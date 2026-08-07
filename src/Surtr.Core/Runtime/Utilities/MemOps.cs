@@ -7,8 +7,11 @@ using System.Runtime.InteropServices;
 
 namespace Surtr.Runtime.Utilities
 {
-    // netstandard2.1 has no System.Runtime.InteropServices.NativeMemory (that's .NET 6+),
-    // so this wraps Marshal's HGlobal allocator behind a NativeMemory-shaped API instead.
+    /// <summary>
+    /// Unmanaged memory utilities built on <see cref="Marshal"/>'s HGlobal allocator. Stands
+    /// in for <c>System.Runtime.InteropServices.NativeMemory</c>, which isn't available on
+    /// netstandard2.1 (that API is .NET 6+).
+    /// </summary>
     internal static unsafe class MemOps
     {
         #region Allocation
@@ -61,21 +64,30 @@ namespace Surtr.Runtime.Utilities
         #endregion
 
         #region Copying & Moving
-        // Buffer.MemoryCopy is overlap-safe (memmove semantics), so Copy and Move
-        // are equivalent; both are provided so call sites can express intent.
+        /// <summary>
+        /// Copies <paramref name="byteCount"/> bytes from <paramref name="source"/> to
+        /// <paramref name="destination"/>. Safe for overlapping regions (memmove semantics).
+        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Copy(void* source, void* destination, nuint byteCount)
             => Buffer.MemoryCopy(source, destination, byteCount, byteCount);
 
+        /// <summary>
+        /// Equivalent to <see cref="Copy"/> - provided separately so call sites can express
+        /// "moving" intent, even though both are overlap-safe.
+        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Move(void* source, void* destination, nuint byteCount)
             => Buffer.MemoryCopy(source, destination, byteCount, byteCount);
         #endregion
 
         #region Filling & Clearing
-        // Vector<byte> chunks (16/32/64 bytes depending on SSE2/AVX2/AVX-512) beat the
-        // qword loop by 2-8x on hardware that accelerates them; the qword loop remains
-        // as the tail handler and as the whole-buffer fallback when it isn't accelerated.
+        /// <summary>
+        /// Zeroes <paramref name="byteCount"/> bytes starting at <paramref name="ptr"/>. Uses
+        /// <see cref="Vector{T}"/> chunks (16/32/64 bytes depending on SSE2/AVX2/AVX-512) when
+        /// the hardware accelerates them, falling back to an 8-byte-at-a-time loop otherwise
+        /// and for the unaligned tail.
+        /// </summary>
         public static void Clear(void* ptr, nuint byteCount)
         {
             byte* bytePtr = (byte*)ptr;
@@ -100,6 +112,11 @@ namespace Surtr.Runtime.Utilities
             ClearTail(bytePtr + offset, byteCount - offset);
         }
 
+        /// <summary>
+        /// Sets <paramref name="byteCount"/> bytes starting at <paramref name="ptr"/> to
+        /// <paramref name="value"/>, using the same <see cref="Vector{T}"/>-chunked strategy
+        /// as <see cref="Clear"/>.
+        /// </summary>
         public static void Fill(void* ptr, nuint byteCount, byte value)
         {
             if (value == 0)

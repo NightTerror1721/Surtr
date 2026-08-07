@@ -42,9 +42,12 @@ namespace Surtr.Runtime.Objects
 
         public RuntimeResourceState ResourceState { get; private set; }
 
-        // _marks is a bitset (one bit per entity slot) instead of a byte array: 8x less
-        // memory to touch on the wholesale clear that starts every CollectGarbage call,
-        // and 8x fewer cache lines while marking/sweeping large registries.
+        /// <summary>
+        /// Number of 64-bit words needed to hold one mark bit per entity slot. The mark
+        /// array is a bitset rather than a byte array: 8x less memory to touch on the
+        /// wholesale clear that starts every <see cref="CollectGarbage"/> call, and 8x
+        /// fewer cache lines while marking/sweeping large registries.
+        /// </summary>
         private readonly int MarkWordCount
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -324,13 +327,20 @@ namespace Surtr.Runtime.Objects
         }
     }
 
-    // SurtrEntityRegistry can't be handed out via a ref field: ref fields need runtime
-    // support unavailable on netstandard2.1, and a pointer is off the table too since
-    // Entities is a managed array, so SurtrEntityRegistry isn't an unmanaged type. A
-    // length-1 Span sidesteps both: it's backed by the runtime's own byref-capable Span<T>
-    // (not a ref field we declare ourselves), and Span<T> doesn't require T to be
-    // unmanaged, so it works with the managed Entities array in tow. No heap allocation,
-    // no copy of the registry - Mark writes straight through to the caller's storage.
+    /// <summary>
+    /// A restricted, indirect handle to a <see cref="SurtrEntityRegistry"/> that exposes only
+    /// marking, for use from <see cref="SurtrRuntimeEntity.VisitReferences"/> during a
+    /// collection.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SurtrEntityRegistry"/> can't be handed out via a ref field: ref fields need
+    /// runtime support unavailable on netstandard2.1, and a pointer is off the table too since
+    /// its entity array is managed, so the registry isn't an unmanaged type. A length-1
+    /// <see cref="Span{T}"/> sidesteps both: it's backed by the runtime's own byref-capable
+    /// Span&lt;T&gt; (not a ref field declared here), and Span&lt;T&gt; doesn't require T to be
+    /// unmanaged, so it works with the managed array in tow. No heap allocation, no copy of
+    /// the registry - marking writes straight through to the caller's storage.
+    /// </remarks>
     public readonly ref struct SurtrEntityMarker
     {
         private readonly Span<SurtrEntityRegistry> _registry;
@@ -341,9 +351,11 @@ namespace Surtr.Runtime.Objects
             _registry = MemoryMarshal.CreateSpan(ref registry, 1);
         }
 
+        /// <summary>Marks the entity identified by <paramref name="ref"/> as reachable.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Mark(SurtrRef @ref) => _registry[0].Mark(@ref);
 
+        /// <summary>Marks the entity referenced by <paramref name="value"/> as reachable, if <paramref name="value"/> is itself a reference.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Mark(SurtrValue value)
         {
@@ -351,6 +363,7 @@ namespace Surtr.Runtime.Objects
                 _registry[0].Mark((SurtrRef)value.Raw);
         }
 
+        /// <summary>Marks <paramref name="entity"/> as reachable, if it isn't <see langword="null"/>.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Mark(SurtrRuntimeEntity? entity)
         {

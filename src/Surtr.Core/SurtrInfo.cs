@@ -8,6 +8,7 @@ namespace Surtr
     /// </summary>
     public static class SurtrInfo
     {
+        /// <summary>The current Surtr runtime version.</summary>
         public const string Version = "0.0.1";
     }
 }
