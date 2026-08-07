@@ -1,0 +1,15 @@
+<Project>
+
+  <!-- Shared MSBuild settings for every project in the Surtr solution (core library,
+       future source generator, tests, etc.). Project-specific overrides belong in
+       each project's own .csproj. -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <Deterministic>true</Deterministic>
+    <Product>Surtr</Product>
+    <Company>Surtr</Company>
+    <NeutralLanguage>en</NeutralLanguage>
+  </PropertyGroup>
+
+</Project>

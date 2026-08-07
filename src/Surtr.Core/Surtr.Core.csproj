@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <RootNamespace>Surtr</RootNamespace>
+    <AssemblyName>Surtr.Core</AssemblyName>
+
+    <!-- Overrides the solution-wide LangVersion (latest) from Directory.Build.props
+         for this project specifically. -->
+    <LangVersion>9.0</LangVersion>
+
+    <!-- The Surtr core (VM, opcode dispatch, unmanaged object registry) leans on
+         unsafe code by design: it needs to talk to its own unmanaged VM alongside
+         the managed CLR. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Keep the assembly free of a Unity install: it's built standalone with the
+         .NET SDK and then consumed as a plain managed DLL from Assets/Plugins (or
+         a UPM package) inside Unity. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>
