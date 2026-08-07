@@ -5,10 +5,6 @@
     <RootNamespace>Surtr</RootNamespace>
     <AssemblyName>Surtr.Core</AssemblyName>
 
-    <!-- Overrides the solution-wide LangVersion (latest) from Directory.Build.props
-         for this project specifically. -->
-    <LangVersion>9.0</LangVersion>
-
     <!-- The Surtr core (VM, opcode dispatch, unmanaged object registry) leans on
          unsafe code by design: it needs to talk to its own unmanaged VM alongside
          the managed CLR. -->
@@ -19,5 +15,9 @@
          a UPM package) inside Unity. -->
     <IsPackable>false</IsPackable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Folder Include="Bytecode\" />
+  </ItemGroup>
 
 </Project>
