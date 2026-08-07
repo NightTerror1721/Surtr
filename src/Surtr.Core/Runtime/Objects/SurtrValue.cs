@@ -1,5 +1,6 @@
 #nullable enable
 
+using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -55,8 +56,12 @@ namespace Surtr.Runtime.Objects
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal SurtrValue(SurtrFloat rawFloat)
         {
-            AsFloat = rawFloat;
-            Raw = 0;
+            // Raw and AsFloat overlap, so whichever is written last wins. Every constructor
+            // here writes Raw last and goes through the bits explicitly - assigning AsFloat
+            // last instead would silently work, but the moment someone adds a trailing
+            // `Raw = ...` the float is clobbered, which is exactly how this used to be broken.
+            AsFloat = 0;
+            Raw = unchecked((SurtrRawValue)BitConverter.DoubleToInt64Bits(rawFloat));
         }
 
         /// <summary>Creates a null reference value, equivalent to <see cref="Null"/>.</summary>
@@ -99,32 +104,48 @@ namespace Surtr.Runtime.Objects
         #endregion
 
         #region Type Checking
+        // These compare against the TagMask* constants, which are the tag already shifted into
+        // the top 16 bits - not the bare Tag* constants, which are the unshifted 16-bit values
+        // used when building a value. Masking Raw yields a shifted pattern, so comparing it to an
+        // unshifted tag is never true.
+
         /// <summary>Whether this value holds an int.</summary>
         public bool IsInt
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => (Raw & TagMask) == TagInt;
+            get => (Raw & TagMask) == TagMaskInt;
         }
 
-        /// <summary>Whether this value holds a float.</summary>
+        /// <summary>
+        /// Whether this value holds a float.
+        /// </summary>
+        /// <remarks>
+        /// A float is stored as its raw IEEE754 bits with no tag applied - that is the whole
+        /// point of NaN boxing - so it is identified by *not* carrying one of the tag patterns
+        /// rather than by carrying its own.
+        /// </remarks>
         public bool IsFloat
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => (Raw & TagMask) == TagFloat;
+            get
+            {
+                SurtrRawValue tag = Raw & TagMask;
+                return tag < TagMaskInt || tag > TagMaskReference;
+            }
         }
 
         /// <summary>Whether this value holds a bool.</summary>
         public bool IsBool
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => (Raw & TagMask) == TagBool;
+            get => (Raw & TagMask) == TagMaskBool;
         }
 
         /// <summary>Whether this value holds a char.</summary>
         public bool IsChar
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => (Raw & TagMask) == TagChar;
+            get => (Raw & TagMask) == TagMaskChar;
         }
 
         /// <summary>Whether this value holds an entity reference (null or otherwise).</summary>

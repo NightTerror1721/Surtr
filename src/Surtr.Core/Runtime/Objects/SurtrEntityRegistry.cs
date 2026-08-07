@@ -351,16 +351,30 @@ namespace Surtr.Runtime.Objects
             _registry = MemoryMarshal.CreateSpan(ref registry, 1);
         }
 
+        /// <summary>
+        /// The registry behind this marker, reached without the span's bounds check.
+        /// </summary>
+        /// <remarks>
+        /// The span is length 1 by construction, so index 0 is always valid, but the JIT can't
+        /// prove that at a call site and would emit a compare-and-branch on every mark. Marking
+        /// runs once per reachable reference in a collection, so that check is worth removing.
+        /// </remarks>
+        private readonly ref SurtrEntityRegistry Registry
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => ref MemoryMarshal.GetReference(_registry);
+        }
+
         /// <summary>Marks the entity identified by <paramref name="ref"/> as reachable.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public readonly void Mark(SurtrRef @ref) => _registry[0].Mark(@ref);
+        public readonly void Mark(SurtrRef @ref) => Registry.Mark(@ref);
 
         /// <summary>Marks the entity referenced by <paramref name="value"/> as reachable, if <paramref name="value"/> is itself a reference.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public readonly void Mark(SurtrValue value)
         {
             if ((value.Raw & SurtrValue.TagMask) == SurtrValue.TagMaskReference)
-                _registry[0].Mark((SurtrRef)value.Raw);
+                Registry.Mark((SurtrRef)value.Raw);
         }
 
         /// <summary>Marks <paramref name="entity"/> as reachable, if it isn't <see langword="null"/>.</summary>
@@ -369,7 +383,7 @@ namespace Surtr.Runtime.Objects
         {
             if (entity is null)
                 return;
-            _registry[0].Mark(entity.SurtrRef);
+            Registry.Mark(entity.SurtrRef);
         }
     }
 }

@@ -489,12 +489,15 @@ namespace Surtr.Runtime.Classes
         public override bool Equals(object? obj) => obj is SurtrClassReference other && Equals(other);
 
         /// <inheritdoc/>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public override int GetHashCode() => _descriptor?.GetHashCode() ?? 0;
 
         /// <summary>Compares two references by their canonical descriptor text.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool operator ==(SurtrClassReference left, SurtrClassReference right) => left.Equals(right);
 
         /// <summary>Compares two references by their canonical descriptor text.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static bool operator !=(SurtrClassReference left, SurtrClassReference right) => !left.Equals(right);
         #endregion
     }

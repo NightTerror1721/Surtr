@@ -109,7 +109,22 @@ namespace Surtr.Runtime.Utilities
                     *(Vector<byte>*)(bytePtr + offset) = zero;
             }
 
-            ClearTail(bytePtr + offset, byteCount - offset);
+            // Tail handled inline rather than by a shared helper. RyuJIT would honour
+            // AggressiveInlining here, but Unity's Mono backend has a far more conservative
+            // inliner, and a real call in the middle of the hottest memory routine in the VM is
+            // not worth the deduplication. Same reasoning in Fill, AreEqual and IsZero.
+            ulong* qwordPtr = (ulong*)(bytePtr + offset);
+            nuint remaining = byteCount - offset;
+            nuint qwordCount = remaining / 8;
+
+            for (nuint i = 0; i < qwordCount; i++)
+                qwordPtr[i] = 0;
+
+            byte* tailPtr = bytePtr + offset + qwordCount * 8;
+            nuint tailBytes = remaining - qwordCount * 8;
+
+            for (nuint i = 0; i < tailBytes; i++)
+                tailPtr[i] = 0;
         }
 
         /// <summary>
@@ -144,39 +159,19 @@ namespace Surtr.Runtime.Utilities
                     *(Vector<byte>*)(bytePtr + offset) = pattern;
             }
 
-            FillTail(bytePtr + offset, byteCount - offset, value);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static void ClearTail(byte* ptr, nuint byteCount)
-        {
-            ulong* qwordPtr = (ulong*)ptr;
-            nuint qwordCount = byteCount / 8;
+            ulong qwordPattern = value * 0x0101010101010101UL;
+            ulong* qwordPtr = (ulong*)(bytePtr + offset);
+            nuint remaining = byteCount - offset;
+            nuint qwordCount = remaining / 8;
 
             for (nuint i = 0; i < qwordCount; i++)
-                qwordPtr[i] = 0;
+                qwordPtr[i] = qwordPattern;
 
-            byte* bytePtr = ptr + qwordCount * 8;
-            nuint remaining = byteCount - qwordCount * 8;
+            byte* tailPtr = bytePtr + offset + qwordCount * 8;
+            nuint tailBytes = remaining - qwordCount * 8;
 
-            for (nuint i = 0; i < remaining; i++)
-                bytePtr[i] = 0;
-        }
-
-        private static void FillTail(byte* ptr, nuint byteCount, byte value)
-        {
-            ulong pattern = value * 0x0101010101010101UL;
-            ulong* qwordPtr = (ulong*)ptr;
-            nuint qwordCount = byteCount / 8;
-
-            for (nuint i = 0; i < qwordCount; i++)
-                qwordPtr[i] = pattern;
-
-            byte* bytePtr = ptr + qwordCount * 8;
-            nuint remaining = byteCount - qwordCount * 8;
-
-            for (nuint i = 0; i < remaining; i++)
-                bytePtr[i] = value;
+            for (nuint i = 0; i < tailBytes; i++)
+                tailPtr[i] = value;
         }
         #endregion
 
@@ -201,7 +196,28 @@ namespace Surtr.Runtime.Utilities
                 }
             }
 
-            return AreEqualTail(leftBytePtr + offset, rightBytePtr + offset, byteCount - offset);
+            ulong* leftQwordPtr = (ulong*)(leftBytePtr + offset);
+            ulong* rightQwordPtr = (ulong*)(rightBytePtr + offset);
+            nuint remaining = byteCount - offset;
+            nuint qwordCount = remaining / 8;
+
+            for (nuint i = 0; i < qwordCount; i++)
+            {
+                if (leftQwordPtr[i] != rightQwordPtr[i])
+                    return false;
+            }
+
+            byte* leftTailPtr = leftBytePtr + offset + qwordCount * 8;
+            byte* rightTailPtr = rightBytePtr + offset + qwordCount * 8;
+            nuint tailBytes = remaining - qwordCount * 8;
+
+            for (nuint i = 0; i < tailBytes; i++)
+            {
+                if (leftTailPtr[i] != rightTailPtr[i])
+                    return false;
+            }
+
+            return true;
         }
 
         public static bool IsZero(void* ptr, nuint byteCount)
@@ -221,40 +237,9 @@ namespace Surtr.Runtime.Utilities
                 }
             }
 
-            return IsZeroTail(bytePtr + offset, byteCount - offset);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static bool AreEqualTail(byte* left, byte* right, nuint byteCount)
-        {
-            ulong* leftQwordPtr = (ulong*)left;
-            ulong* rightQwordPtr = (ulong*)right;
-            nuint qwordCount = byteCount / 8;
-
-            for (nuint i = 0; i < qwordCount; i++)
-            {
-                if (leftQwordPtr[i] != rightQwordPtr[i])
-                    return false;
-            }
-
-            byte* leftBytePtr = left + qwordCount * 8;
-            byte* rightBytePtr = right + qwordCount * 8;
-            nuint remaining = byteCount - qwordCount * 8;
-
-            for (nuint i = 0; i < remaining; i++)
-            {
-                if (leftBytePtr[i] != rightBytePtr[i])
-                    return false;
-            }
-
-            return true;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static bool IsZeroTail(byte* ptr, nuint byteCount)
-        {
-            ulong* qwordPtr = (ulong*)ptr;
-            nuint qwordCount = byteCount / 8;
+            ulong* qwordPtr = (ulong*)(bytePtr + offset);
+            nuint remaining = byteCount - offset;
+            nuint qwordCount = remaining / 8;
 
             for (nuint i = 0; i < qwordCount; i++)
             {
@@ -262,12 +247,12 @@ namespace Surtr.Runtime.Utilities
                     return false;
             }
 
-            byte* bytePtr = ptr + qwordCount * 8;
-            nuint remaining = byteCount - qwordCount * 8;
+            byte* tailPtr = bytePtr + offset + qwordCount * 8;
+            nuint tailBytes = remaining - qwordCount * 8;
 
-            for (nuint i = 0; i < remaining; i++)
+            for (nuint i = 0; i < tailBytes; i++)
             {
-                if (bytePtr[i] != 0)
+                if (tailPtr[i] != 0)
                     return false;
             }
 
