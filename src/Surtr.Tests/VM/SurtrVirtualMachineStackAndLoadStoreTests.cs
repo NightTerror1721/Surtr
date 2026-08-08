@@ -1,0 +1,404 @@
+#nullable enable
+
+using Surtr.Bytecode;
+using Surtr.Runtime;
+using Surtr.Runtime.Objects;
+
+namespace Surtr.Tests.VM
+{
+    public class SurtrVirtualMachineStackAndLoadStoreTests
+    {
+        private static SurtrValue Run(BytecodeBuilder builder, int localCount = 8, int maxStackSize = 32)
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new Surtr.Runtime.Classes.SurtrModule("test");
+            var method = builder.Build(module, localCount, maxStackSize);
+            return runtime.Invoke(method);
+        }
+
+        #region Stack operations
+
+        [Fact]
+        public void Nop_DoesNothing()
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(5)
+                .Op(OpCode.Nop)
+                .Op(OpCode.Nop)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(5, Run(builder).AsInt);
+        }
+
+        [Fact]
+        public void Dup_DuplicatesTheTopOfStack()
+        {
+            // 20 + Dup(=20) = 40: only true if Dup actually pushed a second 20.
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(20)
+                .Op(OpCode.Dup)
+                .Op(OpCode.Add)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(40, Run(builder).AsInt);
+        }
+
+        [Fact]
+        public void Dup2_DuplicatesTheTopTwoValues_PreservingOrder()
+        {
+            // [10, 3] -> Dup2 -> [10, 3, 10, 3]; Sub on the duplicated pair is order-sensitive.
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(10)
+                .Op(OpCode.PushI32).I32(3)
+                .Op(OpCode.Dup2)
+                .Op(OpCode.Sub)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(7, Run(builder).AsInt);
+        }
+
+        [Fact]
+        public void Swap_ExchangesTheTopTwoValues()
+        {
+            // [5, 9] -> Swap -> [9, 5]; Sub is order-sensitive, so this distinguishes a real swap.
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(5)
+                .Op(OpCode.PushI32).I32(9)
+                .Op(OpCode.Swap)
+                .Op(OpCode.Sub)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(4, Run(builder).AsInt); // 9 - 5
+        }
+
+        [Fact]
+        public void Swap2_MovesTheTopPairAboveTheLowerPair_KeepingEachPairsOwnOrder()
+        {
+            // [10, 25, 100, 150] -> Swap2 -> [100, 150, 10, 25]; top pair becomes (10, 25).
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(10)
+                .Op(OpCode.PushI32).I32(25)
+                .Op(OpCode.PushI32).I32(100)
+                .Op(OpCode.PushI32).I32(150)
+                .Op(OpCode.Swap2)
+                .Op(OpCode.Sub)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(-15, Run(builder).AsInt); // 10 - 25
+        }
+
+        [Fact]
+        public void Swap2_LeavesTheOriginalTopPairBelow_InItsOwnOrder()
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(10)
+                .Op(OpCode.PushI32).I32(25)
+                .Op(OpCode.PushI32).I32(100)
+                .Op(OpCode.PushI32).I32(150)
+                .Op(OpCode.Swap2)
+                .Op(OpCode.Pop)
+                .Op(OpCode.Pop)
+                .Op(OpCode.Sub)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(-50, Run(builder).AsInt); // 100 - 150
+        }
+
+        [Fact]
+        public void PushNull_PushesANullReference()
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushNull)
+                .Op(OpCode.ReturnValue);
+
+            var result = Run(builder);
+            Assert.True(result.IsReference);
+            Assert.True(result.IsNullReference);
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(127)]
+        [InlineData(-128)]
+        [InlineData(-1)]
+        public void PushI8_SignExtendsIntoAnInt(int value)
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI8).U8(value)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(value, Run(builder).AsInt);
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(32767)]
+        [InlineData(-32768)]
+        [InlineData(-1)]
+        public void PushI16_SignExtendsIntoAnInt(int value)
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI16).I16(value)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(value, Run(builder).AsInt);
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(int.MaxValue)]
+        [InlineData(int.MinValue)]
+        [InlineData(-1)]
+        public void PushI32_CarriesTheFullRange(int value)
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(value)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(value, Run(builder).AsInt);
+        }
+
+        [Fact]
+        public void Pop_DiscardsTheTopOfStack()
+        {
+            // If Pop failed to discard, the top would still be 99, not 7.
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(7)
+                .Op(OpCode.PushI32).I32(99)
+                .Op(OpCode.Pop)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(7, Run(builder).AsInt);
+        }
+
+        #endregion
+
+        #region Constants
+
+        [Theory]
+        [InlineData(OpCode.Ldc0, 0)]
+        [InlineData(OpCode.Ldc1, 1)]
+        [InlineData(OpCode.Ldc2, 2)]
+        [InlineData(OpCode.Ldc3, 3)]
+        [InlineData(OpCode.Ldc4, 4)]
+        [InlineData(OpCode.Ldc5, 5)]
+        [InlineData(OpCode.Ldc6, 6)]
+        [InlineData(OpCode.Ldc7, 7)]
+        [InlineData(OpCode.Ldc8, 8)]
+        [InlineData(OpCode.Ldc9, 9)]
+        public void LdcDedicated_ReadsItsFixedPoolSlot(OpCode op, int slot)
+        {
+            var builder = new BytecodeBuilder();
+            for (int i = 0; i <= slot; i++)
+                builder.Constant(SurtrValue.CreateInt(i * 111).Raw);
+
+            builder.Op(op).Op(OpCode.ReturnValue);
+
+            Assert.Equal(slot * 111, Run(builder).AsInt);
+        }
+
+        [Fact]
+        public void Ldc_ReadsAnArbitraryTwoBytePoolIndex()
+        {
+            var builder = new BytecodeBuilder();
+            for (int i = 0; i < 20; i++)
+                builder.Constant(SurtrValue.CreateInt(i).Raw);
+
+            builder.Op(OpCode.Ldc).I16(15).Op(OpCode.ReturnValue);
+
+            Assert.Equal(15, Run(builder).AsInt);
+        }
+
+        [Fact]
+        public void LdcS_ReadsAOneBytePoolIndex()
+        {
+            var builder = new BytecodeBuilder();
+            builder.LoadConstant(SurtrValue.CreateInt(321).Raw).Op(OpCode.ReturnValue);
+
+            Assert.Equal(321, Run(builder).AsInt);
+        }
+
+        [Fact]
+        public void LdcX_ReadsAFourBytePoolIndex()
+        {
+            var builder = new BytecodeBuilder();
+            for (int i = 0; i < 300; i++)
+                builder.Constant(SurtrValue.CreateInt(i).Raw);
+
+            builder.Op(OpCode.LdcX).I32(299).Op(OpCode.ReturnValue);
+
+            Assert.Equal(299, Run(builder).AsInt);
+        }
+
+        [Fact]
+        public void Ldc_CanLoadAFloatConstant()
+        {
+            var builder = new BytecodeBuilder();
+            builder.LoadFloat(3.5).Op(OpCode.ReturnValue);
+
+            Assert.Equal(3.5, Run(builder).AsFloat);
+        }
+
+        #endregion
+
+        #region Locals
+
+        [Theory]
+        [InlineData(OpCode.Stl0, OpCode.Ldl0, 0)]
+        [InlineData(OpCode.Stl1, OpCode.Ldl1, 1)]
+        [InlineData(OpCode.Stl2, OpCode.Ldl2, 2)]
+        [InlineData(OpCode.Stl3, OpCode.Ldl3, 3)]
+        [InlineData(OpCode.Stl4, OpCode.Ldl4, 4)]
+        [InlineData(OpCode.Stl5, OpCode.Ldl5, 5)]
+        public void DedicatedStlAndLdl_RoundTripThroughTheirFixedSlot(OpCode store, OpCode load, int slot)
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(1000 + slot)
+                .Op(store)
+                .Op(load)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(1000 + slot, Run(builder, localCount: 6).AsInt);
+        }
+
+        [Fact]
+        public void StlS_And_LdlS_RoundTripThroughAOneByteSlotIndex()
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(77)
+                .Op(OpCode.StlS).U8(6)
+                .Op(OpCode.LdlS).U8(6)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(77, Run(builder, localCount: 8).AsInt);
+        }
+
+        [Fact]
+        public void Stl_And_Ldl_RoundTripThroughATwoByteSlotIndex()
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(555)
+                .Op(OpCode.Stl).I16(20)
+                .Op(OpCode.Ldl).I16(20)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(555, Run(builder, localCount: 24).AsInt);
+        }
+
+        [Fact]
+        public void FreshLocals_StartZeroed()
+        {
+            // No store into local 3 at all - a fresh frame's locals must read back as a zeroed,
+            // untagged slot (int 0 under Ldl3's untagged interpretation), not garbage.
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.Ldl3)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(0, Run(builder, localCount: 6).AsInt);
+        }
+
+        [Fact]
+        public void Locals_AreIndependentSlots()
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(1)
+                .Op(OpCode.Stl0)
+                .Op(OpCode.PushI32).I32(2)
+                .Op(OpCode.Stl1)
+                .Op(OpCode.Ldl0)
+                .Op(OpCode.Ldl1)
+                .Op(OpCode.Sub)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(-1, Run(builder, localCount: 2).AsInt); // 1 - 2
+        }
+
+        #endregion
+
+        #region Host globals
+
+        [Fact]
+        public void Ldg_And_Stg_RoundTripThroughAHostGlobal()
+        {
+            using var runtime = new SurtrRuntime();
+            var global = runtime.DefineGlobal("counter", Surtr.Runtime.Classes.SurtrClassReference.Integer);
+
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(42)
+                .Op(OpCode.Stg).I16(global.Index)
+                .Op(OpCode.Ldg).I16(global.Index)
+                .Op(OpCode.ReturnValue);
+
+            var module = new Surtr.Runtime.Classes.SurtrModule("test");
+            var method = builder.Build(module, localCount: 0, maxStackSize: 8);
+            Assert.Equal(42, runtime.Invoke(method).AsInt);
+        }
+
+        [Fact]
+        public void LdgX_And_StgX_UseAFourByteIndex()
+        {
+            using var runtime = new SurtrRuntime();
+            var global = runtime.DefineGlobal("counter", Surtr.Runtime.Classes.SurtrClassReference.Integer);
+
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(84)
+                .Op(OpCode.StgX).I32(global.Index)
+                .Op(OpCode.LdgX).I32(global.Index)
+                .Op(OpCode.ReturnValue);
+
+            var module = new Surtr.Runtime.Classes.SurtrModule("test");
+            var method = builder.Build(module, localCount: 0, maxStackSize: 8);
+            Assert.Equal(84, runtime.Invoke(method).AsInt);
+        }
+
+        [Fact]
+        public void Stg_IsVisibleToTheHostThroughGetValue()
+        {
+            using var runtime = new SurtrRuntime();
+            var global = runtime.DefineGlobal("shared", Surtr.Runtime.Classes.SurtrClassReference.Integer);
+
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(7)
+                .Op(OpCode.Stg).I16(global.Index)
+                .Op(OpCode.PushI32).I32(0).Op(OpCode.ReturnValue);
+
+            var module = new Surtr.Runtime.Classes.SurtrModule("test");
+            var method = builder.Build(module, localCount: 0, maxStackSize: 8);
+            runtime.Invoke(method);
+
+            Assert.Equal(7, runtime.Globals.GetValue(global.Index).AsInt);
+        }
+
+        #endregion
+
+        #region Return
+
+        [Fact]
+        public void ReturnVoid_AtTheTopLevel_YieldsNull()
+        {
+            var builder = new BytecodeBuilder().Op(OpCode.ReturnVoid);
+            var result = Run(builder);
+
+            Assert.True(result.IsNullReference);
+        }
+
+        [Fact]
+        public void ReturnVoid_FromACalledMethod_LeavesATaggedNullForTheCaller()
+        {
+            using var runtime = new SurtrRuntime();
+
+            var calleeModule = new Surtr.Runtime.Classes.SurtrModule("callee");
+            var callee = new BytecodeBuilder().Op(OpCode.ReturnVoid).Build(calleeModule, localCount: 0, maxStackSize: 4);
+
+            var callerModule = new Surtr.Runtime.Classes.SurtrModule("caller");
+            var builder = new BytecodeBuilder();
+            int methodIndex = builder.AddMethod(callee);
+            builder.Op(OpCode.InvokeStatic).I16(methodIndex).U8(0).U8(1).Op(OpCode.ReturnValue);
+
+            var caller = builder.Build(callerModule, localCount: 0, maxStackSize: 8);
+            Assert.True(runtime.Invoke(caller).IsNullReference);
+        }
+
+        #endregion
+    }
+}

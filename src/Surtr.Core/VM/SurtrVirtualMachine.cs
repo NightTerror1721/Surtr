@@ -523,6 +523,22 @@ namespace Surtr.VM
                 moduleTable = chunk.ModuleTable;
             }
 
+            // Inline immediates are read a byte at a time and recomposed with shifts rather than
+            // through a `*(int*)ip` cast. Two reasons, both load-bearing:
+            //
+            //  - Alignment. Instructions are variable-length, so an immediate lands wherever the
+            //    preceding opcodes leave it, which is rarely its natural boundary. A wide load off
+            //    an unaligned address is undefined per ECMA-335 - a plain `ldind` assumes natural
+            //    alignment, and only an `unaligned.` prefix relaxes that. x86 tolerates it and
+            //    ARM64 usually does, but "usually" is not what the hottest loop should rest on.
+            //  - Endianness. Composing explicitly pins the encoding to little-endian regardless of
+            //    the host, so the bytecode format is canonical rather than whatever the machine is.
+            //
+            // The alternative, MemoryMarshal.Read<T>, is a call - and a method this size is exactly
+            // the kind the inliner gives up on, so it would not reliably fold away. The byte loads
+            // issue in parallel and stay off the critical path, which the switch's indirect branch
+            // dominates regardless. Reads off `sp` keep their wide casts: it is a SurtrRawValue*,
+            // so every slot is already 8-byte aligned and `*(double*)sp` is well-defined.
         Dispatch:
             switch ((OpCode)(*ip++))
             {
@@ -569,12 +585,12 @@ namespace Surtr.VM
                     goto Dispatch;
 
                 case OpCode.PushI16:
-                    *sp++ = SurtrValue.TagMaskInt | (uint)(int)*(short*)ip;
+                    *sp++ = SurtrValue.TagMaskInt | (uint)(int)(short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     goto Dispatch;
 
                 case OpCode.PushI32:
-                    *sp++ = SurtrValue.TagMaskInt | (uint)*(int*)ip;
+                    *sp++ = SurtrValue.TagMaskInt | (uint)(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     goto Dispatch;
 
@@ -585,7 +601,7 @@ namespace Surtr.VM
 
                 #region Load / Store Operations
                 case OpCode.Ldc:
-                    *sp++ = constants[*(ushort*)ip];
+                    *sp++ = constants[(ip[0] | (ip[1] << 8))];
                     ip += 2;
                     goto Dispatch;
 
@@ -601,7 +617,7 @@ namespace Surtr.VM
                 case OpCode.Ldc9: *sp++ = constants[9]; goto Dispatch;
 
                 case OpCode.LdcX:
-                    *sp++ = constants[*(int*)ip];
+                    *sp++ = constants[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     ip += 4;
                     goto Dispatch;
 
@@ -610,7 +626,7 @@ namespace Surtr.VM
                     goto Dispatch;
 
                 case OpCode.Ldl:
-                    *sp++ = frameBase[*(ushort*)ip];
+                    *sp++ = frameBase[(ip[0] | (ip[1] << 8))];
                     ip += 2;
                     goto Dispatch;
 
@@ -626,17 +642,17 @@ namespace Surtr.VM
                     goto Dispatch;
 
                 case OpCode.Ldg:
-                    *sp++ = globals[*(ushort*)ip];
+                    *sp++ = globals[(ip[0] | (ip[1] << 8))];
                     ip += 2;
                     goto Dispatch;
 
                 case OpCode.LdgX:
-                    *sp++ = globals[*(int*)ip];
+                    *sp++ = globals[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     ip += 4;
                     goto Dispatch;
 
                 case OpCode.Stl:
-                    frameBase[*(ushort*)ip] = *--sp;
+                    frameBase[(ip[0] | (ip[1] << 8))] = *--sp;
                     ip += 2;
                     goto Dispatch;
 
@@ -652,12 +668,12 @@ namespace Surtr.VM
                     goto Dispatch;
 
                 case OpCode.Stg:
-                    globals[*(ushort*)ip] = *--sp;
+                    globals[(ip[0] | (ip[1] << 8))] = *--sp;
                     ip += 2;
                     goto Dispatch;
 
                 case OpCode.StgX:
-                    globals[*(int*)ip] = *--sp;
+                    globals[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))] = *--sp;
                     ip += 4;
                     goto Dispatch;
                 #endregion
@@ -938,7 +954,7 @@ namespace Surtr.VM
 
                 case OpCode.InstanceOf:
                 {
-                    var target = typeTable[*(ushort*)ip].ResolvedType!;
+                    var target = typeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
                     ip += 2;
 
                     SurtrRef subject = (SurtrRef)(*(sp - 1));
@@ -957,7 +973,7 @@ namespace Surtr.VM
 
                 case OpCode.InstanceOfX:
                 {
-                    var target = typeTable[*(int*)ip].ResolvedType!;
+                    var target = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
                     ip += 4;
 
                     SurtrRef subject = (SurtrRef)(*(sp - 1));
@@ -1118,7 +1134,7 @@ namespace Surtr.VM
 
                 case OpCode.Cast:
                 {
-                    var target = typeTable[*(ushort*)ip].ResolvedType!;
+                    var target = typeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
                     ip += 2;
 
                     SurtrRef subject = (SurtrRef)(*(sp - 1));
@@ -1142,7 +1158,7 @@ namespace Surtr.VM
 
                 case OpCode.CastX:
                 {
-                    var target = typeTable[*(int*)ip].ResolvedType!;
+                    var target = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
                     ip += 4;
 
                     SurtrRef subject = (SurtrRef)(*(sp - 1));
@@ -1206,7 +1222,7 @@ namespace Surtr.VM
                 #region Array Operations
                 case OpCode.ArrNew:
                 {
-                    var arrayType = typeTable[*(ushort*)ip].Reference;
+                    var arrayType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
                     ip += 2;
                     current.IP = ip;
                     _sp = sp;
@@ -1235,8 +1251,8 @@ namespace Surtr.VM
 
                 case OpCode.ArrNewX:
                 {
-                    var arrayType = typeTable[*(ushort*)ip].Reference;
-                    int length = *(int*)(ip + 2);
+                    var arrayType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
+                    int length = (ip[2] | (ip[3] << 8) | (ip[4] << 16) | (ip[5] << 24));
                     ip += 6;
                     current.IP = ip;
                     _sp = sp;
@@ -1261,8 +1277,8 @@ namespace Surtr.VM
 
                 case OpCode.ArrPack:
                 {
-                    var arrayType = typeTable[*(ushort*)ip].Reference;
-                    int count = *(ushort*)(ip + 2);
+                    var arrayType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
+                    int count = (ip[2] | (ip[3] << 8));
                     ip += 4;
                     current.IP = ip;
                     _sp = sp;
@@ -1432,7 +1448,7 @@ namespace Surtr.VM
                 #region Tuple Operations
                 case OpCode.TupPack:
                 {
-                    var tupleType = typeTable[*(ushort*)ip].Reference;
+                    var tupleType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
                     int arity = ip[2];
                     ip += 3;
                     current.IP = ip;
@@ -1488,7 +1504,7 @@ namespace Surtr.VM
                 #region Dictionary Operations
                 case OpCode.DictNew:
                 {
-                    var dictionaryType = typeTable[*(ushort*)ip].Reference;
+                    var dictionaryType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
                     ip += 2;
                     current.IP = ip;
                     _sp = sp;
@@ -1503,8 +1519,8 @@ namespace Surtr.VM
 
                 case OpCode.DictPack:
                 {
-                    var dictionaryType = typeTable[*(ushort*)ip].Reference;
-                    int count = *(ushort*)(ip + 2);
+                    var dictionaryType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
+                    int count = (ip[2] | (ip[3] << 8));
                     ip += 4;
                     current.IP = ip;
                     _sp = sp;
@@ -1566,7 +1582,7 @@ namespace Surtr.VM
 
                 case OpCode.DictKeys:
                 {
-                    var arrayType = typeTable[*(ushort*)ip].Reference;
+                    var arrayType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
                     ip += 2;
                     current.IP = ip;
                     _sp = sp;
@@ -1584,7 +1600,7 @@ namespace Surtr.VM
 
                 case OpCode.DictValues:
                 {
-                    var arrayType = typeTable[*(ushort*)ip].Reference;
+                    var arrayType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
                     ip += 2;
                     current.IP = ip;
                     _sp = sp;
@@ -1620,7 +1636,7 @@ namespace Surtr.VM
                 #region Object Operations
                 case OpCode.ObjNew:
                 {
-                    var declared = typeTable[*(ushort*)ip].ResolvedClass!;
+                    var declared = typeTable[(ip[0] | (ip[1] << 8))].ResolvedClass!;
                     ip += 2;
                     current.IP = ip;
                     _sp = sp;
@@ -1634,7 +1650,7 @@ namespace Surtr.VM
 
                 case OpCode.ObjNewX:
                 {
-                    var declared = typeTable[*(int*)ip].ResolvedClass!;
+                    var declared = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedClass!;
                     ip += 4;
                     current.IP = ip;
                     _sp = sp;
@@ -1650,7 +1666,7 @@ namespace Surtr.VM
                 #region Field Operations
                 case OpCode.FieldGet:
                 {
-                    int slot = fieldTable[*(ushort*)ip].SlotIndex;
+                    int slot = fieldTable[(ip[0] | (ip[1] << 8))].SlotIndex;
                     ip += 2;
 
                     var instance = (SurtrInstance)entities[(SurtrRef)(*(sp - 1))]!;
@@ -1660,7 +1676,7 @@ namespace Surtr.VM
 
                 case OpCode.FieldSet:
                 {
-                    int slot = fieldTable[*(ushort*)ip].SlotIndex;
+                    int slot = fieldTable[(ip[0] | (ip[1] << 8))].SlotIndex;
                     ip += 2;
 
                     SurtrRawValue value = *--sp;
@@ -1672,22 +1688,22 @@ namespace Surtr.VM
                 case OpCode.StaticFieldGet:
                     // One indirect load: the linker resolved the slot's address when its owner was
                     // laid out, so nothing here tests whether the owner is a class or a module.
-                    *sp++ = *fieldTable[*(ushort*)ip].StaticAddress;
+                    *sp++ = *fieldTable[(ip[0] | (ip[1] << 8))].StaticAddress;
                     ip += 2;
                     goto Dispatch;
 
                 case OpCode.StaticFieldGetX:
-                    *sp++ = *fieldTable[*(int*)ip].StaticAddress;
+                    *sp++ = *fieldTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].StaticAddress;
                     ip += 4;
                     goto Dispatch;
 
                 case OpCode.StaticFieldSet:
-                    *fieldTable[*(ushort*)ip].StaticAddress = *--sp;
+                    *fieldTable[(ip[0] | (ip[1] << 8))].StaticAddress = *--sp;
                     ip += 2;
                     goto Dispatch;
 
                 case OpCode.StaticFieldSetX:
-                    *fieldTable[*(int*)ip].StaticAddress = *--sp;
+                    *fieldTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].StaticAddress = *--sp;
                     ip += 4;
                     goto Dispatch;
                 #endregion
@@ -1695,7 +1711,7 @@ namespace Surtr.VM
                 #region Closure Operations
                 case OpCode.NewClosure:
                 {
-                    var target = methodTable[*(ushort*)ip];
+                    var target = methodTable[(ip[0] | (ip[1] << 8))];
                     int captureCount = ip[2];
                     ip += 3;
                     current.IP = ip;
@@ -1716,7 +1732,7 @@ namespace Surtr.VM
 
                 case OpCode.NewClosureX:
                 {
-                    var target = methodTable[*(int*)ip];
+                    var target = methodTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     int captureCount = ip[4];
                     ip += 5;
                     current.IP = ip;
@@ -1745,7 +1761,7 @@ namespace Surtr.VM
                 #region Control Flow Operations
                 case OpCode.JPZ:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     if ((uint)*--sp == 0) ip += offset;
                     goto Dispatch;
@@ -1753,7 +1769,7 @@ namespace Surtr.VM
 
                 case OpCode.JPNZ:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     if ((uint)*--sp != 0) ip += offset;
                     goto Dispatch;
@@ -1761,7 +1777,7 @@ namespace Surtr.VM
 
                 case OpCode.JPN:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     if ((uint)*--sp == 0) ip += offset;
                     goto Dispatch;
@@ -1769,7 +1785,7 @@ namespace Surtr.VM
 
                 case OpCode.JPNN:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     if ((uint)*--sp != 0) ip += offset;
                     goto Dispatch;
@@ -1777,14 +1793,14 @@ namespace Surtr.VM
 
                 case OpCode.JP:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2 + offset;
                     goto Dispatch;
                 }
 
                 case OpCode.JPZX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     if ((uint)*--sp == 0) ip += offset;
                     goto Dispatch;
@@ -1792,7 +1808,7 @@ namespace Surtr.VM
 
                 case OpCode.JPNZX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     if ((uint)*--sp != 0) ip += offset;
                     goto Dispatch;
@@ -1800,7 +1816,7 @@ namespace Surtr.VM
 
                 case OpCode.JPNX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     if ((uint)*--sp == 0) ip += offset;
                     goto Dispatch;
@@ -1808,7 +1824,7 @@ namespace Surtr.VM
 
                 case OpCode.JPNNX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     if ((uint)*--sp != 0) ip += offset;
                     goto Dispatch;
@@ -1816,14 +1832,14 @@ namespace Surtr.VM
 
                 case OpCode.JPX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4 + offset;
                     goto Dispatch;
                 }
 
                 case OpCode.JPEQ:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     if ((int)sp[0] == (int)sp[1]) ip += offset;
@@ -1832,7 +1848,7 @@ namespace Surtr.VM
 
                 case OpCode.JPFEQ:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     if (((double*)sp)[0] == ((double*)sp)[1]) ip += offset;
@@ -1841,7 +1857,7 @@ namespace Surtr.VM
 
                 case OpCode.JPREQ:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     if ((uint)sp[0] == (uint)sp[1]) ip += offset;
@@ -1850,7 +1866,7 @@ namespace Surtr.VM
 
                 case OpCode.JPStrEQ:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     uint left = (uint)sp[0];
@@ -1864,7 +1880,7 @@ namespace Surtr.VM
 
                 case OpCode.JPEQX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     if ((int)sp[0] == (int)sp[1]) ip += offset;
@@ -1873,7 +1889,7 @@ namespace Surtr.VM
 
                 case OpCode.JPFEQX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     if (((double*)sp)[0] == ((double*)sp)[1]) ip += offset;
@@ -1882,7 +1898,7 @@ namespace Surtr.VM
 
                 case OpCode.JPREQX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     if ((uint)sp[0] == (uint)sp[1]) ip += offset;
@@ -1891,7 +1907,7 @@ namespace Surtr.VM
 
                 case OpCode.JPStrEQX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     uint left = (uint)sp[0];
@@ -1905,7 +1921,7 @@ namespace Surtr.VM
 
                 case OpCode.JPNE:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     if ((int)sp[0] != (int)sp[1]) ip += offset;
@@ -1914,7 +1930,7 @@ namespace Surtr.VM
 
                 case OpCode.JPFNE:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     if (((double*)sp)[0] != ((double*)sp)[1]) ip += offset;
@@ -1923,7 +1939,7 @@ namespace Surtr.VM
 
                 case OpCode.JPRNE:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     if ((uint)sp[0] != (uint)sp[1]) ip += offset;
@@ -1932,7 +1948,7 @@ namespace Surtr.VM
 
                 case OpCode.JPStrNE:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     uint left = (uint)sp[0];
@@ -1946,7 +1962,7 @@ namespace Surtr.VM
 
                 case OpCode.JPNEX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     if ((int)sp[0] != (int)sp[1]) ip += offset;
@@ -1955,7 +1971,7 @@ namespace Surtr.VM
 
                 case OpCode.JPFNEX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     if (((double*)sp)[0] != ((double*)sp)[1]) ip += offset;
@@ -1964,7 +1980,7 @@ namespace Surtr.VM
 
                 case OpCode.JPRNEX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     if ((uint)sp[0] != (uint)sp[1]) ip += offset;
@@ -1973,7 +1989,7 @@ namespace Surtr.VM
 
                 case OpCode.JPStrNEX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     uint left = (uint)sp[0];
@@ -1987,7 +2003,7 @@ namespace Surtr.VM
 
                 case OpCode.JPGT:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     if ((int)sp[0] > (int)sp[1]) ip += offset;
@@ -1996,7 +2012,7 @@ namespace Surtr.VM
 
                 case OpCode.JPFGT:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     if (((double*)sp)[0] > ((double*)sp)[1]) ip += offset;
@@ -2005,7 +2021,7 @@ namespace Surtr.VM
 
                 case OpCode.JPGTX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     if ((int)sp[0] > (int)sp[1]) ip += offset;
@@ -2014,7 +2030,7 @@ namespace Surtr.VM
 
                 case OpCode.JPFGTX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     if (((double*)sp)[0] > ((double*)sp)[1]) ip += offset;
@@ -2023,7 +2039,7 @@ namespace Surtr.VM
 
                 case OpCode.JPGE:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     if ((int)sp[0] >= (int)sp[1]) ip += offset;
@@ -2032,7 +2048,7 @@ namespace Surtr.VM
 
                 case OpCode.JPFGE:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     if (((double*)sp)[0] >= ((double*)sp)[1]) ip += offset;
@@ -2041,7 +2057,7 @@ namespace Surtr.VM
 
                 case OpCode.JPGEX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     if ((int)sp[0] >= (int)sp[1]) ip += offset;
@@ -2050,7 +2066,7 @@ namespace Surtr.VM
 
                 case OpCode.JPFGEX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     if (((double*)sp)[0] >= ((double*)sp)[1]) ip += offset;
@@ -2059,7 +2075,7 @@ namespace Surtr.VM
 
                 case OpCode.JPLT:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     if ((int)sp[0] < (int)sp[1]) ip += offset;
@@ -2068,7 +2084,7 @@ namespace Surtr.VM
 
                 case OpCode.JPFLT:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     if (((double*)sp)[0] < ((double*)sp)[1]) ip += offset;
@@ -2077,7 +2093,7 @@ namespace Surtr.VM
 
                 case OpCode.JPLTX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     if ((int)sp[0] < (int)sp[1]) ip += offset;
@@ -2086,7 +2102,7 @@ namespace Surtr.VM
 
                 case OpCode.JPFLTX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     if (((double*)sp)[0] < ((double*)sp)[1]) ip += offset;
@@ -2095,7 +2111,7 @@ namespace Surtr.VM
 
                 case OpCode.JPLE:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     if ((int)sp[0] <= (int)sp[1]) ip += offset;
@@ -2104,7 +2120,7 @@ namespace Surtr.VM
 
                 case OpCode.JPFLE:
                 {
-                    short offset = *(short*)ip;
+                    short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     sp -= 2;
                     if (((double*)sp)[0] <= ((double*)sp)[1]) ip += offset;
@@ -2113,7 +2129,7 @@ namespace Surtr.VM
 
                 case OpCode.JPLEX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     if ((int)sp[0] <= (int)sp[1]) ip += offset;
@@ -2122,7 +2138,7 @@ namespace Surtr.VM
 
                 case OpCode.JPFLEX:
                 {
-                    int offset = *(int*)ip;
+                    int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     sp -= 2;
                     if (((double*)sp)[0] <= ((double*)sp)[1]) ip += offset;
@@ -2131,8 +2147,8 @@ namespace Surtr.VM
 
                 case OpCode.JPInstanceOf:
                 {
-                    var target = typeTable[*(ushort*)ip].ResolvedType!;
-                    short offset = *(short*)(ip + 2);
+                    var target = typeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
+                    short offset = (short)(ip[2] | (ip[3] << 8));
                     ip += 4;
 
                     SurtrRef subject = (SurtrRef)(*--sp);
@@ -2151,8 +2167,8 @@ namespace Surtr.VM
 
                 case OpCode.JPInstanceOfX:
                 {
-                    var target = typeTable[*(int*)ip].ResolvedType!;
-                    int offset = *(int*)(ip + 4);
+                    var target = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
+                    int offset = (ip[4] | (ip[5] << 8) | (ip[6] << 16) | (ip[7] << 24));
                     ip += 8;
 
                     SurtrRef subject = (SurtrRef)(*--sp);
@@ -2174,21 +2190,32 @@ namespace Surtr.VM
                     // Offsets are measured from the opcode byte, which a variable-length
                     // instruction has no fixed "next address" to replace.
                     byte* instruction = ip - 1;
-                    int low = *(int*)ip;
-                    int count = *(int*)(ip + 4);
-                    int* targets = (int*)(ip + 12);
+                    int low = ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24);
+                    int count = ip[4] | (ip[5] << 8) | (ip[6] << 16) | (ip[7] << 24);
 
                     int index = (int)*--sp - low;
-                    ip = instruction + ((uint)index < (uint)count ? targets[index] : *(int*)(ip + 8));
+                    int target;
+                    if ((uint)index < (uint)count)
+                    {
+                        // The jump table starts at ip + 12; each entry is one 4-byte offset.
+                        byte* entry = ip + 12 + (index * 4);
+                        target = entry[0] | (entry[1] << 8) | (entry[2] << 16) | (entry[3] << 24);
+                    }
+                    else
+                    {
+                        target = ip[8] | (ip[9] << 8) | (ip[10] << 16) | (ip[11] << 24);
+                    }
+
+                    ip = instruction + target;
                     goto Dispatch;
                 }
 
                 case OpCode.SwitchLookup:
                 {
                     byte* instruction = ip - 1;
-                    int count = *(int*)ip;
-                    int target = *(int*)(ip + 4);
-                    int* table = (int*)(ip + 8);
+                    int count = ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24);
+                    int target = ip[4] | (ip[5] << 8) | (ip[6] << 16) | (ip[7] << 24);
+                    byte* table = ip + 8;
 
                     int value = (int)*--sp;
                     int low = 0;
@@ -2196,11 +2223,15 @@ namespace Surtr.VM
                     while (low <= high)
                     {
                         int middle = (int)((uint)(low + high) >> 1);
-                        int key = table[middle * 2];
+
+                        // Each entry is a (key, offset) pair of 4-byte little-endian ints, so
+                        // an entry is 8 bytes wide and the offset sits 4 bytes past the key.
+                        byte* pair = table + (middle * 8);
+                        int key = pair[0] | (pair[1] << 8) | (pair[2] << 16) | (pair[3] << 24);
 
                         if (key == value)
                         {
-                            target = table[middle * 2 + 1];
+                            target = pair[4] | (pair[5] << 8) | (pair[6] << 16) | (pair[7] << 24);
                             break;
                         }
 
@@ -2215,7 +2246,7 @@ namespace Surtr.VM
 
                 #region Call Operations
                 case OpCode.CallLocalModule:
-                    pendingMethod = methodTable[*(ushort*)ip];
+                    pendingMethod = methodTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
                     pendingArguments = *ip++;
                     pendingResults = *ip++;
@@ -2223,7 +2254,7 @@ namespace Surtr.VM
                     goto InvokeResolved;
 
                 case OpCode.CallLocalModuleX:
-                    pendingMethod = methodTable[*(int*)ip];
+                    pendingMethod = methodTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     ip += 4;
                     pendingArguments = *ip++;
                     pendingResults = *ip++;
@@ -2232,8 +2263,8 @@ namespace Surtr.VM
 
                 case OpCode.CallModule:
                 {
-                    var target = moduleTable[*(ushort*)ip];
-                    pendingMethod = target.Chunk.MethodTable[*(ushort*)(ip + 2)];
+                    var target = moduleTable[(ip[0] | (ip[1] << 8))];
+                    pendingMethod = target.Chunk.MethodTable[(ip[2] | (ip[3] << 8))];
                     ip += 4;
                     pendingArguments = *ip++;
                     pendingResults = *ip++;
@@ -2243,8 +2274,8 @@ namespace Surtr.VM
 
                 case OpCode.CallModuleX:
                 {
-                    var target = moduleTable[*(int*)ip];
-                    pendingMethod = target.Chunk.MethodTable[*(int*)(ip + 4)];
+                    var target = moduleTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    pendingMethod = target.Chunk.MethodTable[(ip[4] | (ip[5] << 8) | (ip[6] << 16) | (ip[7] << 24))];
                     ip += 8;
                     pendingArguments = *ip++;
                     pendingResults = *ip++;
@@ -2254,7 +2285,7 @@ namespace Surtr.VM
 
                 case OpCode.CallGlobalNative:
                 {
-                    var function = context.Globals.FunctionTable[*(ushort*)ip];
+                    var function = context.Globals.FunctionTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
                     int argumentCount = *ip++;
                     int resultCount = *ip++;
@@ -2280,7 +2311,7 @@ namespace Surtr.VM
 
                 case OpCode.CallGlobalNativeX:
                 {
-                    var function = context.Globals.FunctionTable[*(int*)ip];
+                    var function = context.Globals.FunctionTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     ip += 4;
                     int argumentCount = *ip++;
                     int resultCount = *ip++;
@@ -2306,7 +2337,7 @@ namespace Surtr.VM
                 #region Method Operations
                 case OpCode.InvokeVirtual:
                 {
-                    var declared = methodTable[*(ushort*)ip];
+                    var declared = methodTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
                     pendingArguments = *ip++;
                     pendingResults = *ip++;
@@ -2320,7 +2351,7 @@ namespace Surtr.VM
                 }
 
                 case OpCode.InvokeSpecial:
-                    pendingMethod = methodTable[*(ushort*)ip];
+                    pendingMethod = methodTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
                     pendingArguments = *ip++;
                     pendingResults = *ip++;
@@ -2328,7 +2359,7 @@ namespace Surtr.VM
                     goto InvokeResolved;
 
                 case OpCode.InvokeStatic:
-                    pendingMethod = methodTable[*(ushort*)ip];
+                    pendingMethod = methodTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
                     pendingArguments = *ip++;
                     pendingResults = *ip++;
@@ -2336,7 +2367,7 @@ namespace Surtr.VM
                     goto InvokeResolved;
 
                 case OpCode.InvokeStaticX:
-                    pendingMethod = methodTable[*(int*)ip];
+                    pendingMethod = methodTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     ip += 4;
                     pendingArguments = *ip++;
                     pendingResults = *ip++;
@@ -2345,7 +2376,7 @@ namespace Surtr.VM
 
                 case OpCode.InvokeInterface:
                 {
-                    var declared = methodTable[*(ushort*)ip];
+                    var declared = methodTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
                     pendingArguments = *ip++;
                     pendingResults = *ip++;

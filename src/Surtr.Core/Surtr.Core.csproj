@@ -16,4 +16,8 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <Folder Include="Runtime\VM\" />
+  </ItemGroup>
+
 </Project>

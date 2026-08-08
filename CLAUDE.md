@@ -213,17 +213,24 @@ Build just the core library:
 dotnet build src/Surtr.Core/Surtr.Core.csproj
 ```
 
-There is no test project, lint config, or CI yet — add commands here once those exist rather than assuming standard `dotnet test`/`dotnet format` invocations apply.
+Run the test suite:
+
+```
+dotnet test Surtr.sln
+```
+
+There is no lint config or CI yet — add commands here once those exist rather than assuming a standard `dotnet format` invocation applies.
 
 ## Architecture / structure
 
-- `Surtr.sln` — solution root; `src/<ProjectName>/<ProjectName>.csproj` is the layout for every project (core library today, future Roslyn source generator and test projects later).
+- `Surtr.sln` — solution root; `src/<ProjectName>/<ProjectName>.csproj` is the layout for every project (core library, test project, future Roslyn source generator).
 - `Directory.Build.props` — MSBuild settings shared by *every* project in the solution (`LangVersion`, `Nullable`, etc.). Put cross-project settings here, not per-project settings. `ImplicitUsings` is deliberately left off (default/disabled) — usings must be written explicitly in every file.
 - `src/Surtr.Core` — the main library, built for `netstandard2.1` so the compiled DLL can be dropped into Unity (2021.2+, including IL2CPP) as a plain managed assembly. `AllowUnsafeBlocks` is enabled here specifically because the VM/registry work described above depends on it; don't assume other projects (e.g. a future source generator) need or should have it. `LangVersion` is inherited as `latest` from `Directory.Build.props` — targeting `netstandard2.1` does not cap the C# language version, since `TargetFramework` (runtime/BCL surface) and `LangVersion` (compiler syntax) are independent settings. Only watch for C# features that need runtime support beyond what's in the BCL (e.g. default interface methods), since Unity's Mono/IL2CPP backends can behave unreliably there even though the code compiles fine.
+- `src/Surtr.Tests` — xUnit test project, targeting `net8.0` (it runs standalone under the .NET SDK, not inside Unity, so it isn't bound to `netstandard2.1` the way the core library is). `AllowUnsafeBlocks` is enabled here too, since chunk-building tests poke at the same unmanaged surface. `GenerateDocumentationFile` is turned back off here — a test assembly is never consumed as a library, so `CS1591` would just be noise. `Surtr.Core` grants it `[InternalsVisibleTo("Surtr.Tests")]` (in `AssemblyInfo.cs`) so tests can reach `internal` types like `SurtrVirtualMachine` and `SurtrChunk` directly, alongside exercising the public `SurtrRuntime` surface. Folder layout mirrors `src/Surtr.Core` (`Runtime/Objects`, `Runtime/Classes`, `VM`, …) so a test's location tells you what it covers.
 
 Inside `src/Surtr.Core`: `Bytecode/` is the instruction set, `Runtime/Classes/` the type metadata and linker, `Runtime/Objects/` the runtime values and the entity registry, `Runtime/BuiltIns/` the shared built-in classes and their native members, `Runtime/Utilities/` the unmanaged helpers, `VM/` the interpreter.
 
-The instruction set, the metadata layer, the object registry, the runtime object model, the built-in classes and the interpreter exist. **The compiler does not** — nothing produces bytecode yet, so a chunk has to be built by hand to run anything, and there is no test project either. Both are the next things to build; the remaining runtime-side gaps are listed in `docs/VM-Plan.md` §3.
+The instruction set, the metadata layer, the object registry, the runtime object model, the built-in classes and the interpreter exist. **The compiler does not** — nothing produces bytecode yet, so a chunk has to be built by hand to run anything (as the tests in `src/Surtr.Tests` do). Building it is the next major piece of work; the remaining runtime-side gaps are listed in `docs/VM-Plan.md` §3.
 
 Because nothing persists a chunk yet, the opcode set is still being *shaped* rather than extended: new members go next to their family, and the append-only rule in `OpCode.cs` takes effect the moment anything serializes bytecode.
 
