@@ -25,15 +25,25 @@ namespace Surtr.Bytecode
     /// <list type="bullet">
     ///   <item><description>An <c>F</c> prefix means the operands are floats. Untagged opcodes work on integers, bools and chars, which all share integer representation.</description></item>
     ///   <item><description>An <c>R</c> prefix means the operands are compared as references - identity, not value.</description></item>
+    ///   <item><description>A <c>Str</c> prefix means the operands are strings compared by their text rather than by identity.</description></item>
     ///   <item><description>An <c>X</c> suffix widens an immediate to 4 bytes, for pools or jump distances that outgrow the 2-byte form.</description></item>
     ///   <item><description>An <c>S</c> suffix narrows an immediate to 1 byte, for the common small-index case.</description></item>
     ///   <item><description>A trailing digit is a dedicated opcode for that fixed index, so the common case costs no immediate at all.</description></item>
     /// </list>
     /// <para>
     /// Pool indices refer to the tables on the declaring module's chunk: constants, types, fields,
-    /// methods and functions each have their own. Since the enum is the on-disk encoding, the
+    /// methods and modules each have their own. Since the enum is the on-disk encoding, the
     /// numeric value of every member is part of the bytecode format - inserting a member in the
-    /// middle renumbers everything after it and invalidates already-compiled bytecode.
+    /// middle renumbers everything after it and invalidates already-compiled bytecode. That rule
+    /// takes effect the moment anything persists a chunk; until then the set is still being shaped,
+    /// and members are grouped by family rather than by the order they were thought of.
+    /// </para>
+    /// <para>
+    /// There is deliberately no separate opcode for calling a host-implemented method. Where a
+    /// call lands is a property of the <c>SurtrMethodInfo</c> the call site names, not of the call
+    /// site, and the interpreter has to read it anyway - a virtual call can resolve onto a native
+    /// override. Every <c>Invoke</c> and <c>Call</c> below therefore reaches bytecode and host code
+    /// alike, at the cost of one byte load and a perfectly predicted branch.
     /// </para>
     /// </remarks>
     public enum OpCode : byte
@@ -495,6 +505,17 @@ namespace Surtr.Bytecode
         /// </remarks>
         REQ,
 
+        /// <summary>String equality by text.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., a, b -&gt; ..., bool</c><br/>
+        /// Notes: the counterpart to <see cref="REQ"/> for the one reference type Surtr compares by
+        /// value. Its own opcode rather than a call to <c>string.equals</c>, because <c>==</c> on
+        /// strings is common enough that a call per comparison would show. Two null strings are
+        /// equal; a null and a non-null are not.
+        /// </remarks>
+        StrEQ,
+
         /// <summary>Integer inequality.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
@@ -516,6 +537,13 @@ namespace Surtr.Bytecode
         /// Stack: <c>..., a, b -&gt; ..., bool</c>
         /// </remarks>
         RNE,
+
+        /// <summary>String inequality by text.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., a, b -&gt; ..., bool</c>
+        /// </remarks>
+        StrNE,
 
         /// <summary>Integer greater-than.</summary>
         /// <remarks>
@@ -685,6 +713,42 @@ namespace Surtr.Bytecode
         /// </remarks>
         F2I,
 
+        /// <summary>Retags an integer as a character.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., a -&gt; ..., char</c><br/>
+        /// Notes: int, bool and char share one representation, so this changes only the value's tag
+        /// and truncates the payload to 16 bits. The tag still matters: it is what decides which
+        /// class the value reports and which box <see cref="BoxChar"/> versus <see cref="BoxInt"/>
+        /// produces.
+        /// </remarks>
+        I2C,
+
+        /// <summary>Retags a character as an integer.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., a -&gt; ..., int</c><br/>
+        /// Notes: always exact - every character fits an integer.
+        /// </remarks>
+        C2I,
+
+        /// <summary>Converts an integer to a boolean.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., a -&gt; ..., bool</c><br/>
+        /// Notes: normalises as well as retags - any non-zero integer becomes <c>true</c>, so the
+        /// payload is always 0 or 1 afterwards. That normalisation is what lets every boolean
+        /// opcode treat the payload as a bit.
+        /// </remarks>
+        I2B,
+
+        /// <summary>Retags a boolean as an integer, giving 0 or 1.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., a -&gt; ..., int</c>
+        /// </remarks>
+        B2I,
+
         /// <summary>Boxes an integer into a heap object.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
@@ -706,6 +770,13 @@ namespace Surtr.Bytecode
         /// Stack: <c>..., a -&gt; ..., ref</c>
         /// </remarks>
         BoxBool,
+
+        /// <summary>Boxes a character into a heap object.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., a -&gt; ..., ref</c>
+        /// </remarks>
+        BoxChar,
 
         /// <summary>Unwraps a boxed value back to its inline representation.</summary>
         /// <remarks>
@@ -761,23 +832,34 @@ namespace Surtr.Bytecode
 
 
         #region Array Operations
-        /// <summary>Allocates an array whose length is taken from the stack.</summary>
+        /// <summary>Allocates an array of the type at <c>typeIdx</c>, whose length is taken from the stack.</summary>
         /// <remarks>
-        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Encoding: <c>opcode(1) typeIdx(2)</c> - 3 bytes.<br/>
         /// Stack: <c>..., size -&gt; ..., array</c><br/>
-        /// Notes: carries no element type, unlike <see cref="ObjNew"/>. Whether the runtime can
-        /// build the array's reference map without one is still open.
+        /// Notes: <c>typeIdx</c> names the whole parameterised type - <c>AI</c>, <c>AS</c>,
+        /// <c>ADIS</c> - not the element type alone, so one immediate carries both the descriptor
+        /// the object keeps and the element family the elements are initialised from. Elements
+        /// start at that family's zero: <c>0</c>, <c>0.0</c>, <c>false</c>, <c>'\0'</c> or null.
         /// </remarks>
         ArrNew,
 
         /// <summary>Allocates an array whose length is an immediate.</summary>
         /// <remarks>
-        /// Encoding: <c>opcode(1) size(4)</c> - 5 bytes.<br/>
+        /// Encoding: <c>opcode(1) typeIdx(2) size(4)</c> - 7 bytes.<br/>
         /// Stack: <c>... -&gt; ..., array</c><br/>
         /// Notes: not a widened <see cref="ArrNew"/> but a different addressing mode - the length
         /// moves from the stack into the instruction, for arrays of statically known size.
         /// </remarks>
         ArrNewX,
+
+        /// <summary>Pops <c>size</c> values and packs them into a new array.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) typeIdx(2) size(2)</c> - 5 bytes.<br/>
+        /// Stack: <c>..., v1, ..., vN -&gt; ..., array</c><br/>
+        /// Notes: what an array literal compiles to. The deepest popped value becomes element 0,
+        /// matching <see cref="TupPack"/>.
+        /// </remarks>
+        ArrPack,
 
         /// <summary>Pushes an array's length.</summary>
         /// <remarks>
@@ -802,6 +884,56 @@ namespace Surtr.Bytecode
         /// </remarks>
         ArrSet,
 
+        /// <summary>Appends a value to an array, growing it.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., arr, value -&gt; ...</c><br/>
+        /// Notes: an opcode rather than a method on the <c>array</c> built-in because there is no
+        /// way to write its signature - a descriptor names one concrete type, and "the element type
+        /// of whatever this array is" is not expressible. The same reasoning covers every opcode
+        /// from here to <see cref="ArrIndexOf"/>, and their dictionary counterparts.
+        /// </remarks>
+        ArrPush,
+
+        /// <summary>Removes and pushes an array's last element.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., arr -&gt; ..., value</c><br/>
+        /// Notes: popping an empty array traps.
+        /// </remarks>
+        ArrPop,
+
+        /// <summary>Inserts a value at an index, shifting everything after it up.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., arr, index, value -&gt; ...</c><br/>
+        /// Notes: an index equal to the length appends; anything beyond it traps.
+        /// </remarks>
+        ArrInsert,
+
+        /// <summary>Removes the element at an index, shifting everything after it down.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., arr, index -&gt; ...</c>
+        /// </remarks>
+        ArrRemoveAt,
+
+        /// <summary>Drops every element of an array.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., arr -&gt; ...</c>
+        /// </remarks>
+        ArrClear,
+
+        /// <summary>Pushes the index of the first element equal to a value, or <c>-1</c>.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., arr, value -&gt; ..., int</c><br/>
+        /// Notes: equality is the runtime's value semantics, not raw bits, so two distinct string
+        /// objects holding the same text match. Linear scan.
+        /// </remarks>
+        ArrIndexOf,
+
         /// <summary>Tests whether an array contains a value.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
@@ -821,11 +953,13 @@ namespace Surtr.Bytecode
 
 
         #region Tuple Operations
-        /// <summary>Pops <c>size</c> values and packs them into a tuple.</summary>
+        /// <summary>Pops <c>size</c> values and packs them into a tuple of the type at <c>typeIdx</c>.</summary>
         /// <remarks>
-        /// Encoding: <c>opcode(1) size(1)</c> - 2 bytes.<br/>
+        /// Encoding: <c>opcode(1) typeIdx(2) size(1)</c> - 4 bytes.<br/>
         /// Stack: <c>..., v1, ..., vN -&gt; ..., tuple</c><br/>
-        /// Notes: the deepest popped value becomes element 0. Caps arity at 255.
+        /// Notes: the deepest popped value becomes element 0. Caps arity at 255. <c>typeIdx</c>
+        /// names the shape - <c>T(IS)</c> - which is the only place a tuple's element types are
+        /// recorded, since elements carry no type of their own.
         /// </remarks>
         TupPack,
 
@@ -855,12 +989,22 @@ namespace Surtr.Bytecode
 
 
         #region Dictionary Operations
-        /// <summary>Allocates an empty dictionary.</summary>
+        /// <summary>Allocates an empty dictionary of the type at <c>typeIdx</c>.</summary>
         /// <remarks>
-        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
-        /// Stack: <c>... -&gt; ..., dict</c>
+        /// Encoding: <c>opcode(1) typeIdx(2)</c> - 3 bytes.<br/>
+        /// Stack: <c>... -&gt; ..., dict</c><br/>
+        /// Notes: <c>typeIdx</c> names the whole pair - <c>DIS</c> for <c>{int: string}</c>.
         /// </remarks>
         DictNew,
+
+        /// <summary>Pops <c>count</c> key/value pairs and packs them into a new dictionary.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) typeIdx(2) count(2)</c> - 5 bytes.<br/>
+        /// Stack: <c>..., k1, v1, ..., kN, vN -&gt; ..., dict</c><br/>
+        /// Notes: what a dictionary literal compiles to. Later pairs overwrite earlier ones on a
+        /// duplicate key, as <see cref="DictSet"/> does.
+        /// </remarks>
+        DictPack,
 
         /// <summary>Pushes the number of entries in a dictionary.</summary>
         /// <remarks>
@@ -883,6 +1027,40 @@ namespace Surtr.Bytecode
         /// Stack: <c>..., dict, key, value -&gt; ...</c>
         /// </remarks>
         DictSet,
+
+        /// <summary>Removes the entry stored under a key.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., dict, key -&gt; ..., bool</c><br/>
+        /// Notes: pushes whether an entry was actually removed, so a caller that does not care can
+        /// drop it with <see cref="Pop"/> and one that does needs no second lookup.
+        /// </remarks>
+        DictDel,
+
+        /// <summary>Drops every entry of a dictionary.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., dict -&gt; ...</c>
+        /// </remarks>
+        DictClear,
+
+        /// <summary>Collects a dictionary's keys into a new array of the type at <c>typeIdx</c>.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) typeIdx(2)</c> - 3 bytes.<br/>
+        /// Stack: <c>..., dict -&gt; ..., array</c><br/>
+        /// Notes: the array's own type has to be named here because it cannot be derived at run
+        /// time - the dictionary knows <c>DIS</c>, but building <c>AI</c> from it would mean parsing
+        /// a descriptor on every call. In the dictionary's own iteration order.
+        /// </remarks>
+        DictKeys,
+
+        /// <summary>Collects a dictionary's values into a new array of the type at <c>typeIdx</c>.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) typeIdx(2)</c> - 3 bytes.<br/>
+        /// Stack: <c>..., dict -&gt; ..., array</c><br/>
+        /// Notes: in the same order as <see cref="DictKeys"/>, so the two line up element for element.
+        /// </remarks>
+        DictValues,
 
         /// <summary>Tests whether a dictionary holds a key.</summary>
         /// <remarks>
@@ -937,6 +1115,42 @@ namespace Surtr.Bytecode
         /// Notes: the compiler must reject this against a read-only field outside a constructor.
         /// </remarks>
         FieldSet,
+
+        /// <summary>Reads a static field, or a module-level variable.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) fieldIdx(2)</c> - 3 bytes.<br/>
+        /// Stack: <c>... -&gt; ..., value</c><br/>
+        /// Notes: no receiver, which is why this cannot be folded into <see cref="FieldGet"/> -
+        /// doing so would put a static/instance test on one of the hottest instructions in the set.
+        /// Module-level variables are the same thing: Surtr has no true globals, so a module
+        /// variable is a static of its module and reaches its storage the same way. The field table
+        /// entry carries the address of the slot itself, resolved when the declaring type was
+        /// linked, so this is one indirect load.
+        /// </remarks>
+        StaticFieldGet,
+
+        /// <summary>Reads a static field using a 4-byte field index.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) fieldIdx(4)</c> - 5 bytes.<br/>
+        /// Stack: <c>... -&gt; ..., value</c>
+        /// </remarks>
+        StaticFieldGetX,
+
+        /// <summary>Writes a static field, or a module-level variable.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) fieldIdx(2)</c> - 3 bytes.<br/>
+        /// Stack: <c>..., value -&gt; ...</c><br/>
+        /// Notes: the compiler must reject this against a read-only field outside its static
+        /// initializer.
+        /// </remarks>
+        StaticFieldSet,
+
+        /// <summary>Writes a static field using a 4-byte field index.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) fieldIdx(4)</c> - 5 bytes.<br/>
+        /// Stack: <c>..., value -&gt; ...</c>
+        /// </remarks>
+        StaticFieldSetX,
         #endregion
 
 
@@ -1068,6 +1282,13 @@ namespace Surtr.Bytecode
         /// </remarks>
         JPREQ,
 
+        /// <summary>Branches if the two popped strings hold the same text.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
+        /// Stack: <c>..., a, b -&gt; ...</c>
+        /// </remarks>
+        JPStrEQ,
+
         /// <summary>Branches if the two popped integers are equal, with a 4-byte offset.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
@@ -1088,6 +1309,13 @@ namespace Surtr.Bytecode
         /// Stack: <c>..., a, b -&gt; ...</c>
         /// </remarks>
         JPREQX,
+
+        /// <summary>Branches if the two popped strings hold the same text, with a 4-byte offset.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
+        /// Stack: <c>..., a, b -&gt; ...</c>
+        /// </remarks>
+        JPStrEQX,
 
         /// <summary>Branches if the two popped integers differ.</summary>
         /// <remarks>
@@ -1111,6 +1339,13 @@ namespace Surtr.Bytecode
         /// </remarks>
         JPRNE,
 
+        /// <summary>Branches if the two popped strings hold different text.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
+        /// Stack: <c>..., a, b -&gt; ...</c>
+        /// </remarks>
+        JPStrNE,
+
         /// <summary>Branches if the two popped integers differ, with a 4-byte offset.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
@@ -1131,6 +1366,13 @@ namespace Surtr.Bytecode
         /// Stack: <c>..., a, b -&gt; ...</c>
         /// </remarks>
         JPRNEX,
+
+        /// <summary>Branches if the two popped strings hold different text, with a 4-byte offset.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
+        /// Stack: <c>..., a, b -&gt; ...</c>
+        /// </remarks>
+        JPStrNEX,
 
         /// <summary>Branches if the deeper popped integer is greater than the top one.</summary>
         /// <remarks>
@@ -1264,6 +1506,34 @@ namespace Surtr.Bytecode
         /// Stack: <c>..., value -&gt; ...</c>
         /// </remarks>
         JPInstanceOfX,
+
+        /// <summary>Branches through a jump table indexed by a contiguous range of integers.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) low(4) count(4) defaultOffset(4) offsets(4 * count)</c> - 13 + 4n bytes.<br/>
+        /// Stack: <c>..., value -&gt; ...</c><br/>
+        /// Notes: the popped value selects <c>offsets[value - low]</c>; anything outside
+        /// <c>[low, low + count)</c> takes <c>defaultOffset</c>. One bounds check and one indexed
+        /// load, whatever the number of cases - which is the whole reason a <c>switch</c> is not
+        /// just a chain of <see cref="JPEQ"/>.
+        /// <para>
+        /// Every offset here is relative to <em>this instruction's own opcode byte</em>, unlike the
+        /// ordinary branches, which are relative to the instruction that follows them. A
+        /// variable-length instruction has no fixed "next" address to measure from at emit time.
+        /// The same applies to <see cref="SwitchLookup"/>.
+        /// </para>
+        /// </remarks>
+        Switch,
+
+        /// <summary>Branches by searching a sorted table of integer keys.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) count(4) defaultOffset(4) (key(4) offset(4)) * count</c> - 9 + 8n bytes.<br/>
+        /// Stack: <c>..., value -&gt; ...</c><br/>
+        /// Notes: the counterpart to <see cref="Switch"/> for sparse cases, where a dense table
+        /// would be mostly padding. Keys must be sorted ascending; the interpreter binary-searches
+        /// them, so lookup is logarithmic rather than the linear scan a chain of comparisons costs.
+        /// Offsets are measured from this instruction's opcode byte.
+        /// </remarks>
+        SwitchLookup,
         #endregion
 
 
@@ -1339,19 +1609,20 @@ namespace Surtr.Bytecode
         /// </remarks>
         InvokeSpecial,
 
-        /// <summary>Invokes a static method of the type at <c>typeIdx</c>.</summary>
+        /// <summary>Invokes a static method.</summary>
         /// <remarks>
-        /// Encoding: <c>opcode(1) methodIdx(2) typeIdx(2) argsCount(1) retCount(1)</c> - 7 bytes.<br/>
+        /// Encoding: <c>opcode(1) methodIdx(2) argsCount(1) retCount(1)</c> - 5 bytes.<br/>
         /// Stack: <c>..., a1, ..., aN -&gt; ..., result?</c><br/>
-        /// Notes: no receiver is popped.
+        /// Notes: no receiver is popped. It carries no type index: the method entry already knows
+        /// its declaring class, and static initializers run when their module is loaded rather than
+        /// on first touch, so there is nothing for the interpreter to trigger here.
         /// </remarks>
         InvokeStatic,
 
-        /// <summary>Invokes a static method, with a 4-byte type index.</summary>
+        /// <summary>Invokes a static method, with a 4-byte method index.</summary>
         /// <remarks>
-        /// Encoding: <c>opcode(1) methodIdx(2) typeIdx(4) argsCount(1) retCount(1)</c> - 9 bytes.<br/>
-        /// Stack: <c>..., a1, ..., aN -&gt; ..., result?</c><br/>
-        /// Notes: only the type index widens here; the method index stays 2 bytes.
+        /// Encoding: <c>opcode(1) methodIdx(4) argsCount(1) retCount(1)</c> - 7 bytes.<br/>
+        /// Stack: <c>..., a1, ..., aN -&gt; ..., result?</c>
         /// </remarks>
         InvokeStaticX,
 
@@ -1364,35 +1635,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         InvokeInterface,
 
-        /// <summary>Invokes a host-implemented instance method.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) methodIdx(2) argsCount(1) retCount(1)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., obj, a1, ..., aN -&gt; ..., result?</c><br/>
-        /// Notes: goes straight to the native entry point instead of through the vtable.
-        /// </remarks>
-        InvokeNative,
-
-        /// <summary>Invokes a host-implemented instance method, with a 4-byte method index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) methodIdx(4) argsCount(1) retCount(1)</c> - 7 bytes.<br/>
-        /// Stack: <c>..., obj, a1, ..., aN -&gt; ..., result?</c>
-        /// </remarks>
-        InvokeNativeX,
-
-        /// <summary>Invokes a host-implemented static method of the type at <c>typeIdx</c>.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) methodIdx(2) typeIdx(2) argsCount(1) retCount(1)</c> - 7 bytes.<br/>
-        /// Stack: <c>..., a1, ..., aN -&gt; ..., result?</c>
-        /// </remarks>
-        InvokeStaticNative,
-
-        /// <summary>Invokes a host-implemented static method, with a 4-byte type index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) methodIdx(2) typeIdx(4) argsCount(1) retCount(1)</c> - 9 bytes.<br/>
-        /// Stack: <c>..., a1, ..., aN -&gt; ..., result?</c>
-        /// </remarks>
-        InvokeStaticNativeX,
-
         /// <summary>Calls a closure taken from the stack.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) argsCount(1) retCount(1)</c> - 3 bytes.<br/>
@@ -1401,6 +1643,33 @@ namespace Surtr.Bytecode
         /// it is resolved entirely at run time. A null closure needs a defined trap.
         /// </remarks>
         InvokeClosure,
+        #endregion
+
+
+        #region Exception Operations
+        /// <summary>Raises the object on top of the stack as an exception.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., exception -&gt; </c> (the frame does not continue)<br/>
+        /// Notes: control leaves this instruction and does not come back. The interpreter unwinds
+        /// frame by frame looking for a handler whose protected range covers the raising
+        /// instruction and whose caught type matches, clears that frame's operand stack, pushes the
+        /// exception, and resumes at the handler.
+        /// <para>
+        /// There is deliberately no opcode for entering or leaving a <c>try</c>. Protected ranges
+        /// live in a table on the method, so a <c>try</c> that never throws costs exactly nothing -
+        /// where a push/pop-handler pair would cost two instructions on every entry. <c>finally</c>
+        /// is the compiler's job: emit the block on each normal exit path, plus a catch-all handler
+        /// that runs it and re-raises with this opcode. That is what javac does, and it keeps the
+        /// interpreter free of a second unwinding mode.
+        /// </para>
+        /// <para>
+        /// A trap the VM itself raises - a bad index, a division by zero - and an exception thrown
+        /// by host code are both catchable the same way: they are wrapped as objects and unwound
+        /// through the same tables.
+        /// </para>
+        /// </remarks>
+        Throw,
         #endregion
 
 

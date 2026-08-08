@@ -46,16 +46,37 @@ namespace Surtr.Runtime.Classes
         Native      = 11,
 
         /// <summary>
+        /// What a generic type parameter erases to.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Surtr's generics are a compile-time construct: the compiler checks them and then throws
+        /// them away, the way Java does. That leaves one thing the runtime still has to answer -
+        /// what a field or parameter declared as <c>T</c> looks like in memory - because a class's
+        /// instance layout and its reference-slot map are built from declared types.
+        /// </para>
+        /// <para>
+        /// The answer is this code: an erased slot always holds a reference. That makes the layout
+        /// computable without knowing the type argument, at the cost the same decision imposes on
+        /// Java - a primitive flowing into an erased slot has to be boxed, and reading one back out
+        /// needs a checked cast the compiler inserts. It sits inside the reference-type range on
+        /// purpose, so <c>IsReferenceType</c> stays a range compare rather than growing a special
+        /// case.
+        /// </para>
+        /// </remarks>
+        Erased      = 12,
+
+        /// <summary>
         /// The absence of a value: the return "type" of a method that returns nothing.
         /// </summary>
         /// <remarks>
         /// Only ever legal as a return type. Nothing can be declared of this type, no value ever
-        /// carries it, and it has no <c>SurtrClass</c> - it exists because every
-        /// <see cref="SurtrMethodInfo"/> needs a return descriptor and <c>ReturnVoid</c> methods
-        /// have nothing else to name. Appended after <see cref="Native"/> so the existing codes
-        /// keep their byte values.
+        /// carries it, and its <c>SurtrClass</c> is an abstract, memberless marker - it exists
+        /// because every <see cref="SurtrMethodInfo"/> needs a return descriptor and
+        /// <c>ReturnVoid</c> methods have nothing else to name. Kept last so every real type,
+        /// reference types included, forms one contiguous range below it.
         /// </remarks>
-        Void        = 12,
+        Void        = 13,
     }
 
     /// <summary>Classification predicates and conversions for <see cref="SurtrValueTypeCode"/>.</summary>
@@ -87,6 +108,9 @@ namespace Surtr.Runtime.Classes
             /// <summary>Whether the code is <see cref="SurtrValueTypeCode.Native"/>.</summary>
             public bool IsNative => code == SurtrValueTypeCode.Native;
 
+            /// <summary>Whether the code is <see cref="SurtrValueTypeCode.Erased"/> - an erased generic type parameter.</summary>
+            public bool IsErased => code == SurtrValueTypeCode.Erased;
+
             /// <summary>Whether the code is <see cref="SurtrValueTypeCode.Void"/>, and so names no value at all.</summary>
             public bool IsVoid => code == SurtrValueTypeCode.Void;
 
@@ -94,8 +118,11 @@ namespace Surtr.Runtime.Classes
             /// <summary>Whether values of this type are passed by value. Currently the same set as <c>IsPrimitive</c>.</summary>
             public bool IsValueType => code >= SurtrValueTypeCode.Integer && code <= SurtrValueTypeCode.Character;
 
-            /// <summary>Whether values of this type are passed by reference: every built-in composite plus object and native types.</summary>
-            public bool IsReferenceType => code >= SurtrValueTypeCode.String && code <= SurtrValueTypeCode.Native;
+            /// <summary>
+            /// Whether values of this type are passed by reference: every built-in composite, object
+            /// and native types, and an erased generic parameter, which is always a reference.
+            /// </summary>
+            public bool IsReferenceType => code >= SurtrValueTypeCode.String && code <= SurtrValueTypeCode.Erased;
 
             /// <summary>The code's underlying byte value.</summary>
             public byte ToByte() => (byte)code;

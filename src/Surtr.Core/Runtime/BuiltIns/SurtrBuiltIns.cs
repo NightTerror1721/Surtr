@@ -91,6 +91,19 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass NativeObject;
 
         /// <summary>
+        /// The class an erased generic type parameter resolves to.
+        /// </summary>
+        /// <remarks>
+        /// Abstract and memberless, like <see cref="Void"/>, and for the same reason: nothing is
+        /// ever an instance of it. It exists so a field or parameter declared as <c>T</c> has a
+        /// handle that resolves like any other, which is what lets a generic class be linked
+        /// without knowing a single type argument. Its <see cref="SurtrValueTypeCode"/> is a
+        /// reference type, so an erased slot is traced by the collector and a primitive has to be
+        /// boxed on the way in - the same bargain erasure strikes on the JVM.
+        /// </remarks>
+        public static readonly SurtrClass Erased;
+
+        /// <summary>
         /// The marker class for <see cref="SurtrValueTypeCode.Void"/>.
         /// </summary>
         /// <remarks>
@@ -122,6 +135,7 @@ namespace Surtr.Runtime.BuiltIns
             Dictionary = Declare("dict", SurtrValueTypeCode.Dictionary, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolDictionary.ToString()));
             Closure = Declare("closure", SurtrValueTypeCode.Closure, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolClosure.ToString()));
             NativeObject = Declare("native", SurtrValueTypeCode.Native, SurtrClassReference.Native(NativeObjectFullName));
+            Erased = Declare("erased", SurtrValueTypeCode.Erased, SurtrClassReference.Erased, isAbstract: true);
             Void = Declare("void", SurtrValueTypeCode.Void, SurtrClassReference.Void, isAbstract: true);
 
             // Built before anything can ask for it: the handle-binding pass below goes through
@@ -137,6 +151,7 @@ namespace Surtr.Runtime.BuiltIns
             ByTypeCode[(int)SurtrValueTypeCode.Dictionary] = Dictionary;
             ByTypeCode[(int)SurtrValueTypeCode.Closure] = Closure;
             ByTypeCode[(int)SurtrValueTypeCode.Native] = NativeObject;
+            ByTypeCode[(int)SurtrValueTypeCode.Erased] = Erased;
             ByTypeCode[(int)SurtrValueTypeCode.Void] = Void;
 
             SurtrPrimitiveBuiltIns.DeclareInteger(BuilderFor(Integer, handles));

@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 namespace Surtr.Runtime.Classes
 {
     /// <summary>Metadata for a field declared in a module or a class.</summary>
-    public sealed class SurtrFieldInfo : SurtrMemberInfo
+    public sealed unsafe class SurtrFieldInfo : SurtrMemberInfo
     {
         private readonly SurtrTypeHandle _fieldType;
         private readonly bool _readOnly;
@@ -17,6 +17,24 @@ namespace Surtr.Runtime.Classes
         /// thing that knows how many slots the base class already claimed.
         /// </summary>
         internal int SlotIndex = -1;
+
+        /// <summary>
+        /// The address of this field's slot in its owner's static storage, or <see langword="null"/>
+        /// for an instance field. Assigned by the linker.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A static read would otherwise have to branch on where the storage lives - a class's
+        /// <see cref="SurtrClass.StaticStorage"/> for a class member, the module's for a
+        /// module-level variable, which is what Surtr calls a global. Resolving that once at link
+        /// time turns <c>StaticFieldGet</c> into a single indirect load with no test at all.
+        /// </para>
+        /// <para>
+        /// Safe to hold as a raw address because static storage is allocated once, when the owner
+        /// is linked, and never reallocated afterwards.
+        /// </para>
+        /// </remarks>
+        internal SurtrRawValue* StaticAddress;
 
         /// <summary>Creates field metadata.</summary>
         public SurtrFieldInfo(

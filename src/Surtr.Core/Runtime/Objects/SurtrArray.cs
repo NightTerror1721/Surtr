@@ -214,6 +214,33 @@ namespace Surtr.Runtime.Objects
             Count = length;
         }
 
+        /// <summary>
+        /// Gives a freshly allocated array <paramref name="length"/> live elements, as
+        /// <c>ArrNew</c> does.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Internal and unguarded: the only caller is the allocation path, which has just built the
+        /// object and is about to hand it to bytecode that indexes it. Growing the buffer here is
+        /// exactly the same work <c>Add</c> would do element by element, minus the per-element
+        /// branch, and the new slots come back zeroed by <see cref="Array.Resize"/>.
+        /// </para>
+        /// <para>
+        /// A zeroed slot carries no tag, so it is not a float, an int, or a reference in the strict
+        /// sense - it is the VM's neutral element. The interpreter's reference tests read the
+        /// 32-bit payload rather than the tag precisely so that a zeroed slot answers "null", and
+        /// the collector's tag test skips it, so nothing is retained by an element the program has
+        /// not written yet.
+        /// </para>
+        /// </remarks>
+        internal void InitializeLength(int length)
+        {
+            if (length > Items.Length)
+                Array.Resize(ref Items, length);
+
+            Count = length;
+        }
+
         /// <summary>Makes room for at least <paramref name="capacity"/> elements without changing the length.</summary>
         public void EnsureCapacity(int capacity)
         {

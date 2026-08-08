@@ -154,7 +154,7 @@ Members are native methods linked by function pointer via `SurtrBuiltInTypeBuild
 
 ## The instruction set
 
-`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — currently **176 opcodes**, leaving 80 free values in the `byte` space. It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
+`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — currently **202 opcodes**, leaving 54 free values in the `byte` space. It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
 
 Surtr is a stack machine. Operands come from the evaluation stack; pool indices, jump offsets and argument counts are encoded inline after the opcode byte as little-endian immediates.
 
@@ -166,13 +166,38 @@ Naming conventions that run through the whole set:
 |---|---|
 | `F` prefix | float operands (untagged opcodes cover int/bool/char, which share a representation) |
 | `R` prefix | reference identity rather than value comparison |
+| `Str` prefix | string operands compared by text rather than by identity |
 | `X` suffix | widens an immediate to 4 bytes |
 | `S` suffix | narrows an immediate to 1 byte |
 | trailing digit | dedicated opcode for that fixed index, no immediate at all |
 
+**There is no separate opcode for calling host code.** Where a call lands is a property of the `SurtrMethodInfo` the call site names, not of the call site, and the interpreter reads it anyway — a virtual call can resolve onto a native override, so the `ImplKind` test exists in the shared entry sequence regardless. Every `Invoke`/`Call` reaches bytecode and host bodies alike, for one byte load and a perfectly predicted branch. `CallGlobalNative` is the exception, and only because host globals live in a different *table*, not because they are native.
+
+Allocation opcodes carry the full parameterised type (`ArrNew`, `ArrNewX`, `ArrPack`, `TupPack`, `DictNew`, `DictPack`, `DictKeys`, `DictValues`): one immediate gives both the descriptor the object keeps and the element family its slots are initialised from. `StaticFieldGet`/`StaticFieldSet` cover statics *and* module-level variables — Surtr has no true globals, so a module variable is a static of its module and reaches its storage the same way. `Switch`/`SwitchLookup` measure their offsets from their own opcode byte, unlike every other branch, because a variable-length instruction has no fixed "next address" at emit time.
+
 Every member is documented with the same three-part `///` block, and new opcodes must follow it: **Encoding** (byte layout as `opcode(1) name(width)` plus total length), **Stack** (`before -> after`, `...` for the untouched remainder, rightmost entry is the top), and **Notes** only where behaviour isn't obvious from the name.
 
-Pool indices refer to the tables on the declaring module's `SurtrChunk`. Several opcodes still have undefined trap behaviour (division by zero, out-of-range indices, null receivers, failed casts) — those need pinning down before the interpreter is written.
+Pool indices refer to the tables on the declaring module's `SurtrChunk`. Trap behaviour is now pinned down by the interpreter — see the table in `docs/VM-Plan.md` §1.6 for what traps, what is defined, and what is deliberately unchecked.
+
+## The virtual machine
+
+`src/Surtr.Core/VM/` executes bytecode. `SurtrVirtualMachine` is **internal** — a host that could reach it could push onto the data stack between calls or start a run at an arbitrary frame, and every invariant the interpreter relies on would become the host's to maintain. The public surface is `SurtrRuntime.Invoke`, `InvokeClosure` and `ResetExecution`, each a complete operation. The runtime owns exactly one machine, because its data stack is a collection root and `Collect()` can only be correct with a single stack to scan. Execution on a runtime is single-threaded, like a `lua_State`.
+
+- **Two stacks, both fixed size.** The data stack is unmanaged `SurtrRawValue` (the collector scans it through a raw pointer); the call stack is a managed `SurtrCallFrame[]` (a frame holds its chunk, method and closure, which the CLR has to keep alive). Neither grows: a reallocation would dangle every `sp` spilled in a suspended dispatch loop, which is exactly what a re-entrant native call leaves behind.
+- **One `switch`, not a table of function pointers.** A function-pointer table costs a real call per instruction that C# cannot turn into a tail-jump, plus spilling `ip`/`sp`/the frame's pools across it. Everything hot lives in locals of `Execute`, and every opcode body is written out where it is used — never call a helper from the dispatch loop. The two shared call sequences at the bottom are reached by `goto`, not by a call.
+- **One calling convention.** Arguments are already on the stack and the callee's frame starts underneath them, so entering a call copies nothing. `argsCount` counts every incoming slot, **receiver included**, which makes the frame base `sp - argsCount` for every kind of call. `retCount` is 0 or 1. Stack room is checked once per call against the callee's `MaxStackSize` — never per push.
+- **Re-entrancy is the point of the frame protocol.** `sp` and the executing frame's `IP` are published before every transfer into host code, and `Execute(entryDepth)` returns when the depth falls back to where it started, so a native function can call back into the VM and unwind cleanly.
+- **A reference is its 32-bit payload**, not its tag. That makes a zeroed slot and an explicit null the same reference, which is why fresh locals read as null without the VM knowing their declared type. Where the tag *does* matter — a value handed to a native function, or boxed — `ArrNew` fills a fresh array with its element family's correctly tagged zero.
+- **Exceptions are handler tables, not handler opcodes.** `SurtrBytecodeMethodInfo.Handlers` holds protected ranges, so entering a `try` emits nothing and costs nothing; only a raise pays. A Surtr `Throw` never becomes a CLR exception while a handler is in reach — the machine walks its own frames. A VM trap or anything host code throws arrives as a CLR exception, gets wrapped as an object, and goes through the same search; only what nothing catches leaves, as `SurtrThrownException`. **`finally` is the compiler's job**: emit the block on each exit path plus a catch-all that runs it and re-raises, exactly as javac does — that keeps `Leave`/`EndFinally` out of the instruction set.
+- **Static initializers run eagerly at module load**, classes before the module, in declaration order. Lazy initialization would cost a "has this run" test on every static access forever to answer a question that is false exactly once. That is also why `InvokeStatic` carries no type index.
+
+## Generics are erased
+
+Generics are a compile-time construct, checked and then discarded, as Java's are. The runtime answers exactly one question about them: what a field declared `T` looks like in memory, since instance layout and the reference-slot map are built from declared types. That answer is `SurtrValueTypeCode.Erased` (descriptor symbol `E`, resolving to `SurtrBuiltIns.Erased`), which sits inside the reference-type range — an erased slot is always a reference, always traced, and `IsReferenceType` stays a range compare.
+
+The compiler owes two things in exchange, the same two Java's does: **box primitives** flowing into an erased slot, and **insert a `Cast`** when reading one back out. No opcode, metadata table or dispatch path needs to know a generic existed.
+
+`docs/VM-Plan.md` carries the full rationale for every decision above, the remaining gaps (interface dispatch does a linear scan, array access pays two bounds checks, a module is tied to the runtime that loaded it), and the ordered plan.
 
 ## Commands
 
@@ -196,9 +221,11 @@ There is no test project, lint config, or CI yet — add commands here once thos
 - `Directory.Build.props` — MSBuild settings shared by *every* project in the solution (`LangVersion`, `Nullable`, etc.). Put cross-project settings here, not per-project settings. `ImplicitUsings` is deliberately left off (default/disabled) — usings must be written explicitly in every file.
 - `src/Surtr.Core` — the main library, built for `netstandard2.1` so the compiled DLL can be dropped into Unity (2021.2+, including IL2CPP) as a plain managed assembly. `AllowUnsafeBlocks` is enabled here specifically because the VM/registry work described above depends on it; don't assume other projects (e.g. a future source generator) need or should have it. `LangVersion` is inherited as `latest` from `Directory.Build.props` — targeting `netstandard2.1` does not cap the C# language version, since `TargetFramework` (runtime/BCL surface) and `LangVersion` (compiler syntax) are independent settings. Only watch for C# features that need runtime support beyond what's in the BCL (e.g. default interface methods), since Unity's Mono/IL2CPP backends can behave unreliably there even though the code compiles fine.
 
-Inside `src/Surtr.Core`: `Bytecode/` is the instruction set, `Runtime/Classes/` the type metadata and linker, `Runtime/Objects/` the runtime values and the entity registry, `Runtime/BuiltIns/` the shared built-in classes and their native members, `Runtime/Utilities/` the unmanaged helpers.
+Inside `src/Surtr.Core`: `Bytecode/` is the instruction set, `Runtime/Classes/` the type metadata and linker, `Runtime/Objects/` the runtime values and the entity registry, `Runtime/BuiltIns/` the shared built-in classes and their native members, `Runtime/Utilities/` the unmanaged helpers, `VM/` the interpreter.
 
-The instruction set, the metadata layer, the object registry, the runtime object model and the built-in classes exist. **The interpreter does not** — nothing executes bytecode yet, so opcodes are currently only a specification that the object model was built to serve.
+The instruction set, the metadata layer, the object registry, the runtime object model, the built-in classes and the interpreter exist. **The compiler does not** — nothing produces bytecode yet, so a chunk has to be built by hand to run anything, and there is no test project either. Both are the next things to build; the remaining runtime-side gaps are listed in `docs/VM-Plan.md` §3.
+
+Because nothing persists a chunk yet, the opcode set is still being *shaped* rather than extended: new members go next to their family, and the append-only rule in `OpCode.cs` takes effect the moment anything serializes bytecode.
 
 ## Coding conventions
 

@@ -3,6 +3,7 @@
 using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
+using Surtr.VM;
 using System;
 using System.Runtime.CompilerServices;
 
@@ -41,6 +42,7 @@ namespace Surtr.Runtime
 
         private SurtrContext _context;
         private readonly SurtrValueComparer _valueComparer;
+        private SurtrVirtualMachine? _virtualMachine;
         private bool _disposed;
 
         /// <summary>Creates and initializes a runtime with the default heap capacity.</summary>
@@ -74,6 +76,36 @@ namespace Surtr.Runtime
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _valueComparer;
+        }
+
+        /// <summary>
+        /// The one machine that executes bytecode against this runtime, created on first use.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Internal: the machine is the runtime's engine, not its API. A host that could reach it
+        /// could push onto the data stack between calls, or start a run at an arbitrary frame, and
+        /// every invariant the interpreter relies on - a balanced stack, a frame protocol that
+        /// unwinds to the depth it started at - would become the host's problem to maintain. What
+        /// the host gets instead is <see cref="Invoke(SurtrMethodInfo, SurtrValue[])"/> and its
+        /// siblings, which push, call and clean up as one operation.
+        /// </para>
+        /// <para>
+        /// One per runtime, not one per call site, because its data stack is a garbage collection
+        /// root: <see cref="Collect(bool)"/> has to be able to find every value the interpreter is
+        /// holding, and it can only do that if there is exactly one stack to look at. Execution on a
+        /// runtime is single-threaded for the same reason a <c>lua_State</c> is.
+        /// </para>
+        /// <para>
+        /// Lazy rather than built in the constructor so a host that only uses the runtime as an
+        /// object heap - registering native types, holding values across native calls - never pays
+        /// for a stack it does not execute on.
+        /// </para>
+        /// </remarks>
+        internal SurtrVirtualMachine VirtualMachine
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _virtualMachine ??= new SurtrVirtualMachine(this);
         }
 
         /// <summary>The host's global variables and functions.</summary>
@@ -335,7 +367,7 @@ namespace Surtr.Runtime
             // Every built-in family collapses onto one shared class, whatever it is parameterised
             // by: AI and AS are both the array class, because an array's element type is a static
             // fact the compiler enforces, not something the object carries.
-            if (typeCode.IsPrimitive || typeCode.IsBuiltIn || typeCode.IsVoid)
+            if (typeCode.IsPrimitive || typeCode.IsBuiltIn || typeCode.IsVoid || typeCode.IsErased)
             {
                 handle.Resolve(SurtrBuiltIns.ForTypeCode(typeCode));
                 return true;
@@ -413,16 +445,108 @@ namespace Surtr.Runtime
                 }
 
                 SurtrTypeLinker.LinkModule(module, ref _context.NextInterfaceId);
+
+                MaterializeStringConstants(module);
+                RegisterStaticBlocks(module);
+
                 module.MarkLoaded();
 
                 // Host signatures taken before this module existed can bind now.
                 RetryHostHandles();
+
+                RunStaticInitializers(module);
             }
             catch
             {
                 _context.Modules.Remove(module.Path);
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Turns the chunk's CLR string literals into real string objects and patches their
+        /// references into the constant pool.
+        /// </summary>
+        /// <remarks>
+        /// Interned rather than merely allocated, so two literals with the same text are one
+        /// object: that makes reference identity agree with text equality for constants, which is
+        /// what lets <c>REQ</c> answer correctly on them and keeps them rooted for the runtime's
+        /// life - exactly the lifetime a literal wants.
+        /// </remarks>
+        private void MaterializeStringConstants(SurtrModule module)
+        {
+            var chunk = module.Chunk;
+            var literals = chunk.StringConstants;
+            int count = chunk.StringConstantSlots.Length;
+
+            for (int i = 0; i < count; i++)
+            {
+                int slot = chunk.StringConstantSlots[i];
+                SurtrRef reference = InternString(literals[i]).GetSurtrReference();
+                chunk.Constants[slot] = SurtrValue.CreateReference(reference).Raw;
+            }
+        }
+
+        /// <summary>
+        /// Tells the collector about the static storage this module just had laid out, its own and
+        /// each of its classes'.
+        /// </summary>
+        private void RegisterStaticBlocks(SurtrModule module)
+        {
+            _context.AddStaticBlock(
+                module.StaticStorage.Pointer,
+                module.ReferenceStaticSlots.Pointer,
+                module.ReferenceStaticSlots.Length);
+
+            foreach (var declared in module.Classes)
+                RegisterClassStaticBlocks(declared);
+        }
+
+        private void RegisterClassStaticBlocks(SurtrClass declared)
+        {
+            _context.AddStaticBlock(
+                declared.StaticStorage.Pointer,
+                declared.ReferenceStaticSlots.Pointer,
+                declared.ReferenceStaticSlots.Length);
+
+            foreach (var nested in declared.NestedClasses)
+                RegisterClassStaticBlocks(nested);
+        }
+
+        /// <summary>
+        /// Runs every static initializer the module brought in: each class's first, then the
+        /// module's own.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Eagerly at load, not lazily on first touch. Lazy initialization is what Java does, and it
+        /// buys initialization-order independence at the price of a "has this run yet" test on every
+        /// static field access and every static call - on the hot path, forever, to answer a
+        /// question that is false exactly once. Loading a module is a controlled event in an
+        /// embedded language, so the cost belongs there instead.
+        /// </para>
+        /// <para>
+        /// The price is ordering: initializers run in declaration order, classes before the module,
+        /// so one that reads another class's statics only sees them if that class was declared
+        /// first. Cross-initializer dependencies are the compiler's to reject.
+        /// </para>
+        /// </remarks>
+        private void RunStaticInitializers(SurtrModule module)
+        {
+            foreach (var declared in module.Classes)
+                RunClassStaticInitializers(declared);
+
+            if (module.StaticInitializer is not null)
+                VirtualMachine.Call(module.StaticInitializer, 0);
+        }
+
+        private void RunClassStaticInitializers(SurtrClass declared)
+        {
+            if (declared.StaticInitializer is not null)
+                VirtualMachine.Call(declared.StaticInitializer, 0);
+
+            foreach (var nested in declared.NestedClasses)
+                RunClassStaticInitializers(nested);
         }
 
         /// <summary>Looks up a loaded module by path.</summary>
@@ -511,6 +635,44 @@ namespace Surtr.Runtime
         }
         #endregion
 
+        #region Execution
+        // The host's whole execution surface. Each of these is one complete operation - push the
+        // arguments, run, hand back the result - so the data stack is never left in a state the
+        // host has to reason about, and the interpreter's frame protocol stays entirely internal.
+
+        /// <summary>Calls a Surtr method and returns its result.</summary>
+        /// <remarks>
+        /// For an instance method, <paramref name="arguments"/><c>[0]</c> is the receiver: it is
+        /// argument zero like any other, which is the same convention a native entry point sees.
+        /// A method that returns nothing answers <see cref="SurtrValue.Null"/>.
+        /// </remarks>
+        /// <exception cref="VM.SurtrExecutionException">The call trapped, or raised an exception nothing caught.</exception>
+        public SurtrValue Invoke(SurtrMethodInfo method, params SurtrValue[] arguments)
+            => VirtualMachine.Call(method, arguments ?? Array.Empty<SurtrValue>());
+
+        /// <summary>Calls a Surtr method with arguments the caller already has in a span.</summary>
+        public SurtrValue Invoke(SurtrMethodInfo method, ReadOnlySpan<SurtrValue> arguments)
+            => VirtualMachine.Call(method, arguments);
+
+        /// <summary>Calls a closure and returns its result.</summary>
+        public SurtrValue InvokeClosure(SurtrClosure closure, params SurtrValue[] arguments)
+            => VirtualMachine.CallClosure(closure, arguments ?? Array.Empty<SurtrValue>());
+
+        /// <summary>Calls a closure with arguments the caller already has in a span.</summary>
+        public SurtrValue InvokeClosure(SurtrClosure closure, ReadOnlySpan<SurtrValue> arguments)
+            => VirtualMachine.CallClosure(closure, arguments);
+
+        /// <summary>
+        /// Discards whatever a failed call left on the interpreter's stacks.
+        /// </summary>
+        /// <remarks>
+        /// An exception that escapes <see cref="Invoke(SurtrMethodInfo, SurtrValue[])"/> leaves the
+        /// machine mid-frame, because unwinding stopped as soon as it was clear no handler would
+        /// match. A host that intends to keep using the runtime after catching one calls this first.
+        /// </remarks>
+        public void ResetExecution() => _virtualMachine?.Reset();
+        #endregion
+
         #region Garbage Collection
         /// <summary>
         /// Keeps <paramref name="entity"/> alive regardless of whether anything can reach it.
@@ -539,9 +701,11 @@ namespace Surtr.Runtime
         /// Collects unreachable objects, tracing from the host globals and the explicit roots.
         /// </summary>
         /// <remarks>
-        /// The no-stack overload: correct while nothing is executing, which is the only time a host
-        /// can call it today. Once the interpreter exists it will call the overload below with its
-        /// own evaluation stack, since anything live only on that stack is invisible here.
+        /// Traces the interpreter's data stack too, whenever this runtime has a
+        /// <see cref="VirtualMachine"/>. That is what makes this safe to call from inside a native
+        /// entry point: everything the interpreter is holding lives on that one stack, and the
+        /// machine publishes its top before every transfer into host code. A runtime that has never
+        /// executed anything has no stack to scan and takes the same path as before.
         /// </remarks>
         /// <param name="fullCollection">
         /// <see langword="true"/> to sweep every unreachable object; <see langword="false"/> to
@@ -549,7 +713,15 @@ namespace Surtr.Runtime
         /// </param>
         /// <returns>How many objects were released.</returns>
         public int Collect(bool fullCollection = true)
-            => Collect(null, null, ReadOnlySpan<SurtrRawValue>.Empty, fullCollection);
+        {
+            var machine = _virtualMachine;
+            if (machine is null)
+                return Collect(null, null, ReadOnlySpan<SurtrRawValue>.Empty, fullCollection);
+
+            // The frame roots carry the closures the live frames are running, which InvokeClosure
+            // takes off the stack before entering their bodies.
+            return Collect(machine.StackBase, machine.StackTop, machine.FrameRoots, fullCollection);
+        }
 
         /// <summary>
         /// Collects unreachable objects, tracing from an evaluation stack as well as from the host
@@ -588,6 +760,7 @@ namespace Surtr.Runtime
                 globals.VariableTable.Pointer,
                 globals.ReferenceVariableSlots.Pointer,
                 globals.ReferenceVariableSlots.Length,
+                _context.LiveStaticBlocks,
                 new ReadOnlySpan<SurtrRawValue>(_context.Roots, 0, rootCount + extraCount),
                 fullCollection);
         }
@@ -620,6 +793,8 @@ namespace Surtr.Runtime
                 return;
 
             _disposed = true;
+            _virtualMachine?.Dispose();
+            _virtualMachine = null;
             _context.Dispose();
         }
     }

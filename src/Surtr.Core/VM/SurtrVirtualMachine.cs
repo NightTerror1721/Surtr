@@ -1,0 +1,2648 @@
+#nullable enable
+
+using Surtr.Bytecode;
+using Surtr.Runtime;
+using Surtr.Runtime.BuiltIns;
+using Surtr.Runtime.Classes;
+using Surtr.Runtime.Objects;
+using Surtr.Runtime.Utilities;
+using System;
+using System.Runtime.CompilerServices;
+
+namespace Surtr.VM
+{
+    /// <summary>
+    /// The Surtr virtual machine: the thing that actually executes bytecode.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Internal on purpose.</b> The machine is the runtime's engine, not its API. A host holding
+    /// one could push onto the data stack between calls or start a run at an arbitrary frame, and
+    /// every invariant the interpreter depends on would become the host's to maintain. The host
+    /// surface is <c>SurtrRuntime.Invoke</c> and its siblings, which push, run and clean up as one
+    /// operation.
+    /// </para>
+    /// <para>
+    /// <b>Two stacks.</b> The <em>data stack</em> is a flat block of unmanaged
+    /// <see cref="SurtrRawValue"/> holding both frame locals and operands, so entering a call copies
+    /// nothing - the callee's locals simply start where the caller left its arguments. The
+    /// <em>call stack</em> is a managed <see cref="SurtrCallFrame"/> array, because a frame holds
+    /// object references the CLR has to keep alive.
+    /// </para>
+    /// <para>
+    /// <b>Fixed capacity, on purpose.</b> Neither stack ever grows. A growable data stack would have
+    /// to be addressed by index rather than by pointer, because a reallocation would dangle every
+    /// <c>sp</c> already spilled in a suspended dispatch loop - exactly what a re-entrant native
+    /// call leaves behind. Fixing the size makes <c>sp</c> a register-resident pointer nothing can
+    /// invalidate, and turns overflow into one compare per <em>call</em> rather than one per push.
+    /// </para>
+    /// <para>
+    /// <b>Dispatch is one switch, not a table of function pointers.</b> A jump table costs a
+    /// predicted indirect branch; a function-pointer table costs a real call per instruction, plus
+    /// spilling <c>ip</c>, <c>sp</c> and the frame's cached pools across it. C# has no way to make
+    /// that call a tail-jump, so the table loses on every axis. Everything hot therefore lives in
+    /// locals of <see cref="Run"/>, and every opcode body is written out where it is used.
+    /// </para>
+    /// <para>
+    /// <b>Re-entrancy.</b> A native function may call straight back in. That works because all
+    /// machine state lives on this instance - the loop only <em>caches</em> it in locals - and the
+    /// interpreter publishes <c>sp</c> and the executing frame's <c>IP</c> before every transfer
+    /// into host code. A nested run pushes its frames above the current one and returns at its own
+    /// depth, leaving everything below untouched.
+    /// </para>
+    /// <para>
+    /// <b>Exceptions</b> are split in two. A Surtr <c>Throw</c> never becomes a CLR exception while
+    /// a handler is in reach: the machine walks its own frames and jumps to the handler, so a caught
+    /// exception costs a table scan. A trap the VM raises, or anything host code throws, arrives as
+    /// a CLR exception, gets wrapped into an object, and is fed through the same search. Only an
+    /// exception nothing catches leaves as a <see cref="SurtrThrownException"/>.
+    /// </para>
+    /// </remarks>
+    internal sealed unsafe class SurtrVirtualMachine : IDisposable
+    {
+        /// <summary>How many value slots the data stack holds when no size is given: 512 KB worth.</summary>
+        internal const int DefaultDataStackSlots = 64 * 1024;
+
+        /// <summary>How many nested calls are allowed when no depth is given.</summary>
+        internal const int DefaultCallDepth = 1024;
+
+        private const int MinimumDataStackSlots = 256;
+        private const int MinimumCallDepth = 8;
+
+        private readonly SurtrRuntime _runtime;
+        private readonly SurtrValueComparer _comparer;
+        private readonly SurtrCallFrame[] _frames;
+
+        /// <summary>
+        /// Everything the machine itself keeps alive: slot 0 is the exception currently being
+        /// unwound, and slot <c>depth + 1</c> is the closure the frame at <c>depth</c> is running.
+        /// </summary>
+        /// <remarks>
+        /// Both are reachable from nowhere else. <c>InvokeClosure</c> takes its target off the stack
+        /// and the frame's arguments take its place, and an in-flight exception has been popped from
+        /// the stack of a frame that is about to be discarded. One store per call and per throw keeps
+        /// the collector from sweeping either.
+        /// </remarks>
+        private readonly SurtrRawValue[] _roots;
+
+        private SurtrRawValue* _stack;
+        private SurtrRawValue* _stackLimit;
+        private SurtrRawValue* _sp;
+        private int _frameCount;
+        private bool _disposed;
+
+        /// <summary>Creates a machine with the default stack sizes.</summary>
+        internal SurtrVirtualMachine(SurtrRuntime runtime)
+            : this(runtime, DefaultDataStackSlots, DefaultCallDepth) { }
+
+        /// <summary>Creates a machine with explicit stack sizes.</summary>
+        /// <param name="runtime">The runtime whose heap, globals and modules this machine executes against.</param>
+        /// <param name="dataStackSlots">How many value slots the data stack holds. Never grows.</param>
+        /// <param name="maxCallDepth">How many nested calls are allowed before the call stack traps.</param>
+        internal SurtrVirtualMachine(SurtrRuntime runtime, int dataStackSlots, int maxCallDepth)
+        {
+            _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
+            _comparer = runtime.ValueComparer;
+
+            if (dataStackSlots < MinimumDataStackSlots)
+                dataStackSlots = MinimumDataStackSlots;
+
+            if (maxCallDepth < MinimumCallDepth)
+                maxCallDepth = MinimumCallDepth;
+
+            // Zeroed rather than merely allocated: a zeroed slot names nothing, so a collection that
+            // happens to scan a slot the program has not written yet cannot retain anything.
+            _stack = MemOps.AllocateZeroed<SurtrRawValue>((nuint)dataStackSlots);
+            _stackLimit = _stack + dataStackSlots;
+            _sp = _stack;
+
+            _frames = new SurtrCallFrame[maxCallDepth];
+            _roots = new SurtrRawValue[maxCallDepth + 1];
+            _frameCount = 0;
+        }
+
+        /// <summary>Releases the data stack of a machine the host forgot to dispose.</summary>
+        ~SurtrVirtualMachine() => ReleaseResources();
+
+        #region State
+        /// <summary>How many values are currently on the data stack.</summary>
+        internal int StackCount
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => (int)(_sp - _stack);
+        }
+
+        /// <summary>How deep the call stack currently is.</summary>
+        internal int CallDepth
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _frameCount;
+        }
+
+        /// <summary>The first slot of the data stack, for the collector to scan from.</summary>
+        internal SurtrRawValue* StackBase
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _stack;
+        }
+
+        /// <summary>One past the last live slot of the data stack.</summary>
+        internal SurtrRawValue* StackTop
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _sp;
+        }
+
+        /// <summary>The in-flight exception and the live frames' closures, as extra roots for a collection.</summary>
+        internal ReadOnlySpan<SurtrRawValue> FrameRoots
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => new ReadOnlySpan<SurtrRawValue>(_roots, 0, _frameCount + 1);
+        }
+        #endregion
+
+        #region Entry Points
+        /// <summary>Pushes a value onto the data stack.</summary>
+        /// <exception cref="SurtrExecutionException">The data stack is full.</exception>
+        internal void Push(SurtrValue value)
+        {
+            if (_sp >= _stackLimit)
+                throw DataStackOverflow();
+
+            *_sp++ = value.Raw;
+        }
+
+        /// <summary>
+        /// Calls <paramref name="method"/> with the <paramref name="argumentCount"/> values already
+        /// on the data stack.
+        /// </summary>
+        /// <remarks>
+        /// Arguments arrive on the stack rather than in a span because that is where a call already
+        /// puts them: a bytecode call site leaves them there, and the callee's frame starts
+        /// underneath them, so the whole convention copies nothing. The arguments are consumed. For
+        /// an instance method, argument 0 is the receiver, which is what makes <c>Ldl0</c> read
+        /// <c>this</c> and <c>arguments[0]</c> the receiver in a native entry point.
+        /// </remarks>
+        /// <returns>The result, or <see cref="SurtrValue.Null"/> for a method that returns nothing.</returns>
+        internal SurtrValue Call(SurtrMethodInfo method, int argumentCount)
+        {
+            if (method is null)
+                throw new ArgumentNullException(nameof(method));
+
+            if (method.ImplKind == SurtrMethodImplKind.Native)
+            {
+                SurtrRawValue* argumentBase = _sp - argumentCount;
+                SurtrValue result = ((SurtrNativeMethodInfo)method).EntryPoint
+                    .Invoke(new SurtrCallArguments(_runtime, argumentBase, argumentCount));
+
+                _sp = argumentBase;
+                return result;
+            }
+
+            if (method.ImplKind != SurtrMethodImplKind.Bytecode)
+                throw new SurtrExecutionException($"'{method.Name}' is abstract and has no body to call.");
+
+            int entryDepth = _frameCount;
+            PushEntryFrame((SurtrBytecodeMethodInfo)method, argumentCount, null);
+            return Execute(entryDepth);
+        }
+
+        /// <summary>Pushes <paramref name="arguments"/> and calls <paramref name="method"/>.</summary>
+        internal SurtrValue Call(SurtrMethodInfo method, ReadOnlySpan<SurtrValue> arguments)
+        {
+            for (int i = 0; i < arguments.Length; i++)
+                Push(arguments[i]);
+
+            return Call(method, arguments.Length);
+        }
+
+        /// <summary>
+        /// Calls <paramref name="closure"/> with the <paramref name="argumentCount"/> values already
+        /// on the data stack.
+        /// </summary>
+        /// <remarks>
+        /// Unlike the bytecode <c>InvokeClosure</c>, the closure itself is not on the stack here -
+        /// the caller holds it - so nothing has to be shifted out of the way before the frame starts.
+        /// </remarks>
+        internal SurtrValue CallClosure(SurtrClosure closure, int argumentCount)
+        {
+            if (closure is null)
+                throw new ArgumentNullException(nameof(closure));
+
+            if (closure.ImplKind == SurtrMethodImplKind.Native)
+            {
+                SurtrRawValue* argumentBase = _sp - argumentCount;
+                SurtrValue result = closure.EntryPoint
+                    .Invoke(new SurtrCallArguments(_runtime, argumentBase, argumentCount));
+
+                _sp = argumentBase;
+                return result;
+            }
+
+            int entryDepth = _frameCount;
+            PushEntryFrame((SurtrBytecodeMethodInfo)closure.Method, argumentCount, closure);
+            return Execute(entryDepth);
+        }
+
+        /// <summary>Pushes <paramref name="arguments"/> and calls <paramref name="closure"/>.</summary>
+        internal SurtrValue CallClosure(SurtrClosure closure, ReadOnlySpan<SurtrValue> arguments)
+        {
+            for (int i = 0; i < arguments.Length; i++)
+                Push(arguments[i]);
+
+            return CallClosure(closure, arguments.Length);
+        }
+
+        /// <summary>Drops everything on both stacks, for a host recovering from an uncaught exception.</summary>
+        internal void Reset()
+        {
+            _sp = _stack;
+
+            for (int i = 0; i < _frameCount; i++)
+            {
+                _frames[i].Chunk = null;
+                _frames[i].Method = null;
+                _frames[i].Closure = null;
+                _roots[i + 1] = 0;
+            }
+
+            _roots[0] = 0;
+            _frameCount = 0;
+        }
+
+        /// <summary>
+        /// Builds the frame a host-initiated call starts in.
+        /// </summary>
+        /// <remarks>
+        /// The interpreter writes this sequence out by hand instead of calling here, because it runs
+        /// on every bytecode call. This copy exists only for the host boundary, which is crossed
+        /// once per entry and is nowhere near the execution path.
+        /// </remarks>
+        private void PushEntryFrame(SurtrBytecodeMethodInfo method, int argumentCount, SurtrClosure? closure)
+        {
+            int depth = _frameCount;
+            if (depth == _frames.Length)
+                throw CallStackOverflow(_frames.Length);
+
+            SurtrRawValue* frameBase = _sp - argumentCount;
+            int localCount = method.LocalCount;
+
+            if (frameBase + localCount + method.MaxStackSize > _stackLimit)
+                throw DataStackOverflow();
+
+            if (localCount > argumentCount)
+                MemOps.Clear(frameBase + argumentCount, (nuint)(localCount - argumentCount) * sizeof(SurtrRawValue));
+
+            var chunk = method.Chunk;
+            byte* codeBase = chunk.Code.Pointer;
+
+            ref SurtrCallFrame frame = ref _frames[depth];
+            frame.Base = frameBase;
+            frame.CodeBase = codeBase;
+            frame.IP = codeBase + method.CodeOffset;
+            frame.Chunk = chunk;
+            frame.Method = method;
+            frame.Closure = closure;
+            frame.LocalCount = localCount;
+            frame.ArgumentCount = argumentCount;
+            frame.ExpectedResults = 1;
+
+            _roots[depth + 1] = closure is null
+                ? 0
+                : SurtrValue.TagMaskReference | (uint)closure.GetSurtrReference();
+
+            _frameCount = depth + 1;
+            _sp = frameBase + localCount;
+        }
+        #endregion
+
+        #region Exception Dispatch
+        /// <summary>
+        /// Runs bytecode until the frame at <paramref name="entryDepth"/> returns, converting any
+        /// CLR exception raised along the way into a Surtr one and offering it to the handler tables.
+        /// </summary>
+        /// <remarks>
+        /// The <see langword="try"/> lives here, wrapped around <see cref="Run"/>, rather than
+        /// inside the dispatch loop. A protected region spanning the loop would constrain how the
+        /// JIT may keep <c>ip</c> and <c>sp</c> in registers across every instruction, to buy
+        /// something the frame protocol already provides: the executing frame's <c>IP</c> is
+        /// published before anything that can raise, so the handler search reads state, never
+        /// locals. That is also what lets the loop be re-entered after a handler is installed -
+        /// <see cref="Run"/> loads everything it needs from the top frame.
+        /// </remarks>
+        private SurtrValue Execute(int entryDepth)
+        {
+            while (true)
+            {
+                try
+                {
+                    return Run(entryDepth);
+                }
+                catch (SurtrThrownException thrown)
+                {
+                    // Already a Surtr object: it escaped a nested run, or came back out through a
+                    // native call that had re-entered the VM.
+                    if (!TryEnterHandler(thrown.Reference, entryDepth))
+                        throw;
+                }
+                catch (Exception clrException)
+                {
+                    // A trap, or anything host code threw. Wrapping it makes it an ordinary object,
+                    // so `catch (native e)` in Surtr source sees a CLR exception exactly the way it
+                    // sees anything else.
+                    SurtrRef wrapped = _runtime.WrapNative(clrException).GetSurtrReference();
+                    if (!TryEnterHandler(wrapped, entryDepth))
+                        throw;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Unwinds towards <paramref name="entryDepth"/> looking for a handler that covers where
+        /// each frame is suspended and catches <paramref name="exception"/>'s type.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Stops at <paramref name="entryDepth"/> rather than at the bottom of the stack, which is
+        /// what makes nesting compose: a run started from inside a native function unwinds only its
+        /// own frames, then lets the exception leave as a CLR one so it travels back out through
+        /// that native frame and resumes the search in the run below.
+        /// </para>
+        /// <para>
+        /// A real method rather than an inlined block, because it is only ever reached once an
+        /// exception exists - the dispatch loop's rule against helpers is about the path taken by
+        /// every instruction, not by the ones that fail.
+        /// </para>
+        /// </remarks>
+        /// <returns><see langword="true"/> if a handler was installed and execution can resume.</returns>
+        private bool TryEnterHandler(SurtrRef exception, int entryDepth)
+        {
+            // Rooted for the whole search: it has already been popped off the stack of a frame that
+            // is about to be discarded, so nothing else is keeping it alive.
+            _roots[0] = SurtrValue.TagMaskReference | (uint)exception;
+
+            var entities = _runtime.Context.EntityRegistry.Entities;
+            SurtrClass? raisedClass = exception == 0 ? null : (entities[exception] as SurtrObject)?.Class;
+
+            while (_frameCount > entryDepth)
+            {
+                int depth = _frameCount - 1;
+                ref SurtrCallFrame frame = ref _frames[depth];
+
+                if (frame.Method is SurtrBytecodeMethodInfo bytecode)
+                {
+                    var handlers = bytecode.Handlers;
+                    int resumeOffset = (int)(frame.IP - frame.CodeBase);
+
+                    for (int i = 0; i < handlers.Length; i++)
+                    {
+                        if (!handlers[i].Covers(resumeOffset) || !Catches(handlers[i], raisedClass))
+                            continue;
+
+                        // The handler starts with a clean operand stack holding just the exception,
+                        // so whatever the protected region had half-built is discarded.
+                        SurtrRawValue* handlerSp = frame.Base + frame.LocalCount;
+                        *handlerSp++ = SurtrValue.TagMaskReference | (uint)exception;
+
+                        _sp = handlerSp;
+                        frame.IP = frame.CodeBase + handlers[i].HandlerOffset;
+                        _roots[0] = 0;
+                        return true;
+                    }
+                }
+
+                frame.Chunk = null;
+                frame.Method = null;
+                frame.Closure = null;
+                _roots[depth + 1] = 0;
+                _frameCount = depth;
+            }
+
+            // Left rooted deliberately: the exception is about to travel out to a host that may want
+            // to inspect it, and Reset is what finally releases it.
+            return false;
+        }
+
+        /// <summary>Whether a handler's declared catch type admits the raised object's class.</summary>
+        private static bool Catches(in SurtrExceptionHandler handler, SurtrClass? raisedClass)
+        {
+            var catchType = handler.CatchType;
+            if (catchType is null)
+                return true;
+
+            if (raisedClass is null)
+                return false;
+
+            var target = catchType.ResolvedType;
+            if (target is null)
+                return false;
+
+            return target.Kind == SurtrMemberKind.Interface
+                ? raisedClass.Implements((SurtrInterface)target)
+                : raisedClass.IsSubclassOf((SurtrClass)target);
+        }
+        #endregion
+
+        #region Interpreter
+        /// <summary>
+        /// The dispatch loop, entered at whatever frame is currently on top.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// One method on purpose. Every hot piece of machine state - the instruction pointer, the
+        /// stack pointer, the frame base, and the current chunk's pools - lives in a local here, so
+        /// an instruction is a jump-table dispatch plus a handful of register operations. Splitting
+        /// opcode bodies into helpers would put all of that back in memory across every call.
+        /// </para>
+        /// <para>
+        /// <paramref name="entryDepth"/> is the call depth <em>before</em> the entry frame was
+        /// pushed. Returning to it is what ends this run. Nothing else about the method is tied to
+        /// where it started, which is why it can be re-entered after a handler is installed.
+        /// </para>
+        /// </remarks>
+        // 512 is MethodImplOptions.AggressiveOptimization, which netstandard2.1 does not name even
+        // though every runtime that honours it accepts the value. It matters here more than
+        // anywhere else in the codebase: it keeps the dispatch loop out of tiered compilation, so
+        // the interpreter is fully optimised from its first instruction rather than after a
+        // rejit - and a method this size is exactly the kind the quick JIT compiles worst.
+        [MethodImpl((MethodImplOptions)512)]
+        private SurtrValue Run(int entryDepth)
+        {
+            var runtime = _runtime;
+            var comparer = _comparer;
+            ref SurtrContext context = ref runtime.Context;
+
+            var frames = _frames;
+            var roots = _roots;
+            int maxDepth = frames.Length;
+
+            SurtrRawValue* stackLimit = _stackLimit;
+            SurtrRawValue* sp;
+
+            // Both of these can move: registering an entity may grow the registry's array, and the
+            // host may declare a global from inside a native call. Every site that can cause either
+            // reloads them, and nothing else has to.
+            var entities = context.EntityRegistry.Entities;
+            SurtrRawValue* globals = context.Globals.VariableTable.Pointer;
+
+            // Per-frame state, reloaded at LoadFrame whenever the executing frame changes. `current`
+            // is what makes publishing the instruction pointer a single store with no bounds check,
+            // which is why it is worth publishing at every site that can raise.
+            ref SurtrCallFrame current = ref frames[0];
+            byte* ip;
+            SurtrRawValue* frameBase;
+            SurtrChunk chunk;
+            SurtrRawValue* constants;
+            SurtrTypeHandle[] typeTable;
+            SurtrFieldInfo[] fieldTable;
+            SurtrMethodInfo[] methodTable;
+            SurtrModule[] moduleTable;
+            SurtrClosure? closure;
+
+            // The operands of the shared call-entry sequences below. Passing them in locals and
+            // jumping keeps every call opcode from carrying its own copy of a twenty-line frame
+            // setup, without turning that setup into a real call.
+            SurtrMethodInfo pendingMethod = null!;
+            SurtrClosure? pendingClosure = null;
+            int pendingArguments = 0;
+            int pendingResults = 0;
+
+        LoadFrame:
+            {
+                current = ref frames[_frameCount - 1];
+                ip = current.IP;
+                frameBase = current.Base;
+                chunk = current.Chunk!;
+                closure = current.Closure;
+                sp = _sp;
+
+                constants = chunk.Constants.Pointer;
+                typeTable = chunk.TypeTable;
+                fieldTable = chunk.FieldTable;
+                methodTable = chunk.MethodTable;
+                moduleTable = chunk.ModuleTable;
+            }
+
+        Dispatch:
+            switch ((OpCode)(*ip++))
+            {
+                case OpCode.Nop:
+                    goto Dispatch;
+
+                #region Stack Operations
+                case OpCode.Dup:
+                    *sp = *(sp - 1);
+                    sp++;
+                    goto Dispatch;
+
+                case OpCode.Dup2:
+                    *sp = *(sp - 2);
+                    *(sp + 1) = *(sp - 1);
+                    sp += 2;
+                    goto Dispatch;
+
+                case OpCode.Swap:
+                {
+                    SurtrRawValue top = *(sp - 1);
+                    *(sp - 1) = *(sp - 2);
+                    *(sp - 2) = top;
+                    goto Dispatch;
+                }
+
+                case OpCode.Swap2:
+                {
+                    SurtrRawValue first = *(sp - 4);
+                    SurtrRawValue second = *(sp - 3);
+                    *(sp - 4) = *(sp - 2);
+                    *(sp - 3) = *(sp - 1);
+                    *(sp - 2) = first;
+                    *(sp - 1) = second;
+                    goto Dispatch;
+                }
+
+                case OpCode.PushNull:
+                    *sp++ = SurtrValue.TagMaskReference;
+                    goto Dispatch;
+
+                case OpCode.PushI8:
+                    *sp++ = SurtrValue.TagMaskInt | (uint)(int)(sbyte)*ip++;
+                    goto Dispatch;
+
+                case OpCode.PushI16:
+                    *sp++ = SurtrValue.TagMaskInt | (uint)(int)*(short*)ip;
+                    ip += 2;
+                    goto Dispatch;
+
+                case OpCode.PushI32:
+                    *sp++ = SurtrValue.TagMaskInt | (uint)*(int*)ip;
+                    ip += 4;
+                    goto Dispatch;
+
+                case OpCode.Pop:
+                    sp--;
+                    goto Dispatch;
+                #endregion
+
+                #region Load / Store Operations
+                case OpCode.Ldc:
+                    *sp++ = constants[*(ushort*)ip];
+                    ip += 2;
+                    goto Dispatch;
+
+                case OpCode.Ldc0: *sp++ = constants[0]; goto Dispatch;
+                case OpCode.Ldc1: *sp++ = constants[1]; goto Dispatch;
+                case OpCode.Ldc2: *sp++ = constants[2]; goto Dispatch;
+                case OpCode.Ldc3: *sp++ = constants[3]; goto Dispatch;
+                case OpCode.Ldc4: *sp++ = constants[4]; goto Dispatch;
+                case OpCode.Ldc5: *sp++ = constants[5]; goto Dispatch;
+                case OpCode.Ldc6: *sp++ = constants[6]; goto Dispatch;
+                case OpCode.Ldc7: *sp++ = constants[7]; goto Dispatch;
+                case OpCode.Ldc8: *sp++ = constants[8]; goto Dispatch;
+                case OpCode.Ldc9: *sp++ = constants[9]; goto Dispatch;
+
+                case OpCode.LdcX:
+                    *sp++ = constants[*(int*)ip];
+                    ip += 4;
+                    goto Dispatch;
+
+                case OpCode.LdcS:
+                    *sp++ = constants[*ip++];
+                    goto Dispatch;
+
+                case OpCode.Ldl:
+                    *sp++ = frameBase[*(ushort*)ip];
+                    ip += 2;
+                    goto Dispatch;
+
+                case OpCode.Ldl0: *sp++ = frameBase[0]; goto Dispatch;
+                case OpCode.Ldl1: *sp++ = frameBase[1]; goto Dispatch;
+                case OpCode.Ldl2: *sp++ = frameBase[2]; goto Dispatch;
+                case OpCode.Ldl3: *sp++ = frameBase[3]; goto Dispatch;
+                case OpCode.Ldl4: *sp++ = frameBase[4]; goto Dispatch;
+                case OpCode.Ldl5: *sp++ = frameBase[5]; goto Dispatch;
+
+                case OpCode.LdlS:
+                    *sp++ = frameBase[*ip++];
+                    goto Dispatch;
+
+                case OpCode.Ldg:
+                    *sp++ = globals[*(ushort*)ip];
+                    ip += 2;
+                    goto Dispatch;
+
+                case OpCode.LdgX:
+                    *sp++ = globals[*(int*)ip];
+                    ip += 4;
+                    goto Dispatch;
+
+                case OpCode.Stl:
+                    frameBase[*(ushort*)ip] = *--sp;
+                    ip += 2;
+                    goto Dispatch;
+
+                case OpCode.Stl0: frameBase[0] = *--sp; goto Dispatch;
+                case OpCode.Stl1: frameBase[1] = *--sp; goto Dispatch;
+                case OpCode.Stl2: frameBase[2] = *--sp; goto Dispatch;
+                case OpCode.Stl3: frameBase[3] = *--sp; goto Dispatch;
+                case OpCode.Stl4: frameBase[4] = *--sp; goto Dispatch;
+                case OpCode.Stl5: frameBase[5] = *--sp; goto Dispatch;
+
+                case OpCode.StlS:
+                    frameBase[*ip++] = *--sp;
+                    goto Dispatch;
+
+                case OpCode.Stg:
+                    globals[*(ushort*)ip] = *--sp;
+                    ip += 2;
+                    goto Dispatch;
+
+                case OpCode.StgX:
+                    globals[*(int*)ip] = *--sp;
+                    ip += 4;
+                    goto Dispatch;
+                #endregion
+
+                #region Arithmetic Operations
+                case OpCode.Add:
+                {
+                    int right = (int)*--sp;
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)((int)*(sp - 1) + right);
+                    goto Dispatch;
+                }
+
+                case OpCode.FAdd:
+                {
+                    double right = *(double*)(--sp);
+                    *(double*)(sp - 1) = *(double*)(sp - 1) + right;
+                    goto Dispatch;
+                }
+
+                case OpCode.Sub:
+                {
+                    int right = (int)*--sp;
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)((int)*(sp - 1) - right);
+                    goto Dispatch;
+                }
+
+                case OpCode.FSub:
+                {
+                    double right = *(double*)(--sp);
+                    *(double*)(sp - 1) = *(double*)(sp - 1) - right;
+                    goto Dispatch;
+                }
+
+                case OpCode.Mul:
+                {
+                    int right = (int)*--sp;
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)((int)*(sp - 1) * right);
+                    goto Dispatch;
+                }
+
+                case OpCode.FMul:
+                {
+                    double right = *(double*)(--sp);
+                    *(double*)(sp - 1) = *(double*)(sp - 1) * right;
+                    goto Dispatch;
+                }
+
+                case OpCode.Div:
+                {
+                    int right = (int)*--sp;
+                    int left = (int)*(sp - 1);
+
+                    // Both cases are hardware faults on x64, not C# exceptions, so they are caught
+                    // here rather than left to trap in a way the host cannot recover from.
+                    if (right == 0 || (right == -1 && left == int.MinValue))
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw IntegerDivision(left, right);
+                    }
+
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)(left / right);
+                    goto Dispatch;
+                }
+
+                case OpCode.FDiv:
+                {
+                    double right = *(double*)(--sp);
+                    *(double*)(sp - 1) = *(double*)(sp - 1) / right;
+                    goto Dispatch;
+                }
+
+                case OpCode.Mod:
+                {
+                    int right = (int)*--sp;
+                    int left = (int)*(sp - 1);
+
+                    if (right == 0 || (right == -1 && left == int.MinValue))
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw IntegerDivision(left, right);
+                    }
+
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)(left % right);
+                    goto Dispatch;
+                }
+
+                case OpCode.FMod:
+                {
+                    double right = *(double*)(--sp);
+                    *(double*)(sp - 1) = *(double*)(sp - 1) % right;
+                    goto Dispatch;
+                }
+
+                case OpCode.Pow:
+                {
+                    int exponent = (int)*--sp;
+                    if (exponent < 0)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw NegativeExponent(exponent);
+                    }
+
+                    // Exponentiation by squaring, written out rather than calling Math.Pow and
+                    // rounding back: the double round-trip loses exactness past 2^53 and costs a
+                    // call the JIT cannot inline.
+                    int factor = (int)*(sp - 1);
+                    int result = 1;
+                    while (exponent != 0)
+                    {
+                        if ((exponent & 1) != 0)
+                            result *= factor;
+
+                        factor *= factor;
+                        exponent >>= 1;
+                    }
+
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)result;
+                    goto Dispatch;
+                }
+
+                case OpCode.FPow:
+                {
+                    double exponent = *(double*)(--sp);
+                    *(double*)(sp - 1) = Math.Pow(*(double*)(sp - 1), exponent);
+                    goto Dispatch;
+                }
+
+                case OpCode.Neg:
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)(-(int)*(sp - 1));
+                    goto Dispatch;
+
+                case OpCode.FNeg:
+                    // Flipping the sign bit rather than computing 0 - x, so negative zero and NaN
+                    // both behave the way IEEE 754 says they should.
+                    *(sp - 1) ^= 0x8000000000000000UL;
+                    goto Dispatch;
+
+                case OpCode.Inv:
+                    *(sp - 1) = SurtrValue.TagMaskBool | ((*(sp - 1) & 1) ^ 1);
+                    goto Dispatch;
+                #endregion
+
+                #region Comparison Operations
+                case OpCode.EQ:
+                {
+                    int right = (int)*--sp;
+                    *(sp - 1) = SurtrValue.TagMaskBool | ((int)*(sp - 1) == right ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.FEQ:
+                {
+                    double right = *(double*)(--sp);
+                    *(sp - 1) = SurtrValue.TagMaskBool | (*(double*)(sp - 1) == right ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.REQ:
+                {
+                    // A reference is its 32-bit payload; the tag exists for the collector. Comparing
+                    // payloads is what makes a zeroed slot and an explicit null the same reference.
+                    uint right = (uint)*--sp;
+                    *(sp - 1) = SurtrValue.TagMaskBool | ((uint)*(sp - 1) == right ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.StrEQ:
+                {
+                    uint right = (uint)*--sp;
+                    uint left = (uint)*(sp - 1);
+                    bool equal = left == right
+                        || (left != 0 && right != 0
+                            && ((SurtrString)entities[(SurtrRef)left]!).TextEquals((SurtrString)entities[(SurtrRef)right]!));
+
+                    *(sp - 1) = SurtrValue.TagMaskBool | (equal ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.NE:
+                {
+                    int right = (int)*--sp;
+                    *(sp - 1) = SurtrValue.TagMaskBool | ((int)*(sp - 1) != right ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.FNE:
+                {
+                    double right = *(double*)(--sp);
+                    *(sp - 1) = SurtrValue.TagMaskBool | (*(double*)(sp - 1) != right ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.RNE:
+                {
+                    uint right = (uint)*--sp;
+                    *(sp - 1) = SurtrValue.TagMaskBool | ((uint)*(sp - 1) != right ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.StrNE:
+                {
+                    uint right = (uint)*--sp;
+                    uint left = (uint)*(sp - 1);
+                    bool equal = left == right
+                        || (left != 0 && right != 0
+                            && ((SurtrString)entities[(SurtrRef)left]!).TextEquals((SurtrString)entities[(SurtrRef)right]!));
+
+                    *(sp - 1) = SurtrValue.TagMaskBool | (equal ? 0UL : 1UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.GT:
+                {
+                    int right = (int)*--sp;
+                    *(sp - 1) = SurtrValue.TagMaskBool | ((int)*(sp - 1) > right ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.FGT:
+                {
+                    double right = *(double*)(--sp);
+                    *(sp - 1) = SurtrValue.TagMaskBool | (*(double*)(sp - 1) > right ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.GE:
+                {
+                    int right = (int)*--sp;
+                    *(sp - 1) = SurtrValue.TagMaskBool | ((int)*(sp - 1) >= right ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.FGE:
+                {
+                    double right = *(double*)(--sp);
+                    *(sp - 1) = SurtrValue.TagMaskBool | (*(double*)(sp - 1) >= right ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.LT:
+                {
+                    int right = (int)*--sp;
+                    *(sp - 1) = SurtrValue.TagMaskBool | ((int)*(sp - 1) < right ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.FLT:
+                {
+                    double right = *(double*)(--sp);
+                    *(sp - 1) = SurtrValue.TagMaskBool | (*(double*)(sp - 1) < right ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.LE:
+                {
+                    int right = (int)*--sp;
+                    *(sp - 1) = SurtrValue.TagMaskBool | ((int)*(sp - 1) <= right ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.FLE:
+                {
+                    double right = *(double*)(--sp);
+                    *(sp - 1) = SurtrValue.TagMaskBool | (*(double*)(sp - 1) <= right ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.IsNull:
+                    *(sp - 1) = SurtrValue.TagMaskBool | ((uint)*(sp - 1) == 0 ? 1UL : 0UL);
+                    goto Dispatch;
+
+                case OpCode.IsNotNull:
+                    *(sp - 1) = SurtrValue.TagMaskBool | ((uint)*(sp - 1) != 0 ? 1UL : 0UL);
+                    goto Dispatch;
+
+                case OpCode.InstanceOf:
+                {
+                    var target = typeTable[*(ushort*)ip].ResolvedType!;
+                    ip += 2;
+
+                    SurtrRef subject = (SurtrRef)(*(sp - 1));
+                    bool matches = false;
+                    if (subject != 0)
+                    {
+                        var subjectClass = ((SurtrObject)entities[subject]!).Class;
+                        matches = target.Kind == SurtrMemberKind.Interface
+                            ? subjectClass.Implements((SurtrInterface)target)
+                            : subjectClass.IsSubclassOf((SurtrClass)target);
+                    }
+
+                    *(sp - 1) = SurtrValue.TagMaskBool | (matches ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.InstanceOfX:
+                {
+                    var target = typeTable[*(int*)ip].ResolvedType!;
+                    ip += 4;
+
+                    SurtrRef subject = (SurtrRef)(*(sp - 1));
+                    bool matches = false;
+                    if (subject != 0)
+                    {
+                        var subjectClass = ((SurtrObject)entities[subject]!).Class;
+                        matches = target.Kind == SurtrMemberKind.Interface
+                            ? subjectClass.Implements((SurtrInterface)target)
+                            : subjectClass.IsSubclassOf((SurtrClass)target);
+                    }
+
+                    *(sp - 1) = SurtrValue.TagMaskBool | (matches ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+                #endregion
+
+                #region Bitwise Operations
+                case OpCode.And:
+                {
+                    int right = (int)*--sp;
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)((int)*(sp - 1) & right);
+                    goto Dispatch;
+                }
+
+                case OpCode.Or:
+                {
+                    int right = (int)*--sp;
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)((int)*(sp - 1) | right);
+                    goto Dispatch;
+                }
+
+                case OpCode.Xor:
+                {
+                    int right = (int)*--sp;
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)((int)*(sp - 1) ^ right);
+                    goto Dispatch;
+                }
+
+                case OpCode.Not:
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)(~(int)*(sp - 1));
+                    goto Dispatch;
+
+                case OpCode.Shl:
+                {
+                    // Masked rather than trapped: this is what the hardware does on both x64 and
+                    // ARM, and defining it costs nothing where trapping would cost a branch.
+                    int count = (int)*--sp & 31;
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)((int)*(sp - 1) << count);
+                    goto Dispatch;
+                }
+
+                case OpCode.Shr:
+                {
+                    int count = (int)*--sp & 31;
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)((uint)*(sp - 1) >> count);
+                    goto Dispatch;
+                }
+
+                case OpCode.Sar:
+                {
+                    int count = (int)*--sp & 31;
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)((int)*(sp - 1) >> count);
+                    goto Dispatch;
+                }
+                #endregion
+
+                #region Conversion Operations
+                case OpCode.I2F:
+                {
+                    int value = (int)*(sp - 1);
+                    *(double*)(sp - 1) = value;
+                    goto Dispatch;
+                }
+
+                case OpCode.F2I:
+                {
+                    double value = *(double*)(sp - 1);
+
+                    // Saturating, with NaN going to zero. An unchecked C# cast of an out-of-range
+                    // double is platform-defined, and Surtr ships on x64 and ARM alike, so the
+                    // three compares buy determinism the cast does not give.
+                    int converted;
+                    if (value >= 2147483647.0) converted = int.MaxValue;
+                    else if (value <= -2147483648.0) converted = int.MinValue;
+                    else if (double.IsNaN(value)) converted = 0;
+                    else converted = (int)value;
+
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)converted;
+                    goto Dispatch;
+                }
+
+                case OpCode.I2C:
+                    *(sp - 1) = SurtrValue.TagMaskChar | (uint)(ushort)(int)*(sp - 1);
+                    goto Dispatch;
+
+                case OpCode.C2I:
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)(int)*(sp - 1);
+                    goto Dispatch;
+
+                case OpCode.I2B:
+                    // Normalises as well as retags, so every boolean payload is 0 or 1 and the
+                    // boolean opcodes can treat it as a bit.
+                    *(sp - 1) = SurtrValue.TagMaskBool | ((int)*(sp - 1) != 0 ? 1UL : 0UL);
+                    goto Dispatch;
+
+                case OpCode.B2I:
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)(int)*(sp - 1);
+                    goto Dispatch;
+
+                case OpCode.BoxInt:
+                {
+                    current.IP = ip;
+                    _sp = sp;
+                    var boxed = new SurtrBoxed(SurtrBuiltIns.Integer, SurtrValue.FromRaw(*(sp - 1)));
+                    SurtrRef reference = context.EntityRegistry.Register(boxed);
+                    entities = context.EntityRegistry.Entities;
+                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.BoxFloat:
+                {
+                    current.IP = ip;
+                    _sp = sp;
+                    var boxed = new SurtrBoxed(SurtrBuiltIns.Float, SurtrValue.FromRaw(*(sp - 1)));
+                    SurtrRef reference = context.EntityRegistry.Register(boxed);
+                    entities = context.EntityRegistry.Entities;
+                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.BoxBool:
+                {
+                    current.IP = ip;
+                    _sp = sp;
+                    var boxed = new SurtrBoxed(SurtrBuiltIns.Boolean, SurtrValue.FromRaw(*(sp - 1)));
+                    SurtrRef reference = context.EntityRegistry.Register(boxed);
+                    entities = context.EntityRegistry.Entities;
+                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.BoxChar:
+                {
+                    current.IP = ip;
+                    _sp = sp;
+                    var boxed = new SurtrBoxed(SurtrBuiltIns.Character, SurtrValue.FromRaw(*(sp - 1)));
+                    SurtrRef reference = context.EntityRegistry.Register(boxed);
+                    entities = context.EntityRegistry.Entities;
+                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.Unbox:
+                    *(sp - 1) = ((SurtrBoxed)entities[(SurtrRef)(*(sp - 1))]!).Value.Raw;
+                    goto Dispatch;
+
+                case OpCode.Cast:
+                {
+                    var target = typeTable[*(ushort*)ip].ResolvedType!;
+                    ip += 2;
+
+                    SurtrRef subject = (SurtrRef)(*(sp - 1));
+                    if (subject != 0)
+                    {
+                        var subjectClass = ((SurtrObject)entities[subject]!).Class;
+                        bool matches = target.Kind == SurtrMemberKind.Interface
+                            ? subjectClass.Implements((SurtrInterface)target)
+                            : subjectClass.IsSubclassOf((SurtrClass)target);
+
+                        if (!matches)
+                        {
+                            current.IP = ip;
+                            _sp = sp;
+                            throw InvalidCast(subjectClass.Name, target.Name);
+                        }
+                    }
+
+                    goto Dispatch;
+                }
+
+                case OpCode.CastX:
+                {
+                    var target = typeTable[*(int*)ip].ResolvedType!;
+                    ip += 4;
+
+                    SurtrRef subject = (SurtrRef)(*(sp - 1));
+                    if (subject != 0)
+                    {
+                        var subjectClass = ((SurtrObject)entities[subject]!).Class;
+                        bool matches = target.Kind == SurtrMemberKind.Interface
+                            ? subjectClass.Implements((SurtrInterface)target)
+                            : subjectClass.IsSubclassOf((SurtrClass)target);
+
+                        if (!matches)
+                        {
+                            current.IP = ip;
+                            _sp = sp;
+                            throw InvalidCast(subjectClass.Name, target.Name);
+                        }
+                    }
+
+                    goto Dispatch;
+                }
+                #endregion
+
+                #region String Operations
+                case OpCode.StrLen:
+                    *(sp - 1) = SurtrValue.TagMaskInt
+                        | (uint)((SurtrString)entities[(SurtrRef)(*(sp - 1))]!).Value.Length;
+                    goto Dispatch;
+
+                case OpCode.StrCat:
+                {
+                    current.IP = ip;
+                    _sp = sp;
+                    string right = ((SurtrString)entities[(SurtrRef)(*(sp - 1))]!).Value;
+                    string left = ((SurtrString)entities[(SurtrRef)(*(sp - 2))]!).Value;
+
+                    SurtrRef reference = context.EntityRegistry.Register(new SurtrString(string.Concat(left, right)));
+                    entities = context.EntityRegistry.Entities;
+
+                    sp--;
+                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.StrGet:
+                {
+                    int index = (int)*--sp;
+                    string text = ((SurtrString)entities[(SurtrRef)(*(sp - 1))]!).Value;
+
+                    if ((uint)index >= (uint)text.Length)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw IndexOutOfRange(index, text.Length, "string");
+                    }
+
+                    *(sp - 1) = SurtrValue.TagMaskChar | (uint)text[index];
+                    goto Dispatch;
+                }
+                #endregion
+
+                #region Array Operations
+                case OpCode.ArrNew:
+                {
+                    var arrayType = typeTable[*(ushort*)ip].Reference;
+                    ip += 2;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    int length = (int)*(sp - 1);
+                    var array = new SurtrArray(arrayType, length);
+                    array.InitializeLength(length);
+
+                    // A zeroed slot already reads as 0, 0.0, false, '\0' or null, so only the tag
+                    // needs fixing - and only for the families whose tag is not zero. A float or
+                    // reference array is correct with no work at all.
+                    SurtrRawValue elementZero = ZeroOf(arrayType.NestedTypeCode);
+                    if (elementZero != 0)
+                    {
+                        var items = array.Items;
+                        for (int i = 0; i < length; i++)
+                            items[i] = SurtrValue.FromRaw(elementZero);
+                    }
+
+                    SurtrRef reference = context.EntityRegistry.Register(array);
+                    entities = context.EntityRegistry.Entities;
+
+                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.ArrNewX:
+                {
+                    var arrayType = typeTable[*(ushort*)ip].Reference;
+                    int length = *(int*)(ip + 2);
+                    ip += 6;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var array = new SurtrArray(arrayType, length);
+                    array.InitializeLength(length);
+
+                    SurtrRawValue elementZero = ZeroOf(arrayType.NestedTypeCode);
+                    if (elementZero != 0)
+                    {
+                        var items = array.Items;
+                        for (int i = 0; i < length; i++)
+                            items[i] = SurtrValue.FromRaw(elementZero);
+                    }
+
+                    SurtrRef reference = context.EntityRegistry.Register(array);
+                    entities = context.EntityRegistry.Entities;
+
+                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.ArrPack:
+                {
+                    var arrayType = typeTable[*(ushort*)ip].Reference;
+                    int count = *(ushort*)(ip + 2);
+                    ip += 4;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var array = new SurtrArray(arrayType, count);
+                    array.InitializeLength(count);
+                    SurtrRef reference = context.EntityRegistry.Register(array);
+                    entities = context.EntityRegistry.Entities;
+
+                    var items = array.Items;
+                    sp -= count;
+                    for (int i = 0; i < count; i++)
+                        items[i] = SurtrValue.FromRaw(sp[i]);
+
+                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.ArrLen:
+                    *(sp - 1) = SurtrValue.TagMaskInt
+                        | (uint)((SurtrArray)entities[(SurtrRef)(*(sp - 1))]!).Count;
+                    goto Dispatch;
+
+                case OpCode.ArrGet:
+                {
+                    int index = (int)*--sp;
+                    var array = (SurtrArray)entities[(SurtrRef)(*(sp - 1))]!;
+
+                    if ((uint)index >= (uint)array.Count)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw IndexOutOfRange(index, array.Count, "array");
+                    }
+
+                    // Two range checks, not one: the explicit trap above, and the CLR's own on the
+                    // managed buffer, which the JIT cannot elide because it compares against
+                    // Items.Length rather than Count. Removing the second needs Unsafe.Add, which
+                    // netstandard2.1 does not carry without a NuGet dependency a Unity host would
+                    // have to ship as well - so it stays until the target framework moves.
+                    *(sp - 1) = array.Items[index].Raw;
+                    goto Dispatch;
+                }
+
+                case OpCode.ArrSet:
+                {
+                    SurtrRawValue value = *--sp;
+                    int index = (int)*--sp;
+                    var array = (SurtrArray)entities[(SurtrRef)(*--sp)]!;
+
+                    if ((uint)index >= (uint)array.Count)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw IndexOutOfRange(index, array.Count, "array");
+                    }
+
+                    array.Items[index] = SurtrValue.FromRaw(value);
+                    goto Dispatch;
+                }
+
+                case OpCode.ArrPush:
+                {
+                    SurtrRawValue value = *--sp;
+                    var array = (SurtrArray)entities[(SurtrRef)(*--sp)]!;
+
+                    // Written out rather than calling Add, so the common case - room already
+                    // available - is a store and an increment with no call at all.
+                    int count = array.Count;
+                    if (count == array.Items.Length)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        array.EnsureCapacity(count + 1);
+                    }
+
+                    array.Items[count] = SurtrValue.FromRaw(value);
+                    array.Count = count + 1;
+                    goto Dispatch;
+                }
+
+                case OpCode.ArrPop:
+                {
+                    var array = (SurtrArray)entities[(SurtrRef)(*(sp - 1))]!;
+                    int last = array.Count - 1;
+
+                    if (last < 0)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw EmptyArray();
+                    }
+
+                    *(sp - 1) = array.Items[last].Raw;
+
+                    // Blanked, not merely abandoned: a stale reference past Count would keep an
+                    // entity alive the moment anything traced beyond the live prefix.
+                    array.Items[last] = SurtrValue.Null;
+                    array.Count = last;
+                    goto Dispatch;
+                }
+
+                case OpCode.ArrInsert:
+                {
+                    SurtrRawValue value = *--sp;
+                    int index = (int)*--sp;
+                    var array = (SurtrArray)entities[(SurtrRef)(*--sp)]!;
+
+                    if ((uint)index > (uint)array.Count)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw IndexOutOfRange(index, array.Count, "array");
+                    }
+
+                    current.IP = ip;
+                    _sp = sp;
+                    array.Insert(index, SurtrValue.FromRaw(value));
+                    goto Dispatch;
+                }
+
+                case OpCode.ArrRemoveAt:
+                {
+                    int index = (int)*--sp;
+                    var array = (SurtrArray)entities[(SurtrRef)(*--sp)]!;
+
+                    if ((uint)index >= (uint)array.Count)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw IndexOutOfRange(index, array.Count, "array");
+                    }
+
+                    array.RemoveAt(index);
+                    goto Dispatch;
+                }
+
+                case OpCode.ArrClear:
+                    ((SurtrArray)entities[(SurtrRef)(*--sp)]!).Clear();
+                    goto Dispatch;
+
+                case OpCode.ArrIndexOf:
+                {
+                    SurtrValue needle = SurtrValue.FromRaw(*--sp);
+                    var array = (SurtrArray)entities[(SurtrRef)(*(sp - 1))]!;
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)array.IndexOf(needle, comparer);
+                    goto Dispatch;
+                }
+
+                case OpCode.ArrIn:
+                {
+                    SurtrValue needle = SurtrValue.FromRaw(*--sp);
+                    var array = (SurtrArray)entities[(SurtrRef)(*(sp - 1))]!;
+                    *(sp - 1) = SurtrValue.TagMaskBool | (array.IndexOf(needle, comparer) >= 0 ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.ArrNIn:
+                {
+                    SurtrValue needle = SurtrValue.FromRaw(*--sp);
+                    var array = (SurtrArray)entities[(SurtrRef)(*(sp - 1))]!;
+                    *(sp - 1) = SurtrValue.TagMaskBool | (array.IndexOf(needle, comparer) < 0 ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+                #endregion
+
+                #region Tuple Operations
+                case OpCode.TupPack:
+                {
+                    var tupleType = typeTable[*(ushort*)ip].Reference;
+                    int arity = ip[2];
+                    ip += 3;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var tuple = new SurtrTuple(tupleType, arity);
+                    SurtrRef reference = context.EntityRegistry.Register(tuple);
+                    entities = context.EntityRegistry.Entities;
+
+                    var elements = tuple.Elements;
+                    sp -= arity;
+                    for (int i = 0; i < arity; i++)
+                        elements[i] = SurtrValue.FromRaw(sp[i]);
+
+                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.TupUnpack:
+                {
+                    int arity = *ip++;
+                    var elements = ((SurtrTuple)entities[(SurtrRef)(*(sp - 1))]!).Elements;
+
+                    sp--;
+                    for (int i = 0; i < arity; i++)
+                        *sp++ = elements[i].Raw;
+
+                    goto Dispatch;
+                }
+
+                case OpCode.TupLen:
+                    *(sp - 1) = SurtrValue.TagMaskInt
+                        | (uint)((SurtrTuple)entities[(SurtrRef)(*(sp - 1))]!).Elements.Length;
+                    goto Dispatch;
+
+                case OpCode.TupGet:
+                {
+                    int index = (int)*--sp;
+                    var elements = ((SurtrTuple)entities[(SurtrRef)(*(sp - 1))]!).Elements;
+
+                    if ((uint)index >= (uint)elements.Length)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw IndexOutOfRange(index, elements.Length, "tuple");
+                    }
+
+                    *(sp - 1) = elements[index].Raw;
+                    goto Dispatch;
+                }
+                #endregion
+
+                #region Dictionary Operations
+                case OpCode.DictNew:
+                {
+                    var dictionaryType = typeTable[*(ushort*)ip].Reference;
+                    ip += 2;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    SurtrRef reference = context.EntityRegistry.Register(
+                        new SurtrDictionary(dictionaryType, comparer, 0));
+                    entities = context.EntityRegistry.Entities;
+
+                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.DictPack:
+                {
+                    var dictionaryType = typeTable[*(ushort*)ip].Reference;
+                    int count = *(ushort*)(ip + 2);
+                    ip += 4;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var dictionary = new SurtrDictionary(dictionaryType, comparer, count);
+                    SurtrRef reference = context.EntityRegistry.Register(dictionary);
+                    entities = context.EntityRegistry.Entities;
+
+                    sp -= count * 2;
+                    for (int i = 0; i < count; i++)
+                        dictionary.Entries[SurtrValue.FromRaw(sp[i * 2])] = SurtrValue.FromRaw(sp[i * 2 + 1]);
+
+                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.DictLen:
+                    *(sp - 1) = SurtrValue.TagMaskInt
+                        | (uint)((SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!).Entries.Count;
+                    goto Dispatch;
+
+                case OpCode.DictGet:
+                {
+                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
+
+                    if (!dictionary.Entries.TryGetValue(key, out SurtrValue found))
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw MissingKey();
+                    }
+
+                    *(sp - 1) = found.Raw;
+                    goto Dispatch;
+                }
+
+                case OpCode.DictSet:
+                {
+                    SurtrValue value = SurtrValue.FromRaw(*--sp);
+                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    current.IP = ip;
+                    _sp = sp;
+                    ((SurtrDictionary)entities[(SurtrRef)(*--sp)]!).Entries[key] = value;
+                    goto Dispatch;
+                }
+
+                case OpCode.DictDel:
+                {
+                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
+                    *(sp - 1) = SurtrValue.TagMaskBool | (dictionary.Entries.Remove(key) ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.DictClear:
+                    ((SurtrDictionary)entities[(SurtrRef)(*--sp)]!).Entries.Clear();
+                    goto Dispatch;
+
+                case OpCode.DictKeys:
+                {
+                    var arrayType = typeTable[*(ushort*)ip].Reference;
+                    ip += 2;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
+                    var keys = new SurtrArray(arrayType, dictionary.Entries.Count);
+                    dictionary.CopyKeysTo(keys);
+
+                    SurtrRef reference = context.EntityRegistry.Register(keys);
+                    entities = context.EntityRegistry.Entities;
+
+                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.DictValues:
+                {
+                    var arrayType = typeTable[*(ushort*)ip].Reference;
+                    ip += 2;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
+                    var values = new SurtrArray(arrayType, dictionary.Entries.Count);
+                    dictionary.CopyValuesTo(values);
+
+                    SurtrRef reference = context.EntityRegistry.Register(values);
+                    entities = context.EntityRegistry.Entities;
+
+                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.DictIn:
+                {
+                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
+                    *(sp - 1) = SurtrValue.TagMaskBool | (dictionary.Entries.ContainsKey(key) ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.DictNIn:
+                {
+                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
+                    *(sp - 1) = SurtrValue.TagMaskBool | (dictionary.Entries.ContainsKey(key) ? 0UL : 1UL);
+                    goto Dispatch;
+                }
+                #endregion
+
+                #region Object Operations
+                case OpCode.ObjNew:
+                {
+                    var declared = typeTable[*(ushort*)ip].ResolvedClass!;
+                    ip += 2;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared));
+                    entities = context.EntityRegistry.Entities;
+
+                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.ObjNewX:
+                {
+                    var declared = typeTable[*(int*)ip].ResolvedClass!;
+                    ip += 4;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared));
+                    entities = context.EntityRegistry.Entities;
+
+                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+                #endregion
+
+                #region Field Operations
+                case OpCode.FieldGet:
+                {
+                    int slot = fieldTable[*(ushort*)ip].SlotIndex;
+                    ip += 2;
+
+                    var instance = (SurtrInstance)entities[(SurtrRef)(*(sp - 1))]!;
+                    *(sp - 1) = instance.Fields[slot].Raw;
+                    goto Dispatch;
+                }
+
+                case OpCode.FieldSet:
+                {
+                    int slot = fieldTable[*(ushort*)ip].SlotIndex;
+                    ip += 2;
+
+                    SurtrRawValue value = *--sp;
+                    var instance = (SurtrInstance)entities[(SurtrRef)(*--sp)]!;
+                    instance.Fields[slot] = SurtrValue.FromRaw(value);
+                    goto Dispatch;
+                }
+
+                case OpCode.StaticFieldGet:
+                    // One indirect load: the linker resolved the slot's address when its owner was
+                    // laid out, so nothing here tests whether the owner is a class or a module.
+                    *sp++ = *fieldTable[*(ushort*)ip].StaticAddress;
+                    ip += 2;
+                    goto Dispatch;
+
+                case OpCode.StaticFieldGetX:
+                    *sp++ = *fieldTable[*(int*)ip].StaticAddress;
+                    ip += 4;
+                    goto Dispatch;
+
+                case OpCode.StaticFieldSet:
+                    *fieldTable[*(ushort*)ip].StaticAddress = *--sp;
+                    ip += 2;
+                    goto Dispatch;
+
+                case OpCode.StaticFieldSetX:
+                    *fieldTable[*(int*)ip].StaticAddress = *--sp;
+                    ip += 4;
+                    goto Dispatch;
+                #endregion
+
+                #region Closure Operations
+                case OpCode.NewClosure:
+                {
+                    var target = methodTable[*(ushort*)ip];
+                    int captureCount = ip[2];
+                    ip += 3;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var captures = captureCount > 0 ? new SurtrValue[captureCount] : Array.Empty<SurtrValue>();
+                    sp -= captureCount;
+                    for (int i = 0; i < captureCount; i++)
+                        captures[i] = SurtrValue.FromRaw(sp[i]);
+
+                    SurtrRef reference = context.EntityRegistry.Register(
+                        new SurtrClosure(target.ToSignature(), target, captures));
+                    entities = context.EntityRegistry.Entities;
+
+                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.NewClosureX:
+                {
+                    var target = methodTable[*(int*)ip];
+                    int captureCount = ip[4];
+                    ip += 5;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var captures = captureCount > 0 ? new SurtrValue[captureCount] : Array.Empty<SurtrValue>();
+                    sp -= captureCount;
+                    for (int i = 0; i < captureCount; i++)
+                        captures[i] = SurtrValue.FromRaw(sp[i]);
+
+                    SurtrRef reference = context.EntityRegistry.Register(
+                        new SurtrClosure(target.ToSignature(), target, captures));
+                    entities = context.EntityRegistry.Entities;
+
+                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+                #endregion
+
+                #region Upvalue Operations
+                case OpCode.UpValueGet:
+                    *sp++ = closure!.UpValues[*ip++].Raw;
+                    goto Dispatch;
+                #endregion
+
+                #region Control Flow Operations
+                case OpCode.JPZ:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    if ((uint)*--sp == 0) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPNZ:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    if ((uint)*--sp != 0) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPN:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    if ((uint)*--sp == 0) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPNN:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    if ((uint)*--sp != 0) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JP:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2 + offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPZX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    if ((uint)*--sp == 0) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPNZX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    if ((uint)*--sp != 0) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPNX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    if ((uint)*--sp == 0) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPNNX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    if ((uint)*--sp != 0) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4 + offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPEQ:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    if ((int)sp[0] == (int)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPFEQ:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    if (((double*)sp)[0] == ((double*)sp)[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPREQ:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    if ((uint)sp[0] == (uint)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPStrEQ:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    uint left = (uint)sp[0];
+                    uint right = (uint)sp[1];
+                    if (left == right
+                        || (left != 0 && right != 0
+                            && ((SurtrString)entities[(SurtrRef)left]!).TextEquals((SurtrString)entities[(SurtrRef)right]!)))
+                        ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPEQX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    if ((int)sp[0] == (int)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPFEQX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    if (((double*)sp)[0] == ((double*)sp)[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPREQX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    if ((uint)sp[0] == (uint)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPStrEQX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    uint left = (uint)sp[0];
+                    uint right = (uint)sp[1];
+                    if (left == right
+                        || (left != 0 && right != 0
+                            && ((SurtrString)entities[(SurtrRef)left]!).TextEquals((SurtrString)entities[(SurtrRef)right]!)))
+                        ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPNE:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    if ((int)sp[0] != (int)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPFNE:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    if (((double*)sp)[0] != ((double*)sp)[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPRNE:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    if ((uint)sp[0] != (uint)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPStrNE:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    uint left = (uint)sp[0];
+                    uint right = (uint)sp[1];
+                    if (!(left == right
+                        || (left != 0 && right != 0
+                            && ((SurtrString)entities[(SurtrRef)left]!).TextEquals((SurtrString)entities[(SurtrRef)right]!))))
+                        ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPNEX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    if ((int)sp[0] != (int)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPFNEX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    if (((double*)sp)[0] != ((double*)sp)[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPRNEX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    if ((uint)sp[0] != (uint)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPStrNEX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    uint left = (uint)sp[0];
+                    uint right = (uint)sp[1];
+                    if (!(left == right
+                        || (left != 0 && right != 0
+                            && ((SurtrString)entities[(SurtrRef)left]!).TextEquals((SurtrString)entities[(SurtrRef)right]!))))
+                        ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPGT:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    if ((int)sp[0] > (int)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPFGT:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    if (((double*)sp)[0] > ((double*)sp)[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPGTX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    if ((int)sp[0] > (int)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPFGTX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    if (((double*)sp)[0] > ((double*)sp)[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPGE:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    if ((int)sp[0] >= (int)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPFGE:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    if (((double*)sp)[0] >= ((double*)sp)[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPGEX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    if ((int)sp[0] >= (int)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPFGEX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    if (((double*)sp)[0] >= ((double*)sp)[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPLT:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    if ((int)sp[0] < (int)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPFLT:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    if (((double*)sp)[0] < ((double*)sp)[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPLTX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    if ((int)sp[0] < (int)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPFLTX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    if (((double*)sp)[0] < ((double*)sp)[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPLE:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    if ((int)sp[0] <= (int)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPFLE:
+                {
+                    short offset = *(short*)ip;
+                    ip += 2;
+                    sp -= 2;
+                    if (((double*)sp)[0] <= ((double*)sp)[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPLEX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    if ((int)sp[0] <= (int)sp[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPFLEX:
+                {
+                    int offset = *(int*)ip;
+                    ip += 4;
+                    sp -= 2;
+                    if (((double*)sp)[0] <= ((double*)sp)[1]) ip += offset;
+                    goto Dispatch;
+                }
+
+                case OpCode.JPInstanceOf:
+                {
+                    var target = typeTable[*(ushort*)ip].ResolvedType!;
+                    short offset = *(short*)(ip + 2);
+                    ip += 4;
+
+                    SurtrRef subject = (SurtrRef)(*--sp);
+                    if (subject != 0)
+                    {
+                        var subjectClass = ((SurtrObject)entities[subject]!).Class;
+                        bool matches = target.Kind == SurtrMemberKind.Interface
+                            ? subjectClass.Implements((SurtrInterface)target)
+                            : subjectClass.IsSubclassOf((SurtrClass)target);
+
+                        if (matches) ip += offset;
+                    }
+
+                    goto Dispatch;
+                }
+
+                case OpCode.JPInstanceOfX:
+                {
+                    var target = typeTable[*(int*)ip].ResolvedType!;
+                    int offset = *(int*)(ip + 4);
+                    ip += 8;
+
+                    SurtrRef subject = (SurtrRef)(*--sp);
+                    if (subject != 0)
+                    {
+                        var subjectClass = ((SurtrObject)entities[subject]!).Class;
+                        bool matches = target.Kind == SurtrMemberKind.Interface
+                            ? subjectClass.Implements((SurtrInterface)target)
+                            : subjectClass.IsSubclassOf((SurtrClass)target);
+
+                        if (matches) ip += offset;
+                    }
+
+                    goto Dispatch;
+                }
+
+                case OpCode.Switch:
+                {
+                    // Offsets are measured from the opcode byte, which a variable-length
+                    // instruction has no fixed "next address" to replace.
+                    byte* instruction = ip - 1;
+                    int low = *(int*)ip;
+                    int count = *(int*)(ip + 4);
+                    int* targets = (int*)(ip + 12);
+
+                    int index = (int)*--sp - low;
+                    ip = instruction + ((uint)index < (uint)count ? targets[index] : *(int*)(ip + 8));
+                    goto Dispatch;
+                }
+
+                case OpCode.SwitchLookup:
+                {
+                    byte* instruction = ip - 1;
+                    int count = *(int*)ip;
+                    int target = *(int*)(ip + 4);
+                    int* table = (int*)(ip + 8);
+
+                    int value = (int)*--sp;
+                    int low = 0;
+                    int high = count - 1;
+                    while (low <= high)
+                    {
+                        int middle = (int)((uint)(low + high) >> 1);
+                        int key = table[middle * 2];
+
+                        if (key == value)
+                        {
+                            target = table[middle * 2 + 1];
+                            break;
+                        }
+
+                        if (key < value) low = middle + 1;
+                        else high = middle - 1;
+                    }
+
+                    ip = instruction + target;
+                    goto Dispatch;
+                }
+                #endregion
+
+                #region Call Operations
+                case OpCode.CallLocalModule:
+                    pendingMethod = methodTable[*(ushort*)ip];
+                    ip += 2;
+                    pendingArguments = *ip++;
+                    pendingResults = *ip++;
+                    pendingClosure = null;
+                    goto InvokeResolved;
+
+                case OpCode.CallLocalModuleX:
+                    pendingMethod = methodTable[*(int*)ip];
+                    ip += 4;
+                    pendingArguments = *ip++;
+                    pendingResults = *ip++;
+                    pendingClosure = null;
+                    goto InvokeResolved;
+
+                case OpCode.CallModule:
+                {
+                    var target = moduleTable[*(ushort*)ip];
+                    pendingMethod = target.Chunk.MethodTable[*(ushort*)(ip + 2)];
+                    ip += 4;
+                    pendingArguments = *ip++;
+                    pendingResults = *ip++;
+                    pendingClosure = null;
+                    goto InvokeResolved;
+                }
+
+                case OpCode.CallModuleX:
+                {
+                    var target = moduleTable[*(int*)ip];
+                    pendingMethod = target.Chunk.MethodTable[*(int*)(ip + 4)];
+                    ip += 8;
+                    pendingArguments = *ip++;
+                    pendingResults = *ip++;
+                    pendingClosure = null;
+                    goto InvokeResolved;
+                }
+
+                case OpCode.CallGlobalNative:
+                {
+                    var function = context.Globals.FunctionTable[*(ushort*)ip];
+                    ip += 2;
+                    int argumentCount = *ip++;
+                    int resultCount = *ip++;
+
+                    SurtrRawValue* argumentBase = sp - argumentCount;
+
+                    // Published before the transfer, so a collection triggered inside host code sees
+                    // the arguments as live and a re-entrant call knows where the stack really is.
+                    _sp = sp;
+                    current.IP = ip;
+
+                    SurtrValue nativeResult = function.EntryPoint
+                        .Invoke(new SurtrCallArguments(runtime, argumentBase, argumentCount));
+
+                    sp = argumentBase;
+                    if (resultCount != 0) *sp++ = nativeResult.Raw;
+                    _sp = sp;
+
+                    entities = context.EntityRegistry.Entities;
+                    globals = context.Globals.VariableTable.Pointer;
+                    goto Dispatch;
+                }
+
+                case OpCode.CallGlobalNativeX:
+                {
+                    var function = context.Globals.FunctionTable[*(int*)ip];
+                    ip += 4;
+                    int argumentCount = *ip++;
+                    int resultCount = *ip++;
+
+                    SurtrRawValue* argumentBase = sp - argumentCount;
+
+                    _sp = sp;
+                    current.IP = ip;
+
+                    SurtrValue nativeResult = function.EntryPoint
+                        .Invoke(new SurtrCallArguments(runtime, argumentBase, argumentCount));
+
+                    sp = argumentBase;
+                    if (resultCount != 0) *sp++ = nativeResult.Raw;
+                    _sp = sp;
+
+                    entities = context.EntityRegistry.Entities;
+                    globals = context.Globals.VariableTable.Pointer;
+                    goto Dispatch;
+                }
+                #endregion
+
+                #region Method Operations
+                case OpCode.InvokeVirtual:
+                {
+                    var declared = methodTable[*(ushort*)ip];
+                    ip += 2;
+                    pendingArguments = *ip++;
+                    pendingResults = *ip++;
+
+                    // The receiver is argument 0, which is what makes the frame base one subtraction
+                    // regardless of whether a call has a receiver at all.
+                    var receiver = (SurtrObject)entities[(SurtrRef)(*(sp - pendingArguments))]!;
+                    pendingMethod = receiver.Class.VirtualMethods[declared.VTableSlot];
+                    pendingClosure = null;
+                    goto InvokeResolved;
+                }
+
+                case OpCode.InvokeSpecial:
+                    pendingMethod = methodTable[*(ushort*)ip];
+                    ip += 2;
+                    pendingArguments = *ip++;
+                    pendingResults = *ip++;
+                    pendingClosure = null;
+                    goto InvokeResolved;
+
+                case OpCode.InvokeStatic:
+                    pendingMethod = methodTable[*(ushort*)ip];
+                    ip += 2;
+                    pendingArguments = *ip++;
+                    pendingResults = *ip++;
+                    pendingClosure = null;
+                    goto InvokeResolved;
+
+                case OpCode.InvokeStaticX:
+                    pendingMethod = methodTable[*(int*)ip];
+                    ip += 4;
+                    pendingArguments = *ip++;
+                    pendingResults = *ip++;
+                    pendingClosure = null;
+                    goto InvokeResolved;
+
+                case OpCode.InvokeInterface:
+                {
+                    var declared = methodTable[*(ushort*)ip];
+                    ip += 2;
+                    pendingArguments = *ip++;
+                    pendingResults = *ip++;
+
+                    var receiverClass = ((SurtrObject)entities[(SurtrRef)(*(sp - pendingArguments))]!).Class;
+                    var contract = (SurtrInterface)declared.DeclaringType!.ResolvedType!;
+
+                    // One extra indirection over a virtual call: the interface's block in the
+                    // class's dispatch table maps the contract's slot onto a vtable index, so an
+                    // override reached through the vtable applies here for free.
+                    int contractIndex = receiverClass.IndexOfInterface(contract);
+                    int vtableSlot = receiverClass.InterfaceMethodSlots[
+                        receiverClass.InterfaceSlotOffsets[contractIndex] + declared.VTableSlot];
+
+                    pendingMethod = receiverClass.VirtualMethods[vtableSlot];
+                    pendingClosure = null;
+                    goto InvokeResolved;
+                }
+
+                case OpCode.InvokeClosure:
+                {
+                    int argumentCount = *ip++;
+                    pendingResults = *ip++;
+
+                    SurtrRawValue* target = sp - argumentCount - 1;
+                    var invoked = (SurtrClosure)entities[(SurtrRef)(*target)]!;
+
+                    // The closure sits one slot below its arguments, and the frame it is about to
+                    // enter has to start at argument 0. Sliding the arguments down over it is one
+                    // move per argument; the alternative - keeping the slot and fixing the stack up
+                    // on return - would pay on every return path instead of here. The closure stays
+                    // rooted through the frame's entry in _roots, which is why dropping the only
+                    // stack reference to it is safe.
+                    for (int i = 0; i < argumentCount; i++)
+                        target[i] = target[i + 1];
+
+                    sp--;
+
+                    pendingMethod = invoked.Method;
+                    pendingClosure = invoked;
+                    pendingArguments = argumentCount;
+                    goto InvokeResolved;
+                }
+                #endregion
+
+                #region Exception Operations
+                case OpCode.Throw:
+                {
+                    current.IP = ip;
+                    SurtrRef raised = (SurtrRef)(*--sp);
+                    _sp = sp;
+
+                    // No CLR exception while a handler is in reach: the search either lands on one
+                    // in this run, or the throw leaves as an exception for the run below.
+                    if (TryEnterHandler(raised, entryDepth))
+                        goto LoadFrame;
+
+                    throw Uncaught(raised, entities);
+                }
+                #endregion
+
+                #region Return Operations
+                case OpCode.ReturnVoid:
+                {
+                    int depth = _frameCount - 1;
+                    ref SurtrCallFrame finished = ref frames[depth];
+
+                    sp = finished.Base;
+                    int expected = finished.ExpectedResults;
+
+                    // A dead frame must not keep its chunk, method or closure alive.
+                    finished.Chunk = null;
+                    finished.Method = null;
+                    finished.Closure = null;
+                    roots[depth + 1] = 0;
+                    _frameCount = depth;
+
+                    if (depth == entryDepth)
+                    {
+                        _sp = sp;
+                        return SurtrValue.Null;
+                    }
+
+                    if (expected != 0) *sp++ = SurtrValue.TagMaskReference;
+                    _sp = sp;
+                    goto LoadFrame;
+                }
+
+                case OpCode.ReturnValue:
+                {
+                    SurtrRawValue result = *(sp - 1);
+                    int depth = _frameCount - 1;
+                    ref SurtrCallFrame finished = ref frames[depth];
+
+                    sp = finished.Base;
+                    int expected = finished.ExpectedResults;
+
+                    finished.Chunk = null;
+                    finished.Method = null;
+                    finished.Closure = null;
+                    roots[depth + 1] = 0;
+                    _frameCount = depth;
+
+                    if (depth == entryDepth)
+                    {
+                        _sp = sp;
+                        return SurtrValue.FromRaw(result);
+                    }
+
+                    if (expected != 0) *sp++ = result;
+                    _sp = sp;
+                    goto LoadFrame;
+                }
+                #endregion
+
+                default:
+                    current.IP = ip;
+                    _sp = sp;
+                    throw InvalidOpCode(*(ip - 1));
+            }
+
+        // ---- Shared call sequences ------------------------------------------------------------
+        // Reached by goto, never by a call: the operands arrive in the pending* locals, so every
+        // call opcode shares one copy of this without paying a call's prologue, epilogue or
+        // register spills. The branch on ImplKind is why there is no separate opcode for calling
+        // host code - a virtual call can land on a native override, so the test has to exist here
+        // regardless, and it predicts perfectly at any one call site.
+
+        InvokeResolved:
+            if (pendingMethod.ImplKind == SurtrMethodImplKind.Native)
+            {
+                SurtrRawValue* nativeArgumentBase = sp - pendingArguments;
+
+                _sp = sp;
+                current.IP = ip;
+
+                SurtrValue resolvedResult = pendingClosure is null
+                    ? ((SurtrNativeMethodInfo)pendingMethod).EntryPoint
+                        .Invoke(new SurtrCallArguments(runtime, nativeArgumentBase, pendingArguments))
+                    : pendingClosure.EntryPoint
+                        .Invoke(new SurtrCallArguments(runtime, nativeArgumentBase, pendingArguments));
+
+                sp = nativeArgumentBase;
+                if (pendingResults != 0) *sp++ = resolvedResult.Raw;
+                _sp = sp;
+
+                entities = context.EntityRegistry.Entities;
+                globals = context.Globals.VariableTable.Pointer;
+                goto Dispatch;
+            }
+
+            {
+                var target = (SurtrBytecodeMethodInfo)pendingMethod;
+
+                int depth = _frameCount;
+                if (depth == maxDepth)
+                {
+                    current.IP = ip;
+                    _sp = sp;
+                    throw CallStackOverflow(maxDepth);
+                }
+
+                SurtrRawValue* newBase = sp - pendingArguments;
+                int localCount = target.LocalCount;
+
+                // The only stack-overflow check in the whole interpreter: the callee's own high
+                // water mark is known at compile time, so nothing has to be checked per push.
+                if (newBase + localCount + target.MaxStackSize > stackLimit)
+                {
+                    current.IP = ip;
+                    _sp = sp;
+                    throw DataStackOverflow();
+                }
+
+                // Locals above the incoming arguments are zeroed, so a collection can never read a
+                // slot the program has not written and retain whatever the last call left there.
+                if (localCount > pendingArguments)
+                    MemOps.Clear(newBase + pendingArguments, (nuint)(localCount - pendingArguments) * sizeof(SurtrRawValue));
+
+                current.IP = ip;
+
+                var targetChunk = target.Chunk;
+                byte* targetCodeBase = targetChunk.Code.Pointer;
+
+                ref SurtrCallFrame entered = ref frames[depth];
+                entered.Base = newBase;
+                entered.CodeBase = targetCodeBase;
+                entered.IP = targetCodeBase + target.CodeOffset;
+                entered.Chunk = targetChunk;
+                entered.Method = target;
+                entered.Closure = pendingClosure;
+                entered.LocalCount = localCount;
+                entered.ArgumentCount = pendingArguments;
+                entered.ExpectedResults = pendingResults;
+
+                roots[depth + 1] = pendingClosure is null
+                    ? 0
+                    : SurtrValue.TagMaskReference | (uint)pendingClosure.GetSurtrReference();
+
+                _frameCount = depth + 1;
+
+                _sp = newBase + localCount;
+                goto LoadFrame;
+            }
+        }
+
+        /// <summary>
+        /// The correctly tagged zero for a type family, or <c>0</c> where a zeroed slot is already
+        /// right.
+        /// </summary>
+        /// <remarks>
+        /// Floats and references need nothing: <c>0.0</c> is all-zero bits, and the interpreter
+        /// reads a reference from its payload, so an untagged zero already means null. Integers,
+        /// booleans and characters read correctly from a zeroed slot too, but their <em>tag</em>
+        /// would be wrong - which a native function or a box would notice - so those are filled in.
+        /// </remarks>
+        private static SurtrRawValue ZeroOf(SurtrValueTypeCode elementType) => elementType switch
+        {
+            SurtrValueTypeCode.Integer => SurtrValue.TagMaskInt,
+            SurtrValueTypeCode.Boolean => SurtrValue.TagMaskBool,
+            SurtrValueTypeCode.Character => SurtrValue.TagMaskChar,
+            _ => 0,
+        };
+        #endregion
+
+        #region Traps
+        // Every one of these is off the hot path by construction: the interpreter only branches here
+        // on failure, and NoInlining keeps their bodies - message formatting and all - out of the
+        // dispatch loop's register allocation. They are raised as CLR exceptions rather than
+        // unwound directly, so a trap and a host exception reach Surtr's handler tables by exactly
+        // one path.
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException IndexOutOfRange(int index, int length, string kind)
+            => new SurtrExecutionException($"Index {index} is outside the {kind}, which holds {length} element(s).");
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException EmptyArray()
+            => new SurtrExecutionException("Cannot remove the last element of an empty array.");
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException IntegerDivision(int left, int right)
+            => new SurtrExecutionException(right == 0
+                ? "Integer division by zero."
+                : $"Integer division of {left} by {right} has no representable result.");
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException NegativeExponent(int exponent)
+            => new SurtrExecutionException($"Integer exponentiation needs a non-negative exponent, but was given {exponent}.");
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException MissingKey()
+            => new SurtrExecutionException("The dictionary holds no entry under that key.");
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException InvalidCast(string fromName, string toName)
+            => new SurtrExecutionException($"A '{fromName}' cannot be cast to '{toName}'.");
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException InvalidOpCode(byte opCode)
+            => new SurtrExecutionException($"0x{opCode:X2} is not a valid opcode.");
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException CallStackOverflow(int maxDepth)
+            => new SurtrExecutionException($"Call stack overflow: more than {maxDepth} nested calls.");
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException DataStackOverflow()
+            => new SurtrExecutionException("Data stack overflow: the machine's value stack is full.");
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrThrownException Uncaught(SurtrRef raised, SurtrRuntimeEntity?[] entities)
+        {
+            var raisedObject = raised == 0 ? null : entities[raised] as SurtrObject;
+            return new SurtrThrownException(raised, raisedObject is null ? "null" : raisedObject.Class.Name);
+        }
+        #endregion
+
+        /// <summary>Releases the machine's data stack.</summary>
+        public void Dispose()
+        {
+            ReleaseResources();
+            GC.SuppressFinalize(this);
+        }
+
+        private void ReleaseResources()
+        {
+            if (_disposed)
+                return;
+
+            _disposed = true;
+
+            MemOps.Free(_stack);
+            _stack = null;
+            _stackLimit = null;
+            _sp = null;
+            _frameCount = 0;
+        }
+    }
+}

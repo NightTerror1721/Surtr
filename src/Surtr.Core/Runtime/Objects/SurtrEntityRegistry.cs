@@ -10,6 +10,36 @@ namespace Surtr.Runtime.Objects
 {
     using Age = byte;
 
+    /// <summary>
+    /// One block of statically allocated slots a collection has to trace: a class's static fields,
+    /// or a module's variables.
+    /// </summary>
+    /// <remarks>
+    /// Static storage is unmanaged and reachable from no object, so nothing else in the heap points
+    /// at it. Unless a collection walks it explicitly, anything a static field is the only owner of
+    /// would be swept out from under a running program. Registered once per linked type, and shaped
+    /// like the host global table for the same reason: the slots that can hold a reference are
+    /// known from declared types, so the walk marks unconditionally instead of tag-testing.
+    /// </remarks>
+    internal readonly unsafe struct SurtrStaticBlock
+    {
+        /// <summary>The block's slots.</summary>
+        internal readonly SurtrRawValue* Values;
+
+        /// <summary>Which of those slots hold a reference.</summary>
+        internal readonly int* ReferenceSlots;
+
+        /// <summary>How many entries <see cref="ReferenceSlots"/> has.</summary>
+        internal readonly int ReferenceSlotCount;
+
+        internal SurtrStaticBlock(SurtrRawValue* values, int* referenceSlots, int referenceSlotCount)
+        {
+            Values = values;
+            ReferenceSlots = referenceSlots;
+            ReferenceSlotCount = referenceSlotCount;
+        }
+    }
+
     internal unsafe struct SurtrEntityRegistry : IRuntimeResource<int>
     {
         private const int InitialMarkStackCapacity = 16;
@@ -181,6 +211,10 @@ namespace Surtr.Runtime.Objects
         /// <c>table.ReferenceVariableSlots.Pointer</c>.
         /// </param>
         /// <param name="globalReferenceSlotCount">How many entries <paramref name="globalReferenceSlots"/> has.</param>
+        /// <param name="staticBlocks">
+        /// The static storage of every linked class and module - see <see cref="SurtrStaticBlock"/>.
+        /// Nothing in the heap points at these, so they have to be walked explicitly.
+        /// </param>
         /// <param name="explicitRoots">
         /// Anything else the caller is keeping alive that is not in one of the tables above -
         /// values held by in-flight native calls, host-side pins, and so on.
@@ -209,6 +243,7 @@ namespace Surtr.Runtime.Objects
             SurtrRawValue* globalVariables,
             int* globalReferenceSlots,
             int globalReferenceSlotCount,
+            ReadOnlySpan<SurtrStaticBlock> staticBlocks,
             ReadOnlySpan<SurtrRawValue> explicitRoots,
             bool fullCollection)
         {
@@ -226,6 +261,13 @@ namespace Surtr.Runtime.Objects
 
             for (int i = 0; i < globalReferenceSlotCount; i++)
                 Mark((SurtrRef)globalVariables[globalReferenceSlots[i]]);
+
+            for (int i = 0; i < staticBlocks.Length; i++)
+            {
+                var block = staticBlocks[i];
+                for (int s = 0; s < block.ReferenceSlotCount; s++)
+                    Mark((SurtrRef)block.Values[block.ReferenceSlots[s]]);
+            }
 
             fixed (SurtrRawValue* rootStartRef = explicitRoots)
             {

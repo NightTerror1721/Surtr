@@ -1,6 +1,7 @@
 #nullable enable
 
 using Surtr.Runtime.Objects;
+using Surtr.Runtime.Utilities;
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
@@ -32,6 +33,32 @@ namespace Surtr.Runtime.Classes
         private bool _loaded;
         private SurtrBuildState _buildState;
 
+        #region Runtime Access Tables
+        // A module is the outermost declaration scope, and Surtr has no true globals, so a
+        // module-level variable *is* a static - it just belongs to the module rather than to a
+        // class. These tables are therefore the exact counterparts of SurtrClass's, built by the
+        // same linker pass, so `StaticFieldGet` reaches a module variable and a class static
+        // through one code path.
+
+        /// <summary>Module-level variables in slot order, indexed by <see cref="SurtrFieldInfo.Slot"/>.</summary>
+        internal SurtrFieldInfo[] StaticFields;
+
+        /// <summary>Backing storage for <see cref="StaticFields"/>.</summary>
+        internal SurtrNativeArray<SurtrRawValue> StaticStorage;
+
+        /// <summary>Which slots of <see cref="StaticStorage"/> hold a reference, and so have to be traced.</summary>
+        internal SurtrNativeArray<int> ReferenceStaticSlots;
+
+        /// <summary>Module-level methods, flattened out of the name-keyed overload groups.</summary>
+        internal SurtrMethodInfo[] Functions;
+
+        /// <summary>
+        /// This module's parameterless static initializer, or <see langword="null"/> if it declares
+        /// none. Run once when the module is loaded, after every class in it has been initialized.
+        /// </summary>
+        internal SurtrMethodInfo? StaticInitializer;
+        #endregion
+
         /// <summary>Creates an empty module with the given dot-separated path.</summary>
         public SurtrModule(string path)
         {
@@ -44,6 +71,9 @@ namespace Surtr.Runtime.Classes
             _methods = new Dictionary<string, SurtrMethodInfo[]>(StringComparer.Ordinal);
             _classes = new Dictionary<string, SurtrClass>(StringComparer.Ordinal);
             _interfaces = new Dictionary<string, SurtrInterface>(StringComparer.Ordinal);
+
+            StaticFields = Array.Empty<SurtrFieldInfo>();
+            Functions = Array.Empty<SurtrMethodInfo>();
         }
 
         /// <summary>The module's dot-separated path, as it appears before the <see cref="SurtrClassReference.ModuleSeparator"/> in a full name.</summary>
@@ -268,6 +298,8 @@ namespace Surtr.Runtime.Classes
             foreach (var type in _classes.Values)
                 type.Dispose();
 
+            StaticStorage.Dispose();
+            ReferenceStaticSlots.Dispose();
             _chunk.Dispose();
         }
     }

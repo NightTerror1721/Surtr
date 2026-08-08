@@ -101,6 +101,22 @@ namespace Surtr.Runtime.Classes
         internal SurtrNativeArray<SurtrRawValue> StaticStorage;
 
         /// <summary>
+        /// Which slots of <see cref="StaticStorage"/> hold a reference, in ascending order.
+        /// </summary>
+        /// <remarks>
+        /// The static counterpart of <see cref="ReferenceSlots"/>, and it exists for a harder
+        /// reason: static storage is unmanaged and reachable from no object, so unless a collection
+        /// walks it explicitly, anything a static field is the sole owner of would be swept.
+        /// </remarks>
+        internal SurtrNativeArray<int> ReferenceStaticSlots;
+
+        /// <summary>
+        /// This class's parameterless static initializer, or <see langword="null"/> if it declares
+        /// none. Run once when the declaring module is loaded.
+        /// </summary>
+        internal SurtrMethodInfo? StaticInitializer;
+
+        /// <summary>
         /// Virtual method table, indexed by <see cref="SurtrMethodInfo.VTableSlot"/>. Inherited
         /// slots keep their index and an override replaces the entry in place, which is what
         /// makes a virtual call one load plus an indirect jump.
@@ -387,6 +403,7 @@ namespace Surtr.Runtime.Classes
 
             ReferenceSlots.Dispose();
             StaticStorage.Dispose();
+            ReferenceStaticSlots.Dispose();
             InterfaceSlotOffsets.Dispose();
             InterfaceMethodSlots.Dispose();
 

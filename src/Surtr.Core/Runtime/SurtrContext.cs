@@ -74,6 +74,20 @@ namespace Surtr.Runtime
         internal int RootCount;
 
         /// <summary>
+        /// The static storage of every class and module linked into this runtime, so a collection
+        /// can trace it.
+        /// </summary>
+        /// <remarks>
+        /// Registered at link time rather than discovered per collection: walking every loaded
+        /// module's class tree to find the storage would turn a constant-time hand-off into a tree
+        /// walk on every collection, and the set only ever grows when a module is loaded.
+        /// </remarks>
+        internal SurtrStaticBlock[] StaticBlocks;
+
+        /// <summary>How many entries of <see cref="StaticBlocks"/> are live.</summary>
+        internal int StaticBlockCount;
+
+        /// <summary>
         /// Hands out the dense interface ids the linker assigns, across every module and native
         /// class this context links, so two interfaces from different modules never collide.
         /// </summary>
@@ -101,11 +115,33 @@ namespace Surtr.Runtime
 
             Roots = new SurtrRawValue[InitialRootCapacity];
             RootCount = 0;
+            StaticBlocks = new SurtrStaticBlock[InitialRootCapacity];
+            StaticBlockCount = 0;
             NextInterfaceId = 0;
 
             // Only after every allocation above has succeeded, so a failed init cannot leave a
             // half-alive context behind - the same rule the registry follows.
             ResourceState = RuntimeResourceState.Initialized;
+        }
+
+        /// <summary>Registers a block of static storage for the collector to trace.</summary>
+        /// <remarks>Blocks holding no reference-typed slot are skipped: tracing one would visit nothing.</remarks>
+        internal void AddStaticBlock(SurtrRawValue* values, int* referenceSlots, int referenceSlotCount)
+        {
+            if (referenceSlotCount == 0)
+                return;
+
+            if (StaticBlockCount == StaticBlocks.Length)
+                Array.Resize(ref StaticBlocks, StaticBlocks.Length * 2);
+
+            StaticBlocks[StaticBlockCount++] = new SurtrStaticBlock(values, referenceSlots, referenceSlotCount);
+        }
+
+        /// <summary>The live prefix of <see cref="StaticBlocks"/>, ready to pass to the collector.</summary>
+        internal readonly ReadOnlySpan<SurtrStaticBlock> LiveStaticBlocks
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => new ReadOnlySpan<SurtrStaticBlock>(StaticBlocks, 0, StaticBlockCount);
         }
 
         /// <summary>Adds a raw reference to the permanent root set.</summary>
@@ -193,6 +229,10 @@ namespace Surtr.Runtime
             InternedStrings?.Clear();
             Roots = Array.Empty<SurtrRawValue>();
             RootCount = 0;
+
+            // The blocks point into storage the modules and classes above have just released.
+            StaticBlocks = Array.Empty<SurtrStaticBlock>();
+            StaticBlockCount = 0;
 
             ResourceState = RuntimeResourceState.Disposed;
         }

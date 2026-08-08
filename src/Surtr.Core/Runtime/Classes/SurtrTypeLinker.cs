@@ -61,8 +61,72 @@ namespace Surtr.Runtime.Classes
             foreach (var type in module.Classes)
                 LinkClass(type, ref nextInterfaceId);
 
+            LinkModuleMembers(module);
+
             module.Chunk.MarkBuilt();
             module.MarkBuilt();
+        }
+
+        /// <summary>
+        /// Lays out a module's own fields and methods.
+        /// </summary>
+        /// <remarks>
+        /// A module is a declaration scope like a class, minus inheritance: it has no base to
+        /// inherit slots from and no vtable, so every field is a static and every method is
+        /// directly bound. Skipping this step is what used to leave module-level members with no
+        /// slot, no storage and no way to be reached from bytecode at all.
+        /// </remarks>
+        private static void LinkModuleMembers(SurtrModule module)
+        {
+            var staticFields = new List<SurtrFieldInfo>();
+
+            foreach (var field in module.Fields)
+            {
+                if (!field.IsStatic)
+                    throw new InvalidOperationException(
+                        $"Module-level variable '{module.Path}.{field.Name}' must be static; a module has no instances for an instance field to belong to.");
+
+                field.SlotIndex = staticFields.Count;
+                staticFields.Add(field);
+                field.MarkBuilt();
+            }
+
+            module.StaticFields = staticFields.ToArray();
+
+            module.StaticStorage.Dispose();
+            module.StaticStorage = new SurtrNativeArray<SurtrRawValue>(staticFields.Count, zeroed: true);
+            BindStaticStorage(staticFields, module.StaticStorage);
+
+            module.ReferenceStaticSlots.Dispose();
+            module.ReferenceStaticSlots = BuildStaticReferenceSlots(staticFields);
+
+            var functions = new List<SurtrMethodInfo>();
+            SurtrMethodInfo? initializer = null;
+
+            foreach (var overloads in module.Methods)
+            {
+                for (int i = 0; i < overloads.Length; i++)
+                {
+                    var method = overloads[i];
+
+                    if (method.IsVirtualDispatch)
+                        throw new InvalidOperationException(
+                            $"Module-level method '{module.Path}.{method.Name}' cannot be virtual or abstract; a module has no hierarchy to dispatch through.");
+
+                    if (method.Role == SurtrMethodRole.StaticInitializer)
+                        initializer = method;
+                    else
+                        functions.Add(method);
+
+                    method.MarkBuilt();
+                }
+            }
+
+            foreach (var property in module.Properties)
+                property.MarkBuilt();
+
+            module.Functions = functions.ToArray();
+            module.StaticInitializer = initializer;
         }
 
         /// <summary>Links a single interface and everything it extends.</summary>
@@ -110,7 +174,19 @@ namespace Surtr.Runtime.Classes
             foreach (var overloads in contract.Methods)
             {
                 for (int i = 0; i < overloads.Length; i++)
+                {
+                    // An interface method never occupies a class vtable slot, so VTableSlot is free
+                    // to carry its index in this contract's own numbering. That is what lets
+                    // InvokeInterface reach the class's dispatch table with two loads instead of
+                    // searching the contract for the method it already holds.
+                    //
+                    // Only methods this interface declares itself are numbered here: a method
+                    // inherited from an extended interface keeps the index its declaring interface
+                    // gave it, which is the one the call site's block in InterfaceMethodSlots is
+                    // laid out against.
+                    overloads[i].VTableSlot = seen[SignatureKey(overloads[i])];
                     overloads[i].MarkBuilt();
+                }
             }
 
             foreach (var property in contract.Properties)
@@ -235,6 +311,45 @@ namespace Surtr.Runtime.Classes
 
             type.StaticStorage.Dispose();
             type.StaticStorage = new SurtrNativeArray<SurtrRawValue>(staticFields.Count, zeroed: true);
+            BindStaticStorage(staticFields, type.StaticStorage);
+
+            type.ReferenceStaticSlots.Dispose();
+            type.ReferenceStaticSlots = BuildStaticReferenceSlots(staticFields);
+        }
+
+        /// <summary>
+        /// Hands every static field the address of its own slot, so reading one is an indirect load
+        /// rather than a test of where its owner keeps its storage.
+        /// </summary>
+        private static unsafe void BindStaticStorage(List<SurtrFieldInfo> staticFields, SurtrNativeArray<SurtrRawValue> storage)
+        {
+            for (int i = 0; i < staticFields.Count; i++)
+                staticFields[i].StaticAddress = storage.Pointer + staticFields[i].SlotIndex;
+        }
+
+        /// <summary>
+        /// Compacts the static slots a collection has to follow, the same way instance layout does
+        /// for <see cref="SurtrClass.ReferenceSlots"/>.
+        /// </summary>
+        private static SurtrNativeArray<int> BuildStaticReferenceSlots(List<SurtrFieldInfo> staticFields)
+        {
+            int referenceCount = 0;
+            for (int i = 0; i < staticFields.Count; i++)
+            {
+                if (staticFields[i].FieldType.Reference.TypeCode.IsReferenceType)
+                    referenceCount++;
+            }
+
+            var slots = new SurtrNativeArray<int>(referenceCount);
+
+            int next = 0;
+            for (int i = 0; i < staticFields.Count; i++)
+            {
+                if (staticFields[i].FieldType.Reference.TypeCode.IsReferenceType)
+                    slots[next++] = staticFields[i].SlotIndex;
+            }
+
+            return slots;
         }
 
         private static void BuildReferenceSlots(SurtrClass type, List<SurtrFieldInfo> instanceFields)
@@ -300,6 +415,7 @@ namespace Surtr.Runtime.Classes
 
                         case SurtrMethodRole.StaticInitializer:
                             staticMethods.Add(method);
+                            type.StaticInitializer = method;
                             method.MarkBuilt();
                             continue;
                     }

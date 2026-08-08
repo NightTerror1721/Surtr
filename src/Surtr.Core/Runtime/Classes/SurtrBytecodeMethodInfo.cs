@@ -20,6 +20,7 @@ namespace Surtr.Runtime.Classes
         private readonly int _codeOffset;
         private readonly int _localCount;
         private readonly int _maxStackSize;
+        private SurtrExceptionHandler[] _handlers = System.Array.Empty<SurtrExceptionHandler>();
 
         internal SurtrBytecodeMethodInfo(
             string name,
@@ -80,6 +81,25 @@ namespace Surtr.Runtime.Classes
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _codeOffset;
+        }
+
+        /// <summary>
+        /// This method's protected regions, in search order: innermost first, and a type-specific
+        /// handler ahead of a catch-all covering the same range. Empty for a method with no
+        /// <c>try</c>, which is the case the interpreter checks first.
+        /// </summary>
+        internal SurtrExceptionHandler[] Handlers
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _handlers;
+        }
+
+        /// <summary>Attaches this method's protected regions. Only the emitter calls this, before the module is linked.</summary>
+        /// <exception cref="System.InvalidOperationException">The method is already built.</exception>
+        public void SetExceptionHandlers(SurtrExceptionHandler[] handlers)
+        {
+            ThrowIfBuilt();
+            _handlers = handlers;
         }
 
         // Type references are handles owned by the module's table and the chunk is owned by the

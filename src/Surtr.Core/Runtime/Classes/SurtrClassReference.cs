@@ -39,6 +39,7 @@ namespace Surtr.Runtime.Classes
     ///             | 'L' '(' descriptor* ')' descriptor closure (params) -> return
     ///             | 'O' fullname ';'                   Surtr object type
     ///             | 'N' fullname ';'                   host-defined native type
+    ///             | 'E'                                erased generic type parameter
     /// fullname   := modulePath ':' typeName ('.' nestedTypeName)*
     /// </code>
     /// <para>
@@ -81,6 +82,18 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>Descriptor symbol for <see cref="SurtrValueTypeCode.Native"/>, followed by a full name and <see cref="NameTerminator"/>.</summary>
         public const char SymbolNative = 'N';
+
+        /// <summary>
+        /// Descriptor symbol for <see cref="SurtrValueTypeCode.Erased"/>: what a generic type
+        /// parameter is written as once the compiler has checked it away.
+        /// </summary>
+        /// <remarks>
+        /// Carries no name. Two different type parameters of the same class erase to the same
+        /// descriptor, exactly as they do on the JVM, because nothing at run time can tell them
+        /// apart or needs to - <c>E</c> says only "a reference whose type the compiler already
+        /// verified".
+        /// </remarks>
+        public const char SymbolErased = 'E';
 
         /// <summary>
         /// Descriptor symbol for <see cref="SurtrValueTypeCode.Void"/>. Only legal as the return
@@ -134,6 +147,26 @@ namespace Surtr.Runtime.Classes
             get => string.IsNullOrEmpty(_descriptor) ? SurtrValueTypeCode.Invalid : CodeOf(_descriptor![0]);
         }
 
+        /// <summary>
+        /// The type code of the component this descriptor nests directly - an array's element, a
+        /// dictionary's key - or <see cref="SurtrValueTypeCode.Invalid"/> if it nests nothing.
+        /// </summary>
+        /// <remarks>
+        /// Reads one character instead of slicing out a whole nested descriptor, which is what the
+        /// typed accessors do and what makes them allocate. The interpreter needs exactly this much
+        /// when it allocates an array: which family the elements belong to, so it can fill them with
+        /// that family's zero.
+        /// </remarks>
+        internal SurtrValueTypeCode NestedTypeCode
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get
+            {
+                string descriptor = Descriptor;
+                return descriptor.Length > 1 ? CodeOf(descriptor[1]) : SurtrValueTypeCode.Invalid;
+            }
+        }
+
         #region Primitive & Built-in Singletons
         /// <summary>A reference to the built-in integer type.</summary>
         public static SurtrClassReference Integer { get; } = new(SymbolInteger.ToString());
@@ -149,6 +182,9 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>A reference to the built-in string type.</summary>
         public static SurtrClassReference String { get; } = new(SymbolString.ToString());
+
+        /// <summary>A reference to an erased generic type parameter.</summary>
+        public static SurtrClassReference Erased { get; } = new(SymbolErased.ToString());
 
         /// <summary>The return reference of a method that returns nothing.</summary>
         public static SurtrClassReference Void { get; } = new(SymbolVoid.ToString());
@@ -294,6 +330,7 @@ namespace Surtr.Runtime.Classes
                 case SymbolBoolean:
                 case SymbolCharacter:
                 case SymbolString:
+                case SymbolErased:
                 case SymbolVoid:
                     return index + 1;
 
@@ -389,6 +426,7 @@ namespace Surtr.Runtime.Classes
             SymbolClosure => SurtrValueTypeCode.Closure,
             SymbolObject => SurtrValueTypeCode.Object,
             SymbolNative => SurtrValueTypeCode.Native,
+            SymbolErased => SurtrValueTypeCode.Erased,
             SymbolVoid => SurtrValueTypeCode.Void,
             _ => SurtrValueTypeCode.Invalid,
         };
@@ -419,6 +457,7 @@ namespace Surtr.Runtime.Classes
                 case SymbolBoolean: builder.Append("bool"); return index + 1;
                 case SymbolCharacter: builder.Append("char"); return index + 1;
                 case SymbolString: builder.Append("string"); return index + 1;
+                case SymbolErased: builder.Append('?'); return index + 1;
                 case SymbolVoid: builder.Append("void"); return index + 1;
 
                 case SymbolArray:
