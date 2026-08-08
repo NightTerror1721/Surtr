@@ -16,8 +16,4 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Folder Include="Bytecode\" />
-  </ItemGroup>
-
 </Project>

@@ -44,13 +44,25 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>A type defined by the embedding host rather than by Surtr source.</summary>
         Native      = 11,
+
+        /// <summary>
+        /// The absence of a value: the return "type" of a method that returns nothing.
+        /// </summary>
+        /// <remarks>
+        /// Only ever legal as a return type. Nothing can be declared of this type, no value ever
+        /// carries it, and it has no <c>SurtrClass</c> - it exists because every
+        /// <see cref="SurtrMethodInfo"/> needs a return descriptor and <c>ReturnVoid</c> methods
+        /// have nothing else to name. Appended after <see cref="Native"/> so the existing codes
+        /// keep their byte values.
+        /// </remarks>
+        Void        = 12,
     }
 
     /// <summary>Classification predicates and conversions for <see cref="SurtrValueTypeCode"/>.</summary>
     public static class SurtrValueTypeCodeExtensions
     {
         private const SurtrValueTypeCode MinValid = SurtrValueTypeCode.Integer;
-        private const SurtrValueTypeCode MaxValid = SurtrValueTypeCode.Native;
+        private const SurtrValueTypeCode MaxValid = SurtrValueTypeCode.Void;
 
         private const byte MinValue = (byte)MinValid;
         private const byte MaxValue = (byte)MaxValid;
@@ -74,6 +86,9 @@ namespace Surtr.Runtime.Classes
 
             /// <summary>Whether the code is <see cref="SurtrValueTypeCode.Native"/>.</summary>
             public bool IsNative => code == SurtrValueTypeCode.Native;
+
+            /// <summary>Whether the code is <see cref="SurtrValueTypeCode.Void"/>, and so names no value at all.</summary>
+            public bool IsVoid => code == SurtrValueTypeCode.Void;
 
 
             /// <summary>Whether values of this type are passed by value. Currently the same set as <c>IsPrimitive</c>.</summary>

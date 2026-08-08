@@ -1,5 +1,6 @@
 #nullable enable
 
+using Surtr.Runtime.Objects;
 using System;
 using System.Runtime.CompilerServices;
 
@@ -21,12 +22,26 @@ namespace Surtr.Runtime.Classes
     /// reverse-P/Invoke stub and no GC mode transition. The trade is that only managed static
     /// methods can be linked; a raw pointer into a C/C++ library is not callable this way.
     /// </para>
+    /// <para>
+    /// Because the convention is managed, the parameter can be an ordinary managed type rather
+    /// than an erased one, and it is: <see cref="SurtrCallArguments"/> carries the runtime itself
+    /// alongside the raw argument block, rather than the callee turning a <c>void*</c> back into
+    /// an object - which would cost a handle dereference and a type check on every call, and would
+    /// let a stray pointer through with no way to catch it. Reading an argument through it is
+    /// plain, safe C#: no <c>unsafe</c>, and no <c>AllowUnsafeBlocks</c> on the assembly that
+    /// declares the function, even though the type wraps a raw pointer internally.
+    /// </para>
     /// </remarks>
-    /// <param name="context">Opaque pointer to the calling VM state.</param>
-    /// <param name="arguments">Pointer to the first argument, laid out contiguously.</param>
-    /// <param name="argumentCount">How many arguments <paramref name="arguments"/> holds.</param>
-    /// <returns>The call's return value, or a null reference for functions returning nothing.</returns>
-    public unsafe delegate SurtrRawValue SurtrNativeFunction(void* context, SurtrRawValue* arguments, int argumentCount);
+    /// <param name="arguments">
+    /// The call's arguments, and the runtime the call is running inside. For an instance method,
+    /// argument 0 is the receiver.
+    /// </param>
+    /// <returns>
+    /// The call's return value. A function declared to return nothing still has to return
+    /// something down this one signature; by convention that is <see cref="SurtrValue.Null"/>,
+    /// which the caller discards.
+    /// </returns>
+    public delegate SurtrValue SurtrNativeFunction(SurtrCallArguments arguments);
 
     /// <summary>
     /// A callable host function address, however it was obtained.
@@ -88,15 +103,21 @@ namespace Surtr.Runtime.Classes
         /// function: it is resolved at compile time, needs no reflection, and is safe under AOT
         /// backends like IL2CPP.
         /// </summary>
+        /// <remarks>
+        /// Taking an address is itself an unsafe operation, so a host registering this way needs
+        /// <c>AllowUnsafeBlocks</c> on the registration code - but only there. The function bodies
+        /// stay safe, since <see cref="SurtrNativeFunction"/> has no pointer in its signature.
+        /// <see cref="FromDelegate"/> avoids even that, at the cost of reflection.
+        /// </remarks>
         /// <example>
         /// <code>
-        /// static SurtrRawValue Print(void* ctx, SurtrRawValue* args, int argc) { ... }
+        /// static SurtrValue Print(SurtrCallArguments args) { ... }
         /// var entry = SurtrNativeEntryPoint.FromFunctionPointer(&amp;Print);
         /// </code>
         /// </example>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static SurtrNativeEntryPoint FromFunctionPointer(
-            delegate*<void*, SurtrRawValue*, int, SurtrRawValue> functionPointer)
+            delegate*<SurtrCallArguments, SurtrValue> functionPointer)
             => new((IntPtr)functionPointer, null);
 
         /// <summary>
@@ -111,7 +132,8 @@ namespace Surtr.Runtime.Classes
         /// <summary>
         /// Links a delegate by resolving the static method behind it to a managed function
         /// pointer. A convenience over the typed <c>FromFunctionPointer</c> overload, useful when
-        /// the host builds its registration table dynamically.
+        /// the host builds its registration table dynamically or wants to stay entirely clear of
+        /// <c>unsafe</c>.
         /// </summary>
         /// <remarks>
         /// The delegate must wrap a single <see langword="static"/> method. An instance method or
@@ -153,7 +175,7 @@ namespace Surtr.Runtime.Classes
         /// <see cref="SurtrNativeFunction"/>, which is managed.
         /// </remarks>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public SurtrRawValue Invoke(void* context, SurtrRawValue* arguments, int argumentCount)
-            => ((delegate*<void*, SurtrRawValue*, int, SurtrRawValue>)_pointer)(context, arguments, argumentCount);
+        public SurtrValue Invoke(SurtrCallArguments arguments)
+            => ((delegate*<SurtrCallArguments, SurtrValue>)_pointer)(arguments);
     }
 }

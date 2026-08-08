@@ -82,6 +82,12 @@ namespace Surtr.Runtime.Classes
         /// <summary>Descriptor symbol for <see cref="SurtrValueTypeCode.Native"/>, followed by a full name and <see cref="NameTerminator"/>.</summary>
         public const char SymbolNative = 'N';
 
+        /// <summary>
+        /// Descriptor symbol for <see cref="SurtrValueTypeCode.Void"/>. Only legal as the return
+        /// descriptor of a closure descriptor - a parameter, field or element can never be void.
+        /// </summary>
+        public const char SymbolVoid = 'V';
+
         /// <summary>Terminates the full name that follows <see cref="SymbolObject"/> or <see cref="SymbolNative"/>.</summary>
         public const char NameTerminator = ';';
 
@@ -143,6 +149,9 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>A reference to the built-in string type.</summary>
         public static SurtrClassReference String { get; } = new(SymbolString.ToString());
+
+        /// <summary>The return reference of a method that returns nothing.</summary>
+        public static SurtrClassReference Void { get; } = new(SymbolVoid.ToString());
         #endregion
 
         #region Factories
@@ -285,6 +294,7 @@ namespace Surtr.Runtime.Classes
                 case SymbolBoolean:
                 case SymbolCharacter:
                 case SymbolString:
+                case SymbolVoid:
                     return index + 1;
 
                 case SymbolArray:
@@ -379,6 +389,7 @@ namespace Surtr.Runtime.Classes
             SymbolClosure => SurtrValueTypeCode.Closure,
             SymbolObject => SurtrValueTypeCode.Object,
             SymbolNative => SurtrValueTypeCode.Native,
+            SymbolVoid => SurtrValueTypeCode.Void,
             _ => SurtrValueTypeCode.Invalid,
         };
         #endregion
@@ -408,6 +419,7 @@ namespace Surtr.Runtime.Classes
                 case SymbolBoolean: builder.Append("bool"); return index + 1;
                 case SymbolCharacter: builder.Append("char"); return index + 1;
                 case SymbolString: builder.Append("string"); return index + 1;
+                case SymbolVoid: builder.Append("void"); return index + 1;
 
                 case SymbolArray:
                 {

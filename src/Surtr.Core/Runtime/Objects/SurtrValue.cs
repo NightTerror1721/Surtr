@@ -33,7 +33,16 @@ namespace Surtr.Runtime.Objects
         public const SurtrRef NullRef = 0;
 
 
-        [FieldOffset(0)] internal readonly SurtrRawValue Raw;
+        /// <summary>
+        /// The whole 8-byte pattern: tag plus payload, or a raw float.
+        /// </summary>
+        /// <remarks>
+        /// Public because this is the currency of the native boundary - a
+        /// <see cref="Surtr.Runtime.Classes.SurtrNativeFunction"/> is handed a
+        /// <c>SurtrRawValue*</c> and has to be able to box and unbox it without help from inside
+        /// the assembly. Pair it with <see cref="FromRaw"/> for the other direction.
+        /// </remarks>
+        [FieldOffset(0)] public readonly SurtrRawValue Raw;
 
         /// <summary>The value reinterpreted as a raw <see cref="SurtrFloat"/> bit pattern.</summary>
         [FieldOffset(0)] public readonly SurtrFloat AsFloat;
@@ -219,6 +228,13 @@ namespace Surtr.Runtime.Objects
         /// <summary>Creates an entity reference value from a raw <see cref="SurtrRef"/> id.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static SurtrValue CreateReference(SurtrRef value) => new(TagReference, (SurtrRawPayloadValue)value);
+
+        /// <summary>
+        /// Reinterprets an already-boxed 8-byte pattern as a value, without inspecting its tag.
+        /// The inverse of reading <see cref="Raw"/>.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static SurtrValue FromRaw(SurtrRawValue raw) => new(raw);
         #endregion
 
         #region Static Properties

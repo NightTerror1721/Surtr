@@ -280,13 +280,19 @@ namespace Surtr.Runtime.Utilities
         public static T* AllocateZeroed<T>(nuint elementCount, nuint elementSize) where T : unmanaged
             => (T*)AllocateZeroed(elementCount, elementSize);
 
+        // The (void*) casts are load-bearing, not decoration. Passing `ptr` as T* would make the
+        // generic overload itself an exact match and the void* one a pointer conversion, so
+        // overload resolution would pick this very method and recurse - forever for the
+        // three-argument form, and until CheckedByteCount overflows for the two-argument one,
+        // since each level re-multiplies the byte count by sizeof(T). Free<T> below casts for the
+        // same reason.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static T* Reallocate<T>(T* ptr, nuint newElementCount) where T : unmanaged
-            => (T*)Reallocate(ptr, CheckedByteCount(newElementCount, (nuint)sizeof(T)));
+            => (T*)Reallocate((void*)ptr, CheckedByteCount(newElementCount, (nuint)sizeof(T)));
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static T* Reallocate<T>(T* ptr, nuint newElementCount, nuint elementSize) where T : unmanaged
-            => (T*)Reallocate(ptr, newElementCount, elementSize);
+            => (T*)Reallocate((void*)ptr, newElementCount, elementSize);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static void Free<T>(T* ptr) where T : unmanaged

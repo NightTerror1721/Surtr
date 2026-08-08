@@ -167,13 +167,48 @@ namespace Surtr.Runtime.Objects
             _marksStack[_markTop++] = @ref;
         }
 
+        /// <summary>
+        /// Marks every entity reachable from the given roots and releases the rest.
+        /// </summary>
+        /// <param name="stackStart">The first slot of the interpreter's evaluation stack.</param>
+        /// <param name="stackTop">One past the last live slot of the evaluation stack.</param>
+        /// <param name="globalVariables">
+        /// The host global value table - pass <c>table.VariableTable.Pointer</c> from the runtime's
+        /// <c>SurtrNativeGlobalTable</c>, or <see langword="null"/> if there is no host global table.
+        /// </param>
+        /// <param name="globalReferenceSlots">
+        /// Which slots of <paramref name="globalVariables"/> hold a reference - pass
+        /// <c>table.ReferenceVariableSlots.Pointer</c>.
+        /// </param>
+        /// <param name="globalReferenceSlotCount">How many entries <paramref name="globalReferenceSlots"/> has.</param>
+        /// <param name="explicitRoots">
+        /// Anything else the caller is keeping alive that is not in one of the tables above -
+        /// values held by in-flight native calls, host-side pins, and so on.
+        /// </param>
+        /// <param name="fullCollection">
+        /// <see langword="true"/> to sweep every unreachable entity; <see langword="false"/> to
+        /// spare any that has survived a previous collection.
+        /// </param>
+        /// <returns>How many entities were released.</returns>
+        /// <remarks>
+        /// <para>
+        /// Host globals arrive as a value table plus a slot list rather than as a flat range,
+        /// mirroring how a class's instance references are traced. The slot list is built from the
+        /// globals' declared types at registration, so this loop marks unconditionally instead of
+        /// tag-testing the way the stack loop has to.
+        /// </para>
+        /// <para>
+        /// Global *functions* are not a root source and are not passed at all. A host global
+        /// function is a code address plus compile-time metadata; it is never a registered entity,
+        /// so there is nothing about it to mark.
+        /// </para>
+        /// </remarks>
         public int CollectGarbage(
             SurtrRawValue* stackStart,
             SurtrRawValue* stackTop,
-            SurtrRef* globalFunctionStart,
-            int globalFunctionCount,
-            SurtrRawValue* globalVariableStart,
-            int globalVariableCount,
+            SurtrRawValue* globalVariables,
+            int* globalReferenceSlots,
+            int globalReferenceSlotCount,
             ReadOnlySpan<SurtrRawValue> explicitRoots,
             bool fullCollection)
         {
@@ -189,11 +224,8 @@ namespace Surtr.Runtime.Objects
                 currentStackValue++;
             }
 
-            for (int i = 0; i < globalFunctionCount; i++)
-                Mark(globalFunctionStart[i]);
-
-            for (int i = 0; i < globalVariableCount; i++)
-                MarkIfReference(globalVariableStart[i]);
+            for (int i = 0; i < globalReferenceSlotCount; i++)
+                Mark((SurtrRef)globalVariables[globalReferenceSlots[i]]);
 
             fixed (SurtrRawValue* rootStartRef = explicitRoots)
             {

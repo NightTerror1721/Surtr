@@ -73,13 +73,15 @@ N<fullname>;              native type      NUnityEngine:GameObject;
 fullname := modulePath ':' typeName ('.' nestedTypeName)*
 ```
 
+`V` (void) is a twelfth symbol that is deliberately *not* a type: it is only legal as a closure descriptor's return. It exists because every `SurtrMethodInfo` needs a return reference and a `ReturnVoid` method has nothing else to name. It resolves to `SurtrBuiltIns.Void` — an abstract, memberless marker class filling the same role as `System.Void` in the CLR — so that no type handle in the system is ever permanently unbound.
+
 The `:` separating module path from type path is deliberate: the resolver splits it in O(1) instead of probing prefixes to find where the module ends. Descriptors are the canonical form for comparison, hashing and bytecode; `ToDisplayString()` exists purely for diagnostics — never key off it.
 
 A descriptor becomes a real class through `SurtrTypeHandle`, which pairs the reference with the `SurtrClass` it names. Handles start unresolved (`null`) and are interned per module in a `SurtrTypeHandleTable`, so resolution runs once per distinct type and a module's handle table doubles as its dependency list.
 
 ### Native entry points use the *managed* calling convention
 
-Every host function linked into Surtr has one fixed shape — `SurtrNativeFunction`, taking `(void* context, SurtrRawValue* arguments, int argumentCount)` — so the interpreter has exactly one function-pointer cast on its call path regardless of a function's Surtr-level signature. `SurtrNativeEntryPoint` stores it as a plain address and `Invoke` issues one indirect call, so nothing downstream branches on how the host linked it.
+Every host function linked into Surtr has one fixed shape — `SurtrNativeFunction`, taking `(SurtrCallArguments arguments)` — so the interpreter has exactly one function-pointer cast on its call path regardless of a function's Surtr-level signature. `SurtrNativeEntryPoint` stores it as a plain address and `Invoke` issues one indirect call, so nothing downstream branches on how the host linked it.
 
 The pointer is a **managed** `delegate*<...>`, not `delegate* unmanaged[...]<...>`. Surtr's host is always C#/Unity, so host functions are managed static methods: calling them directly avoids the reverse-P/Invoke stub and its GC mode transition entirely, and sidesteps IL2CPP's `[MonoPInvokeCallback]` restriction. The cost is that a raw pointer into a C/C++ library cannot be linked.
 
@@ -88,6 +90,89 @@ The pointer is a **managed** `delegate*<...>`, not `delegate* unmanaged[...]<...
 `FromFunctionPointer(&Method)` is the preferred registration path: compile-time, no reflection, AOT-safe. `FromDelegate` is a convenience for dynamically built registration tables — it requires a non-multicast delegate over a `static` method (an instance method or capturing lambda carries a hidden receiver that would corrupt the stack, so it is rejected up front) and resolves through reflection, which AOT backends may strip.
 
 For reference, `delegate* unmanaged<...>` does not compile on `netstandard2.1` at all (CS8889); only the explicit `delegate* unmanaged[Cdecl]<...>` form does, should an unmanaged path ever be needed.
+
+Because the convention is managed, the parameter can be an ordinary managed type rather than an erased one, and it is:
+
+```csharp
+delegate SurtrValue SurtrNativeFunction(SurtrCallArguments arguments);
+```
+
+`SurtrCallArguments` (`Runtime/Classes/SurtrCallArguments.cs`) is a `readonly unsafe ref struct` wrapping a raw `SurtrRawValue*` + length, plus the `SurtrRuntime` the call is running on. Being a `ref struct` is load-bearing, not decorative: it can never be boxed, stored in a field, captured by a lambda, or held across an `await`, so it cannot outlive the stack frame that owns the pointer's memory — the same guarantee `Span<T>` gives a raw pointer, on a domain type with accessor methods instead of a generic indexer.
+
+The runtime arrives **as itself** inside the struct, not as a `void*` the callee turns back into an object. An erased context would cost a `GCHandle` dereference plus a `castclass` on every call (worse under IL2CPP), would let a bogus pointer through with no way to catch it, and would force the runtime to hold a weak self-handle just so the pointer didn't root it forever. Carrying it in `SurtrCallArguments.Runtime` means the collector keeps it alive for the call for free, and a native function taking zero Surtr-level arguments still reaches it — there is no second `runtime` parameter to be redundant with it.
+
+Every accessor comes in two tiers, and this is the point of the type over a bare `Span<T>`:
+
+- **Checked** (`this[int]`, `GetInt`, `GetValue`, `Resolve<T>`, `Get<T>`, `GetString`, …) — bounds-checked, and for entity lookups, null/type-checked with a clear exception. The tier a host writing its own native function should reach for: nothing has verified its call site the way a Surtr call site is verified at compile time.
+- **Unchecked** (`GetRawUnchecked`, `GetUnchecked<T>`, `GetPrimitiveUnchecked`) — skips every check. Sound only when the index and type are already known good, which every built-in native method in `Runtime/BuiltIns` can rely on: `InvokeNative` only ever reaches one after the compiler matched its declared Surtr signature against the call site. This is the tier the built-ins use throughout, so they pay nothing beyond what the pre-`SurtrCallArguments` code already paid.
+
+A host's function body needs **no `unsafe` and no `AllowUnsafeBlocks`** even though `SurtrCallArguments` wraps a pointer internally — none of the checked accessors expose one. The one exception is `Pointer`, an explicit escape hatch: its return type forces the *caller* into their own `unsafe` context to use it, regardless of the struct's own `unsafe` declaration (a type being `unsafe` lets its own members use pointers freely; it grants nothing to callers). `FromDelegate` keeps registration itself unsafe-free too; `FromFunctionPointer(&Method)` needs `unsafe` only at that one line, and remains the AOT/IL2CPP-safe path.
+
+`arguments[0]` is the receiver for instance methods. A method declared to return nothing still returns something down this one signature — by convention `SurtrValue.Null`, which the caller discards.
+
+## Runtime objects
+
+`Runtime/Objects` holds everything the VM treats as a language-level value. All of it derives from `SurtrObject`, which carries the object's `SurtrClass` plus a cached copy of that class's `TypeCode` — one byte duplicated so a family test is a load off the object already in cache instead of a second hop into metadata.
+
+| Type | Holds | Class |
+|---|---|---|
+| `SurtrString` | a CLR `string` + its cached hash | built-in, shared |
+| `SurtrArray` | growable `SurtrValue[]` + count | built-in, shared |
+| `SurtrTuple` | fixed `SurtrValue[]`, immutable | built-in, shared |
+| `SurtrDictionary` | `Dictionary<SurtrValue, SurtrValue>` under the runtime's comparer | built-in, shared |
+| `SurtrClosure` | method + captured values, with the dispatch payload copied out flat | built-in, shared |
+| `SurtrBoxed` | one primitive `SurtrValue` | the *same* class the unboxed primitive has |
+| `SurtrInstance` | `SurtrValue[]` field slots | whatever Surtr source declared |
+| `SurtrNativeObject` / `SurtrNativeProxy` | a host CLR object; open for host subclassing | host-declared, or `SurtrBuiltIns.NativeObject` |
+
+Rules that run through all of them:
+
+- **Storage is managed, not `SurtrNativeArray`.** These are collectable values, and the registry sweeps by dropping its reference — there is no finalization hook — so an unmanaged buffer owned by one would leak on every collection. Unmanaged arrays belong to *metadata*, which is disposed explicitly.
+- **No per-element type tags.** Static typing means the compiler already knows an `int[]` from a `string[]`, and NaN boxing means each element self-describes to the collector. What each composite keeps instead is one interned `TypeReference` descriptor (`AI`, `T(IS)`, `DIS`, `L(II)F`) naming its whole parameterised type — full information for diagnostics and host interop at one field per object rather than one per element.
+- **Class metadata is never registered with the entity registry** and is never traced. It is owned outright — by `SurtrBuiltIns` for the built-ins, by `SurtrContext` for everything else — and lives as long as its owner, which is why `SurtrObject.VisitReferences` does not mark `Class`. It also *cannot* be registered: an entity holds a single `SurtrRef`, so one shared class in two registries would have the second silently inherit the first's id.
+- **`SurtrValueComparer` decides equality**, not raw bits, and lives one-per-runtime. Bits are too strict for strings (two objects, same text, one key) and boxes (a boxed 5 *is* an unboxed 5, in both directions), and too loose for floats (`+0.0`/`-0.0`, NaN). Tuples compare structurally because immutability makes that stable; every other composite compares by identity.
+
+### The built-in classes
+
+`SurtrBuiltIns` holds one process-wide `SurtrClass` per family, built once in a static constructor into a module named `surtr` and linked before any runtime exists. Shared rather than per-context so two runtimes agree on what `string` means and a native entry point registered against one works in the other.
+
+**One class covers every parameterisation** — `AI` and `AS` are both `SurtrBuiltIns.Array` — because a language with no dynamic top type settles element types at compile time. Their `SelfReference` is correspondingly the bare family symbol (`A`, `D`, `T`, `L`), deliberately *not* a well-formed descriptor: it names the family and says nothing about parameters, which is exactly what the class knows. There is no root `object` class; every built-in sits at depth 0 in its own hierarchy.
+
+Members are native methods linked by function pointer via `SurtrBuiltInTypeBuilder`, always `Direct` dispatch (nothing extends a built-in, so a vtable slot would be an indirection with one occupant). Properties also emit `get_x`/`set_x` accessor methods, CLR-style, so the linker sees them.
+
+**Known gap:** `array`, `tuple`, `dict` and `closure` carry a much thinner member surface than `string` or the primitives, because a descriptor names one concrete type and there is no way to write "the element type of whatever this array is". `push`, `pop`, `get`, `set`, `indexOf`, `keys` and the rest of the element-polymorphic surface therefore have no expressible signature. The behaviour exists as ordinary methods on `SurtrArray`/`SurtrDictionary`/`SurtrTuple` for the interpreter to call from `ArrGet`, `DictSet`, `TupGet` and friends; closing the gap for Surtr *source* needs a descriptor form for a built-in's own type parameter.
+
+## The runtime and its context
+
+`SurtrRuntime` is Surtr's `lua_State`: the one object a host holds. It owns a `SurtrContext` (internal struct, reached by `ref` so nothing copies it) holding the entity registry, the host global table, loaded modules, host-declared native classes, the interned-string table, the permanent root set, and the shared interface-id counter.
+
+- **Loading a module** is "resolve every handle in its `TypeHandles`, then link". That table is the module's dependency list, so anything still unresolved afterwards is a load failure rather than a mid-execution surprise.
+- **Interface ids are handed out from the context**, not restarted per module — `SurtrTypeLinker.LinkModule` has an overload taking `ref int nextInterfaceId` for exactly this.
+- **Roots** are pre-boxed raw values (the shape the collector wants). A collection stages the caller's transient roots in the root buffer's slack past `RootCount`, so merging them needs no allocation.
+- Interned strings are rooted permanently: use `InternString` for text a program is *built from*, `NewString` for text it *computes*.
+- The alias names in `GlobalUsings.cs` (`SurtrRawValue`, `SurtrRef`, …) do not flow to consumers — host code outside the assembly sees `ulong` and `int`.
+
+## The instruction set
+
+`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — currently **176 opcodes**, leaving 80 free values in the `byte` space. It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
+
+Surtr is a stack machine. Operands come from the evaluation stack; pool indices, jump offsets and argument counts are encoded inline after the opcode byte as little-endian immediates.
+
+**The enum value is the on-disk encoding.** Members are implicitly numbered from `Nop = 0x00`, so inserting one in the middle renumbers everything after it and silently invalidates every previously compiled chunk. Treat the list as append-only.
+
+Naming conventions that run through the whole set:
+
+| Affix | Meaning |
+|---|---|
+| `F` prefix | float operands (untagged opcodes cover int/bool/char, which share a representation) |
+| `R` prefix | reference identity rather than value comparison |
+| `X` suffix | widens an immediate to 4 bytes |
+| `S` suffix | narrows an immediate to 1 byte |
+| trailing digit | dedicated opcode for that fixed index, no immediate at all |
+
+Every member is documented with the same three-part `///` block, and new opcodes must follow it: **Encoding** (byte layout as `opcode(1) name(width)` plus total length), **Stack** (`before -> after`, `...` for the untouched remainder, rightmost entry is the top), and **Notes** only where behaviour isn't obvious from the name.
+
+Pool indices refer to the tables on the declaring module's `SurtrChunk`. Several opcodes still have undefined trap behaviour (division by zero, out-of-range indices, null receivers, failed casts) — those need pinning down before the interpreter is written.
 
 ## Commands
 
@@ -111,7 +196,9 @@ There is no test project, lint config, or CI yet — add commands here once thos
 - `Directory.Build.props` — MSBuild settings shared by *every* project in the solution (`LangVersion`, `Nullable`, etc.). Put cross-project settings here, not per-project settings. `ImplicitUsings` is deliberately left off (default/disabled) — usings must be written explicitly in every file.
 - `src/Surtr.Core` — the main library, built for `netstandard2.1` so the compiled DLL can be dropped into Unity (2021.2+, including IL2CPP) as a plain managed assembly. `AllowUnsafeBlocks` is enabled here specifically because the VM/registry work described above depends on it; don't assume other projects (e.g. a future source generator) need or should have it. `LangVersion` is inherited as `latest` from `Directory.Build.props` — targeting `netstandard2.1` does not cap the C# language version, since `TargetFramework` (runtime/BCL surface) and `LangVersion` (compiler syntax) are independent settings. Only watch for C# features that need runtime support beyond what's in the BCL (e.g. default interface methods), since Unity's Mono/IL2CPP backends can behave unreliably there even though the code compiles fine.
 
-No VM, opcode set, or object registry has been implemented yet — the repo currently only contains the project skeleton.
+Inside `src/Surtr.Core`: `Bytecode/` is the instruction set, `Runtime/Classes/` the type metadata and linker, `Runtime/Objects/` the runtime values and the entity registry, `Runtime/BuiltIns/` the shared built-in classes and their native members, `Runtime/Utilities/` the unmanaged helpers.
+
+The instruction set, the metadata layer, the object registry, the runtime object model and the built-in classes exist. **The interpreter does not** — nothing executes bytecode yet, so opcodes are currently only a specification that the object model was built to serve.
 
 ## Coding conventions
 

@@ -28,10 +28,26 @@ namespace Surtr.Runtime.Classes
     {
         #region Entry Points
         /// <summary>
-        /// Links every type in a module and freezes it.
+        /// Links every type in a module and freezes it, numbering its interfaces from zero.
         /// </summary>
+        /// <remarks>
+        /// Only correct for a module linked in isolation. Anything linking more than one module
+        /// into the same runtime must use the overload that carries the counter across, or two
+        /// modules will hand out the same interface ids.
+        /// </remarks>
         /// <exception cref="InvalidOperationException">A hierarchy is cyclic, or a concrete class leaves an abstract member unimplemented.</exception>
         internal static void LinkModule(SurtrModule module)
+        {
+            int nextInterfaceId = 0;
+            LinkModule(module, ref nextInterfaceId);
+        }
+
+        /// <summary>
+        /// Links every type in a module and freezes it, continuing an interface numbering shared
+        /// with every other module in the same runtime.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">A hierarchy is cyclic, or a concrete class leaves an abstract member unimplemented.</exception>
+        internal static void LinkModule(SurtrModule module, ref int nextInterfaceId)
         {
             if (module.IsBuilt)
                 return;
@@ -39,7 +55,6 @@ namespace Surtr.Runtime.Classes
             module.BeginLinking();
 
             // Interfaces first: a class's dispatch table needs their slot numbering to exist.
-            int nextInterfaceId = 0;
             foreach (var contract in module.Interfaces)
                 LinkInterface(contract, ref nextInterfaceId);
 
