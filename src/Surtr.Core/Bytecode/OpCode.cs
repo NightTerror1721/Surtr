@@ -1691,5 +1691,112 @@ namespace Surtr.Bytecode
         /// </remarks>
         ReturnValue,
         #endregion
+
+
+        #region Nullable Primitive Operations
+        // Appended rather than filed next to the reference-null instructions above, because the
+        // enum value is the on-disk encoding: inserting one in the middle would renumber every
+        // opcode after it and silently invalidate previously compiled bytecode.
+
+        /// <summary>Pushes the "no value" state of a nullable primitive.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) typeCode(1)</c> - 2 bytes.<br/>
+        /// Stack: <c>... -&gt; ..., absent</c><br/>
+        /// Notes: the immediate is the <c>SurtrValueTypeCode</c> of the primitive that is missing,
+        /// so the value can say what it is the absence of. It is never the null <em>reference</em>:
+        /// that is <see cref="PushNull"/>, and the two carry different tags on purpose.
+        /// </remarks>
+        PushAbsent,
+
+        /// <summary>Replaces a nullable primitive with whether it holds no value.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., a -&gt; ..., bool</c><br/>
+        /// Notes: tests the tag, not the payload, which is exactly why it cannot be
+        /// <see cref="IsNull"/>. A reference is its 32-bit payload, so <c>IsNull</c> ignores the
+        /// tag - and an <c>int</c> of value zero would answer that test the same way a null does.
+        /// </remarks>
+        IsAbsent,
+
+        /// <summary>Replaces a nullable primitive with whether it holds a value.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., a -&gt; ..., bool</c>
+        /// </remarks>
+        IsPresent,
+
+        /// <summary>Pops a value and branches if it is an absent primitive.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
+        /// Stack: <c>..., a -&gt; ...</c><br/>
+        /// Notes: what <c>??</c> and <c>?.</c> lower to over a nullable primitive.
+        /// </remarks>
+        JPA,
+
+        /// <summary>Pops a value and branches if it is an absent primitive, with a 4-byte offset.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
+        /// Stack: <c>..., a -&gt; ...</c>
+        /// </remarks>
+        JPAX,
+
+        /// <summary>Pops a value and branches if it is a present primitive.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
+        /// Stack: <c>..., a -&gt; ...</c>
+        /// </remarks>
+        JPNA,
+
+        /// <summary>Pops a value and branches if it is a present primitive, with a 4-byte offset.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
+        /// Stack: <c>..., a -&gt; ...</c>
+        /// </remarks>
+        JPNAX,
+        #endregion
+
+
+        #region Value Class Operations
+        /// <summary>Boxes the value on top of the stack as an instance of a named class.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) typeIdx(2)</c> - 3 bytes.<br/>
+        /// Stack: <c>..., a -&gt; ..., ref</c><br/>
+        /// Notes: what a <c>value class</c> boxes through. The <c>Box*</c> family carries no type
+        /// index because a boxed primitive takes the class the unboxed primitive already had; a
+        /// value class is erased to the field it wraps, so where it has to become a reference the
+        /// class it should present as is exactly the thing the value no longer says. Unboxing is
+        /// still <see cref="Unbox"/>: the box's own value carries its tag.
+        /// </remarks>
+        BoxAs,
+
+        /// <summary>Boxes as a named class, with a 4-byte type index.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) typeIdx(4)</c> - 5 bytes.<br/>
+        /// Stack: <c>..., a -&gt; ..., ref</c>
+        /// </remarks>
+        BoxAsX,
+        #endregion
+
+
+        #region Range Operations
+        /// <summary>Builds a range from two int bounds, excluding the upper one.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., lo, hi -&gt; ..., ref</c><br/>
+        /// Notes: allocates. A range written inline in a <c>for-in</c> header must never reach
+        /// this - the compiler lowers that to a counted loop over two ints - so this is for a range
+        /// that genuinely escapes into a variable, a parameter or a return.
+        /// </remarks>
+        RangeNew,
+
+        /// <summary>Builds a range from two int bounds, including the upper one.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., lo, hi -&gt; ..., ref</c><br/>
+        /// Notes: the <c>..=</c> form. A separate opcode rather than an increment at the call site
+        /// because <c>hi</c> may be <c>int.MaxValue</c>, where incrementing would wrap.
+        /// </remarks>
+        RangeNewInclusive,
+        #endregion
     }
 }

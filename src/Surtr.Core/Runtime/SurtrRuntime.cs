@@ -43,6 +43,7 @@ namespace Surtr.Runtime
         private SurtrContext _context;
         private readonly SurtrValueComparer _valueComparer;
         private SurtrVirtualMachine? _virtualMachine;
+        private long _pendingInstructionBudget;
         private bool _disposed;
 
         /// <summary>Creates and initializes a runtime with the default heap capacity.</summary>
@@ -105,7 +106,52 @@ namespace Surtr.Runtime
         internal SurtrVirtualMachine VirtualMachine
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => _virtualMachine ??= new SurtrVirtualMachine(this);
+            get
+            {
+                var machine = _virtualMachine;
+                if (machine is null)
+                {
+                    machine = new SurtrVirtualMachine(this);
+                    machine.StepBudget = _pendingInstructionBudget;
+                    _virtualMachine = machine;
+                }
+
+                return machine;
+            }
+        }
+
+        /// <summary>
+        /// How many instructions the next run may execute before it aborts, or <c>0</c> - the
+        /// default - for no limit.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// For a host that evaluates untrusted or possibly non-terminating code, and specifically
+        /// for a compiler folding a <c>const fun</c>: folding runs the function's real bytecode on
+        /// this interpreter rather than on a second evaluator, so the two can never disagree about
+        /// overflow, string equality or any trap - but a function that loops may loop forever, and
+        /// a compiler that hangs is not acceptable. Exceeding the budget raises a
+        /// <see cref="SurtrExecutionException"/>, which the handler search treats like any other
+        /// trap.
+        /// </para>
+        /// <para>
+        /// The budget is consumed as it runs and is <em>not</em> restored between calls, so a host
+        /// evaluating several constants sets it again before each one -
+        /// <see cref="ResetExecution"/> is the natural place, and already leaves the machine clean.
+        /// </para>
+        /// </remarks>
+        public long InstructionBudget
+        {
+            get => _virtualMachine?.StepBudget ?? _pendingInstructionBudget;
+            set
+            {
+                _pendingInstructionBudget = value < 0 ? 0 : value;
+
+                // The machine is built lazily, so a budget set before anything has run has to
+                // wait somewhere until there is a machine to set it on.
+                if (_virtualMachine is not null)
+                    _virtualMachine.StepBudget = _pendingInstructionBudget;
+            }
         }
 
         /// <summary>The host's global variables and functions.</summary>
@@ -350,6 +396,17 @@ namespace Surtr.Runtime
         /// <summary>Builds parameter metadata against this runtime's handle table.</summary>
         public SurtrParameterInfo Parameter(string name, SurtrClassReference parameterType)
             => new SurtrParameterInfo(name, TypeHandle(parameterType));
+
+        /// <summary>Builds metadata for a parameter a call site may omit.</summary>
+        public SurtrParameterInfo Parameter(string name, SurtrClassReference parameterType, SurtrConstant defaultValue)
+            => new SurtrParameterInfo(name, TypeHandle(parameterType), defaultValue);
+
+        /// <summary>
+        /// Builds metadata for the varargs parameter, whose declared type is the element type -
+        /// the body sees an array of it.
+        /// </summary>
+        public SurtrParameterInfo VarargsParameter(string name, SurtrClassReference elementType)
+            => new SurtrParameterInfo(name, TypeHandle(elementType), SurtrConstant.None, isVarargs: true);
 
         /// <summary>
         /// Binds <paramref name="handle"/> to the type its descriptor names, if that type is

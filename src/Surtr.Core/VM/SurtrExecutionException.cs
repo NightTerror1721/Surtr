@@ -33,6 +33,29 @@ namespace Surtr.VM
     }
 
     /// <summary>
+    /// A run that hit its instruction budget and was aborted.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Unlike every other trap, this one is <strong>not offered to the handler tables</strong>: it
+    /// leaves the interpreter without a Surtr <c>catch</c> ever seeing it. That is the whole point
+    /// of the budget. It exists so a host - a compiler folding a <c>const fun</c>, above all - can
+    /// run code that may not terminate without hanging, and a program that could catch the abort
+    /// and carry on looping would give that guarantee straight back.
+    /// </para>
+    /// <para>
+    /// It is also why exceeding the budget leaves it <em>exhausted</em> rather than cleared: a
+    /// later run on the same machine aborts again immediately until the host sets a new budget, so
+    /// there is no window in which the ceiling silently stops applying.
+    /// </para>
+    /// </remarks>
+    public sealed class SurtrBudgetExceededException : SurtrExecutionException
+    {
+        /// <summary>Creates the abort raised when a run runs out of instructions.</summary>
+        public SurtrBudgetExceededException(string message) : base(message) { }
+    }
+
+    /// <summary>
     /// A Surtr-level exception that no handler caught, carrying the object the program raised.
     /// </summary>
     /// <remarks>

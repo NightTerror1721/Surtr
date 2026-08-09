@@ -28,8 +28,9 @@ namespace Surtr.Runtime.Classes
             bool isStatic,
             SurtrVisibility visibility,
             SurtrTypeHandle? declaringType,
-            SurtrNativeEntryPoint entryPoint)
-            : base(name, SurtrMethodImplKind.Native, dispatch, role, isOverride, returnType, parameters, isStatic, visibility, declaringType)
+            SurtrNativeEntryPoint entryPoint,
+            bool isSealed = false)
+            : base(name, SurtrMethodImplKind.Native, dispatch, role, isOverride, returnType, parameters, isStatic, visibility, declaringType, isSealed)
         {
             if (!entryPoint.IsValid)
                 throw new ArgumentException($"Native method '{name}' was given a null entry point.", nameof(entryPoint));

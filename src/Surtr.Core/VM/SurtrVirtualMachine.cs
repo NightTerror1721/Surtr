@@ -89,6 +89,9 @@ namespace Surtr.VM
         private SurtrRawValue* _stackLimit;
         private SurtrRawValue* _sp;
         private int _frameCount;
+
+        // Zero means unlimited, which is what every ordinary run uses. See StepBudget.
+        private long _stepsRemaining;
         private bool _disposed;
 
         /// <summary>Creates a machine with the default stack sizes.</summary>
@@ -254,6 +257,53 @@ namespace Surtr.VM
         }
 
         /// <summary>Drops everything on both stacks, for a host recovering from an uncaught exception.</summary>
+        /// <summary>
+        /// How many more instructions this machine may execute before it raises, or <c>0</c> for
+        /// no limit.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Exists for one caller: compile-time evaluation. A <c>const fun</c> is folded by emitting
+        /// its bytecode and running it on this interpreter rather than on a second evaluator in the
+        /// compiler, which is what keeps compile-time and run-time semantics from drifting - but a
+        /// <c>const fun</c> may loop, so it may loop forever, and a compiler that hangs is not
+        /// acceptable. A ceiling turns that into a diagnostic.
+        /// </para>
+        /// <para>
+        /// <strong>The count is not checked per instruction.</strong> It is charged where a program
+        /// transfers control - every jump and switch arm, and every frame entry - because those are
+        /// the only ways to run forever: straight-line code always reaches a return. So the dispatch
+        /// path is exactly what it was before the budget existed, and an ordinary run pays one
+        /// register decrement per executed jump rather than per instruction. Any new opcode that
+        /// moves <c>ip</c> by an offset has to end at <c>Branched</c> rather than <c>Dispatch</c>,
+        /// which is the one rule this scheme asks of the switch.
+        /// </para>
+        /// <para>
+        /// Charging every jump rather than only the backward ones is deliberate: telling them apart
+        /// would cost a compare on the taken path to make the budget marginally less conservative,
+        /// and a budget only has to bound a run, not measure it.
+        /// </para>
+        /// <para>
+        /// Entering an exception handler is charged too, at a flat rate: without that, a program
+        /// could raise and catch in a loop and never be billed for the instructions in between,
+        /// because a run that unwinds does not write its progress back.
+        /// </para>
+        /// </remarks>
+        internal long StepBudget
+        {
+            get => _stepsRemaining;
+            set => _stepsRemaining = value < 0 ? 0 : value;
+        }
+
+        /// <summary>What entering a handler costs against <see cref="StepBudget"/>.</summary>
+        private const long HandlerEntryCost = 256;
+
+        /// <summary>
+        /// What <see cref="StepBudget"/> holds once a run has spent it: negative, so the very next
+        /// dispatch aborts again rather than running free the way <c>0</c> - unlimited - would.
+        /// </summary>
+        private const long Exhausted = -1;
+
         internal void Reset()
         {
             _sp = _stack;
@@ -338,6 +388,12 @@ namespace Surtr.VM
                 {
                     return Run(entryDepth);
                 }
+                catch (SurtrBudgetExceededException)
+                {
+                    // Never offered to the handler tables. A program that could catch its own
+                    // watchdog and keep looping would defeat the only thing the budget promises.
+                    throw;
+                }
                 catch (SurtrThrownException thrown)
                 {
                     // Already a Surtr object: it escaped a nested run, or came back out through a
@@ -401,6 +457,19 @@ namespace Surtr.VM
 
                         // The handler starts with a clean operand stack holding just the exception,
                         // so whatever the protected region had half-built is discarded.
+                        // Charged before the handler runs, so raise-and-catch cannot be used to
+                        // spin without ever being billed - a run that unwinds never reaches the
+                        // write-back in the dispatch loop.
+                        if (_stepsRemaining != 0)
+                        {
+                            _stepsRemaining -= HandlerEntryCost;
+                            if (_stepsRemaining <= 0)
+                            {
+                                _stepsRemaining = Exhausted;
+                                throw StepBudgetExceeded();
+                            }
+                        }
+
                         SurtrRawValue* handlerSp = frame.Base + frame.LocalCount;
                         *handlerSp++ = SurtrValue.TagMaskReference | (uint)exception;
 
@@ -479,6 +548,12 @@ namespace Surtr.VM
             SurtrRawValue* stackLimit = _stackLimit;
             SurtrRawValue* sp;
 
+            // Held in a local for the same reason ip and sp are: a field read per instruction
+            // would defeat the point. long.MaxValue stands in for "no limit" so the check itself
+            // is unconditional and the branch predicts perfectly either way.
+            bool budgeted = _stepsRemaining != 0;
+            long steps = budgeted ? _stepsRemaining : long.MaxValue;
+
             // Both of these can move: registering an entity may grow the registry's array, and the
             // host may declare a global from inside a native call. Every site that can cause either
             // reloads them, and nothing else has to.
@@ -539,6 +614,23 @@ namespace Surtr.VM
             // issue in parallel and stay off the critical path, which the switch's indirect branch
             // dominates regardless. Reads off `sp` keep their wide casts: it is a SurtrRawValue*,
             // so every slot is already 8-byte aligned and `*(double*)sp` is well-defined.
+
+            // Straight-line code always reaches a return, so the only way a program can run
+            // forever is to keep transferring control: a backward jump, a switch, or a call.
+            // Charging the budget here rather than in the dispatch path is what keeps the
+            // interpreter byte-for-byte what it was before the budget existed - an ordinary run
+            // pays one decrement per executed jump and per frame entry, never per instruction.
+            //
+            // Fallen into from LoadFrame on purpose, so entering a frame is charged too.
+        Branched:
+            if (--steps < 0)
+            {
+                current.IP = ip;
+                _sp = sp;
+                _stepsRemaining = Exhausted;
+                throw StepBudgetExceeded();
+            }
+
         Dispatch:
             switch ((OpCode)(*ip++))
             {
@@ -1764,7 +1856,7 @@ namespace Surtr.VM
                     short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     if ((uint)*--sp == 0) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPNZ:
@@ -1772,7 +1864,7 @@ namespace Surtr.VM
                     short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     if ((uint)*--sp != 0) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPN:
@@ -1780,7 +1872,7 @@ namespace Surtr.VM
                     short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     if ((uint)*--sp == 0) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPNN:
@@ -1788,14 +1880,14 @@ namespace Surtr.VM
                     short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2;
                     if ((uint)*--sp != 0) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JP:
                 {
                     short offset = (short)(ip[0] | (ip[1] << 8));
                     ip += 2 + offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPZX:
@@ -1803,7 +1895,7 @@ namespace Surtr.VM
                     int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     if ((uint)*--sp == 0) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPNZX:
@@ -1811,7 +1903,7 @@ namespace Surtr.VM
                     int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     if ((uint)*--sp != 0) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPNX:
@@ -1819,7 +1911,7 @@ namespace Surtr.VM
                     int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     if ((uint)*--sp == 0) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPNNX:
@@ -1827,14 +1919,14 @@ namespace Surtr.VM
                     int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4;
                     if ((uint)*--sp != 0) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPX:
                 {
                     int offset = (ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24));
                     ip += 4 + offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPEQ:
@@ -1843,7 +1935,7 @@ namespace Surtr.VM
                     ip += 2;
                     sp -= 2;
                     if ((int)sp[0] == (int)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPFEQ:
@@ -1852,7 +1944,7 @@ namespace Surtr.VM
                     ip += 2;
                     sp -= 2;
                     if (((double*)sp)[0] == ((double*)sp)[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPREQ:
@@ -1861,7 +1953,7 @@ namespace Surtr.VM
                     ip += 2;
                     sp -= 2;
                     if ((uint)sp[0] == (uint)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPStrEQ:
@@ -1875,7 +1967,7 @@ namespace Surtr.VM
                         || (left != 0 && right != 0
                             && ((SurtrString)entities[(SurtrRef)left]!).TextEquals((SurtrString)entities[(SurtrRef)right]!)))
                         ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPEQX:
@@ -1884,7 +1976,7 @@ namespace Surtr.VM
                     ip += 4;
                     sp -= 2;
                     if ((int)sp[0] == (int)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPFEQX:
@@ -1893,7 +1985,7 @@ namespace Surtr.VM
                     ip += 4;
                     sp -= 2;
                     if (((double*)sp)[0] == ((double*)sp)[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPREQX:
@@ -1902,7 +1994,7 @@ namespace Surtr.VM
                     ip += 4;
                     sp -= 2;
                     if ((uint)sp[0] == (uint)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPStrEQX:
@@ -1916,7 +2008,7 @@ namespace Surtr.VM
                         || (left != 0 && right != 0
                             && ((SurtrString)entities[(SurtrRef)left]!).TextEquals((SurtrString)entities[(SurtrRef)right]!)))
                         ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPNE:
@@ -1925,7 +2017,7 @@ namespace Surtr.VM
                     ip += 2;
                     sp -= 2;
                     if ((int)sp[0] != (int)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPFNE:
@@ -1934,7 +2026,7 @@ namespace Surtr.VM
                     ip += 2;
                     sp -= 2;
                     if (((double*)sp)[0] != ((double*)sp)[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPRNE:
@@ -1943,7 +2035,7 @@ namespace Surtr.VM
                     ip += 2;
                     sp -= 2;
                     if ((uint)sp[0] != (uint)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPStrNE:
@@ -1957,7 +2049,7 @@ namespace Surtr.VM
                         || (left != 0 && right != 0
                             && ((SurtrString)entities[(SurtrRef)left]!).TextEquals((SurtrString)entities[(SurtrRef)right]!))))
                         ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPNEX:
@@ -1966,7 +2058,7 @@ namespace Surtr.VM
                     ip += 4;
                     sp -= 2;
                     if ((int)sp[0] != (int)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPFNEX:
@@ -1975,7 +2067,7 @@ namespace Surtr.VM
                     ip += 4;
                     sp -= 2;
                     if (((double*)sp)[0] != ((double*)sp)[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPRNEX:
@@ -1984,7 +2076,7 @@ namespace Surtr.VM
                     ip += 4;
                     sp -= 2;
                     if ((uint)sp[0] != (uint)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPStrNEX:
@@ -1998,7 +2090,7 @@ namespace Surtr.VM
                         || (left != 0 && right != 0
                             && ((SurtrString)entities[(SurtrRef)left]!).TextEquals((SurtrString)entities[(SurtrRef)right]!))))
                         ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPGT:
@@ -2007,7 +2099,7 @@ namespace Surtr.VM
                     ip += 2;
                     sp -= 2;
                     if ((int)sp[0] > (int)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPFGT:
@@ -2016,7 +2108,7 @@ namespace Surtr.VM
                     ip += 2;
                     sp -= 2;
                     if (((double*)sp)[0] > ((double*)sp)[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPGTX:
@@ -2025,7 +2117,7 @@ namespace Surtr.VM
                     ip += 4;
                     sp -= 2;
                     if ((int)sp[0] > (int)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPFGTX:
@@ -2034,7 +2126,7 @@ namespace Surtr.VM
                     ip += 4;
                     sp -= 2;
                     if (((double*)sp)[0] > ((double*)sp)[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPGE:
@@ -2043,7 +2135,7 @@ namespace Surtr.VM
                     ip += 2;
                     sp -= 2;
                     if ((int)sp[0] >= (int)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPFGE:
@@ -2052,7 +2144,7 @@ namespace Surtr.VM
                     ip += 2;
                     sp -= 2;
                     if (((double*)sp)[0] >= ((double*)sp)[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPGEX:
@@ -2061,7 +2153,7 @@ namespace Surtr.VM
                     ip += 4;
                     sp -= 2;
                     if ((int)sp[0] >= (int)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPFGEX:
@@ -2070,7 +2162,7 @@ namespace Surtr.VM
                     ip += 4;
                     sp -= 2;
                     if (((double*)sp)[0] >= ((double*)sp)[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPLT:
@@ -2079,7 +2171,7 @@ namespace Surtr.VM
                     ip += 2;
                     sp -= 2;
                     if ((int)sp[0] < (int)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPFLT:
@@ -2088,7 +2180,7 @@ namespace Surtr.VM
                     ip += 2;
                     sp -= 2;
                     if (((double*)sp)[0] < ((double*)sp)[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPLTX:
@@ -2097,7 +2189,7 @@ namespace Surtr.VM
                     ip += 4;
                     sp -= 2;
                     if ((int)sp[0] < (int)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPFLTX:
@@ -2106,7 +2198,7 @@ namespace Surtr.VM
                     ip += 4;
                     sp -= 2;
                     if (((double*)sp)[0] < ((double*)sp)[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPLE:
@@ -2115,7 +2207,7 @@ namespace Surtr.VM
                     ip += 2;
                     sp -= 2;
                     if ((int)sp[0] <= (int)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPFLE:
@@ -2124,7 +2216,7 @@ namespace Surtr.VM
                     ip += 2;
                     sp -= 2;
                     if (((double*)sp)[0] <= ((double*)sp)[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPLEX:
@@ -2133,7 +2225,7 @@ namespace Surtr.VM
                     ip += 4;
                     sp -= 2;
                     if ((int)sp[0] <= (int)sp[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPFLEX:
@@ -2142,7 +2234,7 @@ namespace Surtr.VM
                     ip += 4;
                     sp -= 2;
                     if (((double*)sp)[0] <= ((double*)sp)[1]) ip += offset;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPInstanceOf:
@@ -2162,7 +2254,7 @@ namespace Surtr.VM
                         if (matches) ip += offset;
                     }
 
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.JPInstanceOfX:
@@ -2182,7 +2274,7 @@ namespace Surtr.VM
                         if (matches) ip += offset;
                     }
 
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.Switch:
@@ -2207,7 +2299,7 @@ namespace Surtr.VM
                     }
 
                     ip = instruction + target;
-                    goto Dispatch;
+                    goto Branched;
                 }
 
                 case OpCode.SwitchLookup:
@@ -2240,7 +2332,7 @@ namespace Surtr.VM
                     }
 
                     ip = instruction + target;
-                    goto Dispatch;
+                    goto Branched;
                 }
                 #endregion
 
@@ -2457,6 +2549,7 @@ namespace Surtr.VM
                     if (depth == entryDepth)
                     {
                         _sp = sp;
+                        if (budgeted) _stepsRemaining = steps;
                         return SurtrValue.Null;
                     }
 
@@ -2483,12 +2576,134 @@ namespace Surtr.VM
                     if (depth == entryDepth)
                     {
                         _sp = sp;
+                        if (budgeted) _stepsRemaining = steps;
                         return SurtrValue.FromRaw(result);
                     }
 
                     if (expected != 0) *sp++ = result;
                     _sp = sp;
                     goto LoadFrame;
+                }
+                #endregion
+
+                #region Nullable Primitive Operations
+                case OpCode.PushAbsent:
+                {
+                    // The immediate says which primitive is missing. Nothing on this path reads it
+                    // back - the compiler knows the declared type statically - but a native
+                    // function handed the value, or a diagnostic printing it, can.
+                    *sp++ = SurtrValue.TagMaskAbsent | *ip++;
+                    goto Dispatch;
+                }
+
+                case OpCode.IsAbsent:
+                    *(sp - 1) = SurtrValue.TagMaskBool | (((*(sp - 1)) & SurtrValue.TagMask) == SurtrValue.TagMaskAbsent ? 1UL : 0UL);
+                    goto Dispatch;
+
+                case OpCode.IsPresent:
+                    *(sp - 1) = SurtrValue.TagMaskBool | (((*(sp - 1)) & SurtrValue.TagMask) == SurtrValue.TagMaskAbsent ? 0UL : 1UL);
+                    goto Dispatch;
+
+                case OpCode.JPA:
+                {
+                    short offset = (short)(ip[0] | (ip[1] << 8));
+                    ip += 2;
+                    sp--;
+                    if ((*sp & SurtrValue.TagMask) == SurtrValue.TagMaskAbsent)
+                        ip += offset;
+                    goto Branched;
+                }
+
+                case OpCode.JPAX:
+                {
+                    int offset = ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24);
+                    ip += 4;
+                    sp--;
+                    if ((*sp & SurtrValue.TagMask) == SurtrValue.TagMaskAbsent)
+                        ip += offset;
+                    goto Branched;
+                }
+
+                case OpCode.JPNA:
+                {
+                    short offset = (short)(ip[0] | (ip[1] << 8));
+                    ip += 2;
+                    sp--;
+                    if ((*sp & SurtrValue.TagMask) != SurtrValue.TagMaskAbsent)
+                        ip += offset;
+                    goto Branched;
+                }
+
+                case OpCode.JPNAX:
+                {
+                    int offset = ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24);
+                    ip += 4;
+                    sp--;
+                    if ((*sp & SurtrValue.TagMask) != SurtrValue.TagMaskAbsent)
+                        ip += offset;
+                    goto Branched;
+                }
+                #endregion
+
+                #region Value Class Operations
+                case OpCode.BoxAs:
+                {
+                    var declared = typeTable[(ip[0] | (ip[1] << 8))].ResolvedClass!;
+                    ip += 2;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var boxed = new SurtrBoxed(declared, SurtrValue.FromRaw(*(sp - 1)));
+                    SurtrRef reference = context.EntityRegistry.Register(boxed);
+                    entities = context.EntityRegistry.Entities;
+
+                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.BoxAsX:
+                {
+                    var declared = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedClass!;
+                    ip += 4;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var boxed = new SurtrBoxed(declared, SurtrValue.FromRaw(*(sp - 1)));
+                    SurtrRef reference = context.EntityRegistry.Register(boxed);
+                    entities = context.EntityRegistry.Entities;
+
+                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+                #endregion
+
+                #region Range Operations
+                case OpCode.RangeNew:
+                {
+                    current.IP = ip;
+                    _sp = sp;
+
+                    sp--;
+                    var range = new SurtrRange((int)*(sp - 1), (int)*sp, inclusive: false);
+                    SurtrRef reference = context.EntityRegistry.Register(range);
+                    entities = context.EntityRegistry.Entities;
+
+                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.RangeNewInclusive:
+                {
+                    current.IP = ip;
+                    _sp = sp;
+
+                    sp--;
+                    var range = new SurtrRange((int)*(sp - 1), (int)*sp, inclusive: true);
+                    SurtrRef reference = context.EntityRegistry.Register(range);
+                    entities = context.EntityRegistry.Entities;
+
+                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
                 }
                 #endregion
 
@@ -2642,6 +2857,10 @@ namespace Surtr.VM
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException CallStackOverflow(int maxDepth)
             => new SurtrExecutionException($"Call stack overflow: more than {maxDepth} nested calls.");
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrBudgetExceededException StepBudgetExceeded()
+            => new SurtrBudgetExceededException("Execution exceeded its instruction budget.");
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException DataStackOverflow()

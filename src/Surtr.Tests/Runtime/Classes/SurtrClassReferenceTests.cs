@@ -17,6 +17,8 @@ namespace Surtr.Tests.Runtime.Classes
             Assert.Equal("C", SurtrClassReference.Character.Descriptor);
             Assert.Equal("S", SurtrClassReference.String.Descriptor);
             Assert.Equal("E", SurtrClassReference.Erased.Descriptor);
+            Assert.Equal("G0", SurtrClassReference.GenericParameter(0).Descriptor);
+            Assert.Equal("?I", SurtrClassReference.Nullable(SurtrClassReference.Integer).Descriptor);
             Assert.Equal("V", SurtrClassReference.Void.Descriptor);
         }
 
@@ -352,8 +354,10 @@ namespace Surtr.Tests.Runtime.Classes
         [InlineData("B", "bool")]
         [InlineData("C", "char")]
         [InlineData("S", "string")]
-        [InlineData("E", "?")]
+        [InlineData("E", "unknown")]
         [InlineData("V", "void")]
+        [InlineData("G0", "T0")]
+        [InlineData("?I", "int?")]
         public void ToDisplayString_OfAPrimitive(string descriptor, string expected)
         {
             Assert.Equal(expected, SurtrClassReference.FromDescriptor(descriptor).ToDisplayString());

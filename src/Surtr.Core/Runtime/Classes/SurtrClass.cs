@@ -30,6 +30,8 @@ namespace Surtr.Runtime.Classes
         private readonly SurtrValueTypeCode _typeCode;
         private readonly SurtrTypeHandle? _baseType;
         private readonly bool _abstract;
+        private readonly bool _sealed;
+        private SurtrEnumCaseInfo[] _enumCases = Array.Empty<SurtrEnumCaseInfo>();
 
         private readonly Dictionary<string, SurtrFieldInfo> _fields;
         private readonly Dictionary<string, SurtrPropertyInfo> _properties;
@@ -155,6 +157,22 @@ namespace Surtr.Runtime.Classes
         #endregion
 
         /// <summary>Creates class metadata with empty tables, to be filled in by the loader.</summary>
+        /// <param name="name">The class's declared name, without qualification.</param>
+        /// <param name="typeCode">Which type family the class belongs to.</param>
+        /// <param name="selfReference">The descriptor other metadata refers to this class by.</param>
+        /// <param name="baseType">The class this one extends, or <see langword="null"/> for none.</param>
+        /// <param name="isAbstract">Whether the class cannot be instantiated directly.</param>
+        /// <param name="visibility">How widely the class is visible.</param>
+        /// <param name="declaringType">The type this class is nested in, or <see langword="null"/> at module level.</param>
+        /// <param name="isSealed">
+        /// Whether nothing may extend this class. Mutually exclusive with
+        /// <paramref name="isAbstract"/>, per <c>Language-Syntax.md</c> §2.2 - a class that cannot
+        /// be instantiated and cannot be extended could never have an instance.
+        /// </param>
+        /// <param name="isEnum">
+        /// Whether this class is an enum: a sealed class with a fixed set of named static
+        /// instances (<c>Language-Syntax.md</c> §2.4). Implies <paramref name="isSealed"/>.
+        /// </param>
         public SurtrClass(
             string name,
             SurtrValueTypeCode typeCode,
@@ -162,12 +180,25 @@ namespace Surtr.Runtime.Classes
             SurtrTypeHandle? baseType,
             bool isAbstract,
             SurtrVisibility visibility,
-            SurtrTypeHandle? declaringType)
-            : base(name, SurtrMemberKind.Class, selfReference, visibility, declaringType)
+            SurtrTypeHandle? declaringType,
+            bool isSealed = false,
+            bool isEnum = false)
+            : base(name, isEnum ? SurtrMemberKind.Enum : SurtrMemberKind.Class, selfReference, visibility, declaringType)
         {
+            if (isAbstract && (isSealed || isEnum))
+                throw new ArgumentException(
+                    $"Class '{name}' cannot be both abstract and sealed; nothing could ever instantiate it.",
+                    nameof(isSealed));
+
+            if (isEnum && baseType is not null)
+                throw new ArgumentException(
+                    $"Enum '{name}' cannot declare a base class; the enum class itself occupies that slot.",
+                    nameof(baseType));
+
             _typeCode = typeCode;
             _baseType = baseType;
             _abstract = isAbstract;
+            _sealed = isSealed || isEnum;
 
             _fields = new Dictionary<string, SurtrFieldInfo>(StringComparer.Ordinal);
             _properties = new Dictionary<string, SurtrPropertyInfo>(StringComparer.Ordinal);
@@ -210,6 +241,44 @@ namespace Surtr.Runtime.Classes
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _abstract;
+        }
+
+        /// <summary>
+        /// Whether nothing may extend this class.
+        /// </summary>
+        /// <remarks>
+        /// Worth more than intent-signalling: a sealed class tells a compiler that no override can
+        /// ever exist, so a virtual member on one can be called directly instead of through its
+        /// vtable slot. That is a static fact rather than a guess, which is exactly what
+        /// devirtualisation needs - including for a class the compiler is reading out of another
+        /// module's metadata rather than one it just parsed.
+        /// </remarks>
+        public bool IsSealed
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _sealed;
+        }
+
+        /// <summary>Whether this class is an enum, and so carries <see cref="EnumCases"/>.</summary>
+        public bool IsEnum
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => Kind == SurtrMemberKind.Enum;
+        }
+
+        /// <summary>
+        /// This enum's cases, in declaration order and indexed by ordinal. Empty on anything that
+        /// is not an enum.
+        /// </summary>
+        /// <remarks>
+        /// The ordinal is what makes an exhaustive <c>switch</c> over an enum
+        /// (<c>Language-Syntax.md</c> §4.3) compile to a dense jump table: the cases are instances,
+        /// so without one the keys would be references and there would be nothing to index on.
+        /// </remarks>
+        public ReadOnlySpan<SurtrEnumCaseInfo> EnumCases
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _enumCases;
         }
 
         #region Runtime Queries
@@ -333,20 +402,46 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>Declares a method on this class, joining any existing overload group of the same name.</summary>
         /// <exception cref="InvalidOperationException">The class is already built.</exception>
+        /// <exception cref="ArgumentException">
+        /// A member with the same signature is already declared. Two members differing only in
+        /// return type land here too, which is what <c>Language-Syntax.md</c> §3.5's first rule
+        /// asks for - no call site could choose between them.
+        /// </exception>
         public void AddMethod(SurtrMethodInfo method)
         {
             ThrowIfBuilt();
 
-            if (_methods.TryGetValue(method.Name, out var overloads))
-            {
-                Array.Resize(ref overloads, overloads.Length + 1);
-                overloads[^1] = method;
-                _methods[method.Name] = overloads;
-            }
-            else
-            {
-                _methods.Add(method.Name, new[] { method });
-            }
+            _methods.TryGetValue(method.Name, out var overloads);
+            _methods[method.Name] = SurtrMethodInfo.AppendOverload(overloads, method, Name);
+        }
+
+        /// <summary>
+        /// Declares the next enum case, backed by a static field holding the instance.
+        /// </summary>
+        /// <remarks>
+        /// The ordinal is assigned here rather than accepted, so it always matches declaration
+        /// order and can never be handed out twice.
+        /// </remarks>
+        /// <exception cref="InvalidOperationException">The class is already built, or is not an enum.</exception>
+        public SurtrEnumCaseInfo AddEnumCase(SurtrFieldInfo field)
+        {
+            ThrowIfBuilt();
+
+            if (!IsEnum)
+                throw new InvalidOperationException($"'{Name}' is not an enum and cannot declare enum cases.");
+
+            if (!field.IsStatic)
+                throw new ArgumentException($"Enum case '{field.Name}' must be a static field.", nameof(field));
+
+            var caseInfo = new SurtrEnumCaseInfo(field.Name, _enumCases.Length, field);
+
+            Array.Resize(ref _enumCases, _enumCases.Length + 1);
+            _enumCases[^1] = caseInfo;
+
+            if (!_fields.ContainsKey(field.Name))
+                _fields.Add(field.Name, field);
+
+            return caseInfo;
         }
 
         /// <summary>Declares a nested class or enum.</summary>

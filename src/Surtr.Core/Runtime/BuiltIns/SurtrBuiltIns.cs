@@ -84,6 +84,9 @@ namespace Surtr.Runtime.BuiltIns
         /// <summary>The <c>closure</c> class, behind every <see cref="SurtrClosure"/> whatever its signature.</summary>
         public static readonly SurtrClass Closure;
 
+        /// <summary>The <c>range</c> class, behind every <see cref="SurtrRange"/>.</summary>
+        public static readonly SurtrClass Range;
+
         /// <summary>
         /// The root native class, behind a <see cref="SurtrNativeProxy"/> the host did not declare
         /// a type for. Host-declared native classes are separate and live on the runtime.
@@ -134,6 +137,9 @@ namespace Surtr.Runtime.BuiltIns
             Tuple = Declare("tuple", SurtrValueTypeCode.Tuple, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolTuple.ToString()));
             Dictionary = Declare("dict", SurtrValueTypeCode.Dictionary, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolDictionary.ToString()));
             Closure = Declare("closure", SurtrValueTypeCode.Closure, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolClosure.ToString()));
+            // Unlike its neighbours this one's SelfReference is a well-formed descriptor, because
+            // a range has nothing to be parameterised by: R names the type completely.
+            Range = Declare("range", SurtrValueTypeCode.Range, SurtrClassReference.Range);
             NativeObject = Declare("native", SurtrValueTypeCode.Native, SurtrClassReference.Native(NativeObjectFullName));
             Erased = Declare("erased", SurtrValueTypeCode.Erased, SurtrClassReference.Erased, isAbstract: true);
             Void = Declare("void", SurtrValueTypeCode.Void, SurtrClassReference.Void, isAbstract: true);
@@ -150,9 +156,17 @@ namespace Surtr.Runtime.BuiltIns
             ByTypeCode[(int)SurtrValueTypeCode.Tuple] = Tuple;
             ByTypeCode[(int)SurtrValueTypeCode.Dictionary] = Dictionary;
             ByTypeCode[(int)SurtrValueTypeCode.Closure] = Closure;
+            ByTypeCode[(int)SurtrValueTypeCode.Range] = Range;
             ByTypeCode[(int)SurtrValueTypeCode.Native] = NativeObject;
             ByTypeCode[(int)SurtrValueTypeCode.Erased] = Erased;
             ByTypeCode[(int)SurtrValueTypeCode.Void] = Void;
+
+            // The element-polymorphic members are declared against these: array.push takes G0,
+            // dict.get maps G0 to G1. Tuple and closure declare none on purpose - both are
+            // parameterised by a *list* whose length varies per value, so a fixed parameter list
+            // could not describe either, and neither has a member that would want one.
+            Array.SetGenericParameters("T");
+            Dictionary.SetGenericParameters("K", "V");
 
             SurtrPrimitiveBuiltIns.DeclareInteger(BuilderFor(Integer, handles));
             SurtrPrimitiveBuiltIns.DeclareFloat(BuilderFor(Float, handles));
@@ -163,6 +177,7 @@ namespace Surtr.Runtime.BuiltIns
             SurtrCompositeBuiltIns.DeclareTuple(BuilderFor(Tuple, handles));
             SurtrCompositeBuiltIns.DeclareDictionary(BuilderFor(Dictionary, handles));
             SurtrCompositeBuiltIns.DeclareClosure(BuilderFor(Closure, handles));
+            SurtrCompositeBuiltIns.DeclareRange(BuilderFor(Range, handles));
 
             // Every handle the built-in signatures mention is a built-in, so the whole table binds
             // from what was just declared - the built-in module is the one module with no external

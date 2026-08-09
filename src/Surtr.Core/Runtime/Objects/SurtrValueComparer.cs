@@ -1,5 +1,6 @@
 #nullable enable
 
+using Surtr.Runtime.BuiltIns;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
@@ -73,8 +74,17 @@ namespace Surtr.Runtime.Objects
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private bool BoxEquals(SurtrRef boxedSide, SurtrValue primitiveSide)
-            => _runtime.Context.EntityRegistry.Get(boxedSide) is SurtrBoxed boxed
+        {
+            if (_runtime.Context.EntityRegistry.Get(boxedSide) is not SurtrBoxed boxed)
+                return false;
+
+            // The box has to be a box of that primitive, not merely of something holding the same
+            // bits. A boxed `value class EntityId` wrapping an int also holds an int, and it is a
+            // distinct type: EntityId(7) is not 7, and letting the two compare equal would make a
+            // dictionary keyed by one findable by the other.
+            return ReferenceEquals(boxed.Class, SurtrBuiltIns.ForValue(primitiveSide))
                 && ValuesEqual(boxed.Value, primitiveSide);
+        }
 
         /// <summary>A hash consistent with <see cref="ValuesEqual"/>.</summary>
         public int HashOf(SurtrValue value)
@@ -107,7 +117,11 @@ namespace Surtr.Runtime.Objects
                     return rightEntity is SurtrString rightString && leftString.TextEquals(rightString);
 
                 case SurtrBoxed leftBoxed:
-                    return rightEntity is SurtrBoxed rightBoxed && ValuesEqual(leftBoxed.Value, rightBoxed.Value);
+                    // Same class as well as same content: a box can hold a value class now, and
+                    // two value classes wrapping the same int are still two different types.
+                    return rightEntity is SurtrBoxed rightBoxed
+                        && ReferenceEquals(leftBoxed.Class, rightBoxed.Class)
+                        && ValuesEqual(leftBoxed.Value, rightBoxed.Value);
 
                 case SurtrTuple leftTuple:
                     return rightEntity is SurtrTuple rightTuple && TuplesEqual(leftTuple, rightTuple);

@@ -106,16 +106,8 @@ namespace Surtr.Runtime.Classes
             if (method.IsStatic)
                 throw new ArgumentException($"Interface method '{Name}.{method.Name}' cannot be static.", nameof(method));
 
-            if (_methods.TryGetValue(method.Name, out var existing))
-            {
-                Array.Resize(ref existing, existing.Length + 1);
-                existing[^1] = method;
-                _methods[method.Name] = existing;
-            }
-            else
-            {
-                _methods.Add(method.Name, new[] { method });
-            }
+            _methods.TryGetValue(method.Name, out var existing);
+            _methods[method.Name] = SurtrMethodInfo.AppendOverload(existing, method, Name);
         }
 
         /// <summary>

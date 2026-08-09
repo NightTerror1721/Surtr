@@ -177,7 +177,7 @@ Allocation opcodes carry the full parameterised type (`ArrNew`, `ArrNewX`, `ArrP
 
 Every member is documented with the same three-part `///` block, and new opcodes must follow it: **Encoding** (byte layout as `opcode(1) name(width)` plus total length), **Stack** (`before -> after`, `...` for the untouched remainder, rightmost entry is the top), and **Notes** only where behaviour isn't obvious from the name.
 
-Pool indices refer to the tables on the declaring module's `SurtrChunk`. Trap behaviour is now pinned down by the interpreter — see the table in `docs/VM-Plan.md` §1.6 for what traps, what is defined, and what is deliberately unchecked.
+Pool indices refer to the tables on the declaring module's `SurtrChunk`. Trap behaviour is now pinned down by the interpreter — see the validation policy in `docs/VM-Plan.md` §1.9 for what traps, what is defined, and what is deliberately unchecked.
 
 ## The virtual machine
 
@@ -197,7 +197,37 @@ Generics are a compile-time construct, checked and then discarded, as Java's are
 
 The compiler owes two things in exchange, the same two Java's does: **box primitives** flowing into an erased slot, and **insert a `Cast`** when reading one back out. No opcode, metadata table or dispatch path needs to know a generic existed.
 
-`docs/VM-Plan.md` carries the full rationale for every decision above, the remaining gaps (interface dispatch does a linear scan, array access pays two bounds checks, a module is tied to the runtime that loaded it), and the ordered plan.
+`docs/VM-Plan.md` carries the full rationale for every decision above, the remaining gaps (interface dispatch does a linear scan, array access pays two bounds checks, a module is tied to the runtime that loaded it), what the language spec obliges the runtime to add, and the ordered plan.
+
+## The bytecode emitter
+
+`src/Surtr.Core/Bytecode/Emit/` is the only supported way to produce a chunk. It is **public** even though `SurtrChunk` stays `internal`, so a front end can live in its own assembly; the builders are the seam.
+
+The shape of using it is always **declare → emit → `Build()` → `LoadModule`**, and that order is forced by the runtime rather than chosen. `SurtrBytecodeMethodInfo` snapshots `chunk.MethodOffsets[entryIndex]` *in its constructor*, so no method metadata can exist until every body in the module has been emitted and laid out — yet a call site has to name its target while emitting. The two are reconciled by handing out a method-table slot at declaration time (`SurtrMethodBuilder.Token`) and binding the real metadata into it in `Build()`. Everything else about the layering follows from that one constraint.
+
+| Type | Owns |
+|---|---|
+| `SurtrModuleBuilder` | the constant pool, the four access tables, the declarations, and `Build()` |
+| `SurtrClassBuilder` / `SurtrInterfaceBuilder` | one type's members; `SurtrPropertyBuilder` wires `get_x`/`set_x` |
+| `SurtrMethodBuilder` | one signature, its frame slots and its protected regions |
+| `SurtrCodeEmitter` | the instruction stream, labels, branches and stack tracking |
+| `SurtrBytecodeDisassembler` | renders a built module, for tests and for debugging an emitter |
+
+`SurtrCodeEmitter` has three tiers, and a compiler should live in the third:
+
+1. **Raw** — `Emit(OpCode, pop, push)`, `EmitU8`/`EmitI16`/`EmitI32`. Writes what it is told, validates nothing.
+2. **One method per opcode**, named after it (`Ldl0()`, `ArrPack(type, size)`, `JPZ(label)`), taking its exact operands. Deliberately literal: `JPZ` emits `JPZ` and *fails* if its target is out of reach rather than quietly becoming `JPZX`.
+3. **Grouped helpers** that pick the encoding — `LoadLocal`, `LoadConstant`, `LoadInt`, `Add(typeCode)`, `Compare(comparison, typeCode)`, `JumpIfCompare`, `Call`, `SwitchOn`, `Convert`, `Box`. This is where "which of `Ldl0`…`Ldl5`/`LdlS`/`Ldl`" is decided once instead of at every emit site.
+
+Three things the emitter computes rather than asks for, each because getting it wrong by hand is unrecoverable:
+
+- **`LocalCount` and `MaxStackSize`.** Every tier-two method declares its own pop/push. This pair is the *only* stack-overflow check the interpreter makes, so a hand-supplied wrong value corrupts the stack with nothing to catch it.
+- **Stack agreement at labels.** Every path into a label must arrive at the same depth; a mismatch throws at the instruction that caused it. Handler labels are marked with `MarkHandler`, which sets depth 1 — the unwinder clears the frame's stack and pushes the raised object.
+- **Branch width.** `SurtrJumpWidth.Auto` starts short and widens what does not reach, re-running to a fixed point because widening one branch moves everything after it. Only `Auto` relaxes: a pinned short branch fails instead. This is also why a protected region records its bounds as *labels* — `SurtrExceptionHandler` offsets are chunk-absolute and are only resolvable after relaxation and after the bodies are concatenated.
+
+Two invariants worth not breaking: every method a builder declares goes into its own module's method table whether or not anything local calls it (a cross-module call reads the *callee's* table), and the pools deduplicate — the low indices have dedicated single-byte opcodes behind them, so duplicates would push real entries out of that range.
+
+`Call(SurtrMethodInfo)` infers its dispatch opcode except for one case: a declaring type is carried as a descriptor, and a descriptor does not say whether it names a class or a contract until load. Methods declared through `SurtrInterfaceBuilder` are recognised because the module builder remembers them; anything else needs `CallInterface`.
 
 ## Commands
 
@@ -228,9 +258,30 @@ There is no lint config or CI yet — add commands here once those exist rather 
 - `src/Surtr.Core` — the main library, built for `netstandard2.1` so the compiled DLL can be dropped into Unity (2021.2+, including IL2CPP) as a plain managed assembly. `AllowUnsafeBlocks` is enabled here specifically because the VM/registry work described above depends on it; don't assume other projects (e.g. a future source generator) need or should have it. `LangVersion` is inherited as `latest` from `Directory.Build.props` — targeting `netstandard2.1` does not cap the C# language version, since `TargetFramework` (runtime/BCL surface) and `LangVersion` (compiler syntax) are independent settings. Only watch for C# features that need runtime support beyond what's in the BCL (e.g. default interface methods), since Unity's Mono/IL2CPP backends can behave unreliably there even though the code compiles fine.
 - `src/Surtr.Tests` — xUnit test project, targeting `net8.0` (it runs standalone under the .NET SDK, not inside Unity, so it isn't bound to `netstandard2.1` the way the core library is). `AllowUnsafeBlocks` is enabled here too, since chunk-building tests poke at the same unmanaged surface. `GenerateDocumentationFile` is turned back off here — a test assembly is never consumed as a library, so `CS1591` would just be noise. `Surtr.Core` grants it `[InternalsVisibleTo("Surtr.Tests")]` (in `AssemblyInfo.cs`) so tests can reach `internal` types like `SurtrVirtualMachine` and `SurtrChunk` directly, alongside exercising the public `SurtrRuntime` surface. Folder layout mirrors `src/Surtr.Core` (`Runtime/Objects`, `Runtime/Classes`, `VM`, …) so a test's location tells you what it covers.
 
-Inside `src/Surtr.Core`: `Bytecode/` is the instruction set, `Runtime/Classes/` the type metadata and linker, `Runtime/Objects/` the runtime values and the entity registry, `Runtime/BuiltIns/` the shared built-in classes and their native members, `Runtime/Utilities/` the unmanaged helpers, `VM/` the interpreter.
+Inside `src/Surtr.Core`: `Bytecode/` is the instruction set and `Bytecode/Emit/` the emitter, `Runtime/Classes/` the type metadata and linker, `Runtime/Objects/` the runtime values and the entity registry, `Runtime/BuiltIns/` the shared built-in classes and their native members, `Runtime/Utilities/` the unmanaged helpers, `VM/` the interpreter.
 
-The instruction set, the metadata layer, the object registry, the runtime object model, the built-in classes and the interpreter exist. **The compiler does not** — nothing produces bytecode yet, so a chunk has to be built by hand to run anything (as the tests in `src/Surtr.Tests` do). Building it is the next major piece of work; the remaining runtime-side gaps are listed in `docs/VM-Plan.md` §3.
+The instruction set, the metadata layer, the object registry, the runtime object model, the built-in classes, the interpreter and the emitter exist. **The compiler's front end is only started** — nothing turns Surtr source into calls on `SurtrModuleBuilder` yet, so a module is still assembled by hand, just against the emitter rather than against raw bytes.
+
+**`docs/Language-Syntax.md` is the specification `src/Surtr.Compiler` implements** — the complete surface syntax, with the reasoning behind each choice and the runtime obligations each one creates. Read it before touching the compiler; §1.2 is the authoritative reserved word list and §5.7 the authoritative operator table. Surtr source files use the `.surtr` extension.
+
+The language has three compile-time-only constructs worth knowing about before reading anything else, because they mean source and runtime do not correspond one-to-one: **type aliases** (§2.7) erase to their target's descriptor, **`inline`/`forceinline`** (§3.6) splice a body into a call site, and **`const`/`const fun`/`const if`** (§7) move work to compile time — including conditional compilation, with no preprocessor. The last of those is folded by *running the emitted bytecode on the real VM* rather than by a second evaluator in the compiler, so compile-time and runtime semantics cannot drift; `docs/VM-Plan.md` §4.7 covers what that costs.
+
+Three absences are deliberate and worth not re-proposing. There is **no `static class`** — a module already is a container of members with no instance (§2.5), so `singleton` (§2.8) exists only for the thing modules genuinely cannot do: implement an interface and be passed as a value. There is **no `any`** — `unknown` (§5.10) holds anything but must be cast before use, and is `SurtrValueTypeCode.Erased` with a surface name, so it costs the runtime nothing. And there are **no user-defined implicit conversions** — `operator as` (§5.6) is explicit-only, because overload resolution already has `int` → `float` as its hard case.
+
+Two type-shaped things are erased but not equivalent: a **type alias** (§2.7) is transparent, so `EntityId` and `int` are interchangeable, while a **`value class`** (§2.9) wraps one field and *is* a distinct type to the compiler, erased to that field at runtime — free where its type is statically known, boxed where it flows into an erased or interface-typed slot. `value` stays a contextual keyword: it is the `class` after it that makes the declaration.
+
+What exists in `src/Surtr.Compiler` today: `Syntax/` holds the source buffer, the character reader, the token model, **the lexer**, **the AST** (`Syntax/Ast/`) and **the parser** (`Parser.*.cs`, partial by what each file parses). Both are complete against the spec and covered by `src/Surtr.Tests/Compiler/Syntax`, including `Sample.surtr` — a file exercising every construct in the language, lexed and parsed end to end. `Binding/` and `CodeGen/` are still empty: **name resolution, type checking and lowering onto `SurtrModuleBuilder` are the next piece**, and nothing yet turns a tree into a chunk.
+
+Four things about the front end that are not obvious from the code:
+
+- **The lexer hands back `>>`, `>>>` and their `=` forms whole**, because maximal munch cannot know it is inside a type argument list. `TokenReader.ConsumeTypeArgumentClose` repays that, taking one `>` at a time and refusing to step over an unconsumed one. The `=`-suffixed shapes are rejected with a message asking for a space rather than synthesising a token the lexer never produced.
+- **Type names and contextual keywords lex as `Identifier`.** `int`/`string`/`void`/`range`/`unknown` are ordinary identifiers per §1.1, and `this`/`super`/`value` per §3.2, so the parser recognises them by text. `as?` likewise arrives as `as` then `?`.
+- **Three ambiguities are settled by lookahead, not grammar**: a lambda against a tuple (scan balanced parens for the `=>`), a block against a dict literal (§5.4 makes it positional), and a member's kind (§3.2's introducer keyword).
+- **The parser throws on the first error.** Recovery — resynchronising at a statement boundary so one bad line does not hide the next twenty — is deliberately deferred until there is a binder to report alongside it.
+
+Runtime-side gaps are in `docs/VM-Plan.md` §3; what the language design newly obliges the runtime to grow is `docs/VM-Plan.md` §4, and §5 orders all of it into a build plan.
+
+The VM opcode suites in `src/Surtr.Tests/VM` predate the emitter and still use their own `BytecodeBuilder`, which pokes at `SurtrChunk` directly. That is deliberate: an opcode test should exercise the byte layout it is testing, not whatever the emitter decided to emit. New tests that are *about* a whole module belong in `src/Surtr.Tests/Bytecode/Emit` and should go through `SurtrModuleBuilder`.
 
 Because nothing persists a chunk yet, the opcode set is still being *shaped* rather than extended: new members go next to their family, and the append-only rule in `OpCode.cs` takes effect the moment anything serializes bytecode.
 

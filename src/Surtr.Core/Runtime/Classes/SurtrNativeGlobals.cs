@@ -139,6 +139,8 @@ namespace Surtr.Runtime.Classes
             if (!entryPoint.IsValid)
                 throw new ArgumentException($"Native global function '{name}' was given a null entry point.", nameof(entryPoint));
 
+            SurtrParameterInfo.Validate(parameters, name);
+
             _name = name;
             _returnType = returnType;
             _parameters = parameters;
@@ -171,6 +173,29 @@ namespace Surtr.Runtime.Classes
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _parameters.Length;
+        }
+
+        /// <summary>How many arguments a call site must supply, per <see cref="SurtrMethodInfo.RequiredParameterCount"/>.</summary>
+        public int RequiredParameterCount
+        {
+            get
+            {
+                var parameters = _parameters;
+                for (int i = 0; i < parameters.Length; i++)
+                {
+                    if (parameters[i].HasDefault || parameters[i].IsVarargs)
+                        return i;
+                }
+
+                return parameters.Length;
+            }
+        }
+
+        /// <summary>Whether the last parameter absorbs a surplus of arguments into an array.</summary>
+        public bool HasVarargs
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _parameters.Length != 0 && _parameters[^1].IsVarargs;
         }
 
         /// <summary>The address the interpreter calls through.</summary>

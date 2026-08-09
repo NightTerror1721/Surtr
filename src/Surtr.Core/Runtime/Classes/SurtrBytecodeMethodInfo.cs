@@ -35,8 +35,9 @@ namespace Surtr.Runtime.Classes
             SurtrChunk chunk,
             int entryIndex,
             int localCount,
-            int maxStackSize)
-            : base(name, SurtrMethodImplKind.Bytecode, dispatch, role, isOverride, returnType, parameters, isStatic, visibility, declaringType)
+            int maxStackSize,
+            bool isSealed = false)
+            : base(name, SurtrMethodImplKind.Bytecode, dispatch, role, isOverride, returnType, parameters, isStatic, visibility, declaringType, isSealed)
         {
             _chunk = chunk;
             _entryIndex = entryIndex;

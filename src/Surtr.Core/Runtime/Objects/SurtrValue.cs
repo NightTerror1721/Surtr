@@ -1,5 +1,6 @@
 #nullable enable
 
+using Surtr.Runtime.Classes;
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -22,12 +23,37 @@ namespace Surtr.Runtime.Objects
         internal const SurtrRawValue TagMaskBool        = 0xFFF3000000000000;
         internal const SurtrRawValue TagMaskChar        = 0xFFF4000000000000;
         internal const SurtrRawValue TagMaskReference    = 0xFFF5000000000000;
+        internal const SurtrRawValue TagMaskAbsent      = 0xFFF6000000000000;
 
         internal const SurtrRawTagValue TagInt = 0xFFF1;
         internal const SurtrRawTagValue TagFloat = 0xFFF2;
         internal const SurtrRawTagValue TagBool = 0xFFF3;
         internal const SurtrRawTagValue TagChar = 0xFFF4;
         internal const SurtrRawTagValue TagReference = 0xFFF5;
+
+        /// <summary>
+        /// The tag on a nullable primitive that currently holds no value.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <c>int?</c>, <c>bool?</c>, <c>char?</c> and <c>float?</c> are first-class without ever
+        /// touching the heap: absence is this tag in an ordinary value slot, not a
+        /// <see cref="SurtrBoxed"/> with an entity id. Paying an allocation to represent "no value"
+        /// is exactly the kind of hidden per-value cost the performance rules rule out, and the
+        /// tag space had room - five of sixteen nibbles were claimed.
+        /// </para>
+        /// <para>
+        /// The payload carries the <c>SurtrValueTypeCode</c> of the primitive that is absent. The
+        /// compiler already knows it statically, so nothing on the execution path reads it; it is
+        /// there so a native function handed the value, or a diagnostic printing it, can say
+        /// <em>what</em> is missing rather than just that something is.
+        /// </para>
+        /// <para>
+        /// Tracing needs no change at all: the collector and every <c>VisitReferences</c> walk test
+        /// for the exact reference tag, so a distinct tag is invisible to them for free.
+        /// </para>
+        /// </remarks>
+        internal const SurtrRawTagValue TagAbsent = 0xFFF6;
 
         /// <summary>The reserved reference id representing "no entity" (a null reference).</summary>
         public const SurtrRef NullRef = 0;
@@ -131,7 +157,9 @@ namespace Surtr.Runtime.Objects
         /// <remarks>
         /// A float is stored as its raw IEEE754 bits with no tag applied - that is the whole
         /// point of NaN boxing - so it is identified by *not* carrying one of the tag patterns
-        /// rather than by carrying its own.
+        /// rather than by carrying its own. The upper bound is <see cref="TagMaskAbsent"/>, not
+        /// <see cref="TagMaskReference"/>: the absent tag sits one nibble above the reference tag
+        /// precisely so this stays a single range compare as the claimed range grows.
         /// </remarks>
         public bool IsFloat
         {
@@ -139,8 +167,33 @@ namespace Surtr.Runtime.Objects
             get
             {
                 SurtrRawValue tag = Raw & TagMask;
-                return tag < TagMaskInt || tag > TagMaskReference;
+                return tag < TagMaskInt || tag > TagMaskAbsent;
             }
+        }
+
+        /// <summary>
+        /// Whether this value is a nullable primitive currently holding nothing.
+        /// </summary>
+        /// <remarks>
+        /// Distinct from <see cref="IsNullReference"/>, and the two must not be confused: a null
+        /// reference is a payload of zero under the reference tag, while an absent primitive is its
+        /// own tag. That separation is what lets an <c>int</c> of value <c>0</c> stay
+        /// unambiguously present - the payload-only test <c>IsNull</c> uses on references would
+        /// otherwise read it as null.
+        /// </remarks>
+        public bool IsAbsent
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => (Raw & TagMask) == TagMaskAbsent;
+        }
+
+        /// <summary>
+        /// Which primitive family is missing, for a value where <see cref="IsAbsent"/> holds.
+        /// </summary>
+        public SurtrValueTypeCode AbsentTypeCode
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => (SurtrValueTypeCode)(byte)Raw;
         }
 
         /// <summary>Whether this value holds a bool.</summary>
@@ -228,6 +281,15 @@ namespace Surtr.Runtime.Objects
         /// <summary>Creates an entity reference value from a raw <see cref="SurtrRef"/> id.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static SurtrValue CreateReference(SurtrRef value) => new(TagReference, (SurtrRawPayloadValue)value);
+
+
+        /// <summary>
+        /// Creates the "no value" state of a nullable primitive, remembering which primitive it is
+        /// the absence of.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static SurtrValue CreateAbsent(SurtrValueTypeCode typeCode)
+            => new(TagAbsent, (SurtrRawPayloadValue)(byte)typeCode);
 
         /// <summary>
         /// Reinterprets an already-boxed 8-byte pattern as a value, without inspecting its tag.

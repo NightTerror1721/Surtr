@@ -39,7 +39,10 @@ namespace Surtr.Runtime.Classes
     ///             | 'L' '(' descriptor* ')' descriptor closure (params) -> return
     ///             | 'O' fullname ';'                   Surtr object type
     ///             | 'N' fullname ';'                   host-defined native type
+    ///             | 'R'                                range of ints
     ///             | 'E'                                erased generic type parameter
+    ///             | 'G' digit                          the declaring type's n-th generic parameter
+    ///             | '?' primitive                      nullable primitive (?I, ?F, ?B, ?C)
     /// fullname   := modulePath ':' typeName ('.' nestedTypeName)*
     /// </code>
     /// <para>
@@ -77,6 +80,16 @@ namespace Surtr.Runtime.Classes
         /// <summary>Descriptor symbol for <see cref="SurtrValueTypeCode.Closure"/>, followed by a parenthesized parameter list then the return descriptor.</summary>
         public const char SymbolClosure = 'L';
 
+        /// <summary>
+        /// Descriptor symbol for <see cref="SurtrValueTypeCode.Range"/>.
+        /// </summary>
+        /// <remarks>
+        /// A bare symbol like a primitive's, not a nesting form like <c>A</c> or <c>D</c>: both
+        /// bounds of a range are always <c>int</c>, so there is nothing to parameterise it by and
+        /// nothing for the nesting grammar to carry.
+        /// </remarks>
+        public const char SymbolRange = 'R';
+
         /// <summary>Descriptor symbol for <see cref="SurtrValueTypeCode.Object"/>, followed by a full name and <see cref="NameTerminator"/>.</summary>
         public const char SymbolObject = 'O';
 
@@ -100,6 +113,43 @@ namespace Surtr.Runtime.Classes
         /// descriptor of a closure descriptor - a parameter, field or element can never be void.
         /// </summary>
         public const char SymbolVoid = 'V';
+
+        /// <summary>
+        /// Descriptor symbol introducing a declared generic parameter of the type the member
+        /// belongs to: <c>G</c> followed by one decimal digit, so <c>G0</c> is the declaring
+        /// type's first parameter.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// It resolves to the same class <see cref="SymbolErased"/> does, so it costs the runtime
+        /// nothing and changes no layout: a generic slot is a reference either way. What it adds
+        /// is the one thing <c>E</c> throws away - <em>which</em> parameter it is - and that is
+        /// what lets a built-in declare a member whose signature mentions its own element type.
+        /// <c>array.push(value: G0)</c> is checkable against <c>int[]</c>; <c>push(value: E)</c>
+        /// is not, because nothing connects the parameter back to the receiver.
+        /// </para>
+        /// <para>
+        /// One digit, not a run of them: the arity that would need ten parameters does not exist,
+        /// and a fixed width keeps this parsing in one pass with a single character of lookahead
+        /// like every other symbol.
+        /// </para>
+        /// </remarks>
+        public const char SymbolGenericParameter = 'G';
+
+        /// <summary>
+        /// Descriptor prefix marking a nullable primitive: <c>?</c> followed by a primitive
+        /// symbol, so <c>?I</c> is <c>int?</c>.
+        /// </summary>
+        /// <remarks>
+        /// Legal only before <see cref="SymbolInteger"/>, <see cref="SymbolFloat"/>,
+        /// <see cref="SymbolBoolean"/> or <see cref="SymbolCharacter"/>, and that restriction is
+        /// the point. A nullable <em>reference</em> needs no encoding at all - a reference is its
+        /// 32-bit payload and null is already representable - so allowing <c>?S</c> would create a
+        /// second descriptor for a type that already has one, and descriptors are the canonical
+        /// form for comparison and hashing. Only a primitive needs somewhere to put "absent",
+        /// which is what the reserved value tag provides.
+        /// </remarks>
+        public const char SymbolNullable = '?';
 
         /// <summary>Terminates the full name that follows <see cref="SymbolObject"/> or <see cref="SymbolNative"/>.</summary>
         public const char NameTerminator = ';';
@@ -144,7 +194,51 @@ namespace Surtr.Runtime.Classes
         public SurtrValueTypeCode TypeCode
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => string.IsNullOrEmpty(_descriptor) ? SurtrValueTypeCode.Invalid : CodeOf(_descriptor![0]);
+            get
+            {
+                string? descriptor = _descriptor;
+                if (string.IsNullOrEmpty(descriptor))
+                    return SurtrValueTypeCode.Invalid;
+
+                // A nullable primitive is still that primitive: it occupies a value slot, is not
+                // traced, and answers IsValueType the same way. The prefix says only that one
+                // reserved tag pattern is also in its range.
+                return descriptor![0] == SymbolNullable
+                    ? (descriptor.Length > 1 ? CodeOf(descriptor[1]) : SurtrValueTypeCode.Invalid)
+                    : CodeOf(descriptor[0]);
+            }
+        }
+
+        /// <summary>
+        /// Whether this reference names a nullable primitive - one that can also hold the reserved
+        /// "no value" pattern.
+        /// </summary>
+        public bool IsNullablePrimitive
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => !string.IsNullOrEmpty(_descriptor) && _descriptor![0] == SymbolNullable;
+        }
+
+        /// <summary>
+        /// Whether this reference names a declared generic parameter of its declaring type, and
+        /// which one.
+        /// </summary>
+        /// <returns><see langword="true"/> if the descriptor is a generic parameter.</returns>
+        public bool TryGetGenericParameterIndex(out int index)
+        {
+            string descriptor = Descriptor;
+            if (descriptor.Length == 2 && descriptor[0] == SymbolGenericParameter)
+            {
+                int digit = descriptor[1] - '0';
+                if ((uint)digit <= 9)
+                {
+                    index = digit;
+                    return true;
+                }
+            }
+
+            index = -1;
+            return false;
         }
 
         /// <summary>
@@ -182,6 +276,9 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>A reference to the built-in string type.</summary>
         public static SurtrClassReference String { get; } = new(SymbolString.ToString());
+
+        /// <summary>A reference to the built-in range type.</summary>
+        public static SurtrClassReference Range { get; } = new(SymbolRange.ToString());
 
         /// <summary>A reference to an erased generic type parameter.</summary>
         public static SurtrClassReference Erased { get; } = new(SymbolErased.ToString());
@@ -229,8 +326,47 @@ namespace Surtr.Runtime.Classes
         public static SurtrClassReference Native(string fullName)
             => new(SymbolNative + fullName + NameTerminator);
 
+        /// <summary>
+        /// Builds a reference to the declaring type's <paramref name="index"/>-th generic
+        /// parameter.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException"><paramref name="index"/> is outside 0-9.</exception>
+        public static SurtrClassReference GenericParameter(int index)
+        {
+            if ((uint)index > 9)
+                throw new ArgumentOutOfRangeException(nameof(index), index, "A generic parameter index must be a single digit.");
+
+            return new SurtrClassReference(GenericParameterDescriptors[index]);
+        }
+
+        /// <summary>Builds a reference to the nullable form of a primitive type.</summary>
+        /// <exception cref="ArgumentException"><paramref name="primitiveType"/> is not a primitive.</exception>
+        public static SurtrClassReference Nullable(SurtrClassReference primitiveType)
+        {
+            if (primitiveType.IsNullablePrimitive)
+                return primitiveType;
+
+            if (!primitiveType.TypeCode.IsPrimitive || primitiveType.Descriptor.Length != 1)
+                throw new ArgumentException(
+                    $"Only a primitive can be made nullable; '{primitiveType.Descriptor}' is not one. A nullable reference needs no descriptor of its own.",
+                    nameof(primitiveType));
+
+            return new SurtrClassReference(SymbolNullable + primitiveType.Descriptor);
+        }
+
+        /// <summary>The primitive underlying a nullable primitive reference, or this reference unchanged.</summary>
+        public SurtrClassReference GetUnderlyingPrimitive()
+            => IsNullablePrimitive ? new SurtrClassReference(Descriptor.Substring(1)) : this;
+
         /// <summary>Wraps an already-encoded descriptor without validating it. Intended for metadata loaded from trusted bytecode.</summary>
         public static SurtrClassReference FromDescriptor(string descriptor) => new(descriptor);
+
+        // Interned so a generic parameter reference never allocates: ten one-off strings against
+        // a descriptor that appears in every element-polymorphic built-in signature.
+        private static readonly string[] GenericParameterDescriptors =
+        {
+            "G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "G9",
+        };
         #endregion
 
         #region Composite Accessors
@@ -330,6 +466,7 @@ namespace Surtr.Runtime.Classes
                 case SymbolBoolean:
                 case SymbolCharacter:
                 case SymbolString:
+                case SymbolRange:
                 case SymbolErased:
                 case SymbolVoid:
                     return index + 1;
@@ -360,6 +497,25 @@ namespace Surtr.Runtime.Classes
                 {
                     int end = descriptor.IndexOf(NameTerminator, index + 1);
                     return end < 0 ? -1 : end + 1;
+                }
+
+                case SymbolGenericParameter:
+                {
+                    // Exactly one digit has to follow, which is what keeps this fixed-width.
+                    if ((uint)(index + 1) >= (uint)descriptor.Length)
+                        return -1;
+
+                    int digit = descriptor[index + 1] - '0';
+                    return (uint)digit <= 9 ? index + 2 : -1;
+                }
+
+                case SymbolNullable:
+                {
+                    if ((uint)(index + 1) >= (uint)descriptor.Length)
+                        return -1;
+
+                    // Only a primitive may be made nullable - see SymbolNullable.
+                    return CodeOf(descriptor[index + 1]).IsPrimitive ? index + 2 : -1;
                 }
 
                 default:
@@ -426,8 +582,12 @@ namespace Surtr.Runtime.Classes
             SymbolClosure => SurtrValueTypeCode.Closure,
             SymbolObject => SurtrValueTypeCode.Object,
             SymbolNative => SurtrValueTypeCode.Native,
+            SymbolRange => SurtrValueTypeCode.Range,
             SymbolErased => SurtrValueTypeCode.Erased,
             SymbolVoid => SurtrValueTypeCode.Void,
+            // A generic parameter is an erased slot that remembers which parameter it was: the
+            // index is metadata for the compiler, the representation is the erased one.
+            SymbolGenericParameter => SurtrValueTypeCode.Erased,
             _ => SurtrValueTypeCode.Invalid,
         };
         #endregion
@@ -457,8 +617,28 @@ namespace Surtr.Runtime.Classes
                 case SymbolBoolean: builder.Append("bool"); return index + 1;
                 case SymbolCharacter: builder.Append("char"); return index + 1;
                 case SymbolString: builder.Append("string"); return index + 1;
-                case SymbolErased: builder.Append('?'); return index + 1;
+                case SymbolRange: builder.Append("range"); return index + 1;
+                // `unknown` rather than a bare '?', which now means nullable and would read as
+                // two different things in the same sentence.
+                case SymbolErased: builder.Append("unknown"); return index + 1;
                 case SymbolVoid: builder.Append("void"); return index + 1;
+
+                case SymbolGenericParameter:
+                {
+                    // No name to print: the descriptor carries the position, and the declaring
+                    // type - which is what knows the name - is not reachable from here.
+                    if ((uint)(index + 1) >= (uint)descriptor.Length)
+                        return -1;
+                    builder.Append('T').Append(descriptor[index + 1]);
+                    return index + 2;
+                }
+
+                case SymbolNullable:
+                {
+                    int next = AppendDisplay(builder, descriptor, index + 1);
+                    builder.Append('?');
+                    return next;
+                }
 
                 case SymbolArray:
                 {

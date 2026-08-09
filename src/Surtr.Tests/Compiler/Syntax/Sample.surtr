@@ -1,0 +1,131 @@
+import Ogame.core.Entity;
+import Ogame.core.*;
+
+alias EntityId = int;
+alias IntMap<V> = {int: V};
+alias Handler = (Entity, float) -> void;
+
+const MaxEntities: int = 512;
+const Greeting: string = "hello";
+
+value class Health {
+    public let value: int;
+    constructor(value: int) { this.value = value; }
+}
+
+singleton Registry : IRegistry {
+    private var _entries: {string: int} = {};
+    public fun register(name: string, id: int): void { _entries[name] = id; }
+}
+
+enum Suit : ICardSuit {
+    Hearts("♥", true),
+    Spades("♠", false),;
+
+    private let _symbol: string;
+    private let _isRed: bool;
+    constructor(symbol: string, isRed: bool) { _symbol = symbol; _isRed = isRed; }
+}
+
+interface IShape {
+    enum Kind { Circle, Square }
+    fun getKind(): Kind;
+    name: string { get; }
+}
+
+/// Two-dimensional vector.
+/// @param x horizontal component
+public sealed class Vec2 {
+    public let x: float;
+    public let y: float;
+
+    constructor(x: float, y: float) { this.x = x; this.y = y; }
+
+    operator+(a: Vec2, b: Vec2): Vec2 { return Vec2(a.x + b.x, a.y + b.y); }
+    operator-(v: Vec2): Vec2 { return Vec2(-v.x, -v.y); }
+    operator==(a: Vec2, b: Vec2): bool { return a.x == b.x && a.y == b.y; }
+    operator<=>(a: Vec2, b: Vec2): int { return 0; }
+    operator>>>(a: Vec2, b: int): Vec2 { return a; }
+    operator[](i: int): float { return i == 0 ? x : y; }
+    operator[](i: int, v: float): void { }
+    operator as(v: Vec2): Vec3 { return Vec3(v.x, v.y, 0.0); }
+}
+
+abstract class Animal {
+    public abstract fun speak(): string;
+    public virtual fun move(): void { }
+}
+
+class Dog : Animal {
+    public constructor() : super() { }
+    public sealed override fun speak(): string { return "Woof"; }
+    public override fun move(): void { super.move(); }
+}
+
+native fun log(message: string): void;
+native let ScreenWidth: int;
+native var TimeScale: float;
+
+const fun square(x: int): int { return x * x; }
+static let Sines: float[] = buildTable(256);
+
+fun format(pattern: string, args: string...): string { return pattern; }
+fun spawn(x: float, y: float, hp: int = 100, tag: char = 'a'): Entity { return world.make(x, y); }
+
+@Range(0, 100)
+public inline fun clamp<T : IComparable<T> & IEquatable<T>>(v: T?, lo: T, hi: T): T? {
+    const if (Debug) {
+        log("clamping ${v ?? lo}");
+    } else {
+        log("quiet");
+    }
+
+    outer: for (i in 0..=10) {
+        for (j in 0..items.length) {
+            if (j == 3) continue outer;
+            if (j > 5) break outer;
+        }
+    }
+
+    let bits = (0xFF_FF & 0b1010) ^ (1 << 3) | (-8 >>> 2) | (-8 >> 2);
+    var acc: int = 0;
+    acc += 1; acc -= 2; acc *= 3; acc /= 4; acc %= 5;
+    acc &= 1; acc |= 2; acc ^= 3; acc <<= 1; acc >>= 1; acc >>>= 1;
+
+    if (animal is Dog) { log("a dog"); }
+    let maybe: Dog? = animal as? Dog;
+    let sure: Dog = (animal as Dog)!!;
+    let n = maybe?.legs ?? 4;
+    var lazy: string? = null;
+    lazy ??= "default";
+
+    let f: (int) -> int = (x) => x * 2;
+    let g = (a: int, b: int) => { return a + b; };
+
+    let nested: Box<Box<Box<int>>> = deep;
+    let cmp = a <=> b;
+
+    let label = switch (v) {
+        1 -> "one",
+        2, 3 -> "two or three",
+        else -> "other",
+    };
+
+    switch (acc) {
+        case 1:
+        case 2:
+            break;
+        default:
+            break;
+    }
+
+    try { risky(); }
+    catch (e: OutOfRangeException) { log(e.message); }
+    finally { cleanup(); }
+
+    format("{0}-{1}", "a", "b");
+    spawn(1.0, 2.0);
+    spawn(x: 1.0, y: 2.0, hp: 50, tag: '\n');
+
+    throw OutOfRangeException("bad");
+}

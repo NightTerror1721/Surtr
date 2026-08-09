@@ -39,11 +39,22 @@ namespace Surtr.Runtime.Classes
         /// <summary>The built-in closure type, parameterized by its parameter and return types.</summary>
         Closure     = 9,
 
+        /// <summary>
+        /// The built-in range type: a half-open or closed interval of integers.
+        /// </summary>
+        /// <remarks>
+        /// Sits inside the built-in run rather than after it, so both <c>IsBuiltIn</c> and
+        /// <c>IsReferenceType</c> stay single range compares. Unlike its neighbours it is not
+        /// parameterised - both bounds are always <c>int</c> - which is why its descriptor is a
+        /// bare symbol rather than a nesting form.
+        /// </remarks>
+        Range       = 10,
+
         /// <summary>A class declared in Surtr source.</summary>
-        Object      = 10,
+        Object      = 11,
 
         /// <summary>A type defined by the embedding host rather than by Surtr source.</summary>
-        Native      = 11,
+        Native      = 12,
 
         /// <summary>
         /// What a generic type parameter erases to.
@@ -64,7 +75,7 @@ namespace Surtr.Runtime.Classes
         /// case.
         /// </para>
         /// </remarks>
-        Erased      = 12,
+        Erased      = 13,
 
         /// <summary>
         /// The absence of a value: the return "type" of a method that returns nothing.
@@ -76,7 +87,7 @@ namespace Surtr.Runtime.Classes
         /// <c>ReturnVoid</c> methods have nothing else to name. Kept last so every real type,
         /// reference types included, forms one contiguous range below it.
         /// </remarks>
-        Void        = 13,
+        Void        = 14,
     }
 
     /// <summary>Classification predicates and conversions for <see cref="SurtrValueTypeCode"/>.</summary>
@@ -99,8 +110,11 @@ namespace Surtr.Runtime.Classes
             /// <summary>Whether the code is a primitive (integer, float, boolean or character).</summary>
             public bool IsPrimitive => code >= SurtrValueTypeCode.Integer && code <= SurtrValueTypeCode.Character;
 
-            /// <summary>Whether the code is a built-in composite (string, array, tuple, dictionary or closure).</summary>
-            public bool IsBuiltIn => code >= SurtrValueTypeCode.String && code <= SurtrValueTypeCode.Closure;
+            /// <summary>Whether the code is a built-in composite (string, array, tuple, dictionary, closure or range).</summary>
+            public bool IsBuiltIn => code >= SurtrValueTypeCode.String && code <= SurtrValueTypeCode.Range;
+
+            /// <summary>Whether the code is <see cref="SurtrValueTypeCode.Range"/>.</summary>
+            public bool IsRange => code == SurtrValueTypeCode.Range;
 
             /// <summary>Whether the code is <see cref="SurtrValueTypeCode.Object"/>.</summary>
             public bool IsObject => code == SurtrValueTypeCode.Object;

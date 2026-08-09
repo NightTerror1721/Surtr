@@ -460,6 +460,13 @@ namespace Surtr.Runtime.Classes
                     throw new InvalidOperationException(
                         $"'{type.Name}.{method.Name}' is marked as an override but no base method matches its signature.");
 
+                // A sealed override closes its branch of the hierarchy, so the slot it occupies is
+                // final from that point down - the same guarantee a sealed class gives for a whole
+                // one, and the reason a call below it can skip the vtable.
+                if (virtualMethods[slot].IsSealed)
+                    throw new InvalidOperationException(
+                        $"'{type.Name}.{method.Name}' overrides a sealed member, which cannot be overridden again.");
+
                 // Replacing in place is the whole point: every existing call site, and every
                 // interface entry routed through this slot, picks up the override for free.
                 virtualMethods[slot] = method;
@@ -542,26 +549,15 @@ namespace Surtr.Runtime.Classes
 
         #region Helpers
         /// <summary>
-        /// Builds the key two methods must share to be considered the same slot: name plus
-        /// parameter types.
+        /// The key two methods must share to be considered the same slot.
         /// </summary>
         /// <remarks>
-        /// The return type is deliberately excluded. Overriding a method may not change what it
-        /// is called with, but allowing a narrower return type later only needs this key to stay
-        /// stable, and including it would break that.
+        /// Delegates to <see cref="SurtrMethodInfo.SignatureKey"/> rather than building its own,
+        /// because <see cref="SurtrClass.AddMethod"/> rejects duplicates with the same key and the
+        /// two have to agree exactly - a second implementation here is how an illegal overload
+        /// pair would get past one check and into the other.
         /// </remarks>
-        private static string SignatureKey(SurtrMethodInfo method)
-        {
-            var builder = new StringBuilder(method.Name);
-            builder.Append('(');
-
-            var parameters = method.Parameters;
-            for (int i = 0; i < parameters.Length; i++)
-                builder.Append(parameters[i].ParameterType.Reference.Descriptor);
-
-            builder.Append(')');
-            return builder.ToString();
-        }
+        private static string SignatureKey(SurtrMethodInfo method) => method.SignatureKey();
 
         private static void TryAppendSlot(List<SurtrMethodInfo> slots, Dictionary<string, int> seen, SurtrMethodInfo method)
         {
@@ -594,9 +590,15 @@ namespace Surtr.Runtime.Classes
                 throw new InvalidOperationException(
                     $"Base type '{handle.Reference.Descriptor}' of '{type.Name}' was not resolved before linking.");
 
-            return handle.ResolvedClass
+            var baseClass = handle.ResolvedClass
                 ?? throw new InvalidOperationException(
                     $"'{type.Name}' cannot extend '{handle.Reference.Descriptor}', which is an interface.");
+
+            if (baseClass.IsSealed)
+                throw new InvalidOperationException(
+                    $"'{type.Name}' cannot extend '{baseClass.Name}', which is sealed.");
+
+            return baseClass;
         }
 
         private static SurtrInterface ResolveInterface(SurtrTypeHandle handle, string dependentName)

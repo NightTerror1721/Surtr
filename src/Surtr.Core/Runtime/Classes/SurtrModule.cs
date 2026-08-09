@@ -194,16 +194,8 @@ namespace Surtr.Runtime.Classes
         {
             ThrowIfBuilt();
 
-            if (_methods.TryGetValue(method.Name, out var overloads))
-            {
-                Array.Resize(ref overloads, overloads.Length + 1);
-                overloads[^1] = method;
-                _methods[method.Name] = overloads;
-            }
-            else
-            {
-                _methods.Add(method.Name, new[] { method });
-            }
+            _methods.TryGetValue(method.Name, out var overloads);
+            _methods[method.Name] = SurtrMethodInfo.AppendOverload(overloads, method, Path);
         }
 
         /// <summary>Declares a class or enum directly in this module.</summary>

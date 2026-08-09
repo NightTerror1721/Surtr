@@ -27,8 +27,15 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- Surtr sources used as lexer/parser fixtures. They are data, not code, so they ship
+       next to the test assembly rather than being compiled into it. -->
+  <ItemGroup>
+    <None Include="Compiler\Syntax\*.surtr" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Surtr.Core\Surtr.Core.csproj" />
+    <ProjectReference Include="..\Surtr.Compiler\Surtr.Compiler.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,0 +1,192 @@
+#nullable enable
+
+using Surtr.Compiler.Diagnostics;
+using Surtr.Compiler.Utilities;
+
+namespace Surtr.Compiler.Syntax
+{
+    /// <summary>
+    /// Walks a lexed token stream, extending <see cref="Cursor{T}"/> with the two things
+    /// token-level parsing needs that a bare cursor does not know about: comparison by
+    /// <see cref="TokenType"/> rather than by whole token, and the ability to take a single
+    /// <c>&gt;</c> off a token that begins with one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Cursor{T}"/>'s own <c>Check</c>/<c>Match</c> compare elements with
+    /// <c>EqualityComparer&lt;T&gt;.Default</c>, which for a <see cref="Token"/> would compare its
+    /// lexeme and position too. A parser only ever asks "what kind of token is this", so the
+    /// overloads here shadow that with type-only comparison.
+    /// </para>
+    /// <para>
+    /// <b>The angle-bracket split.</b> Maximal munch means the lexer hands back <c>&gt;&gt;</c> for
+    /// the tail of <c>Box&lt;Box&lt;T&gt;&gt;</c> and <c>&gt;&gt;&gt;</c> for one more level of
+    /// nesting — it cannot know it is inside a type argument list, and no lexer can.
+    /// <see cref="ConsumeTypeArgumentClose"/> is where that is repaid: it takes one <c>&gt;</c>
+    /// worth of whatever token is there and remembers the rest in <see cref="pendingCloseAngles"/>,
+    /// so each enclosing type argument list gets its own in turn. Every ordinary read goes through
+    /// <see cref="Advance()"/>, which refuses to step over an unconsumed <c>&gt;</c>, so a leftover
+    /// can never be silently dropped.
+    /// </para>
+    /// <para>
+    /// The <c>=</c>-suffixed shapes (<c>&gt;=</c>, <c>&gt;&gt;=</c>, <c>&gt;&gt;&gt;=</c>) are
+    /// <em>not</em> split, because doing so would mean synthesising an <c>=</c> token that the
+    /// lexer never produced. They are rejected with a message asking for a space instead. This only
+    /// bites on <c>Foo&lt;T&gt;= x</c> written with no space before the <c>=</c>, which is both
+    /// rare and trivially fixed at the call site — a poor trade against carrying a token-rewriting
+    /// mechanism through the whole parser.
+    /// </para>
+    /// </remarks>
+    internal sealed class TokenReader : Cursor<Token>
+    {
+        /// <summary>
+        /// How many <c>&gt;</c> remain from a multi-angle token the parser has begun splitting.
+        /// Non-zero only in the middle of closing nested type argument lists.
+        /// </summary>
+        private int pendingCloseAngles;
+
+        /// <summary>Identifies the source being parsed, for diagnostics.</summary>
+        internal string SourceName { get; }
+
+        /// <summary>Creates a reader over an already-lexed token stream.</summary>
+        /// <param name="tokens">The tokens, ending with <see cref="TokenType.EndOfFile"/>.</param>
+        /// <param name="sourceName">Identifies the source, for diagnostics.</param>
+        internal TokenReader(Token[] tokens, string sourceName) : base(tokens)
+        {
+            SourceName = sourceName;
+        }
+
+        /// <summary>The type of the token at the current position.</summary>
+        internal TokenType CurrentType => Current.Type;
+
+        /// <summary>Where the current token starts.</summary>
+        internal SourceLocation CurrentLocation => Current.Location;
+
+        /// <summary>True when the current token is of the given type and no split is in progress.</summary>
+        /// <param name="type">The type to test for.</param>
+        internal bool Check(TokenType type) => pendingCloseAngles == 0 && CurrentType == type;
+
+        /// <summary>
+        /// True when the token <paramref name="offset"/> positions ahead is of the given type.
+        /// Raw lookahead: it ignores any split in progress, which is safe because every caller uses
+        /// it outside type-argument parsing.
+        /// </summary>
+        /// <param name="offset">How far ahead to look.</param>
+        /// <param name="type">The type to test for.</param>
+        internal bool CheckAt(int offset, TokenType type) => Peek(offset).Type == type;
+
+        /// <summary>Consumes the current token if it is of the given type, and says whether it did.</summary>
+        /// <param name="type">The type to match.</param>
+        internal bool Match(TokenType type)
+        {
+            if (!Check(type))
+            {
+                return false;
+            }
+
+            Advance();
+            return true;
+        }
+
+        /// <summary>
+        /// Consumes the current token, requiring it to be of the given type. Unlike
+        /// <see cref="Match(TokenType)"/> this is for a position the grammar guarantees is filled,
+        /// so failing it throws rather than returning a sentinel the caller might not check.
+        /// </summary>
+        /// <param name="type">The required type.</param>
+        /// <param name="what">What was expected, for the error message.</param>
+        internal Token Expect(TokenType type, string what)
+        {
+            if (!Check(type))
+            {
+                throw Error($"Expected {what}.");
+            }
+
+            return Advance();
+        }
+
+        /// <summary>Consumes an identifier and returns its text.</summary>
+        /// <param name="what">What the identifier names, for the error message.</param>
+        internal string ExpectIdentifier(string what)
+        {
+            return Expect(TokenType.Identifier, what).ToString();
+        }
+
+        /// <inheritdoc/>
+        internal override Token Advance()
+        {
+            if (pendingCloseAngles > 0)
+            {
+                throw Error("Expected '>' to close the type argument list.");
+            }
+
+            return base.Advance();
+        }
+
+        /// <summary>True when a <c>&gt;</c> is available here, standalone or as the head of a longer token.</summary>
+        internal bool CheckTypeArgumentClose()
+        {
+            if (pendingCloseAngles > 0)
+            {
+                return true;
+            }
+
+            return CurrentType == TokenType.Greater
+                || CurrentType == TokenType.ShiftRight
+                || CurrentType == TokenType.UnsignedShiftRight;
+        }
+
+        /// <summary>
+        /// Consumes one <c>&gt;</c> closing a type argument list, splitting a <c>&gt;&gt;</c> or
+        /// <c>&gt;&gt;&gt;</c> if that is what is there.
+        /// </summary>
+        internal void ConsumeTypeArgumentClose()
+        {
+            if (pendingCloseAngles > 0)
+            {
+                pendingCloseAngles--;
+                return;
+            }
+
+            switch (CurrentType)
+            {
+                case TokenType.Greater:
+                    base.Advance();
+                    return;
+
+                case TokenType.ShiftRight:
+                    base.Advance();
+                    pendingCloseAngles = 1;
+                    return;
+
+                case TokenType.UnsignedShiftRight:
+                    base.Advance();
+                    pendingCloseAngles = 2;
+                    return;
+
+                case TokenType.GreaterEqual:
+                case TokenType.ShiftRightAssign:
+                case TokenType.UnsignedShiftRightAssign:
+                    throw Error("A type argument list cannot be closed by a token ending in '='; put a space before the '='.");
+
+                default:
+                    throw Error("Expected '>' to close the type argument list.");
+            }
+        }
+
+        /// <summary>Builds a parse error carrying the current position.</summary>
+        /// <param name="message">What went wrong.</param>
+        internal SurtrParserException Error(string message)
+        {
+            return new SurtrParserException(message, SourceName, CurrentLocation);
+        }
+
+        /// <summary>Builds a parse error carrying an explicit position.</summary>
+        /// <param name="message">What went wrong.</param>
+        /// <param name="location">Where the problem is.</param>
+        internal SurtrParserException Error(string message, SourceLocation location)
+        {
+            return new SurtrParserException(message, SourceName, location);
+        }
+    }
+}
