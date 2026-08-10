@@ -97,17 +97,36 @@ A<elem>                   array            AI              -> int[]
 D<key><value>             dictionary       DIS             -> {int: string}
 T(<elem>...)              tuple            T(IF)           -> (int, float)
 L(<param>...)<ret>        closure          L(II)F          -> (int, int) -> float
-O<fullname>;              Surtr type       Ogame.core:Entity.Handle;
-N<fullname>;              host type        NUnityEngine:GameObject;
+O<fullname>;<arg>...      Surtr type       Ogame.core:Entity.Handle;
+N<fullname>;<arg>...      host type        NUnityEngine:GameObject;
 G<digit>                  the declaring type's n-th generic parameter    G0
 ?<primitive>              nullable primitive                            ?I -> int?
 V                         void — legal only as a closure's return
-fullname := modulePath ':' typeName ('.' nestedTypeName)*
+fullname := modulePath ':' segment ('.' segment)*
+segment  := typeName ('`' arity)?               Obox:Box`1;I -> Box<int>
 ```
 
 Why a descriptor rather than a dotted name: composite types nest. `Array<Dictionary<int, string>>`
 needs a real bracket-and-comma parser; `ADIS` does not. The `:` separating module path from type
 path lets a resolver split in O(1) instead of probing prefixes to find where the module ends.
+
+**A generic type's arity is mangled into its name segment**, and its arguments follow the name
+terminator. Three consequences, all deliberate:
+
+- **Arity is part of identity.** `Box<T>` and `Box<T, U>` are unrelated declarations with unrelated
+  `SurtrClass` instances, and each is looked up in its module under the mangled name.
+- **Arguments are not.** `Obox:Box`1;I` and `Obox:Box`1;S` share a full name and resolve to the
+  *same* `SurtrClass`, exactly as `AI` and `AS` both resolve to `SurtrBuiltIns.Array`. Nothing is
+  reified: one class, one method table, one compiled body. What the arguments buy is that a
+  signature can tell `f(Box<int>)` from `f(Box<string>)`.
+- **Only the last segment's arity counts.** A type nested inside a generic one does not see its
+  container's parameters, so `Obox:Box`1.Entry;` names an `Entry` that takes nothing. Reading the
+  arity is a side effect of scanning to the terminator, which keeps the whole grammar one pass.
+
+Backtick is illegal in a Surtr identifier, so a mangled name can never collide with a declared one,
+and a non-generic type's descriptor is byte-for-byte what it always was. A generic type has **no
+open form**: a name promising one argument and supplying none is malformed, so a generic contract
+names itself with its own parameters — `IIterable<T>`'s self reference is `Osurtr:IIterable`1;G0`.
 
 Descriptors are the **canonical form** for comparison, hashing and bytecode. `ToDisplayString()`
 exists for diagnostics only — never key off it.

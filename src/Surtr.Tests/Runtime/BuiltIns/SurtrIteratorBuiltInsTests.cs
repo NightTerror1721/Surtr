@@ -23,14 +23,14 @@ namespace Surtr.Tests.Runtime.BuiltIns
         private static SurtrInterface Iterable()
         {
             SurtrBuiltIns.EnsureBuilt();
-            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IIterable", out var contract));
+            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IIterable`1", out var contract));
             return contract;
         }
 
         private static SurtrInterface IteratorContract()
         {
             SurtrBuiltIns.EnsureBuilt();
-            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IIterator", out var contract));
+            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IIterator`1", out var contract));
             return contract;
         }
 

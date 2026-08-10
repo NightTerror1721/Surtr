@@ -105,9 +105,34 @@ namespace Surtr.Tests.Runtime.BuiltIns
         {
             SurtrBuiltIns.EnsureBuilt();
 
-            Assert.True(SurtrBuiltIns.Module.TryGetInterface(name, out var contract));
+            // Arity is part of the name a generic type is declared and looked up under, so the
+            // table is keyed on the mangled form rather than on what source writes.
+            string metadataName = SurtrClassReference.MangleArity(name, 1);
+
+            Assert.False(SurtrBuiltIns.Module.TryGetInterface(name, out _));
+            Assert.True(SurtrBuiltIns.Module.TryGetInterface(metadataName, out var contract));
             Assert.Equal(1, contract.GenericParameterCount);
             Assert.Equal("T", contract.GenericParameters[0]);
+        }
+
+        [Theory]
+        [InlineData("IIterable")]
+        [InlineData("IIterator")]
+        [InlineData("IComparable")]
+        [InlineData("IEquatable")]
+        public void AGenericContractsSelfReferenceIsConstructedWithItsOwnParameter(string name)
+        {
+            SurtrBuiltIns.EnsureBuilt();
+
+            Assert.True(
+                SurtrBuiltIns.Module.TryGetInterface(SurtrClassReference.MangleArity(name, 1), out var contract));
+
+            // Arity in the name says one argument follows, so there is no open form to write: the
+            // contract names itself with its own parameter.
+            Assert.Equal($"Osurtr:{name}`1;G0", contract.SelfReference.Descriptor);
+            Assert.Equal(1, contract.SelfReference.GenericArity);
+            Assert.Equal("G0", Assert.Single(contract.SelfReference.GetTypeArguments()).Descriptor);
+            Assert.Equal($"surtr:{name}<T0>", contract.SelfReference.ToDisplayString());
         }
 
         [Fact]
@@ -115,7 +140,7 @@ namespace Surtr.Tests.Runtime.BuiltIns
         {
             SurtrBuiltIns.EnsureBuilt();
 
-            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IIterator", out var iterator));
+            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IIterator`1", out var iterator));
 
             Assert.True(iterator.TryGetMethods("moveNext", out var moveNext));
             Assert.Equal("B", moveNext[0].ReturnType.Reference.Descriptor);
@@ -130,10 +155,10 @@ namespace Surtr.Tests.Runtime.BuiltIns
         {
             SurtrBuiltIns.EnsureBuilt();
 
-            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IIterable", out var iterable));
+            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IIterable`1", out var iterable));
             Assert.True(iterable.TryGetMethods("iterate", out var iterate));
 
-            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IIterator", out var iterator));
+            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IIterator`1", out var iterator));
             Assert.Equal(iterator.SelfReference.Descriptor, iterate[0].ReturnType.Reference.Descriptor);
         }
 
@@ -142,7 +167,7 @@ namespace Surtr.Tests.Runtime.BuiltIns
         {
             SurtrBuiltIns.EnsureBuilt();
 
-            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IComparable", out var comparable));
+            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IComparable`1", out var comparable));
             Assert.True(comparable.TryGetMethods("compareTo", out var compareTo));
             Assert.Equal("G0", compareTo[0].Parameters[0].ParameterType.Reference.Descriptor);
             Assert.Equal("I", compareTo[0].ReturnType.Reference.Descriptor);
@@ -150,7 +175,7 @@ namespace Surtr.Tests.Runtime.BuiltIns
             // The key erases it, which is what lets an implementation match the slot at all.
             Assert.Equal("compareTo(E)", compareTo[0].SignatureKey());
 
-            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IEquatable", out var equatable));
+            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IEquatable`1", out var equatable));
             Assert.True(equatable.TryGetMethods("equals", out var equals));
             Assert.Equal("G0", equals[0].Parameters[0].ParameterType.Reference.Descriptor);
             Assert.Equal("equals(E)", equals[0].SignatureKey());

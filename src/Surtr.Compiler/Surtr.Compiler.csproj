@@ -13,11 +13,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Folder Include="Binding\" />
-    <Folder Include="CodeGen\" />
-  </ItemGroup>
-
-  <ItemGroup>
     <ProjectReference Include="..\Surtr.Core\Surtr.Core.csproj" />
   </ItemGroup>
 

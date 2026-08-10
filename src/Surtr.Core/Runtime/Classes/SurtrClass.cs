@@ -269,6 +269,20 @@ namespace Surtr.Runtime.Classes
             get => _baseType;
         }
 
+        /// <summary>
+        /// The interfaces this class declares that it implements, as written rather than flattened.
+        /// </summary>
+        /// <remarks>
+        /// The declared list, not <c>Interfaces</c>: a front end reading another module's metadata
+        /// wants what the type said about itself, and rebuilds the transitive closure with its own
+        /// rules. The flattened tables are the runtime's view and stay internal.
+        /// </remarks>
+        public ReadOnlySpan<SurtrTypeHandle> DeclaredInterfaceHandles
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => DeclaredInterfaces;
+        }
+
         /// <summary>Whether this class cannot be instantiated directly.</summary>
         public bool IsAbstract
         {

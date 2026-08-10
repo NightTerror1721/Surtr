@@ -93,5 +93,70 @@ namespace Surtr.Compiler.Diagnostics
         InvalidInterpolation = 2011,
 
         #endregion
+
+        #region Binding — 3xxx
+
+        /// <summary>
+        /// A source file whose location does not give it a usable module path (§2.1): outside the
+        /// source root, at the root with no root module path configured, or in a directory whose
+        /// name is not a legal identifier.
+        /// </summary>
+        InvalidModulePath = 3001,
+
+        /// <summary>
+        /// Modules that depend on one another in a cycle. Static initializers run eagerly at load
+        /// in dependency order, and a cycle has no valid order.
+        /// </summary>
+        ModuleCycle = 3002,
+
+        /// <summary>An <c>import</c> naming a module or type that nothing in the compilation provides.</summary>
+        UnresolvedImport = 3003,
+
+        /// <summary>Two declarations of the same name where only one can exist.</summary>
+        DuplicateDeclaration = 3004,
+
+        /// <summary>A name that resolves to nothing in scope.</summary>
+        UnresolvedName = 3005,
+
+        /// <summary>
+        /// A name two imports both bring into scope. Reported at the use, not at the
+        /// <c>import</c> line, since importing both is only a problem if the name is written (§2.1).
+        /// </summary>
+        AmbiguousName = 3006,
+
+        /// <summary>A generic type given a number of type arguments its declaration does not take.</summary>
+        WrongTypeArgumentCount = 3007,
+
+        /// <summary>A class hierarchy that loops back on itself.</summary>
+        InheritanceCycle = 3008,
+
+        /// <summary>
+        /// A <c>:</c> list that names two classes, extends a <c>sealed</c> one, or puts something
+        /// that is neither a class nor an interface where one was needed (§2.2).
+        /// </summary>
+        InvalidBaseType = 3009,
+
+        /// <summary>Aliases that define one another in a cycle (§2.7).</summary>
+        AliasCycle = 3010,
+
+        /// <summary>A <c>value class</c> that does not wrap exactly one <c>let</c> field, or that extends something (§2.9).</summary>
+        InvalidValueClass = 3011,
+
+        /// <summary>
+        /// An interface member that is not a public abstract method or property: a field, a static,
+        /// or a body (§2.3).
+        /// </summary>
+        InvalidInterfaceMember = 3012,
+
+        /// <summary>A module member with the same name as a build-defined constant (§7.4).</summary>
+        BuildConstantShadowed = 3013,
+
+        /// <summary>Two overloads that no signature could tell apart (§3.5).</summary>
+        DuplicateOverload = 3014,
+
+        /// <summary>More type parameters than the single-digit descriptor form can encode.</summary>
+        TooManyTypeParameters = 3015,
+
+        #endregion
     }
 }

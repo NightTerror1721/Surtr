@@ -52,8 +52,10 @@ namespace Surtr.Tests.Runtime.Classes
             var thing = builder.DefineInterface("IThing");
             thing.DefineMethod("doThing", SurtrClassReference.Void);
 
-            var iterableReference = SurtrClassReference.Object("surtr:IIterable");
-            var iteratorReference = SurtrClassReference.Object("surtr:IIterator");
+            var iterableReference = SurtrClassReference.Constructed(
+                "surtr:IIterable`1", SurtrClassReference.GenericParameter(0));
+            var iteratorReference = SurtrClassReference.Constructed(
+                "surtr:IIterator`1", SurtrClassReference.GenericParameter(0));
 
             var holder = builder.DefineClass("Holder");
             holder.Implements(thing.SelfReference, iterableReference);
@@ -69,7 +71,7 @@ namespace Surtr.Tests.Runtime.Classes
             Assert.True(runtime.TryGetModule("app", out var module));
             Assert.True(module.TryGetClass("Holder", out var built));
             Assert.True(module.TryGetInterface("IThing", out var contract));
-            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IIterable", out var iterable));
+            Assert.True(SurtrBuiltIns.Module.TryGetInterface("IIterable`1", out var iterable));
 
             Assert.Equal("doThing", MethodThrough(built, contract, "doThing"));
             Assert.Equal("iterate", MethodThrough(built, iterable, "iterate"));

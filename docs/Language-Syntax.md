@@ -1432,6 +1432,24 @@ backward-compatible — unannotated existing code keeps meaning exactly what it 
 this is deferred rather than designed now, in line with not building type-checking machinery ahead
 of a concrete need for it.
 
+**Arity is part of a type's identity.** `Box<T>` and `Box<T, U>` are two unrelated declarations that
+happen to share a name, the way `Result<T>` and `Result<T, E>` want to be. This is Java's one real
+absence in this area, and it costs nothing to have: the arity is mangled into the name the runtime
+sees, which no lookup path has to know about.
+
+**A nested type does not see its container's type parameters** — the static-nested rule, not the
+inner-class one. Nesting (§2.6) is qualification, so a type declared inside `Box<T>` is reached as
+`Box.Entry` and, if it needs an element type of its own, declares one:
+
+```
+class Box<T> {
+    class Entry<U> { ... }      // U is Entry's own; T is not in scope here
+}
+```
+
+The alternative would make every mention of `Entry` supply `Box`'s arguments too, for a nesting
+construct whose whole job is naming.
+
 ---
 
 ## 7. Compile-time evaluation

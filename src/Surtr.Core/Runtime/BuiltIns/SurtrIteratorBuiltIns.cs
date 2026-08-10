@@ -32,13 +32,20 @@ namespace Surtr.Runtime.BuiltIns
     /// </remarks>
     internal static unsafe class SurtrIteratorBuiltIns
     {
-        /// <summary>The descriptor naming <c>IIterable</c>, the contract each collection declares.</summary>
+        /// <summary>
+        /// The descriptor naming <c>IIterable&lt;T&gt;</c>, the contract each collection declares.
+        /// </summary>
+        /// <remarks>
+        /// Constructed with the declaring type's own parameter rather than left open: the arity
+        /// mangled into the name says one argument follows, and a name that promises one and
+        /// supplies none is not a descriptor anything can read.
+        /// </remarks>
         internal static SurtrClassReference IterableReference { get; } =
-            SurtrClassReference.Object(SurtrBuiltIns.ModulePath + SurtrClassReference.ModuleSeparator + "IIterable");
+            SurtrStandardLibrary.ContractReference("IIterable", 1);
 
-        /// <summary>The descriptor naming <c>IIterator</c>, which every <c>iterate()</c> returns.</summary>
+        /// <summary>The descriptor naming <c>IIterator&lt;T&gt;</c>, which every <c>iterate()</c> returns.</summary>
         internal static SurtrClassReference IteratorReference { get; } =
-            SurtrClassReference.Object(SurtrBuiltIns.ModulePath + SurtrClassReference.ModuleSeparator + "IIterator");
+            SurtrStandardLibrary.ContractReference("IIterator", 1);
 
         /// <summary>Declares the cursor itself: the two members <c>IIterator&lt;T&gt;</c> asks for.</summary>
         /// <remarks>
