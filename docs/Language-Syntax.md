@@ -1834,8 +1834,14 @@ elsewhere, and vocabulary that waits on a consumer.
 
 **Tracked in `docs/VM-Plan.md` §4**, which is the authoritative list — it sits next to the trap
 table, the value representation and the linker decisions each item has to be reconciled with, and
-`docs/VM-Plan.md` §5 orders them into the build plan. In summary, the syntax obliges the runtime to
-grow:
+`docs/VM-Plan.md` §5 orders them into the build plan.
+
+> **All of it is now implemented.** The list below is what the syntax asked the runtime for and got;
+> read it as a map of where each feature's support lives rather than as work outstanding. What is
+> *not* done is the compiler side — §14.2 is untouched, and so is every compiler obligation in
+> `docs/VM-Plan.md` §4.8.
+
+In summary, the syntax obliged the runtime to grow:
 
 - **a standard library** (§13 — `Exception` above all, since §9 currently has no legal throwable),
   and with it a mapping from each VM trap to the class it surfaces as, since a trap presents as a

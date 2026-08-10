@@ -1,0 +1,302 @@
+#nullable enable
+
+using Surtr.Runtime.Classes;
+using Surtr.Runtime.Objects;
+using System;
+
+namespace Surtr.Runtime.BuiltIns
+{
+    /// <summary>
+    /// The part of the <c>surtr</c> module that is a library rather than a value representation:
+    /// the exception hierarchy, the core interfaces, and <c>Math</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It lives in the same module the primitives and collections do, extended rather than joined
+    /// by a second one, so <c>string</c> and <c>Exception</c> are siblings rather than residents of
+    /// different worlds. Everything here is implicitly in scope in every file.
+    /// </para>
+    /// <para>
+    /// All of it is written in C# for now. The dividing line the design calls for is "native if it
+    /// needs <c>unsafe</c>, a raw pointer or a VM service; Surtr otherwise", which would put the
+    /// exception subclasses and most of this on the Surtr side - but nothing turns Surtr source
+    /// into a module yet, and the runtime cannot wait for the compiler to have an
+    /// <c>Exception</c> to throw. Moving the expressible half across is a later, mechanical change:
+    /// the classes keep their names, their layout and their descriptors.
+    /// </para>
+    /// </remarks>
+    internal static unsafe class SurtrStandardLibrary
+    {
+        /// <summary>The slot <c>Exception</c> keeps its message in, and every subclass inherits.</summary>
+        /// <remarks>
+        /// Zero because <c>Exception</c> is the root of the hierarchy and declares the only field in
+        /// it. Inherited slots keep their base-class index, so a subclass reads the message from the
+        /// same slot no matter how deep it sits - which is what lets the raise helpers here write it
+        /// without knowing which exception class they are building.
+        /// </remarks>
+        internal const int MessageSlot = 0;
+
+        #region Exceptions
+        /// <summary>Declares <c>Exception</c> itself: one message, and the property that reads it.</summary>
+        internal static void DeclareException(SurtrBuiltInTypeBuilder builder)
+        {
+            builder.Field("_message", SurtrClassReference.String);
+
+            builder.Property("message", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionMessage));
+            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionToString));
+
+            builder.Constructor(
+                SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionConstruct),
+                builder.Params(("message", SurtrClassReference.String)));
+        }
+
+        /// <summary>
+        /// Declares a subclass of <c>Exception</c>, which is a constructor and nothing else.
+        /// </summary>
+        /// <remarks>
+        /// The subclasses carry no state of their own: what distinguishes
+        /// <c>IndexOutOfRangeException</c> from <c>KeyNotFoundException</c> is which one a
+        /// <c>catch</c> clause names, and that is the class itself. The constructor is declared per
+        /// subclass rather than inherited because constructors are never inherited - the same rule
+        /// the metadata already enforces.
+        /// </remarks>
+        internal static void DeclareExceptionSubclass(SurtrBuiltInTypeBuilder builder)
+        {
+            builder.Constructor(
+                SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionConstruct),
+                builder.Params(("message", SurtrClassReference.String)));
+        }
+
+        private static SurtrValue ExceptionConstruct(SurtrCallArguments arguments)
+        {
+            // arguments[0] is the receiver, as it is for every instance member.
+            arguments.GetUnchecked<SurtrInstance>(0)[MessageSlot] = arguments.GetValueUnchecked(1);
+            return SurtrValue.Null;
+        }
+
+        private static SurtrValue ExceptionMessage(SurtrCallArguments arguments)
+            => arguments.GetUnchecked<SurtrInstance>(0)[MessageSlot];
+
+        private static SurtrValue ExceptionToString(SurtrCallArguments arguments)
+        {
+            var self = arguments.GetUnchecked<SurtrInstance>(0);
+            var message = arguments.Runtime.Resolve<SurtrString>(self[MessageSlot]);
+
+            string text = message is null
+                ? self.Class.Name
+                : self.Class.Name + ": " + message.Value;
+
+            return SurtrValue.CreateReference(arguments.Runtime.NewString(text).GetSurtrReference());
+        }
+        #endregion
+
+        #region Core interfaces
+        /// <summary>
+        /// Declares the four interfaces the language leans on, into the built-in module.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <c>IIterator</c> is the classic two-member cursor rather than a generator, and
+        /// deliberately: it is a shape a compiler can pattern-match and lower into a plain indexed
+        /// loop for an array, a tuple, a dict or any <c>sealed</c> type, which a generator-based
+        /// protocol would not be. The general path exists so the language is uniform; the special
+        /// cases exist so the common path costs nothing.
+        /// </para>
+        /// <para>
+        /// Each takes a generic parameter, and the members name it with the same descriptor form
+        /// the collections use. Erased at run time, like every other generic.
+        /// </para>
+        /// </remarks>
+        internal static void DeclareCoreInterfaces(SurtrModule module, SurtrTypeHandleTable handles)
+        {
+            SurtrClassReference element = SurtrClassReference.GenericParameter(0);
+
+            var iterator = DeclareInterface(module, handles, "IIterator", "T");
+            AddAbstractMethod(iterator, handles, "moveNext", SurtrClassReference.Boolean);
+            AddAbstractProperty(iterator, handles, "current", element);
+
+            var iterable = DeclareInterface(module, handles, "IIterable", "T");
+            AddAbstractMethod(iterable, handles, "iterate", iterator.SelfReference);
+
+            var comparable = DeclareInterface(module, handles, "IComparable", "T");
+            AddAbstractMethod(comparable, handles, "compareTo", SurtrClassReference.Integer, ("other", element));
+
+            var equatable = DeclareInterface(module, handles, "IEquatable", "T");
+            AddAbstractMethod(equatable, handles, "equals", SurtrClassReference.Boolean, ("other", element));
+        }
+
+        private static SurtrInterface DeclareInterface(
+            SurtrModule module,
+            SurtrTypeHandleTable handles,
+            string name,
+            params string[] genericParameters)
+        {
+            var contract = new SurtrInterface(
+                name,
+                SurtrClassReference.Object(SurtrBuiltIns.ModulePath + SurtrClassReference.ModuleSeparator + name),
+                SurtrVisibility.Public,
+                declaringType: null);
+
+            contract.SetGenericParameters(genericParameters);
+
+            var selfHandle = handles.GetOrAdd(contract.SelfReference);
+            if (!selfHandle.IsResolved)
+                selfHandle.Resolve(contract);
+
+            module.AddInterface(contract);
+            return contract;
+        }
+
+        private static void AddAbstractMethod(
+            SurtrInterface contract,
+            SurtrTypeHandleTable handles,
+            string name,
+            SurtrClassReference returnType,
+            params (string Name, SurtrClassReference Type)[] parameters)
+        {
+            var declared = new SurtrParameterInfo[parameters.Length];
+            for (int i = 0; i < parameters.Length; i++)
+                declared[i] = new SurtrParameterInfo(parameters[i].Name, handles.GetOrAdd(parameters[i].Type));
+
+            contract.AddMethod(new SurtrAbstractMethodInfo(
+                name,
+                handles.GetOrAdd(returnType),
+                declared,
+                SurtrVisibility.Public,
+                handles.GetOrAdd(contract.SelfReference)));
+        }
+
+        private static void AddAbstractProperty(
+            SurtrInterface contract,
+            SurtrTypeHandleTable handles,
+            string name,
+            SurtrClassReference propertyType)
+        {
+            var selfHandle = handles.GetOrAdd(contract.SelfReference);
+
+            // Get-only: an iterator's cursor is read, never assigned through the contract.
+            var getter = new SurtrAbstractMethodInfo(
+                "get_" + name,
+                handles.GetOrAdd(propertyType),
+                Array.Empty<SurtrParameterInfo>(),
+                SurtrVisibility.Public,
+                selfHandle);
+
+            contract.AddMethod(getter);
+            contract.AddProperty(new SurtrPropertyInfo(
+                name,
+                handles.GetOrAdd(propertyType),
+                getter,
+                setter: null,
+                isStatic: false,
+                SurtrVisibility.Public,
+                selfHandle));
+        }
+        #endregion
+
+        #region Math
+        /// <summary>
+        /// Declares <c>Math</c>: the free functions that have nowhere else to live.
+        /// </summary>
+        /// <remarks>
+        /// Every member is static, which is why this is a class with no instances rather than a
+        /// module - a module would have been the natural container, but the built-in module is
+        /// already taken by the type family it is named for, and nesting these under a name is what
+        /// makes <c>Math.clamp</c> read the way the syntax document writes it.
+        /// </remarks>
+        internal static void DeclareMath(SurtrBuiltInTypeBuilder builder)
+        {
+            SurtrClassReference real = SurtrClassReference.Float;
+            SurtrClassReference integer = SurtrClassReference.Integer;
+
+            builder.Method("abs", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathAbs), builder.Params(("value", real)), isStatic: true);
+            builder.Method("sign", integer, SurtrNativeEntryPoint.FromFunctionPointer(&MathSign), builder.Params(("value", real)), isStatic: true);
+            builder.Method("min", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathMin), builder.Params(("a", real), ("b", real)), isStatic: true);
+            builder.Method("max", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathMax), builder.Params(("a", real), ("b", real)), isStatic: true);
+            builder.Method("clamp", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathClamp), builder.Params(("value", real), ("low", real), ("high", real)), isStatic: true);
+            builder.Method("floor", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathFloor), builder.Params(("value", real)), isStatic: true);
+            builder.Method("ceil", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathCeil), builder.Params(("value", real)), isStatic: true);
+            builder.Method("round", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathRound), builder.Params(("value", real)), isStatic: true);
+            builder.Method("sqrt", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathSqrt), builder.Params(("value", real)), isStatic: true);
+
+            // `pow` rather than a `**` operator: the syntax leaves exponentiation out of the
+            // operator table precisely so nothing in it needs right-associativity.
+            builder.Method("pow", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathPow), builder.Params(("value", real), ("exponent", real)), isStatic: true);
+
+            builder.Method("sin", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathSin), builder.Params(("radians", real)), isStatic: true);
+            builder.Method("cos", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathCos), builder.Params(("radians", real)), isStatic: true);
+            builder.Method("tan", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathTan), builder.Params(("radians", real)), isStatic: true);
+            builder.Method("atan2", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathAtan2), builder.Params(("y", real), ("x", real)), isStatic: true);
+            builder.Method("log", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathLog), builder.Params(("value", real)), isStatic: true);
+            builder.Method("exp", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathExp), builder.Params(("value", real)), isStatic: true);
+
+            builder.Property("pi", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathPi), isStatic: true);
+            builder.Property("tau", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathTau), isStatic: true);
+            builder.Property("epsilon", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathEpsilon), isStatic: true);
+        }
+
+        // A static member has no receiver, so its first declared parameter is argument 0.
+        private static SurtrValue MathAbs(SurtrCallArguments arguments)
+            => SurtrValue.CreateFloat(Math.Abs(arguments.GetValueUnchecked(0).AsFloat));
+
+        private static SurtrValue MathSign(SurtrCallArguments arguments)
+            => SurtrValue.CreateInt(Math.Sign(arguments.GetValueUnchecked(0).AsFloat));
+
+        private static SurtrValue MathMin(SurtrCallArguments arguments)
+            => SurtrValue.CreateFloat(Math.Min(arguments.GetValueUnchecked(0).AsFloat, arguments.GetValueUnchecked(1).AsFloat));
+
+        private static SurtrValue MathMax(SurtrCallArguments arguments)
+            => SurtrValue.CreateFloat(Math.Max(arguments.GetValueUnchecked(0).AsFloat, arguments.GetValueUnchecked(1).AsFloat));
+
+        private static SurtrValue MathClamp(SurtrCallArguments arguments)
+        {
+            double value = arguments.GetValueUnchecked(0).AsFloat;
+            double low = arguments.GetValueUnchecked(1).AsFloat;
+            double high = arguments.GetValueUnchecked(2).AsFloat;
+
+            if (value < low) value = low;
+            if (value > high) value = high;
+            return SurtrValue.CreateFloat(value);
+        }
+
+        private static SurtrValue MathFloor(SurtrCallArguments arguments)
+            => SurtrValue.CreateFloat(Math.Floor(arguments.GetValueUnchecked(0).AsFloat));
+
+        private static SurtrValue MathCeil(SurtrCallArguments arguments)
+            => SurtrValue.CreateFloat(Math.Ceiling(arguments.GetValueUnchecked(0).AsFloat));
+
+        private static SurtrValue MathRound(SurtrCallArguments arguments)
+            => SurtrValue.CreateFloat(Math.Round(arguments.GetValueUnchecked(0).AsFloat, MidpointRounding.AwayFromZero));
+
+        private static SurtrValue MathSqrt(SurtrCallArguments arguments)
+            => SurtrValue.CreateFloat(Math.Sqrt(arguments.GetValueUnchecked(0).AsFloat));
+
+        private static SurtrValue MathPow(SurtrCallArguments arguments)
+            => SurtrValue.CreateFloat(Math.Pow(arguments.GetValueUnchecked(0).AsFloat, arguments.GetValueUnchecked(1).AsFloat));
+
+        private static SurtrValue MathSin(SurtrCallArguments arguments)
+            => SurtrValue.CreateFloat(Math.Sin(arguments.GetValueUnchecked(0).AsFloat));
+
+        private static SurtrValue MathCos(SurtrCallArguments arguments)
+            => SurtrValue.CreateFloat(Math.Cos(arguments.GetValueUnchecked(0).AsFloat));
+
+        private static SurtrValue MathTan(SurtrCallArguments arguments)
+            => SurtrValue.CreateFloat(Math.Tan(arguments.GetValueUnchecked(0).AsFloat));
+
+        private static SurtrValue MathAtan2(SurtrCallArguments arguments)
+            => SurtrValue.CreateFloat(Math.Atan2(arguments.GetValueUnchecked(0).AsFloat, arguments.GetValueUnchecked(1).AsFloat));
+
+        private static SurtrValue MathLog(SurtrCallArguments arguments)
+            => SurtrValue.CreateFloat(Math.Log(arguments.GetValueUnchecked(0).AsFloat));
+
+        private static SurtrValue MathExp(SurtrCallArguments arguments)
+            => SurtrValue.CreateFloat(Math.Exp(arguments.GetValueUnchecked(0).AsFloat));
+
+        private static SurtrValue MathPi(SurtrCallArguments arguments) => SurtrValue.CreateFloat(Math.PI);
+
+        private static SurtrValue MathTau(SurtrCallArguments arguments) => SurtrValue.CreateFloat(Math.PI * 2.0);
+
+        private static SurtrValue MathEpsilon(SurtrCallArguments arguments) => SurtrValue.CreateFloat(double.Epsilon);
+        #endregion
+    }
+}

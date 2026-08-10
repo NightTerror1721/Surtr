@@ -176,8 +176,11 @@ namespace Surtr.Tests.VM
                 SurtrNativeEntryPoint.FromDelegate(Return321));
 
             var module = new SurtrModule("test");
-            var builder = new BytecodeBuilder()
-                .Op(OpCode.CallGlobalNative).I16(function.Index).U8(0).U8(1)
+            // The instruction indexes the module's import table, which is bound to the host's
+            // globals by name when the module loads.
+            var builder = new BytecodeBuilder();
+            builder
+                .Op(OpCode.CallGlobalNative).I16(builder.AddNativeFunction(function)).U8(0).U8(1)
                 .Op(OpCode.ReturnValue);
 
             var method = builder.Build(module, localCount: 0, maxStackSize: 4);
@@ -195,8 +198,9 @@ namespace Surtr.Tests.VM
                 SurtrNativeEntryPoint.FromDelegate(Return654));
 
             var module = new SurtrModule("test");
-            var builder = new BytecodeBuilder()
-                .Op(OpCode.CallGlobalNativeX).I32(function.Index).U8(0).U8(1)
+            var builder = new BytecodeBuilder();
+            builder
+                .Op(OpCode.CallGlobalNativeX).I32(builder.AddNativeFunction(function)).U8(0).U8(1)
                 .Op(OpCode.ReturnValue);
 
             var method = builder.Build(module, localCount: 0, maxStackSize: 4);
@@ -212,9 +216,10 @@ namespace Surtr.Tests.VM
                 SurtrNativeEntryPoint.FromDelegate(ReturnNull));
 
             var module = new SurtrModule("test");
-            var builder = new BytecodeBuilder()
+            var builder = new BytecodeBuilder();
+            builder
                 .Op(OpCode.PushI32).I32(42)
-                .Op(OpCode.CallGlobalNative).I16(function.Index).U8(0).U8(0) // resultCount = 0
+                .Op(OpCode.CallGlobalNative).I16(builder.AddNativeFunction(function)).U8(0).U8(0) // resultCount = 0
                 .Op(OpCode.ReturnValue);
 
             var method = builder.Build(module, localCount: 0, maxStackSize: 4);

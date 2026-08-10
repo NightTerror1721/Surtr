@@ -3,6 +3,7 @@
 using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
+using Surtr.Runtime.Utilities;
 using Surtr.VM;
 using System;
 using System.Runtime.CompilerServices;
@@ -309,6 +310,37 @@ namespace Surtr.Runtime
             return value;
         }
 
+        /// <summary>
+        /// Builds an exception object of <paramref name="exceptionClass"/> carrying
+        /// <paramref name="message"/>.
+        /// </summary>
+        /// <remarks>
+        /// The message goes straight into the slot <c>Exception</c> declares rather than through a
+        /// constructor call: this is reached from inside a trap, where re-entering the interpreter
+        /// to run a constructor would mean raising an exception from the middle of raising one.
+        /// Every subclass inherits that slot at the same index, which is what lets one helper build
+        /// any of them.
+        /// </remarks>
+        /// <exception cref="ArgumentException"><paramref name="exceptionClass"/> does not derive from <c>Exception</c>.</exception>
+        public SurtrInstance NewException(SurtrClass exceptionClass, string message)
+        {
+            if (exceptionClass is null)
+                throw new ArgumentNullException(nameof(exceptionClass));
+
+            if (!exceptionClass.IsSubclassOf(SurtrBuiltIns.Exception))
+                throw new ArgumentException(
+                    $"'{exceptionClass.Name}' does not derive from Exception and cannot be raised.",
+                    nameof(exceptionClass));
+
+            var instance = new SurtrInstance(exceptionClass);
+            _context.EntityRegistry.Register(instance);
+
+            instance[SurtrStandardLibrary.MessageSlot] =
+                SurtrValue.CreateReference(NewString(message).GetSurtrReference());
+
+            return instance;
+        }
+
         /// <summary>Wraps a host object as an instance of a host-declared native class.</summary>
         public SurtrNativeProxy WrapNative(SurtrClass nativeClass, object? target)
         {
@@ -447,7 +479,16 @@ namespace Surtr.Runtime
 
             SurtrClassReference.TrySplitFullName(fullName, out string modulePath, out string typePath);
             if (!_context.Modules.TryGetValue(modulePath, out var module))
-                return false;
+            {
+                // The built-in module is implicitly in scope in every file, which is what lets
+                // `Exception` and `Attribute` be written unqualified - but it is process-wide and
+                // deliberately *not* in this runtime's table, because disposing a runtime disposes
+                // every module that is. So it is reached here instead of being registered.
+                if (!string.Equals(modulePath, SurtrBuiltIns.ModulePath, StringComparison.Ordinal))
+                    return false;
+
+                module = SurtrBuiltIns.Module;
+            }
 
             var declared = module.FindClass(typePath);
             if (declared is not null)
@@ -488,6 +529,14 @@ namespace Surtr.Runtime
             if (_context.Modules.ContainsKey(module.Path))
                 throw new InvalidOperationException($"A module is already loaded at path '{module.Path}'.");
 
+            // A module carries state that belongs to the runtime that loaded it - string literals
+            // patched with references from its heap, native imports bound to its global table - so
+            // loading the same instance twice would corrupt the second silently. Rejecting it is
+            // the whole fix; a module meant for two runtimes is built twice.
+            if (module.IsLoaded)
+                throw new InvalidOperationException(
+                    $"Module '{module.Path}' is already loaded into a runtime and cannot be loaded into another.");
+
             // Registered before resolving, because a module's types are almost always mentioned by
             // the module itself and would otherwise be unfindable.
             _context.Modules.Add(module.Path, module);
@@ -503,7 +552,9 @@ namespace Surtr.Runtime
 
                 SurtrTypeLinker.LinkModule(module, ref _context.NextInterfaceId);
 
+                BindNativeImports(module);
                 MaterializeStringConstants(module);
+                MaterializeAttributes(module);
                 RegisterStaticBlocks(module);
 
                 module.MarkLoaded();
@@ -517,6 +568,157 @@ namespace Surtr.Runtime
             {
                 _context.Modules.Remove(module.Path);
                 throw;
+            }
+        }
+
+        /// <summary>
+        /// Builds one instance per attribute usage in the module and roots it permanently.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// At load, with the module's other statics, for the same reason they run there: every
+        /// class an attribute could name is linked by now, and a host reading an attribute back
+        /// should never be the thing that triggers its construction.
+        /// </para>
+        /// <para>
+        /// Rooted permanently rather than traced from the member: class metadata is owned outright
+        /// and is never registered with the entity registry, so there is nothing for a collection
+        /// to reach an attribute instance <em>through</em>. The root set is what keeps it alive,
+        /// and metadata's lifetime is the runtime's.
+        /// </para>
+        /// <para>
+        /// Arguments fill the attribute's instance slots positionally rather than going through a
+        /// constructor call: running bytecode here would mean executing during load, before the
+        /// module is marked loaded, and an attribute's constructor has nothing to do but assign.
+        /// </para>
+        /// </remarks>
+        private void MaterializeAttributes(SurtrModule module)
+        {
+            // A module itself carries none: the syntax attaches an attribute to a declaration, and
+            // a module is derived from a directory rather than declared.
+            foreach (var field in module.Fields)
+                MaterializeAttributesOn(field);
+
+            foreach (var property in module.Properties)
+                MaterializeAttributesOn(property);
+
+            foreach (var overloads in module.Methods)
+            {
+                for (int i = 0; i < overloads.Length; i++)
+                    MaterializeAttributesOn(overloads[i]);
+            }
+
+            foreach (var type in module.Classes)
+                MaterializeAttributesOnType(type);
+
+            foreach (var contract in module.Interfaces)
+                MaterializeAttributesOn(contract);
+        }
+
+        private void MaterializeAttributesOnType(SurtrClass type)
+        {
+            MaterializeAttributesOn(type);
+
+            foreach (var field in type.Fields)
+                MaterializeAttributesOn(field);
+
+            foreach (var property in type.Properties)
+                MaterializeAttributesOn(property);
+
+            foreach (var overloads in type.Methods)
+            {
+                for (int i = 0; i < overloads.Length; i++)
+                    MaterializeAttributesOn(overloads[i]);
+            }
+
+            foreach (var nested in type.NestedClasses)
+                MaterializeAttributesOnType(nested);
+
+            foreach (var nested in type.NestedInterfaces)
+                MaterializeAttributesOn(nested);
+        }
+
+        private void MaterializeAttributesOn(SurtrMemberInfo member)
+        {
+            var attributes = member.Attributes;
+
+            for (int i = 0; i < attributes.Length; i++)
+            {
+                var usage = attributes[i];
+                if (usage.Instance != SurtrValue.NullRef)
+                    continue;
+
+                var attributeClass = usage.AttributeType.ResolvedClass
+                    ?? throw new InvalidOperationException(
+                        $"Attribute '{usage.AttributeType.Reference.ToDisplayString()}' on '{member.Name}' did not resolve to a class.");
+
+                if (!attributeClass.IsSubclassOf(SurtrBuiltIns.Attribute))
+                    throw new InvalidOperationException(
+                        $"'{attributeClass.Name}' is used as an attribute on '{member.Name}' but does not derive from Attribute.");
+
+                var instance = new SurtrInstance(attributeClass);
+                SurtrRef reference = _context.EntityRegistry.Register(instance);
+
+                var arguments = usage.Arguments;
+                if (arguments.Length > instance.SlotCount)
+                    throw new InvalidOperationException(
+                        $"Attribute '{attributeClass.Name}' on '{member.Name}' was given {arguments.Length} arguments but has {instance.SlotCount} fields.");
+
+                for (int argument = 0; argument < arguments.Length; argument++)
+                    instance[argument] = arguments[argument].Materialize(this);
+
+                AddRoot(instance);
+                usage.Instance = reference;
+            }
+        }
+
+        /// <summary>
+        /// Binds every <c>native</c> the module declares to the host global of that name.
+        /// </summary>
+        /// <remarks>
+        /// A module that names a host global nobody registered fails here, the same way an
+        /// unresolved <see cref="SurtrTypeHandle"/> does, rather than at whichever instruction
+        /// eventually reaches it. Binding by name is also what unties a compiled module from the
+        /// order a particular host happened to register its globals in.
+        /// </remarks>
+        private void BindNativeImports(SurtrModule module)
+        {
+            var chunk = module.Chunk;
+            var globals = _context.Globals;
+
+            var variableNames = chunk.NativeVariableImports;
+            if (variableNames.Length != 0)
+            {
+                var slots = new SurtrNativeArray<int>(variableNames.Length);
+                for (int i = 0; i < variableNames.Length; i++)
+                {
+                    if (!globals.TryGetVariable(variableNames[i], out var variable))
+                    {
+                        slots.Dispose();
+                        throw new InvalidOperationException(
+                            $"Module '{module.Path}' declares native variable '{variableNames[i]}', which this runtime has no host global for.");
+                    }
+
+                    slots[i] = variable.Index;
+                }
+
+                chunk.NativeVariableSlots = slots;
+            }
+
+            var functionNames = chunk.NativeFunctionImports;
+            if (functionNames.Length != 0)
+            {
+                var functions = new SurtrNativeGlobalFunction[functionNames.Length];
+                for (int i = 0; i < functionNames.Length; i++)
+                {
+                    if (!globals.TryGetFunction(functionNames[i], out var function))
+                        throw new InvalidOperationException(
+                            $"Module '{module.Path}' declares native function '{functionNames[i]}', which this runtime has no host global for.");
+
+                    functions[i] = function;
+                }
+
+                chunk.NativeFunctionTable = functions;
             }
         }
 

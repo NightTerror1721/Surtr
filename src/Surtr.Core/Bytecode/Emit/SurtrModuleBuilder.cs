@@ -47,6 +47,11 @@ namespace Surtr.Bytecode.Emit
         private readonly Dictionary<string, int> _stringByText = new Dictionary<string, int>(StringComparer.Ordinal);
 
         private readonly List<SurtrTypeHandle> _typeTable = new List<SurtrTypeHandle>();
+        private readonly List<string> _nativeVariableImports = new List<string>();
+        private readonly Dictionary<string, int> _nativeVariableSlots = new Dictionary<string, int>(StringComparer.Ordinal);
+        private readonly List<string> _nativeFunctionImports = new List<string>();
+        private readonly Dictionary<string, int> _nativeFunctionSlots = new Dictionary<string, int>(StringComparer.Ordinal);
+
         private readonly Dictionary<string, int> _typeSlots = new Dictionary<string, int>(StringComparer.Ordinal);
 
         private readonly List<SurtrFieldInfo> _fieldTable = new List<SurtrFieldInfo>();
@@ -190,6 +195,59 @@ namespace Surtr.Bytecode.Emit
         /// </summary>
         public SurtrParameterInfo VarargsParameter(string name, SurtrClassReference elementType)
             => new SurtrParameterInfo(name, TypeHandle(elementType), SurtrConstant.None, isVarargs: true);
+
+        /// <summary>
+        /// Declares a host global this module reads or writes as a <c>native</c> variable, and
+        /// interns it into the module's import table.
+        /// </summary>
+        /// <remarks>
+        /// Nothing is resolved here: the name is checked against the host's globals when the module
+        /// is loaded, and a name nobody registered fails the load rather than the instruction that
+        /// would have reached it.
+        /// </remarks>
+        public SurtrNativeVariableToken NativeVariable(string name)
+        {
+            if (name is null)
+                throw new ArgumentNullException(nameof(name));
+
+            if (_nativeVariableSlots.TryGetValue(name, out int existing))
+                return new SurtrNativeVariableToken(existing);
+
+            ThrowIfBuilt();
+
+            int slot = _nativeVariableImports.Count;
+            _nativeVariableImports.Add(name);
+            _nativeVariableSlots.Add(name, slot);
+            return new SurtrNativeVariableToken(slot);
+        }
+
+        /// <summary>Declares a host function this module calls, and interns it into the import table.</summary>
+        public SurtrNativeFunctionToken NativeFunction(string name)
+        {
+            if (name is null)
+                throw new ArgumentNullException(nameof(name));
+
+            if (_nativeFunctionSlots.TryGetValue(name, out int existing))
+                return new SurtrNativeFunctionToken(existing);
+
+            ThrowIfBuilt();
+
+            int slot = _nativeFunctionImports.Count;
+            _nativeFunctionImports.Add(name);
+            _nativeFunctionSlots.Add(name, slot);
+            return new SurtrNativeFunctionToken(slot);
+        }
+
+        /// <summary>
+        /// Builds an attribute usage against this module's handle table, ready to be attached to a
+        /// declaration.
+        /// </summary>
+        /// <remarks>
+        /// The arguments fill the attribute class's fields positionally, and the instance is built
+        /// when the module loads - not here, and not on first read.
+        /// </remarks>
+        public SurtrAttributeUsage Attribute(SurtrClassReference attributeType, params SurtrConstant[] arguments)
+            => new SurtrAttributeUsage(TypeHandle(attributeType), arguments);
 
         /// <summary>Interns a type into the chunk's type access table.</summary>
         public SurtrTypeToken Type(SurtrClassReference reference)
@@ -539,6 +597,8 @@ namespace Surtr.Bytecode.Emit
             for (int i = 0; i < _stringSlots.Count; i++)
                 chunk.StringConstantSlots[i] = _stringSlots[i];
 
+            chunk.NativeVariableImports = _nativeVariableImports.ToArray();
+            chunk.NativeFunctionImports = _nativeFunctionImports.ToArray();
             chunk.TypeTable = _typeTable.ToArray();
             chunk.FieldTable = _fieldTable.ToArray();
             chunk.ModuleTable = _moduleTable.ToArray();

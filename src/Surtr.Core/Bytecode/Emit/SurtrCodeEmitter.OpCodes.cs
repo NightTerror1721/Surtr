@@ -221,10 +221,12 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter LdlS(int localIndex) => WithU8(OpCode.LdlS, localIndex, 0, 1, "localIdx");
 
         /// <summary>Emits <see cref="OpCode.Ldg"/>.</summary>
-        public SurtrCodeEmitter Ldg(int globalIndex) => WithU16(OpCode.Ldg, globalIndex, 0, 1, "globalIdx");
+        /// <param name="import">A module-local import from <see cref="SurtrModuleBuilder.NativeVariable"/>.</param>
+        public SurtrCodeEmitter Ldg(SurtrNativeVariableToken import) => WithU16(OpCode.Ldg, import.Index, 0, 1, nameof(import));
 
         /// <summary>Emits <see cref="OpCode.LdgX"/>.</summary>
-        public SurtrCodeEmitter LdgX(int globalIndex) => WithI32(OpCode.LdgX, globalIndex, 0, 1);
+        /// <param name="import">A module-local import from <see cref="SurtrModuleBuilder.NativeVariable"/>.</param>
+        public SurtrCodeEmitter LdgX(SurtrNativeVariableToken import) => WithI32(OpCode.LdgX, import.Index, 0, 1);
 
         /// <summary>Emits <see cref="OpCode.Stl"/>.</summary>
         public SurtrCodeEmitter Stl(int localIndex) => WithU16(OpCode.Stl, localIndex, 1, 0, "localIdx");
@@ -251,10 +253,12 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter StlS(int localIndex) => WithU8(OpCode.StlS, localIndex, 1, 0, "localIdx");
 
         /// <summary>Emits <see cref="OpCode.Stg"/>.</summary>
-        public SurtrCodeEmitter Stg(int globalIndex) => WithU16(OpCode.Stg, globalIndex, 1, 0, "globalIdx");
+        /// <param name="import">A module-local import from <see cref="SurtrModuleBuilder.NativeVariable"/>.</param>
+        public SurtrCodeEmitter Stg(SurtrNativeVariableToken import) => WithU16(OpCode.Stg, import.Index, 1, 0, nameof(import));
 
         /// <summary>Emits <see cref="OpCode.StgX"/>.</summary>
-        public SurtrCodeEmitter StgX(int globalIndex) => WithI32(OpCode.StgX, globalIndex, 1, 0);
+        /// <param name="import">A module-local import from <see cref="SurtrModuleBuilder.NativeVariable"/>.</param>
+        public SurtrCodeEmitter StgX(SurtrNativeVariableToken import) => WithI32(OpCode.StgX, import.Index, 1, 0);
 
         #endregion
 
@@ -964,18 +968,18 @@ namespace Surtr.Bytecode.Emit
         }
 
         /// <summary>Emits <see cref="OpCode.CallGlobalNative"/>.</summary>
-        /// <param name="functionIndex">The host function's index in the runtime's global function table.</param>
+        /// <param name="import">A module-local import from <see cref="SurtrModuleBuilder.NativeFunction"/>.</param>
         /// <param name="argumentCount">How many arguments the call leaves on the stack.</param>
         /// <param name="resultCount">0 or 1: the frame protocol writes back at most one value.</param>
-        public SurtrCodeEmitter CallGlobalNative(int functionIndex, int argumentCount, int resultCount)
-            => WithCall(OpCode.CallGlobalNative, functionIndex, 2, argumentCount, resultCount);
+        public SurtrCodeEmitter CallGlobalNative(SurtrNativeFunctionToken import, int argumentCount, int resultCount)
+            => WithCall(OpCode.CallGlobalNative, import.Index, 2, argumentCount, resultCount);
 
         /// <summary>Emits <see cref="OpCode.CallGlobalNativeX"/>.</summary>
-        /// <param name="functionIndex">The host function's index in the runtime's global function table.</param>
+        /// <param name="import">A module-local import from <see cref="SurtrModuleBuilder.NativeFunction"/>.</param>
         /// <param name="argumentCount">How many arguments the call leaves on the stack.</param>
         /// <param name="resultCount">0 or 1: the frame protocol writes back at most one value.</param>
-        public SurtrCodeEmitter CallGlobalNativeX(int functionIndex, int argumentCount, int resultCount)
-            => WithCall(OpCode.CallGlobalNativeX, functionIndex, 4, argumentCount, resultCount);
+        public SurtrCodeEmitter CallGlobalNativeX(SurtrNativeFunctionToken import, int argumentCount, int resultCount)
+            => WithCall(OpCode.CallGlobalNativeX, import.Index, 4, argumentCount, resultCount);
 
         #endregion
 

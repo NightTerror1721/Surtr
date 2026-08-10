@@ -323,10 +323,15 @@ namespace Surtr.Tests.VM
             using var runtime = new SurtrRuntime();
             var global = runtime.DefineGlobal("counter", Surtr.Runtime.Classes.SurtrClassReference.Integer);
 
-            var builder = new BytecodeBuilder()
+            // The instruction carries the module's own import index, not the runtime's global
+            // index: the two coincide here only because this module imports one global.
+            var builder = new BytecodeBuilder();
+            int import = builder.AddNativeVariable(global);
+
+            builder
                 .Op(OpCode.PushI32).I32(42)
-                .Op(OpCode.Stg).I16(global.Index)
-                .Op(OpCode.Ldg).I16(global.Index)
+                .Op(OpCode.Stg).I16(import)
+                .Op(OpCode.Ldg).I16(import)
                 .Op(OpCode.ReturnValue);
 
             var module = new Surtr.Runtime.Classes.SurtrModule("test");
@@ -340,10 +345,13 @@ namespace Surtr.Tests.VM
             using var runtime = new SurtrRuntime();
             var global = runtime.DefineGlobal("counter", Surtr.Runtime.Classes.SurtrClassReference.Integer);
 
-            var builder = new BytecodeBuilder()
+            var builder = new BytecodeBuilder();
+            int import = builder.AddNativeVariable(global);
+
+            builder
                 .Op(OpCode.PushI32).I32(84)
-                .Op(OpCode.StgX).I32(global.Index)
-                .Op(OpCode.LdgX).I32(global.Index)
+                .Op(OpCode.StgX).I32(import)
+                .Op(OpCode.LdgX).I32(import)
                 .Op(OpCode.ReturnValue);
 
             var module = new Surtr.Runtime.Classes.SurtrModule("test");
@@ -357,9 +365,12 @@ namespace Surtr.Tests.VM
             using var runtime = new SurtrRuntime();
             var global = runtime.DefineGlobal("shared", Surtr.Runtime.Classes.SurtrClassReference.Integer);
 
-            var builder = new BytecodeBuilder()
+            var builder = new BytecodeBuilder();
+            int import = builder.AddNativeVariable(global);
+
+            builder
                 .Op(OpCode.PushI32).I32(7)
-                .Op(OpCode.Stg).I16(global.Index)
+                .Op(OpCode.Stg).I16(import)
                 .Op(OpCode.PushI32).I32(0).Op(OpCode.ReturnValue);
 
             var module = new Surtr.Runtime.Classes.SurtrModule("test");

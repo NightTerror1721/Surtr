@@ -81,6 +81,39 @@ namespace Surtr.Runtime.BuiltIns
             return method;
         }
 
+        /// <summary>Declares an instance field on the class.</summary>
+        /// <remarks>
+        /// The built-in <em>collections</em> have no fields - their storage is CLR state on the
+        /// object, reached by native code that already knows the concrete type. A library class
+        /// like <c>Exception</c> is different: Surtr source extends it, so its state has to be a
+        /// real slot in a real instance layout that the linker lays out and the collector traces.
+        /// </remarks>
+        internal SurtrFieldInfo Field(string name, SurtrClassReference fieldType, bool isReadOnly = true)
+        {
+            var field = new SurtrFieldInfo(name, Handle(fieldType), isStatic: false, isReadOnly, SurtrVisibility.Private, _selfHandle);
+            _class.AddField(field);
+            return field;
+        }
+
+        /// <summary>Declares a native constructor on the class.</summary>
+        internal SurtrMethodInfo Constructor(SurtrNativeEntryPoint entryPoint, SurtrParameterInfo[]? parameters = null)
+        {
+            var constructor = new SurtrNativeMethodInfo(
+                "ctor",
+                SurtrMethodDispatch.Direct,
+                SurtrMethodRole.Constructor,
+                isOverride: false,
+                Handle(SurtrClassReference.Void),
+                parameters ?? NoParameters,
+                isStatic: false,
+                SurtrVisibility.Public,
+                _selfHandle,
+                entryPoint);
+
+            _class.AddMethod(constructor);
+            return constructor;
+        }
+
         /// <summary>
         /// Declares a native property on the class, plus the accessor methods behind it.
         /// </summary>

@@ -62,6 +62,7 @@ namespace Surtr.Runtime.Classes
         private readonly SurtrMemberKind _kind;
         private readonly SurtrVisibility _visibility;
         private readonly bool _static;
+        private SurtrAttributeUsage[] _attributes = Array.Empty<SurtrAttributeUsage>();
         private SurtrBuildState _buildState;
 
         private protected SurtrMemberInfo(
@@ -117,6 +118,52 @@ namespace Surtr.Runtime.Classes
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _kind;
+        }
+
+        /// <summary>
+        /// The attributes written above this declaration, in source order. Empty on the
+        /// overwhelming majority of members, which is why it costs one reference to a shared empty
+        /// array rather than a list.
+        /// </summary>
+        public ReadOnlySpan<SurtrAttributeUsage> Attributes
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _attributes;
+        }
+
+        /// <summary>Records an attribute written above this declaration.</summary>
+        /// <exception cref="InvalidOperationException">The member is already built.</exception>
+        public void AddAttribute(SurtrAttributeUsage attribute)
+        {
+            ThrowIfBuilt();
+
+            if (attribute is null)
+                throw new ArgumentNullException(nameof(attribute));
+
+            var grown = new SurtrAttributeUsage[_attributes.Length + 1];
+            Array.Copy(_attributes, grown, _attributes.Length);
+            grown[^1] = attribute;
+            _attributes = grown;
+        }
+
+        /// <summary>
+        /// Finds the first attribute of <paramref name="attributeClass"/> on this member.
+        /// </summary>
+        /// <returns><see langword="true"/> if the member carries one.</returns>
+        public bool TryGetAttribute(SurtrClass attributeClass, out SurtrAttributeUsage attribute)
+        {
+            var attributes = _attributes;
+            for (int i = 0; i < attributes.Length; i++)
+            {
+                if (ReferenceEquals(attributes[i].AttributeType.ResolvedClass, attributeClass))
+                {
+                    attribute = attributes[i];
+                    return true;
+                }
+            }
+
+            attribute = null!;
+            return false;
         }
 
         /// <summary>How far this member is between being declared and being ready to run.</summary>

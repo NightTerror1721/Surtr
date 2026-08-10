@@ -2,6 +2,7 @@
 
 using Surtr.Bytecode;
 using Surtr.Runtime;
+using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using Surtr.VM;
@@ -172,30 +173,158 @@ namespace Surtr.Tests.VM
 
         #endregion
 
-        #region A VM trap, wrapped and caught like any other exception
+        #region A VM trap, raised as a library exception and caught like any other
 
-        [Fact]
-        public void ATrap_IsWrappedAsANativeObject_AndCanBeCaught()
+        /// <summary>Runs a body inside a protected region whose handler returns the raised object.</summary>
+        private static SurtrValue CatchRaised(SurtrRuntime runtime, Action<BytecodeBuilder> body, SurtrTypeHandle? catchType = null)
         {
-            using var runtime = new SurtrRuntime();
             var module = new SurtrModule("test");
             var builder = new BytecodeBuilder();
 
             int tryStart = builder.Position;
-            builder.Op(OpCode.PushI32).I32(1).Op(OpCode.PushI32).I32(0).Op(OpCode.Div); // traps: division by zero
+            body(builder);
             int tryEnd = builder.Position;
+
             int handlerOffset = builder.Position;
-            builder.Op(OpCode.ReturnValue); // returns the wrapped exception reference itself
+            builder.Op(OpCode.ReturnValue); // the handler starts with the raised object on the stack
+
+            var method = builder.Build(module, localCount: 0, maxStackSize: 8);
+            method.SetExceptionHandlers(new[] { new SurtrExceptionHandler(tryStart, tryEnd, handlerOffset, catchType) });
+
+            return runtime.Invoke(method);
+        }
+
+        [Fact]
+        public void ATrap_IsRaisedAsTheLibraryClassItNames()
+        {
+            using var runtime = new SurtrRuntime();
+
+            SurtrValue raised = CatchRaised(runtime, b =>
+                b.Op(OpCode.PushI32).I32(1).Op(OpCode.PushI32).I32(0).Op(OpCode.Div));
+
+            var instance = runtime.Resolve<SurtrInstance>(raised);
+
+            // It used to arrive as a native proxy wrapping the CLR exception, which meant no catch
+            // clause naming a Surtr type could ever take it - only a catch-all.
+            Assert.NotNull(instance);
+            Assert.Same(SurtrBuiltIns.DivideByZeroException, instance!.Class);
+            Assert.True(instance.Class.IsSubclassOf(SurtrBuiltIns.Exception));
+        }
+
+        [Fact]
+        public void ATrap_IsCaughtByAClauseNamingItsExactClass()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+
+            SurtrValue raised = CatchRaised(
+                runtime,
+                b => b.Op(OpCode.PushI32).I32(1).Op(OpCode.PushI32).I32(0).Op(OpCode.Div),
+                VmMetadataHelpers.HandleFor(module, SurtrBuiltIns.DivideByZeroException));
+
+            Assert.NotNull(runtime.Resolve<SurtrInstance>(raised));
+        }
+
+        [Fact]
+        public void ATrap_IsCaughtByAClauseNamingExceptionItself()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+
+            // The whole point of the hierarchy: `catch (e: Exception)` takes what the VM raises.
+            SurtrValue raised = CatchRaised(
+                runtime,
+                b => b.Op(OpCode.PushI32).I32(1).Op(OpCode.PushI32).I32(0).Op(OpCode.Div),
+                VmMetadataHelpers.HandleFor(module, SurtrBuiltIns.Exception));
+
+            Assert.NotNull(runtime.Resolve<SurtrInstance>(raised));
+        }
+
+        [Fact]
+        public void ATrap_IsNotCaughtByAnUnrelatedExceptionClass()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+
+            Assert.Throws<SurtrExecutionException>(() => CatchRaised(
+                runtime,
+                b => b.Op(OpCode.PushI32).I32(1).Op(OpCode.PushI32).I32(0).Op(OpCode.Div),
+                VmMetadataHelpers.HandleFor(module, SurtrBuiltIns.KeyNotFoundException)));
+        }
+
+        [Fact]
+        public void ARaisedTrap_CarriesTheTrapMessage()
+        {
+            using var runtime = new SurtrRuntime();
+
+            SurtrValue raised = CatchRaised(runtime, b =>
+                b.Op(OpCode.PushI32).I32(1).Op(OpCode.PushI32).I32(0).Op(OpCode.Div));
+
+            var instance = runtime.Resolve<SurtrInstance>(raised)!;
+            var message = runtime.Resolve<SurtrString>(instance[0]);
+
+            Assert.NotNull(message);
+            Assert.Contains("zero", message!.Value, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void AnIndexTrap_RaisesIndexOutOfRangeException()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+
+            var builder = new BytecodeBuilder();
+            int arrayType = builder.AddType(module.TypeHandles.GetOrAdd(
+                SurtrClassReference.Array(SurtrClassReference.Integer)));
+
+            int tryStart = builder.Position;
+            builder.Op(OpCode.PushI32).I32(0).Op(OpCode.ArrNew).I16(arrayType)
+                   .Op(OpCode.PushI32).I32(5).Op(OpCode.ArrGet);
+            int tryEnd = builder.Position;
+
+            int handlerOffset = builder.Position;
+            builder.Op(OpCode.ReturnValue);
 
             var method = builder.Build(module, localCount: 0, maxStackSize: 8);
             method.SetExceptionHandlers(new[] { new SurtrExceptionHandler(tryStart, tryEnd, handlerOffset, catchType: null) });
 
-            var result = runtime.Invoke(method);
-            var proxy = runtime.Resolve<SurtrNativeProxy>(result);
+            var instance = runtime.Resolve<SurtrInstance>(runtime.Invoke(method));
+
+            Assert.NotNull(instance);
+            Assert.Same(SurtrBuiltIns.IndexOutOfRangeException, instance!.Class);
+        }
+
+        [Fact]
+        public void AHostExceptionWithNoCounterpart_StaysANativeProxy()
+        {
+            using var runtime = new SurtrRuntime();
+            runtime.DefineGlobalFunction(
+                "boom", SurtrClassReference.Void, Array.Empty<SurtrParameterInfo>(),
+                SurtrNativeEntryPoint.FromDelegate(ThrowUnmapped));
+
+            var module = new SurtrModule("test");
+            var builder = new BytecodeBuilder();
+            int import = builder.AddNativeFunction(runtime.Globals.TryGetFunction("boom", out var fn) ? fn : throw new InvalidOperationException());
+
+            int tryStart = builder.Position;
+            builder.Op(OpCode.CallGlobalNative).I16(import).U8(0).U8(0);
+            int tryEnd = builder.Position;
+
+            int handlerOffset = builder.Position;
+            builder.Op(OpCode.ReturnValue);
+
+            var method = builder.Build(module, localCount: 0, maxStackSize: 8);
+            method.SetExceptionHandlers(new[] { new SurtrExceptionHandler(tryStart, tryEnd, handlerOffset, catchType: null) });
+
+            // Not forced into a class it is not: `catch (native e)` has to keep meaning something.
+            var proxy = runtime.Resolve<SurtrNativeProxy>(runtime.Invoke(method));
 
             Assert.NotNull(proxy);
-            Assert.IsType<SurtrExecutionException>(proxy!.Target);
+            Assert.IsType<NotSupportedException>(proxy!.Target);
         }
+
+        private static SurtrValue ThrowUnmapped(SurtrCallArguments arguments)
+            => throw new NotSupportedException("no Surtr counterpart");
 
         #endregion
 
@@ -226,8 +355,9 @@ namespace Surtr.Tests.VM
                 SurtrNativeEntryPoint.FromDelegate(ReentrantBody));
 
             var outerModule = new SurtrModule("outer");
-            var outer = new BytecodeBuilder()
-                .Op(OpCode.CallGlobalNative).I16(function.Index).U8(0).U8(1) // -> reenters, returns 41 + 1 = 42
+            var outerBuilder = new BytecodeBuilder();
+            var outer = outerBuilder
+                .Op(OpCode.CallGlobalNative).I16(outerBuilder.AddNativeFunction(function)).U8(0).U8(1) // -> reenters, returns 41 + 1 = 42
                 .Op(OpCode.PushI32).I32(1)
                 .Op(OpCode.Add)                                              // proves the outer frame resumed: 42 + 1
                 .Op(OpCode.ReturnValue)

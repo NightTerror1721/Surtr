@@ -64,14 +64,19 @@ The encoding is a JVM/CLR-style descriptor rather than a dotted C#-style full na
 
 ```
 I F B C S                 integer, float, boolean, character, string
+R                         range of ints (both bounds int, so not parameterised)
 A<elem>                   array            AI            -> int[]
 D<key><value>             dictionary       DIS           -> {int: string}
 T(<elem>...)              tuple            T(IF)         -> (int, float)
 L(<param>...)<ret>        closure          L(II)F        -> (int, int) -> float
 O<fullname>;              Surtr class      Ogame.core:Entity.Handle;
 N<fullname>;              native type      NUnityEngine:GameObject;
+G<digit>                  the declaring type's n-th generic parameter   G0
+?<primitive>              nullable primitive                           ?I -> int?
 fullname := modulePath ':' typeName ('.' nestedTypeName)*
 ```
+
+`G<digit>` and `?<primitive>` both keep the one-character-of-lookahead property: each is a fixed two-character form. `?` is legal only before a primitive, because a nullable *reference* needs no encoding — a reference is its 32-bit payload and null is already representable — and a second descriptor for a type that already has one would break descriptors being the canonical form for comparison and hashing.
 
 `V` (void) is a twelfth symbol that is deliberately *not* a type: it is only legal as a closure descriptor's return. It exists because every `SurtrMethodInfo` needs a return reference and a `ReturnVoid` method has nothing else to name. It resolves to `SurtrBuiltIns.Void` — an abstract, memberless marker class filling the same role as `System.Void` in the CLR — so that no type handle in the system is ever permanently unbound.
 
@@ -140,7 +145,9 @@ Rules that run through all of them:
 
 Members are native methods linked by function pointer via `SurtrBuiltInTypeBuilder`, always `Direct` dispatch (nothing extends a built-in, so a vtable slot would be an indirection with one occupant). Properties also emit `get_x`/`set_x` accessor methods, CLR-style, so the linker sees them.
 
-**Known gap:** `array`, `tuple`, `dict` and `closure` carry a much thinner member surface than `string` or the primitives, because a descriptor names one concrete type and there is no way to write "the element type of whatever this array is". `push`, `pop`, `get`, `set`, `indexOf`, `keys` and the rest of the element-polymorphic surface therefore have no expressible signature. The behaviour exists as ordinary methods on `SurtrArray`/`SurtrDictionary`/`SurtrTuple` for the interpreter to call from `ArrGet`, `DictSet`, `TupGet` and friends; closing the gap for Surtr *source* needs a descriptor form for a built-in's own type parameter.
+**`array` and `dict` declare real generic parameters** — `T`, and `K`/`V` — and their element-polymorphic members are declared against them through the descriptor `G<n>`, which names the declaring type's n-th parameter. `G0` resolves to `SurtrBuiltIns.Erased`, so the runtime representation is exactly what `E` would have been and no layout, tracing or dispatch path knows the difference; what it adds is *which* parameter it is, which is what lets `int[].push("x")` be rejected against metadata alone. `push`, `pop`, `get`, `set`, `insert`, `indexOf`, `contains`, `remove`, `keys` and `values` are declared this way, and `length` is the uniform spelling of size on all four collections.
+
+`tuple` and `closure` declare no parameters and keep the thin surface, deliberately: both are parameterised by a *list* whose length varies per value, and a tuple's element type varies per index, so no fixed parameter could name what `get(index)` returns. Element access there stays `TupGet` with a statically known index.
 
 ## The runtime and its context
 
@@ -154,7 +161,7 @@ Members are native methods linked by function pointer via `SurtrBuiltInTypeBuild
 
 ## The instruction set
 
-`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — currently **202 opcodes**, leaving 54 free values in the `byte` space. It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
+`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — currently **213 opcodes**, leaving 43 free values in the `byte` space. It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
 
 Surtr is a stack machine. Operands come from the evaluation stack; pool indices, jump offsets and argument counts are encoded inline after the opcode byte as little-endian immediates.
 
@@ -260,7 +267,9 @@ There is no lint config or CI yet — add commands here once those exist rather 
 
 Inside `src/Surtr.Core`: `Bytecode/` is the instruction set and `Bytecode/Emit/` the emitter, `Runtime/Classes/` the type metadata and linker, `Runtime/Objects/` the runtime values and the entity registry, `Runtime/BuiltIns/` the shared built-in classes and their native members, `Runtime/Utilities/` the unmanaged helpers, `VM/` the interpreter.
 
-The instruction set, the metadata layer, the object registry, the runtime object model, the built-in classes, the interpreter and the emitter exist. **The compiler's front end is only started** — nothing turns Surtr source into calls on `SurtrModuleBuilder` yet, so a module is still assembled by hand, just against the emitter rather than against raw bytes.
+The instruction set, the metadata layer, the object registry, the runtime object model, the built-in classes, the standard library, the interpreter and the emitter exist. **The compiler's front end is only started** — nothing turns Surtr source into calls on `SurtrModuleBuilder` yet, so a module is still assembled by hand, just against the emitter rather than against raw bytes.
+
+**Everything `docs/VM-Plan.md` §4 asked the runtime for is implemented**: parameter defaults and varargs, `sealed`, enums with per-case ordinals, generic parameters on the built-ins, nullable primitives, `range`, the standard library with its exception hierarchy and the trap-to-class mapping, per-module native imports bound by name at load, class-naming boxing for value classes, attributes as real classes, and an instruction budget. What remains is the compiler side — §4.8 of that document is entirely owed.
 
 **`docs/Language-Syntax.md` is the specification `src/Surtr.Compiler` implements** — the complete surface syntax, with the reasoning behind each choice and the runtime obligations each one creates. Read it before touching the compiler; §1.2 is the authoritative reserved word list and §5.7 the authoritative operator table. Surtr source files use the `.surtr` extension.
 

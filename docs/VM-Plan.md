@@ -142,6 +142,13 @@ Trapped, each from a `NoInlining` cold helper: division by zero and `int.MinValu
 integer exponents, array/string/tuple index out of range, popping an empty array, `DictGet` on a
 missing key, a failed `Cast`, stack and call-depth overflow, an invalid opcode byte.
 
+**Each trap names the library class it surfaces as**, on the exception it raises, so a Surtr
+`catch` clause can name what the runtime raises rather than only what Surtr code threw. The pairing
+lives beside the condition rather than at the catch site — see §4.2. One trap is deliberately
+*not* mapped: exceeding the instruction budget leaves as a `SurtrBudgetExceededException`, which
+the handler search never sees, because a program that could catch its own watchdog would give back
+the only thing the budget promises.
+
 Defined rather than trapped, because defining them is free: shift counts mask to `& 31`; `F2I`
 saturates with NaN → 0 (deterministic across x64 and ARM, which an unchecked C# cast is not);
 `FDiv` follows IEEE 754; a null receiver hits the CLR's own null check.
@@ -204,7 +211,11 @@ fixed "next address" to measure from at emit time.
 
 ## 2. What is implemented
 
-All **202 opcodes** execute; 54 byte values remain free. Verified by a throwaway harness covering:
+All **213 opcodes** execute; 43 byte values remain free. The eleven added since are the nullable
+primitive family (`PushAbsent`, `IsAbsent`, `IsPresent`, `JPA`/`JPAX`, `JPNA`/`JPNAX`), the boxing
+pair that names a class (`BoxAs`, `BoxAsX`), and range construction (`RangeNew`,
+`RangeNewInclusive`). All were appended rather than filed next to their families, because the enum
+value is the on-disk encoding. Verified by a throwaway harness covering:
 integer and float arithmetic, loops with backward jumps, intra-module calls, typed array
 allocation and element ops, dictionaries, strings and interned literals, closures with upvalues,
 module-level variables and their static initializer, both switch forms, tag conversions, catching a
@@ -256,11 +267,16 @@ because it compares against `Items.Length` rather than `Count`. Removing the sec
 `Unsafe.Add`, which netstandard2.1 does not carry without a NuGet package a Unity host would also
 have to ship. Revisit if the target framework moves.
 
-### 3.3 A module belongs to one runtime
+### 3.3 A module belongs to one runtime — closed
 
-String literals are patched with references from the heap that loaded them, so loading the same
-`SurtrModule` instance into two runtimes would corrupt the second. `LoadModule` does not reject it
-yet.
+String literals are patched with references from the heap that loaded them, and native imports are
+bound to that runtime's global table, so loading the same `SurtrModule` instance into two runtimes
+would corrupt the second. `LoadModule` now rejects it: a module already marked loaded cannot be
+loaded again, and a module meant for two runtimes is built twice.
+
+What made this worth closing alongside §4.14 is that the two are the same defect from different
+directions — one is state from the loading runtime baked into the module, the other was the
+module's instructions carrying indices that only meant anything in one runtime.
 
 ### 3.4 Static initializer ordering is declaration order
 
@@ -275,8 +291,13 @@ runtime capabilities that do not exist. This is that list, ordered by how much o
 on it. With one exception these are new obligations the language design took on rather than defects
 in what was built — the exception is §4.14, which is §3.3's problem reached from another direction.
 
-Every entry below has been re-checked against the code. The one that changed most is §4.1: it is
-largely built already.
+> **All of §4 is now implemented**, along with §3.3. What each section describes is what was built,
+> so read them as the rationale behind the code rather than as work outstanding. Four things landed
+> differently from how they were first written down, and each is noted in place: §4.1 turned out to
+> be largely built already; §4.6 got real generic parameters on the built-ins rather than an
+> erased placeholder; §4.7's budget is charged on control transfers rather than per instruction;
+> and §4.15's attributes are real classes rather than name/value pairs. The one thing §4 did *not*
+> settle, and still has not, is the compiler side — every obligation in §4.8 is still owed.
 
 ### 4.1 Member tables keyed by signature — mostly already built
 
@@ -369,16 +390,31 @@ statically-known `array`/`tuple`/`dict`, and any `sealed` type.
 
 Closing §3.1 makes the general path cheaper but does not remove the need for the special cases.
 
-### 4.6 The element-polymorphic built-in members still cannot be declared
+### 4.6 The element-polymorphic built-in members — closed with real generic parameters
 
 `CLAUDE.md` already names this as a known gap and it is now blocking surface syntax: `push`, `pop`,
 `get`, `set`, `indexOf`, `keys` and the rest have no expressible signature, because a descriptor
 names one concrete type and there is no way to write "the element type of whatever this array is".
 
 The behaviour exists as ordinary methods on `SurtrArray`/`SurtrDictionary`/`SurtrTuple` for the
-interpreter to call from `ArrGet`, `DictSet` and friends. What is missing is a descriptor form for
-a built-in's *own* type parameter. Until that exists, `Language-Syntax.md` §12.4 can fix the naming
-convention (`length`, uniformly) but not publish a member list.
+interpreter to call from `ArrGet`, `DictSet` and friends. What was missing was a descriptor form for
+a built-in's *own* type parameter.
+
+**Resolved by giving the built-ins real generic parameters** rather than by reusing the erased
+descriptor. `SurtrTypeInfo` carries a parameter list, `array` declares `T` and `dict` declares
+`K`/`V`, and the descriptor `G0`/`G1` names the declaring type's n-th parameter — one symbol plus
+one digit, so it parses in the same single pass with one character of lookahead as everything else.
+It resolves to `SurtrBuiltIns.Erased`, so the runtime representation is exactly what `E` would have
+been and no layout, no tracing and no dispatch path changed; what it adds is the one thing `E`
+throws away, *which* parameter it is, and that is what lets `int[].push("x")` be rejected against
+metadata alone.
+
+`push`, `pop`, `get`, `set`, `insert`, `indexOf`, `contains`, `remove` on `array`, and `get`, `set`,
+`containsKey`, `remove`, `keys`, `values` on `dict`, are declared against them. `length` is now the
+uniform spelling on all four collections — `dict` used to answer `count`. `tuple` and `closure`
+declare no parameters and keep the thin surface: both are parameterised by a *list* whose length
+varies per value, and a tuple's element type varies per index, so no fixed parameter could name what
+`get(index)` returns.
 
 ### 4.7 The compiler runs the VM at compile time
 
@@ -391,10 +427,20 @@ policy — and would silently diverge the first time one of them didn't.
 What that asks of the runtime is small, because the pieces already exist:
 
 * **An instruction budget on a run.** A `const fun` may loop, so it may loop forever, and a
-  compiler that hangs is not acceptable. The dispatch loop needs an optional step ceiling that
-  raises rather than spins. This is the only genuinely new runtime capability §7 requires.
+  compiler that hangs is not acceptable. `SurtrRuntime.InstructionBudget` is the ceiling; exceeding
+  it raises a `SurtrBudgetExceededException` that no Surtr `catch` can take.
+
+  **It is charged on control transfers, not per instruction.** Straight-line code always reaches a
+  return, so the only way to run forever is to keep transferring control - every jump and switch
+  arm ends at a shared charging label, and so does frame entry. That leaves the dispatch path
+  byte-for-byte what it was before the budget existed, which a per-instruction decrement would not
+  have: this is the hottest loop in the system and it is not the place to spend a register and a
+  branch on something only a compiler uses. The rule this asks of the switch, and the only one, is
+  that a new opcode moving `ip` by an offset must end at `Branched` rather than `Dispatch`.
 * **`ResetExecution` between evaluations**, which already exists and already leaves the machine
-  clean.
+  clean. Note that it does *not* restore the budget: exceeding it leaves it exhausted rather than
+  cleared, so a host re-arms before each evaluation and there is no window where the ceiling
+  silently stops applying.
 
 The hard part is on the compiler's side and is recorded in `Language-Syntax.md` §14.2: const
 evaluation has to run as its own earlier pass, because `const if` decides what gets emitted at all,
@@ -568,9 +614,21 @@ its two audiences — a Unity host reading an attribute back to expose a field t
 There is no attribute storage anywhere in `Runtime/Classes`: not on `SurtrMemberInfo`, not on
 `SurtrTypeInfo`, not on `SurtrParameterInfo`.
 
-That makes it runtime work, unlike the rest of §11. What has to exist first is somewhere to put
-them and a host-facing way to read them back; *which* attributes exist can stay open after that,
+That makes it runtime work, unlike the rest of §11. What had to exist first was somewhere to put
+them and a host-facing way to read them back; *which* attributes exist stays open after that,
 exactly as `Language-Syntax.md` §14.3 leaves it.
+
+**Built as real attribute classes**, not as name/value pairs. `SurtrBuiltIns.Attribute` is the
+abstract root every attribute class extends, a `SurtrAttributeUsage` records which class a
+declaration named and the constant arguments it was given, and `SurtrMemberInfo.Attributes` holds
+them. The instance is built when the declaring module loads — with the module's other statics, for
+the same reason those run there, and never lazily on first read. Arguments fill the attribute's
+fields positionally rather than through a constructor call, because running bytecode during a load
+would mean executing before the module is marked loaded.
+
+Attribute instances are **rooted permanently**. Class metadata is owned outright and is never
+registered with the entity registry, so there is nothing for a collection to reach an attribute
+instance *through*; the root set is what keeps it alive, and metadata's lifetime is the runtime's.
 
 ### 4.16 `Switch` indexes integers only
 
@@ -595,8 +653,9 @@ enum one is why §4.13's case list is not optional.
 **~~Phase 1 — a real test project.~~ Done.** `src/Surtr.Tests` exists and `CLAUDE.md` records the
 command. The bytecode emitter (`Bytecode/Emit/`) landed alongside it.
 
-**Phase 2 — close §3.3 and §3.4** with explicit checks at load, which are cheap and turn two silent
-corruptions into clear failures.
+**~~Phase 2 — close §3.3 and §3.4.~~ §3.3 done.** `LoadModule` rejects a module that is already
+loaded, which turns a silent corruption into a clear failure. §3.4 stays open and stays the
+compiler's: nothing detects a cross-initializer dependency, and nothing at load can.
 
 **Phase 3 — the front end, against the syntax spec.** The **lexer, AST and parser are done**, in
 `src/Surtr.Compiler/Syntax/`, covering `Language-Syntax.md` end to end and verified against a
@@ -607,29 +666,39 @@ for an editor but the right one until diagnostics exist to report alongside it),
 that needs more than syntax to check, which is all of them — a `sealed` on a non-`override`, an
 `abstract` member in a non-`abstract` class, two overloads differing only by an alias.
 
-**Phase 4 — the runtime work the language needs**, from §4, in dependency order:
+**~~Phase 4 — the runtime work the language needs.~~ Done.** Every item in §4 is implemented and
+covered by `src/Surtr.Tests`. What landed, in the order it landed:
 
-1. **§4.2, the standard library and the trap mapping** — nothing else can be written in Surtr until
-   `Exception` exists, and the wrap site has to start naming real classes or no `catch` will ever
-   see a trap.
-2. **The metadata batch — §4.12, §4.13, §4.15, and §4.1's two leftovers.** Defaults and varargs,
-   `sealed`, enum-ness plus the case ordinal, attribute storage, and rejecting a duplicate
-   signature at `AddMethod`. Grouped because they are all fields on the same handful of classes and
-   all need the same pass through `SurtrClassBuilder`/`SurtrModuleBuilder`; the type checker needs
-   the first two before it can resolve an overload declared in another module.
-3. **§4.4 `range` and §4.5 `for-in` lowering** — both needed before ordinary loops compile.
-4. **§4.14, the native import table** — pulled forward to sit beside Phase 2's §3.3 check, since
-   both are "resolve by name at load and fail clearly" and both land in `LoadModule`.
-5. **§4.3, nullable primitives** — self-contained, and the syntax already assumes it.
-6. **§4.7's instruction budget** — small, and it unblocks the whole `const` family, which the
-   compiler cannot fold without it.
-7. **§4.11, value classes** — settle how a box names its class first (a `Box` opcode carrying a
-   type index, most likely), since everything else about the feature depends on it.
-8. **§4.6**, whenever the descriptor form for a built-in's own type parameter is designed. This one
-   gates the collection member surface and has no workaround.
+1. **§4.12, §4.13 and §4.1's leftovers — the metadata batch.** Parameter defaults and varargs with
+   §3.5's three shape rules enforced at the declaration; `sealed` on a class and on an override,
+   with the linker rejecting both ways of violating it; enums as their own member kind, with a case
+   list carrying the ordinal an exhaustive switch indexes on; a duplicate signature rejected at
+   `AddMethod`; and one signature key shared by the linker and that check instead of two that could
+   disagree.
+2. **§4.6, real generic parameters on the built-ins**, and with them the whole element-polymorphic
+   collection surface, `length` uniform across all four.
+3. **§4.3, §4.4 and §4.11 — the value-representation trio.** The absent-primitive tag with the
+   float boundary moved to match, `range` as a first-class built-in, and a boxing pair that names
+   the class it presents as, with `SurtrValueComparer` comparing a box's class so a boxed value
+   class is not equal to a boxed primitive with the same bits.
+4. **§4.14 and §3.3 — binding by name at load.** A per-module native import table, resolved against
+   the host's globals when the module loads, so a missing name fails there rather than at the
+   instruction that would have reached it, and a compiled module stops depending on one host's
+   registration order.
+5. **§4.2, the standard library and the trap mapping.** `Exception` and the seven classes §13.3
+   names, the four core interfaces, `Math` — and every trap now raising the library class it names,
+   so `catch (e: Exception)` finally takes what the VM raises. A host exception with no counterpart
+   stays a native proxy rather than being forced into a class it is not.
+6. **§4.15, attributes as real classes**, instantiated at load and rooted permanently.
+7. **§4.7's instruction budget**, charged on control transfers so the dispatch path is unchanged.
 
-**§4.16** gets no place of its own in that order: the string half is a lowering the compiler can
-write whenever it needs it, and the enum half falls out of item 2.
+Two things surfaced only once this was running, and both are fixed: the budget abort was catchable
+by a Surtr catch-all, which handed a spinning program an unlimited run; and the built-in module was
+not reachable from a runtime's module table, so nothing could extend `Exception`.
+
+**Phase 4b — what §4 did not close.** §4.8 is untouched and still entirely owed: every item on it is
+the compiler's. §4.16's string switch still needs `SurtrString`'s cached hash reachable from
+bytecode, and its enum half now only needs the lowering, since the ordinal exists.
 
 **Phase 5 — measure, then optimise.** Not before. Candidates: §3.1, §3.2, and an inline cache on
 `InvokeVirtual` if profiling shows monomorphic call sites dominating. All local changes; none

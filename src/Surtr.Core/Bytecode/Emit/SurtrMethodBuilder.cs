@@ -77,6 +77,11 @@ namespace Surtr.Bytecode.Emit
         private readonly List<string?> _localNames = new List<string?>();
         private readonly List<PendingHandler> _handlers = new List<PendingHandler>();
 
+        // Attributes cannot land on the metadata as they are written, because the metadata does
+        // not exist until the body has been laid out. They wait here and are attached in Build,
+        // the same way the method itself is.
+        private readonly List<SurtrAttributeUsage> _attributes = new List<SurtrAttributeUsage>();
+
         private SurtrCodeEmitter _code;
         private SurtrMethodToken _token;
         private SurtrBytecodeMethodInfo? _built;
@@ -128,6 +133,16 @@ namespace Surtr.Bytecode.Emit
 
         /// <summary>The instruction stream to emit the body into.</summary>
         public SurtrCodeEmitter Code => _code;
+
+        /// <summary>Records an attribute written above this method.</summary>
+        public SurtrMethodBuilder AddAttribute(SurtrAttributeUsage attribute)
+        {
+            if (attribute is null)
+                throw new ArgumentNullException(nameof(attribute));
+
+            _attributes.Add(attribute);
+            return this;
+        }
 
         /// <summary>Whether this is a module-level function rather than a class member.</summary>
         public bool IsModuleLevel => _declaringClass is null;
@@ -295,6 +310,9 @@ namespace Surtr.Bytecode.Emit
                 LocalCount,
                 _code.MaxStackDepth,
                 _sealed);
+
+            for (int i = 0; i < _attributes.Count; i++)
+                _built.AddAttribute(_attributes[i]);
 
             return _built;
         }

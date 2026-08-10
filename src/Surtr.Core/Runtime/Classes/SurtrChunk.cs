@@ -82,6 +82,43 @@ namespace Surtr.Runtime.Classes
         /// </remarks>
         internal SurtrModule[] ModuleTable;
 
+        /// <summary>
+        /// The host globals this module declares as <c>native</c> variables, by name and in
+        /// module-local index order.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A <c>native</c> declaration is a name and a signature the compiler checks call sites
+        /// against; the body and the storage belong to the host. This table is what makes the
+        /// binding happen <em>by name at load</em>: the alternative, which is what this used to be,
+        /// was for the instruction to carry a direct index into the runtime's global table, which
+        /// silently ties a compiled module to one host's registration order and gives
+        /// <see cref="SurtrRuntime.LoadModule"/> nothing to fail on when a name was never
+        /// registered at all.
+        /// </para>
+        /// <para>
+        /// Kept as text rather than resolved in place because a module outlives any one runtime,
+        /// and two runtimes may well number their globals differently.
+        /// </para>
+        /// </remarks>
+        internal string[] NativeVariableImports;
+
+        /// <summary>The host functions this module declares as <c>native</c>, by name and in module-local index order.</summary>
+        internal string[] NativeFunctionImports;
+
+        /// <summary>
+        /// Where each of <see cref="NativeVariableImports"/> lives in the runtime's global storage,
+        /// filled in at load.
+        /// </summary>
+        /// <remarks>
+        /// Unmanaged, so <c>Ldg</c> reaches it without touching a managed array bound: the extra
+        /// load this costs over the old direct index is the whole price of binding by name.
+        /// </remarks>
+        internal SurtrNativeArray<int> NativeVariableSlots;
+
+        /// <summary>The resolved counterpart of <see cref="NativeFunctionImports"/>, filled in at load.</summary>
+        internal SurtrNativeGlobalFunction[] NativeFunctionTable;
+
         private bool _disposed;
         private SurtrBuildState _buildState;
 
@@ -93,6 +130,9 @@ namespace Surtr.Runtime.Classes
             FieldTable = Array.Empty<SurtrFieldInfo>();
             MethodTable = Array.Empty<SurtrMethodInfo>();
             ModuleTable = Array.Empty<SurtrModule>();
+            NativeVariableImports = Array.Empty<string>();
+            NativeFunctionImports = Array.Empty<string>();
+            NativeFunctionTable = Array.Empty<SurtrNativeGlobalFunction>();
         }
 
         /// <summary>Whether the chunk's unmanaged buffers have been released.</summary>
@@ -125,12 +165,16 @@ namespace Surtr.Runtime.Classes
             Constants.Dispose();
             MethodOffsets.Dispose();
             StringConstantSlots.Dispose();
+            NativeVariableSlots.Dispose();
 
             StringConstants = Array.Empty<string>();
             TypeTable = Array.Empty<SurtrTypeHandle>();
             FieldTable = Array.Empty<SurtrFieldInfo>();
             MethodTable = Array.Empty<SurtrMethodInfo>();
             ModuleTable = Array.Empty<SurtrModule>();
+            NativeVariableImports = Array.Empty<string>();
+            NativeFunctionImports = Array.Empty<string>();
+            NativeFunctionTable = Array.Empty<SurtrNativeGlobalFunction>();
 
             _disposed = true;
         }

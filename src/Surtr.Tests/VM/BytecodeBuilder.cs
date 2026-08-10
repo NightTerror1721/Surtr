@@ -30,6 +30,16 @@ namespace Surtr.Tests.VM
         private readonly List<SurtrMethodInfo> _methodTable = new();
         private readonly List<SurtrModule> _moduleTable = new();
 
+        // A host global is reached through the module's own import table, so a test that touches
+        // one declares the import here and gets back the module-local index the instruction
+        // carries. Resolution is normally SurtrRuntime.LoadModule's job; these tests build a chunk
+        // by hand and never load one, so the already-registered global's slot is recorded straight
+        // away - which is the same binding, just performed by the fixture.
+        private readonly List<string> _nativeVariableImports = new();
+        private readonly List<int> _nativeVariableSlots = new();
+        private readonly List<string> _nativeFunctionImports = new();
+        private readonly List<SurtrNativeGlobalFunction> _nativeFunctionTable = new();
+
         private readonly struct Patch
         {
             public readonly int WritePosition;
@@ -262,6 +272,30 @@ namespace Surtr.Tests.VM
         }
 
         /// <summary>Adds an entry to the chunk's module table and returns its index.</summary>
+        /// <summary>Declares a host variable import and returns its module-local index.</summary>
+        public int AddNativeVariable(SurtrNativeGlobalVariable variable)
+        {
+            int existing = _nativeVariableImports.IndexOf(variable.Name);
+            if (existing >= 0)
+                return existing;
+
+            _nativeVariableImports.Add(variable.Name);
+            _nativeVariableSlots.Add(variable.Index);
+            return _nativeVariableImports.Count - 1;
+        }
+
+        /// <summary>Declares a host function import and returns its module-local index.</summary>
+        public int AddNativeFunction(SurtrNativeGlobalFunction function)
+        {
+            int existing = _nativeFunctionImports.IndexOf(function.Name);
+            if (existing >= 0)
+                return existing;
+
+            _nativeFunctionImports.Add(function.Name);
+            _nativeFunctionTable.Add(function);
+            return _nativeFunctionImports.Count - 1;
+        }
+
         public int AddModule(SurtrModule module)
         {
             _moduleTable.Add(module);
@@ -325,6 +359,18 @@ namespace Surtr.Tests.VM
             chunk.FieldTable = _fieldTable.ToArray();
             chunk.MethodTable = _methodTable.ToArray();
             chunk.ModuleTable = _moduleTable.ToArray();
+
+            chunk.NativeVariableImports = _nativeVariableImports.ToArray();
+            chunk.NativeFunctionImports = _nativeFunctionImports.ToArray();
+            chunk.NativeFunctionTable = _nativeFunctionTable.ToArray();
+
+            if (_nativeVariableSlots.Count != 0)
+            {
+                var slots = new SurtrNativeArray<int>(_nativeVariableSlots.Count);
+                for (int i = 0; i < _nativeVariableSlots.Count; i++)
+                    slots[i] = _nativeVariableSlots[i];
+                chunk.NativeVariableSlots = slots;
+            }
 
             var returnType = module.TypeHandles.GetOrAdd(SurtrClassReference.Void);
 

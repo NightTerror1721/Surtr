@@ -88,6 +88,53 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass Range;
 
         /// <summary>
+        /// The root of everything throwable. Carries a message, and is extendable from Surtr source.
+        /// </summary>
+        /// <remarks>
+        /// Every thrown value's type must extend this, which is what lets a <c>catch</c> clause
+        /// match against a real hierarchy rather than an arbitrary object.
+        /// </remarks>
+        public static readonly SurtrClass Exception;
+
+        /// <summary>Raised when an argument is outside what a member accepts.</summary>
+        public static readonly SurtrClass ArgumentException;
+
+        /// <summary>Raised by an array, string or tuple index outside its bounds.</summary>
+        public static readonly SurtrClass IndexOutOfRangeException;
+
+        /// <summary>Raised by a dictionary lookup with no entry under that key.</summary>
+        public static readonly SurtrClass KeyNotFoundException;
+
+        /// <summary>Raised by a member access on a null receiver.</summary>
+        public static readonly SurtrClass NullReferenceException;
+
+        /// <summary>Raised by integer division or remainder by zero.</summary>
+        public static readonly SurtrClass DivideByZeroException;
+
+        /// <summary>Raised by a cast that the value's actual class does not satisfy.</summary>
+        public static readonly SurtrClass InvalidCastException;
+
+        /// <summary>Raised when the interpreter's own call or value stack is exhausted.</summary>
+        public static readonly SurtrClass StackOverflowException;
+
+        /// <summary>Raised by an operation the runtime cannot perform in its current state.</summary>
+        public static readonly SurtrClass InvalidOperationException;
+
+        /// <summary><c>Math</c>: static numeric helpers, all of them free functions in disguise.</summary>
+        public static readonly SurtrClass Math;
+
+        /// <summary>
+        /// The root every attribute class extends.
+        /// </summary>
+        /// <remarks>
+        /// Abstract and stateless: what makes an attribute an attribute is deriving from this, and
+        /// what it carries is whatever fields its own declaration adds. Requiring a common root is
+        /// what lets a use site be checked - <c>@Range(0, 100)</c> has to name a class, and that
+        /// class has to be one of these.
+        /// </remarks>
+        public static readonly SurtrClass Attribute;
+
+        /// <summary>
         /// The root native class, behind a <see cref="SurtrNativeProxy"/> the host did not declare
         /// a type for. Host-declared native classes are separate and live on the runtime.
         /// </summary>
@@ -141,6 +188,21 @@ namespace Surtr.Runtime.BuiltIns
             // a range has nothing to be parameterised by: R names the type completely.
             Range = Declare("range", SurtrValueTypeCode.Range, SurtrClassReference.Range);
             NativeObject = Declare("native", SurtrValueTypeCode.Native, SurtrClassReference.Native(NativeObjectFullName));
+            // The library classes. Ordinary Surtr objects with real instance layouts, unlike the
+            // value-representation classes above: Surtr source extends Exception, so its state has
+            // to be a slot the linker lays out and the collector traces.
+            Exception = DeclareObject("Exception");
+            ArgumentException = DeclareObject("ArgumentException", Exception);
+            IndexOutOfRangeException = DeclareObject("IndexOutOfRangeException", Exception);
+            KeyNotFoundException = DeclareObject("KeyNotFoundException", Exception);
+            NullReferenceException = DeclareObject("NullReferenceException", Exception);
+            DivideByZeroException = DeclareObject("DivideByZeroException", Exception);
+            InvalidCastException = DeclareObject("InvalidCastException", Exception);
+            StackOverflowException = DeclareObject("StackOverflowException", Exception);
+            InvalidOperationException = DeclareObject("InvalidOperationException", Exception);
+            Math = DeclareObject("Math", isAbstract: true);
+            Attribute = DeclareObject("Attribute", isAbstract: true);
+
             Erased = Declare("erased", SurtrValueTypeCode.Erased, SurtrClassReference.Erased, isAbstract: true);
             Void = Declare("void", SurtrValueTypeCode.Void, SurtrClassReference.Void, isAbstract: true);
 
@@ -179,13 +241,49 @@ namespace Surtr.Runtime.BuiltIns
             SurtrCompositeBuiltIns.DeclareClosure(BuilderFor(Closure, handles));
             SurtrCompositeBuiltIns.DeclareRange(BuilderFor(Range, handles));
 
+            SurtrStandardLibrary.DeclareException(BuilderFor(Exception, handles));
+            SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(ArgumentException, handles));
+            SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(IndexOutOfRangeException, handles));
+            SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(KeyNotFoundException, handles));
+            SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(NullReferenceException, handles));
+            SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(DivideByZeroException, handles));
+            SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(InvalidCastException, handles));
+            SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(StackOverflowException, handles));
+            SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(InvalidOperationException, handles));
+            SurtrStandardLibrary.DeclareMath(BuilderFor(Math, handles));
+            SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
+
             // Every handle the built-in signatures mention is a built-in, so the whole table binds
             // from what was just declared - the built-in module is the one module with no external
             // dependencies, which is what lets it link before any runtime exists.
             foreach (var handle in handles.Handles)
             {
-                if (!handle.IsResolved)
-                    handle.Resolve(ForTypeCode(handle.Reference.TypeCode));
+                if (handle.IsResolved)
+                    continue;
+
+                // A library class names itself with an O descriptor, which no type code can answer
+                // for - those all collapse onto one shared family class. Everything else in this
+                // module is a family, and resolves from the code alone.
+                var reference = handle.Reference;
+                if (reference.TypeCode.IsObject && reference.TryGetFullName(out string fullName))
+                {
+                    int separator = fullName.IndexOf(SurtrClassReference.ModuleSeparator);
+                    string typeName = separator < 0 ? fullName : fullName.Substring(separator + 1);
+
+                    if (Module.TryGetClass(typeName, out var libraryClass))
+                    {
+                        handle.Resolve(libraryClass);
+                        continue;
+                    }
+
+                    if (Module.TryGetInterface(typeName, out var contract))
+                    {
+                        handle.Resolve(contract);
+                        continue;
+                    }
+                }
+
+                handle.Resolve(ForTypeCode(reference.TypeCode));
             }
 
             SurtrTypeLinker.LinkModule(Module);
@@ -207,6 +305,40 @@ namespace Surtr.Runtime.BuiltIns
             return declared;
         }
 
+        /// <summary>
+        /// Declares a library class: an ordinary Surtr object type in the built-in module, named
+        /// the way any other Surtr class is.
+        /// </summary>
+        /// <remarks>
+        /// Its <c>SelfReference</c> is a well-formed <c>O</c> descriptor, unlike the family classes
+        /// above, whose bare symbols name a family and say nothing about parameterisation. These
+        /// have no parameterisation to say nothing about: <c>Exception</c> is one concrete type.
+        /// </remarks>
+        private static SurtrClass DeclareObject(string name, SurtrClass? baseClass = null, bool isAbstract = false)
+        {
+            var handles = Module.TypeHandles;
+            SurtrTypeHandle? baseHandle = null;
+
+            if (baseClass is not null)
+            {
+                baseHandle = handles.GetOrAdd(baseClass.SelfReference);
+                if (!baseHandle.IsResolved)
+                    baseHandle.Resolve(baseClass);
+            }
+
+            var declared = new SurtrClass(
+                name,
+                SurtrValueTypeCode.Object,
+                SurtrClassReference.Object(ModulePath + SurtrClassReference.ModuleSeparator + name),
+                baseHandle,
+                isAbstract,
+                SurtrVisibility.Public,
+                declaringType: null);
+
+            Module.AddClass(declared);
+            return declared;
+        }
+
         private static SurtrBuiltInTypeBuilder BuilderFor(SurtrClass declared, SurtrTypeHandleTable handles)
         {
             var selfHandle = handles.GetOrAdd(declared.SelfReference);
@@ -214,6 +346,43 @@ namespace Surtr.Runtime.BuiltIns
                 selfHandle.Resolve(declared);
 
             return new SurtrBuiltInTypeBuilder(declared, selfHandle, handles);
+        }
+
+        /// <summary>
+        /// The library class a CLR exception should surface as inside Surtr code, or
+        /// <see langword="null"/> if it has no counterpart.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A VM trap answers first, because it names its own class - the pairing between a trap
+        /// condition and the class it presents as belongs next to the condition, not here. What is
+        /// left is host code: a handful of CLR exception types have obvious counterparts and are
+        /// worth mapping so a Surtr <c>catch</c> can name them, and everything else deliberately
+        /// does not map, staying a native proxy rather than being forced into a class it is not.
+        /// </para>
+        /// <para>
+        /// Cold: only ever reached once an exception exists.
+        /// </para>
+        /// </remarks>
+        public static SurtrClass? ExceptionClassFor(System.Exception clrException)
+        {
+            if (clrException is Surtr.VM.SurtrExecutionException trap)
+                return trap.SurtrType;
+
+            return clrException switch
+            {
+                // ArgumentOutOfRange first: it derives from ArgumentException, and an index is what
+                // the built-in collections raise it for.
+                System.ArgumentOutOfRangeException => IndexOutOfRangeException,
+                System.IndexOutOfRangeException => IndexOutOfRangeException,
+                System.Collections.Generic.KeyNotFoundException => KeyNotFoundException,
+                System.NullReferenceException => NullReferenceException,
+                System.DivideByZeroException => DivideByZeroException,
+                System.InvalidCastException => InvalidCastException,
+                System.ArgumentException => ArgumentException,
+                System.InvalidOperationException => InvalidOperationException,
+                _ => null,
+            };
         }
 
         /// <summary>

@@ -403,11 +403,12 @@ namespace Surtr.VM
                 }
                 catch (Exception clrException)
                 {
-                    // A trap, or anything host code threw. Wrapping it makes it an ordinary object,
-                    // so `catch (native e)` in Surtr source sees a CLR exception exactly the way it
-                    // sees anything else.
-                    SurtrRef wrapped = _runtime.WrapNative(clrException).GetSurtrReference();
-                    if (!TryEnterHandler(wrapped, entryDepth))
+                    // A trap, or anything host code threw. Either becomes an ordinary object so it
+                    // can go through the same handler search - a trap as the library class it
+                    // names, so `catch (e: IndexOutOfRangeException)` takes it, and anything else
+                    // as a native proxy, so `catch (native e)` still sees a CLR exception the way
+                    // it sees any other host object.
+                    if (!TryEnterHandler(AsSurtrObject(clrException), entryDepth))
                         throw;
                 }
             }
@@ -492,6 +493,25 @@ namespace Surtr.VM
             return false;
         }
 
+        /// <summary>
+        /// Turns a CLR exception into the Surtr object a <c>catch</c> clause will be matched
+        /// against.
+        /// </summary>
+        /// <remarks>
+        /// Cold by construction - it only runs once an exception exists - so it can afford the type
+        /// tests. The fallback matters as much as the mapping: a host exception with no Surtr
+        /// counterpart stays a proxy rather than being forced into a class it is not, which is what
+        /// keeps <c>catch (native e)</c> meaningful.
+        /// </remarks>
+        private SurtrRef AsSurtrObject(Exception clrException)
+        {
+            var surtrType = SurtrBuiltIns.ExceptionClassFor(clrException);
+
+            return surtrType is null
+                ? _runtime.WrapNative(clrException).GetSurtrReference()
+                : _runtime.NewException(surtrType, clrException.Message).GetSurtrReference();
+        }
+
         /// <summary>Whether a handler's declared catch type admits the raised object's class.</summary>
         private static bool Catches(in SurtrExceptionHandler handler, SurtrClass? raisedClass)
         {
@@ -572,6 +592,13 @@ namespace Surtr.VM
             SurtrFieldInfo[] fieldTable;
             SurtrMethodInfo[] methodTable;
             SurtrModule[] moduleTable;
+
+            // The module's own view of the host globals it declared as `native`. Both tables are
+            // per-chunk and bound by name at load, so a compiled module is not tied to the order a
+            // particular host registered its globals in.
+            int* nativeVariableSlots;
+            SurtrNativeGlobalFunction[] nativeFunctionTable;
+
             SurtrClosure? closure;
 
             // The operands of the shared call-entry sequences below. Passing them in locals and
@@ -596,6 +623,8 @@ namespace Surtr.VM
                 fieldTable = chunk.FieldTable;
                 methodTable = chunk.MethodTable;
                 moduleTable = chunk.ModuleTable;
+                nativeVariableSlots = chunk.NativeVariableSlots.Pointer;
+                nativeFunctionTable = chunk.NativeFunctionTable;
             }
 
             // Inline immediates are read a byte at a time and recomposed with shifts rather than
@@ -733,13 +762,18 @@ namespace Surtr.VM
                     *sp++ = frameBase[*ip++];
                     goto Dispatch;
 
+                // The immediate indexes the *module's* import table, not the runtime's global
+                // table, so one extra load stands between the instruction and the storage. That
+                // load is what buys binding by name at load time - and with it a clear failure
+                // when a host never registered the global, instead of a silent read of whatever
+                // that index happens to name in this runtime.
                 case OpCode.Ldg:
-                    *sp++ = globals[(ip[0] | (ip[1] << 8))];
+                    *sp++ = globals[nativeVariableSlots[(ip[0] | (ip[1] << 8))]];
                     ip += 2;
                     goto Dispatch;
 
                 case OpCode.LdgX:
-                    *sp++ = globals[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    *sp++ = globals[nativeVariableSlots[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))]];
                     ip += 4;
                     goto Dispatch;
 
@@ -760,12 +794,12 @@ namespace Surtr.VM
                     goto Dispatch;
 
                 case OpCode.Stg:
-                    globals[(ip[0] | (ip[1] << 8))] = *--sp;
+                    globals[nativeVariableSlots[(ip[0] | (ip[1] << 8))]] = *--sp;
                     ip += 2;
                     goto Dispatch;
 
                 case OpCode.StgX:
-                    globals[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))] = *--sp;
+                    globals[nativeVariableSlots[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))]] = *--sp;
                     ip += 4;
                     goto Dispatch;
                 #endregion
@@ -2377,7 +2411,7 @@ namespace Surtr.VM
 
                 case OpCode.CallGlobalNative:
                 {
-                    var function = context.Globals.FunctionTable[(ip[0] | (ip[1] << 8))];
+                    var function = nativeFunctionTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
                     int argumentCount = *ip++;
                     int resultCount = *ip++;
@@ -2403,7 +2437,7 @@ namespace Surtr.VM
 
                 case OpCode.CallGlobalNativeX:
                 {
-                    var function = context.Globals.FunctionTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    var function = nativeFunctionTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     ip += 4;
                     int argumentCount = *ip++;
                     int resultCount = *ip++;
@@ -2825,38 +2859,41 @@ namespace Surtr.VM
         // one path.
 
         [MethodImpl(MethodImplOptions.NoInlining)]
+        // Each trap names the library class it surfaces as. The pairing lives here, beside the
+        // condition, rather than at the catch site: the validation policy fixes which conditions
+        // trap at all, and every one of them is exactly one of these classes.
         private static SurtrExecutionException IndexOutOfRange(int index, int length, string kind)
-            => new SurtrExecutionException($"Index {index} is outside the {kind}, which holds {length} element(s).");
+            => new SurtrExecutionException($"Index {index} is outside the {kind}, which holds {length} element(s).", SurtrBuiltIns.IndexOutOfRangeException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException EmptyArray()
-            => new SurtrExecutionException("Cannot remove the last element of an empty array.");
+            => new SurtrExecutionException("Cannot remove the last element of an empty array.", SurtrBuiltIns.InvalidOperationException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException IntegerDivision(int left, int right)
             => new SurtrExecutionException(right == 0
                 ? "Integer division by zero."
-                : $"Integer division of {left} by {right} has no representable result.");
+                : $"Integer division of {left} by {right} has no representable result.", SurtrBuiltIns.DivideByZeroException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException NegativeExponent(int exponent)
-            => new SurtrExecutionException($"Integer exponentiation needs a non-negative exponent, but was given {exponent}.");
+            => new SurtrExecutionException($"Integer exponentiation needs a non-negative exponent, but was given {exponent}.", SurtrBuiltIns.ArgumentException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException MissingKey()
-            => new SurtrExecutionException("The dictionary holds no entry under that key.");
+            => new SurtrExecutionException("The dictionary holds no entry under that key.", SurtrBuiltIns.KeyNotFoundException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException InvalidCast(string fromName, string toName)
-            => new SurtrExecutionException($"A '{fromName}' cannot be cast to '{toName}'.");
+            => new SurtrExecutionException($"A '{fromName}' cannot be cast to '{toName}'.", SurtrBuiltIns.InvalidCastException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException InvalidOpCode(byte opCode)
-            => new SurtrExecutionException($"0x{opCode:X2} is not a valid opcode.");
+            => new SurtrExecutionException($"0x{opCode:X2} is not a valid opcode.", SurtrBuiltIns.InvalidOperationException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException CallStackOverflow(int maxDepth)
-            => new SurtrExecutionException($"Call stack overflow: more than {maxDepth} nested calls.");
+            => new SurtrExecutionException($"Call stack overflow: more than {maxDepth} nested calls.", SurtrBuiltIns.StackOverflowException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrBudgetExceededException StepBudgetExceeded()
@@ -2864,7 +2901,7 @@ namespace Surtr.VM
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException DataStackOverflow()
-            => new SurtrExecutionException("Data stack overflow: the machine's value stack is full.");
+            => new SurtrExecutionException("Data stack overflow: the machine's value stack is full.", SurtrBuiltIns.StackOverflowException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrThrownException Uncaught(SurtrRef raised, SurtrRuntimeEntity?[] entities)

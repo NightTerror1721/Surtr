@@ -1,5 +1,6 @@
 #nullable enable
 
+using Surtr.Runtime.Classes;
 using System;
 
 namespace Surtr.VM
@@ -30,6 +31,31 @@ namespace Surtr.VM
 
         /// <summary>Creates a trap with a message and an underlying cause.</summary>
         public SurtrExecutionException(string message, Exception innerException) : base(message, innerException) { }
+
+        /// <summary>Creates a trap that surfaces to Surtr code as <paramref name="surtrType"/>.</summary>
+        public SurtrExecutionException(string message, SurtrClass surtrType) : base(message)
+        {
+            SurtrType = surtrType;
+        }
+
+        /// <summary>
+        /// The Surtr class this trap presents as to a <c>catch</c> clause, or
+        /// <see langword="null"/> if it has none.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A trap is a CLR exception on the way out of the interpreter, because that is the cheap
+        /// shape for something raised from a cold helper. But a Surtr <c>catch</c> matches on a
+        /// Surtr class, so unless the trap names one, the only clause that could ever take it is a
+        /// catch-all - which is not what an <c>IndexOutOfRangeException</c> in the library is for.
+        /// </para>
+        /// <para>
+        /// Naming the class here rather than deciding it at the catch site keeps the pairing next
+        /// to the condition that raises it: the validation policy says which conditions trap, and
+        /// each of those is exactly one of these.
+        /// </para>
+        /// </remarks>
+        public SurtrClass? SurtrType { get; }
     }
 
     /// <summary>
