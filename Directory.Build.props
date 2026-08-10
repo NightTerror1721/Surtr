@@ -10,6 +10,13 @@
     <Product>Surtr</Product>
     <Company>Surtr</Company>
     <NeutralLanguage>en</NeutralLanguage>
+
+    <!-- Emits <AssemblyName>.xml next to the DLL so Visual Studio's IntelliSense shows
+         /// doc comments for consumers of the compiled assembly (e.g. a Unity project
+         referencing Surtr.Core.dll), not just while editing this solution directly.
+         Deliberately not paired with <NoWarn>1591</NoWarn>: CS1591 (missing XML comment
+         on a public member) stays visible as a running to-document list. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
 </Project>

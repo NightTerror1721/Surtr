@@ -1,0 +1,240 @@
+#nullable enable
+
+using Surtr.Runtime.Classes;
+using Surtr.Runtime.Objects;
+using Surtr.Runtime.Utilities;
+using System;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+
+namespace Surtr.Runtime
+{
+    /// <summary>
+    /// The mutable state one <see cref="SurtrRuntime"/> owns: its object registry, the host
+    /// surface published into it, the modules loaded into it, and the roots keeping all of that
+    /// alive.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Internal and a struct on purpose. It is the runtime's guts, not its API - everything a host
+    /// is meant to touch is a method on <see cref="SurtrRuntime"/>, and everything the interpreter
+    /// is meant to touch is a field here reached through
+    /// <see cref="SurtrRuntime.Context"/>, which returns it by reference so no part of it is ever
+    /// copied.
+    /// </para>
+    /// <para>
+    /// What is <em>not</em> here is as deliberate as what is: the built-in classes. They are
+    /// process-wide singletons on <see cref="BuiltIns.SurtrBuiltIns"/>, shared by every context, so
+    /// two runtimes in the same process agree on what <c>string</c> means and a native entry point
+    /// written against one works in the other.
+    /// </para>
+    /// </remarks>
+    internal unsafe struct SurtrContext : IRuntimeResource<int>
+    {
+        private const int InitialRootCapacity = 16;
+
+        /// <summary>The runtime's object heap: every collectable value, addressed by <see cref="SurtrRef"/>.</summary>
+        internal SurtrEntityRegistry EntityRegistry;
+
+        /// <summary>The host's global variables and functions - the only truly global names in Surtr.</summary>
+        internal SurtrNativeGlobalTable Globals;
+
+        /// <summary>Every loaded module, keyed by its dot-separated path.</summary>
+        internal Dictionary<string, SurtrModule> Modules;
+
+        /// <summary>Every host-declared native class, keyed by the full name in its descriptor.</summary>
+        internal Dictionary<string, SurtrClass> NativeClasses;
+
+        /// <summary>
+        /// Type handles for signatures the host declares outside any module - global functions and
+        /// native class members. Interned here for the same reason a module interns its own: one
+        /// handle per distinct descriptor, resolved once.
+        /// </summary>
+        internal SurtrTypeHandleTable HostTypeHandles;
+
+        /// <summary>
+        /// Text-to-object table backing <see cref="SurtrRuntime.InternString"/>, so one piece of
+        /// text is one <see cref="SurtrString"/> for the runtime's lifetime.
+        /// </summary>
+        internal Dictionary<string, SurtrString> InternedStrings;
+
+        /// <summary>
+        /// Entities kept alive regardless of reachability, as raw reference values ready to hand
+        /// to the collector.
+        /// </summary>
+        /// <remarks>
+        /// Stored pre-boxed rather than as entities because that is the shape
+        /// <see cref="SurtrEntityRegistry.CollectGarbage"/> wants, and a rooted entity's
+        /// <see cref="SurtrRef"/> cannot change while it is rooted - a root is by definition never
+        /// released - so there is nothing to keep in sync.
+        /// </remarks>
+        internal SurtrRawValue[] Roots;
+
+        /// <summary>How many entries of <see cref="Roots"/> are live.</summary>
+        internal int RootCount;
+
+        /// <summary>
+        /// The static storage of every class and module linked into this runtime, so a collection
+        /// can trace it.
+        /// </summary>
+        /// <remarks>
+        /// Registered at link time rather than discovered per collection: walking every loaded
+        /// module's class tree to find the storage would turn a constant-time hand-off into a tree
+        /// walk on every collection, and the set only ever grows when a module is loaded.
+        /// </remarks>
+        internal SurtrStaticBlock[] StaticBlocks;
+
+        /// <summary>How many entries of <see cref="StaticBlocks"/> are live.</summary>
+        internal int StaticBlockCount;
+
+        /// <summary>
+        /// Hands out the dense interface ids the linker assigns, across every module and native
+        /// class this context links, so two interfaces from different modules never collide.
+        /// </summary>
+        internal int NextInterfaceId;
+
+        /// <inheritdoc/>
+        public RuntimeResourceState ResourceState { get; private set; }
+
+        /// <inheritdoc/>
+        /// <param name="initialEntityCapacity">How many objects the registry should be sized for up front.</param>
+        /// <exception cref="InvalidOperationException">The context is already initialized.</exception>
+        public void Initialize(int initialEntityCapacity)
+        {
+            if (ResourceState.IsInitialized)
+                throw new InvalidOperationException("SurtrContext is already initialized.");
+
+            EntityRegistry = default;
+            EntityRegistry.Initialize(initialEntityCapacity);
+
+            Globals = new SurtrNativeGlobalTable();
+            Modules = new Dictionary<string, SurtrModule>(StringComparer.Ordinal);
+            NativeClasses = new Dictionary<string, SurtrClass>(StringComparer.Ordinal);
+            HostTypeHandles = new SurtrTypeHandleTable();
+            InternedStrings = new Dictionary<string, SurtrString>(StringComparer.Ordinal);
+
+            Roots = new SurtrRawValue[InitialRootCapacity];
+            RootCount = 0;
+            StaticBlocks = new SurtrStaticBlock[InitialRootCapacity];
+            StaticBlockCount = 0;
+            NextInterfaceId = 0;
+
+            // Only after every allocation above has succeeded, so a failed init cannot leave a
+            // half-alive context behind - the same rule the registry follows.
+            ResourceState = RuntimeResourceState.Initialized;
+        }
+
+        /// <summary>Registers a block of static storage for the collector to trace.</summary>
+        /// <remarks>Blocks holding no reference-typed slot are skipped: tracing one would visit nothing.</remarks>
+        internal void AddStaticBlock(SurtrRawValue* values, int* referenceSlots, int referenceSlotCount)
+        {
+            if (referenceSlotCount == 0)
+                return;
+
+            if (StaticBlockCount == StaticBlocks.Length)
+                Array.Resize(ref StaticBlocks, StaticBlocks.Length * 2);
+
+            StaticBlocks[StaticBlockCount++] = new SurtrStaticBlock(values, referenceSlots, referenceSlotCount);
+        }
+
+        /// <summary>The live prefix of <see cref="StaticBlocks"/>, ready to pass to the collector.</summary>
+        internal readonly ReadOnlySpan<SurtrStaticBlock> LiveStaticBlocks
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => new ReadOnlySpan<SurtrStaticBlock>(StaticBlocks, 0, StaticBlockCount);
+        }
+
+        /// <summary>Adds a raw reference to the permanent root set.</summary>
+        internal void AddRoot(SurtrRawValue root)
+        {
+            EnsureRootCapacity(RootCount + 1);
+            Roots[RootCount++] = root;
+        }
+
+        /// <summary>
+        /// Grows <see cref="Roots"/> to hold at least <paramref name="capacity"/> entries.
+        /// </summary>
+        /// <remarks>
+        /// Also used to borrow slack past <see cref="RootCount"/>: a collection stages the caller's
+        /// transient roots there so the collector can be handed one contiguous span without
+        /// allocating a merged array on every collection.
+        /// </remarks>
+        internal void EnsureRootCapacity(int capacity)
+        {
+            if (capacity <= Roots.Length)
+                return;
+
+            int grown = Roots.Length == 0 ? InitialRootCapacity : Roots.Length * 2;
+            if (grown < capacity)
+                grown = capacity;
+
+            Array.Resize(ref Roots, grown);
+        }
+
+        /// <summary>Drops a raw reference from the permanent root set.</summary>
+        /// <returns><see langword="false"/> if it was not rooted.</returns>
+        internal bool RemoveRoot(SurtrRawValue root)
+        {
+            var roots = Roots;
+            for (int i = 0; i < RootCount; i++)
+            {
+                if (roots[i] != root)
+                    continue;
+
+                // Order is meaningless here, so fill the hole from the end rather than shifting.
+                RootCount--;
+                roots[i] = roots[RootCount];
+                roots[RootCount] = 0;
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>The live prefix of <see cref="Roots"/>, ready to pass to the collector.</summary>
+        internal readonly ReadOnlySpan<SurtrRawValue> LiveRoots
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => new ReadOnlySpan<SurtrRawValue>(Roots, 0, RootCount);
+        }
+
+        /// <inheritdoc/>
+        public void Dispose()
+        {
+            if (ResourceState.IsDisposed)
+                return;
+
+            // Modules own unmanaged buffers (chunk pools, per-class static storage and dispatch
+            // tables); the registry owns its own. Neither is reachable by a finalizer once this
+            // context is gone, so both are released here.
+            if (Modules is not null)
+            {
+                foreach (var module in Modules.Values)
+                    module.Dispose();
+
+                Modules.Clear();
+            }
+
+            if (NativeClasses is not null)
+            {
+                foreach (var nativeClass in NativeClasses.Values)
+                    nativeClass.Dispose();
+
+                NativeClasses.Clear();
+            }
+
+            Globals?.Dispose();
+            EntityRegistry.Dispose();
+
+            InternedStrings?.Clear();
+            Roots = Array.Empty<SurtrRawValue>();
+            RootCount = 0;
+
+            // The blocks point into storage the modules and classes above have just released.
+            StaticBlocks = Array.Empty<SurtrStaticBlock>();
+            StaticBlockCount = 0;
+
+            ResourceState = RuntimeResourceState.Disposed;
+        }
+    }
+}

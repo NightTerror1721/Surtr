@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <RootNamespace>Surtr.Compiler</RootNamespace>
+    <AssemblyName>Surtr.Compiler</AssemblyName>
+
+    <!-- The compiler is tooling, not execution-path code, so it stays on the ordinary
+         managed/safe surface and talks to Surtr.Core only through its public API
+         (Bytecode/Emit) - see CLAUDE.md's note on Bytecode/Emit being the supported
+         seam for an out-of-assembly front end. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Folder Include="Binding\" />
+    <Folder Include="CodeGen\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Surtr.Core\Surtr.Core.csproj" />
+  </ItemGroup>
+
+</Project>
