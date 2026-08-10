@@ -8,8 +8,8 @@ namespace Surtr.Compiler.Syntax.Ast
     public abstract class StatementSyntax : SyntaxNode
     {
         /// <summary>Initializes the node with the position it starts at.</summary>
-        /// <param name="location">Where in the source the statement begins.</param>
-        protected StatementSyntax(SourceLocation location) : base(location)
+        /// <param name="span">The source the statement covers.</param>
+        protected StatementSyntax(SourceSpan span) : base(span)
         {
         }
     }
@@ -21,9 +21,9 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<StatementSyntax> Statements { get; }
 
         /// <summary>Initializes a block.</summary>
-        /// <param name="location">Where in the source the block begins.</param>
+        /// <param name="span">The source the block covers.</param>
         /// <param name="statements">The statements it contains.</param>
-        public BlockStatementSyntax(SourceLocation location, IReadOnlyList<StatementSyntax> statements) : base(location)
+        public BlockStatementSyntax(SourceSpan span, IReadOnlyList<StatementSyntax> statements) : base(span)
         {
             Statements = statements;
         }
@@ -36,9 +36,9 @@ namespace Surtr.Compiler.Syntax.Ast
         public ExpressionSyntax Expression { get; }
 
         /// <summary>Initializes an expression statement.</summary>
-        /// <param name="location">Where in the source the statement begins.</param>
+        /// <param name="span">The source the statement covers.</param>
         /// <param name="expression">The expression.</param>
-        public ExpressionStatementSyntax(SourceLocation location, ExpressionSyntax expression) : base(location)
+        public ExpressionStatementSyntax(SourceSpan span, ExpressionSyntax expression) : base(span)
         {
             Expression = expression;
         }
@@ -63,14 +63,14 @@ namespace Surtr.Compiler.Syntax.Ast
         public bool IsConst { get; }
 
         /// <summary>Initializes a local declaration.</summary>
-        /// <param name="location">Where in the source the statement begins.</param>
+        /// <param name="span">The source the statement covers.</param>
         /// <param name="name">The declared name.</param>
         /// <param name="type">The declared type, or <c>null</c>.</param>
         /// <param name="initializer">The initializer, or <c>null</c>.</param>
         /// <param name="isMutable">True for <c>var</c>.</param>
         /// <param name="isConst">True for <c>const</c>.</param>
-        public LocalDeclarationStatementSyntax(SourceLocation location, string name, TypeSyntax? type, ExpressionSyntax? initializer, bool isMutable, bool isConst)
-            : base(location)
+        public LocalDeclarationStatementSyntax(SourceSpan span, string name, TypeSyntax? type, ExpressionSyntax? initializer, bool isMutable, bool isConst)
+            : base(span)
         {
             Name = name;
             Type = type;
@@ -99,13 +99,13 @@ namespace Surtr.Compiler.Syntax.Ast
         public bool IsConst { get; }
 
         /// <summary>Initializes an <c>if</c>.</summary>
-        /// <param name="location">Where in the source the statement begins.</param>
+        /// <param name="span">The source the statement covers.</param>
         /// <param name="condition">The condition.</param>
         /// <param name="then">The branch taken when the condition holds.</param>
         /// <param name="elseBranch">The <c>else</c> branch, or <c>null</c>.</param>
         /// <param name="isConst">True for <c>const if</c>.</param>
-        public IfStatementSyntax(SourceLocation location, ExpressionSyntax condition, StatementSyntax then, StatementSyntax? elseBranch, bool isConst)
-            : base(location)
+        public IfStatementSyntax(SourceSpan span, ExpressionSyntax condition, StatementSyntax then, StatementSyntax? elseBranch, bool isConst)
+            : base(span)
         {
             Condition = condition;
             Then = then;
@@ -124,10 +124,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public StatementSyntax Body { get; }
 
         /// <summary>Initializes a <c>while</c> loop.</summary>
-        /// <param name="location">Where in the source the statement begins.</param>
+        /// <param name="span">The source the statement covers.</param>
         /// <param name="condition">The condition.</param>
         /// <param name="body">The loop body.</param>
-        public WhileStatementSyntax(SourceLocation location, ExpressionSyntax condition, StatementSyntax body) : base(location)
+        public WhileStatementSyntax(SourceSpan span, ExpressionSyntax condition, StatementSyntax body) : base(span)
         {
             Condition = condition;
             Body = body;
@@ -150,13 +150,13 @@ namespace Surtr.Compiler.Syntax.Ast
         public StatementSyntax Body { get; }
 
         /// <summary>Initializes a three-clause <c>for</c>.</summary>
-        /// <param name="location">Where in the source the statement begins.</param>
+        /// <param name="span">The source the statement covers.</param>
         /// <param name="initializer">The initializer clause, or <c>null</c>.</param>
         /// <param name="condition">The condition clause, or <c>null</c>.</param>
         /// <param name="step">The iteration clause, or <c>null</c>.</param>
         /// <param name="body">The loop body.</param>
-        public ForStatementSyntax(SourceLocation location, StatementSyntax? initializer, ExpressionSyntax? condition, ExpressionSyntax? step, StatementSyntax body)
-            : base(location)
+        public ForStatementSyntax(SourceSpan span, StatementSyntax? initializer, ExpressionSyntax? condition, ExpressionSyntax? step, StatementSyntax body)
+            : base(span)
         {
             Initializer = initializer;
             Condition = condition;
@@ -181,13 +181,13 @@ namespace Surtr.Compiler.Syntax.Ast
         public StatementSyntax Body { get; }
 
         /// <summary>Initializes a <c>for-in</c> loop.</summary>
-        /// <param name="location">Where in the source the statement begins.</param>
+        /// <param name="span">The source the statement covers.</param>
         /// <param name="variableName">The loop variable's name.</param>
         /// <param name="variableType">The loop variable's declared type, or <c>null</c>.</param>
         /// <param name="sequence">The sequence being iterated.</param>
         /// <param name="body">The loop body.</param>
-        public ForInStatementSyntax(SourceLocation location, string variableName, TypeSyntax? variableType, ExpressionSyntax sequence, StatementSyntax body)
-            : base(location)
+        public ForInStatementSyntax(SourceSpan span, string variableName, TypeSyntax? variableType, ExpressionSyntax sequence, StatementSyntax body)
+            : base(span)
         {
             VariableName = variableName;
             VariableType = variableType;
@@ -213,11 +213,11 @@ namespace Surtr.Compiler.Syntax.Ast
         public bool IsDefault => Labels.Count == 0;
 
         /// <summary>Initializes a switch section.</summary>
-        /// <param name="location">Where in the source the section begins.</param>
+        /// <param name="span">The source the section covers.</param>
         /// <param name="labels">The values labelling it, or an empty list for <c>default</c>.</param>
         /// <param name="statements">The statements in this section.</param>
-        public SwitchSectionSyntax(SourceLocation location, IReadOnlyList<ExpressionSyntax> labels, IReadOnlyList<StatementSyntax> statements)
-            : base(location)
+        public SwitchSectionSyntax(SourceSpan span, IReadOnlyList<ExpressionSyntax> labels, IReadOnlyList<StatementSyntax> statements)
+            : base(span)
         {
             Labels = labels;
             Statements = statements;
@@ -234,11 +234,11 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<SwitchSectionSyntax> Sections { get; }
 
         /// <summary>Initializes a switch statement.</summary>
-        /// <param name="location">Where in the source the statement begins.</param>
+        /// <param name="span">The source the statement covers.</param>
         /// <param name="subject">The value being switched on.</param>
         /// <param name="sections">The sections, in source order.</param>
-        public SwitchStatementSyntax(SourceLocation location, ExpressionSyntax subject, IReadOnlyList<SwitchSectionSyntax> sections)
-            : base(location)
+        public SwitchStatementSyntax(SourceSpan span, ExpressionSyntax subject, IReadOnlyList<SwitchSectionSyntax> sections)
+            : base(span)
         {
             Subject = subject;
             Sections = sections;
@@ -258,12 +258,12 @@ namespace Surtr.Compiler.Syntax.Ast
         public BlockStatementSyntax Body { get; }
 
         /// <summary>Initializes a catch clause.</summary>
-        /// <param name="location">Where in the source the clause begins.</param>
+        /// <param name="span">The source the clause covers.</param>
         /// <param name="variableName">The name bound to the caught exception.</param>
         /// <param name="exceptionType">The exception type matched.</param>
         /// <param name="body">The handler body.</param>
-        public CatchClauseSyntax(SourceLocation location, string variableName, TypeSyntax exceptionType, BlockStatementSyntax body)
-            : base(location)
+        public CatchClauseSyntax(SourceSpan span, string variableName, TypeSyntax exceptionType, BlockStatementSyntax body)
+            : base(span)
         {
             VariableName = variableName;
             ExceptionType = exceptionType;
@@ -284,12 +284,12 @@ namespace Surtr.Compiler.Syntax.Ast
         public BlockStatementSyntax? Finally { get; }
 
         /// <summary>Initializes a try statement.</summary>
-        /// <param name="location">Where in the source the statement begins.</param>
+        /// <param name="span">The source the statement covers.</param>
         /// <param name="body">The protected block.</param>
         /// <param name="catches">The catch clauses.</param>
         /// <param name="finallyBlock">The <c>finally</c> block, or <c>null</c>.</param>
-        public TryStatementSyntax(SourceLocation location, BlockStatementSyntax body, IReadOnlyList<CatchClauseSyntax> catches, BlockStatementSyntax? finallyBlock)
-            : base(location)
+        public TryStatementSyntax(SourceSpan span, BlockStatementSyntax body, IReadOnlyList<CatchClauseSyntax> catches, BlockStatementSyntax? finallyBlock)
+            : base(span)
         {
             Body = body;
             Catches = catches;
@@ -304,9 +304,9 @@ namespace Surtr.Compiler.Syntax.Ast
         public ExpressionSyntax Value { get; }
 
         /// <summary>Initializes a throw statement.</summary>
-        /// <param name="location">Where in the source the statement begins.</param>
+        /// <param name="span">The source the statement covers.</param>
         /// <param name="value">The value thrown.</param>
-        public ThrowStatementSyntax(SourceLocation location, ExpressionSyntax value) : base(location)
+        public ThrowStatementSyntax(SourceSpan span, ExpressionSyntax value) : base(span)
         {
             Value = value;
         }
@@ -319,9 +319,9 @@ namespace Surtr.Compiler.Syntax.Ast
         public ExpressionSyntax? Value { get; }
 
         /// <summary>Initializes a return statement.</summary>
-        /// <param name="location">Where in the source the statement begins.</param>
+        /// <param name="span">The source the statement covers.</param>
         /// <param name="value">The returned value, or <c>null</c>.</param>
-        public ReturnStatementSyntax(SourceLocation location, ExpressionSyntax? value) : base(location)
+        public ReturnStatementSyntax(SourceSpan span, ExpressionSyntax? value) : base(span)
         {
             Value = value;
         }
@@ -337,10 +337,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public string? Label { get; }
 
         /// <summary>Initializes a break or continue.</summary>
-        /// <param name="location">Where in the source the statement begins.</param>
+        /// <param name="span">The source the statement covers.</param>
         /// <param name="isContinue">True for <c>continue</c>.</param>
         /// <param name="label">The target loop's label, or <c>null</c>.</param>
-        public BreakStatementSyntax(SourceLocation location, bool isContinue, string? label) : base(location)
+        public BreakStatementSyntax(SourceSpan span, bool isContinue, string? label) : base(span)
         {
             IsContinue = isContinue;
             Label = label;
@@ -357,10 +357,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public StatementSyntax Statement { get; }
 
         /// <summary>Initializes a labelled statement.</summary>
-        /// <param name="location">Where in the source the statement begins.</param>
+        /// <param name="span">The source the statement covers.</param>
         /// <param name="label">The label.</param>
         /// <param name="statement">The statement it labels.</param>
-        public LabeledStatementSyntax(SourceLocation location, string label, StatementSyntax statement) : base(location)
+        public LabeledStatementSyntax(SourceSpan span, string label, StatementSyntax statement) : base(span)
         {
             Label = label;
             Statement = statement;
@@ -371,8 +371,8 @@ namespace Surtr.Compiler.Syntax.Ast
     public sealed class EmptyStatementSyntax : StatementSyntax
     {
         /// <summary>Initializes an empty statement.</summary>
-        /// <param name="location">Where in the source the statement begins.</param>
-        public EmptyStatementSyntax(SourceLocation location) : base(location)
+        /// <param name="span">The source the statement covers.</param>
+        public EmptyStatementSyntax(SourceSpan span) : base(span)
         {
         }
     }

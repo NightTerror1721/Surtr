@@ -272,6 +272,53 @@ namespace Surtr.Runtime.Classes
             }
 
             type.Interfaces = closure.ToArray();
+            BuildInterfaceIndex(type);
+        }
+
+        /// <summary>
+        /// Builds the id-to-index table <c>InvokeInterface</c> probes, so resolving a contract on a
+        /// receiver costs a mask and a load instead of a scan.
+        /// </summary>
+        /// <remarks>
+        /// Load-time code, so it favours being obviously right: the table is at least twice as
+        /// wide as it needs to be, which keeps probing to a step or two and costs a handful of
+        /// ints per class.
+        /// </remarks>
+        private static void BuildInterfaceIndex(SurtrClass type)
+        {
+            type.InterfaceIndexById.Dispose();
+
+            var interfaces = type.Interfaces;
+            if (interfaces.Length == 0)
+            {
+                type.InterfaceIndexById = default;
+                type.InterfaceIndexMask = -1;
+                return;
+            }
+
+            int slots = 1;
+            while (slots < interfaces.Length * 2)
+                slots <<= 1;
+
+            var table = new SurtrNativeArray<int>(slots * 2);
+            for (int i = 0; i < table.Length; i++)
+                table[i] = -1;
+
+            int mask = slots - 1;
+            for (int i = 0; i < interfaces.Length; i++)
+            {
+                int id = interfaces[i].InterfaceId;
+                int slot = id & mask;
+
+                while (table[slot << 1] >= 0)
+                    slot = (slot + 1) & mask;
+
+                table[slot << 1] = id;
+                table[(slot << 1) + 1] = i;
+            }
+
+            type.InterfaceIndexById = table;
+            type.InterfaceIndexMask = mask;
         }
         #endregion
 

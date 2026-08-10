@@ -816,6 +816,27 @@ emits a direct indexed loop with no interface call and no iterator object for:
 Everything else goes through `IIterable<T>`. The general path exists so the language is uniform;
 the special cases exist so the common path costs nothing.
 
+**The built-in collections really do implement it**, rather than being iterable by compiler
+privilege alone — `array`, `string`, `tuple`, `dict` and `range` each declare `IIterable<T>` and
+hand back an `iterator`. Without that the interface would be a promise only user code could keep,
+and `let xs: IIterable<int> = ints;` would not link. The lowering above still applies to every one
+of them: satisfying the contract is what makes the type system whole, not what a loop does.
+
+What each yields:
+
+| Source | Element |
+|---|---|
+| `T[]` | `T` |
+| `(A, B, …)` | the element at each position |
+| `string` | `char` |
+| `range` | `int` |
+| `{K: V}` | `(K, V)` — a pair per entry |
+
+A dictionary yields **pairs**, not keys: iterating one almost always wants both halves, and the
+keys-only form is already spelled `for (k in d.keys())`. A dictionary is walked over a snapshot of
+its keys taken when iteration begins, which is what makes mutation during a loop defined rather
+than a fault — an entry removed after that point is skipped, and one added is not seen.
+
 `break` and `continue` target the nearest enclosing loop by default, as in every C-family
 language, but a loop can be given a label to `break`/`continue` a specific outer loop from inside
 a nested one:
@@ -1123,7 +1144,7 @@ class Vec2 {
         return a.x == b.x && a.y == b.y;
     }
 
-    operator as(v: Vec2): Vec3 {
+    operator as Vec3(v: Vec2) {
         return Vec3(v.x, v.y, 0.0);
     }
 }
@@ -1150,7 +1171,7 @@ friends), where writing `a.add(b)` everywhere would cost real readability for no
 | `operator<=>` | 2 | all four of `<`, `<=`, `>`, `>=` — and `<=>` itself is usable directly (§5.7) |
 | `operator[]` | 1 | indexed read |
 | `operator[]` returning `void` | 2 | indexed write: the index, then the value |
-| `operator as` | 1 | an explicit cast to the declared return type |
+| `operator as T` | 1 | an explicit cast to `T`, which is written after the keyword and is the declaration's return type |
 
 Four of these need their behaviour pinned down, because the declaration alone does not say it:
 
@@ -1162,12 +1183,21 @@ Four of these need their behaviour pinned down, because the declaration alone do
   operand. The compiler expands `x++` into an assignment back to `x`, which is what makes one
   declaration serve both the prefix and the postfix form — the difference between them is which
   value the surrounding expression sees, not which function runs.
-- **`operator as`** is an **explicit** conversion only: it applies where the source writes
+- **`operator as T`** is an **explicit** conversion only: it applies where the source writes
   `v as Vec3`, never on its own. User-defined *implicit* conversions were deliberately left out —
   §3.5's overload resolution already has `int` → `float` as its hard case, and letting user types
-  join in would multiply the candidate set and turn ambiguity diagnostics into guesswork. The
-  target type is the declared return type, so both directions of a conversion are separate
-  declarations.
+  join in would multiply the candidate set and turn ambiguity diagnostics into guesswork. Both
+  directions of a conversion are separate declarations, on whichever type declares each.
+
+  **The target is written after the keyword, and no return type follows the parameters.** This is
+  the one overload whose declarations are told apart by what they *produce* rather than by what
+  they take — a type may convert to several others from the same operand — and a trailing return
+  type could not carry that: overloads are keyed by name plus parameter types, deliberately
+  excluding the return (`CLAUDE.md`, `SurtrMethodInfo.SignatureKey`), so
+  `operator as(v: Vec2): Vec3` and `operator as(v: Vec2): Vec4` would be the same member. Naming
+  the target where every other overload names nothing puts it *in* the key instead. Writing it a
+  second time after the parameters is then redundant, and is rejected rather than allowed to
+  disagree with the first spelling.
 - **`operator[]` is one-dimensional.** The read form takes exactly one index; the write form takes
   the index and then the value, and returns `void`. There is no multidimensional indexing anywhere
   in Surtr — an array descriptor is `A<elem>` and a dictionary is `D<key><value>`, both with a
@@ -1789,6 +1819,19 @@ Surtr.
 generator: it is a shape the compiler can pattern-match and lower into a plain indexed loop for the
 cases §4.2 lists, which a generator-based protocol would not be.
 
+The cursor the built-ins hand back is a single `iterator` class covering all five sources, the same
+way one `array` class covers every element type. It also carries a `reset()`, which is
+*not* on `IIterator<T>`: rewinding is meaningful for a cursor over a snapshot and meaningless for
+one over a stream, so it stays off the contract a user class has to satisfy.
+
+**A member satisfying a generic interface matches on the erased signature.** `IComparable<T>`
+declares `compareTo(other: T)`, and `T` erases to the same slot `unknown` occupies, so an
+implementation is bound to the contract's slot by the erased parameter list rather than by the
+substituted one — `CLAUDE.md`'s note that `G<n>` and `E` are one type at runtime is what makes that
+sound. The consequence is the one Java has: a class implementing `IComparable<Vec2>` and wanting a
+`compareTo(other: Vec2)` its own callers can use needs the compiler to emit a bridge into the
+erased slot.
+
 ### 13.3 The exception hierarchy
 
 `Exception` is the root of everything throwable (§9). It carries at minimum a `Message: string`
@@ -1812,13 +1855,28 @@ conditions trap at all.
 
 ### 13.4 Naming convention for collection members
 
-Built-in collections expose their size as **`length`**, uniformly — `array`, `tuple`, `string` and
-`dict` alike. One name, no rule about which container uses which word. This is the piece
-`CLAUDE.md` flags as a known gap: `array`/`dict`/`tuple`/`closure` cannot yet *declare* their
-element-polymorphic members (`push`, `get`, `keys`, …) because a descriptor names one concrete type
-and there is no way to write "the element type of whatever this array is". Closing that gap needs a
-descriptor form for a built-in's own type parameter, and until it exists this section can name the
-convention but not the full member list — see §14.
+Built-in collections expose their size as **`length`**, uniformly — `array`, `tuple`, `string`,
+`dict` and `range` alike. One name, no rule about which container uses which word.
+
+The element-polymorphic members this section could once only gesture at are declared: `array` takes
+a type parameter `T` and `dict` takes `K`/`V`, and `push`, `pop`, `get`, `set`, `insert`,
+`indexOf`, `contains`, `remove`, `keys` and `values` are written against them. So `int[].push("x")`
+is rejected against metadata alone, while at run time the parameter is an erased slot and costs
+nothing.
+
+Two members are worth naming because their shape was a decision rather than a translation:
+
+- **`array.sort(comparator: (T, T) -> int)`** takes the ordering as a lambda and has no
+  parameterless form. Sorting by "the natural order" would mean dispatching `IComparable` on an
+  erased slot, and saying which order you want is one lambda. It is **stable**, and it is a merge
+  sort written in Surtr's own runtime rather than a call to the host's sort, so the same array and
+  comparator produce the same order on every platform and every runtime version — the same reason
+  the string hash is not the host's.
+- **`string.format(pattern: string, args: string...)`** substitutes `{0}`-style placeholders, with
+  `{{` for a literal brace. It takes **strings**, not a heterogeneous list: a statically typed
+  language knows what every argument is, so converting at the call site with `.toString()` is one
+  visible call instead of a type walk hidden inside `format`. An index with no argument behind it
+  is an error, not an empty string.
 
 ---
 

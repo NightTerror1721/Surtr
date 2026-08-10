@@ -35,42 +35,117 @@ namespace Surtr.Compiler.Syntax
     /// </description></item>
     /// </list>
     /// <para>
-    /// Malformed input throws <see cref="SurtrLexerException"/> rather than producing
-    /// <see cref="TokenType.Invalid"/>. The lexer is the only stage that still knows the exact
-    /// character position of the problem, so it is the right one to report it.
+    /// <b>Malformed input is reported into <see cref="Diagnostics"/> and skipped</b>, rather than
+    /// producing a <see cref="TokenType.Invalid"/> token for a later stage to puzzle over. The
+    /// lexer is the only stage that still knows the exact character position of the problem, so it
+    /// is the right one to describe it — and the only one that can, since a token that never
+    /// existed leaves nothing behind to point at.
+    /// </para>
+    /// <para>
+    /// Recovery skips a failed <em>literal</em> whole rather than a character, so the closing quote
+    /// of a bad string is never read as opening another one. A compiler whose second complaint is
+    /// caused by its first is a compiler whose output gets skimmed.
     /// </para>
     /// </remarks>
     public sealed class Lexer
     {
         private readonly SurtrSourceBuffer source;
         private readonly CharReader reader;
+        private readonly SurtrDiagnosticBag diagnostics;
 
         /// <summary>Creates a lexer over <paramref name="source"/>.</summary>
         /// <param name="source">The source text to scan.</param>
-        public Lexer(SurtrSourceBuffer source)
+        /// <param name="diagnostics">
+        /// Where to report malformed input, or <see langword="null"/> for a bag of its own. Pass the
+        /// parser's so that one compilation collects everything in one place.
+        /// </param>
+        public Lexer(SurtrSourceBuffer source, SurtrDiagnosticBag? diagnostics = null)
         {
             this.source = source;
+            this.diagnostics = diagnostics ?? new SurtrDiagnosticBag();
             reader = new CharReader(source);
         }
+
+        /// <summary>Everything the lexer has found wrong with the source.</summary>
+        public SurtrDiagnosticBag Diagnostics => diagnostics;
 
         /// <summary>
         /// Scans the whole source. The returned list always ends with a single
         /// <see cref="TokenType.EndOfFile"/> token, so a parser never has to bounds-check its
         /// lookahead.
         /// </summary>
+        /// <remarks>
+        /// <b>Malformed input is reported and skipped, not thrown.</b> A lexer that gave up on the
+        /// first bad character would hand the parser nothing, so a file with one stray <c>#</c> in
+        /// it would report exactly one problem and hide every other — and the parser, which finds
+        /// most of what is actually wrong with a file, would never run at all.
+        /// </remarks>
         public List<Token> Tokenize()
         {
             List<Token> tokens = new List<Token>();
 
             while (true)
             {
-                Token token = NextToken();
+                int before = reader.Position;
+                Token token;
+
+                try
+                {
+                    token = NextToken();
+                }
+                catch (SurtrLexerException)
+                {
+                    // Already reported by Error; all that is left is to get past it.
+                    Recover(before);
+                    continue;
+                }
+
                 tokens.Add(token);
 
                 if (token.Type == TokenType.EndOfFile)
                 {
                     return tokens;
                 }
+            }
+        }
+
+        /// <summary>Gets past a token that failed to scan, so the next problem reported is a new one.</summary>
+        /// <param name="start">Where the failed token began.</param>
+        /// <remarks>
+        /// <para>
+        /// Skipping one character would be enough to guarantee progress, and would be the wrong
+        /// answer: resuming in the middle of a bad string literal finds the closing quote, calls it
+        /// the start of another one, and reports a second problem that exists only because of the
+        /// first. Cascades like that are what make a compiler's output worth ignoring.
+        /// </para>
+        /// <para>
+        /// So a failed literal is skipped as a literal — up to and including its closing delimiter,
+        /// or to the end of the line, since neither string nor character literals may cross one.
+        /// Anything else advances by a character, which is all that is needed when the token that
+        /// failed was one character long to begin with.
+        /// </para>
+        /// </remarks>
+        private void Recover(int start)
+        {
+            char opener = start < source.Text.Length ? source.Text.Span[start] : '\0';
+
+            if (opener == '"' || opener == '\'')
+            {
+                while (!reader.IsAtEnd && reader.Current != '\n')
+                {
+                    if (reader.Advance() == opener)
+                    {
+                        return;
+                    }
+                }
+
+                return;
+            }
+
+            // A token that failed without consuming anything would otherwise be retried forever.
+            if (reader.Position == start && !reader.IsAtEnd)
+            {
+                reader.Advance();
             }
         }
 
@@ -179,7 +254,7 @@ namespace Surtr.Compiler.Syntax
                 reader.Skip();
             }
 
-            throw Error("Unterminated block comment.", start);
+            throw Error(SurtrDiagnosticCode.UnterminatedComment, "Unterminated block comment.", start);
         }
 
         /// <summary>Scans a <c>///</c> doc comment to the end of its line. The payload is the text after the slashes, trimmed.</summary>
@@ -255,7 +330,7 @@ namespace Surtr.Compiler.Syntax
             {
                 if (!double.TryParse(digits, NumberStyles.Float, CultureInfo.InvariantCulture, out double floatValue))
                 {
-                    throw Error($"'{digits}' is not a valid floating-point literal.", start);
+                    throw Error(SurtrDiagnosticCode.InvalidNumericLiteral, $"'{digits}' is not a valid floating-point literal.", start);
                 }
 
                 return Make(TokenType.FloatLiteral, start, TokenPayload.ForFloat(floatValue));
@@ -263,7 +338,7 @@ namespace Surtr.Compiler.Syntax
 
             if (!long.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out long intValue))
             {
-                throw Error($"'{digits}' is not a valid integer literal.", start);
+                throw Error(SurtrDiagnosticCode.InvalidNumericLiteral, $"'{digits}' is not a valid integer literal.", start);
             }
 
             return Make(TokenType.IntegerLiteral, start, TokenPayload.ForInteger(intValue));
@@ -281,7 +356,7 @@ namespace Surtr.Compiler.Syntax
 
             if (digits.Length == 0)
             {
-                throw Error($"A {description} literal needs at least one digit.", start);
+                throw Error(SurtrDiagnosticCode.InvalidNumericLiteral, $"A {description} literal needs at least one digit.", start);
             }
 
             try
@@ -290,7 +365,7 @@ namespace Surtr.Compiler.Syntax
             }
             catch (OverflowException)
             {
-                throw Error($"The {description} literal is too large to fit in an integer.", start);
+                throw Error(SurtrDiagnosticCode.NumericLiteralOutOfRange, $"The {description} literal is too large to fit in an integer.", start);
             }
         }
 
@@ -327,7 +402,7 @@ namespace Surtr.Compiler.Syntax
             {
                 if (reader.IsAtEnd)
                 {
-                    throw Error("Unterminated string literal.", start);
+                    throw Error(SurtrDiagnosticCode.UnterminatedStringLiteral, "Unterminated string literal.", start);
                 }
 
                 char current = reader.Current;
@@ -339,7 +414,7 @@ namespace Surtr.Compiler.Syntax
 
                 if (current == '\n')
                 {
-                    throw Error("A string literal cannot span multiple lines.", start);
+                    throw Error(SurtrDiagnosticCode.LiteralSpansLines, "A string literal cannot span multiple lines.", start);
                 }
 
                 if (current == '\\')
@@ -377,14 +452,14 @@ namespace Surtr.Compiler.Syntax
 
             if (reader.IsAtEnd || reader.Current == '\'')
             {
-                throw Error("A character literal cannot be empty.", start);
+                throw Error(SurtrDiagnosticCode.InvalidCharacterLiteral, "A character literal cannot be empty.", start);
             }
 
             char value = reader.Current == '\\' ? ScanEscape() : ScanPlainCharacter(start);
 
             if (reader.IsAtEnd || reader.Current != '\'')
             {
-                throw Error("A character literal must hold exactly one character.", start);
+                throw Error(SurtrDiagnosticCode.InvalidCharacterLiteral, "A character literal must hold exactly one character.", start);
             }
 
             reader.Skip();
@@ -396,7 +471,7 @@ namespace Surtr.Compiler.Syntax
         {
             if (reader.Current == '\n')
             {
-                throw Error("A character literal cannot span multiple lines.", start);
+                throw Error(SurtrDiagnosticCode.LiteralSpansLines, "A character literal cannot span multiple lines.", start);
             }
 
             return reader.Advance();
@@ -414,7 +489,7 @@ namespace Surtr.Compiler.Syntax
 
             if (reader.IsAtEnd)
             {
-                throw Error("Unterminated escape sequence.", start);
+                throw Error(SurtrDiagnosticCode.InvalidEscapeSequence, "Unterminated escape sequence.", start);
             }
 
             char escape = reader.Advance();
@@ -431,7 +506,7 @@ namespace Surtr.Compiler.Syntax
                 case '$': return '$';
                 case 'u': return ScanUnicodeEscape(start);
                 default:
-                    throw Error($"Unrecognized escape sequence '\\{escape}'.", start);
+                    throw Error(SurtrDiagnosticCode.InvalidEscapeSequence, $"Unrecognized escape sequence '\\{escape}'.", start);
             }
         }
 
@@ -444,7 +519,7 @@ namespace Surtr.Compiler.Syntax
             {
                 if (reader.IsAtEnd || !IsHexDigit(reader.Current))
                 {
-                    throw Error("A '\\u' escape needs exactly four hexadecimal digits.", start);
+                    throw Error(SurtrDiagnosticCode.InvalidEscapeSequence, "A '\\u' escape needs exactly four hexadecimal digits.", start);
                 }
 
                 value = (value * 16) + HexDigitValue(reader.Advance());
@@ -563,7 +638,7 @@ namespace Surtr.Compiler.Syntax
                     return Make(reader.Match('=') ? TokenType.CaretAssign : TokenType.Caret, start);
 
                 default:
-                    throw Error($"'{current}' does not begin any token.", start);
+                    throw Error(SurtrDiagnosticCode.UnexpectedCharacter, $"'{current}' does not begin any token.", start);
             }
         }
 
@@ -574,9 +649,27 @@ namespace Surtr.Compiler.Syntax
             return new Token(type, lexeme, start, payload);
         }
 
-        private SurtrLexerException Error(string message, SourceLocation location)
+        /// <summary>
+        /// Reports a malformed piece of input and hands back the exception that abandons the token.
+        /// </summary>
+        /// <remarks>
+        /// Reporting and throwing are one step because they are one decision: the diagnostic is
+        /// recorded whether or not anyone catches the exception, so <see cref="Tokenize"/> can
+        /// recover and keep scanning while a caller that wanted the simple behaviour still gets it.
+        /// The span runs from where the token started to wherever scanning gave up, which is what
+        /// lets a tool underline the whole bad literal rather than its first character.
+        /// </remarks>
+        private SurtrLexerException Error(SurtrDiagnosticCode code, string message, SourceLocation start)
         {
-            return new SurtrLexerException(message, source.Name, location);
+            var diagnostic = new SurtrDiagnostic(
+                code,
+                SurtrDiagnosticSeverity.Error,
+                message,
+                source.Name,
+                SourceSpan.FromBounds(start, reader.Position));
+
+            diagnostics.Report(diagnostic);
+            return new SurtrLexerException(diagnostic);
         }
 
         /// <summary>

@@ -218,11 +218,48 @@ namespace Surtr.Bytecode.Emit
             return method;
         }
 
-        /// <summary>Declares a method whose body is a host function.</summary>
+        /// <summary>Declares a method whose body is a host function, already linked.</summary>
+        /// <remarks>
+        /// For a module the host builds and loads in the same process. Give
+        /// <paramref name="linkName"/> as well if the module will ever be written to an image: the
+        /// address cannot travel, so a name is what a load in another process binds against.
+        /// </remarks>
         public SurtrNativeMethodInfo DefineNativeMethod(
             string name,
             SurtrClassReference returnType,
             SurtrNativeEntryPoint entryPoint,
+            SurtrParameterInfo[]? parameters = null,
+            bool isStatic = false,
+            SurtrMethodDispatch dispatch = SurtrMethodDispatch.Direct,
+            bool isOverride = false,
+            SurtrVisibility visibility = SurtrVisibility.Public,
+            bool isSealed = false,
+            string? linkName = null)
+        {
+            var method = new SurtrNativeMethodInfo(
+                name, dispatch, SurtrMethodRole.Normal, isOverride,
+                _module.TypeHandle(returnType),
+                parameters ?? Array.Empty<SurtrParameterInfo>(),
+                isStatic, visibility, _selfHandle, entryPoint, isSealed, linkName);
+
+            _class.AddMethod(method);
+            return method;
+        }
+
+        /// <summary>
+        /// Declares a method whose body the loading runtime will supply, by name.
+        /// </summary>
+        /// <remarks>
+        /// The form to use for a module meant to travel: the declaration says what the member
+        /// looks like and what it is called, and every runtime that loads it publishes its own
+        /// body with <c>SurtrRuntime.DefineNativeBody</c>. A module can mix these freely with
+        /// bytecode methods, which is what lets one module be written half in Surtr and half in
+        /// C#. <c>linkName</c> is the name the host publishes the body under.
+        /// </remarks>
+        public SurtrNativeMethodInfo DeclareNativeMethod(
+            string name,
+            SurtrClassReference returnType,
+            string linkName,
             SurtrParameterInfo[]? parameters = null,
             bool isStatic = false,
             SurtrMethodDispatch dispatch = SurtrMethodDispatch.Direct,
@@ -234,7 +271,42 @@ namespace Surtr.Bytecode.Emit
                 name, dispatch, SurtrMethodRole.Normal, isOverride,
                 _module.TypeHandle(returnType),
                 parameters ?? Array.Empty<SurtrParameterInfo>(),
-                isStatic, visibility, _selfHandle, entryPoint, isSealed);
+                isStatic, visibility, _selfHandle, linkName, isSealed);
+
+            _class.AddMethod(method);
+            return method;
+        }
+
+        /// <summary>Declares a constructor whose body is a host function.</summary>
+        public SurtrNativeMethodInfo DefineNativeConstructor(
+            SurtrNativeEntryPoint entryPoint,
+            SurtrParameterInfo[]? parameters = null,
+            SurtrVisibility visibility = SurtrVisibility.Public,
+            string name = "ctor",
+            string? linkName = null)
+        {
+            var method = new SurtrNativeMethodInfo(
+                name, SurtrMethodDispatch.Direct, SurtrMethodRole.Constructor, false,
+                _module.TypeHandle(SurtrClassReference.Void),
+                parameters ?? Array.Empty<SurtrParameterInfo>(),
+                false, visibility, _selfHandle, entryPoint, false, linkName);
+
+            _class.AddMethod(method);
+            return method;
+        }
+
+        /// <summary>Declares a constructor whose body the loading runtime will supply, by name.</summary>
+        public SurtrNativeMethodInfo DeclareNativeConstructor(
+            string linkName,
+            SurtrParameterInfo[]? parameters = null,
+            SurtrVisibility visibility = SurtrVisibility.Public,
+            string name = "ctor")
+        {
+            var method = new SurtrNativeMethodInfo(
+                name, SurtrMethodDispatch.Direct, SurtrMethodRole.Constructor, false,
+                _module.TypeHandle(SurtrClassReference.Void),
+                parameters ?? Array.Empty<SurtrParameterInfo>(),
+                false, visibility, _selfHandle, linkName);
 
             _class.AddMethod(method);
             return method;
@@ -408,6 +480,74 @@ namespace Surtr.Bytecode.Emit
         {
             _setter = setter;
             return this;
+        }
+
+        /// <summary>Adds a <c>get_x</c> accessor whose body is a host function, already linked.</summary>
+        /// <remarks>
+        /// A native property is nothing but native accessors: a property is already a pair of
+        /// ordinary <c>get_x</c>/<c>set_x</c> methods, so making them native needs no new concept
+        /// and they travel in an image exactly as any other native member does.
+        /// </remarks>
+        public SurtrPropertyBuilder DefineNativeGetter(SurtrNativeEntryPoint entryPoint, string? linkName = null)
+        {
+            _getter = NativeAccessor("get_" + _name, _propertyType, Array.Empty<SurtrParameterInfo>(), entryPoint, linkName);
+            return this;
+        }
+
+        /// <summary>Adds a <c>set_x</c> accessor whose body is a host function, already linked.</summary>
+        public SurtrPropertyBuilder DefineNativeSetter(SurtrNativeEntryPoint entryPoint, string? linkName = null)
+        {
+            _setter = NativeAccessor("set_" + _name, SurtrClassReference.Void, ValueParameter(), entryPoint, linkName);
+            return this;
+        }
+
+        /// <summary>Adds a <c>get_x</c> accessor whose body the loading runtime will supply, by name.</summary>
+        public SurtrPropertyBuilder DeclareNativeGetter(string linkName)
+        {
+            _getter = DeclaredAccessor("get_" + _name, _propertyType, Array.Empty<SurtrParameterInfo>(), linkName);
+            return this;
+        }
+
+        /// <summary>Adds a <c>set_x</c> accessor whose body the loading runtime will supply, by name.</summary>
+        public SurtrPropertyBuilder DeclareNativeSetter(string linkName)
+        {
+            _setter = DeclaredAccessor("set_" + _name, SurtrClassReference.Void, ValueParameter(), linkName);
+            return this;
+        }
+
+        private SurtrParameterInfo[] ValueParameter()
+            => new[] { new SurtrParameterInfo("value", _module.TypeHandle(_propertyType)) };
+
+        private SurtrMethodInfo NativeAccessor(
+            string name,
+            SurtrClassReference returnType,
+            SurtrParameterInfo[] parameters,
+            SurtrNativeEntryPoint entryPoint,
+            string? linkName)
+            => RequireClass(name).DefineNativeMethod(
+                name, returnType, entryPoint, parameters, _static,
+                SurtrMethodDispatch.Direct, false, _visibility, false, linkName);
+
+        private SurtrMethodInfo DeclaredAccessor(
+            string name,
+            SurtrClassReference returnType,
+            SurtrParameterInfo[] parameters,
+            string linkName)
+            => RequireClass(name).DeclareNativeMethod(
+                name, returnType, linkName, parameters, _static,
+                SurtrMethodDispatch.Direct, false, _visibility);
+
+        private SurtrClassBuilder RequireClass(string accessorName)
+        {
+            if (_interface is not null)
+                throw new InvalidOperationException(
+                    $"Property '{_name}' is declared on an interface, which cannot carry a body; bind abstract accessors instead.");
+
+            // A module-level property's accessors are module-level functions, and a module-level
+            // function is never native - a host global is what Surtr calls that, and it binds
+            // through the global table rather than through a member's link name.
+            return _class ?? throw new InvalidOperationException(
+                $"'{accessorName}' is a module-level accessor, which cannot be native; publish a host global instead.");
         }
 
         private SurtrMethodBuilder CreateAccessor(

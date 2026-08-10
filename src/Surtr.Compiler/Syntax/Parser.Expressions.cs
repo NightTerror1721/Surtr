@@ -1,5 +1,6 @@
 #nullable enable
 
+using Surtr.Compiler.Diagnostics;
 using System.Collections.Generic;
 using Surtr.Compiler.Syntax.Ast;
 
@@ -124,7 +125,7 @@ namespace Surtr.Compiler.Syntax
 
             // Right-associative: `a = b = c` is `a = (b = c)`, so recurse rather than loop.
             ExpressionSyntax value = ParseExpression();
-            return new AssignmentExpressionSyntax(start, assignment.Value, left, value);
+            return new AssignmentExpressionSyntax(SpanFrom(start), assignment.Value, left, value);
         }
 
         /// <summary>Parses the ternary, which sits just above assignment and is also right-associative.</summary>
@@ -144,7 +145,7 @@ namespace Surtr.Compiler.Syntax
             reader.Expect(TokenType.Colon, "':' in the conditional expression");
             ExpressionSyntax whenFalse = ParseExpression();
 
-            return new ConditionalExpressionSyntax(start, condition, whenTrue, whenFalse);
+            return new ConditionalExpressionSyntax(SpanFrom(start), condition, whenTrue, whenFalse);
         }
 
         /// <summary>
@@ -163,7 +164,7 @@ namespace Surtr.Compiler.Syntax
                 {
                     SourceLocation start = reader.CurrentLocation;
                     reader.Advance();
-                    left = new TypeTestExpressionSyntax(start, left, ParseType());
+                    left = new TypeTestExpressionSyntax(SpanFrom(start), left, ParseType());
                     continue;
                 }
 
@@ -173,13 +174,15 @@ namespace Surtr.Compiler.Syntax
                     return left;
                 }
 
-                SourceLocation operatorLocation = reader.CurrentLocation;
                 BinaryOperator op = ToBinaryOperator(reader.CurrentType);
                 reader.Advance();
 
                 // Everything here is left-associative, so the right operand binds one level tighter.
                 ExpressionSyntax right = ParseBinary(precedence + 1);
-                left = new BinaryExpressionSyntax(operatorLocation, op, left, right);
+
+                // The whole operation, not the operator: an error about `a + b` should underline
+                // both operands.
+                left = new BinaryExpressionSyntax(left.Span.To(right.Span), op, left, right);
             }
         }
 
@@ -192,23 +195,23 @@ namespace Surtr.Compiler.Syntax
             {
                 case TokenType.Minus:
                     reader.Advance();
-                    return new UnaryExpressionSyntax(start, UnaryOperator.Negate, ParseUnary());
+                    return new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.Negate, ParseUnary());
 
                 case TokenType.LogicalNot:
                     reader.Advance();
-                    return new UnaryExpressionSyntax(start, UnaryOperator.Not, ParseUnary());
+                    return new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.Not, ParseUnary());
 
                 case TokenType.Tilde:
                     reader.Advance();
-                    return new UnaryExpressionSyntax(start, UnaryOperator.Complement, ParseUnary());
+                    return new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.Complement, ParseUnary());
 
                 case TokenType.Increment:
                     reader.Advance();
-                    return new UnaryExpressionSyntax(start, UnaryOperator.PreIncrement, ParseUnary());
+                    return new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.PreIncrement, ParseUnary());
 
                 case TokenType.Decrement:
                     reader.Advance();
-                    return new UnaryExpressionSyntax(start, UnaryOperator.PreDecrement, ParseUnary());
+                    return new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.PreDecrement, ParseUnary());
 
                 default:
                     return ParseCast();
@@ -227,7 +230,7 @@ namespace Surtr.Compiler.Syntax
 
                 // §5.7: a type must follow `as`, so a `?` here can only be the safe-cast form.
                 bool safe = reader.Match(TokenType.Question);
-                operand = new CastExpressionSyntax(start, operand, ParseType(), safe);
+                operand = new CastExpressionSyntax(SpanFrom(start), operand, ParseType(), safe);
             }
 
             return operand;
@@ -247,13 +250,13 @@ namespace Surtr.Compiler.Syntax
                     bool nullConditional = reader.CurrentType == TokenType.QuestionDot;
                     reader.Advance();
                     string name = reader.ExpectIdentifier("a member name after '.'");
-                    expression = new MemberAccessExpressionSyntax(start, expression, name, nullConditional);
+                    expression = new MemberAccessExpressionSyntax(SpanFrom(start), expression, name, nullConditional);
                     continue;
                 }
 
                 if (reader.Check(TokenType.LeftParen))
                 {
-                    expression = new CallExpressionSyntax(start, expression, EmptyTypes, ParseArgumentList());
+                    expression = new CallExpressionSyntax(SpanFrom(start), expression, EmptyTypes, ParseArgumentList());
                     continue;
                 }
 
@@ -262,28 +265,28 @@ namespace Surtr.Compiler.Syntax
                     reader.Advance();
                     ExpressionSyntax index = ParseExpression();
                     reader.Expect(TokenType.RightBracket, "']' to close the index");
-                    expression = new IndexExpressionSyntax(start, expression, index);
+                    expression = new IndexExpressionSyntax(SpanFrom(start), expression, index);
                     continue;
                 }
 
                 if (reader.Check(TokenType.Increment))
                 {
                     reader.Advance();
-                    expression = new UnaryExpressionSyntax(start, UnaryOperator.PostIncrement, expression);
+                    expression = new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.PostIncrement, expression);
                     continue;
                 }
 
                 if (reader.Check(TokenType.Decrement))
                 {
                     reader.Advance();
-                    expression = new UnaryExpressionSyntax(start, UnaryOperator.PostDecrement, expression);
+                    expression = new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.PostDecrement, expression);
                     continue;
                 }
 
                 if (reader.Check(TokenType.BangBang))
                 {
                     reader.Advance();
-                    expression = new UnaryExpressionSyntax(start, UnaryOperator.NullAssert, expression);
+                    expression = new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.NullAssert, expression);
                     continue;
                 }
 
@@ -310,7 +313,7 @@ namespace Surtr.Compiler.Syntax
                     reader.Advance();
                 }
 
-                arguments.Add(new ArgumentSyntax(start, name, ParseExpression()));
+                arguments.Add(new ArgumentSyntax(SpanFrom(start), name, ParseExpression()));
 
                 if (!reader.Match(TokenType.Comma))
                 {
@@ -358,19 +361,22 @@ namespace Surtr.Compiler.Syntax
                     if (CheckContextual("this"))
                     {
                         reader.Advance();
-                        return new ThisExpressionSyntax(start);
+                        return new ThisExpressionSyntax(SpanFrom(start));
                     }
 
                     if (CheckContextual("super"))
                     {
                         reader.Advance();
-                        return new SuperExpressionSyntax(start);
+                        return new SuperExpressionSyntax(SpanFrom(start));
                     }
 
-                    return new IdentifierExpressionSyntax(start, reader.Advance().ToString());
+                    // Consumed first: arguments evaluate left to right, so a SpanFrom sitting
+                    // beside the Advance would close the span before the token was read.
+                    string name = reader.Advance().ToString();
+                    return new IdentifierExpressionSyntax(SpanFrom(start), name);
 
                 default:
-                    throw reader.Error($"Expected an expression, found {reader.CurrentType}.");
+                    throw reader.Error(SurtrDiagnosticCode.ExpectedExpression, $"Expected an expression, found {reader.CurrentType}.");
             }
         }
 
@@ -419,7 +425,7 @@ namespace Surtr.Compiler.Syntax
 
                     if (depth != 0)
                     {
-                        throw reader.Error("Unterminated '${' in the interpolated string.", token.Location);
+                        throw reader.Error(SurtrDiagnosticCode.InvalidInterpolation, "Unterminated '${' in the interpolated string.", token.Span);
                     }
 
                     parts.Add(ParseInterpolationHole(raw.Substring(expressionStart, j - expressionStart), token));
@@ -436,15 +442,20 @@ namespace Surtr.Compiler.Syntax
 
                 if (nameEnd == nameStart)
                 {
-                    throw reader.Error("A '$' in an interpolated string must be followed by a name or '{'.", token.Location);
+                    throw reader.Error(SurtrDiagnosticCode.InvalidInterpolation, "A '$' in an interpolated string must be followed by a name or '{'.", token.Span);
                 }
 
-                parts.Add(new IdentifierExpressionSyntax(token.Location, raw.Substring(nameStart, nameEnd - nameStart)));
+                // Every part takes the whole literal's span. The text a part was decoded from does
+                // not sit at a fixed offset in the source — escapes and `${` holes shift it — and a
+                // hole's own nodes come from a nested parser working in its own coordinates, so
+                // precise sub-spans would mean remapping a whole subtree. Worth doing when a binder
+                // starts reporting inside interpolations; not before.
+                parts.Add(new IdentifierExpressionSyntax(token.Span, raw.Substring(nameStart, nameEnd - nameStart)));
                 i = nameEnd - 1;
             }
 
             FlushInterpolationText(parts, text, token);
-            return new InterpolatedStringExpressionSyntax(token.Location, parts);
+            return new InterpolatedStringExpressionSyntax(token.Span, parts);
         }
 
         /// <summary>Parses one <c>${ ... }</c> hole by running a nested parser over its text.</summary>
@@ -455,7 +466,7 @@ namespace Surtr.Compiler.Syntax
 
             if (!inner.reader.Check(TokenType.EndOfFile))
             {
-                throw reader.Error("An interpolation hole must hold exactly one expression.", token.Location);
+                throw reader.Error(SurtrDiagnosticCode.InvalidInterpolation, "An interpolation hole must hold exactly one expression.", token.Span);
             }
 
             return expression;
@@ -510,7 +521,7 @@ namespace Surtr.Compiler.Syntax
             }
 
             reader.Expect(TokenType.RightBracket, "']' to close the array literal");
-            return new ArrayLiteralExpressionSyntax(start, elements);
+            return new ArrayLiteralExpressionSyntax(SpanFrom(start), elements);
         }
 
         /// <summary>Parses <c>{ k: v }</c>. Only reachable in expression position, per §5.4.</summary>
@@ -525,7 +536,7 @@ namespace Surtr.Compiler.Syntax
                 SourceLocation entryStart = reader.CurrentLocation;
                 ExpressionSyntax key = ParseExpression();
                 reader.Expect(TokenType.Colon, "':' between the key and value");
-                entries.Add(new DictEntrySyntax(entryStart, key, ParseExpression()));
+                entries.Add(new DictEntrySyntax(SpanFrom(entryStart), key, ParseExpression()));
 
                 if (!reader.Match(TokenType.Comma))
                 {
@@ -534,7 +545,7 @@ namespace Surtr.Compiler.Syntax
             }
 
             reader.Expect(TokenType.RightBrace, "'}' to close the dictionary literal");
-            return new DictLiteralExpressionSyntax(start, entries);
+            return new DictLiteralExpressionSyntax(SpanFrom(start), entries);
         }
 
         /// <summary>Parses <c>(a)</c> as a grouping and <c>(a, b)</c> as a tuple.</summary>
@@ -557,11 +568,11 @@ namespace Surtr.Compiler.Syntax
 
             if (elements.Count == 0)
             {
-                throw reader.Error("Expected an expression inside the parentheses.", start);
+                throw reader.Error(SurtrDiagnosticCode.ExpectedExpression, "Expected an expression inside the parentheses.", start);
             }
 
             // One element is a grouping, not a one-element tuple; the node it wrapped is enough.
-            return elements.Count == 1 ? elements[0] : new TupleLiteralExpressionSyntax(start, elements);
+            return elements.Count == 1 ? elements[0] : new TupleLiteralExpressionSyntax(SpanFrom(start), elements);
         }
 
         /// <summary>
@@ -614,7 +625,7 @@ namespace Surtr.Compiler.Syntax
 
                 // §5.9: the annotation is optional when a target type supplies it.
                 TypeSyntax? type = reader.Match(TokenType.Colon) ? ParseType() : null;
-                parameters.Add(new ParameterSyntax(parameterStart, name, type, null, false));
+                parameters.Add(new ParameterSyntax(SpanFrom(parameterStart), name, type, null, false));
 
                 if (!reader.Match(TokenType.Comma))
                 {
@@ -627,10 +638,10 @@ namespace Surtr.Compiler.Syntax
 
             if (reader.Check(TokenType.LeftBrace))
             {
-                return new LambdaExpressionSyntax(start, parameters, null, ParseBlock());
+                return new LambdaExpressionSyntax(SpanFrom(start), parameters, null, ParseBlock());
             }
 
-            return new LambdaExpressionSyntax(start, parameters, ParseExpression(), null);
+            return new LambdaExpressionSyntax(SpanFrom(start), parameters, ParseExpression(), null);
         }
 
         /// <summary>Parses the expression form of <c>switch</c> (§4.3).</summary>
@@ -659,7 +670,7 @@ namespace Surtr.Compiler.Syntax
                 }
 
                 reader.Expect(TokenType.Arrow, "'->' in the switch arm");
-                arms.Add(new SwitchExpressionArmSyntax(armStart, values, ParseExpression()));
+                arms.Add(new SwitchExpressionArmSyntax(SpanFrom(armStart), values, ParseExpression()));
 
                 if (!reader.Match(TokenType.Comma))
                 {
@@ -668,7 +679,7 @@ namespace Surtr.Compiler.Syntax
             }
 
             reader.Expect(TokenType.RightBrace, "'}' to close the switch arms");
-            return new SwitchExpressionSyntax(start, subject, arms);
+            return new SwitchExpressionSyntax(SpanFrom(start), subject, arms);
         }
     }
 }

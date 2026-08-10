@@ -8,8 +8,8 @@ namespace Surtr.Compiler.Syntax.Ast
     public abstract class ExpressionSyntax : SyntaxNode
     {
         /// <summary>Initializes the node with the position it starts at.</summary>
-        /// <param name="location">Where in the source the expression begins.</param>
-        protected ExpressionSyntax(SourceLocation location) : base(location)
+        /// <param name="span">The source the expression covers.</param>
+        protected ExpressionSyntax(SourceSpan span) : base(span)
         {
         }
     }
@@ -27,7 +27,7 @@ namespace Surtr.Compiler.Syntax.Ast
 
         /// <summary>Initializes a literal.</summary>
         /// <param name="literal">The literal token.</param>
-        public LiteralExpressionSyntax(Token literal) : base(literal.Location)
+        public LiteralExpressionSyntax(Token literal) : base(literal.Span)
         {
             Literal = literal;
         }
@@ -46,10 +46,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<ExpressionSyntax> Parts { get; }
 
         /// <summary>Initializes an interpolated string.</summary>
-        /// <param name="location">Where in the source the literal begins.</param>
+        /// <param name="span">The source the literal covers.</param>
         /// <param name="parts">The alternating text and expression parts.</param>
-        public InterpolatedStringExpressionSyntax(SourceLocation location, IReadOnlyList<ExpressionSyntax> parts)
-            : base(location)
+        public InterpolatedStringExpressionSyntax(SourceSpan span, IReadOnlyList<ExpressionSyntax> parts)
+            : base(span)
         {
             Parts = parts;
         }
@@ -62,9 +62,9 @@ namespace Surtr.Compiler.Syntax.Ast
         public string Name { get; }
 
         /// <summary>Initializes an identifier reference.</summary>
-        /// <param name="location">Where in the source the identifier begins.</param>
+        /// <param name="span">The source the identifier covers.</param>
         /// <param name="name">The identifier's text.</param>
-        public IdentifierExpressionSyntax(SourceLocation location, string name) : base(location)
+        public IdentifierExpressionSyntax(SourceSpan span, string name) : base(span)
         {
             Name = name;
         }
@@ -74,8 +74,8 @@ namespace Surtr.Compiler.Syntax.Ast
     public sealed class ThisExpressionSyntax : ExpressionSyntax
     {
         /// <summary>Initializes a <c>this</c> reference.</summary>
-        /// <param name="location">Where in the source it begins.</param>
-        public ThisExpressionSyntax(SourceLocation location) : base(location)
+        /// <param name="span">The source it covers.</param>
+        public ThisExpressionSyntax(SourceSpan span) : base(span)
         {
         }
     }
@@ -84,8 +84,8 @@ namespace Surtr.Compiler.Syntax.Ast
     public sealed class SuperExpressionSyntax : ExpressionSyntax
     {
         /// <summary>Initializes a <c>super</c> reference.</summary>
-        /// <param name="location">Where in the source it begins.</param>
-        public SuperExpressionSyntax(SourceLocation location) : base(location)
+        /// <param name="span">The source it covers.</param>
+        public SuperExpressionSyntax(SourceSpan span) : base(span)
         {
         }
     }
@@ -103,12 +103,12 @@ namespace Surtr.Compiler.Syntax.Ast
         public ExpressionSyntax Right { get; }
 
         /// <summary>Initializes a binary operation.</summary>
-        /// <param name="location">Where in the source the expression begins.</param>
+        /// <param name="span">The source the expression covers.</param>
         /// <param name="op">Which operator this is.</param>
         /// <param name="left">The left operand.</param>
         /// <param name="right">The right operand.</param>
-        public BinaryExpressionSyntax(SourceLocation location, BinaryOperator op, ExpressionSyntax left, ExpressionSyntax right)
-            : base(location)
+        public BinaryExpressionSyntax(SourceSpan span, BinaryOperator op, ExpressionSyntax left, ExpressionSyntax right)
+            : base(span)
         {
             Operator = op;
             Left = left;
@@ -126,10 +126,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public ExpressionSyntax Operand { get; }
 
         /// <summary>Initializes a unary operation.</summary>
-        /// <param name="location">Where in the source the expression begins.</param>
+        /// <param name="span">The source the expression covers.</param>
         /// <param name="op">Which operator this is.</param>
         /// <param name="operand">The operand.</param>
-        public UnaryExpressionSyntax(SourceLocation location, UnaryOperator op, ExpressionSyntax operand) : base(location)
+        public UnaryExpressionSyntax(SourceSpan span, UnaryOperator op, ExpressionSyntax operand) : base(span)
         {
             Operator = op;
             Operand = operand;
@@ -149,12 +149,12 @@ namespace Surtr.Compiler.Syntax.Ast
         public ExpressionSyntax Value { get; }
 
         /// <summary>Initializes an assignment.</summary>
-        /// <param name="location">Where in the source the expression begins.</param>
+        /// <param name="span">The source the expression covers.</param>
         /// <param name="op">Which assignment operator this is.</param>
         /// <param name="target">The assignment target.</param>
         /// <param name="value">The value being assigned.</param>
-        public AssignmentExpressionSyntax(SourceLocation location, AssignmentOperator op, ExpressionSyntax target, ExpressionSyntax value)
-            : base(location)
+        public AssignmentExpressionSyntax(SourceSpan span, AssignmentOperator op, ExpressionSyntax target, ExpressionSyntax value)
+            : base(span)
         {
             Operator = op;
             Target = target;
@@ -175,12 +175,12 @@ namespace Surtr.Compiler.Syntax.Ast
         public ExpressionSyntax WhenFalse { get; }
 
         /// <summary>Initializes a ternary conditional.</summary>
-        /// <param name="location">Where in the source the expression begins.</param>
+        /// <param name="span">The source the expression covers.</param>
         /// <param name="condition">The condition.</param>
         /// <param name="whenTrue">The value when the condition holds.</param>
         /// <param name="whenFalse">The value when it does not.</param>
-        public ConditionalExpressionSyntax(SourceLocation location, ExpressionSyntax condition, ExpressionSyntax whenTrue, ExpressionSyntax whenFalse)
-            : base(location)
+        public ConditionalExpressionSyntax(SourceSpan span, ExpressionSyntax condition, ExpressionSyntax whenTrue, ExpressionSyntax whenFalse)
+            : base(span)
         {
             Condition = condition;
             WhenTrue = whenTrue;
@@ -198,10 +198,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public ExpressionSyntax Value { get; }
 
         /// <summary>Initializes an argument.</summary>
-        /// <param name="location">Where in the source the argument begins.</param>
+        /// <param name="span">The source the argument covers.</param>
         /// <param name="name">The parameter name, or <c>null</c> when positional.</param>
         /// <param name="value">The argument's value.</param>
-        public ArgumentSyntax(SourceLocation location, string? name, ExpressionSyntax value) : base(location)
+        public ArgumentSyntax(SourceSpan span, string? name, ExpressionSyntax value) : base(span)
         {
             Name = name;
             Value = value;
@@ -221,12 +221,12 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<ArgumentSyntax> Arguments { get; }
 
         /// <summary>Initializes a call.</summary>
-        /// <param name="location">Where in the source the expression begins.</param>
+        /// <param name="span">The source the expression covers.</param>
         /// <param name="callee">The expression being called.</param>
         /// <param name="typeArguments">Explicit type arguments, or an empty list.</param>
         /// <param name="arguments">The arguments, in source order.</param>
-        public CallExpressionSyntax(SourceLocation location, ExpressionSyntax callee, IReadOnlyList<TypeSyntax> typeArguments, IReadOnlyList<ArgumentSyntax> arguments)
-            : base(location)
+        public CallExpressionSyntax(SourceSpan span, ExpressionSyntax callee, IReadOnlyList<TypeSyntax> typeArguments, IReadOnlyList<ArgumentSyntax> arguments)
+            : base(span)
         {
             Callee = callee;
             TypeArguments = typeArguments;
@@ -244,10 +244,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public ExpressionSyntax Index { get; }
 
         /// <summary>Initializes an index expression.</summary>
-        /// <param name="location">Where in the source the expression begins.</param>
+        /// <param name="span">The source the expression covers.</param>
         /// <param name="target">The expression being indexed.</param>
         /// <param name="index">The index.</param>
-        public IndexExpressionSyntax(SourceLocation location, ExpressionSyntax target, ExpressionSyntax index) : base(location)
+        public IndexExpressionSyntax(SourceSpan span, ExpressionSyntax target, ExpressionSyntax index) : base(span)
         {
             Target = target;
             Index = index;
@@ -267,12 +267,12 @@ namespace Surtr.Compiler.Syntax.Ast
         public bool IsNullConditional { get; }
 
         /// <summary>Initializes a member access.</summary>
-        /// <param name="location">Where in the source the expression begins.</param>
+        /// <param name="span">The source the expression covers.</param>
         /// <param name="target">The receiver.</param>
         /// <param name="name">The member's name.</param>
         /// <param name="isNullConditional">True when written <c>?.</c>.</param>
-        public MemberAccessExpressionSyntax(SourceLocation location, ExpressionSyntax target, string name, bool isNullConditional)
-            : base(location)
+        public MemberAccessExpressionSyntax(SourceSpan span, ExpressionSyntax target, string name, bool isNullConditional)
+            : base(span)
         {
             Target = target;
             Name = name;
@@ -293,12 +293,12 @@ namespace Surtr.Compiler.Syntax.Ast
         public bool IsSafe { get; }
 
         /// <summary>Initializes a cast.</summary>
-        /// <param name="location">Where in the source the expression begins.</param>
+        /// <param name="span">The source the expression covers.</param>
         /// <param name="operand">The value being cast.</param>
         /// <param name="targetType">The target type.</param>
         /// <param name="isSafe">True when written <c>as?</c>.</param>
-        public CastExpressionSyntax(SourceLocation location, ExpressionSyntax operand, TypeSyntax targetType, bool isSafe)
-            : base(location)
+        public CastExpressionSyntax(SourceSpan span, ExpressionSyntax operand, TypeSyntax targetType, bool isSafe)
+            : base(span)
         {
             Operand = operand;
             TargetType = targetType;
@@ -316,10 +316,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public TypeSyntax TargetType { get; }
 
         /// <summary>Initializes a type test.</summary>
-        /// <param name="location">Where in the source the expression begins.</param>
+        /// <param name="span">The source the expression covers.</param>
         /// <param name="operand">The value being tested.</param>
         /// <param name="targetType">The type being tested against.</param>
-        public TypeTestExpressionSyntax(SourceLocation location, ExpressionSyntax operand, TypeSyntax targetType) : base(location)
+        public TypeTestExpressionSyntax(SourceSpan span, ExpressionSyntax operand, TypeSyntax targetType) : base(span)
         {
             Operand = operand;
             TargetType = targetType;
@@ -339,12 +339,12 @@ namespace Surtr.Compiler.Syntax.Ast
         public BlockStatementSyntax? BlockBody { get; }
 
         /// <summary>Initializes a lambda.</summary>
-        /// <param name="location">Where in the source the expression begins.</param>
+        /// <param name="span">The source the expression covers.</param>
         /// <param name="parameters">The parameters.</param>
         /// <param name="body">The expression body, or <c>null</c>.</param>
         /// <param name="blockBody">The block body, or <c>null</c>.</param>
-        public LambdaExpressionSyntax(SourceLocation location, IReadOnlyList<ParameterSyntax> parameters, ExpressionSyntax? body, BlockStatementSyntax? blockBody)
-            : base(location)
+        public LambdaExpressionSyntax(SourceSpan span, IReadOnlyList<ParameterSyntax> parameters, ExpressionSyntax? body, BlockStatementSyntax? blockBody)
+            : base(span)
         {
             Parameters = parameters;
             Body = body;
@@ -359,9 +359,9 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<ExpressionSyntax> Elements { get; }
 
         /// <summary>Initializes an array literal.</summary>
-        /// <param name="location">Where in the source the literal begins.</param>
+        /// <param name="span">The source the literal covers.</param>
         /// <param name="elements">The elements, in order.</param>
-        public ArrayLiteralExpressionSyntax(SourceLocation location, IReadOnlyList<ExpressionSyntax> elements) : base(location)
+        public ArrayLiteralExpressionSyntax(SourceSpan span, IReadOnlyList<ExpressionSyntax> elements) : base(span)
         {
             Elements = elements;
         }
@@ -377,10 +377,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public ExpressionSyntax Value { get; }
 
         /// <summary>Initializes a dictionary entry.</summary>
-        /// <param name="location">Where in the source the entry begins.</param>
+        /// <param name="span">The source the entry covers.</param>
         /// <param name="key">The key.</param>
         /// <param name="value">The value.</param>
-        public DictEntrySyntax(SourceLocation location, ExpressionSyntax key, ExpressionSyntax value) : base(location)
+        public DictEntrySyntax(SourceSpan span, ExpressionSyntax key, ExpressionSyntax value) : base(span)
         {
             Key = key;
             Value = value;
@@ -394,9 +394,9 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<DictEntrySyntax> Entries { get; }
 
         /// <summary>Initializes a dictionary literal.</summary>
-        /// <param name="location">Where in the source the literal begins.</param>
+        /// <param name="span">The source the literal covers.</param>
         /// <param name="entries">The entries, in order.</param>
-        public DictLiteralExpressionSyntax(SourceLocation location, IReadOnlyList<DictEntrySyntax> entries) : base(location)
+        public DictLiteralExpressionSyntax(SourceSpan span, IReadOnlyList<DictEntrySyntax> entries) : base(span)
         {
             Entries = entries;
         }
@@ -409,9 +409,9 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<ExpressionSyntax> Elements { get; }
 
         /// <summary>Initializes a tuple literal.</summary>
-        /// <param name="location">Where in the source the literal begins.</param>
+        /// <param name="span">The source the literal covers.</param>
         /// <param name="elements">The elements, in order.</param>
-        public TupleLiteralExpressionSyntax(SourceLocation location, IReadOnlyList<ExpressionSyntax> elements) : base(location)
+        public TupleLiteralExpressionSyntax(SourceSpan span, IReadOnlyList<ExpressionSyntax> elements) : base(span)
         {
             Elements = elements;
         }
@@ -430,11 +430,11 @@ namespace Surtr.Compiler.Syntax.Ast
         public bool IsElse => Values.Count == 0;
 
         /// <summary>Initializes a switch-expression arm.</summary>
-        /// <param name="location">Where in the source the arm begins.</param>
+        /// <param name="span">The source the arm covers.</param>
         /// <param name="values">The values matched, or an empty list for <c>else</c>.</param>
         /// <param name="result">The arm's result.</param>
-        public SwitchExpressionArmSyntax(SourceLocation location, IReadOnlyList<ExpressionSyntax> values, ExpressionSyntax result)
-            : base(location)
+        public SwitchExpressionArmSyntax(SourceSpan span, IReadOnlyList<ExpressionSyntax> values, ExpressionSyntax result)
+            : base(span)
         {
             Values = values;
             Result = result;
@@ -451,11 +451,11 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<SwitchExpressionArmSyntax> Arms { get; }
 
         /// <summary>Initializes a switch expression.</summary>
-        /// <param name="location">Where in the source the expression begins.</param>
+        /// <param name="span">The source the expression covers.</param>
         /// <param name="subject">The value being switched on.</param>
         /// <param name="arms">The arms, in source order.</param>
-        public SwitchExpressionSyntax(SourceLocation location, ExpressionSyntax subject, IReadOnlyList<SwitchExpressionArmSyntax> arms)
-            : base(location)
+        public SwitchExpressionSyntax(SourceSpan span, ExpressionSyntax subject, IReadOnlyList<SwitchExpressionArmSyntax> arms)
+            : base(span)
         {
             Subject = subject;
             Arms = arms;

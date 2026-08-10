@@ -611,6 +611,8 @@ namespace Surtr.Bytecode.Emit
 
             chunk.MethodTable = methodTable;
 
+            _module.MarkEmitted();
+
             _built = true;
             return _module;
         }

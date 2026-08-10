@@ -415,6 +415,15 @@ namespace Surtr.Runtime.Classes
         /// One method rather than two private copies, because the linker and the declaration-time
         /// duplicate check have to agree exactly or an illegal overload pair slips through.
         /// </para>
+        /// <para>
+        /// Parameter descriptors are written <em>erased</em>: a <c>G0</c> is spelled <c>E</c>,
+        /// because after erasure they are the same type - both resolve to
+        /// <c>SurtrBuiltIns.Erased</c>, both occupy a reference slot, and no call site can tell
+        /// them apart. Without that, a class could never implement a generic interface whose
+        /// members mention the parameter: <c>IComparable</c> declares <c>compareTo(G0)</c>, and an
+        /// implementation naming the same erased slot would miss the contract's slot by spelling
+        /// alone.
+        /// </para>
         /// </remarks>
         public string SignatureKey() => _signatureKey ??= BuildSignatureKey();
 
@@ -457,9 +466,47 @@ namespace Surtr.Runtime.Classes
             builder.Append(name).Append('(');
 
             for (int i = 0; i < _parameters.Length; i++)
-                builder.Append(_parameters[i].ParameterType.Reference.Descriptor);
+                AppendErased(builder, _parameters[i].ParameterType.Reference.Descriptor);
 
             return builder.Append(')').ToString();
+        }
+
+        /// <summary>
+        /// Appends a descriptor with every generic parameter rewritten to the erased symbol.
+        /// </summary>
+        /// <remarks>
+        /// A single left-to-right pass, because <c>G</c> is always followed by exactly one digit
+        /// and nothing else in the grammar can produce that pair - the same one-character-of-
+        /// lookahead property the descriptor encoding is built on. Nested forms are covered for
+        /// free: <c>AG0</c> becomes <c>AE</c> without the loop having to know it is inside an
+        /// array.
+        /// </remarks>
+        private static void AppendErased(StringBuilder builder, string descriptor)
+        {
+            for (int i = 0; i < descriptor.Length; i++)
+            {
+                char symbol = descriptor[i];
+
+                if (symbol == SurtrClassReference.SymbolGenericParameter && i + 1 < descriptor.Length)
+                {
+                    builder.Append(SurtrClassReference.SymbolErased);
+                    i++;
+                    continue;
+                }
+
+                builder.Append(symbol);
+
+                // A full name runs to its terminator verbatim: a type called `G0` inside one is a
+                // name, not a parameter, and must not be rewritten.
+                if (symbol != SurtrClassReference.SymbolObject && symbol != SurtrClassReference.SymbolNative)
+                    continue;
+
+                int terminator = descriptor.IndexOf(SurtrClassReference.NameTerminator, i + 1);
+                int end = terminator < 0 ? descriptor.Length : terminator + 1;
+
+                builder.Append(descriptor, i + 1, end - i - 1);
+                i = end - 1;
+            }
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]

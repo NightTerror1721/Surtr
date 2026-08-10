@@ -490,6 +490,9 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Emits <see cref="OpCode.StrCat"/>.</summary>
         public SurtrCodeEmitter StrCat() => Simple(OpCode.StrCat, 2, 1);
 
+        /// <summary>Emits <see cref="OpCode.StrHash"/>.</summary>
+        public SurtrCodeEmitter StrHash() => Simple(OpCode.StrHash, 1, 1);
+
         /// <summary>Emits <see cref="OpCode.StrGet"/>.</summary>
         public SurtrCodeEmitter StrGet() => Simple(OpCode.StrGet, 2, 1);
 

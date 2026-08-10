@@ -144,12 +144,16 @@ namespace Surtr.Tests.Runtime.BuiltIns
 
             Assert.True(SurtrBuiltIns.Module.TryGetInterface("IComparable", out var comparable));
             Assert.True(comparable.TryGetMethods("compareTo", out var compareTo));
-            Assert.Equal("compareTo(G0)", compareTo[0].SignatureKey());
+            Assert.Equal("G0", compareTo[0].Parameters[0].ParameterType.Reference.Descriptor);
             Assert.Equal("I", compareTo[0].ReturnType.Reference.Descriptor);
+
+            // The key erases it, which is what lets an implementation match the slot at all.
+            Assert.Equal("compareTo(E)", compareTo[0].SignatureKey());
 
             Assert.True(SurtrBuiltIns.Module.TryGetInterface("IEquatable", out var equatable));
             Assert.True(equatable.TryGetMethods("equals", out var equals));
-            Assert.Equal("equals(G0)", equals[0].SignatureKey());
+            Assert.Equal("G0", equals[0].Parameters[0].ParameterType.Reference.Descriptor);
+            Assert.Equal("equals(E)", equals[0].SignatureKey());
         }
 
         #endregion

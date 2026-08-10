@@ -48,7 +48,8 @@ public sealed class Vec2 {
     operator>>>(a: Vec2, b: int): Vec2 { return a; }
     operator[](i: int): float { return i == 0 ? x : y; }
     operator[](i: int, v: float): void { }
-    operator as(v: Vec2): Vec3 { return Vec3(v.x, v.y, 0.0); }
+    operator as Vec3(v: Vec2) { return Vec3(v.x, v.y, 0.0); }
+    operator as string(v: Vec2) { return "vec"; }
 }
 
 abstract class Animal {

@@ -1,5 +1,6 @@
 #nullable enable
 
+using Surtr.Compiler.Diagnostics;
 using System.Collections.Generic;
 using Surtr.Compiler.Syntax.Ast;
 
@@ -41,7 +42,10 @@ namespace Surtr.Compiler.Syntax
             if (reader.Check(TokenType.KeywordStatic) && reader.CheckAt(1, TokenType.LeftBrace))
             {
                 reader.Advance();
-                return new StaticBlockDeclarationSyntax(start, ParseBlock());
+                // Parsed first, for the same reason: the span has to close after the block, and
+                // arguments evaluate left to right.
+                BlockStatementSyntax body = ParseBlock();
+                return new StaticBlockDeclarationSyntax(SpanFrom(start), body);
             }
 
             Modifiers modifiers = ParseModifiers();
@@ -91,7 +95,7 @@ namespace Surtr.Compiler.Syntax
                         return ParseProperty(start, docComment, attributes, modifiers);
                     }
 
-                    throw reader.Error($"Expected a declaration, found {reader.CurrentType}.");
+                    throw reader.Error(SurtrDiagnosticCode.ExpectedDeclaration, $"Expected a declaration, found {reader.CurrentType}.");
             }
         }
 
@@ -122,7 +126,7 @@ namespace Surtr.Compiler.Syntax
                     case TokenType.KeywordInternal:
                         if (modifiers.Visibility != Visibility.Default)
                         {
-                            throw reader.Error("A declaration can only carry one visibility.");
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one visibility.");
                         }
 
                         modifiers.Visibility = ToVisibility(reader.Advance().Type);
@@ -232,7 +236,7 @@ namespace Surtr.Compiler.Syntax
 
             reader.Expect(TokenType.RightBrace, "'}' to close the type body");
 
-            return new TypeDeclarationSyntax(start, attributes, docComment, modifiers.Visibility, kind, name,
+            return new TypeDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, kind, name,
                 typeParameters, baseTypes, cases, members, modifiers.IsAbstract, modifiers.IsSealed, modifiers.IsStatic);
         }
 
@@ -260,7 +264,7 @@ namespace Surtr.Compiler.Syntax
                     ? ParseArgumentList()
                     : new List<ArgumentSyntax>();
 
-                cases.Add(new EnumCaseSyntax(start, name, arguments, caseDoc));
+                cases.Add(new EnumCaseSyntax(SpanFrom(start), name, arguments, caseDoc));
 
                 if (!reader.Match(TokenType.Comma))
                 {
@@ -285,7 +289,7 @@ namespace Surtr.Compiler.Syntax
             TypeSyntax target = ParseType();
             reader.Expect(TokenType.Semicolon, "';' after the alias");
 
-            return new AliasDeclarationSyntax(start, attributes, docComment, modifiers.Visibility, name, typeParameters, target);
+            return new AliasDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, name, typeParameters, target);
         }
 
         /// <summary>Parses a field, or a module-level variable (§3.2, §2.5, §7.1).</summary>
@@ -306,7 +310,7 @@ namespace Surtr.Compiler.Syntax
 
             reader.Expect(TokenType.Semicolon, "';' after the field");
 
-            return new FieldDeclarationSyntax(start, attributes, docComment, modifiers.Visibility, name, type,
+            return new FieldDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, name, type,
                 initializer, isMutable, modifiers.IsConst, modifiers.IsStatic, modifiers.IsNative);
         }
 
@@ -329,13 +333,13 @@ namespace Surtr.Compiler.Syntax
 
                 if (!reader.Check(TokenType.Identifier))
                 {
-                    throw reader.Error("Expected 'get' or 'set'.");
+                    throw reader.Error(SurtrDiagnosticCode.UnexpectedToken, "Expected 'get' or 'set'.");
                 }
 
                 bool isGetter = CheckContextual("get");
                 if (!isGetter && !CheckContextual("set"))
                 {
-                    throw reader.Error("Expected 'get' or 'set'.");
+                    throw reader.Error(SurtrDiagnosticCode.UnexpectedToken, "Expected 'get' or 'set'.");
                 }
 
                 reader.Advance();
@@ -351,12 +355,12 @@ namespace Surtr.Compiler.Syntax
                     reader.Expect(TokenType.Semicolon, "';' after the accessor");
                 }
 
-                accessors.Add(new AccessorSyntax(accessorStart, isGetter, body));
+                accessors.Add(new AccessorSyntax(SpanFrom(accessorStart), isGetter, body));
             }
 
             reader.Expect(TokenType.RightBrace, "'}' to close the property accessors");
 
-            return new PropertyDeclarationSyntax(start, attributes, docComment, modifiers.Visibility, name, type,
+            return new PropertyDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, name, type,
                 accessors, modifiers.IsStatic, modifiers.Dispatch, modifiers.IsSealed);
         }
 
@@ -380,7 +384,7 @@ namespace Surtr.Compiler.Syntax
                 body = ParseBlock();
             }
 
-            return new MethodDeclarationSyntax(start, attributes, docComment, modifiers.Visibility, name, typeParameters,
+            return new MethodDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, name, typeParameters,
                 parameters, returnType, body, modifiers.IsStatic, modifiers.Dispatch, modifiers.IsSealed,
                 modifiers.Inline, modifiers.IsConst, modifiers.IsNative);
         }
@@ -403,14 +407,14 @@ namespace Surtr.Compiler.Syntax
                 }
                 else if (!CheckContextual("super"))
                 {
-                    throw reader.Error("A constructor chain must call 'super' or 'this'.");
+                    throw reader.Error(SurtrDiagnosticCode.InvalidConstructorChain, "A constructor chain must call 'super' or 'this'.");
                 }
 
                 reader.Advance();
                 chainArguments = ParseArgumentList();
             }
 
-            return new ConstructorDeclarationSyntax(start, attributes, docComment, modifiers.Visibility,
+            return new ConstructorDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility,
                 parameters, chainArguments, chainsToThis, ParseBlock());
         }
 
@@ -420,12 +424,13 @@ namespace Surtr.Compiler.Syntax
         {
             if (modifiers.Visibility != Visibility.Default || modifiers.IsStatic)
             {
-                throw reader.Error("An operator overload is always public and static; neither is written.", start);
+                throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "An operator overload is always public and static; neither is written.", start);
             }
 
             reader.Advance();
 
             TokenType op = reader.CurrentType;
+            TypeSyntax? conversionTarget = null;
 
             // `operator[]` is the one whose token is a pair rather than a single operator.
             if (op == TokenType.LeftBracket)
@@ -433,23 +438,50 @@ namespace Surtr.Compiler.Syntax
                 reader.Advance();
                 reader.Expect(TokenType.RightBracket, "']' in 'operator[]'");
             }
+            else if (op == TokenType.KeywordAs)
+            {
+                reader.Advance();
+
+                if (reader.Check(TokenType.LeftParen))
+                {
+                    throw reader.Error(SurtrDiagnosticCode.InvalidOperatorDeclaration, "A conversion names its target after 'as': write 'operator as Vec3(v: Vec2)'.");
+                }
+
+                conversionTarget = ParseType();
+            }
             else if (IsOverloadableOperator(op))
             {
                 reader.Advance();
             }
             else
             {
-                throw reader.Error($"'{reader.Current}' cannot be overloaded.");
+                throw reader.Error(SurtrDiagnosticCode.InvalidOperatorDeclaration, $"'{reader.Current}' cannot be overloaded.");
             }
 
             IReadOnlyList<ParameterSyntax> parameters = ParseParameterList();
-            reader.Expect(TokenType.Colon, "':' before the operator's return type");
-            TypeSyntax returnType = ParseType();
 
-            return new OperatorDeclarationSyntax(start, attributes, docComment, op, parameters, returnType, ParseBlock());
+            // A conversion has already named its target, and writing it again as a return type
+            // could only ever disagree with the first spelling. Every other overload still writes
+            // one, because nothing else in its declaration says what it produces.
+            TypeSyntax returnType;
+            if (conversionTarget is null)
+            {
+                reader.Expect(TokenType.Colon, "':' before the operator's return type");
+                returnType = ParseType();
+            }
+            else
+            {
+                returnType = conversionTarget;
+            }
+
+            return new OperatorDeclarationSyntax(SpanFrom(start), attributes, docComment, op, parameters, returnType, ParseBlock());
         }
 
-        /// <summary>The overloadable set from §5.6. Everything absent here is absent for a stated reason.</summary>
+        /// <summary>
+        /// The overloads whose token is the whole declaration. Everything absent here is absent
+        /// for a stated reason — except <c>[]</c> and <c>as</c>, which are absent because each
+        /// carries something after the token and so is recognised by the caller instead.
+        /// </summary>
         private static bool IsOverloadableOperator(TokenType type)
         {
             switch (type)
@@ -471,7 +503,6 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.Decrement:
                 case TokenType.Equal:
                 case TokenType.Spaceship:
-                case TokenType.KeywordAs:
                     return true;
 
                 default:
@@ -496,7 +527,7 @@ namespace Surtr.Compiler.Syntax
                 bool isVarargs = reader.Match(TokenType.Ellipsis);
                 ExpressionSyntax? defaultValue = reader.Match(TokenType.Assign) ? ParseExpression() : null;
 
-                parameters.Add(new ParameterSyntax(start, name, type, defaultValue, isVarargs));
+                parameters.Add(new ParameterSyntax(SpanFrom(start), name, type, defaultValue, isVarargs));
 
                 if (!reader.Match(TokenType.Comma))
                 {
@@ -529,7 +560,7 @@ namespace Surtr.Compiler.Syntax
                     : ParseDeclarationGroup();
             }
 
-            return new ConstIfDeclarationSyntax(start, condition, then, otherwise);
+            return new ConstIfDeclarationSyntax(SpanFrom(start), condition, then, otherwise);
         }
 
         /// <summary>Parses the braced group of declarations forming one branch of a declaration-level <c>const if</c>.</summary>

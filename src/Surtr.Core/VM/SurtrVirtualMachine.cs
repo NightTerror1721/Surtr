@@ -1313,6 +1313,13 @@ namespace Surtr.VM
                         | (uint)((SurtrString)entities[(SurtrRef)(*(sp - 1))]!).Value.Length;
                     goto Dispatch;
 
+                case OpCode.StrHash:
+                    // A load, not a walk: the hash was computed when the string was built, and is
+                    // the same in any process, which is what a compiled string switch needs.
+                    *(sp - 1) = SurtrValue.TagMaskInt
+                        | (uint)((SurtrString)entities[(SurtrRef)(*(sp - 1))]!).Hash;
+                    goto Dispatch;
+
                 case OpCode.StrCat:
                 {
                     current.IP = ip;
@@ -2510,10 +2517,21 @@ namespace Surtr.VM
                     var receiverClass = ((SurtrObject)entities[(SurtrRef)(*(sp - pendingArguments))]!).Class;
                     var contract = (SurtrInterface)declared.DeclaringType!.ResolvedType!;
 
+                    // Which block of the receiver's dispatch table this contract owns. Written out
+                    // rather than calling SurtrClass.IndexOfInterface, which would be a real call
+                    // from a method this size - the two have to stay in step.
+                    int contractId = contract.InterfaceId;
+                    int indexMask = receiverClass.InterfaceIndexMask;
+                    int probe = contractId & indexMask;
+
+                    while (receiverClass.InterfaceIndexById[probe << 1] != contractId)
+                        probe = (probe + 1) & indexMask;
+
+                    int contractIndex = receiverClass.InterfaceIndexById[(probe << 1) + 1];
+
                     // One extra indirection over a virtual call: the interface's block in the
                     // class's dispatch table maps the contract's slot onto a vtable index, so an
                     // override reached through the vtable applies here for free.
-                    int contractIndex = receiverClass.IndexOfInterface(contract);
                     int vtableSlot = receiverClass.InterfaceMethodSlots[
                         receiverClass.InterfaceSlotOffsets[contractIndex] + declared.VTableSlot];
 

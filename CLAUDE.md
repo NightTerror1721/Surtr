@@ -13,6 +13,18 @@ Core design goals that shape most architectural decisions in this repo:
 - **Managed/unmanaged object registry.** Because the core is unmanaged but still needs to reference managed (CLR) objects, the project will need a registry that indexes managed objects, hands them an internal id usable from unmanaged code, and de-indexes them again — effectively a small, purpose-built garbage collector for that boundary.
 - **Long-running project.** This is being built incrementally over a long timeframe; expect the codebase to grow substantially beyond the current skeleton.
 
+### The documentation map
+
+This file is the orientation; each of these goes deep on one thing. Read the relevant one before changing that area, and update it in the same commit — a doc that contradicts the code is worse than no doc.
+
+| Document | Covers |
+|---|---|
+| `docs/Language-Syntax.md` | The surface language, and the reasoning behind each choice. §1.2 is the authoritative reserved word list, §5.7 the operator table. |
+| `docs/Runtime-Model.md` | How classes, methods, properties, enums, interfaces and modules fit together, what linking builds, and what the compiler owes the runtime. |
+| `docs/Opcodes.md` | All 214 opcodes by family, with values, encodings and stack effects. Generated from `OpCode.cs`, which stays the source of truth. |
+| `docs/Module-Format.md` | The `.surtrc` byte layout, and what is bound at load rather than written. |
+| `docs/VM-Plan.md` | The interpreter's design decisions, the remaining gaps, and the ordered plan. |
+
 ## Performance is CRITICAL
 
 This is a VM that runs inside a game engine's frame budget. Treat throughput as a hard requirement, not a nice-to-have, and prefer the faster construct even when the slower one reads better:
@@ -128,6 +140,7 @@ A host's function body needs **no `unsafe` and no `AllowUnsafeBlocks`** even tho
 | `SurtrClosure` | method + captured values, with the dispatch payload copied out flat | built-in, shared |
 | `SurtrBoxed` | one primitive `SurtrValue` | the *same* class the unboxed primitive has |
 | `SurtrInstance` | `SurtrValue[]` field slots | whatever Surtr source declared |
+| `SurtrIterator` | a collection + a position; a dict's keys snapshotted | built-in, shared |
 | `SurtrNativeObject` / `SurtrNativeProxy` | a host CLR object; open for host subclassing | host-declared, or `SurtrBuiltIns.NativeObject` |
 
 Rules that run through all of them:
@@ -143,7 +156,11 @@ Rules that run through all of them:
 
 **One class covers every parameterisation** — `AI` and `AS` are both `SurtrBuiltIns.Array` — because a language with no dynamic top type settles element types at compile time. Their `SelfReference` is correspondingly the bare family symbol (`A`, `D`, `T`, `L`), deliberately *not* a well-formed descriptor: it names the family and says nothing about parameters, which is exactly what the class knows. There is no root `object` class; every built-in sits at depth 0 in its own hierarchy.
 
-Members are native methods linked by function pointer via `SurtrBuiltInTypeBuilder`, always `Direct` dispatch (nothing extends a built-in, so a vtable slot would be an indirection with one occupant). Properties also emit `get_x`/`set_x` accessor methods, CLR-style, so the linker sees them.
+Members are native methods linked by function pointer via `SurtrBuiltInTypeBuilder`, `Direct` dispatch by default (nothing extends a built-in, so a vtable slot would be an indirection with one occupant). The exception is a member satisfying an interface: interface dispatch resolves through the receiver's vtable, so `iterate`, `moveNext` and `get_current` are declared `Virtual` or the linker could not find them. Properties also emit `get_x`/`set_x` accessor methods, CLR-style, so the linker sees them.
+
+**`array`, `string`, `tuple`, `dict` and `range` implement `IIterable<T>`** and hand back a shared `iterator` class, so the contract `for-in` is defined by (`Language-Syntax.md` §4.2) is one every collection actually satisfies rather than one only user code can keep. A compiled `for-in` over any of them still lowers to an indexed loop and never allocates a cursor; the contract exists so an `int[]` can flow into an `IIterable<int>`. A dict yields `(K, V)` pairs, walked over a snapshot of its keys.
+
+A member implementing a generic interface is matched on the **erased** signature: `SurtrMethodInfo.SignatureKey()` writes `G<n>` as `E`, because after erasure they are the same slot and an implementation could otherwise never line up with the contract's. The other half of that bargain is Java's: a class wanting both `compareTo(Vec2)` and `IComparable<Vec2>` needs the compiler to emit a bridge.
 
 **`array` and `dict` declare real generic parameters** — `T`, and `K`/`V` — and their element-polymorphic members are declared against them through the descriptor `G<n>`, which names the declaring type's n-th parameter. `G0` resolves to `SurtrBuiltIns.Erased`, so the runtime representation is exactly what `E` would have been and no layout, tracing or dispatch path knows the difference; what it adds is *which* parameter it is, which is what lets `int[].push("x")` be rejected against metadata alone. `push`, `pop`, `get`, `set`, `insert`, `indexOf`, `contains`, `remove`, `keys` and `values` are declared this way, and `length` is the uniform spelling of size on all four collections.
 
@@ -161,7 +178,7 @@ Members are native methods linked by function pointer via `SurtrBuiltInTypeBuild
 
 ## The instruction set
 
-`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — currently **213 opcodes**, leaving 43 free values in the `byte` space. It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
+`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — currently **214 opcodes**, leaving 42 free values in the `byte` space. It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
 
 Surtr is a stack machine. Operands come from the evaluation stack; pool indices, jump offsets and argument counts are encoded inline after the opcode byte as little-endian immediates.
 
@@ -204,7 +221,7 @@ Generics are a compile-time construct, checked and then discarded, as Java's are
 
 The compiler owes two things in exchange, the same two Java's does: **box primitives** flowing into an erased slot, and **insert a `Cast`** when reading one back out. No opcode, metadata table or dispatch path needs to know a generic existed.
 
-`docs/VM-Plan.md` carries the full rationale for every decision above, the remaining gaps (interface dispatch does a linear scan, array access pays two bounds checks, a module is tied to the runtime that loaded it), what the language spec obliges the runtime to add, and the ordered plan.
+`docs/VM-Plan.md` carries the full rationale for every decision above, the remaining gaps (array access pays two bounds checks), what the language spec obliges the runtime to add, and the ordered plan. Interface dispatch no longer scans: each class carries an open-addressed `interfaceId → index` table, and a context numbers its own interfaces starting at `SurtrBuiltIns.ReservedInterfaceIds` so a user contract can never collide with a built-in one.
 
 ## The bytecode emitter
 
@@ -219,6 +236,10 @@ The shape of using it is always **declare → emit → `Build()` → `LoadModule
 | `SurtrMethodBuilder` | one signature, its frame slots and its protected regions |
 | `SurtrCodeEmitter` | the instruction stream, labels, branches and stack tracking |
 | `SurtrBytecodeDisassembler` | renders a built module, for tests and for debugging an emitter |
+
+`src/Surtr.Core/Bytecode/Image/` turns a built module into bytes and back. `SurtrModuleImage` is the portable artefact — what a compiler writes to disk, and what makes one compiled module loadable into **as many runtimes as you like**: `image.Instantiate()` hands each runtime its own `SurtrModule`, because loading is what ties one to a heap, a global table and a set of static storage. Everything naming something outside the module — the module reference table, and any access-table entry pointing at another type's member — travels as text and is bound in `LoadModule` next to the type handles, through `SurtrPendingMember`.
+
+**A native member travels as a name too**, so a module written entirely by the host, or mixing compiled Surtr with C# (`Language-Syntax.md` §13.1's standard library), is an image like any other. `SurtrNativeMethodInfo.LinkName` is what the image carries — derived from the owner and signature (`host:Facade.answer()`) unless declared — and each runtime publishes its own body with `SurtrRuntime.DefineNativeBody`. Declare one with `DeclareNativeMethod`/`DeclareNativeGetter` for a module meant to travel, or `DefineNativeMethod` with an entry point for one built and loaded in the same process. A name nothing published fails the load; an unbound method points at a body that says so, rather than at null. Native *properties* need no separate mechanism — a property is already a pair of `get_x`/`set_x` methods. What still cannot travel is the built-in module (process-wide; a copy would shadow it) and a module-level member of another module (nothing records which module owns one).
 
 `SurtrCodeEmitter` has three tiers, and a compiler should live in the third:
 
@@ -279,20 +300,24 @@ Three absences are deliberate and worth not re-proposing. There is **no `static 
 
 Two type-shaped things are erased but not equivalent: a **type alias** (§2.7) is transparent, so `EntityId` and `int` are interchangeable, while a **`value class`** (§2.9) wraps one field and *is* a distinct type to the compiler, erased to that field at runtime — free where its type is statically known, boxed where it flows into an erased or interface-typed slot. `value` stays a contextual keyword: it is the `class` after it that makes the declaration.
 
-What exists in `src/Surtr.Compiler` today: `Syntax/` holds the source buffer, the character reader, the token model, **the lexer**, **the AST** (`Syntax/Ast/`) and **the parser** (`Parser.*.cs`, partial by what each file parses). Both are complete against the spec and covered by `src/Surtr.Tests/Compiler/Syntax`, including `Sample.surtr` — a file exercising every construct in the language, lexed and parsed end to end. `Binding/` and `CodeGen/` are still empty: **name resolution, type checking and lowering onto `SurtrModuleBuilder` are the next piece**, and nothing yet turns a tree into a chunk.
+What exists in `src/Surtr.Compiler` today: `Syntax/` holds the source buffer, the character reader, the token model, **the lexer**, **the AST** (`Syntax/Ast/`) and **the parser** (`Parser.*.cs`, partial by what each file parses); `Diagnostics/` holds the spans, codes and bag described above. All of it is complete against the spec and covered by `src/Surtr.Tests/Compiler/Syntax`, including `Sample.surtr` — a file exercising every construct in the language, lexed and parsed end to end. `Binding/` and `CodeGen/` are still empty: **name resolution, type checking and lowering onto `SurtrModuleBuilder` are the next piece**, and nothing yet turns a tree into a chunk.
+
+**Diagnostics are collected, not thrown.** `Syntax/SourceSpan.cs` gives every token and every AST node a start *and* an end, which is what lets a tool underline a construct rather than point at its first character; a node's span runs from its first token to its last, built by the parser's one `SpanFrom` helper. `Diagnostics/` holds `SurtrDiagnostic` (a stable `SurtrDiagnosticCode`, a severity, a message, a span), and `SurtrDiagnosticBag`, which the lexer and parser share so one bag holds everything wrong with a file. **`Parser.ParseCompilationUnit` does not throw on a syntax error** — check `Parser.Diagnostics`, or call `ThrowIfErrors()` for the simple behaviour.
+
+Recovery happens at two boundaries, both chosen because resynchronising anywhere else is guesswork: a **declaration** that fails is skipped to the next `;` or introducer keyword at brace depth zero, and a **statement** that fails is skipped to the next `;` or statement keyword. The lexer recovers too, and skips a failed *literal* whole rather than a character — otherwise the closing quote of a bad string opens another one and the second complaint is caused by the first. Diagnostic codes are append-only within their group (1xxx lexical, 2xxx syntactic, 3xxx reserved for binding, 4xxx for code generation): a published code is a name someone may have written down. Assert on codes in tests, never on message text.
 
 Four things about the front end that are not obvious from the code:
 
 - **The lexer hands back `>>`, `>>>` and their `=` forms whole**, because maximal munch cannot know it is inside a type argument list. `TokenReader.ConsumeTypeArgumentClose` repays that, taking one `>` at a time and refusing to step over an unconsumed one. The `=`-suffixed shapes are rejected with a message asking for a space rather than synthesising a token the lexer never produced.
 - **Type names and contextual keywords lex as `Identifier`.** `int`/`string`/`void`/`range`/`unknown` are ordinary identifiers per §1.1, and `this`/`super`/`value` per §3.2, so the parser recognises them by text. `as?` likewise arrives as `as` then `?`.
 - **Three ambiguities are settled by lookahead, not grammar**: a lambda against a tuple (scan balanced parens for the `=>`), a block against a dict literal (§5.4 makes it positional), and a member's kind (§3.2's introducer keyword).
-- **The parser throws on the first error.** Recovery — resynchronising at a statement boundary so one bad line does not hide the next twenty — is deliberately deferred until there is a binder to report alongside it.
+- **A production still aborts by throwing `SurtrParserException`** — that is control flow, not failure. The recovery points catch it, resynchronise and carry on, and the diagnostic it already reported joins whatever else the file has wrong. It only reaches a caller through `ThrowIfErrors()`, or from a narrower entry point with no boundary to recover at.
 
 Runtime-side gaps are in `docs/VM-Plan.md` §3; what the language design newly obliges the runtime to grow is `docs/VM-Plan.md` §4, and §5 orders all of it into a build plan.
 
 The VM opcode suites in `src/Surtr.Tests/VM` predate the emitter and still use their own `BytecodeBuilder`, which pokes at `SurtrChunk` directly. That is deliberate: an opcode test should exercise the byte layout it is testing, not whatever the emitter decided to emit. New tests that are *about* a whole module belong in `src/Surtr.Tests/Bytecode/Emit` and should go through `SurtrModuleBuilder`.
 
-Because nothing persists a chunk yet, the opcode set is still being *shaped* rather than extended: new members go next to their family, and the append-only rule in `OpCode.cs` takes effect the moment anything serializes bytecode.
+**The append-only rule in `OpCode.cs` is now in force.** `Bytecode/Image/` serializes bytecode, so the enum value of every existing member is on disk somewhere: inserting one in the middle renumbers everything after it and silently invalidates every image already written. New opcodes go at the end, whatever family they belong to, and `SurtrModuleImage.FormatVersion` covers changes to how a module is *framed* rather than to what runs inside it.
 
 ## Coding conventions
 

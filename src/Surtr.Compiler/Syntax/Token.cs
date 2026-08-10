@@ -35,6 +35,14 @@ namespace Surtr.Compiler.Syntax
         /// <summary>The number of characters this token spans in the source.</summary>
         public int Length => Lexeme.Length;
 
+        /// <summary>The range of source this token covers.</summary>
+        /// <remarks>
+        /// Derived rather than stored: <see cref="Lexeme"/> is the exact text the token was scanned
+        /// from, so its length is the token's extent and a second field would only be able to
+        /// disagree with it.
+        /// </remarks>
+        public SourceSpan Span => new SourceSpan(Location, Lexeme.Length);
+
         /// <summary>Creates a token.</summary>
         /// <param name="type">What kind of token this is.</param>
         /// <param name="lexeme">The exact source text the token was scanned from.</param>

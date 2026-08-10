@@ -258,6 +258,7 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.Unbox:
                 case OpCode.StrLen:
                 case OpCode.StrCat:
+                case OpCode.StrHash:
                 case OpCode.StrGet:
                 case OpCode.ArrLen:
                 case OpCode.ArrGet:

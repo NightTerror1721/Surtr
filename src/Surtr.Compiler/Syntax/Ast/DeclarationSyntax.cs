@@ -89,12 +89,12 @@ namespace Surtr.Compiler.Syntax.Ast
         public Visibility Visibility { get; }
 
         /// <summary>Initializes a declaration.</summary>
-        /// <param name="location">Where in the source the declaration begins.</param>
+        /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">The attributes attached to it.</param>
         /// <param name="docComment">The doc comment lines preceding it.</param>
         /// <param name="visibility">The declared visibility.</param>
-        protected DeclarationSyntax(SourceLocation location, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility)
-            : base(location)
+        protected DeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility)
+            : base(span)
         {
             Attributes = attributes;
             DocComment = docComment;
@@ -112,10 +112,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<ExpressionSyntax> Arguments { get; }
 
         /// <summary>Initializes an attribute.</summary>
-        /// <param name="location">Where in the source the attribute begins.</param>
+        /// <param name="span">The source the attribute covers.</param>
         /// <param name="name">The attribute's name.</param>
         /// <param name="arguments">Its arguments.</param>
-        public AttributeSyntax(SourceLocation location, string name, IReadOnlyList<ExpressionSyntax> arguments) : base(location)
+        public AttributeSyntax(SourceSpan span, string name, IReadOnlyList<ExpressionSyntax> arguments) : base(span)
         {
             Name = name;
             Arguments = arguments;
@@ -138,13 +138,13 @@ namespace Surtr.Compiler.Syntax.Ast
         public bool IsVarargs { get; }
 
         /// <summary>Initializes a parameter.</summary>
-        /// <param name="location">Where in the source the parameter begins.</param>
+        /// <param name="span">The source the parameter covers.</param>
         /// <param name="name">The parameter's name.</param>
         /// <param name="type">Its declared type, or <c>null</c>.</param>
         /// <param name="defaultValue">Its default value, or <c>null</c>.</param>
         /// <param name="isVarargs">True when declared with a trailing <c>...</c>.</param>
-        public ParameterSyntax(SourceLocation location, string name, TypeSyntax? type, ExpressionSyntax? defaultValue, bool isVarargs)
-            : base(location)
+        public ParameterSyntax(SourceSpan span, string name, TypeSyntax? type, ExpressionSyntax? defaultValue, bool isVarargs)
+            : base(span)
         {
             Name = name;
             Type = type;
@@ -163,10 +163,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<TypeSyntax> Constraints { get; }
 
         /// <summary>Initializes a type parameter.</summary>
-        /// <param name="location">Where in the source the parameter begins.</param>
+        /// <param name="span">The source the parameter covers.</param>
         /// <param name="name">Its name.</param>
         /// <param name="constraints">Its constraints, or an empty list.</param>
-        public TypeParameterSyntax(SourceLocation location, string name, IReadOnlyList<TypeSyntax> constraints) : base(location)
+        public TypeParameterSyntax(SourceSpan span, string name, IReadOnlyList<TypeSyntax> constraints) : base(span)
         {
             Name = name;
             Constraints = constraints;
@@ -187,11 +187,11 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<DeclarationSyntax> Declarations { get; }
 
         /// <summary>Initializes a compilation unit.</summary>
-        /// <param name="location">Where in the source the file begins.</param>
+        /// <param name="span">The source the file covers.</param>
         /// <param name="imports">The imports.</param>
         /// <param name="declarations">The declarations.</param>
-        public CompilationUnitSyntax(SourceLocation location, IReadOnlyList<ImportSyntax> imports, IReadOnlyList<DeclarationSyntax> declarations)
-            : base(location)
+        public CompilationUnitSyntax(SourceSpan span, IReadOnlyList<ImportSyntax> imports, IReadOnlyList<DeclarationSyntax> declarations)
+            : base(span)
         {
             Imports = imports;
             Declarations = declarations;
@@ -208,10 +208,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public bool IsWildcard { get; }
 
         /// <summary>Initializes an import.</summary>
-        /// <param name="location">Where in the source the import begins.</param>
+        /// <param name="span">The source the import covers.</param>
         /// <param name="path">The dotted path's segments.</param>
         /// <param name="isWildcard">True when written with a trailing <c>.*</c>.</param>
-        public ImportSyntax(SourceLocation location, IReadOnlyList<string> path, bool isWildcard) : base(location)
+        public ImportSyntax(SourceSpan span, IReadOnlyList<string> path, bool isWildcard) : base(span)
         {
             Path = path;
             IsWildcard = isWildcard;
@@ -231,16 +231,16 @@ namespace Surtr.Compiler.Syntax.Ast
         public TypeSyntax Target { get; }
 
         /// <summary>Initializes an alias declaration.</summary>
-        /// <param name="location">Where in the source the declaration begins.</param>
+        /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">Attributes attached to it.</param>
         /// <param name="docComment">Doc comment lines preceding it.</param>
         /// <param name="visibility">Its declared visibility.</param>
         /// <param name="name">The alias's name.</param>
         /// <param name="typeParameters">Its type parameters.</param>
         /// <param name="target">The type it names.</param>
-        public AliasDeclarationSyntax(SourceLocation location, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
+        public AliasDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
             string name, IReadOnlyList<TypeParameterSyntax> typeParameters, TypeSyntax target)
-            : base(location, attributes, docComment, visibility)
+            : base(span, attributes, docComment, visibility)
         {
             Name = name;
             TypeParameters = typeParameters;
@@ -282,7 +282,7 @@ namespace Surtr.Compiler.Syntax.Ast
         public bool IsStatic { get; }
 
         /// <summary>Initializes a type declaration.</summary>
-        /// <param name="location">Where in the source the declaration begins.</param>
+        /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">Attributes attached to it.</param>
         /// <param name="docComment">Doc comment lines preceding it.</param>
         /// <param name="visibility">Its declared visibility.</param>
@@ -295,10 +295,10 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="isAbstract">True when declared <c>abstract</c>.</param>
         /// <param name="isSealed">True when declared <c>sealed</c>.</param>
         /// <param name="isStatic">True when declared <c>static</c>.</param>
-        public TypeDeclarationSyntax(SourceLocation location, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
+        public TypeDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
             TypeDeclarationKind kind, string name, IReadOnlyList<TypeParameterSyntax> typeParameters, IReadOnlyList<TypeSyntax> baseTypes,
             IReadOnlyList<EnumCaseSyntax> enumCases, IReadOnlyList<DeclarationSyntax> members, bool isAbstract, bool isSealed, bool isStatic)
-            : base(location, attributes, docComment, visibility)
+            : base(span, attributes, docComment, visibility)
         {
             Kind = kind;
             Name = name;
@@ -325,12 +325,12 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<string> DocComment { get; }
 
         /// <summary>Initializes an enum case.</summary>
-        /// <param name="location">Where in the source the case begins.</param>
+        /// <param name="span">The source the case covers.</param>
         /// <param name="name">The case's name.</param>
         /// <param name="arguments">The constructor arguments.</param>
         /// <param name="docComment">Doc comment lines preceding it.</param>
-        public EnumCaseSyntax(SourceLocation location, string name, IReadOnlyList<ArgumentSyntax> arguments, IReadOnlyList<string> docComment)
-            : base(location)
+        public EnumCaseSyntax(SourceSpan span, string name, IReadOnlyList<ArgumentSyntax> arguments, IReadOnlyList<string> docComment)
+            : base(span)
         {
             Name = name;
             Arguments = arguments;
@@ -363,7 +363,7 @@ namespace Surtr.Compiler.Syntax.Ast
         public bool IsNative { get; }
 
         /// <summary>Initializes a field declaration.</summary>
-        /// <param name="location">Where in the source the declaration begins.</param>
+        /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">Attributes attached to it.</param>
         /// <param name="docComment">Doc comment lines preceding it.</param>
         /// <param name="visibility">Its declared visibility.</param>
@@ -374,9 +374,9 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="isConst">True for <c>const</c>.</param>
         /// <param name="isStatic">True when declared <c>static</c>.</param>
         /// <param name="isNative">True when declared <c>native</c>.</param>
-        public FieldDeclarationSyntax(SourceLocation location, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
+        public FieldDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
             string name, TypeSyntax? type, ExpressionSyntax? initializer, bool isMutable, bool isConst, bool isStatic, bool isNative)
-            : base(location, attributes, docComment, visibility)
+            : base(span, attributes, docComment, visibility)
         {
             Name = name;
             Type = type;
@@ -398,10 +398,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public BlockStatementSyntax? Body { get; }
 
         /// <summary>Initializes an accessor.</summary>
-        /// <param name="location">Where in the source the accessor begins.</param>
+        /// <param name="span">The source the accessor covers.</param>
         /// <param name="isGetter">True for <c>get</c>.</param>
         /// <param name="body">Its body, or <c>null</c>.</param>
-        public AccessorSyntax(SourceLocation location, bool isGetter, BlockStatementSyntax? body) : base(location)
+        public AccessorSyntax(SourceSpan span, bool isGetter, BlockStatementSyntax? body) : base(span)
         {
             IsGetter = isGetter;
             Body = body;
@@ -430,7 +430,7 @@ namespace Surtr.Compiler.Syntax.Ast
         public bool IsSealed { get; }
 
         /// <summary>Initializes a property declaration.</summary>
-        /// <param name="location">Where in the source the declaration begins.</param>
+        /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">Attributes attached to it.</param>
         /// <param name="docComment">Doc comment lines preceding it.</param>
         /// <param name="visibility">Its declared visibility.</param>
@@ -440,9 +440,9 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="isStatic">True when declared <c>static</c>.</param>
         /// <param name="dispatch">How it dispatches.</param>
         /// <param name="isSealed">True when the override was also declared <c>sealed</c>.</param>
-        public PropertyDeclarationSyntax(SourceLocation location, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
+        public PropertyDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
             string name, TypeSyntax type, IReadOnlyList<AccessorSyntax> accessors, bool isStatic, DispatchModifier dispatch, bool isSealed)
-            : base(location, attributes, docComment, visibility)
+            : base(span, attributes, docComment, visibility)
         {
             Name = name;
             Type = type;
@@ -490,7 +490,7 @@ namespace Surtr.Compiler.Syntax.Ast
         public bool IsNative { get; }
 
         /// <summary>Initializes a method declaration.</summary>
-        /// <param name="location">Where in the source the declaration begins.</param>
+        /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">Attributes attached to it.</param>
         /// <param name="docComment">Doc comment lines preceding it.</param>
         /// <param name="visibility">Its declared visibility.</param>
@@ -505,10 +505,10 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="inline">Its inlining request.</param>
         /// <param name="isConst">True when declared <c>const</c>.</param>
         /// <param name="isNative">True when declared <c>native</c>.</param>
-        public MethodDeclarationSyntax(SourceLocation location, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
+        public MethodDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
             string name, IReadOnlyList<TypeParameterSyntax> typeParameters, IReadOnlyList<ParameterSyntax> parameters, TypeSyntax returnType,
             BlockStatementSyntax? body, bool isStatic, DispatchModifier dispatch, bool isSealed, InlineModifier inline, bool isConst, bool isNative)
-            : base(location, attributes, docComment, visibility)
+            : base(span, attributes, docComment, visibility)
         {
             Name = name;
             TypeParameters = typeParameters;
@@ -540,7 +540,7 @@ namespace Surtr.Compiler.Syntax.Ast
         public BlockStatementSyntax Body { get; }
 
         /// <summary>Initializes a constructor declaration.</summary>
-        /// <param name="location">Where in the source the declaration begins.</param>
+        /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">Attributes attached to it.</param>
         /// <param name="docComment">Doc comment lines preceding it.</param>
         /// <param name="visibility">Its declared visibility.</param>
@@ -548,9 +548,9 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="chainArguments">The chained constructor's arguments, or <c>null</c>.</param>
         /// <param name="chainsToThis">True when the chain was <c>this(...)</c>.</param>
         /// <param name="body">Its body.</param>
-        public ConstructorDeclarationSyntax(SourceLocation location, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
+        public ConstructorDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
             IReadOnlyList<ParameterSyntax> parameters, IReadOnlyList<ArgumentSyntax>? chainArguments, bool chainsToThis, BlockStatementSyntax body)
-            : base(location, attributes, docComment, visibility)
+            : base(span, attributes, docComment, visibility)
         {
             Parameters = parameters;
             ChainArguments = chainArguments;
@@ -571,23 +571,31 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>Its parameters. The arity distinguishes the unary and binary forms of <c>-</c>, and the read and write forms of <c>[]</c>.</summary>
         public IReadOnlyList<ParameterSyntax> Parameters { get; }
 
-        /// <summary>Its return type. For <c>operator as</c> this is the conversion's target.</summary>
+        /// <summary>
+        /// Its return type — and, for <c>operator as</c>, the conversion's target, which §5.6
+        /// writes after the keyword rather than after the parameters.
+        /// </summary>
+        /// <remarks>
+        /// One property rather than two, because a conversion's target <em>is</em> what it
+        /// returns: a separate <c>ConversionTarget</c> would hold the same type under a second
+        /// name, and <see cref="Operator"/> already says which spelling produced it.
+        /// </remarks>
         public TypeSyntax ReturnType { get; }
 
         /// <summary>Its body.</summary>
         public BlockStatementSyntax Body { get; }
 
         /// <summary>Initializes an operator declaration.</summary>
-        /// <param name="location">Where in the source the declaration begins.</param>
+        /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">Attributes attached to it.</param>
         /// <param name="docComment">Doc comment lines preceding it.</param>
         /// <param name="op">The overloaded operator's token type.</param>
         /// <param name="parameters">Its parameters.</param>
         /// <param name="returnType">Its return type.</param>
         /// <param name="body">Its body.</param>
-        public OperatorDeclarationSyntax(SourceLocation location, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment,
+        public OperatorDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment,
             TokenType op, IReadOnlyList<ParameterSyntax> parameters, TypeSyntax returnType, BlockStatementSyntax body)
-            : base(location, attributes, docComment, Visibility.Public)
+            : base(span, attributes, docComment, Visibility.Public)
         {
             Operator = op;
             Parameters = parameters;
@@ -603,10 +611,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public BlockStatementSyntax Body { get; }
 
         /// <summary>Initializes a static block.</summary>
-        /// <param name="location">Where in the source the block begins.</param>
+        /// <param name="span">The source the block covers.</param>
         /// <param name="body">Its body.</param>
-        public StaticBlockDeclarationSyntax(SourceLocation location, BlockStatementSyntax body)
-            : base(location, new List<AttributeSyntax>(), new List<string>(), Visibility.Default)
+        public StaticBlockDeclarationSyntax(SourceSpan span, BlockStatementSyntax body)
+            : base(span, new List<AttributeSyntax>(), new List<string>(), Visibility.Default)
         {
             Body = body;
         }
@@ -628,12 +636,12 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<DeclarationSyntax> Else { get; }
 
         /// <summary>Initializes a declaration-level <c>const if</c>.</summary>
-        /// <param name="location">Where in the source it begins.</param>
+        /// <param name="span">The source it covers.</param>
         /// <param name="condition">The condition.</param>
         /// <param name="then">The declarations kept when the condition holds.</param>
         /// <param name="elseDeclarations">The declarations kept otherwise.</param>
-        public ConstIfDeclarationSyntax(SourceLocation location, ExpressionSyntax condition, IReadOnlyList<DeclarationSyntax> then, IReadOnlyList<DeclarationSyntax> elseDeclarations)
-            : base(location, new List<AttributeSyntax>(), new List<string>(), Visibility.Default)
+        public ConstIfDeclarationSyntax(SourceSpan span, ExpressionSyntax condition, IReadOnlyList<DeclarationSyntax> then, IReadOnlyList<DeclarationSyntax> elseDeclarations)
+            : base(span, new List<AttributeSyntax>(), new List<string>(), Visibility.Default)
         {
             Condition = condition;
             Then = then;

@@ -34,9 +34,11 @@ namespace Surtr.Bytecode
     /// Pool indices refer to the tables on the declaring module's chunk: constants, types, fields,
     /// methods and modules each have their own. Since the enum is the on-disk encoding, the
     /// numeric value of every member is part of the bytecode format - inserting a member in the
-    /// middle renumbers everything after it and invalidates already-compiled bytecode. That rule
-    /// takes effect the moment anything persists a chunk; until then the set is still being shaped,
-    /// and members are grouped by family rather than by the order they were thought of.
+    /// middle renumbers everything after it and invalidates already-compiled bytecode.
+    /// <b>That rule is in force</b>: <c>Bytecode/Image/</c> writes chunks to bytes, so every value
+    /// below is on disk somewhere. New opcodes go at the end, whatever family they belong to,
+    /// which is why the tail of this enum reads less tidily than its middle. See
+    /// <c>docs/Opcodes.md</c> for the set laid out by family with its numeric values.
     /// </para>
     /// <para>
     /// There is deliberately no separate opcode for calling a host-implemented method. Where a
@@ -792,7 +794,7 @@ namespace Surtr.Bytecode
         /// Encoding: <c>opcode(1) typeIdx(2)</c> - 3 bytes.<br/>
         /// Stack: <c>..., a -&gt; ..., a</c><br/>
         /// Notes: the type is an immediate, not a stack operand. This is a checked reference cast:
-        /// the value is unchanged on success, and a failure needs a defined trap.
+        /// the value is unchanged on success; a failure traps as `InvalidCastException`.
         /// </remarks>
         Cast,
 
@@ -825,7 +827,7 @@ namespace Surtr.Bytecode
         /// <remarks>
         /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
         /// Stack: <c>..., str, index -&gt; ..., char</c><br/>
-        /// Notes: an out-of-range index needs a defined trap.
+        /// Notes: an out-of-range index traps as `IndexOutOfRangeException`.
         /// </remarks>
         StrGet,
         #endregion
@@ -872,7 +874,7 @@ namespace Surtr.Bytecode
         /// <remarks>
         /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
         /// Stack: <c>..., arr, index -&gt; ..., value</c><br/>
-        /// Notes: an out-of-range index needs a defined trap.
+        /// Notes: an out-of-range index traps as `IndexOutOfRangeException`.
         /// </remarks>
         ArrGet,
 
@@ -1104,7 +1106,7 @@ namespace Surtr.Bytecode
         /// Encoding: <c>opcode(1) fieldIdx(2)</c> - 3 bytes.<br/>
         /// Stack: <c>..., obj -&gt; ..., value</c><br/>
         /// Notes: the field table entry carries the slot index, so the read is a direct offset
-        /// into the instance rather than a name lookup. A null receiver needs a defined trap.
+        /// into the instance rather than a name lookup. A null receiver hits the CLR null check and surfaces as `NullReferenceException`.
         /// </remarks>
         FieldGet,
 
@@ -1596,7 +1598,7 @@ namespace Surtr.Bytecode
         /// Stack: <c>..., obj, a1, ..., aN -&gt; ..., result?</c><br/>
         /// Notes: the method table entry supplies a vtable slot, so dispatch is one load plus an
         /// indirect call - the receiver's runtime class decides which override runs. A null
-        /// receiver needs a defined trap.
+        /// receiver hits the CLR null check and surfaces as `NullReferenceException`.
         /// </remarks>
         InvokeVirtual,
 
@@ -1640,7 +1642,7 @@ namespace Surtr.Bytecode
         /// Encoding: <c>opcode(1) argsCount(1) retCount(1)</c> - 3 bytes.<br/>
         /// Stack: <c>..., closure, a1, ..., aN -&gt; ..., result?</c><br/>
         /// Notes: the only call form with no index immediate - the target comes from the stack, so
-        /// it is resolved entirely at run time. A null closure needs a defined trap.
+        /// it is resolved entirely at run time. A null closure hits the CLR null check and surfaces as `NullReferenceException`.
         /// </remarks>
         InvokeClosure,
         #endregion
@@ -1797,6 +1799,22 @@ namespace Surtr.Bytecode
         /// because <c>hi</c> may be <c>int.MaxValue</c>, where incrementing would wrap.
         /// </remarks>
         RangeNewInclusive,
+        #endregion
+
+
+        #region String Hashing
+        /// <summary>Replaces a string with its hash.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., str -&gt; ..., hash</c><br/>
+        /// Notes: reads the hash <see cref="Runtime.Objects.SurtrString"/> computed once at
+        /// construction, so this is a load rather than a walk over the text. The value is
+        /// <see cref="Runtime.Objects.SurtrString.ComputeHash"/>'s, which depends only on the text -
+        /// that is what lets a compiler hash a <c>switch</c>'s case labels at build time and have
+        /// them still match at run time, in another process. This exists for that lowering: hash,
+        /// <c>SwitchLookup</c>, then <c>StrEQ</c> to settle collisions.
+        /// </remarks>
+        StrHash,
         #endregion
     }
 }

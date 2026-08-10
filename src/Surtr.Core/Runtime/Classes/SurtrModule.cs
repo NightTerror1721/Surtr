@@ -31,6 +31,7 @@ namespace Surtr.Runtime.Classes
         private readonly Dictionary<string, SurtrInterface> _interfaces;
 
         private bool _loaded;
+        private bool _emitted;
         private SurtrBuildState _buildState;
 
         #region Runtime Access Tables
@@ -90,6 +91,22 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>Whether the runtime context has loaded this module and bound its type handles.</summary>
         public bool IsLoaded => _loaded;
+
+        /// <summary>
+        /// Whether every body has been emitted and laid out into the chunk - what
+        /// <c>SurtrModuleBuilder.Build</c> finishing means.
+        /// </summary>
+        /// <remarks>
+        /// Distinct from <see cref="IsBuilt"/>, which is about <em>linking</em> and only becomes
+        /// true once a runtime has loaded the module. A module can be written to an image between
+        /// the two, and telling "the emitter is done" apart from "nobody has emitted anything yet"
+        /// needs a signal of its own - the chunk's tables are legitimately empty for a module that
+        /// declares nothing.
+        /// </remarks>
+        public bool IsEmitted => _emitted;
+
+        /// <summary>Records that the emitter has finished laying out this module's bodies.</summary>
+        internal void MarkEmitted() => _emitted = true;
 
         /// <summary>How far this module is between being declared and being ready to run.</summary>
         public SurtrBuildState BuildState

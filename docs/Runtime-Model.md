@@ -1,0 +1,598 @@
+# The Surtr runtime model
+
+How the runtime's pieces fit together: what a class, a method, a property, an enum and a module
+each are, how they reach one another, and what changes between declaring them and running them.
+
+`docs/VM-Plan.md` holds the interpreter's design decisions, `docs/Opcodes.md` the instruction set,
+`docs/Module-Format.md` the on-disk form, and `docs/Language-Syntax.md` the surface language this
+model has to express.
+
+---
+
+## 1. Two hierarchies, one root
+
+Everything the runtime owns descends from `SurtrRuntimeEntity` — the base for anything that can be
+handed a `SurtrRef`, the 32-bit integer handle unmanaged VM code addresses managed objects by.
+
+```
+SurtrRuntimeEntity
+├── SurtrObject ................. a language-level value
+│   ├── SurtrString, SurtrArray, SurtrTuple, SurtrDictionary
+│   ├── SurtrClosure, SurtrRange, SurtrIterator, SurtrBoxed
+│   ├── SurtrInstance ........... an instance of a class Surtr source declared
+│   └── SurtrNativeObject
+│       └── SurtrNativeProxy .... a host CLR object
+│
+├── SurtrModule ................. the only top-level container
+└── SurtrMemberInfo ............. anything declared inside a module or a type
+    ├── SurtrFieldInfo
+    ├── SurtrPropertyInfo
+    ├── SurtrMethodInfo
+    │   ├── SurtrBytecodeMethodInfo
+    │   ├── SurtrNativeMethodInfo
+    │   └── SurtrAbstractMethodInfo
+    └── SurtrTypeInfo
+        ├── SurtrClass
+        └── SurtrInterface
+```
+
+Two things about this shape are worth stating up front, because a lot follows from them.
+
+**A type is a member.** `SurtrTypeInfo` extends `SurtrMemberInfo` because Surtr has no free-floating
+types: every class and interface is declared inside a module or another type. So a nested type has a
+visibility, a declaring type and attributes for the same reason a field does, with no special case.
+
+**Metadata shares a root with values but is never registered.** `SurtrMemberInfo` is a
+`SurtrRuntimeEntity`, yet class metadata is never given to an entity registry and is never traced.
+It is *owned outright* — by `SurtrBuiltIns` for the built-ins, by `SurtrContext` for everything
+else — and lives as long as its owner. It also **cannot** be registered: an entity holds a single
+`SurtrRef`, so one shared class in two registries would have the second silently inherit the first's
+id. This is why `SurtrObject.VisitReferences` does not mark an object's `Class`.
+
+---
+
+## 2. Modules
+
+A module is the only top-level container, and the unit type resolution works against.
+
+```
+SurtrModule
+├── path                "game.core", derived from the file's directory
+├── TypeHandles         every type it mentions, interned — also its dependency list
+├── Chunk               bytecode, pools, access tables
+├── Fields / Properties / Methods / Classes / Interfaces      the compiler's view, by name
+└── StaticFields / StaticStorage / Functions / StaticInitializer     the runtime's view, by index
+```
+
+**There are no true globals.** A module-level variable *is* a static of its module, and reaches its
+storage through the same `StaticFieldGet`/`StaticFieldSet` a class static does — the module simply
+carries the same static tables a class does. The only genuinely global names are host-declared
+native variables and functions, which can never be written in Surtr source and live in the runtime's
+`SurtrNativeGlobalTable` instead.
+
+**A module belongs to one runtime.** Loading patches its string literals with references from that
+runtime's heap, binds its native imports to that runtime's global table, and hands its classes
+static storage the collector traces through that runtime's registry. `LoadModule` rejects a second
+attempt. The shareable artefact is the *image* (`docs/Module-Format.md`), which instantiates a fresh
+module per runtime.
+
+---
+
+## 3. Type references: names before objects
+
+A member's signature cannot point at a `SurtrClass` instance. Class construction would become
+circular and order-dependent, and metadata is built before any runtime exists. So a type reference
+travels as **text** and is resolved later.
+
+### 3.1 `SurtrClassReference` — the descriptor
+
+A compact string, in a grammar that nests unambiguously and parses left to right with one character
+of lookahead:
+
+```
+I F B C S                 int, float, bool, char, string
+R                         range of ints
+E                         an erased generic parameter
+A<elem>                   array            AI              -> int[]
+D<key><value>             dictionary       DIS             -> {int: string}
+T(<elem>...)              tuple            T(IF)           -> (int, float)
+L(<param>...)<ret>        closure          L(II)F          -> (int, int) -> float
+O<fullname>;              Surtr type       Ogame.core:Entity.Handle;
+N<fullname>;              host type        NUnityEngine:GameObject;
+G<digit>                  the declaring type's n-th generic parameter    G0
+?<primitive>              nullable primitive                            ?I -> int?
+V                         void — legal only as a closure's return
+fullname := modulePath ':' typeName ('.' nestedTypeName)*
+```
+
+Why a descriptor rather than a dotted name: composite types nest. `Array<Dictionary<int, string>>`
+needs a real bracket-and-comma parser; `ADIS` does not. The `:` separating module path from type
+path lets a resolver split in O(1) instead of probing prefixes to find where the module ends.
+
+Descriptors are the **canonical form** for comparison, hashing and bytecode. `ToDisplayString()`
+exists for diagnostics only — never key off it.
+
+### 3.2 `SurtrTypeHandle` — the descriptor plus what it resolved to
+
+A handle pairs a reference with the `SurtrTypeInfo` it names, starting unresolved. Handles are
+**interned per module** in a `SurtrTypeHandleTable`, so resolution runs once per distinct type — and
+so a module's handle table doubles as its dependency list. Loading a module is exactly "resolve
+every handle, then link"; anything still unresolved is a load failure rather than a surprise
+mid-execution.
+
+A handle can resolve to a class *or* an interface. That is why both share `SurtrTypeInfo` and why
+`Kind` distinguishes them with a field read rather than a cast.
+
+---
+
+## 4. Classes
+
+`SurtrClass` carries two completely different views of the same declarations, and keeping them
+straight is the single most important thing about it.
+
+| | Shape | Who reads it | When it is built |
+|---|---|---|---|
+| **The compiler's view** | name-keyed dictionaries: `TryGetField`, `TryGetMethods`, `TryGetProperty`, `TryGetNestedClass` | a compiler, tooling, a host | as members are declared |
+| **The runtime's view** | flat arrays indexed by a small integer: `InstanceFields`, `VirtualMethods`, `Interfaces`, … | the interpreter | by the linker, at load |
+
+**Nothing on the execution path ever goes through a name.** The runtime tables are *flattened*:
+inherited entries are already folded in, so a lookup never walks the hierarchy.
+
+### 4.1 The tables, and what each one buys
+
+```
+Ancestors[]            the chain by depth, with Ancestors[Depth] == this
+Depth                  how many classes sit above this one
+Interfaces[]           every interface satisfied, transitively closed
+InterfaceIndexById     interfaceId -> index into Interfaces, open-addressed
+InterfaceSlotOffsets   where each interface's block starts in InterfaceMethodSlots
+InterfaceMethodSlots   flattened: (interface, contract slot) -> vtable index
+InstanceFields[]       instance layout, indexed by SurtrFieldInfo.Slot
+InstanceSlotCount      what the allocator needs
+ReferenceSlots         which instance slots hold a reference
+StaticFields[]         static layout
+StaticStorage          the unmanaged block behind them
+ReferenceStaticSlots   which static slots hold a reference
+VirtualMethods[]       the vtable, indexed by SurtrMethodInfo.VTableSlot
+DirectMethods[]        non-virtual instance methods
+StaticMethods[]        statics
+Constructors[]         never inherited, so never in the vtable
+StaticInitializer      run once, at load
+```
+
+Four of these are worth explaining, because each is a deliberate trade:
+
+**`Ancestors` is indexed by depth**, with `Ancestors[Depth] == this`. If a type really is an
+ancestor, it sits at its own depth in this chain — so `IsSubclassOf` is one bounds compare and one
+load at any hierarchy depth, rather than a walk up base pointers.
+
+**`ReferenceSlots` lists which instance slots hold a reference.** It is an optimisation, not a
+requirement: values are NaN-boxed, so the collector *could* tag-test every slot. It exists because a
+statically typed language already knows which fields are references, so tracing walks the k
+reference slots instead of branching on all n. It also sidesteps **NaN aliasing** — a raw double
+whose bits land in the tag range would read as a reference, and a table derived from static types
+cannot be fooled that way.
+
+**`InterfaceMethodSlots` stores vtable *indices*, not method references.** That keeps it a flat
+block of ints in unmanaged memory, and it means an override later in the hierarchy replaces one
+vtable entry and every interface routed through it follows along for free.
+
+**`InterfaceIndexById` is an open-addressed table of `(interfaceId, index)` pairs.** Resolving a
+contract on a receiver has to happen per interface call, and the receiver's class is exactly what a
+call site does not know — so the index cannot be an immediate the way a vtable slot is. A mask, a
+load and a compare replaces what used to be a scan.
+
+### 4.2 What is inherited, and what is not
+
+| | Inherited | Keeps its base index |
+|---|---|---|
+| Instance fields | yes | **yes** |
+| Vtable slots | yes | **yes** |
+| Interfaces | yes (and transitively closed) | yes |
+| Static fields | no — each class owns its own | — |
+| Constructors | no | — |
+
+The two "keeps its base index" rows are load-bearing invariants the interpreter depends on: a field
+access or a call site **compiled against the base type keeps working on a derived instance**, with
+no adjustment. An override replaces its vtable entry *in place*, which is also what makes an
+override automatically apply to every interface routed through that slot.
+
+---
+
+## 5. Methods
+
+A method carries three orthogonal axes, and only one of them is modelled by subclassing.
+
+| Axis | Type | Values |
+|---|---|---|
+| **Where the body lives** | subclass | `SurtrBytecodeMethodInfo` · `SurtrNativeMethodInfo` · `SurtrAbstractMethodInfo` |
+| **How a call resolves** | `SurtrMethodDispatch` field | `Direct` · `Virtual` · `Abstract` |
+| **What part it plays** | `SurtrMethodRole` field | `Normal` · `Constructor` · `StaticInitializer` |
+
+Only the first is a subclass because only it adds state — a bytecode method has a chunk and an
+offset, a native one an entry point, an abstract one nothing. Making dispatch or role a second
+subclass axis would multiply against the first and produce types carrying no data of their own.
+Keep new axes as fields unless they genuinely add state.
+
+The axes are independent except for one pairing: **abstract dispatch always goes with an abstract
+impl kind**, since there is nothing to run. A method is `Direct` by default — Surtr has no implicit
+override, so a method is virtual only when it says so.
+
+### 5.1 Where each kind ends up
+
+```
+role == Constructor          -> Constructors[]        never inherited, never virtual
+role == StaticInitializer    -> StaticMethods[] and StaticInitializer
+IsStatic                     -> StaticMethods[]
+!IsVirtualDispatch           -> DirectMethods[]       bound at compile time
+otherwise                    -> VirtualMethods[]      placed by PlaceInVTable
+```
+
+### 5.2 Signatures and overloads
+
+The three method tables are **overload groups** — `Dictionary<string, SurtrMethodInfo[]>` — not one
+method per name. Two keys answer two different questions:
+
+* **`SignatureKey()`** — name plus every parameter descriptor, *excluding the return type*. This
+  answers "is this the same member". It is what `AddMethod` rejects duplicates on, what the linker
+  matches an `override` on, and what an image names an overload by. Excluding the return is what
+  lets `Language-Syntax.md` §3.5 say two members differing only in return type are an error rather
+  than an overload — they produce the same key.
+* **`ToSignature()`** — the whole type as a closure descriptor, return included. This answers "what
+  type is this method".
+
+Parameter descriptors in the key are written **erased**: a `G0` is spelled `E`. After erasure they
+are the same slot, and without that a class could never implement a generic interface —
+`IComparable` declares `compareTo(G0)`, and an implementation naming the same erased slot would miss
+the contract's slot by spelling alone. The other half of that bargain is Java's: a class wanting
+both `compareTo(Vec2)` and `IComparable<Vec2>` needs the compiler to emit a bridge.
+
+### 5.3 Parameters
+
+`SurtrParameterInfo` carries everything a call site needs to be checked against a member declared in
+*another module*, where overload resolution works from metadata rather than a syntax tree:
+
+* a **name**, so a named argument can find it;
+* a **default value** (a `SurtrConstant`), so an omitted trailing argument can be filled in;
+* a **varargs** mark, so a surplus can be absorbed.
+
+Three shape rules are enforced where the member is declared, not where it is called: defaults are
+trailing-only, varargs is last and at most one, and varargs cannot follow a default. A call site
+reading this metadata is entitled to assume the shape holds — overload resolution walks the list
+once and stops at the first optional parameter, which is only sound if defaults really are trailing.
+
+None of it reaches the interpreter: a call arrives with its arguments already filled in and its
+varargs array already packed.
+
+### 5.4 Native methods
+
+A native method's body is a host function reached through `SurtrNativeEntryPoint`, and every host
+function has one fixed shape:
+
+```csharp
+delegate SurtrValue SurtrNativeFunction(SurtrCallArguments arguments);
+```
+
+so the interpreter has exactly one function-pointer cast on its call path regardless of the
+method's Surtr-level signature. The pointer is a **managed** `delegate*`, not
+`delegate* unmanaged[…]`: Surtr's host is always C#/Unity, so calling directly avoids the
+reverse-P/Invoke stub and its GC transition, and sidesteps IL2CPP's `[MonoPInvokeCallback]`
+restriction. Never put an unmanaged address in one.
+
+`arguments[0]` is the receiver for an instance method — argument zero like any other. A method
+declared to return nothing still returns `SurtrValue.Null` down this one signature, and the caller
+discards it.
+
+**A body can arrive late.** A method declared with only a `LinkName` is bound when its module is
+loaded, by whichever runtime is loading it, through `SurtrRuntime.DefineNativeBody`. That is what
+lets a module carrying native members travel in an image. Until it is bound it points at a body that
+*reports the mistake* rather than at null.
+
+---
+
+## 6. Properties
+
+A property is not a storage kind. It is a name attached to **accessor methods**, declared as
+ordinary `get_x`/`set_x` methods exactly as the CLR does it:
+
+```
+SurtrPropertyInfo
+├── PropertyType
+├── Getter -> SurtrMethodInfo?      the class's own get_x
+└── Setter -> SurtrMethodInfo?      the class's own set_x
+```
+
+The accessors go into the declaring type's method tables and get linked with everything else — a
+property whose accessors were in no table would be the one member the linker never sees. Everything
+that applies to a method therefore applies to an accessor: it can be virtual, it can be native, it
+can satisfy an interface, and it travels in an image as a method.
+
+A get-only property has **no setter at all**, not a private one. An auto-property is a compiler
+construct: it synthesises a private backing field and two trivial bodies, and nothing in the runtime
+knows the difference.
+
+---
+
+## 7. Interfaces
+
+An interface is a **pure contract**: public abstract methods and properties only. No fields, no
+statics, no default implementations — `AddMethod`/`AddProperty` reject anything else, so the
+dispatch tables can assume it.
+
+```
+SurtrInterface
+├── DeclaredExtendedInterfaces[]    by handle, before linking
+├── ExtendedInterfaces[]            transitively closed, by the linker
+├── MethodSlots[]                   the contract in slot order, inherited slots included
+└── InterfaceId                     dense, assigned at link time
+```
+
+**Slot numbering is flat per interface.** An extended interface's methods keep the indices their
+declaring interface gave them, and this interface's own are numbered after. So one interface has one
+numbering, and a call site naming slot *n* means the same thing whichever sub-interface the receiver
+was reached through.
+
+Interface method slots are stored in each method's otherwise-unused `VTableSlot`, since an interface
+method never occupies a class vtable slot itself.
+
+**Ids are handed out from the context, not restarted per module** — and a context starts its
+numbering at `SurtrBuiltIns.ReservedInterfaceIds`, because the built-in interfaces were numbered
+before any runtime existed. Without that, the first interface any module declared would collide with
+`IIterator`, and the collision would show up not as an error but as a call landing in the wrong
+method.
+
+### How an interface call resolves
+
+```
+InvokeInterface methodIdx argsCount retCount
+
+  contract      = methodTable[methodIdx].DeclaringType          the interface
+  contractIndex = receiverClass.InterfaceIndexById[contract.InterfaceId]     mask + load
+  vtableSlot    = receiverClass.InterfaceMethodSlots[
+                      receiverClass.InterfaceSlotOffsets[contractIndex]
+                      + declaredMethod.VTableSlot ]
+  target        = receiverClass.VirtualMethods[vtableSlot]
+```
+
+One extra indirection over a virtual call. This depends on `SurtrMethodInfo.DeclaringType` naming
+the declaring **interface** for an interface method, which the compiler must honour.
+
+---
+
+## 8. Enums
+
+An enum is not a separate kind of thing. It is **a sealed class with a fixed set of named static
+instances** — exactly what `Language-Syntax.md` §2.4 describes and exactly how the metadata stores
+it:
+
+* `SurtrMemberKind.Enum` rather than `Class`, so a compiler reading another module's metadata can
+  tell.
+* Implicitly sealed. It cannot declare a base class, because the enum class itself occupies that
+  slot.
+* Each case is a **static, read-only field of the enum's own type**, holding an instance the static
+  initializer constructs. A case with arguments is a constructor call against the enum's own
+  constructor.
+
+`SurtrEnumCaseInfo` adds the one thing a field cannot carry: an **ordinal**, assigned by
+`AddEnumCase` in declaration order and never accepted from outside. It exists for one reason — an
+exhaustive `switch` over an enum has to compile to a dense jump table, and the cases are references,
+which a table cannot index on. With the ordinal it is a `FieldGet` plus an ordinary `Switch`.
+
+It is a struct rather than a class because it is three fields with no identity, always read out of
+the array on `SurtrClass.EnumCases`.
+
+---
+
+## 9. Build state: three phases, one cycle detector
+
+Every member, class, interface, module and chunk carries a `SurtrBuildState`:
+
+```
+UnderConstruction  ──►  Linking  ──►  Built
+```
+
+* **`UnderConstruction`** — declarations are accepted. `AddField`, `AddMethod`,
+  `SetDeclaredInterfaces` and friends call `ThrowIfBuilt()` first.
+* **`Linking`** — the linker is working on it. Meeting a type that is *already* linking means the
+  hierarchy loops back on itself, so the state doubles as the cycle detector at no extra cost.
+* **`Built`** — the tables are flattened and slot indices have been handed out. Nothing can be added
+  afterwards, because a member appearing now would silently invalidate every index already given
+  out.
+
+`SurtrModule` carries a second, independent flag: **`IsEmitted`**, set by
+`SurtrModuleBuilder.Build()`. It answers "has the emitter finished laying out the bodies", which is
+a different question from "has this been linked" — a module can be written to an image between the
+two, and a module that declares nothing has legitimately empty tables either way.
+
+---
+
+## 10. Linking
+
+`SurtrTypeLinker` turns declarations into the runtime's tables. It runs **depth-first: base class and
+interfaces first**, since a type's layout is built on top of theirs. It is load-time code and
+deliberately favours obvious correctness over allocation-freedom — the dictionaries and signature
+strings it builds are discarded once a type is linked.
+
+For each class, in order:
+
+1. **Resolve the base**, rejecting an unresolved handle, an interface used as a base, and a sealed
+   base.
+2. **`BuildAncestors`** — copy the base chain, append this class.
+3. **`BuildInterfaceClosure`** — inherited first (so a base-typed itable index stays valid on a
+   derived instance), then declared ones and everything they extend.
+4. **`BuildInterfaceIndex`** — the id-to-index probe table.
+5. **`BuildFieldLayout`** — inherited fields keep their base slots, then this class's; static
+   storage is allocated and each static field is handed the **address** of its own slot, so
+   `StaticFieldGet` is one indirect load with no test for where the storage lives.
+6. **`BuildMethodTables`** — start from the base vtable verbatim, then place each method.
+7. **`BuildInterfaceDispatch`** — index the vtable once by signature, then answer every contract
+   slot from that map, rejecting a contract the class does not satisfy.
+8. **`VerifyConcrete`** — a non-abstract class may not leave an abstract method in its vtable.
+9. **Nested types**, then `MarkBuilt()`.
+
+`PlaceInVTable` is where `override` and `sealed` are enforced: an `override` with no matching base
+signature is rejected, so is one overriding a `sealed override`, and so is a method that would
+silently hide an inherited virtual without saying `override`.
+
+---
+
+## 11. Values at run time
+
+Metadata describes; `Runtime/Objects` is what actually flows through the interpreter.
+
+### 11.1 `SurtrValue` — the fast path
+
+A NaN-boxed 64-bit value. A primitive is carried **as itself**, with a tag, and never allocates:
+`SurtrValue`/`SurtrRawValue` exist purely so the interpreter can move primitives around without
+going through class metadata. They are not a separate non-object tier in the language — every value
+conceptually has a `SurtrClass`, and `SurtrBuiltIns.ForValue` answers which by reading the tag.
+
+**A reference is its 32-bit payload**, not its tag, so a zeroed slot and an explicit null are the
+same reference — which is what lets fresh locals read as null without the VM knowing their declared
+type.
+
+### 11.2 `SurtrObject` — everything collectable
+
+| Type | Holds | Class |
+|---|---|---|
+| `SurtrString` | a CLR string + its cached hash | built-in, shared |
+| `SurtrArray` | growable `SurtrValue[]` + count | built-in, shared |
+| `SurtrTuple` | fixed `SurtrValue[]`, immutable | built-in, shared |
+| `SurtrDictionary` | `Dictionary<SurtrValue, SurtrValue>` under the runtime's comparer | built-in, shared |
+| `SurtrClosure` | method + captured values, dispatch payload copied out flat | built-in, shared |
+| `SurtrRange` | two ints and an inclusivity flag | built-in, shared |
+| `SurtrIterator` | a collection + a position | built-in, shared |
+| `SurtrBoxed` | one primitive value | the *same* class the unboxed primitive has |
+| `SurtrInstance` | `SurtrValue[]` field slots | whatever Surtr source declared |
+| `SurtrNativeProxy` | a host CLR object | host-declared, or `SurtrBuiltIns.NativeObject` |
+
+Every object carries its `SurtrClass` plus a **cached copy of that class's `TypeCode`** — one byte
+duplicated so a family test is a load off the object already in cache rather than a second hop into
+metadata.
+
+Rules that run through all of them:
+
+* **Storage is managed, not `SurtrNativeArray`.** These are collectable, and the registry sweeps by
+  dropping its reference — there is no finalization hook — so an unmanaged buffer owned by one would
+  leak on every collection. Unmanaged arrays belong to *metadata*, which is disposed explicitly.
+* **No per-element type tags.** Static typing means the compiler already knows an `int[]` from a
+  `string[]`, and NaN boxing means each element self-describes to the collector. What each composite
+  keeps instead is one interned descriptor naming its whole parameterised type.
+* **`SurtrValueComparer` decides equality**, not raw bits, and lives one per runtime. Bits are too
+  strict for strings (two objects, same text, one key) and boxes (a boxed 5 *is* an unboxed 5), and
+  too loose for floats (`+0.0`/`-0.0`, `NaN`).
+
+---
+
+## 12. The built-in classes
+
+`SurtrBuiltIns` holds one **process-wide** `SurtrClass` per family, built once in a static
+constructor into a module named `surtr`, linked before any runtime exists.
+
+Shared rather than per-context so that two runtimes agree on what `string` means and a native entry
+point registered against one works in the other. It gets away with being shared because it has **no
+per-runtime state**: no static fields, and no string literals to patch. It is deliberately *not* in
+any runtime's module table — `TryResolveHandle` reaches it specially — because disposing a runtime
+disposes every module that is.
+
+**One class covers every parameterisation.** `AI` and `AS` are both `SurtrBuiltIns.Array`, because a
+language with no dynamic top type settles element types at compile time. Their `SelfReference` is
+correspondingly the bare family symbol (`A`, `D`, `T`, `L`), deliberately *not* a well-formed
+descriptor: it names the family and says nothing about parameters, which is exactly what the class
+knows.
+
+**There is no root `object` class.** Every built-in sits at depth 0 in its own hierarchy. A common
+root would only earn its keep if values of unrelated types had to be held in one place, which a
+language with no top type never requires.
+
+`array` and `dict` declare **real generic parameters** — `T`, and `K`/`V` — and their
+element-polymorphic members are declared against them through `G<n>`. `G0` resolves to
+`SurtrBuiltIns.Erased`, so the runtime representation is exactly what `E` would have been and no
+layout, tracing or dispatch path knows the difference; what it adds is *which* parameter it is,
+which is what lets `int[].push("x")` be rejected against metadata alone.
+
+`array`, `string`, `tuple`, `dict` and `range` implement `IIterable<T>`, so the contract `for-in` is
+defined by is one every collection actually satisfies. A compiled `for-in` over any of them still
+lowers to an indexed loop and never allocates a cursor — the contract exists so an `int[]` can flow
+into an `IIterable<int>`, not to make loops slower.
+
+---
+
+## 13. The runtime and its context
+
+`SurtrRuntime` is Surtr's `lua_State`: the one object a host holds. It owns a `SurtrContext` — an
+internal struct, reached by `ref` so nothing copies it — holding:
+
+```
+EntityRegistry     the object heap, addressed by SurtrRef
+Globals            host variables and functions, the only true globals
+NativeBodies       host bodies for native members, by link name
+Modules            loaded modules, by path
+NativeClasses      host-declared native classes, by full name
+HostTypeHandles    handles for signatures the host declares outside any module
+InternedStrings    text -> one SurtrString, for the runtime's life
+Roots              entities kept alive regardless of reachability
+StaticBlocks       every class's and module's static storage, so a collection can trace it
+NextInterfaceId    the shared counter, starting past the built-ins' reservation
+```
+
+* **Interned strings are rooted permanently.** Use `InternString` for text a program is *built
+  from*, `NewString` for text it *computes*.
+* **Roots are pre-boxed raw values** — the shape the collector wants. A collection stages the
+  caller's transient roots in the root buffer's slack past `RootCount`, so merging needs no
+  allocation.
+* **Static storage is registered at link time**, not discovered per collection: it is unmanaged and
+  reachable from no object, so unless a collection walks it explicitly, anything a static field
+  solely owns would be swept.
+
+---
+
+## 14. Loading a module, end to end
+
+```
+LoadModule(module)
+ ├─ reject a duplicate path, or a module already loaded elsewhere
+ ├─ register it              (its own types must be findable while resolving)
+ ├─ resolve every type handle    ── the handle table is the dependency list
+ ├─ bind pending access tables   ── images only: names -> objects
+ ├─ bind native bodies           ── by link name, from NativeBodies
+ ├─ LINK every type              ── SurtrTypeLinker, depth-first
+ ├─ bind native imports          ── host globals, by name
+ ├─ materialise string literals  ── intern, patch into the constant pool
+ ├─ materialise attributes       ── one instance per usage, rooted permanently
+ ├─ register static blocks       ── so the collector can trace them
+ ├─ mark loaded, retry host handles
+ └─ run static initializers      ── each class's, then the module's
+```
+
+**Static initializers run eagerly, at load, classes before the module, in declaration order.** Lazy
+initialization is what Java does, and it buys initialization-order independence at the price of a
+"has this run yet" test on every static access forever, to answer a question that is false exactly
+once. Loading a module is a controlled event in an embedded language, so the cost belongs there.
+
+The price is ordering: an initializer that reads another class's statics only sees them if that
+class was declared first. **Cross-initializer dependencies are the compiler's to reject** — nothing
+at load detects them.
+
+That eagerness is also why `InvokeStatic` carries no type index: nothing has to be triggered at a
+call site.
+
+---
+
+## 15. What the compiler owes this model
+
+Things the runtime assumes and will not check:
+
+* **Box a primitive flowing into an erased slot, and `Cast` reading one back out.**
+* **Emit `finally` on every exit path**, plus a catch-all that runs it and re-raises. There is no
+  `Leave`/`EndFinally`.
+* **Reject cross-initializer dependencies.**
+* **Name the declaring *interface*** in an interface method's `DeclaringType`.
+* **Reject instantiating an `abstract` class** — `ObjNew` does not test it.
+* **Emit a bridge** into a generic interface's erased slot where a typed overload is also wanted.
+* **Devirtualise on a `sealed` class and below a `sealed override`**, which is most of what those
+  modifiers are for.
+* **Lower `for-in` over a built-in to an indexed loop**, never through `IIterable`.
+* **Lower a range written inline in a loop header to two ints**, allocating nothing.
+
+`docs/VM-Plan.md` §4.8 is the authoritative list.

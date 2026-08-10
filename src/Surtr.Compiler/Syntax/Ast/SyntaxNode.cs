@@ -27,14 +27,17 @@ namespace Surtr.Compiler.Syntax.Ast
     /// </remarks>
     public abstract class SyntaxNode
     {
-        /// <summary>Where in the source this node begins.</summary>
-        public SourceLocation Location { get; }
+        /// <summary>The range of source this node covers, from its first token to its last.</summary>
+        public SourceSpan Span { get; }
 
-        /// <summary>Initializes the node with the position it starts at.</summary>
-        /// <param name="location">Where in the source the node begins.</param>
-        protected SyntaxNode(SourceLocation location)
+        /// <summary>Where in the source this node begins. Shorthand for <c>Span.Start</c>.</summary>
+        public SourceLocation Location => Span.Start;
+
+        /// <summary>Initializes the node with the source it covers.</summary>
+        /// <param name="span">The range of source the node covers.</param>
+        protected SyntaxNode(SourceSpan span)
         {
-            Location = location;
+            Span = span;
         }
     }
 

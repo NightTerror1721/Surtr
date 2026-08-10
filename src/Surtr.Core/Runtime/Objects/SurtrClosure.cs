@@ -76,6 +76,15 @@ namespace Surtr.Runtime.Objects
             switch (method)
             {
                 case SurtrNativeMethodInfo native:
+                    // The address is copied out flat here and read on every call afterwards, so a
+                    // body bound later would never be seen. Loading is what binds one, so a closure
+                    // over an unbound method means its module was never loaded - caught here for
+                    // the same reason the abstract case below is.
+                    if (!native.IsBound)
+                        throw new ArgumentException(
+                            $"Native method '{native.Name}' has no body bound; its module has not been loaded into a runtime that published '{native.LinkName}'.",
+                            nameof(method));
+
                     EntryPoint = native.EntryPoint;
                     break;
 

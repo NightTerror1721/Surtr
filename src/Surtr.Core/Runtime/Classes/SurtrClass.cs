@@ -144,6 +144,36 @@ namespace Surtr.Runtime.Classes
         internal SurtrNativeArray<int> InterfaceSlotOffsets;
 
         /// <summary>
+        /// Maps an interface's <see cref="SurtrInterface.InterfaceId"/> to its position in
+        /// <see cref="Interfaces"/>: an open-addressed table of <c>(id, index)</c> pairs, with
+        /// <c>-1</c> for an empty slot.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The pairs are interleaved - slot <c>s</c> is <c>[2s]</c> and <c>[2s+1]</c> - so a hit
+        /// reads both halves from the same cache line, and the whole table is unmanaged ints
+        /// rather than the managed <see cref="SurtrInterface"/> references
+        /// <see cref="Interfaces"/> holds.
+        /// </para>
+        /// <para>
+        /// This exists because <c>InvokeInterface</c> has to answer "where does this contract sit
+        /// on <em>this</em> receiver" on every call, and the receiver's class is exactly what a
+        /// call site does not know - so the index cannot be an immediate the way a vtable slot is.
+        /// A scan over <see cref="Interfaces"/> answered it in <c>O(k)</c> with a branch per step;
+        /// this answers it with a mask, a load and a compare.
+        /// </para>
+        /// <para>
+        /// Sized to at least twice the number of interfaces and rounded to a power of two, so the
+        /// table is never more than half full and probing terminates well inside
+        /// <see cref="InterfaceIndexMask"/> steps.
+        /// </para>
+        /// </remarks>
+        internal SurtrNativeArray<int> InterfaceIndexById;
+
+        /// <summary>One less than the slot count of <see cref="InterfaceIndexById"/>, for masking an id into it.</summary>
+        internal int InterfaceIndexMask;
+
+        /// <summary>
         /// The interface dispatch table, flattened: for interface <c>i</c> and interface method
         /// slot <c>m</c>, <c>InterfaceMethodSlots[InterfaceSlotOffsets[i] + m]</c> is the index
         /// into <see cref="VirtualMethods"/> that implements it.
@@ -210,6 +240,9 @@ namespace Surtr.Runtime.Classes
             // walked the hierarchy and laid the instance out.
             Depth = 0;
             InstanceSlotCount = 0;
+
+            // -1 rather than 0: a zero mask would name a one-slot table that does not exist yet.
+            InterfaceIndexMask = -1;
 
             DeclaredInterfaces = Array.Empty<SurtrTypeHandle>();
             Ancestors = Array.Empty<SurtrClass>();
@@ -311,14 +344,36 @@ namespace Surtr.Runtime.Classes
         }
 
         /// <summary>Finds an interface's position in this class's dispatch table.</summary>
+        /// <remarks>
+        /// Probes <see cref="InterfaceIndexById"/> rather than scanning <see cref="Interfaces"/>.
+        /// The interpreter writes this same probe out by hand inside its dispatch loop, because a
+        /// call from there would not be inlined; keeping the two in step is the reason this one
+        /// stays short enough to read side by side with it.
+        /// </remarks>
         /// <returns>The index into <see cref="Interfaces"/>, or <c>-1</c> if not implemented.</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal int IndexOfInterface(SurtrInterface contract)
         {
-            var interfaces = Interfaces;
-            for (int i = 0; i < interfaces.Length; i++)
+            int mask = InterfaceIndexMask;
+            if (mask < 0)
+                return -1;
+
+            int id = contract.InterfaceId;
+            int slot = id & mask;
+
+            // Bounded by the table size rather than looping until a hit: a receiver whose class
+            // does not implement the contract is a compiler bug, and spinning forever is a worse
+            // way to report one than answering -1.
+            for (int probe = 0; probe <= mask; probe++)
             {
-                if (ReferenceEquals(interfaces[i], contract))
-                    return i;
+                int entry = InterfaceIndexById[slot << 1];
+                if (entry == id)
+                    return InterfaceIndexById[(slot << 1) + 1];
+
+                if (entry < 0)
+                    return -1;
+
+                slot = (slot + 1) & mask;
             }
 
             return -1;
@@ -501,6 +556,7 @@ namespace Surtr.Runtime.Classes
             ReferenceStaticSlots.Dispose();
             InterfaceSlotOffsets.Dispose();
             InterfaceMethodSlots.Dispose();
+            InterfaceIndexById.Dispose();
 
             foreach (var nested in _nestedClasses.Values)
                 nested.Dispose();

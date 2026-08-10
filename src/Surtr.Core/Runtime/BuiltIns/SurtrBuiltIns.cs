@@ -88,6 +88,17 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass Range;
 
         /// <summary>
+        /// The <c>iterator</c> class, behind every <see cref="SurtrIterator"/>: the cursor each
+        /// built-in collection hands back from <c>iterate()</c>.
+        /// </summary>
+        /// <remarks>
+        /// A library class rather than a value family, so it needs no <see cref="SurtrValueTypeCode"/>
+        /// of its own - what it is, is one concrete type satisfying <c>IIterator&lt;T&gt;</c>, the
+        /// same shape <see cref="Exception"/> has.
+        /// </remarks>
+        public static readonly SurtrClass Iterator;
+
+        /// <summary>
         /// The root of everything throwable. Carries a message, and is extendable from Surtr source.
         /// </summary>
         /// <remarks>
@@ -164,6 +175,19 @@ namespace Surtr.Runtime.BuiltIns
         /// </remarks>
         public static readonly SurtrClass Void;
 
+        /// <summary>
+        /// How many interface ids the built-in module has already claimed, counting up from zero.
+        /// </summary>
+        /// <remarks>
+        /// A runtime's own numbering has to start here rather than at zero. Ids are dense and are
+        /// what a class's dispatch table is keyed on, so a module whose first interface took id 0
+        /// would collide with <c>IIterator</c> on any class implementing both - and the collision
+        /// would not show up as an error, it would show up as a call landing in the wrong method.
+        /// The built-in module is linked once, before any runtime exists, which is what makes a
+        /// fixed reservation the right shape here.
+        /// </remarks>
+        public static int ReservedInterfaceIds { get; }
+
         /// <summary>Every built-in class indexed by its <see cref="SurtrValueTypeCode"/>, so the lookup is one load.</summary>
         private static readonly SurtrClass[] ByTypeCode;
 
@@ -202,6 +226,7 @@ namespace Surtr.Runtime.BuiltIns
             InvalidOperationException = DeclareObject("InvalidOperationException", Exception);
             Math = DeclareObject("Math", isAbstract: true);
             Attribute = DeclareObject("Attribute", isAbstract: true);
+            Iterator = DeclareObject("iterator");
 
             Erased = Declare("erased", SurtrValueTypeCode.Erased, SurtrClassReference.Erased, isAbstract: true);
             Void = Declare("void", SurtrValueTypeCode.Void, SurtrClassReference.Void, isAbstract: true);
@@ -253,6 +278,16 @@ namespace Surtr.Runtime.BuiltIns
             SurtrStandardLibrary.DeclareMath(BuilderFor(Math, handles));
             SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
 
+            // After the interfaces exist, because these declare that they satisfy them - the
+            // handles would intern either way, but reading the declarations in dependency order is
+            // what makes this constructor followable.
+            SurtrIteratorBuiltIns.DeclareIterator(BuilderFor(Iterator, handles));
+            SurtrIteratorBuiltIns.DeclareIterable(BuilderFor(Array, handles), SurtrIteratorKind.Array);
+            SurtrIteratorBuiltIns.DeclareIterable(BuilderFor(String, handles), SurtrIteratorKind.String);
+            SurtrIteratorBuiltIns.DeclareIterable(BuilderFor(Tuple, handles), SurtrIteratorKind.Tuple);
+            SurtrIteratorBuiltIns.DeclareIterable(BuilderFor(Dictionary, handles), SurtrIteratorKind.Dictionary);
+            SurtrIteratorBuiltIns.DeclareIterable(BuilderFor(Range, handles), SurtrIteratorKind.Range);
+
             // Every handle the built-in signatures mention is a built-in, so the whole table binds
             // from what was just declared - the built-in module is the one module with no external
             // dependencies, which is what lets it link before any runtime exists.
@@ -286,7 +321,10 @@ namespace Surtr.Runtime.BuiltIns
                 handle.Resolve(ForTypeCode(reference.TypeCode));
             }
 
-            SurtrTypeLinker.LinkModule(Module);
+            int nextInterfaceId = 0;
+            SurtrTypeLinker.LinkModule(Module, ref nextInterfaceId);
+            ReservedInterfaceIds = nextInterfaceId;
+
             Module.MarkLoaded();
         }
 
