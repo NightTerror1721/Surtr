@@ -542,6 +542,132 @@ namespace Surtr.Tests.Compiler.Binding
             BindIn(out var compilation, "let a = 1;\nlet b = a[0];");
             AssertReports(compilation, SurtrDiagnosticCode.NotSupportedOnType);
         }
+
+        [Fact]
+        public void ATupleIsIndexedByPosition()
+        {
+            var binder = BindIn(out var compilation, "let t = (1, \"x\", 2.0);\nlet a = t[1];\nlet b = t[2];");
+
+            AssertNoErrors(compilation);
+
+            var indexes = Walk(Body(binder)).OfType<BoundIndexExpression>().ToList();
+            Assert.Same(compilation.TypeFactory.String, indexes[0].Type);
+            Assert.Same(compilation.TypeFactory.Float, indexes[1].Type);
+        }
+
+        [Fact]
+        public void ATupleIndexHasToBeAConstant()
+        {
+            BindIn(out var compilation, "let t = (1, 2);\nlet i = 0;\nlet a = t[i];");
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidTupleIndex);
+        }
+
+        [Fact]
+        public void ATupleIndexPastItsArityIsReported()
+        {
+            BindIn(out var compilation, "let t = (1, 2);\nlet a = t[2];");
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidTupleIndex);
+        }
+
+        [Fact]
+        public void ATupleElementCannotBeAssignedTo()
+        {
+            BindIn(out var compilation, "let t = (1, 2);\nt[0] = 3;");
+            AssertReports(compilation, SurtrDiagnosticCode.NotAssignable);
+        }
+        #endregion
+
+        #region The built-in collections' own members
+        [Fact]
+        public void AnArraysMembersAreReachableAndTakeItsElementType()
+        {
+            var binder = BindIn(out var compilation, "let xs: int[] = [1];\nlet n = xs.length;\nxs.push(2);");
+
+            AssertNoErrors(compilation);
+
+            var length = Walk(Body(binder)).OfType<BoundPropertyExpression>().Single();
+            Assert.Equal("length", length.Property.Name);
+            Assert.Same(compilation.TypeFactory.Int, length.Type);
+
+            var push = Walk(Body(binder)).OfType<BoundCallExpression>().Single(c => c.Method.Name == "push");
+            Assert.Same(compilation.TypeFactory.Int, push.Method.Parameters[0].Type);
+        }
+
+        [Fact]
+        public void AnArraysElementTypeIsCheckedAtTheCallSite()
+        {
+            BindIn(out var compilation, "let xs: int[] = [1];\nxs.push(\"x\");");
+            AssertReports(compilation, SurtrDiagnosticCode.UnresolvedCall);
+        }
+
+        [Fact]
+        public void APoppedElementReadsAsTheElementType()
+        {
+            var binder = BindIn(out var compilation, "let xs: string[] = [\"a\"];\nlet s = xs.pop();");
+
+            AssertNoErrors(compilation);
+            Assert.Same(
+                compilation.TypeFactory.String,
+                Walk(Body(binder)).OfType<BoundCallExpression>().Single(c => c.Method.Name == "pop").Type);
+        }
+
+        [Fact]
+        public void ADictionarysMembersSubstituteBothParameters()
+        {
+            var binder = BindIn(out var compilation,
+                "let m: {string: int} = {};\nlet v = m.get(\"k\");\nlet ks = m.keys();");
+
+            AssertNoErrors(compilation);
+
+            var calls = Walk(Body(binder)).OfType<BoundCallExpression>().ToList();
+            Assert.Same(compilation.TypeFactory.Int, calls.Single(c => c.Method.Name == "get").Type);
+            Assert.Same(
+                compilation.TypeFactory.Array(compilation.TypeFactory.String),
+                calls.Single(c => c.Method.Name == "keys").Type);
+        }
+
+        [Fact]
+        public void AStringsMembersAreReachable()
+        {
+            var binder = BindIn(out var compilation, "let s = \"abc\";\nlet n = s.length;\nlet t = s.substring(0, 2);");
+
+            AssertNoErrors(compilation);
+            Assert.Same(
+                compilation.TypeFactory.String,
+                Walk(Body(binder)).OfType<BoundCallExpression>().Single(c => c.Method.Name == "substring").Type);
+        }
+
+        [Fact]
+        public void APrimitivesMembersAreReachable()
+        {
+            var binder = BindIn(out var compilation, "let n = 7;\nlet s = n.toString();");
+
+            AssertNoErrors(compilation);
+            Assert.Same(
+                compilation.TypeFactory.String,
+                Walk(Body(binder)).OfType<BoundCallExpression>().Single(c => c.Method.Name == "toString").Type);
+        }
+
+        [Fact]
+        public void ATupleKeepsTheThinSurfaceItDeclares()
+        {
+            var binder = BindIn(out var compilation, "let t = (1, 2);\nlet n = t.length;");
+
+            AssertNoErrors(compilation);
+            Assert.Same(compilation.TypeFactory.Int, Walk(Body(binder)).OfType<BoundPropertyExpression>().Single().Type);
+        }
+
+        [Fact]
+        public void ASubstitutedMemberStillNamesTheMetadataItCameFrom()
+        {
+            // The substituted view is a fresh symbol, and a call site that could not name a real
+            // method table entry would bind and then fail to emit.
+            var binder = BindIn(out var compilation, "let xs: int[] = [1];\nxs.push(2);");
+
+            AssertNoErrors(compilation);
+            Assert.NotNull(
+                Walk(Body(binder)).OfType<BoundCallExpression>().Single(c => c.Method.Name == "push").Method.ImportedFrom);
+        }
         #endregion
 
         #region Statements

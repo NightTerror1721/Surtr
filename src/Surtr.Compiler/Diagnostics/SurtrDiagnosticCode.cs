@@ -217,6 +217,19 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         ConstEvaluationFailed = 3034,
 
+        /// <summary>
+        /// A tuple indexed by something other than a constant inside its arity (§5.5). A tuple's
+        /// element type varies per index, so the index is part of the type rather than a value.
+        /// </summary>
+        InvalidTupleIndex = 3035,
+
+        #endregion
+
+        #region Code generation — 4xxx
+
+        /// <summary>A construct code generation cannot lower yet.</summary>
+        NotLowered = 4001,
+
         #endregion
     }
 }

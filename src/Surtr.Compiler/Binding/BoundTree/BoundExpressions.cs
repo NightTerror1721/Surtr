@@ -340,7 +340,13 @@ namespace Surtr.Compiler.Binding.BoundTree
         public BoundExpression Index { get; }
 
         /// <inheritdoc/>
-        public override bool IsAssignable => true;
+        /// <remarks>
+        /// An array slot and a dictionary entry can be written; a tuple element and a character of
+        /// a string cannot, both being immutable once built (§5.5). There is no <c>TupSet</c> for
+        /// exactly that reason.
+        /// </remarks>
+        public override bool IsAssignable
+            => Target.Type.NonNullable.TypeKind is TypeSymbolKind.Array or TypeSymbolKind.Dictionary;
     }
 
     /// <summary>A conversion made explicit, whether or not it was written.</summary>
@@ -397,12 +403,14 @@ namespace Surtr.Compiler.Binding.BoundTree
             TypeSymbol type,
             IReadOnlyList<ParameterSymbol> parameters,
             BoundStatement body,
-            IReadOnlyList<Symbol> captured)
+            IReadOnlyList<Symbol> captured,
+            bool capturesReceiver)
             : base(syntax, type)
         {
             Parameters = parameters;
             Body = body;
             Captured = captured;
+            CapturesReceiver = capturesReceiver;
         }
 
         /// <summary>Its parameters.</summary>
@@ -416,6 +424,18 @@ namespace Surtr.Compiler.Binding.BoundTree
         /// arguments to the closure.
         /// </summary>
         public IReadOnlyList<Symbol> Captured { get; }
+
+        /// <summary>
+        /// Whether it reads the enclosing instance, written or implied.
+        /// </summary>
+        /// <remarks>
+        /// Recorded here rather than left for the emitter to find, because <c>this</c> is not a
+        /// symbol and so cannot sit in <see cref="Captured"/> — and because a closure's upvalues are
+        /// fixed when it is built, so the emitter has to know before it pushes any of them. The
+        /// lifted body is a static function, so the receiver has to arrive as a capture like
+        /// anything else.
+        /// </remarks>
+        public bool CapturesReceiver { get; }
     }
 
     /// <summary>An array literal.</summary>

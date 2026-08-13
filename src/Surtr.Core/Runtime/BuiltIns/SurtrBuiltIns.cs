@@ -99,6 +99,23 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass Iterator;
 
         /// <summary>
+        /// <c>IIterator&lt;T&gt;</c>: the two-member cursor <c>for-in</c> is defined against (§4.2).
+        /// </summary>
+        public static readonly SurtrInterface IIterator;
+
+        /// <summary>
+        /// <c>IIterable&lt;T&gt;</c>: what a <c>for-in</c> over anything but a built-in collection
+        /// calls <c>iterate()</c> on.
+        /// </summary>
+        public static readonly SurtrInterface IIterable;
+
+        /// <summary><c>IComparable&lt;T&gt;</c>, which <c>&lt;=&gt;</c> lowers to for a user type.</summary>
+        public static readonly SurtrInterface IComparable;
+
+        /// <summary><c>IEquatable&lt;T&gt;</c>.</summary>
+        public static readonly SurtrInterface IEquatable;
+
+        /// <summary>
         /// The root of everything throwable. Carries a message, and is extendable from Surtr source.
         /// </summary>
         /// <remarks>
@@ -278,6 +295,14 @@ namespace Surtr.Runtime.BuiltIns
             SurtrStandardLibrary.DeclareMath(BuilderFor(Math, handles));
             SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
 
+            // Kept as fields because a compiler has to name them to lower `for-in` and `<=>`: those
+            // lowerings are calls through a contract's own slots, and looking one up by a mangled
+            // string at every emit site would put the arity convention in two places.
+            IIterator = Contract("IIterator", 1);
+            IIterable = Contract("IIterable", 1);
+            IComparable = Contract("IComparable", 1);
+            IEquatable = Contract("IEquatable", 1);
+
             // After the interfaces exist, because these declare that they satisfy them - the
             // handles would intern either way, but reading the declarations in dependency order is
             // what makes this constructor followable.
@@ -327,6 +352,13 @@ namespace Surtr.Runtime.BuiltIns
 
             Module.MarkLoaded();
         }
+
+        /// <summary>The contract just declared under <paramref name="name"/> and its arity.</summary>
+        private static SurtrInterface Contract(string name, int arity)
+            => Module.TryGetInterface(SurtrClassReference.MangleArity(name, arity), out var contract)
+                ? contract
+                // Qualified: this class declares a field of that name for the Surtr exception class.
+                : throw new System.InvalidOperationException($"The built-in module declares no '{name}' of arity {arity}.");
 
         private static SurtrClass Declare(string name, SurtrValueTypeCode typeCode, SurtrClassReference selfReference, bool isAbstract = false)
         {

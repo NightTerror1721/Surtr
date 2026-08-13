@@ -259,6 +259,17 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>Whether the compiler synthesised it, such as a property's backing field.</summary>
         public bool IsSynthetic { get; internal set; }
 
+        /// <summary>
+        /// The metadata this field was imported from, or <see langword="null"/> when source
+        /// declared it.
+        /// </summary>
+        /// <remarks>
+        /// The field counterpart of <see cref="MethodSymbol.ImportedFrom"/>, and kept for the same
+        /// reason: a read of an already-built module's static — an enum case, most often — has to
+        /// name a real <c>SurtrFieldInfo</c>, which the symbol alone cannot reconstruct.
+        /// </remarks>
+        public Runtime.Classes.SurtrFieldInfo? ImportedFrom { get; internal set; }
+
         /// <inheritdoc/>
         public override string ToDisplayString() => Name + ": " + Type.ToDisplayString();
     }

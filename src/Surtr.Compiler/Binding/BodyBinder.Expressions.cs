@@ -179,13 +179,29 @@ namespace Surtr.Compiler.Binding
 
         private BoundExpression? BindModuleMember(SyntaxNode syntax, string name)
         {
-            foreach (var field in _module.Fields)
+            // This module first, so a local declaration shadows an imported one rather than racing
+            // it — the same order the type scope already puts them in.
+            if (BindMemberOf(_module, syntax, name) is BoundExpression own)
+                return own;
+
+            foreach (var imported in _imported)
+            {
+                if (BindMemberOf(imported, syntax, name) is BoundExpression member)
+                    return member;
+            }
+
+            return null;
+        }
+
+        private static BoundExpression? BindMemberOf(ModuleSymbol module, SyntaxNode syntax, string name)
+        {
+            foreach (var field in module.Fields)
             {
                 if (string.Equals(field.Name, name, StringComparison.Ordinal))
                     return new BoundFieldExpression(syntax, null, field);
             }
 
-            foreach (var property in _module.Properties)
+            foreach (var property in module.Properties)
             {
                 if (string.Equals(property.Name, name, StringComparison.Ordinal))
                     return new BoundPropertyExpression(syntax, null, property);
@@ -204,7 +220,21 @@ namespace Surtr.Compiler.Binding
                     $"'{_method.Name}' is static, so there is no instance to read this member from.");
             }
 
-            return new BoundThisExpression(syntax, type, isSuper: false);
+            return This(syntax, type, isSuper: false);
+        }
+
+        /// <summary>
+        /// Builds a receiver read, noting it when it happens inside a lambda.
+        /// </summary>
+        /// <remarks>
+        /// Every <c>this</c> goes through here so the note cannot be forgotten at one of the sites
+        /// that build one implicitly. Erring towards noting costs an unread upvalue; erring the
+        /// other way loses the receiver a lifted body needs.
+        /// </remarks>
+        private BoundThisExpression This(SyntaxNode syntax, TypeSymbol type, bool isSuper)
+        {
+            _capturedReceiver |= _lambdaBoundary is not null;
+            return new BoundThisExpression(syntax, type, isSuper);
         }
 
         private BoundExpression BindThis(ExpressionSyntax syntax, bool isSuper)
@@ -218,7 +248,7 @@ namespace Surtr.Compiler.Binding
             }
 
             if (!isSuper)
-                return new BoundThisExpression(syntax, _containingType, isSuper: false);
+                return This(syntax, _containingType, isSuper: false);
 
             if (_containingType.BaseType is not NamedTypeSymbol baseType)
             {
@@ -228,7 +258,7 @@ namespace Surtr.Compiler.Binding
                     $"'{_containingType.Name}' has no base class, so 'super' names nothing.");
             }
 
-            return new BoundThisExpression(syntax, baseType, isSuper: true);
+            return This(syntax, baseType, isSuper: true);
         }
 
         private BoundExpression BindMemberAccess(MemberAccessExpressionSyntax syntax)
@@ -291,8 +321,13 @@ namespace Surtr.Compiler.Binding
             if (syntax.Operator == BinaryOperator.NullCoalesce)
                 return BindNullCoalesce(syntax, expected);
 
+            // `x == null` types the literal from the other side, which is the one context a null
+            // has here — and without it the comparison would be against the error type.
             var left = BindExpression(syntax.Left);
-            var right = BindExpression(syntax.Right);
+            var right = BindExpression(syntax.Right, IsNullLiteral(syntax.Right) ? left.Type.Nullable : null);
+
+            if (IsNullLiteral(syntax.Left) && !right.Type.IsError)
+                left = BindExpression(syntax.Left, right.Type.Nullable);
 
             if (left.Type.IsError || right.Type.IsError)
                 return Error(syntax);
@@ -629,7 +664,7 @@ namespace Surtr.Compiler.Binding
                 return Error(syntax);
             }
 
-            if (!target.IsAssignable)
+            if (!target.IsAssignable && !IsInitialisingWrite(target))
             {
                 BindExpression(syntax.Value);
                 return Error(
@@ -667,6 +702,27 @@ namespace Surtr.Compiler.Binding
 
             var combined = new BoundBinaryExpression(syntax, @operator, left, right, result);
             return new BoundAssignmentExpression(syntax, target, Convert(combined, target.Type, syntax.Span));
+        }
+
+        /// <summary>
+        /// Whether a write to a <c>let</c> field is the one that gives it its value.
+        /// </summary>
+        /// <remarks>
+        /// §3.2 makes a <c>let</c> field write-once rather than never-written: it is assigned either
+        /// by an initializer or by a constructor, and a value class has no other way to be built at
+        /// all. What makes it safe is that the receiver has to be the instance being constructed —
+        /// a constructor writing <em>another</em> object's <c>let</c> is the case this excludes.
+        /// </remarks>
+        private bool IsInitialisingWrite(BoundExpression target)
+        {
+            if (_method.Role != MethodRole.Constructor
+                || target is not BoundFieldExpression { Field.IsReadOnly: true, Field.IsStatic: false } field)
+            {
+                return false;
+            }
+
+            return field.Receiver is BoundThisExpression { IsSuper: false }
+                && ReferenceEquals(field.Field.ContainingSymbol, _containingType);
         }
 
         private static BinaryOperator Expand(AssignmentOperator @operator) => @operator switch
@@ -707,7 +763,7 @@ namespace Surtr.Compiler.Binding
                         return BindClosureInvocation(syntax, BindExpression(syntax.Callee));
 
                     receiver = _containingType is not null && !_method.IsStatic
-                        ? new BoundThisExpression(syntax, _containingType, isSuper: false)
+                        ? This(syntax, _containingType, isSuper: false)
                         : null;
 
                     break;
@@ -737,10 +793,13 @@ namespace Surtr.Compiler.Binding
             if (owner is not null && _lookup.FindMethods(owner, name).Count > 0)
                 return BindMethodCall(syntax, receiver, owner, name, isVirtual);
 
-            foreach (var candidate in _module.Methods)
+            if (DeclaresMethod(_module, name))
+                return BindModuleCall(syntax, _module, name);
+
+            foreach (var imported in _imported)
             {
-                if (string.Equals(candidate.Name, name, StringComparison.Ordinal))
-                    return BindModuleCall(syntax, name);
+                if (DeclaresMethod(imported, name))
+                    return BindModuleCall(syntax, imported, name);
             }
 
             return Error(
@@ -760,10 +819,21 @@ namespace Surtr.Compiler.Binding
             return Complete(syntax, receiver, candidates, name, isVirtual);
         }
 
-        private BoundExpression BindModuleCall(CallExpressionSyntax syntax, string name)
+        private static bool DeclaresMethod(ModuleSymbol module, string name)
+        {
+            foreach (var method in module.Methods)
+            {
+                if (string.Equals(method.Name, name, StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private BoundExpression BindModuleCall(CallExpressionSyntax syntax, ModuleSymbol module, string name)
         {
             var candidates = new List<MethodSymbol>();
-            foreach (var method in _module.Methods)
+            foreach (var method in module.Methods)
             {
                 if (string.Equals(method.Name, name, StringComparison.Ordinal))
                     candidates.Add(method);
@@ -812,7 +882,7 @@ namespace Surtr.Compiler.Binding
             }
 
             var method = result.Method!;
-            var ordered = OrderArguments(syntax, method, arguments);
+            var ordered = OrderArguments(syntax, syntax.Arguments, method, arguments);
 
             // A call on a sealed type or through `super` can be bound directly, which is the
             // devirtualisation §2.2 calls out as a static fact rather than a guess.
@@ -831,7 +901,8 @@ namespace Surtr.Compiler.Binding
         /// reads a call, its arguments line up with its parameters one for one.
         /// </remarks>
         private IReadOnlyList<BoundExpression> OrderArguments(
-            CallExpressionSyntax syntax,
+            SyntaxNode syntax,
+            IReadOnlyList<ArgumentSyntax> written,
             MethodSymbol method,
             IReadOnlyList<BoundExpression> arguments)
         {
@@ -852,7 +923,7 @@ namespace Surtr.Compiler.Binding
             int positional = 0;
             for (int i = 0; i < arguments.Count; i++)
             {
-                string? name = syntax.Arguments[i].Name;
+                string? name = written[i].Name;
 
                 if (name is not null)
                 {
@@ -860,7 +931,7 @@ namespace Surtr.Compiler.Binding
                     {
                         if (string.Equals(parameters[p].Name, name, StringComparison.Ordinal))
                         {
-                            ordered[p] = Convert(arguments[i], parameters[p].Type, syntax.Arguments[i].Span);
+                            ordered[p] = Convert(arguments[i], parameters[p].Type, written[i].Span);
                             break;
                         }
                     }
@@ -878,17 +949,17 @@ namespace Surtr.Compiler.Binding
                         && arguments.Count - i == 1
                         && _conversions.IsAssignable(arguments[i].Type, vararg.Type))
                     {
-                        ordered[varargIndex] = Convert(arguments[i], vararg.Type, syntax.Arguments[i].Span);
+                        ordered[varargIndex] = Convert(arguments[i], vararg.Type, written[i].Span);
                         continue;
                     }
 
                     var element = ((ArrayTypeSymbol)vararg.Type).ElementType;
-                    varargs.Add(Convert(arguments[i], element, syntax.Arguments[i].Span));
+                    varargs.Add(Convert(arguments[i], element, written[i].Span));
                     continue;
                 }
 
                 if (target < parameters.Count)
-                    ordered[target] = Convert(arguments[i], parameters[target].Type, syntax.Arguments[i].Span);
+                    ordered[target] = Convert(arguments[i], parameters[target].Type, written[i].Span);
             }
 
             if (varargIndex >= 0 && ordered[varargIndex] is null)
@@ -909,6 +980,20 @@ namespace Surtr.Compiler.Binding
         }
 
         private BoundExpression BindObjectCreation(CallExpressionSyntax syntax, NamedTypeSymbol type)
+            => BindObjectCreation(syntax, syntax.Arguments, type);
+
+        /// <summary>
+        /// Binds a construction from an argument list rather than from a call.
+        /// </summary>
+        /// <remarks>
+        /// The list is a parameter because an enum case is a construction too (§2.4) and is written
+        /// with no callee at all — <c>Hearts(1)</c> names its own enum, which nothing in the source
+        /// repeats.
+        /// </remarks>
+        private BoundExpression BindObjectCreation(
+            SyntaxNode syntax,
+            IReadOnlyList<ArgumentSyntax> written,
+            NamedTypeSymbol type)
         {
             if (type.IsAbstract)
             {
@@ -918,13 +1003,13 @@ namespace Surtr.Compiler.Binding
                     $"'{type.Name}' is abstract and cannot be constructed.");
             }
 
-            var arguments = new BoundExpression[syntax.Arguments.Count];
-            var infos = new ArgumentInfo[syntax.Arguments.Count];
+            var arguments = new BoundExpression[written.Count];
+            var infos = new ArgumentInfo[written.Count];
 
             for (int i = 0; i < arguments.Length; i++)
             {
-                arguments[i] = BindExpression(syntax.Arguments[i].Value);
-                infos[i] = new ArgumentInfo(arguments[i].Type, syntax.Arguments[i].Name);
+                arguments[i] = BindExpression(written[i].Value);
+                infos[i] = new ArgumentInfo(arguments[i].Type, written[i].Name);
             }
 
             var constructors = new List<MethodSymbol>();
@@ -955,7 +1040,7 @@ namespace Surtr.Compiler.Binding
             }
 
             return new BoundObjectCreationExpression(
-                syntax, type, result.Method, OrderArguments(syntax, result.Method!, arguments));
+                syntax, type, result.Method, OrderArguments(syntax, written, result.Method!, arguments));
         }
 
         private BoundExpression BindClosureInvocation(CallExpressionSyntax syntax, BoundExpression callee)
@@ -1009,6 +1094,9 @@ namespace Surtr.Compiler.Binding
 
                 case NamedTypeSymbol named when named.SpecialType == SpecialType.String:
                     return new BoundIndexExpression(syntax, target, Convert(index, _factory.Int, syntax.Index.Span), _factory.Char);
+
+                case TupleTypeSymbol tuple:
+                    return BindTupleIndex(syntax, target, index, tuple);
             }
 
             // Anything else has to declare `operator[]`.
@@ -1029,6 +1117,40 @@ namespace Surtr.Compiler.Binding
                 syntax,
                 SurtrDiagnosticCode.NotSupportedOnType,
                 $"'{target.Type.ToDisplayString()}' cannot be indexed.");
+        }
+
+        /// <summary>
+        /// Binds <c>t[0]</c>, whose index is part of the type rather than a value (§5.5).
+        /// </summary>
+        /// <remarks>
+        /// A tuple's element type varies per index, so nothing could type <c>t[i]</c> for a running
+        /// <c>i</c> — which is exactly why <c>tuple</c> declares no generic parameter and no
+        /// <c>get(index)</c>. The index therefore has to fold here, and <c>TupGet</c> carries it as
+        /// an immediate.
+        /// </remarks>
+        private BoundExpression BindTupleIndex(
+            IndexExpressionSyntax syntax,
+            BoundExpression target,
+            BoundExpression index,
+            TupleTypeSymbol tuple)
+        {
+            if (Unwrap(index) is not BoundLiteralExpression { Value: long ordinal })
+            {
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.InvalidTupleIndex,
+                    $"'{tuple.ToDisplayString()}' holds a different type at each position, so it can only be indexed by a constant.");
+            }
+
+            if (ordinal < 0 || ordinal >= tuple.ElementTypes.Count)
+            {
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.InvalidTupleIndex,
+                    $"'{tuple.ToDisplayString()}' has {tuple.ElementTypes.Count} element(s), so {ordinal} names none of them.");
+            }
+
+            return new BoundIndexExpression(syntax, target, index, tuple.ElementTypes[(int)ordinal]);
         }
 
         private BoundExpression BindCast(CastExpressionSyntax syntax)
@@ -1339,10 +1461,12 @@ namespace Surtr.Compiler.Binding
             var outerValues = _values;
             var outerCaptures = _captures;
             var outerBoundary = _lambdaBoundary;
+            bool outerCapturedReceiver = _capturedReceiver;
 
             _values = _values.CreateChild();
             _lambdaBoundary = _values;
             _captures = new List<Symbol>();
+            _capturedReceiver = false;
 
             foreach (var parameter in parameters)
                 _values.TryDeclare(parameter.Name, parameter);
@@ -1368,17 +1492,22 @@ namespace Surtr.Compiler.Binding
             }
 
             var captured = _captures;
+            bool capturesReceiver = _capturedReceiver;
 
             _values = outerValues;
             _captures = outerCaptures;
             _lambdaBoundary = outerBoundary;
+
+            // A lambda nested inside another one reading `this` makes the outer one capture it too:
+            // the inner one can only get it from somewhere, and its only source is the outer body.
+            _capturedReceiver = outerCapturedReceiver || (capturesReceiver && outerBoundary is not null);
 
             var parameterTypes = new TypeSymbol[parameters.Length];
             for (int i = 0; i < parameters.Length; i++)
                 parameterTypes[i] = parameters[i].Type;
 
             return new BoundLambdaExpression(
-                syntax, _factory.Closure(parameterTypes, returnType), parameters, body, captured);
+                syntax, _factory.Closure(parameterTypes, returnType), parameters, body, captured, capturesReceiver);
         }
         #endregion
     }

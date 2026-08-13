@@ -62,6 +62,35 @@ namespace Surtr.Compiler.Binding
         /// <summary>The factory every imported type is interned through.</summary>
         public TypeSymbolFactory Factory => _factory;
 
+        /// <summary>
+        /// The one class behind every array parameterisation, which is where an array's members
+        /// live.
+        /// </summary>
+        /// <remarks>
+        /// The binder's <c>int[]</c> is an <see cref="ArrayTypeSymbol"/> and carries no members of
+        /// its own, deliberately: <c>AI</c> and <c>AS</c> resolve to one
+        /// <c>SurtrBuiltIns.Array</c>, so one symbol has to hold what they share.
+        /// <see cref="MemberLookup"/> pairs the two by constructing this with the element type.
+        /// </remarks>
+        public NamedTypeSymbol ArrayType => _arrayType ??= Import(SurtrBuiltIns.Array);
+
+        /// <summary>The one class behind every dictionary parameterisation.</summary>
+        public NamedTypeSymbol DictionaryType => _dictionaryType ??= Import(SurtrBuiltIns.Dictionary);
+
+        /// <summary>
+        /// The class behind every tuple, which declares no parameters — a tuple's element type
+        /// varies per index, so no fixed parameter could name what it holds.
+        /// </summary>
+        public NamedTypeSymbol TupleType => _tupleType ??= Import(SurtrBuiltIns.Tuple);
+
+        /// <summary>The class behind every closure, which declares no parameters for the same reason.</summary>
+        public NamedTypeSymbol ClosureType => _closureType ??= Import(SurtrBuiltIns.Closure);
+
+        private NamedTypeSymbol? _arrayType;
+        private NamedTypeSymbol? _dictionaryType;
+        private NamedTypeSymbol? _tupleType;
+        private NamedTypeSymbol? _closureType;
+
         /// <summary>Makes a module's types available to resolve against.</summary>
         public void AddModule(SurtrModule module)
         {
@@ -119,7 +148,10 @@ namespace Surtr.Compiler.Binding
             // reported as an ambiguous name at every use.
             if (TryImportScalarBuiltIn(type, out var wellKnown))
             {
+                // Cached before its members are read, for the same reason every other type is: the
+                // signature of `int.toString()` mentions `string`, which mentions `int` again.
                 _types.Add(type, wellKnown);
+                Complete(wellKnown, type);
                 return wellKnown;
             }
 
@@ -296,10 +328,20 @@ namespace Surtr.Compiler.Binding
         /// Maps a built-in class whose descriptor is a single symbol onto the factory's own.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// Only the scalar ones. <c>array</c>, <c>dict</c>, <c>tuple</c> and <c>closure</c> carry a
         /// bare family symbol as their self reference — deliberately not a well-formed descriptor,
         /// since one class covers every parameterisation — so they import as ordinary named types
         /// and keep somewhere for their members to live.
+        /// </para>
+        /// <para>
+        /// The symbol comes back from the factory rather than being declared here because
+        /// <c>int</c> has to be <em>one</em> symbol: a second would compare unequal to the first,
+        /// and since §13 puts the whole <c>surtr</c> module in scope implicitly, the two would then
+        /// be reported as an ambiguous name at every use. Its members are still imported onto it —
+        /// everything in Surtr is an object, so <c>string</c> without <c>length</c> would be a hole
+        /// in the language rather than an optimisation.
+        /// </para>
         /// </remarks>
         private bool TryImportScalarBuiltIn(SurtrTypeInfo type, out NamedTypeSymbol wellKnown)
         {
@@ -346,6 +388,14 @@ namespace Surtr.Compiler.Binding
             {
                 SurtrClassReference.TrySplitFullName(fullName, out string modulePath, out _);
                 containingModule = ModuleSymbolFor(modulePath);
+            }
+            else
+            {
+                // `array`, `dict`, `tuple` and `closure` name themselves with a bare family symbol,
+                // which carries no module path — deliberately, since one class covers every
+                // parameterisation. They are built-ins, so that is the module they belong to, and
+                // saying so is what keeps their members reachable through the standard-library rule.
+                containingModule = ModuleSymbolFor(SurtrBuiltIns.ModulePath);
             }
 
             // The metadata name carries the arity; the symbol keeps the two apart, so strip it back
@@ -459,6 +509,7 @@ namespace Surtr.Compiler.Binding
                     IsStatic = field.IsStatic,
                     IsReadOnly = field.IsReadOnly,
                     Accessibility = Translate(field.Visibility),
+                    ImportedFrom = field,
                 });
             }
 

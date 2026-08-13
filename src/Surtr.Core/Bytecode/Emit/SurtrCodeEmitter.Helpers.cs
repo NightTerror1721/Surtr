@@ -619,6 +619,27 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter CallSpecial(SurtrMethodInfo callee, bool discardResult = false)
             => InvokeSpecial(_module.Method(RequireInstance(callee)), callee.ParameterCount + 1, ResultsFor(callee, discardResult));
 
+        /// <summary>
+        /// Calls a method declared on this builder without virtual dispatch.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="Call(SurtrMethodBuilder, bool)"/> takes the dispatch from the callee, which is
+        /// right for an ordinary call and wrong for the one case where the <em>call site</em>
+        /// decides: a <c>super</c> call names a virtual method and must not go through the vtable,
+        /// or an override calling its base would call itself.
+        /// </remarks>
+        public SurtrCodeEmitter CallSpecial(SurtrMethodBuilder callee, bool discardResult = false)
+        {
+            if (callee is null)
+                throw new ArgumentNullException(nameof(callee));
+
+            if (callee.IsStatic || callee.IsModuleLevel)
+                throw new ArgumentException($"'{callee.Name}' is static or module-level and has no receiver to dispatch on.", nameof(callee));
+
+            int results = discardResult || callee.ReturnTypeReference.TypeCode.IsVoid ? 0 : 1;
+            return InvokeSpecial(callee.Token, callee.ArgumentSlotCount, results);
+        }
+
         /// <summary>Calls a method through an interface contract.</summary>
         public SurtrCodeEmitter CallInterface(SurtrMethodInfo callee, bool discardResult = false)
             => InvokeInterface(_module.Method(RequireInstance(callee)), callee.ParameterCount + 1, ResultsFor(callee, discardResult));

@@ -46,7 +46,12 @@ namespace Surtr.Compiler.Binding
         private readonly Dictionary<string, Scope> _moduleScopes = new Dictionary<string, Scope>(StringComparer.Ordinal);
         private readonly Dictionary<string, Scope> _importScopes = new Dictionary<string, Scope>(StringComparer.Ordinal);
 
+        private readonly Dictionary<string, List<ModuleSymbol>> _importedModules =
+            new Dictionary<string, List<ModuleSymbol>>(StringComparer.Ordinal);
+
         private readonly List<BodyBinding> _bodies = new List<BodyBinding>();
+        private readonly List<InitializerBinding> _initializers = new List<InitializerBinding>();
+        private readonly List<BoundFieldInitializer> _boundInitializers = new List<BoundFieldInitializer>();
 
         private readonly Dictionary<IReadOnlyList<DeclarationSyntax>, IReadOnlyList<DeclarationSyntax>> _flattened =
             new Dictionary<IReadOnlyList<DeclarationSyntax>, IReadOnlyList<DeclarationSyntax>>(ByReference.Instance);
@@ -82,8 +87,8 @@ namespace Surtr.Compiler.Binding
             _diagnostics = compilation.Diagnostics;
             _factory = compilation.TypeFactory;
             _resolver = new TypeResolver(_factory, compilation.Importer, _diagnostics);
-            Conversions = new Conversions(_factory);
-            MemberLookup = new MemberLookup(_factory);
+            MemberLookup = new MemberLookup(_factory, compilation.Importer);
+            Conversions = new Conversions(_factory, MemberLookup);
             OverloadResolution = new OverloadResolution(Conversions);
             Constants = new ConstantEvaluator(compilation.Project.BuildConstants);
         }
@@ -108,6 +113,12 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>The bodies bound so far, by the method each belongs to.</summary>
         public IReadOnlyDictionary<MethodSymbol, BoundStatement> Bodies => _bound;
+
+        /// <summary>
+        /// Every field initializer and enum case, in declaration order — which is the order they
+        /// run in.
+        /// </summary>
+        public IReadOnlyList<BoundFieldInitializer> FieldInitializers => _boundInitializers;
 
         /// <summary>The modules this compilation declares, by path.</summary>
         public IReadOnlyDictionary<string, ModuleSymbol> Modules => _modules;
@@ -435,6 +446,8 @@ namespace Surtr.Compiler.Binding
         private void BindImports(SurtrSourceModule sourceModule)
         {
             var scope = _importScopes[sourceModule.Path];
+            var imported = new List<ModuleSymbol>();
+            _importedModules.Add(sourceModule.Path, imported);
 
             foreach (var unit in sourceModule.Units)
             {
@@ -446,6 +459,11 @@ namespace Surtr.Compiler.Binding
                         {
                             foreach (var type in module.Types)
                                 scope.AddCandidate(type.Name, type);
+
+                            // §2.5 makes a module a container of members, so a wildcard import
+                            // brings its functions and variables in too — not only its types.
+                            if (!imported.Contains(module))
+                                imported.Add(module);
                         }
 
                         continue;
@@ -466,6 +484,12 @@ namespace Surtr.Compiler.Binding
                 }
             }
         }
+
+        /// <summary>The modules a wildcard import brought into scope, whose members are reachable unqualified.</summary>
+        private IReadOnlyList<ModuleSymbol> ImportedBy(ModuleSymbol module)
+            => _importedModules.TryGetValue(module.Path, out var imported)
+                ? imported
+                : (IReadOnlyList<ModuleSymbol>)Array.Empty<ModuleSymbol>();
 
         private bool TryGetModuleSymbol(string modulePath, out ModuleSymbol module)
             => _modules.TryGetValue(modulePath, out module!)
@@ -691,12 +715,19 @@ namespace Surtr.Compiler.Binding
 
             foreach (var enumCase in syntax.EnumCases)
             {
-                members.Add(new FieldSymbol(enumCase.Name, symbol, symbol)
+                var field = new FieldSymbol(enumCase.Name, symbol, symbol)
                 {
                     IsStatic = true,
                     IsReadOnly = true,
                     Accessibility = Accessibility.Public,
-                });
+                };
+
+                members.Add(field);
+
+                // A case is a static holding one instance the enum's own initializer builds, so it
+                // is an initializer like any other — with a construction on the right.
+                _initializers.Add(new InitializerBinding(
+                    field, null, enumCase, binding.Scope, binding.Module, symbol, binding.SourceName));
 
                 if (!names.Add(enumCase.Name))
                     Duplicate(binding, enumCase.Span, enumCase.Name);
@@ -829,8 +860,48 @@ namespace Surtr.Compiler.Binding
             foreach (var body in _bodies)
                 BindOne(body);
 
+            // After the bodies, because an initializer may call a const fun and folding one needs
+            // the folder — which the round above is what builds.
+            foreach (var initializer in _initializers)
+                BindInitializer(initializer);
+
             VerifyConstantDeclarations();
             return _bound;
+        }
+
+        /// <summary>Binds one field initializer or enum case, in a scope that is its declaration's.</summary>
+        private void BindInitializer(InitializerBinding initializer)
+        {
+            var owner = new MethodSymbol(
+                initializer.Field.Name,
+                (Symbol?)initializer.ContainingType ?? initializer.Module,
+                initializer.Field.Type)
+            {
+                // A static initializer has no receiver, so a `this` in one has to be reported
+                // rather than silently bound against nothing.
+                IsStatic = initializer.Field.IsStatic,
+            };
+
+            var binder = new BodyBinder(
+                _factory,
+                _resolver,
+                Conversions,
+                MemberLookup,
+                OverloadResolution,
+                Constants,
+                _diagnostics,
+                initializer.SourceName,
+                initializer.Scope,
+                initializer.Module,
+                initializer.ContainingType,
+                owner,
+                ImportedBy(initializer.Module));
+
+            var value = initializer.EnumCase is EnumCaseSyntax enumCase
+                ? binder.BindEnumCase(enumCase, initializer.ContainingType!)
+                : binder.BindInitializer(initializer.Syntax!, initializer.Field.Type);
+
+            _boundInitializers.Add(new BoundFieldInitializer(initializer.Field, value, initializer.ContainingType));
         }
 
         private void BindOne(BodyBinding body)
@@ -850,7 +921,8 @@ namespace Surtr.Compiler.Binding
                 body.Scope,
                 body.Module,
                 body.ContainingType,
-                body.Method);
+                body.Method,
+                ImportedBy(body.Module));
 
             var bound = binder.BindBody(body.Syntax);
             _bound.Add(body.Method, bound);
@@ -989,20 +1061,37 @@ namespace Surtr.Compiler.Binding
 
         #region Member binding
         private FieldSymbol BindField(FieldDeclarationSyntax syntax, NamedTypeSymbol owner, TypeBinding binding)
-            => new FieldSymbol(syntax.Name, owner, ResolveOrInfer(syntax.Type, binding.Scope, binding.SourceName))
+        {
+            var field = new FieldSymbol(syntax.Name, owner, ResolveOrInfer(syntax.Type, binding.Scope, binding.SourceName))
             {
                 IsStatic = syntax.IsStatic,
                 IsReadOnly = !syntax.IsMutable,
                 Accessibility = Translate(syntax.Visibility, Accessibility.Private),
             };
 
+            if (syntax.Initializer is not null)
+            {
+                _initializers.Add(new InitializerBinding(
+                    field, syntax.Initializer, null, binding.Scope, binding.Module, owner, binding.SourceName));
+            }
+
+            return field;
+        }
+
         private FieldSymbol BindModuleField(FieldDeclarationSyntax syntax, ModuleSymbol owner, Scope scope, string sourceName)
-            => new FieldSymbol(syntax.Name, owner, ResolveOrInfer(syntax.Type, scope, sourceName))
+        {
+            var field = new FieldSymbol(syntax.Name, owner, ResolveOrInfer(syntax.Type, scope, sourceName))
             {
                 IsStatic = true,
                 IsReadOnly = !syntax.IsMutable,
                 Accessibility = Translate(syntax.Visibility, Accessibility.Internal),
             };
+
+            if (syntax.Initializer is not null)
+                _initializers.Add(new InitializerBinding(field, syntax.Initializer, null, scope, owner, null, sourceName));
+
+            return field;
+        }
 
         private PropertySymbol BindProperty(
             PropertyDeclarationSyntax syntax,
@@ -1019,7 +1108,10 @@ namespace Surtr.Compiler.Binding
                 Accessibility = accessibility,
             };
 
-            WireAccessors(property, syntax.Accessors, owner, syntax.Dispatch, isInterface, accessibility);
+            WireAccessors(
+                property, syntax.Accessors, owner, syntax.Dispatch, isInterface, accessibility,
+                binding.Scope, binding.Module, owner, binding.SourceName);
+
             return property;
         }
 
@@ -1035,7 +1127,10 @@ namespace Surtr.Compiler.Binding
                 Accessibility = Translate(syntax.Visibility, Accessibility.Internal),
             };
 
-            WireAccessors(property, syntax.Accessors, owner, DispatchModifier.None, isInterface: false, property.Accessibility);
+            WireAccessors(
+                property, syntax.Accessors, owner, DispatchModifier.None, isInterface: false, property.Accessibility,
+                scope, owner, containingType: null, sourceName);
+
             return property;
         }
 
@@ -1053,22 +1148,28 @@ namespace Surtr.Compiler.Binding
             Symbol owner,
             DispatchModifier dispatch,
             bool isInterface,
-            Accessibility accessibility)
+            Accessibility accessibility,
+            Scope scope,
+            ModuleSymbol module,
+            NamedTypeSymbol? containingType,
+            string sourceName)
         {
-            bool hasGetter = accessors.Count == 0;
-            bool hasSetter = false;
+            // A property written bare is `get` alone, and an auto-property either way: an accessor
+            // with no body is one code generation synthesises against a backing field.
+            AccessorSyntax? getter = accessors.Count == 0 ? new AccessorSyntax(default, true, null) : null;
+            AccessorSyntax? setter = null;
 
             for (int i = 0; i < accessors.Count; i++)
             {
                 if (accessors[i].IsGetter)
-                    hasGetter = true;
+                    getter = accessors[i];
                 else
-                    hasSetter = true;
+                    setter = accessors[i];
             }
 
-            if (hasGetter)
+            if (getter is not null)
             {
-                property.Getter = new MethodSymbol(MemberNames.Getter(property.Name), owner, property.Type)
+                var bound = new MethodSymbol(MemberNames.Getter(property.Name), owner, property.Type)
                 {
                     IsStatic = property.IsStatic,
                     Accessibility = accessibility,
@@ -1076,11 +1177,14 @@ namespace Surtr.Compiler.Binding
                     Dispatch = TranslateDispatch(dispatch, isInterface),
                     IsOverride = dispatch == DispatchModifier.Override,
                 };
+
+                RecordBody(bound, getter.Body, scope, module, containingType, sourceName);
+                property.Getter = bound;
             }
 
-            if (hasSetter)
+            if (setter is not null)
             {
-                var setter = new MethodSymbol(MemberNames.Setter(property.Name), owner, _factory.Void)
+                var bound = new MethodSymbol(MemberNames.Setter(property.Name), owner, _factory.Void)
                 {
                     IsStatic = property.IsStatic,
                     Accessibility = accessibility,
@@ -1089,8 +1193,9 @@ namespace Surtr.Compiler.Binding
                     IsOverride = dispatch == DispatchModifier.Override,
                 };
 
-                setter.Parameters = new[] { new ParameterSymbol("value", property.Type, 0, setter) };
-                property.Setter = setter;
+                bound.Parameters = new[] { new ParameterSymbol("value", property.Type, 0, bound) };
+                RecordBody(bound, setter.Body, scope, module, containingType, sourceName);
+                property.Setter = bound;
             }
         }
 
@@ -1339,6 +1444,44 @@ namespace Surtr.Compiler.Binding
             public string Name { get; }
 
             public ExpressionSyntax Initializer { get; }
+
+            public string SourceName { get; }
+        }
+
+        /// <summary>One field initializer or enum case, kept until phase 3 can bind it.</summary>
+        private readonly struct InitializerBinding
+        {
+            public InitializerBinding(
+                FieldSymbol field,
+                ExpressionSyntax? syntax,
+                EnumCaseSyntax? enumCase,
+                Scope scope,
+                ModuleSymbol module,
+                NamedTypeSymbol? containingType,
+                string sourceName)
+            {
+                Field = field;
+                Syntax = syntax;
+                EnumCase = enumCase;
+                Scope = scope;
+                Module = module;
+                ContainingType = containingType;
+                SourceName = sourceName;
+            }
+
+            public FieldSymbol Field { get; }
+
+            /// <summary>The written initializer, for an ordinary field.</summary>
+            public ExpressionSyntax? Syntax { get; }
+
+            /// <summary>The case, for an enum — which has arguments rather than an expression.</summary>
+            public EnumCaseSyntax? EnumCase { get; }
+
+            public Scope Scope { get; }
+
+            public ModuleSymbol Module { get; }
+
+            public NamedTypeSymbol? ContainingType { get; }
 
             public string SourceName { get; }
         }

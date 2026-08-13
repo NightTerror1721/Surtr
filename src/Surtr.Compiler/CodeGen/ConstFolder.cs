@@ -219,10 +219,15 @@ namespace Surtr.Compiler.CodeGen
             while (true)
             {
                 var builder = new SurtrModuleBuilder(ModulePath);
+                var context = new EmitContext(builder, _descriptors);
                 var declared = new Dictionary<MethodSymbol, SurtrMethodBuilder>();
 
                 for (int i = 0; i < candidates.Count; i++)
-                    declared.Add(candidates[i], Declare(builder, candidates[i], i));
+                {
+                    var function = Declare(builder, candidates[i], i);
+                    declared.Add(candidates[i], function);
+                    context.Declare(candidates[i], function);
+                }
 
                 var dropped = new List<MethodSymbol>();
 
@@ -230,8 +235,7 @@ namespace Surtr.Compiler.CodeGen
                 {
                     try
                     {
-                        new MethodBodyEmitter(declared[candidate], candidate, _descriptors, declared)
-                            .Emit(_bodies[candidate]);
+                        new MethodBodyEmitter(declared[candidate], candidate, context).Emit(_bodies[candidate]);
                     }
                     catch (Exception exception) when (exception is SurtrCompilerException or InvalidOperationException)
                     {

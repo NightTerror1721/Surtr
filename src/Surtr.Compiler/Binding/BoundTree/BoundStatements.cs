@@ -275,6 +275,40 @@ namespace Surtr.Compiler.Binding.BoundTree
         public string? Label { get; }
     }
 
+    /// <summary>One field's initial value, bound but not attached to any body.</summary>
+    /// <remarks>
+    /// <para>
+    /// An initializer is not a statement in a method — it is written on the declaration — but it
+    /// runs, and where it runs depends on what the field is: a static one from its declaring type's
+    /// initializer, an instance one from the top of every constructor, and an enum case from the
+    /// enum's own initializer. Keeping them in a list of their own rather than splicing them into a
+    /// body during binding is what lets code generation decide that, which is where the decision
+    /// belongs.
+    /// </para>
+    /// <para>
+    /// An enum case is one of these too: <see cref="Value"/> is the construction and
+    /// <see cref="Field"/> is the static that holds it, which is exactly what §2.4 says a case is.
+    /// </para>
+    /// </remarks>
+    public sealed class BoundFieldInitializer
+    {
+        internal BoundFieldInitializer(FieldSymbol field, BoundExpression value, NamedTypeSymbol? declaringType)
+        {
+            Field = field;
+            Value = value;
+            DeclaringType = declaringType;
+        }
+
+        /// <summary>The field being given a value.</summary>
+        public FieldSymbol Field { get; }
+
+        /// <summary>What it is set to.</summary>
+        public BoundExpression Value { get; }
+
+        /// <summary>The type declaring it, or <see langword="null"/> for a module-level variable.</summary>
+        public NamedTypeSymbol? DeclaringType { get; }
+    }
+
     /// <summary>A labelled statement, which a <c>break</c> or <c>continue</c> may name.</summary>
     public sealed class BoundLabeledStatement : BoundStatement
     {

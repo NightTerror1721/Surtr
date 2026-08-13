@@ -49,6 +49,10 @@ namespace Surtr.Compiler.Binding
         private readonly ModuleSymbol _module;
         private readonly MethodSymbol _method;
 
+        // Modules a wildcard import brought in. §2.5 makes a module a container of members, so its
+        // functions and variables are in scope unqualified exactly as its types are.
+        private readonly IReadOnlyList<ModuleSymbol> _imported;
+
         private readonly HashSet<Symbol> _narrowed = new HashSet<Symbol>();
 
         private Scope _values;
@@ -59,6 +63,11 @@ namespace Surtr.Compiler.Binding
         // capture, and §8 allows a capture only of something that is never reassigned.
         private List<Symbol>? _captures;
         private Scope? _lambdaBoundary;
+
+        // `this` is not a symbol, so it cannot live in _captures - but a lifted lambda body is a
+        // static function, so reading the enclosing instance from inside one still has to become an
+        // upvalue. This is the flag that says so.
+        private bool _capturedReceiver;
 
         internal BodyBinder(
             TypeSymbolFactory factory,
@@ -72,8 +81,10 @@ namespace Surtr.Compiler.Binding
             Scope typeScope,
             ModuleSymbol module,
             NamedTypeSymbol? containingType,
-            MethodSymbol method)
+            MethodSymbol method,
+            IReadOnlyList<ModuleSymbol>? imported = null)
         {
+            _imported = imported ?? Array.Empty<ModuleSymbol>();
             _factory = factory;
             _resolver = resolver;
             _conversions = conversions;
@@ -97,6 +108,22 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>Binds a whole body.</summary>
         public BoundBlockStatement BindBody(BlockStatementSyntax body) => (BoundBlockStatement)BindBlock(body);
+
+        /// <summary>
+        /// Binds a field's initializer against the field's own type.
+        /// </summary>
+        /// <remarks>
+        /// An initializer is not a body, but it is an expression in a member's scope and it runs —
+        /// a static one from the declaring type's initializer, an instance one from every
+        /// constructor. Binding it here rather than at emit is what puts its conversions in the
+        /// tree like everything else's.
+        /// </remarks>
+        public BoundExpression BindInitializer(ExpressionSyntax syntax, TypeSymbol declared)
+            => BindConverted(syntax, declared);
+
+        /// <summary>Binds one enum case as the construction it is (§2.4).</summary>
+        public BoundExpression BindEnumCase(EnumCaseSyntax syntax, NamedTypeSymbol @enum)
+            => BindObjectCreation(syntax, syntax.Arguments, @enum);
 
         #region Scopes and lookup
         private Scope PushScope()

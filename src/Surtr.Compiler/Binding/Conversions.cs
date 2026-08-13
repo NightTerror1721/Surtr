@@ -110,9 +110,20 @@ namespace Surtr.Compiler.Binding
     public sealed class Conversions
     {
         private readonly TypeSymbolFactory _factory;
+        private readonly MemberLookup? _lookup;
 
         /// <summary>Creates a classifier over one compilation's types.</summary>
-        public Conversions(TypeSymbolFactory factory) => _factory = factory;
+        /// <param name="factory">The factory every type is interned through.</param>
+        /// <param name="lookup">
+        /// What maps a composite onto the built-in class behind it, so <c>int[]</c> can be seen to
+        /// satisfy <c>IIterable&lt;int&gt;</c>. Optional, because the classifier is testable on its
+        /// own and every rule but that one is about named types already.
+        /// </param>
+        public Conversions(TypeSymbolFactory factory, MemberLookup? lookup = null)
+        {
+            _factory = factory;
+            _lookup = lookup;
+        }
 
         /// <summary>Whether a value of <paramref name="source"/> may be used where <paramref name="destination"/> is expected.</summary>
         public bool IsAssignable(TypeSymbol source, TypeSymbol destination)
@@ -160,12 +171,33 @@ namespace Surtr.Compiler.Binding
             if (ReferenceEquals(derived.NonNullable, baseType.NonNullable))
                 return true;
 
-            if (derived.NonNullable is not NamedTypeSymbol from || baseType.NonNullable is not NamedTypeSymbol to)
+            // A composite is not a NamedTypeSymbol and carries no interface list of its own, but the
+            // class behind it does — which is what makes `int[]` an `IIterable<int>` (§4.2).
+            if (Named(derived) is not NamedTypeSymbol from || baseType.NonNullable is not NamedTypeSymbol to)
                 return false;
 
             return WalkForBase(from, to, new HashSet<NamedTypeSymbol>());
         }
 
+        private NamedTypeSymbol? Named(TypeSymbol type)
+        {
+            if (type.NonNullable is NamedTypeSymbol named)
+                return named;
+
+            return _lookup?.BackingType(type);
+        }
+
+        /// <summary>
+        /// Whether <paramref name="to"/> is anywhere above <paramref name="from"/>, reading each
+        /// step as the construction below it makes it.
+        /// </summary>
+        /// <remarks>
+        /// The substitution is what makes this correct rather than nearly correct. A declaration
+        /// records that it satisfies <c>IIterable&lt;T&gt;</c> in terms of its <em>own</em>
+        /// parameter, so <c>array&lt;int&gt;</c> reaches <c>IIterable&lt;int&gt;</c> only once that
+        /// <c>T</c> has been replaced — and with generics invariant (§6), the unsubstituted symbol
+        /// would compare unequal and the answer would be a flat no.
+        /// </remarks>
         private bool WalkForBase(NamedTypeSymbol from, NamedTypeSymbol to, HashSet<NamedTypeSymbol> seen)
         {
             if (!seen.Add(from))
@@ -174,25 +206,21 @@ namespace Surtr.Compiler.Binding
             if (ReferenceEquals(from, to))
                 return true;
 
-            // A construction and its declaration are different symbols; invariance means only the
-            // construction matches, but the walk itself goes through declarations.
-            for (var walk = from; walk is not null; walk = walk.BaseType)
+            var substitution = from.SubstitutionFromArguments(_factory);
+
+            foreach (var contract in from.Interfaces)
             {
-                if (ReferenceEquals(walk, to))
+                if (WalkForBase(AsSeenFrom(contract, substitution), to, seen))
                     return true;
-
-                foreach (var contract in walk.Interfaces)
-                {
-                    if (WalkForBase(contract, to, seen))
-                        return true;
-                }
-
-                if (ReferenceEquals(walk.BaseType, walk))
-                    break;
             }
 
-            return false;
+            return from.BaseType is NamedTypeSymbol baseType
+                && !ReferenceEquals(baseType, from)
+                && WalkForBase(AsSeenFrom(baseType, substitution), to, seen);
         }
+
+        private static NamedTypeSymbol AsSeenFrom(NamedTypeSymbol type, TypeSubstitution substitution)
+            => substitution.IsEmpty ? type : (NamedTypeSymbol)type.Substitute(substitution);
 
         private Conversion ClassifyImplicit(TypeSymbol source, TypeSymbol destination)
         {
@@ -219,7 +247,7 @@ namespace Surtr.Compiler.Binding
             if (from.SpecialType == SpecialType.Int && to.SpecialType == SpecialType.Float)
                 return Conversion.Of(ConversionKind.ImplicitNumeric);
 
-            if (from is NamedTypeSymbol && to is NamedTypeSymbol && IsSubtype(from, to))
+            if (to is NamedTypeSymbol && IsSubtype(from, to))
                 return Conversion.Of(ConversionKind.ImplicitReference);
 
             return Conversion.None;

@@ -26,12 +26,13 @@ description of what exists, and a plan that outlives its execution is just a sta
 | `Binding/Conversions.cs`, `MemberLookup.cs`, `OverloadResolution.cs` | Done (Step 3, phase 3 rules) |
 | `Binding/BoundTree/`, `BodyBinder.*.cs` | Done (Step 3, phase 3) |
 | `Binding/FlowAnalysis.cs`, `ConstantEvaluator.cs` | Done (Step 3, phase 3) |
-| `CodeGen/MethodBodyEmitter.cs` — bound tree onto `SurtrCodeEmitter` | Done for the const-evaluable subset (Step 4) |
+| `CodeGen/MethodBodyEmitter.cs` — bound tree onto `SurtrCodeEmitter` | Done (Steps 4 and 5) |
 | `CodeGen/ConstFolder.cs`, `Binding/ConstFunctionCheck.cs` | Done (Step 4) |
-| `CodeGen/` — the rest of lowering, and a whole module emitted | **Not started** |
+| `CodeGen/ModuleEmitter.cs`, `EmitContext.cs` — a whole module emitted, and its image | Done (Step 5) |
 
-**Steps 3 and 4 are complete.** 1517 tests green. `Sample.surtr` exercises every construct in the language and round-trips through
-lex + parse.
+**Steps 3, 4 and 5 are complete.** 1570 tests green, and Surtr source now compiles to a module that
+loads into a runtime and runs. `Sample.surtr` exercises every construct in the language and
+round-trips through lex + parse.
 
 Everything `docs/VM-Plan.md` §4 asked the *runtime* for is implemented. §4.8 — the list of things
 the runtime deliberately does not do because the compiler must — is entirely owed, and is
@@ -348,68 +349,98 @@ emitted code for the fold to change, so it belongs where it becomes observable.
 
 ---
 
-## 5. Step 5 — Lowering and code generation
+## 5. Step 5 — Lowering and code generation — **done**
 
-Onto `SurtrModuleBuilder`, honouring the declare → emit → `Build()` → `LoadModule` order the emitter
-forces. `CodeGen/MethodBodyEmitter` already exists and is where this continues — Step 4 built the
-const-evaluable subset of it, and everything below is what it still refuses.
+Surtr source now becomes a real `SurtrModule`, loads into a real `SurtrRuntime`, and runs.
+`CodeGen/ModuleEmitter` drives it and `CodeGen/MethodBodyEmitter` lowers each body;
+`CodeGen/EmitContext` is what they share.
 
-### Already lowered (Step 4)
+### The two orderings, both forced rather than chosen
 
-Locals and parameters, every arithmetic, bitwise and comparison operator, `&&`/`||` with their
-short circuit, `??`, `<=>` on a primitive family, the ternary, `if`/`while`/`for`, `break` and
-`continue` including the labelled forms, `return`, `throw`, both switch forms, `for-in` over a range
-or an array, array/tuple/dict literals, indexed read and write, interpolated strings, conversions
-including boxing into an erased slot and the `Cast` back out, a call to a local function, and a call
-to an imported one through `MethodSymbol.ImportedFrom`.
+**Between modules** it is `SurtrCompilation.LoadOrder`, because a call into another module names an
+entry in *that* module's method table, which does not exist until it has been built. That is also
+why §2's module cycle is a hard error rather than something emission could work around.
 
-Two of those are deliberately provisional. **A switch is a chain of comparisons**, not
-`SurtrCodeEmitter.SwitchOn`: a jump table needs every label to be an integer key known at emit, and
-the general case needs the enum-ordinal and string lowerings below — picking the encoding is one
-decision, made once, here. And **`for-in` over a range only works when the range is written
-inline**, which is what `RangeNew`'s own documentation asks for.
+**Within a module** it is declare → emit → `Build()`, because `SurtrBytecodeMethodInfo` snapshots its
+body's offset in its constructor. So every type, field, property and method signature is declared
+first, then every body is emitted against the tokens, then the chunk is laid out.
 
-### Lowerings owed
+### What the emitter synthesises, and why it is here rather than in the binder
+
+Each is a decision about where code *runs*, not about what a program means:
+
+* an **auto-property**'s `$backing$x` field and its two trivial accessors — and either accessor
+  being bare is enough, since §3.4 lets `{ get; set { ... } }` mix them;
+* a **static initializer** per type carrying its static field initializers and, for an enum, its
+  cases — one emitter across all of them, emitting *fragments*, since letting any one finish the
+  method would leave every later one unreachable;
+* the **instance field initializers**, at the top of every constructor — with a parameterless one
+  synthesised when a class has initializers and declares none, which every creation site then has
+  to call because the binder saw no constructor to resolve to;
+* `override` **dropped where it names no base method**: §2.2 makes a contract a promise rather than
+  an inheritance, both are written `override` in Surtr, and `SurtrTypeLinker` rejects an override
+  with no base entry to replace.
+
+### Lowerings — all done
 
 | Source construct | Lowers to |
 |---|---|
-| `for-in` over a built-in collection other than an array | an indexed loop, no iterator allocated |
-| `for-in` over an `IIterable<T>` | `iterate()` + `moveNext()`/`current` through the vtable |
+| `for-in` over any built-in collection | an indexed loop, no iterator allocated |
+| `for-in` over an `IIterable<T>` | `iterate()` + `moveNext()`/`current` through the dispatch table |
 | `finally` | the block on every exit path, plus a catch-all that runs it and re-raises |
 | `try`/`catch` | protected regions on the method builder, plus handler labels |
 | `as?` | `InstanceOf` + branch |
-| `<=>` and relational operators on `string` | a call to native `string.compareTo` |
-| string `switch` | `StrHash` + numeric switch + equality confirm |
-| a dense integer `switch` | `SwitchOn`, which picks a jump table or a key table |
-| lambda | a **static synthetic method** plus a closure allocation |
+| `<=>` and the relational operators on `string` | a call to native `string.compareTo` |
+| string `switch` | `StrHash` + `SwitchOn` + an equality confirm per hash |
+| an integer or `char` `switch` | `SwitchOn`, which picks a jump table or a key table |
+| lambda | a **static synthetic method** plus a closure whose upvalues are its captures |
 | object creation, field and property access, `this`/`super` | `ObjNew`, `FieldGet`/`FieldSet`, the accessor calls |
 | `inline` / `forceinline` (§3.6) | the body spliced into the call site |
 | type alias (§2.7) | its target's descriptor; transparent |
-| `value class` (§2.9) | its single field, boxed only where it flows into a reference slot |
-| property access | the `get_x`/`set_x` call the linker sees |
-| enum case | its ordinal |
+| `value class` (§2.9) | its single field; `BoxAs` only where it flows into a reference slot |
+| enum case | a static field of the enum's own type, built by the enum's initializer |
 | a folded `const fun` call in an ordinary body | the constant itself |
 
-### Naming conventions to fix *before* the first emit
+Three of those took a decision worth recording:
 
-Synthetic members go into the module's real method table and travel in the image, so their names are
-ABI. Pick once, write them down here, and never change them:
-
-* Lambda bodies.
-* Auto-property backing fields.
-* Bridge methods into a generic interface's erased slot.
-* Closure display/capture holders, if any.
-
-The constraint is only that they cannot collide with a legal Surtr identifier, so a character no
-identifier may contain is the whole mechanism. `<` and `>` are what javac and Roslyn both use.
+* **A `switch` over an enum stays a chain of reference comparisons.** A case is a singleton
+  instance, so matching one *is* a reference compare — switching on an ordinal would need a member
+  the enum does not have, to save nothing.
+* **A `value class`'s constructor is spliced, not called.** `ObjNew` would allocate an instance of
+  the *erased* type, which for an `EntityId` over an `int` is `int` itself. So the constructor has
+  to be one assignment to the wrapped field, and the construction evaluates to that assignment's
+  right-hand side. Anything wider is refused rather than approximated, because there is no object
+  for a second statement to observe.
+* **`for-in` through `IIterable<T>` does not `Cast` a primitive element.** A built-in collection
+  stores a primitive raw — "an int pushed into an `int[]` is never boxed on the way" — while `Cast`
+  reads its subject as a reference unconditionally, so casting one would check whichever entity its
+  value happens to number. A reference element is checked; a primitive one already is what it
+  should be.
 
 ### Notes
 
-* A lambda is a static method with its captures passed as construction arguments to `SurtrClosure`,
-  never an instance method on a synthesised class — the runtime already copies the dispatch payload
-  flat, so there is nothing for a class to add.
+* A lambda is a static module-level function whose captures are the closure's **upvalues**, never an
+  instance method on a synthesised class — the runtime already copies the dispatch payload flat.
+  `this` is not a symbol and so cannot sit in a capture list, which is what
+  `BoundLambdaExpression.CapturesReceiver` records.
+* `SurtrCodeEmitter.CallSpecial(SurtrMethodBuilder)` is new and exists for one case: a `super` call
+  names a virtual method and must not go through the vtable, or an override calling its base would
+  call itself. Every other call takes its dispatch from the callee.
 * Every declared method goes into its own module's method table whether or not anything local calls
   it: a cross-module call reads the *callee's* table.
+
+### What is left
+
+* **Parameter defaults do not travel.** `SurtrParameterInfo` takes a `SurtrConstant`, and the binder
+  records only that a default *was written*, not what it folds to.
+* **`singleton` (§2.8) emits as a plain class.** What it still needs is the one instance and the
+  static holding it.
+* **A bridge into a generic interface's erased slot** is not emitted, so a class declaring both
+  `compareTo(Vec2)` and `IComparable<Vec2>` will not link (§7).
+* **Calling a method *on* a `value class`** is refused: the receiver is the wrapped field, so there
+  is nothing to dispatch on until the call is either spliced or the value boxed.
+* **A nested lambda capturing through an outer one** is refused: `NoteCapture` stops at the innermost
+  lambda boundary, so the outer body never records the capture the inner one needs.
 
 ---
 
@@ -610,9 +641,11 @@ no open form to write: a name promising one argument and supplying none is malfo
 5. ~~Step 3 — binder~~ **done**, all three phases.
 6. ~~Step 4 — const evaluation of `const fun` (§7.2), on a scratch runtime~~ **done**, together
    with the bound-tree emitter it needed.
-7. Step 5 — the rest of lowering, and emitting a whole module.
+7. ~~Step 5 — the rest of lowering, and emitting a whole module~~ **done**.
 
 Steps 4 and 5 did overlap, exactly as predicted, and in both directions: `const if` needed a
-literal-only folder inside Step 3, and folding a `const fun` needed a real emitter inside Step 4.
-What is left of Step 5 is the lowering table in §5 plus the module-level work — declaring types,
-fields, properties and methods on a `SurtrModuleBuilder`, and writing the image.
+literal-only folder inside Step 3, and folding a `const fun` needed a real emitter inside Step 4 —
+which is why Step 5 started with most of a body emitter already written.
+
+What is left is in §5's closing list, and none of it is structural: each is a member the emitter
+declines to emit rather than a layer that does not exist.
