@@ -152,7 +152,7 @@ namespace Surtr.Tests.Compiler.Binding
             Assert.Equal("$lambda$move$0", SyntheticNames.Lambda("move", 0));
             Assert.Equal("$lambda$move$3", SyntheticNames.Lambda("move", 3));
             Assert.Equal("$backing$health", SyntheticNames.BackingField("health"));
-            Assert.Equal("$bridge$compareTo$0", SyntheticNames.Bridge("compareTo", 0));
+            Assert.Equal("$instance$Registry", SyntheticNames.Instance("Registry"));
         }
 
         [Fact]
@@ -160,7 +160,7 @@ namespace Surtr.Tests.Compiler.Binding
         {
             Assert.True(SyntheticNames.IsSynthetic(SyntheticNames.Lambda("move", 0)));
             Assert.True(SyntheticNames.IsSynthetic(SyntheticNames.BackingField("health")));
-            Assert.True(SyntheticNames.IsSynthetic(SyntheticNames.Bridge("compareTo", 0)));
+            Assert.True(SyntheticNames.IsSynthetic(SyntheticNames.Instance("Registry")));
 
             Assert.False(SyntheticNames.IsSynthetic("move"));
             Assert.False(SyntheticNames.IsSynthetic(""));
@@ -174,19 +174,20 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
-        public void APropertyAccessorIsNotSynthetic()
+        public void ANameAnotherLayerLooksForIsNotSynthetic()
         {
-            // get_x/set_x are what SurtrTypeLinker looks for when it wires a property up, so
-            // marking them would hide them from the layer that has to find them.
+            // get_x/set_x are what SurtrTypeLinker looks for when it wires a property up, and a
+            // bridge carries the contract method's own name because the slot is keyed on it — so
+            // marking either would hide it from the layer that has to find it.
             Assert.False(SyntheticNames.IsSynthetic("get_health"));
             Assert.False(SyntheticNames.IsSynthetic("set_health"));
+            Assert.False(SyntheticNames.IsSynthetic("compareTo"));
         }
 
         [Fact]
         public void ANegativeIndexIsRejected()
         {
             Assert.Throws<ArgumentOutOfRangeException>(() => SyntheticNames.Lambda("move", -1));
-            Assert.Throws<ArgumentOutOfRangeException>(() => SyntheticNames.Bridge("compareTo", -1));
         }
         #endregion
     }

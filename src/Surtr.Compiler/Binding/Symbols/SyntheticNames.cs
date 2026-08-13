@@ -23,10 +23,12 @@ namespace Surtr.Compiler.Binding.Symbols
     /// backing field.
     /// </para>
     /// <para>
-    /// <b>Property accessors are deliberately not here.</b> A property lowers to <c>get_x</c> and
-    /// <c>set_x</c>, CLR-style, and those are the names <c>SurtrTypeLinker</c> looks for when it
-    /// wires a property up — marking them synthetic would hide them from the layer that has to
-    /// find them.
+    /// <b>Property accessors are deliberately not here</b>, and neither is a bridge into a generic
+    /// interface's erased slot. Both are names another layer <em>looks for</em>: a property lowers
+    /// to <c>get_x</c>/<c>set_x</c>, which is what <c>SurtrTypeLinker</c> wires a property up by,
+    /// and a bridge occupies a contract slot keyed on name plus erased parameters — so it has to
+    /// carry the contract method's own name or it fills no slot at all. Marking either would hide
+    /// it from the layer that has to find it.
     /// </para>
     /// </remarks>
     public static class SyntheticNames
@@ -40,8 +42,20 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>The category of an auto-property's backing field.</summary>
         public const string BackingCategory = "backing";
 
-        /// <summary>The category of a bridge into a generic interface's erased slot.</summary>
-        public const string BridgeCategory = "bridge";
+        /// <summary>The category of the static field holding a <c>singleton</c>'s one instance.</summary>
+        public const string InstanceCategory = "instance";
+
+        /// <summary>
+        /// The name of the static field holding a <c>singleton</c>'s instance (§2.8).
+        /// </summary>
+        /// <remarks>
+        /// A singleton is reached by the declaration's own name, which is a <em>type</em> name — so
+        /// the value has to live somewhere the type does not, and a static of the singleton's own
+        /// class is the one place that needs no second container. The field is synthetic because
+        /// nothing in the source declares it and nothing may write it.
+        /// </remarks>
+        /// <param name="typeName">The singleton's declared name.</param>
+        public static string Instance(string typeName) => Build(InstanceCategory, typeName);
 
         /// <summary>
         /// The name of a lambda's body, which is lifted to a static method of the declaring module.
@@ -58,20 +72,6 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>The name of an auto-property's backing field.</summary>
         /// <param name="propertyName">The property it backs.</param>
         public static string BackingField(string propertyName) => Build(BackingCategory, propertyName);
-
-        /// <summary>
-        /// The name of a bridge method occupying a generic interface's erased slot.
-        /// </summary>
-        /// <remarks>
-        /// <c>SurtrMethodInfo.SignatureKey()</c> writes <c>G&lt;n&gt;</c> as <c>E</c>, so an
-        /// implementation binds to a contract slot by its erased parameter list. A class wanting
-        /// both <c>compareTo(Vec2)</c> and <c>IComparable&lt;Vec2&gt;</c> therefore needs two
-        /// members: the typed one its own callers bind to, and one of these, which occupies the
-        /// erased slot, casts, and forwards.
-        /// </remarks>
-        /// <param name="methodName">The method being bridged to.</param>
-        /// <param name="index">Its position among that method's bridges, from zero.</param>
-        public static string Bridge(string methodName, int index) => Build(BridgeCategory, methodName, index);
 
         /// <summary>Whether a name was produced by this class rather than written in source.</summary>
         public static bool IsSynthetic(string name) => name.Length > 0 && name[0] == Marker;

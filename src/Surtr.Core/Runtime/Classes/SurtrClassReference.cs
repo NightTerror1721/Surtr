@@ -484,6 +484,66 @@ namespace Surtr.Runtime.Classes
         /// <summary>Wraps an already-encoded descriptor without validating it. Intended for metadata loaded from trusted bytecode.</summary>
         public static SurtrClassReference FromDescriptor(string descriptor) => new(descriptor);
 
+        /// <summary>
+        /// The same type with every generic parameter rewritten to <see cref="SymbolErased"/>.
+        /// </summary>
+        /// <remarks>
+        /// This is the form a signature key compares, so it is also the form a bridge method's
+        /// parameters have to be declared in: a class implementing <c>IComparable&lt;Vec2&gt;</c>
+        /// occupies a slot keyed on <c>compareTo(E)</c>, which nothing spelled <c>Vec2</c> can
+        /// match. Returns the reference unchanged when it mentions no parameter, so the common case
+        /// allocates nothing.
+        /// </remarks>
+        public static SurtrClassReference Erase(SurtrClassReference reference)
+        {
+            string descriptor = reference.Descriptor;
+
+            if (descriptor.IndexOf(SymbolGenericParameter) < 0)
+                return reference;
+
+            var builder = new StringBuilder(descriptor.Length);
+            AppendErased(builder, descriptor);
+            return new SurtrClassReference(builder.ToString());
+        }
+
+        /// <summary>
+        /// Appends a descriptor with every generic parameter rewritten to the erased symbol.
+        /// </summary>
+        /// <remarks>
+        /// A single left-to-right pass, because <c>G</c> is always followed by exactly one digit
+        /// and nothing else in the grammar can produce that pair - the same one-character-of-
+        /// lookahead property the descriptor encoding is built on. Nested forms are covered for
+        /// free: <c>AG0</c> becomes <c>AE</c> without the loop having to know it is inside an
+        /// array.
+        /// </remarks>
+        internal static void AppendErased(StringBuilder builder, string descriptor)
+        {
+            for (int i = 0; i < descriptor.Length; i++)
+            {
+                char symbol = descriptor[i];
+
+                if (symbol == SymbolGenericParameter && i + 1 < descriptor.Length)
+                {
+                    builder.Append(SymbolErased);
+                    i++;
+                    continue;
+                }
+
+                builder.Append(symbol);
+
+                // A full name runs to its terminator verbatim: a type called `G0` inside one is a
+                // name, not a parameter, and must not be rewritten.
+                if (symbol != SymbolObject && symbol != SymbolNative)
+                    continue;
+
+                int terminator = descriptor.IndexOf(NameTerminator, i + 1);
+                int end = terminator < 0 ? descriptor.Length : terminator + 1;
+
+                builder.Append(descriptor, i + 1, end - i - 1);
+                i = end - 1;
+            }
+        }
+
         // Interned so a generic parameter reference never allocates: ten one-off strings against
         // a descriptor that appears in every element-polymorphic built-in signature.
         private static readonly string[] GenericParameterDescriptors =

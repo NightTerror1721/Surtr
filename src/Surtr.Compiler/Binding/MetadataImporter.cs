@@ -594,12 +594,32 @@ namespace Surtr.Compiler.Binding
                     symbol)
                 {
                     IsVararg = declared[i].IsVarargs,
+                    HasDefaultValue = declared[i].HasDefault,
+                    DefaultValue = Import(declared[i].DefaultValue),
                 };
             }
 
             symbol.Parameters = parameters;
             return symbol;
         }
+
+        /// <summary>
+        /// A parameter default, back in the compiler's own constant vocabulary (§3.5).
+        /// </summary>
+        /// <remarks>
+        /// The integer widens to <see cref="long"/> here rather than staying a machine int, because
+        /// that is the width every folded constant has in the binder — a literal read from source
+        /// arrives the same way, so a call site cannot tell an imported default from a written one.
+        /// </remarks>
+        private static object? Import(SurtrConstant constant) => constant.Kind switch
+        {
+            SurtrConstantKind.Integer => (long)constant.Value.AsInt,
+            SurtrConstantKind.Float => constant.Value.AsFloat,
+            SurtrConstantKind.Boolean => constant.Value.AsBool,
+            SurtrConstantKind.Character => constant.Value.AsChar,
+            SurtrConstantKind.String => constant.Text,
+            _ => null,
+        };
 
         private ModuleSymbol ModuleSymbolFor(string modulePath)
         {

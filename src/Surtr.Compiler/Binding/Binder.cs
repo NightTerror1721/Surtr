@@ -51,6 +51,7 @@ namespace Surtr.Compiler.Binding
 
         private readonly List<BodyBinding> _bodies = new List<BodyBinding>();
         private readonly List<InitializerBinding> _initializers = new List<InitializerBinding>();
+        private readonly List<DefaultBinding> _defaults = new List<DefaultBinding>();
         private readonly List<BoundFieldInitializer> _boundInitializers = new List<BoundFieldInitializer>();
 
         private readonly Dictionary<IReadOnlyList<DeclarationSyntax>, IReadOnlyList<DeclarationSyntax>> _flattened =
@@ -510,9 +511,63 @@ namespace Surtr.Compiler.Binding
             foreach (var module in _modules.Values)
                 BindModuleMembers(module);
 
+            // After every type has its members, because the question is about a base class's, and
+            // nothing says a base is bound before what extends it.
+            foreach (var binding in _declared)
+                CheckSealedOverrides(binding);
+
             // Last, because a bound like `<T : IComparable<T>>` names a type whose own hierarchy is
             // still being resolved while the signatures above are bound.
             _resolver.VerifyConstraints(Conversions);
+        }
+
+        /// <summary>
+        /// Rejects an <c>override</c> of a member the base declared <c>sealed</c> (§2.2).
+        /// </summary>
+        /// <remarks>
+        /// The runtime does not check it — <c>SurtrTypeLinker</c> replaces the vtable entry either
+        /// way — so this is the only thing standing between `sealed` and a member that says it
+        /// closes its branch and does not.
+        /// </remarks>
+        private void CheckSealedOverrides(TypeBinding binding)
+        {
+            foreach (var member in binding.Symbol.Members)
+            {
+                if (member is not MethodSymbol { IsOverride: true } method)
+                    continue;
+
+                for (var walk = binding.Symbol.BaseType; walk is not null; walk = walk.BaseType)
+                {
+                    if (Overridden(walk, method) is not MethodSymbol overridden)
+                        continue;
+
+                    if (overridden.IsSealed)
+                    {
+                        Report(
+                            SurtrDiagnosticCode.InvalidBaseType,
+                            binding,
+                            binding.Syntax.Span,
+                            $"'{overridden.ContainingType?.Name}.{method.Name}' is sealed, so '{binding.Symbol.Name}' cannot override it.");
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        private static MethodSymbol? Overridden(NamedTypeSymbol baseType, MethodSymbol method)
+        {
+            foreach (var member in baseType.Members)
+            {
+                if (member is MethodSymbol candidate
+                    && string.Equals(candidate.Name, method.Name, StringComparison.Ordinal)
+                    && candidate.Parameters.Count == method.Parameters.Count)
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
         }
 
         private void BindHierarchy(TypeBinding binding)
@@ -736,6 +791,9 @@ namespace Surtr.Compiler.Binding
             if (syntax.Kind == TypeDeclarationKind.ValueClass)
                 BindValueClassField(binding, members, letFields);
 
+            if (syntax.Kind == TypeDeclarationKind.Singleton)
+                BindSingletonInstance(binding, symbol, members);
+
             symbol.Members = members;
         }
 
@@ -763,6 +821,49 @@ namespace Surtr.Compiler.Binding
             }
 
             binding.Symbol.UnderlyingType = wrapped!.Type;
+        }
+
+        /// <summary>
+        /// Gives a <c>singleton</c> the one thing that makes it a value: a static holding its
+        /// instance (§2.8).
+        /// </summary>
+        /// <remarks>
+        /// Built like an enum case, and for the same reason — the declaration's own name has to
+        /// answer as a value, and a type name cannot. So the instance is a synthetic static of the
+        /// singleton's own class, and an initializer builds it with everything else the module
+        /// loads. §2.8 forbids a constructor, since nothing would choose when to run it.
+        /// </remarks>
+        private void BindSingletonInstance(TypeBinding binding, NamedTypeSymbol symbol, List<Symbol> members)
+        {
+            symbol.IsSealed = true;
+
+            foreach (var member in members)
+            {
+                if (member is MethodSymbol { Role: MethodRole.Constructor })
+                {
+                    Report(
+                        SurtrDiagnosticCode.InvalidValueClass,
+                        binding,
+                        binding.Syntax.Span,
+                        $"'{symbol.Name}' is a singleton, so nothing chooses when it is built and it cannot declare a constructor.");
+
+                    break;
+                }
+            }
+
+            var instance = new FieldSymbol(SyntheticNames.Instance(symbol.Name), symbol, symbol)
+            {
+                IsStatic = true,
+                IsReadOnly = true,
+                Accessibility = Accessibility.Public,
+                IsSynthetic = true,
+            };
+
+            members.Add(instance);
+            symbol.SingletonInstance = instance;
+
+            _initializers.Add(new InitializerBinding(
+                instance, null, null, binding.Scope, binding.Module, symbol, binding.SourceName, binding.Syntax));
         }
 
         private void BindModuleMembers(ModuleSymbol module)
@@ -846,6 +947,10 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         public IReadOnlyDictionary<MethodSymbol, BoundStatement> BindBodies()
         {
+            // Before anything is bound, because a call site that omits an argument emits the
+            // default in its place — so the value has to exist by the time any body is walked.
+            FoldDefaults();
+
             // Const functions first, and not for tidiness: §7.2 folds a call by running the callee's
             // emitted body, so a `const if` inside an ordinary body can only be answered once every
             // const fun has one. Binding them in two rounds is the whole of that ordering.
@@ -857,6 +962,11 @@ namespace Surtr.Compiler.Binding
 
             PrepareConstFolding();
 
+            // Again, for the ones that name a `const fun`: §7.2 makes one a constant expression, and
+            // the folder that answers it did not exist a moment ago.
+            FoldDefaults();
+            ReportUnfoldedDefaults();
+
             foreach (var body in _bodies)
                 BindOne(body);
 
@@ -867,6 +977,41 @@ namespace Surtr.Compiler.Binding
 
             VerifyConstantDeclarations();
             return _bound;
+        }
+
+        /// <summary>
+        /// Folds every parameter default that has not folded yet (§3.5).
+        /// </summary>
+        /// <remarks>
+        /// Over syntax through <see cref="ConstantEvaluator"/>, which is what §3.5's "must be a
+        /// compile-time constant" means, and run twice: once before any body is bound, so an
+        /// ordinary call site can emit one, and again once a <c>const fun</c> can be run.
+        /// </remarks>
+        private void FoldDefaults()
+        {
+            foreach (var binding in _defaults)
+            {
+                if (binding.Parameter.DefaultValue is not null)
+                    continue;
+
+                if (Constants.TryEvaluate(binding.Syntax, out object? value))
+                    binding.Parameter.DefaultValue = value;
+            }
+        }
+
+        private void ReportUnfoldedDefaults()
+        {
+            foreach (var binding in _defaults)
+            {
+                if (binding.Parameter.DefaultValue is not null)
+                    continue;
+
+                ReportAt(
+                    binding.SourceName,
+                    binding.Syntax.Span,
+                    SurtrDiagnosticCode.NotAConstant,
+                    $"The default for '{binding.Parameter.Name}' has to fold at compile time; §3.5 allows only a constant.");
+            }
         }
 
         /// <summary>Binds one field initializer or enum case, in a scope that is its declaration's.</summary>
@@ -897,9 +1042,14 @@ namespace Surtr.Compiler.Binding
                 owner,
                 ImportedBy(initializer.Module));
 
-            var value = initializer.EnumCase is EnumCaseSyntax enumCase
-                ? binder.BindEnumCase(enumCase, initializer.ContainingType!)
-                : binder.BindInitializer(initializer.Syntax!, initializer.Field.Type);
+            BoundExpression value;
+
+            if (initializer.EnumCase is EnumCaseSyntax enumCase)
+                value = binder.BindEnumCase(enumCase, initializer.ContainingType!);
+            else if (initializer.Syntax is ExpressionSyntax written)
+                value = binder.BindInitializer(written, initializer.Field.Type);
+            else
+                value = binder.BindSingletonInstance(initializer.ContainingType!, initializer.Anchor);
 
             _boundInitializers.Add(new BoundFieldInitializer(initializer.Field, value, initializer.ContainingType));
         }
@@ -1368,6 +1518,9 @@ namespace Surtr.Compiler.Binding
                     HasDefaultValue = syntax[i].DefaultValue is not null,
                     IsVararg = syntax[i].IsVarargs,
                 };
+
+                if (syntax[i].DefaultValue is ExpressionSyntax written)
+                    _defaults.Add(new DefaultBinding(parameters[i], written, sourceName));
             }
 
             return parameters;
@@ -1448,6 +1601,23 @@ namespace Surtr.Compiler.Binding
             public string SourceName { get; }
         }
 
+        /// <summary>One parameter default, kept until there is something that can fold it.</summary>
+        private readonly struct DefaultBinding
+        {
+            public DefaultBinding(ParameterSymbol parameter, ExpressionSyntax syntax, string sourceName)
+            {
+                Parameter = parameter;
+                Syntax = syntax;
+                SourceName = sourceName;
+            }
+
+            public ParameterSymbol Parameter { get; }
+
+            public ExpressionSyntax Syntax { get; }
+
+            public string SourceName { get; }
+        }
+
         /// <summary>One field initializer or enum case, kept until phase 3 can bind it.</summary>
         private readonly struct InitializerBinding
         {
@@ -1458,7 +1628,8 @@ namespace Surtr.Compiler.Binding
                 Scope scope,
                 ModuleSymbol module,
                 NamedTypeSymbol? containingType,
-                string sourceName)
+                string sourceName,
+                SyntaxNode? anchor = null)
             {
                 Field = field;
                 Syntax = syntax;
@@ -1467,6 +1638,7 @@ namespace Surtr.Compiler.Binding
                 Module = module;
                 ContainingType = containingType;
                 SourceName = sourceName;
+                Anchor = anchor ?? (SyntaxNode?)syntax ?? enumCase!;
             }
 
             public FieldSymbol Field { get; }
@@ -1476,6 +1648,9 @@ namespace Surtr.Compiler.Binding
 
             /// <summary>The case, for an enum — which has arguments rather than an expression.</summary>
             public EnumCaseSyntax? EnumCase { get; }
+
+            /// <summary>Where a diagnostic about this initializer points, whatever shape it has.</summary>
+            public SyntaxNode Anchor { get; }
 
             public Scope Scope { get; }
 

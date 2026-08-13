@@ -152,6 +152,23 @@ namespace Surtr.Compiler.Binding.Symbols
 
         private TypeSymbol? _underlyingType;
 
+        /// <summary>
+        /// The static field holding a <c>singleton</c>'s one instance (§2.8), or
+        /// <see langword="null"/> for every other kind.
+        /// </summary>
+        /// <remarks>
+        /// This is what lets the declaration's own name answer as a value: §1.1 puts type names and
+        /// value names in separate namespaces, so <c>Registry</c> resolves as a type and then has to
+        /// be read through here to become one.
+        /// </remarks>
+        public FieldSymbol? SingletonInstance
+        {
+            get => Definition._singletonInstance;
+            internal set => Definition._singletonInstance = value;
+        }
+
+        private FieldSymbol? _singletonInstance;
+
         /// <summary>Whether the declaration is <c>sealed</c>, so nothing may extend it.</summary>
         public bool IsSealed
         {

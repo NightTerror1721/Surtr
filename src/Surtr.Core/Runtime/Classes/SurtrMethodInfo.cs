@@ -475,39 +475,12 @@ namespace Surtr.Runtime.Classes
         /// Appends a descriptor with every generic parameter rewritten to the erased symbol.
         /// </summary>
         /// <remarks>
-        /// A single left-to-right pass, because <c>G</c> is always followed by exactly one digit
-        /// and nothing else in the grammar can produce that pair - the same one-character-of-
-        /// lookahead property the descriptor encoding is built on. Nested forms are covered for
-        /// free: <c>AG0</c> becomes <c>AE</c> without the loop having to know it is inside an
-        /// array.
+        /// Delegated to <see cref="SurtrClassReference.AppendErased"/> rather than written out
+        /// again: a compiler emitting a bridge has to produce exactly the descriptor this key
+        /// compares, and two copies of that rule would agree until one of them was edited.
         /// </remarks>
         private static void AppendErased(StringBuilder builder, string descriptor)
-        {
-            for (int i = 0; i < descriptor.Length; i++)
-            {
-                char symbol = descriptor[i];
-
-                if (symbol == SurtrClassReference.SymbolGenericParameter && i + 1 < descriptor.Length)
-                {
-                    builder.Append(SurtrClassReference.SymbolErased);
-                    i++;
-                    continue;
-                }
-
-                builder.Append(symbol);
-
-                // A full name runs to its terminator verbatim: a type called `G0` inside one is a
-                // name, not a parameter, and must not be rewritten.
-                if (symbol != SurtrClassReference.SymbolObject && symbol != SurtrClassReference.SymbolNative)
-                    continue;
-
-                int terminator = descriptor.IndexOf(SurtrClassReference.NameTerminator, i + 1);
-                int end = terminator < 0 ? descriptor.Length : terminator + 1;
-
-                builder.Append(descriptor, i + 1, end - i - 1);
-                i = end - 1;
-            }
-        }
+            => SurtrClassReference.AppendErased(builder, descriptor);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private SurtrClassReference BuildSignature()

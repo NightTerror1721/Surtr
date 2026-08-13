@@ -577,13 +577,43 @@ namespace Surtr.Compiler.CodeGen
 
                 // A varargs parameter is declared by its element type: the body sees an array of it,
                 // and the call site is what packs one.
-                parameters[i] = parameter.IsVararg && parameter.Type.NonNullable is ArrayTypeSymbol array
-                    ? context.Module.VarargsParameter(parameter.Name, _descriptors.Emit(array.ElementType))
-                    : context.Module.Parameter(parameter.Name, _descriptors.Emit(parameter.Type));
+                if (parameter.IsVararg && parameter.Type.NonNullable is ArrayTypeSymbol array)
+                {
+                    parameters[i] = context.Module.VarargsParameter(parameter.Name, _descriptors.Emit(array.ElementType));
+                    continue;
+                }
+
+                var type = _descriptors.Emit(parameter.Type);
+
+                parameters[i] = parameter.HasDefaultValue
+                    ? context.Module.Parameter(parameter.Name, type, Constant(parameter))
+                    : context.Module.Parameter(parameter.Name, type);
             }
 
             return parameters;
         }
+
+        /// <summary>
+        /// A folded default in the form metadata carries, so a module compiled later can omit the
+        /// argument too.
+        /// </summary>
+        /// <remarks>
+        /// The interpreter never reads this — §4.8 makes filling a default the call site's job — but
+        /// the declaration is where the value is written, and an image that dropped it would make a
+        /// defaulted parameter mandatory to everything downstream.
+        /// </remarks>
+        private static SurtrConstant Constant(ParameterSymbol parameter) => parameter.DefaultValue switch
+        {
+            null => SurtrConstant.Null,
+            long integer when parameter.Type.NonNullable.SpecialType == SpecialType.Float => SurtrConstant.Float(integer),
+            long integer => SurtrConstant.Integer((int)integer),
+            double real => SurtrConstant.Float(real),
+            bool boolean => SurtrConstant.Boolean(boolean),
+            char character => SurtrConstant.Character(character),
+            string text => SurtrConstant.String(text),
+            _ => throw new SurtrEmitException(
+                $"The default for '{parameter.Name}' folded to a '{parameter.DefaultValue.GetType().Name}', which metadata cannot carry."),
+        };
 
         /// <summary>Splits a type's initializers into the two places they run from.</summary>
         private void SortInitializers(TypeEmission emission, NamedTypeSymbol symbol)
@@ -617,6 +647,15 @@ namespace Surtr.Compiler.CodeGen
             {
                 if (symbol.Role == MethodRole.Constructor)
                 {
+                    // A value class's constructor is spliced at every creation site (§2.9), so the
+                    // declared one is never reached. Emitting its body anyway would write to a
+                    // field slot that a boxed value class does not have.
+                    if (emission.Symbol.TypeKind == TypeSymbolKind.ValueClass)
+                    {
+                        builder.Code.ReturnVoid();
+                        continue;
+                    }
+
                     EmitInstanceInitializers(context, emission, builder);
                     EmitBody(context, symbol, builder, allowMissing: true);
                     continue;
@@ -630,6 +669,8 @@ namespace Surtr.Compiler.CodeGen
 
                 EmitBody(context, symbol, builder, allowMissing: false);
             }
+
+            EmitBridges(context, emission, @class);
 
             if (emission.StaticInitializers.Count == 0)
                 return;
@@ -645,6 +686,171 @@ namespace Surtr.Compiler.CodeGen
 
             initializer.Code.ReturnVoid();
         }
+
+        #region Bridges
+        /// <summary>
+        /// Emits a bridge for every generic-interface slot the class fills with a typed member.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <c>SurtrTypeLinker</c> matches an implementation to a contract slot by
+        /// <c>SignatureKey()</c>, which writes <c>G&lt;n&gt;</c> as <c>E</c> — so a class satisfying
+        /// <c>IComparable&lt;Vec2&gt;</c> occupies a slot keyed <c>compareTo(E)</c>, and its own
+        /// <c>compareTo(Vec2)</c> misses it by spelling alone. This is Java's bargain and the
+        /// compiler's half of it: a second member, named after the contract's, taking the erased
+        /// parameters, that casts and forwards.
+        /// </para>
+        /// <para>
+        /// The bridge is emitted, never bound. It has no symbol, so nothing in source can name it
+        /// and <c>SignatureSet</c> never sees it — which is what keeps it from reading as a
+        /// duplicate of the member it forwards to.
+        /// </para>
+        /// </remarks>
+        private void EmitBridges(EmitContext context, TypeEmission emission, SurtrClassBuilder @class)
+        {
+            var owner = emission.Symbol;
+
+            foreach (var contract in owner.Interfaces)
+            {
+                var open = contract.Definition.Members;
+                var closed = _binder.MemberLookup.MembersOf(contract);
+
+                for (int i = 0; i < open.Count && i < closed.Count; i++)
+                {
+                    if (open[i] is not MethodSymbol declared || closed[i] is not MethodSymbol wanted)
+                        continue;
+
+                    if (!NeedsBridge(owner, declared, wanted, out var target))
+                        continue;
+
+                    EmitBridge(context, @class, declared, wanted, target);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Whether a contract slot needs a bridge, and which member it should forward to.
+        /// </summary>
+        /// <remarks>
+        /// Only when the class fills the slot with something more specific than the slot's own
+        /// erased shape. A member already declared against the erased type occupies the slot
+        /// directly and needs nothing, and a contract that mentions no type parameter has nothing
+        /// to erase in the first place.
+        /// </remarks>
+        private bool NeedsBridge(
+            NamedTypeSymbol owner,
+            MethodSymbol declared,
+            MethodSymbol wanted,
+            out MethodSymbol target)
+        {
+            target = null!;
+
+            string slot = SlotKey(declared);
+            if (string.Equals(slot, SlotKey(wanted), StringComparison.Ordinal))
+                return false;
+
+            foreach (var candidate in _binder.MemberLookup.FindMethods(owner, wanted.Name))
+            {
+                string key = SlotKey(candidate);
+
+                // Already erased: the class wrote the slot's own shape, so nothing is missing.
+                if (string.Equals(key, slot, StringComparison.Ordinal))
+                    return false;
+
+                if (string.Equals(key, SlotKey(wanted), StringComparison.Ordinal))
+                    target = candidate;
+            }
+
+            return target is not null;
+        }
+
+        /// <summary>The key <c>SurtrTypeLinker</c> matches a contract slot on.</summary>
+        private string SlotKey(MethodSymbol method)
+        {
+            var builder = new System.Text.StringBuilder(method.Name).Append('(');
+
+            foreach (var parameter in method.Parameters)
+                builder.Append(SurtrClassReference.Erase(_descriptors.Emit(parameter.Type)).Descriptor);
+
+            return builder.Append(')').ToString();
+        }
+
+        private void EmitBridge(
+            EmitContext context,
+            SurtrClassBuilder @class,
+            MethodSymbol declared,
+            MethodSymbol wanted,
+            MethodSymbol target)
+        {
+            var parameters = new SurtrParameterInfo[declared.Parameters.Count];
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                parameters[i] = context.Module.Parameter(
+                    declared.Parameters[i].Name,
+                    SurtrClassReference.Erase(_descriptors.Emit(declared.Parameters[i].Type)));
+            }
+
+            var bridge = @class.DefineMethod(
+                wanted.Name,
+                SurtrClassReference.Erase(_descriptors.Emit(declared.ReturnType)),
+                parameters,
+                isStatic: false,
+                SurtrMethodDispatch.Virtual,
+                isOverride: false,
+                SurtrVisibility.Public);
+
+            var code = bridge.Code;
+            code.LoadLocal(bridge.Receiver);
+
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                code.LoadLocal(bridge.Parameter(i));
+
+                // The slot handed us a reference; the member it forwards to wants the real type.
+                if (!ReferenceEquals(declared.Parameters[i].Type, wanted.Parameters[i].Type))
+                    Narrow(code, wanted.Parameters[i].Type);
+            }
+
+            // Virtual, so an override further down the hierarchy is what a call through the
+            // contract lands on — which is the whole reason the slot stores a vtable index.
+            if (context.TryGetBuilder(target, out var local))
+                code.Call(local);
+            else if (context.Resolve(target) is SurtrMethodInfo built)
+                code.CallVirtual(built);
+            else
+                throw new SurtrEmitException($"'{target.Name}' has no metadata for a bridge to forward to.");
+
+            if (declared.ReturnType.IsVoid)
+            {
+                code.ReturnVoid();
+                return;
+            }
+
+            // A slot returning the erased type has to be handed a reference back.
+            if (!ReferenceEquals(declared.ReturnType, wanted.ReturnType))
+                code.Box(MethodBodyEmitter.TypeCodeOf(wanted.ReturnType));
+
+            code.ReturnValue();
+        }
+
+        /// <summary>Reads a concrete type out of the erased value a contract slot passes.</summary>
+        private void Narrow(SurtrCodeEmitter code, TypeSymbol target)
+        {
+            var bare = target.NonNullable;
+
+            if (bare.TypeKind == TypeSymbolKind.ValueClass)
+            {
+                code.CastTo(_descriptors.EmitBoxedForm((NamedTypeSymbol)bare));
+                code.Unbox();
+                return;
+            }
+
+            code.CastTo(_descriptors.Emit(bare));
+
+            if (bare.IsPrimitive && !bare.IsVoid)
+                code.Unbox();
+        }
+        #endregion
 
         private void EmitModuleBodies(EmitContext context, SurtrModuleBuilder builder, ModuleSymbol module)
         {

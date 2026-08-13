@@ -214,8 +214,18 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>Its position in the parameter list.</summary>
         public int Ordinal { get; }
 
-        /// <summary>Whether a default was written for it (§3.4).</summary>
+        /// <summary>Whether a default was written for it (§3.5).</summary>
         public bool HasDefaultValue { get; internal set; }
+
+        /// <summary>
+        /// What that default folds to, in the compiler's own constant vocabulary.
+        /// </summary>
+        /// <remarks>
+        /// §3.5 requires a default to be a compile-time constant, so this is the value itself rather
+        /// than an expression: a call site that omits the argument emits it as a literal, and the
+        /// declaration carries it in metadata so a module compiled later can do the same.
+        /// </remarks>
+        public object? DefaultValue { get; internal set; }
 
         /// <summary>Whether it collects the remaining arguments (§3.4).</summary>
         public bool IsVararg { get; internal set; }

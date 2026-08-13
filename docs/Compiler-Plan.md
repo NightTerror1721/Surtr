@@ -30,7 +30,7 @@ description of what exists, and a plan that outlives its execution is just a sta
 | `CodeGen/ConstFolder.cs`, `Binding/ConstFunctionCheck.cs` | Done (Step 4) |
 | `CodeGen/ModuleEmitter.cs`, `EmitContext.cs` — a whole module emitted, and its image | Done (Step 5) |
 
-**Steps 3, 4 and 5 are complete.** 1570 tests green, and Surtr source now compiles to a module that
+**Steps 3, 4 and 5 are complete.** 1590 tests green, and Surtr source now compiles to a module that
 loads into a runtime and runs. `Sample.surtr` exercises every construct in the language and
 round-trips through lex + parse.
 
@@ -429,18 +429,35 @@ Three of those took a decision worth recording:
 * Every declared method goes into its own module's method table whether or not anything local calls
   it: a cross-module call reads the *callee's* table.
 
-### What is left
+### The five that were left, and how each came out
 
-* **Parameter defaults do not travel.** `SurtrParameterInfo` takes a `SurtrConstant`, and the binder
-  records only that a default *was written*, not what it folds to.
-* **`singleton` (§2.8) emits as a plain class.** What it still needs is the one instance and the
-  static holding it.
-* **A bridge into a generic interface's erased slot** is not emitted, so a class declaring both
-  `compareTo(Vec2)` and `IComparable<Vec2>` will not link (§7).
-* **Calling a method *on* a `value class`** is refused: the receiver is the wrapped field, so there
-  is nothing to dispatch on until the call is either spliced or the value boxed.
-* **A nested lambda capturing through an outer one** is refused: `NoteCapture` stops at the innermost
-  lambda boundary, so the outer body never records the capture the inner one needs.
+* **Parameter defaults (§3.5).** Folded through `ConstantEvaluator` — twice, once before any body is
+  bound so an ordinary call site can emit one, and again once a `const fun` can be run. A call site
+  that omits an argument materialises the value as a literal, because §4.8 makes filling a default
+  the call site's job and a call opcode carries a count and nothing else. The declaration still
+  records it, so a module compiled later can omit the argument too, and `MetadataImporter` reads it
+  back — an image that dropped it would make a defaulted parameter mandatory downstream.
+* **`singleton` (§2.8).** A sealed class plus a synthetic `$instance$Registry` static of its own
+  type, built by the class's initializer like an enum case. That static is the whole feature: §1.1
+  puts type names and value names in separate namespaces, so `Registry` resolves as a *type* and has
+  to be read through the instance to become a value — which is why this is the one place in the
+  binder where a type name answers as one. A constructor is rejected, since nothing would choose
+  when to run it.
+* **Bridges.** For each generic contract slot the class fills with a typed member, a second member
+  named after the contract's, taking the erased parameters, that casts and forwards — virtually, so
+  an override further down still wins. It is emitted, never bound, so nothing in source can name it
+  and `SignatureSet` never sees it as a duplicate. `SurtrClassReference.Erase` is new and shared with
+  `SurtrMethodInfo.SignatureKey`, because the compiler has to produce exactly the descriptor the
+  linker compares and two copies of that rule would agree until one was edited.
+* **A call on a `value class`.** The receiver boxes with `BoxAs`, and `this` inside the callee
+  unwraps. One rule — *inside a value class's own method the receiver is boxed, everywhere else a
+  value class is its field* — which is what keeps `this.raw` free at every other site. §6.3's "a
+  direct call does not box" is now a missed optimisation rather than a correctness gap, and boxing
+  more than needed is safe where boxing less is a type confusion.
+* **Nested lambda captures.** `NoteCapture` walks a *stack* of lambda frames outwards and stops at
+  the first one the symbol is inside. An inner lambda's upvalue has to come from the outer body, so
+  the outer lambda has to have captured it too; stopping at the innermost boundary is exactly what
+  used to lose it. The receiver follows the same rule.
 
 ---
 
@@ -477,14 +494,17 @@ is greppable and, `$` being illegal in an identifier, cannot collide.
 |---|---|
 | a lambda's lifted body | `$lambda$move$0` |
 | an auto-property's backing field | `$backing$health` |
-| a bridge into a generic interface's erased slot | `$bridge$compareTo$0` |
+| the static holding a `singleton`'s instance | `$instance$Registry` |
 
 The index appears only where one context can hold several: a method may hold many lambdas, a
 property has exactly one backing field.
 
-**Property accessors are deliberately excluded.** A property lowers to `get_x`/`set_x`, and those
-are the names `SurtrTypeLinker` looks for when it wires one up — marking them would hide them from
-the layer that has to find them.
+**Two names another layer looks for are deliberately excluded.** A property lowers to
+`get_x`/`set_x`, which is what `SurtrTypeLinker` wires a property up by. And a **bridge carries the
+contract method's own name** — `compareTo`, not `$bridge$compareTo$0`: the linker matches a contract
+slot on `SignatureKey()`, which is name plus erased parameters, so a bridge under any other name
+fills no slot at all. That correction retires the `$bridge$` convention this section used to name;
+nothing had emitted one, so no image carries it.
 
 `Binding/Symbols/SyntheticNames.cs`.
 
@@ -529,16 +549,22 @@ and it keeps every construction site from having to supply the container's argum
 
 ## 7. What the runtime deliberately does not do (VM-Plan §4.8)
 
-Reproduced so this plan stands alone. Each of these is a compiler obligation, not a runtime gap:
+Reproduced so this plan stands alone. Each of these is a compiler obligation, not a runtime gap, and
+**every one of them is now met** — the list stays because it is what the runtime is entitled to
+assume, and anything that stops holding is a miscompile rather than a missing feature:
 
-* **Box a primitive flowing into an erased slot, and emit a `Cast` reading one back out.**
+* **Box a primitive flowing into an erased slot, and emit a `Cast` reading one back out.** With one
+  exception the runtime's own design forces: a built-in collection stores a primitive raw, so what
+  comes back out of `IIterator.current` is not a box and must not be cast.
 * **Emit `finally` on every exit path**, plus a catch-all that runs it and re-raises. This is what
   keeps `Leave`/`EndFinally` out of the instruction set.
 * **Emit a bridge into a generic interface's erased slot.** `SignatureKey()` writes `G<n>` as `E`, so
   a class wanting both `compareTo(Vec2)` and `IComparable<Vec2>` needs two members: the typed one and
   a bridge that casts and forwards.
 * **Reject instantiating an `abstract` class.** `ObjNew` does not check.
-* **Reject overriding a `sealed` member and extending a `sealed` class.**
+* **Reject overriding a `sealed` member and extending a `sealed` class.** The linker replaces the
+  vtable entry either way, so `Binder.CheckSealedOverrides` is the only thing between `sealed` and a
+  member that says it closes its branch and does not.
 * **Lower `<=>` and the relational operators on `string`** to `string.compareTo`.
 * **Lower `as?`** to `InstanceOf` plus a branch.
 * **Check argument counts, types and defaults at the call site.** The interpreter trusts them.
@@ -647,5 +673,6 @@ Steps 4 and 5 did overlap, exactly as predicted, and in both directions: `const 
 literal-only folder inside Step 3, and folding a `const fun` needed a real emitter inside Step 4 —
 which is why Step 5 started with most of a body emitter already written.
 
-What is left is in §5's closing list, and none of it is structural: each is a member the emitter
-declines to emit rather than a layer that does not exist.
+Everything §5 once listed as owed is emitted, including the five it had left over — parameter
+defaults, `singleton`, bridges, calls on a `value class`, and nested lambda captures. The front end
+is finished against the specification.

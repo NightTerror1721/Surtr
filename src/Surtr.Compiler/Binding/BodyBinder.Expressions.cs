@@ -137,6 +137,11 @@ namespace Surtr.Compiler.Binding
                 return Narrow(read, parameter, parameter.Type, syntax);
             }
 
+            // §2.8: a singleton is reached by the declaration's own name, and that name is a type
+            // name — so this is the one place a type resolves to a value.
+            if (TryBindAsType(syntax, out var named) && Singleton(syntax, named) is BoundExpression instance)
+                return instance;
+
             // Then the type this body is in, then the module. A bare name never reaches an
             // enclosing type's members through an instance it does not have.
             if (_containingType is not null && BindImplicitMember(syntax, _containingType, syntax.Name) is BoundExpression member)
@@ -233,7 +238,7 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         private BoundThisExpression This(SyntaxNode syntax, TypeSymbol type, bool isSuper)
         {
-            _capturedReceiver |= _lambdaBoundary is not null;
+            NoteReceiverCapture();
             return new BoundThisExpression(syntax, type, isSuper);
         }
 
@@ -261,11 +266,29 @@ namespace Surtr.Compiler.Binding
             return This(syntax, baseType, isSuper: true);
         }
 
+        /// <summary>
+        /// A <c>singleton</c>'s instance, read from the static that holds it (§2.8).
+        /// </summary>
+        /// <remarks>
+        /// Null for every other kind, so a caller can ask before falling through to the static
+        /// member rules — which is exactly the order §2.8 needs, since a singleton's members are
+        /// instance members reached through a type name.
+        /// </remarks>
+        private BoundExpression? Singleton(SyntaxNode syntax, NamedTypeSymbol type)
+            => type.TypeKind == TypeSymbolKind.Singleton && type.SingletonInstance is FieldSymbol instance
+                ? new BoundFieldExpression(syntax, null, instance)
+                : null;
+
         private BoundExpression BindMemberAccess(MemberAccessExpressionSyntax syntax)
         {
             // `Suit.Hearts` is a static member, not a field on a value called Suit.
             if (TryBindAsType(syntax.Target, out var staticType))
+            {
+                if (Singleton(syntax.Target, staticType) is BoundExpression instance)
+                    return BindInstanceMember(syntax, instance);
+
                 return BindStaticMember(syntax, staticType);
+            }
 
             var receiver = BindExpression(syntax.Target);
             if (receiver.Type.IsError)
@@ -279,6 +302,11 @@ namespace Surtr.Compiler.Binding
                     $"'{receiver.Type.ToDisplayString()}' cannot be null, so '?.' has nothing to guard against.");
             }
 
+            return BindInstanceMember(syntax, receiver);
+        }
+
+        private BoundExpression BindInstanceMember(MemberAccessExpressionSyntax syntax, BoundExpression receiver)
+        {
             var lookupType = receiver.Type.NonNullable;
 
             if (_lookup.FindField(lookupType, syntax.Name) is FieldSymbol field)
@@ -775,8 +803,11 @@ namespace Surtr.Compiler.Binding
 
                     if (TryBindAsType(member.Target, out var staticOwner))
                     {
-                        receiver = null;
-                        return BindMethodCall(syntax, null, staticOwner, name, isVirtual: false);
+                        // A singleton's members are instance members reached through a type name
+                        // (§2.8), so the instance is the receiver rather than nothing.
+                        return Singleton(member.Target, staticOwner) is BoundExpression instance
+                            ? BindMethodCall(syntax, instance, staticOwner, name, isVirtual: false)
+                            : BindMethodCall(syntax, null, staticOwner, name, isVirtual: false);
                     }
 
                     receiver = BindExpression(member.Target);
@@ -970,13 +1001,30 @@ namespace Surtr.Compiler.Binding
 
             var result = new BoundExpression[parameters.Count];
             for (int i = 0; i < result.Length; i++)
-            {
-                // A parameter nothing filled has a default, which resolution already checked for -
-                // its value is emitted from the declaration rather than carried here.
-                result[i] = ordered[i] ?? new BoundErrorExpression(syntax, parameters[i].Type);
-            }
+                result[i] = ordered[i] ?? Omitted(syntax, parameters[i]);
 
             return result;
+        }
+
+        /// <summary>
+        /// The value an argument nothing filled takes: the parameter's default, as a literal.
+        /// </summary>
+        /// <remarks>
+        /// Materialised at the call site rather than looked up at run time, which is what §4.8 means
+        /// by the interpreter trusting the arguments it is given — a call opcode carries a count and
+        /// nothing else, so a defaulted argument has to be a real value on the stack.
+        /// </remarks>
+        private BoundExpression Omitted(SyntaxNode syntax, ParameterSymbol parameter)
+        {
+            if (!parameter.HasDefaultValue)
+                return new BoundErrorExpression(syntax, parameter.Type);
+
+            // An integer default reaching a float parameter widens here, exactly as a written
+            // literal would: the value is known, so nothing converts at run time.
+            if (parameter.DefaultValue is long widened && parameter.Type.NonNullable.SpecialType == SpecialType.Float)
+                return new BoundLiteralExpression(syntax, parameter.Type, (double)widened);
+
+            return new BoundLiteralExpression(syntax, parameter.Type, parameter.DefaultValue);
         }
 
         private BoundExpression BindObjectCreation(CallExpressionSyntax syntax, NamedTypeSymbol type)
@@ -1459,14 +1507,10 @@ namespace Surtr.Compiler.Binding
 
             // The lambda's own scope, and the boundary that makes everything outside it a capture.
             var outerValues = _values;
-            var outerCaptures = _captures;
-            var outerBoundary = _lambdaBoundary;
-            bool outerCapturedReceiver = _capturedReceiver;
 
             _values = _values.CreateChild();
-            _lambdaBoundary = _values;
-            _captures = new List<Symbol>();
-            _capturedReceiver = false;
+            var frame = new LambdaFrame(_values);
+            _lambdas.Add(frame);
 
             foreach (var parameter in parameters)
                 _values.TryDeclare(parameter.Name, parameter);
@@ -1491,23 +1535,20 @@ namespace Surtr.Compiler.Binding
                 body = new BoundNopStatement(syntax);
             }
 
-            var captured = _captures;
-            bool capturesReceiver = _capturedReceiver;
-
+            _lambdas.RemoveAt(_lambdas.Count - 1);
             _values = outerValues;
-            _captures = outerCaptures;
-            _lambdaBoundary = outerBoundary;
-
-            // A lambda nested inside another one reading `this` makes the outer one capture it too:
-            // the inner one can only get it from somewhere, and its only source is the outer body.
-            _capturedReceiver = outerCapturedReceiver || (capturesReceiver && outerBoundary is not null);
 
             var parameterTypes = new TypeSymbol[parameters.Length];
             for (int i = 0; i < parameters.Length; i++)
                 parameterTypes[i] = parameters[i].Type;
 
             return new BoundLambdaExpression(
-                syntax, _factory.Closure(parameterTypes, returnType), parameters, body, captured, capturesReceiver);
+                syntax,
+                _factory.Closure(parameterTypes, returnType),
+                parameters,
+                body,
+                frame.Captures,
+                frame.CapturesReceiver);
         }
         #endregion
     }

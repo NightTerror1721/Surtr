@@ -59,15 +59,30 @@ namespace Surtr.Compiler.Binding
         private int _loopDepth;
         private readonly List<string> _loopLabels = new List<string>();
 
-        // Set only while a lambda's body is being bound: anything read from outside it is a
-        // capture, and §8 allows a capture only of something that is never reassigned.
-        private List<Symbol>? _captures;
-        private Scope? _lambdaBoundary;
+        /// <summary>One lambda whose body is being bound, and what it has been found to capture.</summary>
+        /// <remarks>
+        /// A stack rather than a single frame, because a lambda inside a lambda reading an outer
+        /// local makes <em>both</em> capture it: the inner one can only get the value from
+        /// somewhere, and its only source is the outer body's own upvalue.
+        /// </remarks>
+        private sealed class LambdaFrame
+        {
+            public LambdaFrame(Scope boundary) => Boundary = boundary;
 
-        // `this` is not a symbol, so it cannot live in _captures - but a lifted lambda body is a
-        // static function, so reading the enclosing instance from inside one still has to become an
-        // upvalue. This is the flag that says so.
-        private bool _capturedReceiver;
+            /// <summary>The lambda's own scope; anything declared at or below it is not a capture.</summary>
+            public Scope Boundary { get; }
+
+            public List<Symbol> Captures { get; } = new List<Symbol>();
+
+            /// <summary>
+            /// Whether it reads the enclosing instance. Separate from <see cref="Captures"/> because
+            /// <c>this</c> is not a symbol, and a lifted body is a static function that still has to
+            /// receive it as an upvalue.
+            /// </summary>
+            public bool CapturesReceiver { get; set; }
+        }
+
+        private readonly List<LambdaFrame> _lambdas = new List<LambdaFrame>();
 
         internal BodyBinder(
             TypeSymbolFactory factory,
@@ -125,6 +140,15 @@ namespace Surtr.Compiler.Binding
         public BoundExpression BindEnumCase(EnumCaseSyntax syntax, NamedTypeSymbol @enum)
             => BindObjectCreation(syntax, syntax.Arguments, @enum);
 
+        /// <summary>Binds a <c>singleton</c>'s one instance, which its module builds at load (§2.8).</summary>
+        /// <remarks>
+        /// A construction with no constructor, because §2.8 forbids one: what varies between two
+        /// singletons is their field initializers, and those run from the constructor the emitter
+        /// synthesises like any other class's.
+        /// </remarks>
+        public BoundExpression BindSingletonInstance(NamedTypeSymbol singleton, SyntaxNode syntax)
+            => new BoundObjectCreationExpression(syntax, singleton, constructor: null, NoArguments);
+
         #region Scopes and lookup
         private Scope PushScope()
         {
@@ -155,46 +179,89 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
-        /// Records that a lambda reads something declared outside it.
+        /// Records that a lambda reads something declared outside it — on every lambda it is
+        /// outside of.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// A capture is copied into the closure rather than shared through a cell, which is only
         /// sound for something that never changes — so this is also where the effectively-final
         /// rule is enforced, at the point the capture happens rather than after the fact.
+        /// </para>
+        /// <para>
+        /// The walk goes outwards and stops at the first lambda the symbol is inside, because every
+        /// lambda beyond that one contains the declaration too. Stopping earlier is what would break
+        /// nesting: an inner lambda's upvalue has to come from the outer body, so the outer lambda
+        /// has to have captured it as well.
+        /// </para>
         /// </remarks>
         private void NoteCapture(Symbol symbol, SourceSpan span)
         {
-            if (_captures is null || _lambdaBoundary is null)
+            if (_lambdas.Count == 0)
                 return;
 
-            // Anything the lambda itself declared is not a capture - including its parameters,
-            // which live in the boundary scope rather than inside it, so the walk has to include it.
+            var declaring = ScopeDeclaring(symbol);
+            if (declaring is null)
+                return;
+
+            for (int i = _lambdas.Count - 1; i >= 0; i--)
+            {
+                var frame = _lambdas[i];
+
+                // Anything the lambda itself declared is not a capture — including its parameters,
+                // which live in the boundary scope rather than inside it.
+                if (IsWithin(declaring, frame.Boundary))
+                    return;
+
+                if (symbol is LocalSymbol local)
+                {
+                    if (!local.IsReadOnly)
+                    {
+                        Report(
+                            SurtrDiagnosticCode.NotAssignable,
+                            span,
+                            $"'{local.Name}' is reassigned, so a lambda cannot capture it; declare it 'let'.");
+
+                        return;
+                    }
+
+                    local.IsCaptured = true;
+                }
+
+                if (!frame.Captures.Contains(symbol))
+                    frame.Captures.Add(symbol);
+            }
+        }
+
+        /// <summary>The innermost scope that declares <paramref name="symbol"/>, from where we are.</summary>
+        private Scope? ScopeDeclaring(Symbol symbol)
+        {
             for (Scope? scope = _values; scope is not null; scope = scope.Parent)
             {
                 if (scope.LookupLocal(symbol.Name).Symbol is Symbol found && ReferenceEquals(found, symbol))
-                    return;
-
-                if (ReferenceEquals(scope, _lambdaBoundary))
-                    break;
+                    return scope;
             }
 
-            if (symbol is LocalSymbol local)
+            return null;
+        }
+
+        /// <summary>Whether <paramref name="scope"/> is <paramref name="boundary"/> or nested inside it.</summary>
+        private static bool IsWithin(Scope scope, Scope boundary)
+        {
+            for (Scope? walk = scope; walk is not null; walk = walk.Parent)
             {
-                if (!local.IsReadOnly)
-                {
-                    Report(
-                        SurtrDiagnosticCode.NotAssignable,
-                        span,
-                        $"'{local.Name}' is reassigned, so a lambda cannot capture it; declare it 'let'.");
-
-                    return;
-                }
-
-                local.IsCaptured = true;
+                if (ReferenceEquals(walk, boundary))
+                    return true;
             }
 
-            if (!_captures.Contains(symbol))
-                _captures.Add(symbol);
+            return false;
+        }
+
+        /// <summary>Records that the enclosing instance was read, on every lambda that is inside it.</summary>
+        private void NoteReceiverCapture()
+        {
+            foreach (var frame in _lambdas)
+                frame.CapturesReceiver = true;
         }
         #endregion
 

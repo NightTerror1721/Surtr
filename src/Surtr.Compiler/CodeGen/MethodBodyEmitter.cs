@@ -1893,12 +1893,11 @@ namespace Surtr.Compiler.CodeGen
 
             if (call.Receiver is not null)
             {
-                // A value class's receiver is the wrapped field, not an object, so a call on one
-                // would hand the callee an int where it expects an instance.
-                if (call.Receiver.Type.NonNullable.TypeKind == TypeSymbolKind.ValueClass)
-                    throw Unsupported($"a call to '{call.Method.Name}' on a value class, which is not an object to dispatch on");
-
                 Expression(call.Receiver);
+
+                // §6.3: a value class is the field it wraps, and a field is not something to
+                // dispatch on — so a call on one boxes first, and `this` inside the callee unwraps.
+                BoxIfValueClass(call.Receiver.Type);
             }
 
             foreach (var argument in call.Arguments)
@@ -2375,6 +2374,12 @@ namespace Surtr.Compiler.CodeGen
                 throw Unsupported("'this', in a body with no receiver");
 
             Code.LoadLocal(_method.Receiver);
+
+            // Inside a value class's own method the receiver arrived boxed, because that is the
+            // only shape a call could dispatch on. Unwrapping it here is what makes `this` mean the
+            // wrapped value everywhere in the language, so no other rule has to know about the box.
+            if (_symbol.ContainingType is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass })
+                Code.Unbox();
         }
 
         private SurtrFieldInfo Field(FieldSymbol field)

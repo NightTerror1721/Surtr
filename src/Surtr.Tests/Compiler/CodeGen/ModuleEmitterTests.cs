@@ -4,6 +4,7 @@ using Surtr.Bytecode.Image;
 using Surtr.Compiler.Binding;
 using Surtr.Compiler.CodeGen;
 using Surtr.Compiler.Compilation;
+using Surtr.Compiler.Diagnostics;
 using Surtr.Runtime;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -544,7 +545,267 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Parameter defaults (§3.5)
+        [Fact]
+        public void AnOmittedArgumentTakesItsDefault()
+        {
+            var runtime = Run(
+                "fun spawn(x: int, hp: int = 100): int { return x * 1000 + hp; }\n"
+                    + "fun run(): int { return spawn(1); }");
+
+            Assert.Equal(1100, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AWrittenArgumentStillWins()
+        {
+            var runtime = Run(
+                "fun spawn(x: int, hp: int = 100): int { return x * 1000 + hp; }\n"
+                    + "fun run(): int { return spawn(1, 50); }");
+
+            Assert.Equal(1050, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ANamedArgumentMaySkipADefaultedOne()
+        {
+            var runtime = Run(
+                "fun make(a: int = 1, b: int = 2, c: int = 4): int { return a * 100 + b * 10 + c; }\n"
+                    + "fun run(): int { return make(c: 9); }");
+
+            Assert.Equal(129, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ADefaultMayBeAConstOrAConstFunction()
+        {
+            var runtime = Run(
+                "const Base: int = 7;\n"
+                    + "const fun twice(x: int): int { return x + x; }\n"
+                    + "fun f(a: int = Base, b: int = twice(4)): int { return a * 100 + b; }\n"
+                    + "fun run(): int { return f(); }");
+
+            Assert.Equal(708, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnIntegerDefaultWidensIntoAFloatParameter()
+        {
+            var runtime = Run(
+                "fun scale(v: float = 2): float { return v * 3.0; }\nfun run(): float { return scale(); }");
+
+            Assert.Equal(6.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void ADefaultThatDoesNotFoldIsReported()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "fun other(): int { return 1; }\nfun f(a: int = other()): int { return a; }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.NotAConstant);
+        }
+
+        [Fact]
+        public void ADefaultSurvivesTheImage()
+        {
+            var emitter = Build("fun spawn(x: int, hp: int = 100): int { return x + hp; }");
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes()).Instantiate();
+
+            Assert.True(reloaded.TryGetMethods("spawn", out var overloads));
+            Assert.True(overloads[0].Parameters[1].HasDefault);
+            Assert.Equal(100, overloads[0].Parameters[1].DefaultValue.Value.AsInt);
+        }
+        #endregion
+
+        #region Singletons (§2.8)
+        [Fact]
+        public void ASingletonIsBuiltOnceAndReachedByItsOwnName()
+        {
+            var runtime = Run(
+                "singleton Counter {\n"
+                    + "  public var value: int = 0;\n"
+                    + "  public fun bump(): int { this.value = this.value + 1; return this.value; }\n"
+                    + "}\n"
+                    + "fun run(): int { Counter.bump(); Counter.bump(); return Counter.value; }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ASingletonIsAValueAndSatisfiesItsInterface()
+        {
+            var runtime = Run(
+                "interface Named { fun name(): string; }\n"
+                    + "singleton Registry : Named { public override fun name(): string { return \"registry\"; } }\n"
+                    + "fun describe(n: Named): string { return n.name(); }\n"
+                    + "fun run(): string { return describe(Registry); }");
+
+            Assert.Equal("registry", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void ASingletonHoldsItsStateAcrossCalls()
+        {
+            var runtime = Run(
+                "singleton Store {\n"
+                    + "  private var _entries: {string: int} = {};\n"
+                    + "  public fun put(k: string, v: int): void { this._entries[k] = v; }\n"
+                    + "  public fun get(k: string): int { return this._entries[k]; }\n"
+                    + "}\n"
+                    + "fun run(): int { Store.put(\"a\", 41); return Store.get(\"a\") + 1; }");
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ASingletonCannotDeclareAConstructor()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "singleton Bad { public constructor() { } }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidValueClass);
+        }
+        #endregion
+
+        #region Bridges into a generic interface's erased slot
+        [Fact]
+        public void ATypedImplementationReachesAGenericContractThroughABridge()
+        {
+            var runtime = Run(
+                "class Score : IComparable<Score> {\n"
+                    + "  public let value: int;\n"
+                    + "  public constructor(value: int) { this.value = value; }\n"
+                    + "  public override fun compareTo(other: Score): int { return this.value <=> other.value; }\n"
+                    + "}\n"
+                    + "fun order(a: IComparable<Score>, b: Score): int { return a.compareTo(b); }\n"
+                    + "fun run(): int { return order(Score(9), Score(4)); }");
+
+            Assert.True(Int(runtime, "run") > 0);
+        }
+
+        [Fact]
+        public void ABridgeForwardsToWhicheverOverrideTheReceiverHas()
+        {
+            var runtime = Run(
+                "class Base : IEquatable<Base> {\n"
+                    + "  public virtual fun equals(other: Base): bool { return false; }\n"
+                    + "}\n"
+                    + "class Always : Base { public override fun equals(other: Base): bool { return true; } }\n"
+                    + "fun same(a: IEquatable<Base>, b: Base): bool { return a.equals(b); }\n"
+                    + "fun run(): bool { return same(Always(), Base()); }");
+
+            Assert.True(Call(runtime, "run").AsBool);
+        }
+        #endregion
+
+        #region Value classes (§2.9)
+        [Fact]
+        public void AValueClassMethodIsCalledOnTheBoxedForm()
+        {
+            var runtime = Run(
+                "value class EntityId {\n"
+                    + "  public let raw: int;\n"
+                    + "  public constructor(raw: int) { this.raw = raw; }\n"
+                    + "  public fun doubled(): int { return this.raw * 2; }\n"
+                    + "}\n"
+                    + "fun run(): int { let id = EntityId(21); return id.doubled(); }");
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AValueClassStillCostsNothingWhereItsTypeIsKnown()
+        {
+            var runtime = Run(
+                "value class EntityId { public let raw: int; public constructor(raw: int) { this.raw = raw; } }\n"
+                    + "fun run(): int { let id = EntityId(7); return id.raw; }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AValueClassFlowingIntoAnErasedSlotIsBoxedAsItself()
+        {
+            var runtime = Run(
+                "value class EntityId {\n"
+                    + "  public let raw: int;\n"
+                    + "  public constructor(raw: int) { this.raw = raw; }\n"
+                    + "}\n"
+                    + "fun run(): int { let u: unknown = EntityId(5); let back = u as EntityId; return back.raw; }");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+        #endregion
+
+        #region Nested lambdas
+        [Fact]
+        public void ALambdaInsideALambdaCapturesThroughTheOuterOne()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let base = 40;\n"
+                    + "  let outer = (a: int) => ((b: int) => a + b + base)(1);\n"
+                    + "  return outer(1);\n"
+                    + "}");
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ANestedLambdaMayCaptureTheReceiverThroughItsOuterOne()
+        {
+            var runtime = Run(
+                "class Adder {\n"
+                    + "  public var offset: int = 10;\n"
+                    + "  public fun make(): (int) -> int { return (x: int) => ((y: int) => y + this.offset)(x); }\n"
+                    + "}\n"
+                    + "fun run(): int { return Adder().make()(5); }");
+
+            Assert.Equal(15, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ANestedLambdaReturnedFromTheOuterOneStillSeesTheCapture()
+        {
+            var runtime = Run(
+                "fun make(): (int) -> (int) -> int {\n"
+                    + "  let scale = 3;\n"
+                    + "  return (a: int) => (b: int) => (a + b) * scale;\n"
+                    + "}\n"
+                    + "fun run(): int { return make()(2)(5); }");
+
+            Assert.Equal(21, Int(runtime, "run"));
+        }
+        #endregion
+
         #region Refusals
+        [Fact]
+        public void OverridingASealedMemberIsReported()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "class A { public virtual fun f(): int { return 1; } }\n"
+                    + "class B : A { public sealed override fun f(): int { return 2; } }\n"
+                    + "class C : B { public override fun f(): int { return 3; } }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidBaseType);
+        }
+
         [Fact]
         public void ACompilationWithErrorsIsNotEmitted()
         {
