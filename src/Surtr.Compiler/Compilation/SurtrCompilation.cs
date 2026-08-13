@@ -63,7 +63,7 @@ namespace Surtr.Compiler.Compilation
     /// with the project.
     /// </para>
     /// </remarks>
-    public sealed class SurtrCompilation
+    public sealed class SurtrCompilation : IDisposable
     {
         private readonly Dictionary<string, SurtrSourceModule> _modules =
             new Dictionary<string, SurtrSourceModule>(StringComparer.Ordinal);
@@ -113,6 +113,16 @@ namespace Surtr.Compiler.Compilation
         public Binder Bind() => _binder ??= Binder.Bind(this);
 
         private Binder? _binder;
+
+        /// <summary>
+        /// Releases what binding held: the scratch runtime const folding ran on, if it built one.
+        /// </summary>
+        /// <remarks>
+        /// A compilation owns its binder, so it owns what the binder owns. Nothing is allocated
+        /// unless the source declares a <c>const fun</c>, so a compilation that never folds anything
+        /// has nothing to release and disposing it costs nothing.
+        /// </remarks>
+        public void Dispose() => _binder?.Dispose();
 
         /// <summary>
         /// Parses every file in <paramref name="project"/>, groups them into modules, orders the

@@ -144,6 +144,19 @@ namespace Surtr.Compiler.Binding.Symbols
         /// </remarks>
         public bool IsConversion { get; internal set; }
 
+        /// <summary>
+        /// The metadata this method was imported from, or <see langword="null"/> when source
+        /// declared it.
+        /// </summary>
+        /// <remarks>
+        /// The one thing an imported symbol keeps of where it came from, and it is kept because a
+        /// call site has to name a real method table entry: a call that resolved to a member of an
+        /// already-built module or of the standard library cannot be emitted from the symbol alone.
+        /// It is metadata, not a descriptor — reading it decodes nothing, so this stays clear of the
+        /// rule that only <c>MetadataImporter</c> reads the runtime's encoding.
+        /// </remarks>
+        public Runtime.Classes.SurtrMethodInfo? ImportedFrom { get; internal set; }
+
         /// <inheritdoc/>
         public override string ToDisplayString()
         {

@@ -1,6 +1,8 @@
 #nullable enable
 
+using Surtr.Compiler.Binding.BoundTree;
 using Surtr.Compiler.Binding.Symbols;
+using Surtr.Compiler.CodeGen;
 using Surtr.Compiler.Compilation;
 using Surtr.Compiler.Diagnostics;
 using Surtr.Compiler.Syntax;
@@ -29,7 +31,7 @@ namespace Surtr.Compiler.Binding
     /// would need to look up.
     /// </para>
     /// </remarks>
-    public sealed class Binder
+    public sealed class Binder : IDisposable
     {
         private readonly SurtrCompilation _compilation;
         private readonly SurtrDiagnosticBag _diagnostics;
@@ -43,9 +45,36 @@ namespace Surtr.Compiler.Binding
 
         private readonly Dictionary<string, Scope> _moduleScopes = new Dictionary<string, Scope>(StringComparer.Ordinal);
         private readonly Dictionary<string, Scope> _importScopes = new Dictionary<string, Scope>(StringComparer.Ordinal);
+
+        private readonly List<BodyBinding> _bodies = new List<BodyBinding>();
+
+        private readonly Dictionary<IReadOnlyList<DeclarationSyntax>, IReadOnlyList<DeclarationSyntax>> _flattened =
+            new Dictionary<IReadOnlyList<DeclarationSyntax>, IReadOnlyList<DeclarationSyntax>>(ByReference.Instance);
+
+        /// <summary>Keys a cache on the identity of a syntax list rather than on its contents.</summary>
+        private sealed class ByReference : IEqualityComparer<IReadOnlyList<DeclarationSyntax>>
+        {
+            internal static readonly ByReference Instance = new ByReference();
+
+            public bool Equals(IReadOnlyList<DeclarationSyntax> x, IReadOnlyList<DeclarationSyntax> y)
+                => ReferenceEquals(x, y);
+
+            public int GetHashCode(IReadOnlyList<DeclarationSyntax> obj)
+                => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj);
+        }
+
+        private readonly Dictionary<MethodSymbol, BoundStatement> _bound =
+            new Dictionary<MethodSymbol, BoundStatement>();
         private readonly Dictionary<NamedTypeSymbol, TypeBinding> _typeBindings = new Dictionary<NamedTypeSymbol, TypeBinding>();
         private readonly List<TypeBinding> _declared = new List<TypeBinding>();
-        private readonly HashSet<NamedTypeSymbol> _linking = new HashSet<NamedTypeSymbol>();
+        private readonly List<ConstraintBinding> _constraints = new List<ConstraintBinding>();
+        private readonly List<ConstantDeclaration> _constantDeclarations = new List<ConstantDeclaration>();
+
+        private readonly Dictionary<string, List<MethodSymbol>> _constFunctions =
+            new Dictionary<string, List<MethodSymbol>>(StringComparer.Ordinal);
+
+        private ConstFolder? _constFolder;
+        private string? _lastFoldFailure;
 
         private Binder(SurtrCompilation compilation)
         {
@@ -53,7 +82,32 @@ namespace Surtr.Compiler.Binding
             _diagnostics = compilation.Diagnostics;
             _factory = compilation.TypeFactory;
             _resolver = new TypeResolver(_factory, compilation.Importer, _diagnostics);
+            Conversions = new Conversions(_factory);
+            MemberLookup = new MemberLookup(_factory);
+            OverloadResolution = new OverloadResolution(Conversions);
+            Constants = new ConstantEvaluator(compilation.Project.BuildConstants);
         }
+
+        /// <summary>Folds the constants <c>const if</c> needs, over syntax (§7.3).</summary>
+        public ConstantEvaluator Constants { get; }
+
+        /// <summary>
+        /// What runs a <c>const fun</c> at compile time, or <see langword="null"/> until
+        /// <see cref="BindBodies"/> has run — and afterwards too, if the compilation declares none.
+        /// </summary>
+        public ConstFolder? ConstFolder => _constFolder;
+
+        /// <summary>How one type reaches another.</summary>
+        public Conversions Conversions { get; }
+
+        /// <summary>Finding a member on a type.</summary>
+        public MemberLookup MemberLookup { get; }
+
+        /// <summary>Picking the member a call site means.</summary>
+        public OverloadResolution OverloadResolution { get; }
+
+        /// <summary>The bodies bound so far, by the method each belongs to.</summary>
+        public IReadOnlyDictionary<MethodSymbol, BoundStatement> Bodies => _bound;
 
         /// <summary>The modules this compilation declares, by path.</summary>
         public IReadOnlyDictionary<string, ModuleSymbol> Modules => _modules;
@@ -102,6 +156,8 @@ namespace Surtr.Compiler.Binding
         #region Phase 1 - declarations
         private void DeclarationPhase()
         {
+            CollectConstants();
+
             foreach (var sourceModule in _compilation.Modules.Values)
             {
                 var module = new ModuleSymbol(sourceModule.Path);
@@ -126,7 +182,7 @@ namespace Surtr.Compiler.Binding
 
                 foreach (var unit in sourceModule.Units)
                 {
-                    foreach (var declaration in unit.Syntax.Declarations)
+                    foreach (var declaration in Flatten(unit.Syntax.Declarations, unit.File.Path))
                     {
                         DeclareMember(
                             declaration, module, containingType: null, moduleScope, types, declaredHere, unit.File.Path);
@@ -162,9 +218,86 @@ namespace Surtr.Compiler.Binding
                     return;
 
                 case ConstIfDeclarationSyntax:
-                    // §7.2 folds this before anything here can see it. Until the const evaluator
-                    // exists, neither branch is declared, which is better than declaring both.
+                    // Already resolved by Flatten before this list was walked.
                     return;
+            }
+        }
+
+        /// <summary>
+        /// Resolves every declaration-level <c>const if</c>, leaving only the declarations that
+        /// exist in this build.
+        /// </summary>
+        /// <remarks>
+        /// §7.3: a member in an untaken branch does not exist in any sense — no field slot, no
+        /// vtable entry, no metadata. So the branch is dropped here, before anything looks at it,
+        /// which is also what lets it name host types this build does not have.
+        /// </remarks>
+        private IReadOnlyList<DeclarationSyntax> Flatten(IReadOnlyList<DeclarationSyntax> declarations, string sourceName)
+        {
+            // Cached by identity: a module's declarations are flattened once in each phase, and a
+            // condition that failed to fold should be reported once rather than once per phase.
+            if (_flattened.TryGetValue(declarations, out var cached))
+                return cached;
+
+            var result = FlattenCore(declarations, sourceName);
+            _flattened.Add(declarations, result);
+            return result;
+        }
+
+        private IReadOnlyList<DeclarationSyntax> FlattenCore(IReadOnlyList<DeclarationSyntax> declarations, string sourceName)
+        {
+            bool any = false;
+            for (int i = 0; i < declarations.Count && !any; i++)
+                any = declarations[i] is ConstIfDeclarationSyntax;
+
+            if (!any)
+                return declarations;
+
+            var flattened = new List<DeclarationSyntax>(declarations.Count);
+            foreach (var declaration in declarations)
+            {
+                if (declaration is not ConstIfDeclarationSyntax conditional)
+                {
+                    flattened.Add(declaration);
+                    continue;
+                }
+
+                if (!Constants.TryEvaluateCondition(conditional.Condition, out bool taken))
+                {
+                    ReportAt(
+                        sourceName,
+                        conditional.Condition.Span,
+                        SurtrDiagnosticCode.NotAConstant,
+                        "A 'const if' condition has to fold to a bool at compile time.");
+
+                    continue;
+                }
+
+                flattened.AddRange(Flatten(taken ? conditional.Then : conditional.Else, sourceName));
+            }
+
+            return flattened;
+        }
+
+        /// <summary>
+        /// Registers every module-level <c>const</c> before any <c>const if</c> is folded.
+        /// </summary>
+        /// <remarks>
+        /// A <c>const</c> may be written below the <c>const if</c> that reads it, so they are all
+        /// collected first and folded on demand.
+        /// </remarks>
+        private void CollectConstants()
+        {
+            foreach (var sourceModule in _compilation.Modules.Values)
+            {
+                foreach (var unit in sourceModule.Units)
+                {
+                    foreach (var declaration in unit.Syntax.Declarations)
+                    {
+                        if (declaration is FieldDeclarationSyntax { IsConst: true, Initializer: not null } constant)
+                            AddConstant(constant, unit.File.Path);
+                    }
+                }
             }
         }
 
@@ -225,18 +358,32 @@ namespace Surtr.Compiler.Binding
             foreach (var parameter in symbol.TypeParameters)
                 typeScope.TryDeclare(parameter.Name, parameter);
 
+            // A bound may name the parameter it bounds (`<T : IComparable<T>>`), so it is resolved
+            // in the scope that already holds the parameters rather than the one outside them.
+            if (symbol.Arity > 0)
+                _constraints.Add(new ConstraintBinding(symbol.TypeParameters, syntax.TypeParameters, typeScope, sourceName));
+
             var nested = new List<NamedTypeSymbol>();
             var nestedNames = new HashSet<string>(StringComparer.Ordinal);
 
+            // A `const` inside the type is in scope for a `const if` inside it too.
             foreach (var member in syntax.Members)
             {
-                if (member is TypeDeclarationSyntax or AliasDeclarationSyntax or ConstIfDeclarationSyntax)
+                if (member is FieldDeclarationSyntax { IsConst: true, Initializer: not null } constant)
+                    AddConstant(constant, sourceName);
+            }
+
+            var members = Flatten(syntax.Members, sourceName);
+
+            foreach (var member in members)
+            {
+                if (member is TypeDeclarationSyntax or AliasDeclarationSyntax)
                     DeclareMember(member, module, symbol, typeScope, nested, nestedNames, sourceName);
             }
 
             symbol.NestedTypes = nested;
 
-            var binding = new TypeBinding(symbol, syntax, typeScope, module, sourceName);
+            var binding = new TypeBinding(symbol, syntax, members, typeScope, module, sourceName);
             _typeBindings.Add(symbol, binding);
             _declared.Add(binding);
 
@@ -331,11 +478,17 @@ namespace Surtr.Compiler.Binding
             foreach (var binding in _declared)
                 BindHierarchy(binding);
 
+            BindConstraints();
+
             foreach (var binding in _declared)
                 BindMembers(binding);
 
             foreach (var module in _modules.Values)
                 BindModuleMembers(module);
+
+            // Last, because a bound like `<T : IComparable<T>>` names a type whose own hierarchy is
+            // still being resolved while the signatures above are bound.
+            _resolver.VerifyConstraints(Conversions);
         }
 
         private void BindHierarchy(TypeBinding binding)
@@ -443,7 +596,7 @@ namespace Surtr.Compiler.Binding
             var names = new HashSet<string>(StringComparer.Ordinal);
             int letFields = 0;
 
-            foreach (var member in syntax.Members)
+            foreach (var member in binding.Members)
             {
                 switch (member)
                 {
@@ -595,7 +748,7 @@ namespace Surtr.Compiler.Binding
             {
                 var signatures = new SignatureSet(_factory, _diagnostics, unit.File.Path);
 
-                foreach (var declaration in unit.Syntax.Declarations)
+                foreach (var declaration in Flatten(unit.Syntax.Declarations, unit.File.Path))
                 {
                     switch (declaration)
                     {
@@ -632,6 +785,13 @@ namespace Surtr.Compiler.Binding
             module.Methods = methods;
         }
 
+        /// <summary>Records a <c>const</c>, both for folding and for the §7.1 check on its initializer.</summary>
+        private void AddConstant(FieldDeclarationSyntax syntax, string sourceName)
+        {
+            Constants.AddConstant(syntax.Name, syntax.Initializer!);
+            _constantDeclarations.Add(new ConstantDeclaration(syntax.Name, syntax.Initializer!, sourceName));
+        }
+
         private void CheckBuildConstant(string name, string sourceName, SourceSpan span)
         {
             // §7.4: shadowing a build flag would be invisible at the use site.
@@ -640,6 +800,190 @@ namespace Surtr.Compiler.Binding
                 ReportAt(sourceName, span, SurtrDiagnosticCode.BuildConstantShadowed,
                     $"The build defines '{name}', so a module member cannot take that name.");
             }
+        }
+        #endregion
+
+        #region Phase 3 - bodies
+        /// <summary>
+        /// Binds every body the compilation declared, and returns them by method.
+        /// </summary>
+        /// <remarks>
+        /// Separate from <see cref="Bind"/> because it is a separate phase and answers a separate
+        /// question: phases 1 and 2 settle what every type <em>is</em>, which is all a tool needs
+        /// for navigation or metadata. One body's binding cannot affect another's, so they run in
+        /// any order.
+        /// </remarks>
+        public IReadOnlyDictionary<MethodSymbol, BoundStatement> BindBodies()
+        {
+            // Const functions first, and not for tidiness: §7.2 folds a call by running the callee's
+            // emitted body, so a `const if` inside an ordinary body can only be answered once every
+            // const fun has one. Binding them in two rounds is the whole of that ordering.
+            foreach (var body in _bodies)
+            {
+                if (body.Method.IsConst)
+                    BindOne(body);
+            }
+
+            PrepareConstFolding();
+
+            foreach (var body in _bodies)
+                BindOne(body);
+
+            VerifyConstantDeclarations();
+            return _bound;
+        }
+
+        private void BindOne(BodyBinding body)
+        {
+            if (_bound.ContainsKey(body.Method))
+                return;
+
+            var binder = new BodyBinder(
+                _factory,
+                _resolver,
+                Conversions,
+                MemberLookup,
+                OverloadResolution,
+                Constants,
+                _diagnostics,
+                body.SourceName,
+                body.Scope,
+                body.Module,
+                body.ContainingType,
+                body.Method);
+
+            var bound = binder.BindBody(body.Syntax);
+            _bound.Add(body.Method, bound);
+
+            // After binding, not during: reachability and definite assignment are questions
+            // about a whole body, and the bound tree is the form that has one.
+            FlowAnalysis.Analyze(body.Method, bound, _diagnostics, body.SourceName);
+        }
+
+        /// <summary>
+        /// Checks every <c>const fun</c> and gives the constant evaluator something that can run one.
+        /// </summary>
+        /// <remarks>
+        /// Both halves belong together: a function that breaks §7.2's rules is reported against its
+        /// own declaration, and only the ones left are worth building a scratch runtime for. A
+        /// compilation with no <c>const fun</c> at all builds none, so nothing pays for a feature it
+        /// does not use.
+        /// </remarks>
+        private void PrepareConstFolding()
+        {
+            bool any = false;
+
+            foreach (var body in _bodies)
+            {
+                if (!body.Method.IsConst || !_bound.TryGetValue(body.Method, out var bound))
+                    continue;
+
+                ConstFunctionCheck.Verify(body.Method, bound, _diagnostics, body.SourceName);
+
+                if (!_constFunctions.TryGetValue(body.Method.Name, out var overloads))
+                    _constFunctions.Add(body.Method.Name, overloads = new List<MethodSymbol>());
+
+                overloads.Add(body.Method);
+                any = true;
+            }
+
+            if (!any)
+                return;
+
+            _constFolder = new ConstFolder(_bound);
+            Constants.CallFolder = FoldConstCall;
+        }
+
+        /// <summary>
+        /// Resolves a <c>const fun</c> call written inside a constant expression, and folds it.
+        /// </summary>
+        /// <remarks>
+        /// Resolution is by name and argument count across the whole compilation, which is the same
+        /// fidelity <see cref="ConstantEvaluator"/> already gives a constant's name: folding runs
+        /// over syntax, before scopes exist in the form a call site would need. Two const functions
+        /// answering to one name and arity make the call ambiguous rather than arbitrary, so nothing
+        /// is folded silently against the wrong one.
+        /// </remarks>
+        private bool FoldConstCall(string name, IReadOnlyList<object?> arguments, out object? value)
+        {
+            value = null;
+
+            if (_constFolder is null || !_constFunctions.TryGetValue(name, out var overloads))
+                return false;
+
+            MethodSymbol? match = null;
+            foreach (var candidate in overloads)
+            {
+                if (candidate.Parameters.Count != arguments.Count)
+                    continue;
+
+                if (match is not null)
+                {
+                    _lastFoldFailure = $"'{name}' names more than one const function taking {arguments.Count} argument(s).";
+                    return false;
+                }
+
+                match = candidate;
+            }
+
+            if (match is null)
+            {
+                _lastFoldFailure = $"'{name}' is not a const function taking {arguments.Count} argument(s).";
+                return false;
+            }
+
+            bool folded = _constFolder.TryFold(match, arguments, out value, out string failure);
+            if (!folded)
+                _lastFoldFailure = failure;
+
+            return folded;
+        }
+
+        /// <summary>
+        /// Checks that every <c>const</c> initializer really is a constant expression (§7.1).
+        /// </summary>
+        /// <remarks>
+        /// Last, because an initializer may call a <c>const fun</c> and folding one needs its bound
+        /// body. Nothing forces a constant to be folded otherwise — most are read by a <c>const if</c>
+        /// or by nothing at all — so this is the pass that turns "did not fold" into a diagnostic
+        /// rather than into a silently missing value.
+        /// </remarks>
+        private void VerifyConstantDeclarations()
+        {
+            foreach (var declaration in _constantDeclarations)
+            {
+                _lastFoldFailure = null;
+
+                if (Constants.TryGetValue(declaration.Name, out _))
+                    continue;
+
+                ReportAt(
+                    declaration.SourceName,
+                    declaration.Initializer.Span,
+                    SurtrDiagnosticCode.NotAConstant,
+                    _lastFoldFailure is null
+                        ? $"'{declaration.Name}' is const, so its initializer has to fold at compile time."
+                        : $"'{declaration.Name}' is const and its initializer did not fold: {_lastFoldFailure}");
+            }
+        }
+
+        /// <summary>Releases the scratch runtime const folding used, if one was built.</summary>
+        public void Dispose()
+        {
+            _constFolder?.Dispose();
+            _constFolder = null;
+        }
+
+        private void RecordBody(
+            MethodSymbol method,
+            BlockStatementSyntax? syntax,
+            Scope scope,
+            ModuleSymbol module,
+            NamedTypeSymbol? containingType,
+            string sourceName)
+        {
+            if (syntax is not null)
+                _bodies.Add(new BodyBinding(method, syntax, scope, module, containingType, sourceName));
         }
         #endregion
 
@@ -770,9 +1114,10 @@ namespace Surtr.Compiler.Binding
                 IsConst = syntax.IsConst,
             };
 
-            BindTypeParameters(method, syntax.TypeParameters, scope);
+            BindTypeParameters(method, syntax.TypeParameters, scope, binding.SourceName);
             method.ReturnType = _resolver.Resolve(syntax.ReturnType, scope, binding.SourceName);
             method.Parameters = BindParameters(syntax.Parameters, method, scope, binding.SourceName);
+            RecordBody(method, syntax.Body, scope, binding.Module, owner, binding.SourceName);
             return method;
         }
 
@@ -793,9 +1138,10 @@ namespace Surtr.Compiler.Binding
                 IsConst = syntax.IsConst,
             };
 
-            BindTypeParameters(method, syntax.TypeParameters, scope);
+            BindTypeParameters(method, syntax.TypeParameters, scope, sourceName);
             method.ReturnType = _resolver.Resolve(syntax.ReturnType, scope, sourceName);
             method.Parameters = BindParameters(syntax.Parameters, method, scope, sourceName);
+            RecordBody(method, syntax.Body, scope, owner, containingType: null, sourceName);
             return method;
         }
 
@@ -811,6 +1157,7 @@ namespace Surtr.Compiler.Binding
             };
 
             method.Parameters = BindParameters(syntax.Parameters, method, binding.Scope, binding.SourceName);
+            RecordBody(method, syntax.Body, binding.Scope, binding.Module, owner, binding.SourceName);
             return method;
         }
 
@@ -833,10 +1180,11 @@ namespace Surtr.Compiler.Binding
 
             method.ReturnType = _resolver.Resolve(syntax.ReturnType, binding.Scope, binding.SourceName);
             method.Parameters = BindParameters(syntax.Parameters, method, binding.Scope, binding.SourceName);
+            RecordBody(method, syntax.Body, binding.Scope, binding.Module, owner, binding.SourceName);
             return method;
         }
 
-        private void BindTypeParameters(MethodSymbol method, IReadOnlyList<TypeParameterSyntax> syntax, Scope scope)
+        private void BindTypeParameters(MethodSymbol method, IReadOnlyList<TypeParameterSyntax> syntax, Scope scope, string sourceName)
         {
             if (syntax.Count == 0)
                 return;
@@ -849,6 +1197,52 @@ namespace Surtr.Compiler.Binding
             }
 
             method.TypeParameters = parameters;
+            _constraints.Add(new ConstraintBinding(parameters, syntax, scope, sourceName));
+        }
+
+        /// <summary>
+        /// Resolves every type parameter's bounds, once every type exists.
+        /// </summary>
+        private void BindConstraints()
+        {
+            foreach (var binding in _constraints)
+            {
+                for (int i = 0; i < binding.Parameters.Count && i < binding.Syntax.Count; i++)
+                {
+                    var written = binding.Syntax[i].Constraints;
+                    if (written.Count == 0)
+                        continue;
+
+                    var bounds = new TypeSymbol[written.Count];
+                    for (int c = 0; c < bounds.Length; c++)
+                        bounds[c] = _resolver.Resolve(written[c], binding.Scope, binding.SourceName);
+
+                    binding.Parameters[i].Constraints = bounds;
+                }
+            }
+        }
+
+        private readonly struct ConstraintBinding
+        {
+            public ConstraintBinding(
+                IReadOnlyList<TypeParameterSymbol> parameters,
+                IReadOnlyList<TypeParameterSyntax> syntax,
+                Scope scope,
+                string sourceName)
+            {
+                Parameters = parameters;
+                Syntax = syntax;
+                Scope = scope;
+                SourceName = sourceName;
+            }
+
+            public IReadOnlyList<TypeParameterSymbol> Parameters { get; }
+
+            public IReadOnlyList<TypeParameterSyntax> Syntax { get; }
+
+            public Scope Scope { get; }
+
+            public string SourceName { get; }
         }
 
         private ParameterSymbol[] BindParameters(
@@ -932,17 +1326,67 @@ namespace Surtr.Compiler.Binding
             return builder.ToString();
         }
 
+        /// <summary>One <c>const</c> declaration, kept so §7.1's rule can be checked once at the end.</summary>
+        private readonly struct ConstantDeclaration
+        {
+            public ConstantDeclaration(string name, ExpressionSyntax initializer, string sourceName)
+            {
+                Name = name;
+                Initializer = initializer;
+                SourceName = sourceName;
+            }
+
+            public string Name { get; }
+
+            public ExpressionSyntax Initializer { get; }
+
+            public string SourceName { get; }
+        }
+
+        private readonly struct BodyBinding
+        {
+            public BodyBinding(
+                MethodSymbol method,
+                BlockStatementSyntax syntax,
+                Scope scope,
+                ModuleSymbol module,
+                NamedTypeSymbol? containingType,
+                string sourceName)
+            {
+                Method = method;
+                Syntax = syntax;
+                Scope = scope;
+                Module = module;
+                ContainingType = containingType;
+                SourceName = sourceName;
+            }
+
+            public MethodSymbol Method { get; }
+
+            public BlockStatementSyntax Syntax { get; }
+
+            public Scope Scope { get; }
+
+            public ModuleSymbol Module { get; }
+
+            public NamedTypeSymbol? ContainingType { get; }
+
+            public string SourceName { get; }
+        }
+
         private readonly struct TypeBinding
         {
             public TypeBinding(
                 NamedTypeSymbol symbol,
                 TypeDeclarationSyntax syntax,
+                IReadOnlyList<DeclarationSyntax> members,
                 Scope scope,
                 ModuleSymbol module,
                 string sourceName)
             {
                 Symbol = symbol;
                 Syntax = syntax;
+                Members = members;
                 Scope = scope;
                 Module = module;
                 SourceName = sourceName;
@@ -951,6 +1395,9 @@ namespace Surtr.Compiler.Binding
             public NamedTypeSymbol Symbol { get; }
 
             public TypeDeclarationSyntax Syntax { get; }
+
+            /// <summary>The members that survive this build's <c>const if</c>s.</summary>
+            public IReadOnlyList<DeclarationSyntax> Members { get; }
 
             public Scope Scope { get; }
 

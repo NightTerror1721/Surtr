@@ -513,6 +513,14 @@ evaluation has to run as its own earlier pass, because `const if` decides what g
 which means the declare → emit → `Build()` → `LoadModule` order has to run twice over different
 subsets of a module.
 
+**That half is now built** — `docs/Compiler-Plan.md` §4 has the shape it took. Two things about it
+are worth knowing from this side. The const-evaluable functions go into **one scratch module of
+their own**, loaded into a scratch runtime, so the second pass is a whole separate module rather
+than a re-entry into the one being compiled. And the budget's re-arming rule is load-bearing exactly
+as written above: `ConstFolder` sets `InstructionBudget` before *every* evaluation, because a run
+that exceeded it leaves it exhausted, and a folder that armed it once would abort every fold after
+the first one that ran away.
+
 ### 4.8 Compiler obligations, recorded so they are not lost
 
 None of these need runtime work; all of them are things the runtime assumes and will not check.

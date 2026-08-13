@@ -24,10 +24,13 @@ description of what exists, and a plan that outlives its execution is just a sta
 | `Binding/MetadataImporter.cs` — metadata in, as symbols | Done (Step 2) |
 | `Binding/Binder.cs`, `Scope.cs`, `TypeResolver.cs`, `SignatureSet.cs` | Done (Step 3, phases 1–2) |
 | `Binding/Conversions.cs`, `MemberLookup.cs`, `OverloadResolution.cs` | Done (Step 3, phase 3 rules) |
-| `Binding/` — the bound tree, body binding, flow analysis | **Empty** |
-| `CodeGen/` — lowering onto `SurtrModuleBuilder` | **Empty** |
+| `Binding/BoundTree/`, `BodyBinder.*.cs` | Done (Step 3, phase 3) |
+| `Binding/FlowAnalysis.cs`, `ConstantEvaluator.cs` | Done (Step 3, phase 3) |
+| `CodeGen/MethodBodyEmitter.cs` — bound tree onto `SurtrCodeEmitter` | Done for the const-evaluable subset (Step 4) |
+| `CodeGen/ConstFolder.cs`, `Binding/ConstFunctionCheck.cs` | Done (Step 4) |
+| `CodeGen/` — the rest of lowering, and a whole module emitted | **Not started** |
 
-1385 tests green. `Sample.surtr` exercises every construct in the language and round-trips through
+**Steps 3 and 4 are complete.** 1517 tests green. `Sample.surtr` exercises every construct in the language and round-trips through
 lex + parse.
 
 Everything `docs/VM-Plan.md` §4 asked the *runtime* for is implemented. §4.8 — the list of things
@@ -207,17 +210,67 @@ single bound node.
   silent pick dressed up as a rule. The winner is then re-checked against every other candidate,
   because beating the one it happened to be compared against is not beating all of them.
 
-### What phase 3 still owes
+### Phase 3, part two — the bound tree and the body binder — **done**
 
-* The bound tree, and binding statements and expressions onto it. This is volume rather than
-  decisions: the rules above are what a body is checked *against*.
-* **Flow analysis** for nullability narrowing, definite assignment, and effectively-final captures
-  (a lambda may capture only what is never reassigned — Step 5 depends on this).
-* **Type inference** for a `var`/`let` or a parameter with no written type. Phase 2 leaves those as
-  the error type *without reporting*, since the omission is not itself a mistake.
-* Generic constraint checking (`<T : IComparable<T>>`), which now has the subtype test it needs.
-* `const if` (§7.2), which must be folded before the branch not taken is bound; phase 1 currently
-  declares neither branch, which is better than declaring both.
+`Binding/BoundTree/` holds the tree; `BodyBinder` (partial, split by expressions and statements)
+walks a body onto it. `Binder.BindBodies()` runs it, separately from `Bind()`, because phases 1 and
+2 answer what every type *is* — which is all a tool needs for navigation or metadata — and one
+body's binding cannot affect another's.
+
+Five things the tree settles so nothing downstream has to:
+
+* **Every conversion is a node**, written or not. An `int` argument reaching a `float` parameter
+  carries its widening, so code generation never rediscovers one.
+* **Arguments arrive in parameter order**, with named ones reordered and varargs collected into an
+  array literal. By the time anything reads a call, its arguments line up one for one.
+* **A compound assignment is expanded**: `x += 1` arrives as `x = x + 1`, so nothing needs a second
+  form of assignment or a second table of operators.
+* **Devirtualisation is decided here.** A call through `super`, or on a receiver whose type is
+  `sealed`, is marked non-virtual — §2.2's static fact rather than a guess.
+* **`for-in` is *not* lowered.** Whether a sequence walks by index or through `iterate()` is a
+  code-generation decision; binding only settles what one step yields.
+
+Two rules the binder enforces that are flow-shaped rather than type-shaped, and are done because
+they are decided at the point they happen rather than by a later pass:
+
+* **A lambda captures only what is never reassigned.** A capture is copied into the closure rather
+  than shared through a cell, so a `var` is rejected at the capture site.
+* **Type inference is one-way.** A written type also types the initializer, which is what lets
+  `let xs: int[] = [];` work where a bare `let xs = [];` cannot — the empty literal is reported.
+
+### Phase 3, part three — flow, constraints, exhaustiveness and `const if` — **done**
+
+* **`FlowAnalysis`** runs on the bound tree after each body is bound, which is the form that has a
+  whole body to ask about. Three questions: what can be reached, whether a local is assigned
+  everywhere it is read, and whether a method can finish without returning what it promised.
+  Deliberately *not* a fixed-point analysis over a control-flow graph: it walks the tree and joins
+  the branches of an `if`, which is exact for straight-line code and conservative in a loop — a
+  local assigned only inside a loop body is not treated as assigned after it, since nothing proves
+  the loop runs. Running on the bound tree also means a compound assignment is already expanded, so
+  `x += 1` reads before it writes for free.
+* **Nullability narrowing** is in the binder rather than in the flow pass, because it changes what
+  an expression *is* rather than what can happen. Only the shapes that carry their proof on their
+  face — `x != null`, `x is T`, and the `&&` of two such — and only inside the branch they guard.
+  Stopping there keeps the rule predictable, which matters more than one more shape.
+* **Generic constraints** are bound in a pass of their own after the hierarchy, since
+  `<T : IComparable<T>>` names a type whose own hierarchy is still being resolved while signatures
+  are bound. They are checked in another pass at the end, against the *substituted* bound —
+  `Sorter<Vec2>` asks whether `Vec2` satisfies `IComparable<Vec2>`, not `IComparable<T>`.
+* **Switch exhaustiveness** applies to the expression form over an enum only. An enum's cases are
+  fixed at its own declaration, so the set is knowable, and the point is that adding a case later
+  turns every switch that covered it into an error rather than letting the new one fall silently
+  through an `else`. The statement form is never required to produce a value and is unaffected.
+* **`const if`** (§7.3) resolves at declaration level by flattening the member list before anything
+  walks it, so a member in an untaken branch does not exist in any sense; and at statement level by
+  binding only the taken branch. The untaken branch is **never bound**, which is the whole reason
+  the feature works — a branch guarded on one platform routinely names types this build lacks.
+
+`ConstantEvaluator` folds over *syntax*, not over bound nodes, because a declaration-level
+`const if` decides which declarations exist and has to be answered before any type has members. It
+handles literals, build constants (§7.4), other `const` bindings, and the operators — and
+short-circuits, so `false && somethingUnknown` still folds. It is **not** §7.2's general evaluator:
+that one folds a `const fun` by running its emitted body on a real VM so compile-time and run-time
+semantics cannot drift, and it is Step 4.
 
 ### Notes
 
@@ -225,48 +278,117 @@ single bound node.
 
 ---
 
-## 4. Step 4 — Const evaluation
+## 4. Step 4 — Const evaluation — **done**
 
 `Language-Syntax.md` §7 — `const`, `const fun`, `const if` — folded by **running the emitted bytecode
 on the real VM**, not by a second evaluator in the compiler. Two evaluators would drift, and the
 drift would show up as a program that means one thing at compile time and another at run time.
 
-### Deliverables
+### How it came out
 
-* A scratch `SurtrModuleBuilder` + scratch `SurtrRuntime` per constant-folding batch.
-* `InstructionBudget` set, so a non-terminating `const fun` is a diagnostic rather than a hang.
-* `ResetExecution` between evaluations, so one failure does not poison the next.
-* `const if` resolved *before* body binding of the branch not taken, since a disabled branch may
-  reference symbols that do not exist in this configuration.
+* **`CodeGen/MethodBodyEmitter`** turns a bound body into bytecode. It exists here rather than in
+  Step 5 because folding needs it: the compiler cannot fold anything until it can *emit* something,
+  so Step 4 had to build the part of Step 5 it depends on. What it covers is the const-evaluable
+  subset §7.2 defines — loops, conditionals, locals, arithmetic, strings, both switch forms, locally
+  built arrays, tuples and dicts, and calls. Everything outside it raises `SurtrEmitException`
+  rather than emitting something approximate, and that list is exactly §5's lowering table.
+* **`CodeGen/ConstFolder`** owns the one runtime the compiler ever loads. It emits every const
+  function into a single scratch module — which makes a call between two of them an ordinary
+  `CallLocalModule`, with no cross-module table and no load order to arrange — then runs one on
+  demand. `ResetExecution` after every failure, and the budget re-armed before every run, because
+  exceeding it leaves it *exhausted* rather than cleared.
+* **Emission runs to a fixed point.** A function the emitter cannot lower is dropped, and dropping
+  it makes every function that *calls* it fail to emit in turn, so the round repeats until nothing
+  new drops. That is what keeps one unsupported construct from quietly changing what a caller
+  computes: a caller of a dropped function is itself dropped, never emitted against a stub.
+* **`Binding/ConstFunctionCheck`** reports §7.2's restrictions — not `virtual` or `abstract`, not
+  `native`, no receiver, no write to a field or property, and no call to anything but another const
+  function or the standard library. They are properties of the *declaration*, so they are reported
+  against it whether or not anything ever asks for a fold. What the folder reports instead is the
+  other kind of failure: the function is fine and this particular run did not finish.
+* **§7.2's example calls `table.push(...)`**, so "may not call `native` functions" means a *host*
+  one (§10), not the standard library — whose bodies are process-wide and exist inside the compiler
+  already. `MethodSymbol.ImportedFrom` is what lets a call site name one: the single thing an
+  imported symbol keeps of where it came from.
+* **`const` initializers are checked** (§7.1). Nothing forced a constant to be folded before — most
+  are read by a `const if` or by nothing at all — so `VerifyConstantDeclarations` is what turns "did
+  not fold" into a diagnostic instead of a silently missing value.
+
+### The ordering, which is the whole difficulty
+
+§7.2 predicted it: folding needs the callee's *emitted body*, so const evaluation cannot happen at
+one point in the pipeline. What settles it is binding bodies in two rounds — **every `const fun`
+first**, then the folder is built, then everything else. So:
+
+| Position | Can it call a `const fun`? |
+|---|---|
+| a **declaration-level** `const if` (§7.3) | **no** — answered in the declaration phase, before any signature exists |
+| a **statement-level** `const if` | yes |
+| a `const` initializer (§7.1) | yes |
+| an ordinary call with constant arguments | not yet — see below |
+
+The first row is a real limitation and it is reported rather than guessed at. The last is deferred
+on purpose: §7.2 says such a call *is* folded, but until Step 5 emits ordinary bodies there is no
+emitted code for the fold to change, so it belongs where it becomes observable.
+
+### What is left
+
+* Fold a `const fun` call with constant arguments inside an ordinary body, at Step 5.
+* `static let Sines: float[] = buildSineTable(256);` folds today through `ConstFolder.TryFold`;
+  **materialising** the result into the module's static initializer is Step 5's.
+* Resolution inside a constant expression is by name and arity across the whole compilation, which
+  is the fidelity `ConstantEvaluator` already had for a constant's own name. Two const functions
+  answering to one name and arity make the call ambiguous rather than arbitrary.
 
 ### Notes
 
 * `docs/VM-Plan.md` §4.7 covers what this costs and why it is still the right trade.
-* Const evaluation is the one place the compiler loads a runtime. Keep it behind one type.
+* Const evaluation is the one place the compiler loads a runtime, and it is behind one type. A
+  compilation that declares no `const fun` builds none.
 
 ---
 
 ## 5. Step 5 — Lowering and code generation
 
 Onto `SurtrModuleBuilder`, honouring the declare → emit → `Build()` → `LoadModule` order the emitter
-forces.
+forces. `CodeGen/MethodBodyEmitter` already exists and is where this continues — Step 4 built the
+const-evaluable subset of it, and everything below is what it still refuses.
+
+### Already lowered (Step 4)
+
+Locals and parameters, every arithmetic, bitwise and comparison operator, `&&`/`||` with their
+short circuit, `??`, `<=>` on a primitive family, the ternary, `if`/`while`/`for`, `break` and
+`continue` including the labelled forms, `return`, `throw`, both switch forms, `for-in` over a range
+or an array, array/tuple/dict literals, indexed read and write, interpolated strings, conversions
+including boxing into an erased slot and the `Cast` back out, a call to a local function, and a call
+to an imported one through `MethodSymbol.ImportedFrom`.
+
+Two of those are deliberately provisional. **A switch is a chain of comparisons**, not
+`SurtrCodeEmitter.SwitchOn`: a jump table needs every label to be an integer key known at emit, and
+the general case needs the enum-ordinal and string lowerings below — picking the encoding is one
+decision, made once, here. And **`for-in` over a range only works when the range is written
+inline**, which is what `RangeNew`'s own documentation asks for.
 
 ### Lowerings owed
 
 | Source construct | Lowers to |
 |---|---|
-| `for-in` over a built-in collection | an indexed loop, no iterator allocated |
+| `for-in` over a built-in collection other than an array | an indexed loop, no iterator allocated |
 | `for-in` over an `IIterable<T>` | `iterate()` + `moveNext()`/`current` through the vtable |
 | `finally` | the block on every exit path, plus a catch-all that runs it and re-raises |
+| `try`/`catch` | protected regions on the method builder, plus handler labels |
 | `as?` | `InstanceOf` + branch |
 | `<=>` and relational operators on `string` | a call to native `string.compareTo` |
 | string `switch` | `StrHash` + numeric switch + equality confirm |
+| a dense integer `switch` | `SwitchOn`, which picks a jump table or a key table |
 | lambda | a **static synthetic method** plus a closure allocation |
+| object creation, field and property access, `this`/`super` | `ObjNew`, `FieldGet`/`FieldSet`, the accessor calls |
 | `inline` / `forceinline` (§3.6) | the body spliced into the call site |
 | type alias (§2.7) | its target's descriptor; transparent |
 | `value class` (§2.9) | its single field, boxed only where it flows into a reference slot |
 | property access | the `get_x`/`set_x` call the linker sees |
 | enum case | its ordinal |
+| a folded `const fun` call in an ordinary body | the constant itself |
 
 ### Naming conventions to fix *before* the first emit
 
@@ -485,9 +607,12 @@ no open form to write: a name promising one argument and supplying none is malfo
 2. ~~The runtime half of §8~~ **done** — descriptor parsing, display, arity-mangled contract names.
 3. ~~§6's ABI decisions~~ **done** — operator names, synthetic names, boxing sites, nested types.
 4. ~~Step 2 — compilation and import~~ **done**.
-5. Step 3 — binder. Phases 1 and 2 **done**; phase 3, body binding, is the next piece.
-6. Step 4 — const evaluation (needs a binder to have something to fold).
-7. Step 5 — lowering and codegen.
+5. ~~Step 3 — binder~~ **done**, all three phases.
+6. ~~Step 4 — const evaluation of `const fun` (§7.2), on a scratch runtime~~ **done**, together
+   with the bound-tree emitter it needed.
+7. Step 5 — the rest of lowering, and emitting a whole module.
 
-Steps 4 and 5 can overlap: `const if` must be resolved before body binding, so a minimal folder for
-literal-valued constants may be needed inside Step 3.
+Steps 4 and 5 did overlap, exactly as predicted, and in both directions: `const if` needed a
+literal-only folder inside Step 3, and folding a `const fun` needed a real emitter inside Step 4.
+What is left of Step 5 is the lowering table in §5 plus the module-level work — declaring types,
+fields, properties and methods on a `SurtrModuleBuilder`, and writing the image.

@@ -529,6 +529,7 @@ namespace Surtr.Compiler.Binding
                 IsSealed = method.IsSealed,
                 IsNative = method is SurtrNativeMethodInfo,
                 IsSynthetic = SyntheticNames.IsSynthetic(method.Name),
+                ImportedFrom = method,
             };
 
             var declared = method.Parameters;

@@ -37,6 +37,67 @@ namespace Surtr.Compiler.Binding
         private readonly Dictionary<AliasSymbol, AliasBinding> _aliases = new Dictionary<AliasSymbol, AliasBinding>();
         private readonly HashSet<AliasSymbol> _resolvingAliases = new HashSet<AliasSymbol>();
 
+        private readonly List<ConstructionSite> _constructions = new List<ConstructionSite>();
+
+        private int _suppressed;
+
+        /// <summary>
+        /// Checks every constructed generic against its parameters' bounds (§6).
+        /// </summary>
+        /// <remarks>
+        /// Deferred to its own pass because a constraint like <c>&lt;T : IComparable&lt;T&gt;&gt;</c>
+        /// names a type whose hierarchy is itself still being resolved while signatures are bound.
+        /// Once phase 2 is done, every bound is known and the check is a subtype test.
+        /// </remarks>
+        public void VerifyConstraints(Conversions conversions)
+        {
+            foreach (var site in _constructions)
+            {
+                var parameters = site.Type.TypeParameters;
+                var arguments = site.Type.TypeArguments;
+
+                // A bound is written in terms of the declaration's own parameters, so it has to be
+                // read as this construction makes it: `<T : IComparable<T>>` on `Sorter<Vec2>` is
+                // the question of whether `Vec2` satisfies `IComparable<Vec2>`.
+                var substitution = site.Type.SubstitutionFromArguments(_factory);
+
+                for (int i = 0; i < parameters.Count && i < arguments.Count; i++)
+                {
+                    foreach (var declaredBound in parameters[i].Constraints)
+                    {
+                        var bound = substitution.Apply(declaredBound);
+
+                        if (bound.IsError || arguments[i].IsError || conversions.IsSubtype(arguments[i], bound))
+                            continue;
+
+                        ReportError(
+                            SurtrDiagnosticCode.ConstraintNotSatisfied,
+                            $"'{arguments[i].ToDisplayString()}' does not satisfy '{parameters[i].Name} : {bound.ToDisplayString()}'.",
+                            site.SourceName,
+                            site.Span);
+                    }
+                }
+            }
+
+            _constructions.Clear();
+        }
+
+        private readonly struct ConstructionSite
+        {
+            internal ConstructionSite(NamedTypeSymbol type, SourceSpan span, string sourceName)
+            {
+                Type = type;
+                Span = span;
+                SourceName = sourceName;
+            }
+
+            internal NamedTypeSymbol Type { get; }
+
+            internal SourceSpan Span { get; }
+
+            internal string SourceName { get; }
+        }
+
         /// <summary>Creates a resolver over one compilation's factory, imports and diagnostics.</summary>
         public TypeResolver(TypeSymbolFactory factory, MetadataImporter importer, SurtrDiagnosticBag diagnostics)
         {
@@ -54,6 +115,37 @@ namespace Surtr.Compiler.Binding
         /// </summary>
         public void RegisterAlias(AliasSymbol alias, AliasDeclarationSyntax syntax, Scope scope, string sourceName)
             => _aliases[alias] = new AliasBinding(syntax, scope, sourceName);
+
+        /// <summary>
+        /// Whether a dotted name names a type, without reporting if it does not.
+        /// </summary>
+        /// <remarks>
+        /// A body binder asks this before treating a name as a value, because <c>Vec2(1, 2)</c> is
+        /// a construction and <c>Suit.Hearts</c> is a static member — and a name that turns out to
+        /// be an ordinary local is not a mistake worth a diagnostic.
+        /// </remarks>
+        public bool TryResolveTypeName(IReadOnlyList<string> path, Scope scope, SourceSpan span, out NamedTypeSymbol type)
+        {
+            var syntax = new NamedTypeSyntax(span, path, System.Array.Empty<TypeSyntax>());
+
+            _suppressed++;
+            try
+            {
+                var resolved = Resolve(syntax, scope, string.Empty);
+                if (resolved is NamedTypeSymbol named && !named.IsError)
+                {
+                    type = named;
+                    return true;
+                }
+            }
+            finally
+            {
+                _suppressed--;
+            }
+
+            type = null!;
+            return false;
+        }
 
         /// <summary>Resolves a type as written.</summary>
         public TypeSymbol Resolve(TypeSyntax syntax, Scope scope, string sourceName)
@@ -265,7 +357,7 @@ namespace Surtr.Compiler.Binding
 
             if (matching.Count == 0)
             {
-                _diagnostics.ReportError(
+                ReportError(
                     SurtrDiagnosticCode.WrongTypeArgumentCount,
                     $"No declaration of '{Join(syntax.Path, syntax.Path.Count)}' takes {arguments.Length} type argument(s).",
                     sourceName,
@@ -275,7 +367,7 @@ namespace Surtr.Compiler.Binding
             }
 
             // Two imports both answering: §2.1 makes that a problem here, at the use.
-            _diagnostics.ReportError(
+            ReportError(
                 SurtrDiagnosticCode.AmbiguousName,
                 $"'{Join(syntax.Path, syntax.Path.Count)}' is brought into scope by more than one import.",
                 sourceName,
@@ -292,7 +384,7 @@ namespace Surtr.Compiler.Binding
                 {
                     if (named.Arity != arguments.Length)
                     {
-                        _diagnostics.ReportError(
+                        ReportError(
                             SurtrDiagnosticCode.WrongTypeArgumentCount,
                             $"'{named.Name}' takes {named.Arity} type argument(s), not {arguments.Length}.",
                             sourceName,
@@ -301,14 +393,25 @@ namespace Surtr.Compiler.Binding
                         return _factory.ErrorType;
                     }
 
-                    return arguments.Length == 0 ? named : named.Construct(arguments);
+                    if (arguments.Length == 0)
+                        return named;
+
+                    var constructed = named.Construct(arguments);
+
+                    // Checked later, not here: a constraint may name a type whose own members are
+                    // still being resolved, so the site is recorded and verified once phase 2 has
+                    // finished settling every signature.
+                    if (_suppressed == 0)
+                        _constructions.Add(new ConstructionSite(constructed, syntax.Span, sourceName));
+
+                    return constructed;
                 }
 
                 case TypeParameterSymbol parameter:
                 {
                     if (arguments.Length > 0)
                     {
-                        _diagnostics.ReportError(
+                        ReportError(
                             SurtrDiagnosticCode.WrongTypeArgumentCount,
                             $"'{parameter.Name}' is a type parameter and takes no type arguments.",
                             sourceName,
@@ -334,7 +437,7 @@ namespace Surtr.Compiler.Binding
 
             if (alias.TypeParameters.Count != arguments.Length)
             {
-                _diagnostics.ReportError(
+                ReportError(
                     SurtrDiagnosticCode.WrongTypeArgumentCount,
                     $"Alias '{alias.Name}' takes {alias.TypeParameters.Count} type argument(s), not {arguments.Length}.",
                     sourceName,
@@ -371,7 +474,7 @@ namespace Surtr.Compiler.Binding
 
             if (!_resolvingAliases.Add(alias))
             {
-                _diagnostics.ReportError(
+                ReportError(
                     SurtrDiagnosticCode.AliasCycle,
                     $"Alias '{alias.Name}' is defined in terms of itself.",
                     sourceName,
@@ -396,13 +499,22 @@ namespace Surtr.Compiler.Binding
         {
             string written = Join(syntax.Path, syntax.Path.Count);
 
-            _diagnostics.ReportError(
+            ReportError(
                 SurtrDiagnosticCode.UnresolvedName,
                 $"'{written}' does not name a type in scope.",
                 sourceName,
                 syntax.Span);
 
             return _factory.Error(written);
+        }
+
+        /// <summary>
+        /// Reports, unless a caller is only asking whether a name happens to be a type.
+        /// </summary>
+        private void ReportError(SurtrDiagnosticCode code, string message, string sourceName, SourceSpan span)
+        {
+            if (_suppressed == 0)
+                _diagnostics.ReportError(code, message, sourceName, span);
         }
 
         private static string Join(IReadOnlyList<string> path, int count)

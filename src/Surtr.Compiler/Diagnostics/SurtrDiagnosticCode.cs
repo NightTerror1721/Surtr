@@ -157,6 +157,66 @@ namespace Surtr.Compiler.Diagnostics
         /// <summary>More type parameters than the single-digit descriptor form can encode.</summary>
         TooManyTypeParameters = 3015,
 
+        /// <summary>A value used where its type does not reach the one expected.</summary>
+        CannotConvert = 3016,
+
+        /// <summary>A member name the receiver's type does not have.</summary>
+        UnresolvedMember = 3017,
+
+        /// <summary>A call whose arguments fit no overload, or fit two equally well (§3.5).</summary>
+        UnresolvedCall = 3018,
+
+        /// <summary>Something called, indexed or iterated that does not support it.</summary>
+        NotSupportedOnType = 3019,
+
+        /// <summary>An operator applied to operand types it is not defined for (§5.7).</summary>
+        OperatorNotDefined = 3020,
+
+        /// <summary>An assignment to something that cannot be assigned: a <c>let</c>, or a value.</summary>
+        NotAssignable = 3021,
+
+        /// <summary><c>this</c> or <c>super</c> written where there is no instance.</summary>
+        NoInstanceInScope = 3022,
+
+        /// <summary><c>null</c> written against a type that cannot hold it (§5.1).</summary>
+        NullNotAllowed = 3023,
+
+        /// <summary>A type that has to be inferred and cannot be.</summary>
+        CannotInferType = 3024,
+
+        /// <summary>A <c>break</c> or <c>continue</c> with no loop to leave, or naming one that is not there.</summary>
+        JumpOutsideLoop = 3025,
+
+        /// <summary>Branches of one expression whose types have nothing in common.</summary>
+        NoCommonType = 3026,
+
+        /// <summary>A local read on a path that has not assigned it yet.</summary>
+        UseBeforeAssignment = 3027,
+
+        /// <summary>A statement nothing can reach.</summary>
+        UnreachableCode = 3028,
+
+        /// <summary>A method that can finish without returning the value it promises.</summary>
+        NotAllPathsReturn = 3029,
+
+        /// <summary>A type argument that does not satisfy its parameter's constraints (§6).</summary>
+        ConstraintNotSatisfied = 3030,
+
+        /// <summary>A switch expression over an enum that neither lists every case nor has an <c>else</c> (§4.4).</summary>
+        SwitchNotExhaustive = 3031,
+
+        /// <summary>An expression required to be constant that does not fold (§7).</summary>
+        NotAConstant = 3032,
+
+        /// <summary>A <c>const fun</c> that breaks one of the restrictions §7.2 puts on one.</summary>
+        InvalidConstFunction = 3033,
+
+        /// <summary>
+        /// A <c>const fun</c> the compiler tried to fold and could not run: it threw, exceeded the
+        /// instruction budget, or uses something the const evaluator cannot emit yet (§7.2).
+        /// </summary>
+        ConstEvaluationFailed = 3034,
+
         #endregion
     }
 }
