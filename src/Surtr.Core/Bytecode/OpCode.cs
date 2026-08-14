@@ -1807,12 +1807,12 @@ namespace Surtr.Bytecode
         /// <remarks>
         /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
         /// Stack: <c>..., str -&gt; ..., hash</c><br/>
-        /// Notes: reads the hash <see cref="Runtime.Objects.SurtrString"/> computed once at
-        /// construction, so this is a load rather than a walk over the text. The value is
-        /// <see cref="Runtime.Objects.SurtrString.ComputeHash"/>'s, which depends only on the text -
-        /// that is what lets a compiler hash a <c>switch</c>'s case labels at build time and have
-        /// them still match at run time, in another process. This exists for that lowering: hash,
-        /// <c>SwitchLookup</c>, then <c>StrEQ</c> to settle collisions.
+        /// Notes: reads the hash <see cref="Runtime.Objects.SurtrString"/> computed once on first
+        /// need and cached, so this is a load rather than a walk over the text on every use. The
+        /// value is <see cref="Runtime.Objects.SurtrString.ComputeHash"/>'s, which depends only on
+        /// the text - that is what lets a compiler hash a <c>switch</c>'s case labels at build time
+        /// and have them still match at run time, in another process. This exists for that
+        /// lowering: hash, <c>SwitchLookup</c>, then <c>StrEQ</c> to settle collisions.
         /// </remarks>
         StrHash,
         #endregion

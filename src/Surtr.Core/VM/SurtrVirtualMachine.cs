@@ -1314,8 +1314,9 @@ namespace Surtr.VM
                     goto Dispatch;
 
                 case OpCode.StrHash:
-                    // A load, not a walk: the hash was computed when the string was built, and is
-                    // the same in any process, which is what a compiled string switch needs.
+                    // A load, not a walk: the hash is computed once, on first need, and cached on
+                    // the string - and is the same in any process, which is what a compiled string
+                    // switch needs.
                     *(sp - 1) = SurtrValue.TagMaskInt
                         | (uint)((SurtrString)entities[(SurtrRef)(*(sp - 1))]!).Hash;
                     goto Dispatch;

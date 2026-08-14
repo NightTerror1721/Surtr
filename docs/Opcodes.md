@@ -533,4 +533,4 @@ One instruction, existing for one lowering: `switch` over strings.
 
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
-| `0xD5` | `StrHash` | `opcode(1)` · 1 byte | `..., str -> ..., hash` | Replaces a string with its hash. Reads the hash `SurtrString` computed once at construction, so this is a load rather than a walk over the text. The value is `ComputeHash`'s, which depends only on the text - that is what lets a compiler hash a switch's case labels at build time and have them still match at run time, in another process. This exists for that lowering: hash, SwitchLookup, then StrEQ to settle collisions. |
+| `0xD5` | `StrHash` | `opcode(1)` · 1 byte | `..., str -> ..., hash` | Replaces a string with its hash. Reads the hash `SurtrString` computed once on first need and cached, so this is a load rather than a walk over the text on every use. The value is `ComputeHash`'s, which depends only on the text - that is what lets a compiler hash a switch's case labels at build time and have them still match at run time, in another process. This exists for that lowering: hash, SwitchLookup, then StrEQ to settle collisions. |

@@ -20,10 +20,14 @@ namespace Surtr.Runtime.Objects
     /// and no marshalling.
     /// </para>
     /// <para>
-    /// The instance is immutable, which is what lets <see cref="Hash"/> be computed once at
-    /// construction. That matters because strings are the one reference type Surtr compares by
-    /// value - see <see cref="SurtrValueComparer"/> - so a string used as a dictionary key would
-    /// otherwise rehash its whole text on every lookup.
+    /// The instance is immutable - <see cref="Value"/> never changes - but the hash in
+    /// <see cref="Hash"/> is computed lazily, once, on first need, and then cached. Strings are
+    /// the one reference type Surtr compares by value - see <see cref="SurtrValueComparer"/> - so
+    /// a string used as a dictionary key hashes its whole text at most once, while a string that
+    /// never becomes a key (a concatenation result, an error message, a formatted value) never
+    /// pays for a hash it will never use. That matters: concatenation, casing, trimming, joining
+    /// and interpolation all build strings, and hashing each one eagerly would add a second walk
+    /// over the text to every one of them.
     /// </para>
     /// </remarks>
     public sealed class SurtrString : SurtrObject
@@ -32,15 +36,33 @@ namespace Surtr.Runtime.Objects
         internal readonly string Value;
 
         /// <summary>
-        /// <see cref="Value"/>'s hash, computed once by <see cref="ComputeHash"/> and therefore the
-        /// same in every process, on every platform, forever.
+        /// <see cref="Value"/>'s hash: <see cref="ComputeHash"/>'s, therefore the same in every
+        /// process, on every platform, forever. Computed on first need and cached.
         /// </summary>
-        internal readonly int Hash;
+        /// <remarks>
+        /// <para>
+        /// The cache is a plain field, not a lock. Built-in classes are process-wide, so two
+        /// runtimes can demand the hash of the same string at once; the computation is a pure
+        /// function of the text, both threads write the same value, and an <see cref="int"/> store
+        /// is atomic - the race is benign.
+        /// </para>
+        /// <para>
+        /// 0 is the "not computed" sentinel and also a legal FNV-1a output, so a text whose true
+        /// hash is 0 is recomputed on every access: correct, and rarer than one text in 2^32.
+        /// </para>
+        /// </remarks>
+        private int _hash;
+
+        /// <summary>The string's cached hash, computed on first access.</summary>
+        internal int Hash
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _hash != 0 ? _hash : (_hash = ComputeHash(Value));
+        }
 
         internal SurtrString(string value) : base(SurtrBuiltIns.String)
         {
             Value = value;
-            Hash = ComputeHash(value);
         }
 
         /// <summary>
@@ -116,10 +138,19 @@ namespace Surtr.Runtime.Objects
         /// <summary>Ordinal comparison against another Surtr string.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TextEquals(SurtrString other)
-            // Cheap rejects first: identity, then the cached hashes, then the characters. Two
-            // strings of different text almost always differ in hash, so the full ordinal
-            // comparison is reached only by genuine matches and by real collisions.
-            => ReferenceEquals(this, other) || (Hash == other.Hash && string.Equals(Value, other.Value, StringComparison.Ordinal));
+        {
+            // Cheap rejects first: identity, then the cached hashes, then the characters. The
+            // hash is a fast reject only when both sides already have one - forcing the lazy
+            // hash here would pay a scalar FNV walk to skip a vectorised ordinal compare, which
+            // is backwards. Two strings of different text almost always differ in hash, so the
+            // full ordinal comparison is reached only by genuine matches, real collisions, and
+            // strings that were never hashed.
+            if (ReferenceEquals(this, other))
+                return true;
+            if (_hash != 0 && other._hash != 0 && _hash != other._hash)
+                return false;
+            return string.Equals(Value, other.Value, StringComparison.Ordinal);
+        }
 
         // A string holds no Surtr values, so there is nothing here to trace.
         internal override void VisitReferences(SurtrEntityMarker marker) { }
