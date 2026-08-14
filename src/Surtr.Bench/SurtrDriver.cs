@@ -1,0 +1,120 @@
+#nullable enable
+
+using Surtr.Compiler.Binding;
+using Surtr.Compiler.CodeGen;
+using Surtr.Compiler.Compilation;
+using Surtr.Runtime;
+using Surtr.Runtime.Classes;
+using Surtr.Runtime.Objects;
+using System;
+using System.Collections.Generic;
+
+namespace Surtr.Bench
+{
+    /// <summary>
+    /// Compiles the embedded Surtr module once, loads it into one runtime, and hands back cached
+    /// <see cref="SurtrMethodInfo"/> handles so a timed loop pays only the call, never the front end.
+    /// </summary>
+    internal sealed class SurtrDriver : IDisposable
+    {
+        // Mirrors the module-path derivation ModuleEmitterTests relies on: a file at
+        // <root>/bench/Bench.surtr is module "bench". Nothing here touches the disk.
+        private const string SourceRoot = "D:/proj/src";
+
+        private const string ModulePath = "bench";
+
+        private readonly SurtrRuntime _runtime;
+        private readonly SurtrCompilation _compilation;
+        private readonly Dictionary<string, SurtrMethodInfo> _methods = new();
+        private readonly SurtrValue[] _argument = new SurtrValue[1];
+
+        public static SurtrDriver Build(string moduleSource)
+        {
+            var project = new SurtrProject(SourceRoot);
+            project.AddSourceFile(SourceRoot + "/bench/Bench.surtr", moduleSource);
+
+            var compilation = SurtrCompilation.Create(project);
+            var binder = compilation.Bind();
+            binder.BindBodies();
+            if (compilation.HasErrors)
+                throw new InvalidOperationException("binding reported: " + string.Join("; ", compilation.Diagnostics));
+
+            var emitter = new ModuleEmitter(compilation, binder);
+            if (!emitter.TryEmit())
+                throw new InvalidOperationException("emission reported: " + string.Join("; ", compilation.Diagnostics));
+
+            var runtime = new SurtrRuntime();
+
+            // A safety net rather than a limit: a workload that stopped terminating must fail
+            // cleanly instead of hanging the harness.
+            runtime.InstructionBudget = 5_000_000_000;
+
+            // "hostAdd" is the host global the module's `native fun hostAdd` links against. It has
+            // to be published before LoadModule, exactly as the tests do it.
+            RegisterNativeGlobals(runtime);
+
+            foreach (var module in emitter.Modules)
+                runtime.LoadModule(module);
+
+            return new SurtrDriver(runtime, compilation, ModulePath);
+        }
+
+        /// <summary>
+        /// Publishes the native globals the bench module declares. The first declared parameter of
+        /// a host global is argument zero, so there is no receiver.
+        /// </summary>
+        private static unsafe void RegisterNativeGlobals(SurtrRuntime runtime)
+        {
+            runtime.DefineGlobalFunction(
+                "hostAdd",
+                SurtrClassReference.Integer,
+                new[] { new SurtrParameterInfo("value", runtime.TypeHandle(SurtrClassReference.Integer)) },
+                SurtrNativeEntryPoint.FromFunctionPointer(&HostAdd));
+        }
+
+        private static SurtrValue HostAdd(SurtrCallArguments arguments)
+            => SurtrValue.CreateInt(arguments.GetInt(0) + 1);
+
+        private SurtrDriver(SurtrRuntime runtime, SurtrCompilation compilation, string modulePath)
+        {
+            _runtime = runtime;
+            _compilation = compilation;
+
+            if (!runtime.TryGetModule(modulePath, out var module))
+                throw new InvalidOperationException($"no module '{modulePath}' was loaded.");
+
+            foreach (var workload in Workloads.AllWorkloads)
+            {
+                if (!module.TryGetMethods(workload.Name, out var overloads) || overloads.Length == 0)
+                    throw new InvalidOperationException($"the bench module declares no '{workload.Name}'.");
+                _methods[workload.Name] = overloads[0];
+            }
+        }
+
+        /// <summary>Calls one workload once and returns its int result.</summary>
+        public long CallInt(string function, long size)
+        {
+            _argument[0] = SurtrValue.CreateInt((int)size);
+            return _runtime.Invoke(_methods[function], _argument).AsInt;
+        }
+
+        /// <summary>Calls one workload once and returns its float result.</summary>
+        public double CallFloat(string function, long size)
+        {
+            _argument[0] = SurtrValue.CreateInt((int)size);
+            return _runtime.Invoke(_methods[function], _argument).AsFloat;
+        }
+
+        /// <summary>
+        /// Collects whatever the previous call left unreachable. Called between samples, never
+        /// inside the timed region: Surtr's collector only runs when the host asks it to.
+        /// </summary>
+        public void Collect() => _runtime.Collect();
+
+        public void Dispose()
+        {
+            _runtime.Dispose();
+            _compilation.Dispose();
+        }
+    }
+}
