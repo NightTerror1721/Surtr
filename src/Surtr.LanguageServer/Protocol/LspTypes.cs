@@ -109,6 +109,96 @@ namespace Surtr.LanguageServer.Protocol
         public object HoverProvider { get; set; } = true;
 
         public object DefinitionProvider { get; set; } = true;
+
+        public CompletionOptions? CompletionProvider { get; set; }
+
+        public SignatureHelpOptions? SignatureHelpProvider { get; set; }
+    }
+
+    /// <summary>What the server offers for <c>textDocument/completion</c>.</summary>
+    public sealed class CompletionOptions
+    {
+        /// <summary>A dot is all that triggers completion while typing; Ctrl+Space asks for it directly.</summary>
+        public List<string> TriggerCharacters { get; set; } = new List<string> { "." };
+    }
+
+    /// <summary>What the server offers for <c>textDocument/signatureHelp</c>.</summary>
+    public sealed class SignatureHelpOptions
+    {
+        public List<string> TriggerCharacters { get; set; } = new List<string> { "(", "," };
+
+        public List<string> RetriggerCharacters { get; set; } = new List<string> { "," };
+    }
+
+    /// <summary>Standard LSP completion item kinds, by their protocol numbers.</summary>
+    public static class CompletionItemKinds
+    {
+        public const int Text = 1;
+        public const int Method = 2;
+        public const int Function = 3;
+        public const int Constructor = 4;
+        public const int Field = 5;
+        public const int Variable = 6;
+        public const int Class = 7;
+        public const int Interface = 8;
+        public const int Module = 9;
+        public const int Property = 10;
+        public const int Enum = 13;
+        public const int Keyword = 14;
+        public const int Snippet = 15;
+        public const int TypeParameter = 25;
+    }
+
+    /// <summary>The answer to <c>textDocument/completion</c>.</summary>
+    public sealed class CompletionList
+    {
+        public bool IsIncomplete { get; set; }
+
+        public List<CompletionItem> Items { get; set; } = new List<CompletionItem>();
+    }
+
+    /// <summary>One suggestion. The label is what gets inserted; the rest describes it.</summary>
+    public sealed class CompletionItem
+    {
+        public string Label { get; set; } = string.Empty;
+
+        public int Kind { get; set; }
+
+        /// <summary>A short one-line description shown beside the label.</summary>
+        public string? Detail { get; set; }
+
+        /// <summary>Richer markdown shown once the item is selected.</summary>
+        public MarkupContent? Documentation { get; set; }
+
+        /// <summary>Orders the list; sorting by kind alone would put keywords first.</summary>
+        public string? SortText { get; set; }
+    }
+
+    /// <summary>The answer to <c>textDocument/signatureHelp</c>.</summary>
+    public sealed class SignatureHelp
+    {
+        public List<SignatureInformation> Signatures { get; set; } = new List<SignatureInformation>();
+
+        /// <summary>Which signature the client should show, by index into <see cref="Signatures"/>.</summary>
+        public int? ActiveSignature { get; set; }
+
+        /// <summary>Which parameter of that signature the cursor is filling.</summary>
+        public int? ActiveParameter { get; set; }
+    }
+
+    public sealed class SignatureInformation
+    {
+        public string Label { get; set; } = string.Empty;
+
+        public MarkupContent? Documentation { get; set; }
+
+        public List<ParameterInformation> Parameters { get; set; } = new List<ParameterInformation>();
+    }
+
+    /// <summary>One parameter of a signature; the label is its rendered text.</summary>
+    public sealed class ParameterInformation
+    {
+        public string Label { get; set; } = string.Empty;
     }
 
     public sealed class TextDocumentSyncOptions

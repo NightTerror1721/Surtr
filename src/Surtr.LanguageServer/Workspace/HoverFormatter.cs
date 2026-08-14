@@ -142,7 +142,8 @@ namespace Surtr.LanguageServer.Workspace
             return builder.ToString();
         }
 
-        private static string MethodHeading(MethodSymbol method)
+        /// <summary>A method's one-line signature, as <c>fun name(x: int): int</c>.</summary>
+        public static string MethodHeading(MethodSymbol method)
         {
             string name;
             string typeParameters = method.TypeParameters.Count > 0
@@ -202,7 +203,8 @@ namespace Surtr.LanguageServer.Workspace
             return "(" + string.Join(", ", parts) + ")";
         }
 
-        private static string ParameterText(MethodSymbol method, int index)
+        /// <summary>One parameter's rendered text, as <c>name : type</c> with any default or vararg marker.</summary>
+        public static string ParameterText(MethodSymbol method, int index)
         {
             ParameterSymbol parameter = method.Parameters[index];
             string prefix = parameter.IsVararg ? "..." : string.Empty;

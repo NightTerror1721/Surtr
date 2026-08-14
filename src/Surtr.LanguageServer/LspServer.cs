@@ -86,6 +86,14 @@ namespace Surtr.LanguageServer
                     OnDefinition(message);
                     break;
 
+                case "textDocument/completion":
+                    OnCompletion(message);
+                    break;
+
+                case "textDocument/signatureHelp":
+                    OnSignatureHelp(message);
+                    break;
+
                 default:
                     if (message.IsRequest)
                         Fail(message, RpcErrorCodes.MethodNotFound, "Method not implemented: " + message.Method);
@@ -108,6 +116,8 @@ namespace Surtr.LanguageServer
                 Capabilities = new ServerCapabilities
                 {
                     TextDocumentSync = new TextDocumentSyncOptions(),
+                    CompletionProvider = new CompletionOptions(),
+                    SignatureHelpProvider = new SignatureHelpOptions(),
                 },
                 ServerInfo = new ServerInfo(),
             };
@@ -229,6 +239,40 @@ namespace Surtr.LanguageServer
             int position = lines.OffsetAt(parameters.Position.Line, parameters.Position.Character);
 
             return SymbolResolver.Resolve(_workspace.Snapshot, path, text, position);
+        }
+
+        private void OnCompletion(RpcMessage message)
+        {
+            var parameters = Params<TextDocumentPositionParams>(message);
+            if (parameters?.TextDocument is null || _workspace is null)
+            {
+                Reply(message, null);
+                return;
+            }
+
+            string path = Workspace.Workspace.PathFromUri(parameters.TextDocument.Uri);
+            string text = _workspace.CurrentText(path);
+            var lines = TextLines.Index(text);
+            int position = lines.OffsetAt(parameters.Position.Line, parameters.Position.Character);
+
+            Reply(message, CompletionProvider.Complete(_workspace.Snapshot, path, text, position));
+        }
+
+        private void OnSignatureHelp(RpcMessage message)
+        {
+            var parameters = Params<TextDocumentPositionParams>(message);
+            if (parameters?.TextDocument is null || _workspace is null)
+            {
+                Reply(message, null);
+                return;
+            }
+
+            string path = Workspace.Workspace.PathFromUri(parameters.TextDocument.Uri);
+            string text = _workspace.CurrentText(path);
+            var lines = TextLines.Index(text);
+            int position = lines.OffsetAt(parameters.Position.Line, parameters.Position.Character);
+
+            Reply(message, CompletionProvider.SignatureHelp(_workspace.Snapshot, path, text, position));
         }
 
         /// <summary>Publishes diagnostics for every file with some, and clears the ones that went quiet.</summary>
