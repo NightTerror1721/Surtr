@@ -187,6 +187,89 @@ namespace Surtr.Compiler.Binding.BoundTree
         public bool IsVirtual { get; }
     }
 
+    /// <summary>
+    /// A <c>?.</c> access: the receiver is evaluated once, and the access happens only if it is not
+    /// null (§5.1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A node of its own rather than a flag on each kind of access, because what makes <c>?.</c> what
+    /// it is has nothing to do with which member is reached — it is that the receiver is evaluated
+    /// exactly once and that a null one short-circuits the whole access. Both facts belong to the
+    /// access as a unit, and a flag on a field read would have to be repeated on a property read and
+    /// on a call and mean the same thing three times.
+    /// </para>
+    /// <para>
+    /// <see cref="Access"/> reads its receiver through a
+    /// <see cref="BoundConditionalReceiver"/> standing for the value already evaluated, which is what
+    /// keeps <c>make()?.name</c> from calling <c>make()</c> twice. A chain nests: the receiver of the
+    /// outer access is itself one of these.
+    /// </para>
+    /// </remarks>
+    public sealed class BoundNullConditionalExpression : BoundExpression
+    {
+        internal BoundNullConditionalExpression(
+            SyntaxNode syntax,
+            BoundExpression receiver,
+            BoundExpression access,
+            TypeSymbol type)
+            : base(syntax, type)
+        {
+            Receiver = receiver;
+            Access = access;
+        }
+
+        /// <summary>The receiver being tested, evaluated once.</summary>
+        public BoundExpression Receiver { get; }
+
+        /// <summary>The access performed when the receiver is not null.</summary>
+        public BoundExpression Access { get; }
+    }
+
+    /// <summary>
+    /// Stands for the already-evaluated receiver inside a <see cref="BoundNullConditionalExpression"/>.
+    /// </summary>
+    public sealed class BoundConditionalReceiver : BoundExpression
+    {
+        internal BoundConditionalReceiver(SyntaxNode syntax, TypeSymbol type) : base(syntax, type)
+        {
+        }
+    }
+
+    /// <summary>
+    /// A <c>!!</c> assertion: the operand, checked to be present right now (§5.1).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The type it produces is the non-nullable one, which is the half the type checker cares about —
+    /// but §5.1 says it <em>throws</em> when the assertion does not hold, and that is the half that
+    /// makes it worth writing. Without the check the operator is a silent cast, which fails later and
+    /// somewhere else, and the whole point of an escape hatch is that it fails where it was written.
+    /// </para>
+    /// <para>
+    /// <see cref="Thrown"/> is bound here rather than built at emit because it is an ordinary
+    /// construction of a library class, and the emitter has no way to resolve a name.
+    /// </para>
+    /// </remarks>
+    public sealed class BoundNullAssertExpression : BoundExpression
+    {
+        internal BoundNullAssertExpression(SyntaxNode syntax, BoundExpression operand, TypeSymbol type, BoundExpression? thrown)
+            : base(syntax, type)
+        {
+            Operand = operand;
+            Thrown = thrown;
+        }
+
+        /// <summary>The value being asserted.</summary>
+        public BoundExpression Operand { get; }
+
+        /// <summary>
+        /// The exception raised when it is null, or <see langword="null"/> when the standard library
+        /// this compilation sees declares no <c>NullReferenceException</c> to raise.
+        /// </summary>
+        public BoundExpression? Thrown { get; }
+    }
+
     /// <summary>A closure held in a value being invoked (§8).</summary>
     /// <remarks>
     /// Separate from <see cref="BoundCallExpression"/> because there is no method to name: the

@@ -287,6 +287,12 @@ namespace Surtr.Compiler.CodeGen
                 case BoundAssignmentExpression assignment:
                     EmitAssignment(assignment, keepValue: false);
                     return;
+
+                // `a?.f();` still has to skip the call when `a` is null, but neither path leaves a
+                // value — so the guard is emitted without one rather than pushed and popped.
+                case BoundNullConditionalExpression access:
+                    EmitNullConditional(access, discardResult: true);
+                    return;
             }
 
             Expression(expression);
@@ -1182,6 +1188,22 @@ namespace Surtr.Compiler.CodeGen
                     EmitSwitchExpression(@switch);
                     return;
 
+                case BoundNullConditionalExpression conditionalAccess:
+                    EmitNullConditional(conditionalAccess, discardResult: false);
+                    return;
+
+                case BoundNullAssertExpression assertion:
+                    EmitNullAssert(assertion);
+                    return;
+
+                case BoundConditionalReceiver:
+                    Code.LoadLocal(
+                        _conditionalReceivers.Count > 0
+                            ? _conditionalReceivers[_conditionalReceivers.Count - 1]
+                            : throw Unsupported("a '?.' receiver outside the access it belongs to"));
+
+                    return;
+
                 case BoundErrorExpression:
                     throw Unsupported("an expression that failed to bind, so the compilation should have stopped at its diagnostics");
 
@@ -1194,6 +1216,13 @@ namespace Surtr.Compiler.CodeGen
         {
             switch (literal.Value)
             {
+                // §5.1: absence in a nullable primitive is its own tagged value, not a null reference.
+                // A reference is its 32-bit payload, so a null one and a present `0` would be the
+                // same value — which is exactly what the absent tag exists to keep apart.
+                case null when IsNullablePrimitive(literal.Type):
+                    Code.PushAbsent(TypeCodeOf(literal.Type));
+                    return;
+
                 case null: Code.LoadNull(); return;
                 case bool value: Code.LoadBool(value); return;
                 case char value: Code.LoadChar(value); return;
@@ -1237,6 +1266,15 @@ namespace Surtr.Compiler.CodeGen
                         ?? throw Unsupported("a user-defined conversion with no operator behind it"),
                     discardResult: false);
 
+                return;
+            }
+
+            // `null` reaching a nullable primitive is the absent tag, not a null reference: §5.1 makes
+            // absence a value of its own precisely so it costs no allocation, and a null reference is
+            // its 32-bit payload — which would make an absent `int?` and a present `0` the same value.
+            if (conversion.Operand is BoundLiteralExpression { Value: null } && IsNullablePrimitive(to))
+            {
+                Code.PushAbsent(TypeCodeOf(to));
                 return;
             }
 
@@ -1493,6 +1531,111 @@ namespace Surtr.Compiler.CodeGen
             Code.MarkLabel(end);
         }
 
+        /// <summary>
+        /// Emits a <c>?.</c> access: the receiver once, then the access only if it was not null (§5.1).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The receiver goes into a slot rather than being duplicated on the stack, for two reasons.
+        /// It has to be readable at whatever depth the access reaches it — an argument list may sit
+        /// between them — and both paths have to leave the stack at the same depth, which the emitter
+        /// checks at the join. A <c>Dup</c>/<c>Pop</c> pair would have to be balanced by hand at every
+        /// shape of access instead.
+        /// </para>
+        /// <para>
+        /// What the null path pushes depends on the member: a nullable primitive is the absent tag,
+        /// not a null reference, since those are deliberately different values in the encoding.
+        /// </para>
+        /// </remarks>
+        private void EmitNullConditional(BoundNullConditionalExpression access, bool discardResult)
+        {
+            var slot = _method.DeclareLocal("$safe$" + _conditionalReceivers.Count);
+
+            Expression(access.Receiver);
+            Code.StoreLocal(slot);
+
+            var whenNull = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.LoadLocal(slot);
+
+            if (IsNullablePrimitive(access.Receiver.Type))
+                Code.JPA(whenNull);
+            else
+                Code.JumpIfNull(whenNull);
+
+            _conditionalReceivers.Add(slot);
+
+            bool hasValue = !access.Type.IsVoid && !discardResult;
+
+            if (access.Access is BoundCallExpression call)
+                EmitCall(call, discardResult: !hasValue);
+            else if (hasValue)
+                Expression(access.Access);
+            else
+                Statement(new BoundExpressionStatement(access.Syntax, access.Access));
+
+            _conditionalReceivers.RemoveAt(_conditionalReceivers.Count - 1);
+
+            Code.Jump(end);
+            Code.MarkLabel(whenNull);
+
+            if (hasValue)
+                PushAbsentValue(access.Type);
+
+            Code.MarkLabel(end);
+        }
+
+        /// <summary>
+        /// Emits <c>x!!</c>: the value, and a raise on the path where it turned out to be null (§5.1).
+        /// </summary>
+        /// <remarks>
+        /// The operand stays on the stack and a duplicate is what the test consumes, so the value
+        /// passes through untouched on the path that matters. The raising path ends in <c>Throw</c>,
+        /// which is why the join needs no balancing: nothing falls out of it.
+        /// </remarks>
+        private void EmitNullAssert(BoundNullAssertExpression assertion)
+        {
+            Expression(assertion.Operand);
+
+            if (assertion.Thrown is null)
+                return;
+
+            var ok = Code.NewLabel();
+
+            Code.Dup();
+
+            if (IsNullablePrimitive(assertion.Operand.Type))
+                Code.JPNA(ok);
+            else
+                Code.JumpIfNotNull(ok);
+
+            Code.Pop();
+            Expression(assertion.Thrown);
+            Code.Throw();
+            Code.MarkLabel(ok);
+        }
+
+        /// <summary>Pushes the "no value" of a type: the absent tag for a primitive, null otherwise.</summary>
+        private void PushAbsentValue(TypeSymbol type)
+        {
+            if (IsNullablePrimitive(type))
+                Code.PushAbsent(TypeCodeOf(type));
+            else
+                Code.LoadNull();
+        }
+
+        /// <summary>
+        /// Whether a type's "no value" is the absent tag rather than a null reference (§5.1).
+        /// </summary>
+        private static bool IsNullablePrimitive(TypeSymbol type)
+            => type.IsNullable && type.NonNullable.SpecialType is SpecialType.Int or SpecialType.Float
+                or SpecialType.Bool or SpecialType.Char;
+
+        // A stack, because `a?.b?.c` nests one guarded access inside another and each has its own
+        // receiver slot; the innermost is the one a placeholder reads.
+        private readonly List<SurtrLocal> _conditionalReceivers = new List<SurtrLocal>();
+
         private void EmitNullCoalesce(BoundBinaryExpression binary)
         {
             var otherwise = Code.NewLabel();
@@ -1500,7 +1643,14 @@ namespace Surtr.Compiler.CodeGen
 
             Expression(binary.Left);
             Code.Dup();
-            Code.JumpIfNull(otherwise);
+
+            // A nullable primitive says "no value" with the absent tag rather than with a null
+            // payload, so asking the wrong question would let an absent `int?` through as a value.
+            if (IsNullablePrimitive(binary.Left.Type))
+                Code.JPA(otherwise);
+            else
+                Code.JumpIfNull(otherwise);
+
             Code.Jump(end);
             Code.MarkLabel(otherwise);
             Code.Pop();
@@ -1663,6 +1813,15 @@ namespace Surtr.Compiler.CodeGen
 
                 case BoundFieldExpression field:
                 {
+                    // §10: a `native var` is the host's storage, reached through this module's import
+                    // table rather than through a static slot it does not have.
+                    if (field.Field.IsNative)
+                    {
+                        value();
+                        Code.StoreGlobal(field.Field.Name);
+                        return;
+                    }
+
                     var info = Field(field.Field);
 
                     if (field.Field.IsStatic)
@@ -1729,6 +1888,14 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitFieldRead(BoundFieldExpression field)
         {
+            // §10: a host global has no field slot to read — it lives in the runtime's global table
+            // and the module names it by an import bound when the module loads.
+            if (field.Field.IsNative)
+            {
+                Code.LoadGlobal(field.Field.Name);
+                return;
+            }
+
             var info = Field(field.Field);
 
             if (field.Field.IsStatic)
@@ -1779,11 +1946,18 @@ namespace Surtr.Compiler.CodeGen
             if (creation.Constructor is null)
             {
                 // A type whose fields have initializers got a constructor the source never wrote,
-                // and skipping it would leave every instance holding zeroes.
+                // and skipping it would leave every instance holding zeroes. It has no symbol, so
+                // both halves have to be asked: a builder inside this module, metadata across a
+                // module boundary.
                 if (_context.TryGetDefaultConstructor(type, out var synthesised))
                 {
                     Code.Dup();
                     Code.Call(synthesised, discardResult: true);
+                }
+                else if (_context.TryGetBuiltDefaultConstructor(type, out var built))
+                {
+                    Code.Dup();
+                    Code.Call(built, discardResult: true);
                 }
 
                 return;
@@ -1918,6 +2092,19 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private void EmitResolvedCall(MethodSymbol method, bool virtualCall, bool discardResult)
         {
+            // §10's one genuinely global category. `CallGlobalNative` is not about the body being
+            // native — a native class member is called like anything else — but about the target
+            // living in the host's table rather than in a module's, which is a different namespace.
+            if (method.IsNative && method.ContainingType is null)
+            {
+                Code.CallGlobal(
+                    method.Name,
+                    method.Parameters.Count,
+                    discardResult || method.ReturnType.IsVoid ? 0 : 1);
+
+                return;
+            }
+
             if (_context.TryGetBuilder(method, out var local))
             {
                 // The one case where the call site rather than the callee decides: a `super` call,

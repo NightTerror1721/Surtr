@@ -292,11 +292,12 @@ namespace Surtr.Compiler.Binding.BoundTree
     /// </remarks>
     public sealed class BoundFieldInitializer
     {
-        internal BoundFieldInitializer(FieldSymbol field, BoundExpression value, NamedTypeSymbol? declaringType)
+        internal BoundFieldInitializer(FieldSymbol field, BoundExpression value, NamedTypeSymbol? declaringType, int order = 0)
         {
             Field = field;
             Value = value;
             DeclaringType = declaringType;
+            Order = order;
         }
 
         /// <summary>The field being given a value.</summary>
@@ -307,6 +308,90 @@ namespace Surtr.Compiler.Binding.BoundTree
 
         /// <summary>The type declaring it, or <see langword="null"/> for a module-level variable.</summary>
         public NamedTypeSymbol? DeclaringType { get; }
+
+        /// <summary>
+        /// Where the declaration sat among its container's other initializers.
+        /// </summary>
+        /// <remarks>
+        /// §2.5 and §3.2 run a <c>static { }</c> block interleaved with the field initializers, in
+        /// the source position it appears — so the two lists have to be merged at emit, and one
+        /// counter across both is what orders them.
+        /// </remarks>
+        public int Order { get; }
+    }
+
+    /// <summary>
+    /// A <c>static { ... }</c> block, which runs from its container's static initializer (§2.5, §3.2).
+    /// </summary>
+    /// <remarks>
+    /// It is not a member and has no symbol anything can name; what it has is a body and a position
+    /// among the initializers it runs beside. Kept in a list of its own for the same reason
+    /// <see cref="BoundFieldInitializer"/> is: <em>where</em> the code runs is a code-generation
+    /// decision, and splicing it into a body during binding would take that decision away.
+    /// </remarks>
+    public sealed class BoundStaticBlock
+    {
+        internal BoundStaticBlock(BoundStatement body, NamedTypeSymbol? declaringType, ModuleSymbol module, int order)
+        {
+            Body = body;
+            DeclaringType = declaringType;
+            Module = module;
+            Order = order;
+        }
+
+        /// <summary>The block itself.</summary>
+        public BoundStatement Body { get; }
+
+        /// <summary>The type declaring it, or <see langword="null"/> for a module-level block.</summary>
+        public NamedTypeSymbol? DeclaringType { get; }
+
+        /// <summary>The module it belongs to.</summary>
+        public ModuleSymbol Module { get; }
+
+        /// <summary>Where it sat among its container's initializers.</summary>
+        public int Order { get; }
+    }
+
+    /// <summary>
+    /// The <c>: super(...)</c> or <c>: this(...)</c> a constructor chains to (§3.2).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Not a statement inside the body, because it does not run inside it: a chain is evaluated
+    /// first, and what follows it differs between the two forms. A <c>super</c> chain runs the base
+    /// constructor and then this class's own instance initializers; a <c>this</c> chain runs another
+    /// constructor of the same class, which already ran them, so they must not run twice.
+    /// </para>
+    /// <para>
+    /// Keeping it beside the body rather than in it is what lets the emitter order those three
+    /// pieces — chain, initializers, body — without having to recognise a call in the tree.
+    /// </para>
+    /// </remarks>
+    public sealed class BoundConstructorChain
+    {
+        internal BoundConstructorChain(
+            SyntaxNode syntax,
+            MethodSymbol target,
+            IReadOnlyList<BoundExpression> arguments,
+            bool isThis)
+        {
+            Syntax = syntax;
+            Target = target;
+            Arguments = arguments;
+            IsThis = isThis;
+        }
+
+        /// <summary>The syntax it was written on.</summary>
+        public SyntaxNode Syntax { get; }
+
+        /// <summary>The constructor being chained to.</summary>
+        public MethodSymbol Target { get; }
+
+        /// <summary>Its arguments, in parameter order.</summary>
+        public IReadOnlyList<BoundExpression> Arguments { get; }
+
+        /// <summary>Whether it was written <c>this(...)</c> rather than <c>super(...)</c>.</summary>
+        public bool IsThis { get; }
     }
 
     /// <summary>A labelled statement, which a <c>break</c> or <c>continue</c> may name.</summary>

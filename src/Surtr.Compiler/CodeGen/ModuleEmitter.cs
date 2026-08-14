@@ -56,6 +56,10 @@ namespace Surtr.Compiler.CodeGen
         private readonly Dictionary<FieldSymbol, SurtrFieldInfo> _builtFields =
             new Dictionary<FieldSymbol, SurtrFieldInfo>();
 
+        // Keyed by type rather than by method, because a synthesised constructor has no symbol.
+        private readonly Dictionary<NamedTypeSymbol, SurtrMethodInfo> _builtDefaultConstructors =
+            new Dictionary<NamedTypeSymbol, SurtrMethodInfo>();
+
         private readonly List<SurtrModule> _modules = new List<SurtrModule>();
 
         /// <summary>Creates an emitter over a bound compilation.</summary>
@@ -138,6 +142,9 @@ namespace Surtr.Compiler.CodeGen
 
             foreach (var pair in _builtFields)
                 context.Declare(pair.Key, pair.Value);
+
+            foreach (var pair in _builtDefaultConstructors)
+                context.BindDefaultConstructor(pair.Key, pair.Value);
 
             var types = new List<TypeEmission>();
 
@@ -325,13 +332,45 @@ namespace Surtr.Compiler.CodeGen
             SortInitializers(emission, symbol);
 
             // Declared here rather than while bodies are emitted, because a creation site in
-            // another type may be emitted first and has to be able to name it.
-            if (emission.Constructors.Count == 0 && emission.InstanceInitializers.Count > 0)
+            // another type may be emitted first and has to be able to name it. A class with no
+            // initializers of its own still needs one when its base has something to run: nothing
+            // else would ever reach the base's constructor, since `ObjNew` only allocates.
+            if (emission.Constructors.Count == 0
+                && (emission.InstanceInitializers.Count > 0 || NeedsConstruction(symbol.BaseType)))
             {
                 var synthesised = @class.DefineConstructor();
                 emission.SyntheticConstructor = synthesised;
                 context.DeclareDefaultConstructor(symbol, synthesised);
             }
+        }
+
+        /// <summary>
+        /// Whether building an instance of <paramref name="type"/> has to run anything, so a derived
+        /// class declaring no constructor still needs one to reach it (§3.2).
+        /// </summary>
+        /// <remarks>
+        /// Decided from symbols rather than from what has been emitted so far, because a derived
+        /// class may be declared before its base and the two questions would otherwise be answered
+        /// in whichever order the file happened to be written in.
+        /// </remarks>
+        private bool NeedsConstruction(NamedTypeSymbol? type)
+        {
+            for (var walk = type; walk is not null; walk = walk.BaseType)
+            {
+                foreach (var member in walk.Members)
+                {
+                    if (member is MethodSymbol { Role: MethodRole.Constructor })
+                        return true;
+                }
+
+                foreach (var initializer in _binder.FieldInitializers)
+                {
+                    if (!initializer.Field.IsStatic && ReferenceEquals(initializer.DeclaringType, walk))
+                        return true;
+                }
+            }
+
+            return false;
         }
 
         private void DeclareContractMembers(EmitContext context, SurtrInterfaceBuilder contract, NamedTypeSymbol symbol)
@@ -539,7 +578,18 @@ namespace Surtr.Compiler.CodeGen
         private void DeclareModuleMembers(EmitContext context, SurtrModuleBuilder builder, ModuleSymbol module)
         {
             foreach (var field in module.Fields)
+            {
+                // §10: a `native` variable declares nothing here. It has no static slot — the host
+                // owns the storage — and the import that reaches it is interned at each use site, so
+                // defining a variable of the same name would give the module a second, dead one.
+                if (field.IsNative)
+                {
+                    builder.NativeVariable(field.Name);
+                    continue;
+                }
+
                 context.Declare(field, builder.DefineVariable(field.Name, _descriptors.Emit(field.Type), field.IsReadOnly, Visibility(field.Accessibility)));
+            }
 
             foreach (var property in module.Properties)
             {
@@ -554,8 +604,15 @@ namespace Surtr.Compiler.CodeGen
 
             foreach (var method in module.Methods)
             {
+                // A module-level `native fun` is a host global (§10): it goes in the import table
+                // rather than the method table, and a call site emits `CallGlobalNative`. Declared
+                // here as well as at each use so a module that only ever passes it around still
+                // fails to load when the host never registered it.
                 if (method.IsNative)
-                    throw new SurtrEmitException($"'{method.Name}' is a module-level native function, which binds through the host global table rather than through a link name.");
+                {
+                    builder.NativeFunction(method.Name);
+                    continue;
+                }
 
                 context.Declare(
                     method,
@@ -639,7 +696,7 @@ namespace Surtr.Compiler.CodeGen
 
             if (emission.SyntheticConstructor is SurtrMethodBuilder synthetic)
             {
-                EmitInstanceInitializers(context, emission, synthetic);
+                EmitConstructorPrologue(context, emission, constructor: null, synthetic);
                 synthetic.Code.ReturnVoid();
             }
 
@@ -656,7 +713,7 @@ namespace Surtr.Compiler.CodeGen
                         continue;
                     }
 
-                    EmitInstanceInitializers(context, emission, builder);
+                    EmitConstructorPrologue(context, emission, symbol, builder);
                     EmitBody(context, symbol, builder, allowMissing: true);
                     continue;
                 }
@@ -672,7 +729,9 @@ namespace Surtr.Compiler.CodeGen
 
             EmitBridges(context, emission, @class);
 
-            if (emission.StaticInitializers.Count == 0)
+            var blocks = StaticBlocksOf(emission.Symbol);
+
+            if (emission.StaticInitializers.Count == 0 && blocks.Count == 0)
                 return;
 
             var initializer = @class.DefineStaticInitializer();
@@ -681,10 +740,52 @@ namespace Surtr.Compiler.CodeGen
             // One emitter across all of them, and fragments rather than bodies: each assignment is
             // a statement in the same method, and letting any of them finish it would leave every
             // later one unreachable.
-            foreach (var field in emission.StaticInitializers)
-                body.EmitFragment(Assignment(field));
+            EmitStaticFragments(body, emission.StaticInitializers, blocks);
 
             initializer.Code.ReturnVoid();
+        }
+
+        /// <summary>
+        /// Emits a type's or module's static field initializers and <c>static { }</c> blocks in the
+        /// one order they were written in (§2.5, §3.2).
+        /// </summary>
+        /// <remarks>
+        /// Two lists, one sequence: a block reads what the initializers above it wrote and is read by
+        /// the ones below, so merging them by declaration position is the whole point of recording
+        /// that position at all.
+        /// </remarks>
+        private static void EmitStaticFragments(
+            MethodBodyEmitter body,
+            List<BoundFieldInitializer> initializers,
+            List<BoundStaticBlock> blocks)
+        {
+            int field = 0;
+            int block = 0;
+
+            while (field < initializers.Count || block < blocks.Count)
+            {
+                bool takeField = block >= blocks.Count
+                    || (field < initializers.Count && initializers[field].Order <= blocks[block].Order);
+
+                if (takeField)
+                    body.EmitFragment(Assignment(initializers[field++]));
+                else
+                    body.EmitFragment(blocks[block++].Body);
+            }
+        }
+
+        /// <summary>The <c>static { }</c> blocks a type declares, in source order.</summary>
+        private List<BoundStaticBlock> StaticBlocksOf(NamedTypeSymbol symbol)
+        {
+            var blocks = new List<BoundStaticBlock>();
+
+            foreach (var block in _binder.StaticBlocks)
+            {
+                if (ReferenceEquals(block.DeclaringType, symbol))
+                    blocks.Add(block);
+            }
+
+            return blocks;
         }
 
         #region Bridges
@@ -876,16 +977,23 @@ namespace Surtr.Compiler.CodeGen
                     initializers.Add(initializer);
             }
 
-            if (initializers.Count == 0)
+            var blocks = new List<BoundStaticBlock>();
+            foreach (var block in _binder.StaticBlocks)
+            {
+                if (block.DeclaringType is null && ReferenceEquals(block.Module, module))
+                    blocks.Add(block);
+            }
+
+            if (initializers.Count == 0 && blocks.Count == 0)
                 return;
 
             // A module-level variable is a static of its module, so its initializer runs from the
-            // module's own initializer — which the runtime runs after every class's.
+            // module's own initializer — which the runtime runs after every class's. A module-level
+            // `static { }` block runs from the same place, in its own source position among them.
             var moduleInitializer = builder.DefineStaticInitializer();
             var body = new MethodBodyEmitter(moduleInitializer, StaticInitializerSymbol(null, module), context);
 
-            foreach (var field in initializers)
-                body.EmitFragment(Assignment(field));
+            EmitStaticFragments(body, initializers, blocks);
 
             moduleInitializer.Code.ReturnVoid();
         }
@@ -904,15 +1012,126 @@ namespace Surtr.Compiler.CodeGen
             new MethodBodyEmitter(builder, symbol, context).Emit(body);
         }
 
-        private void EmitInstanceInitializers(EmitContext context, TypeEmission emission, SurtrMethodBuilder constructor)
+        /// <summary>
+        /// Emits what runs before a constructor's own body: the chain it names, and this class's
+        /// instance field initializers (§3.2).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The order is forced. A <c>super(...)</c> chain runs the base constructor first, because
+        /// this class's initializers may read what the base set up. A <c>this(...)</c> chain runs
+        /// another constructor of the same class, which already ran the initializers — so running
+        /// them again would undo whatever that constructor did with them, which is exactly what
+        /// §3.2 says must not happen.
+        /// </para>
+        /// <para>
+        /// With nothing written, the base's parameterless constructor is called anyway: it is what
+        /// §3.2 promises, and <c>ObjNew</c> allocates without running anything.
+        /// </para>
+        /// </remarks>
+        private void EmitConstructorPrologue(
+            EmitContext context,
+            TypeEmission emission,
+            MethodSymbol? constructor,
+            SurtrMethodBuilder builder)
         {
-            if (emission.InstanceInitializers.Count == 0)
-                return;
+            // Against the real constructor where there is one, because a chain's arguments are
+            // ordinary expressions over its parameters and a stand-in symbol would not own them.
+            var body = new MethodBodyEmitter(builder, constructor ?? InstanceInitializerSymbol(emission.Symbol), context);
 
-            var body = new MethodBodyEmitter(constructor, InstanceInitializerSymbol(emission.Symbol), context);
+            if (constructor is not null && _binder.ConstructorChains.TryGetValue(constructor, out var chain))
+            {
+                body.EmitFragment(ChainStatement(emission.Symbol, chain));
+
+                if (chain.IsThis)
+                    return;
+            }
+            else
+            {
+                EmitImplicitBaseChain(context, emission.Symbol, builder);
+            }
 
             foreach (var field in emission.InstanceInitializers)
                 body.EmitFragment(Assignment(field));
+        }
+
+        /// <summary>Wraps a bound chain as the call on <c>this</c> that it is.</summary>
+        private static BoundStatement ChainStatement(NamedTypeSymbol owner, BoundConstructorChain chain)
+            => new BoundExpressionStatement(
+                chain.Syntax,
+                new BoundCallExpression(
+                    chain.Syntax,
+                    new BoundThisExpression(chain.Syntax, owner, isSuper: false),
+                    chain.Target,
+                    chain.Arguments,
+                    isVirtual: false));
+
+        /// <summary>
+        /// Calls the base's parameterless constructor for a constructor that chains to nothing.
+        /// </summary>
+        /// <remarks>
+        /// Emitted as instructions rather than as a bound call, because the constructor it reaches
+        /// may be one the compiler synthesised — which has a builder and metadata but no symbol for
+        /// a bound tree to name.
+        /// </remarks>
+        private void EmitImplicitBaseChain(EmitContext context, NamedTypeSymbol owner, SurtrMethodBuilder builder)
+        {
+            if (owner.BaseType is not NamedTypeSymbol baseType)
+                return;
+
+            foreach (var member in _binder.MemberLookup.MembersOf(baseType))
+            {
+                if (member is not MethodSymbol { Role: MethodRole.Constructor } candidate || candidate.Parameters.Count != 0)
+                    continue;
+
+                builder.Code.LoadLocal(builder.Receiver);
+
+                if (context.TryGetBuilder(candidate, out var declared))
+                    builder.Code.Call(declared, discardResult: true);
+                else if (context.Resolve(candidate) is SurtrMethodInfo built)
+                    builder.Code.Call(built, discardResult: true);
+                else
+                    throw new SurtrEmitException($"'{baseType.Name}' has a constructor with no metadata to call.");
+
+                return;
+            }
+
+            if (!TryGetSynthesizedConstructor(context, baseType, out var synthetic, out var syntheticInfo))
+                return;
+
+            builder.Code.LoadLocal(builder.Receiver);
+
+            if (synthetic is not null)
+                builder.Code.Call(synthetic, discardResult: true);
+            else
+                builder.Code.Call(syntheticInfo!, discardResult: true);
+        }
+
+        /// <summary>
+        /// The constructor synthesised for a type that declares none, from this module or from one
+        /// built earlier in the same compilation.
+        /// </summary>
+        /// <remarks>
+        /// Both halves are needed because a synthesised constructor has no symbol: inside the module
+        /// being built it is a builder, and across a module boundary it is metadata that nothing on
+        /// the symbol side records. Without the second half a creation site in another module would
+        /// allocate an instance and run none of its initializers.
+        /// </remarks>
+        private bool TryGetSynthesizedConstructor(
+            EmitContext context,
+            NamedTypeSymbol type,
+            out SurtrMethodBuilder? builder,
+            out SurtrMethodInfo? built)
+        {
+            if (context.TryGetDefaultConstructor(type, out var declared))
+            {
+                builder = declared;
+                built = null;
+                return true;
+            }
+
+            builder = null;
+            return context.TryGetBuiltDefaultConstructor(type, out built!);
         }
 
         /// <summary>Whether an accessor is one the compiler has to supply a body for.</summary>
@@ -1035,6 +1254,12 @@ namespace Surtr.Compiler.CodeGen
                     if (builder.Built is SurtrMethodInfo info)
                         _builtMethods[method] = info;
                 }
+
+                // A synthesised constructor has no symbol, so nothing above records it — and a
+                // creation site in a module built later has to be able to call it or the instance it
+                // allocates runs none of its initializers.
+                if (emission.SyntheticConstructor?.Built is SurtrMethodInfo synthetic)
+                    _builtDefaultConstructors[emission.Symbol.Definition] = synthetic;
 
                 foreach (var member in emission.Symbol.Members)
                 {

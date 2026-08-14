@@ -820,5 +820,532 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.False(new ModuleEmitter(compilation, binder).TryEmit());
         }
         #endregion
+
+        #region Constructor chaining (§3.2)
+        [Fact]
+        public void ASuperChainRunsTheBaseConstructor()
+        {
+            var runtime = Run(
+                "class Animal {\n"
+                    + "  public let name: string;\n"
+                    + "  public constructor(name: string) { this.name = name; }\n"
+                    + "}\n"
+                    + "class Dog : Animal {\n"
+                    + "  public constructor(name: string) : super(name) { }\n"
+                    + "}\n"
+                    + "fun run(): string { return Dog(\"rex\").name; }");
+
+            Assert.Equal("rex", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void AThisChainRunsTheOtherConstructor()
+        {
+            var runtime = Run(
+                "class C {\n"
+                    + "  public var n: int = 0;\n"
+                    + "  public constructor() : this(5) { }\n"
+                    + "  public constructor(n: int) { this.n = n; }\n"
+                    + "}\n"
+                    + "fun run(): int { return C().n; }");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// §3.2: the chained-to constructor already ran them, so running them again would undo
+        /// whatever it did with them.
+        /// </summary>
+        [Fact]
+        public void AThisChainDoesNotRerunTheInstanceInitializers()
+        {
+            var runtime = Run(
+                "class C {\n"
+                    + "  public var log: int = 0;\n"
+                    + "  public constructor() : this(0) { log += 1; }\n"
+                    + "  public constructor(n: int) { }\n"
+                    + "}\n"
+                    + "fun run(): int { return C().log; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void TheInstanceInitializersRunAfterTheSuperChain()
+        {
+            var runtime = Run(
+                "class Base { public var b: int = 0; public constructor(b: int) { this.b = b; } }\n"
+                    + "class Derived : Base {\n"
+                    + "  public var d: int = 4;\n"
+                    + "  public constructor() : super(6) { }\n"
+                    + "}\n"
+                    + "fun run(): int { let x = Derived(); return x.b + x.d; }");
+
+            Assert.Equal(10, Int(runtime, "run"));
+        }
+
+        /// <summary>§3.2: a constructor that omits the chain still reaches the base's parameterless one.</summary>
+        [Fact]
+        public void AConstructorWithNoChainStillReachesItsBase()
+        {
+            var runtime = Run(
+                "class Base { public var n: int = 0; public constructor() { n = 7; } }\n"
+                    + "class Derived : Base { public constructor() { } }\n"
+                    + "fun run(): int { return Derived().n; }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A derived class declaring nothing at all still has to be constructed: <c>ObjNew</c> only
+        /// allocates, so without a synthesised constructor the base's initializers never run.
+        /// </summary>
+        [Fact]
+        public void ADerivedClassWithNoMembersStillRunsItsBasesInitializers()
+        {
+            var runtime = Run(
+                "class Base { public var n: int = 7; }\n"
+                    + "class Derived : Base { }\n"
+                    + "fun run(): int { return Derived().n; }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AChainReachesThroughThreeLevels()
+        {
+            var runtime = Run(
+                "class A { public var n: int = 0; public constructor(n: int) { this.n = n; } }\n"
+                    + "class B : A { public constructor(n: int) : super(n + 1) { } }\n"
+                    + "class C : B { public constructor() : super(5) { } }\n"
+                    + "fun run(): int { return C().n; }");
+
+            Assert.Equal(6, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AChainToASuperThatDoesNotExistIsReported()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "class C { public constructor() : super() { } }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidConstructorChain);
+        }
+
+        /// <summary>
+        /// §3.2 gives an omitted chain one meaning — the base's parameterless constructor — so where
+        /// the base has none, the omission names nothing and the base would go unconstructed.
+        /// </summary>
+        [Fact]
+        public void AConstructorWithNoChainWhoseBaseHasNoParameterlessOneIsReported()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "class A { public var n: int = 0; public constructor(n: int) { this.n = n; } }\n"
+                    + "class B : A { public constructor() { } }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.BaseConstructorUnreachable);
+        }
+
+        /// <summary>The same case, reached by declaring no constructor at all.</summary>
+        [Fact]
+        public void AClassWithNoConstructorWhoseBaseNeedsArgumentsIsReported()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "class A { public constructor(n: int) { } }\nclass B : A { }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.BaseConstructorUnreachable);
+        }
+
+        /// <summary>
+        /// Constructors are not inherited, so a grandparent's parameterless one does not answer for
+        /// the parent that sits between.
+        /// </summary>
+        [Fact]
+        public void AGrandparentsParameterlessConstructorDoesNotSatisfyTheParent()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "class A { public constructor() { } }\n"
+                    + "class B : A { public constructor(n: int) : super() { } }\n"
+                    + "class C : B { }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.BaseConstructorUnreachable);
+        }
+
+        /// <summary>
+        /// A base that declares no constructor needs nothing called: its initializers run from the
+        /// parameterless one the emitter synthesises for it.
+        /// </summary>
+        [Fact]
+        public void ABaseThatDeclaresNoConstructorNeedsNoChain()
+        {
+            var runtime = Run(
+                "class A { public var n: int = 5; }\nclass B : A { }\nfun run(): int { return B().n; }");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// §9's own shape: every library exception takes a message, so a subclass has to pass one up.
+        /// </summary>
+        [Fact]
+        public void AUserExceptionChainsItsMessageIntoTheLibrary()
+        {
+            var runtime = Run(
+                "class BadThing : Exception { constructor(message: string) : super(message) { } }\n"
+                    + "fun run(): string {\n"
+                    + "  try { throw BadThing(\"nope\"); }\n"
+                    + "  catch (e: BadThing) { return e.message; }\n"
+                    + "}");
+
+            Assert.Equal("nope", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void AThisChainThatLoopsBackIsReported()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "class C {\n"
+                    + "  public constructor() : this(1) { }\n"
+                    + "  public constructor(n: int) : this() { }\n"
+                    + "}");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidConstructorChain);
+        }
+
+        /// <summary>
+        /// The synthesised constructor has no symbol, so a creation site in another module can only
+        /// reach it through metadata the emitter carried across.
+        /// </summary>
+        [Fact]
+        public void ConstructingAClassFromAnotherModuleRunsItsInitializers()
+        {
+            var runtime = Run(
+                "import game.util.Thing;\nfun run(): int { return Thing().n; }",
+                ("/game/util/Thing.surtr", "public class Thing { public let n: int = 6; }"));
+
+            Assert.Equal(6, Int(runtime, "run"));
+        }
+        #endregion
+
+        #region Static blocks (§2.5, §3.2)
+        [Fact]
+        public void AModuleStaticBlockRunsAtLoad()
+        {
+            var runtime = Run("var counter: int = 0;\nstatic { counter = 7; }\nfun run(): int { return counter; }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AClassStaticBlockRunsAtLoad()
+        {
+            var runtime = Run(
+                "class C { public static var n: int = 1; static { n = 7; } }\nfun run(): int { return C.n; }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// §2.5 runs a block in the source position it appears among the field initializers, so a
+        /// block reads what the ones above it wrote and is read by the ones below.
+        /// </summary>
+        [Fact]
+        public void AStaticBlockRunsInItsSourcePositionAmongTheInitializers()
+        {
+            var runtime = Run(
+                "var a: int = 1;\nstatic { a += 1; }\nvar b: int = 10;\nstatic { b += a; }\nfun run(): int { return b; }");
+
+            Assert.Equal(12, Int(runtime, "run"));
+        }
+        #endregion
+
+        #region Nullable access (§5.1)
+        [Fact]
+        public void ASafeNavigationYieldsNullInsteadOfFaulting()
+        {
+            var runtime = Run(
+                "class Holder { public let name: string = \"x\"; }\n"
+                    + "fun run(): int {\n"
+                    + "  let h: Holder? = null;\n"
+                    + "  let n = h?.name;\n"
+                    + "  return n == null ? 1 : 0;\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ASafeNavigationReadsTheMemberWhenTheReceiverIsThere()
+        {
+            var runtime = Run(
+                "class Holder { public let name: string = \"x\"; }\n"
+                    + "fun run(): string { let h: Holder? = Holder(); return h?.name ?? \"fallback\"; }");
+
+            Assert.Equal("x", Text(runtime, "run"));
+        }
+
+        /// <summary>A primitive member's absence is the absent tag, which is what <c>??</c> tests.</summary>
+        [Fact]
+        public void ASafeNavigationOnAPrimitiveMemberCoalesces()
+        {
+            var runtime = Run(
+                "class Holder { public let size: int = 9; }\n"
+                    + "fun run(): int { let h: Holder? = null; return h?.size ?? 4; }");
+
+            Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ASafeNavigationChainShortCircuitsAtTheFirstNull()
+        {
+            var runtime = Run(
+                "class Inner { public let name: string = \"x\"; }\n"
+                    + "class Outer { public var inner: Inner? = null; }\n"
+                    + "fun run(): int {\n"
+                    + "  let o: Outer? = Outer();\n"
+                    + "  return o?.inner?.name == null ? 1 : 0;\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The receiver is evaluated once, which is the half of <c>?.</c> that a re-evaluating
+        /// lowering would get wrong without ever looking wrong.
+        /// </summary>
+        [Fact]
+        public void ASafeNavigationEvaluatesItsReceiverOnce()
+        {
+            var runtime = Run(
+                "var calls: int = 0;\n"
+                    + "class Holder { public let name: string = \"x\"; }\n"
+                    + "fun make(): Holder? { calls += 1; return null; }\n"
+                    + "fun run(): int { let n = make()?.name; return calls; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ANullAssertionThrowsWhenItDoesNotHold()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let s: string? = null;\n"
+                    + "  try { let t = s!!; return 0; }\n"
+                    + "  catch (e: NullReferenceException) { return 1; }\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ANullAssertionPassesTheValueThroughWhenItHolds()
+        {
+            var runtime = Run("fun run(): string { let s: string? = \"x\"; return s!!; }");
+
+            Assert.Equal("x", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void ANullAssertionOnAnAbsentPrimitiveThrows()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  var n: int? = null;\n"
+                    + "  try { let v = n!!; return 0; }\n"
+                    + "  catch (e: NullReferenceException) { return 1; }\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A present <c>0</c> is not absence: a reference is its 32-bit payload, so the two would be
+        /// one value without the absent tag.
+        /// </summary>
+        [Fact]
+        public void APresentZeroIsNotAbsent()
+        {
+            var runtime = Run("fun run(): int { var n: int? = 0; return n ?? 7; }");
+
+            Assert.Equal(0, Int(runtime, "run"));
+        }
+        #endregion
+
+        #region Varargs (§3.5)
+        [Fact]
+        public void AVarargsCallAbsorbsTheSurplus()
+        {
+            var runtime = Run(
+                "fun count(first: string, rest: string...): int { return rest.length; }\n"
+                    + "fun run(): int { return count(\"a\", \"b\", \"c\"); }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AVarargsCallWithNoSurplusPacksAnEmptyArray()
+        {
+            var runtime = Run(
+                "fun count(first: string, rest: string...): int { return rest.length; }\n"
+                    + "fun run(): int { return count(\"a\"); }");
+
+            Assert.Equal(0, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AVarargsParameterMayBePassedAWholeArray()
+        {
+            var runtime = Run(
+                "fun count(first: string, rest: string...): int { return rest.length; }\n"
+                    + "fun run(): int { return count(\"a\", [\"b\", \"c\", \"d\"]); }");
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void TheBodySeesAVarargsParameterAsAnArray()
+        {
+            var runtime = Run(
+                "fun first(prefix: string, rest: string...): string { return rest.get(0); }\n"
+                    + "fun run(): string { return first(\"a\", \"b\", \"c\"); }");
+
+            Assert.Equal("b", Text(runtime, "run"));
+        }
+
+        /// <summary>§13.4's own shape, which was unreachable while varargs did not resolve.</summary>
+        [Fact]
+        public void StringFormatIsCallableFromSource()
+        {
+            var runtime = Run("fun run(): string { return string.format(\"{0}-{1}\", \"a\", \"b\"); }");
+
+            Assert.Equal("a-b", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void AVarargsSignatureSurvivesAModuleBoundary()
+        {
+            var runtime = Run(
+                "import game.util.*;\nfun run(): int { return tally(\"a\", \"b\", \"c\"); }",
+                ("/game/util/M.surtr", "public fun tally(first: string, rest: string...): int { return rest.length; }"));
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+        #endregion
+
+        #region Module-level natives (§10)
+        /// <summary>
+        /// §10: a module naming a host global nobody registered fails to load, rather than reading a
+        /// zero out of storage of its own.
+        /// </summary>
+        [Fact]
+        public void AModuleNamingAnUnregisteredNativeVariableFailsToLoad()
+        {
+            var emitter = Build("native let ScreenWidth: int;\nfun run(): int { return ScreenWidth; }");
+
+            using var runtime = new SurtrRuntime();
+            Assert.Throws<InvalidOperationException>(() => runtime.LoadModule(emitter.Modules[0]));
+        }
+
+        [Fact]
+        public void AModuleNamingAnUnregisteredNativeFunctionFailsToLoad()
+        {
+            var emitter = Build("native fun hostLog(message: string): void;\nfun run(): int { hostLog(\"hi\"); return 1; }");
+
+            using var runtime = new SurtrRuntime();
+            Assert.Throws<InvalidOperationException>(() => runtime.LoadModule(emitter.Modules[0]));
+        }
+
+        [Fact]
+        public void ANativeVariableReadsTheHostsOwnStorage()
+        {
+            var emitter = Build("native let ScreenWidth: int;\nfun run(): int { return ScreenWidth; }");
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            var width = runtime.DefineGlobal("ScreenWidth", SurtrClassReference.Integer, isReadOnly: true);
+            runtime.Globals.SetValue(width, SurtrValue.CreateInt(1280));
+            runtime.LoadModule(emitter.Modules[0]);
+
+            Assert.Equal(1280, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AWriteToANativeVariableLandsInTheHostsOwnStorage()
+        {
+            var emitter = Build("native var TimeScale: float;\nfun run(): int { TimeScale = 0.5; return 1; }");
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            runtime.DefineGlobal("TimeScale", SurtrClassReference.Float);
+            runtime.LoadModule(emitter.Modules[0]);
+
+            Assert.Equal(1, Int(runtime, "run"));
+            Assert.True(runtime.Globals.TryGetValue("TimeScale", out var written));
+            Assert.Equal(0.5, written.AsFloat);
+        }
+
+        [Fact]
+        public unsafe void ANativeFunctionCallReachesTheHostsGlobal()
+        {
+            var emitter = Build("native fun hostSquare(value: int): int;\nfun run(): int { return hostSquare(3); }");
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            runtime.DefineGlobalFunction(
+                "hostSquare",
+                SurtrClassReference.Integer,
+                new[] { new SurtrParameterInfo("value", runtime.TypeHandle(SurtrClassReference.Integer)) },
+                SurtrNativeEntryPoint.FromFunctionPointer(&Square));
+
+            runtime.LoadModule(emitter.Modules[0]);
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+
+        // A host global takes no receiver, so its first declared parameter is argument zero.
+        private static SurtrValue Square(SurtrCallArguments arguments)
+            => SurtrValue.CreateInt(arguments.GetInt(0) * arguments.GetInt(0));
+
+        [Fact]
+        public void ANativeVariableCannotHaveAnInitializer()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(Root + "/game/core/Test.surtr", "native let ScreenWidth: int = 5;");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidNativeDeclaration);
+        }
+        #endregion
     }
 }

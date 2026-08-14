@@ -223,6 +223,19 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         InvalidTupleIndex = 3035,
 
+        /// <summary>
+        /// A <c>native</c> declaration that breaks §10: one written somewhere other than module
+        /// scope, or one given a body or an initializer the host is supposed to own.
+        /// </summary>
+        InvalidNativeDeclaration = 3036,
+
+        /// <summary>
+        /// A constructor that chains to nothing whose base declares no parameterless constructor
+        /// (§3.2). An omitted chain means the base's parameterless one, so where there is none the
+        /// omission names nothing and the base would go unconstructed.
+        /// </summary>
+        BaseConstructorUnreachable = 3037,
+
         #endregion
 
         #region Code generation — 4xxx

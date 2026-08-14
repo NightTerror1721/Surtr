@@ -294,39 +294,98 @@ namespace Surtr.Compiler.Binding
             if (receiver.Type.IsError)
                 return Error(syntax);
 
-            if (syntax.IsNullConditional && !receiver.Type.IsNullable)
-            {
-                Report(
-                    SurtrDiagnosticCode.CannotConvert,
-                    syntax.Span,
-                    $"'{receiver.Type.ToDisplayString()}' cannot be null, so '?.' has nothing to guard against.");
-            }
+            if (syntax.IsNullConditional)
+                RequireNullable(receiver, syntax);
 
             return BindInstanceMember(syntax, receiver);
+        }
+
+        /// <summary>
+        /// Builds a construction of a standard-library exception the compiler raises itself (§13.3).
+        /// </summary>
+        /// <remarks>
+        /// Resolved through the ordinary type scope, which §13 puts the whole <c>surtr</c> module in —
+        /// so this finds the same class a <c>catch</c> clause naming it would. A compilation whose
+        /// library does not declare it gets <see langword="null"/> rather than a diagnostic: the
+        /// operator still means what it means, and refusing to compile over a missing library class
+        /// would be a worse failure than the one it is guarding against.
+        /// </remarks>
+        private BoundExpression? BuildLibraryException(SyntaxNode syntax, string name, string message)
+        {
+            if (_typeScope.Lookup(name).Symbol is not NamedTypeSymbol type)
+                return null;
+
+            foreach (var member in _lookup.MembersOf(type))
+            {
+                if (member is not MethodSymbol { Role: MethodRole.Constructor } constructor
+                    || constructor.Parameters.Count != 1
+                    || constructor.Parameters[0].Type.SpecialType != SpecialType.String)
+                {
+                    continue;
+                }
+
+                return new BoundObjectCreationExpression(
+                    syntax,
+                    type,
+                    constructor,
+                    new BoundExpression[] { new BoundLiteralExpression(syntax, _factory.String, message) });
+            }
+
+            return null;
+        }
+
+        /// <summary>Reports a <c>?.</c> whose receiver could not have been null in the first place.</summary>
+        private void RequireNullable(BoundExpression receiver, MemberAccessExpressionSyntax syntax)
+        {
+            if (receiver.Type.IsNullable || receiver.Type.IsError)
+                return;
+
+            Report(
+                SurtrDiagnosticCode.CannotConvert,
+                syntax.Span,
+                $"'{receiver.Type.ToDisplayString()}' cannot be null, so '?.' has nothing to guard against.");
         }
 
         private BoundExpression BindInstanceMember(MemberAccessExpressionSyntax syntax, BoundExpression receiver)
         {
             var lookupType = receiver.Type.NonNullable;
 
+            // §5.1: `a?.b` evaluates `a` once and short-circuits to null, so the access is built over
+            // a stand-in for the receiver and the guard wraps the pair.
+            var accessed = syntax.IsNullConditional
+                ? new BoundConditionalReceiver(syntax.Target, lookupType)
+                : receiver;
+
             if (_lookup.FindField(lookupType, syntax.Name) is FieldSymbol field)
-                return Nullable(new BoundFieldExpression(syntax, field.IsStatic ? null : receiver, field), syntax);
+                return Guard(new BoundFieldExpression(syntax, field.IsStatic ? null : accessed, field), syntax);
 
             if (_lookup.FindProperty(lookupType, syntax.Name) is PropertySymbol property)
-                return Nullable(new BoundPropertyExpression(syntax, property.IsStatic ? null : receiver, property), syntax);
+                return Guard(new BoundPropertyExpression(syntax, property.IsStatic ? null : accessed, property), syntax);
 
             return Error(
                 syntax,
                 SurtrDiagnosticCode.UnresolvedMember,
                 $"'{receiver.Type.ToDisplayString()}' has no member called '{syntax.Name}'.");
 
-            // `a?.b` yields null when `a` is, so the whole expression is nullable whatever `b` is.
-            BoundExpression Nullable(BoundExpression bound, MemberAccessExpressionSyntax access)
-                => access.IsNullConditional && !bound.Type.IsNullable
-                    ? new BoundConversionExpression(
-                        access, bound, bound.Type.Nullable, Conversion.Of(ConversionKind.ImplicitNullable), isExplicit: false)
-                    : bound;
+            BoundExpression Guard(BoundExpression bound, MemberAccessExpressionSyntax access)
+                => access.IsNullConditional ? NullConditional(access, receiver, bound) : bound;
         }
+
+        /// <summary>
+        /// Wraps an access whose receiver was written with <c>?.</c> (§5.1).
+        /// </summary>
+        /// <remarks>
+        /// The whole expression is nullable whatever the member's own type is, which is the half of
+        /// <c>?.</c> the type checker sees; the other half is the short-circuit, and that is the
+        /// emitter's. A <c>void</c> access stays <c>void</c> — there is no value for null to stand in
+        /// for, and only the skip matters.
+        /// </remarks>
+        private BoundExpression NullConditional(SyntaxNode syntax, BoundExpression receiver, BoundExpression access)
+            => new BoundNullConditionalExpression(
+                syntax,
+                receiver,
+                access,
+                access.Type.IsVoid || access.Type.IsError ? access.Type : access.Type.Nullable);
 
         private BoundExpression BindStaticMember(MemberAccessExpressionSyntax syntax, NamedTypeSymbol type)
         {
@@ -643,9 +702,16 @@ namespace Surtr.Compiler.Binding
 
                 case UnaryOperator.NullAssert:
                     // `!!` asserts, so the type it produces is the non-nullable one whether or not
-                    // the assertion turns out to hold.
-                    return new BoundConversionExpression(
-                        syntax, operand, type, Conversion.Of(ConversionKind.ExplicitReference), isExplicit: true);
+                    // the assertion turns out to hold — and §5.1 makes it throw where it does not,
+                    // which is what separates it from a silent cast.
+                    return new BoundNullAssertExpression(
+                        syntax,
+                        operand,
+                        type,
+                        BuildLibraryException(
+                            syntax,
+                            "NullReferenceException",
+                            $"'{operand.Type.ToDisplayString()}' was null where '!!' asserted it was not."));
             }
 
             if (TryBindUserUnary(syntax, operand) is BoundExpression user)
@@ -812,6 +878,28 @@ namespace Surtr.Compiler.Binding
 
                     receiver = BindExpression(member.Target);
                     isVirtual = receiver is not BoundThisExpression { IsSuper: true };
+
+                    // §5.1 again, for `a?.f()`: the call is what the guard protects, so the receiver
+                    // it sees is the stand-in and the guard wraps the call.
+                    if (member.IsNullConditional && !receiver.Type.IsError)
+                    {
+                        RequireNullable(receiver, member);
+
+                        var guarded = _lookup.FindMethods(receiver.Type.NonNullable, name).Count > 0
+                            ? BindMethodCall(
+                                syntax,
+                                new BoundConditionalReceiver(member.Target, receiver.Type.NonNullable),
+                                receiver.Type.NonNullable,
+                                name,
+                                isVirtual)
+                            : Error(
+                                syntax,
+                                SurtrDiagnosticCode.UnresolvedName,
+                                $"'{receiver.Type.ToDisplayString()}' has no method called '{name}'.");
+
+                        return guarded.Type.IsError ? guarded : NullConditional(syntax, receiver, guarded);
+                    }
+
                     break;
                 }
 
@@ -1051,6 +1139,61 @@ namespace Surtr.Compiler.Binding
                     $"'{type.Name}' is abstract and cannot be constructed.");
             }
 
+            if (!TryResolveConstructor(syntax, written, type, out var constructor, out var arguments))
+                return Error(syntax);
+
+            return new BoundObjectCreationExpression(syntax, type, constructor, arguments);
+        }
+
+        /// <summary>
+        /// Binds a <c>: super(...)</c> or <c>: this(...)</c> chain against the constructors of the
+        /// type it names (§3.2).
+        /// </summary>
+        /// <remarks>
+        /// Deliberately not routed through <see cref="BindObjectCreation(SyntaxNode, IReadOnlyList{ArgumentSyntax}, NamedTypeSymbol)"/>:
+        /// a chain allocates nothing, and the base it reaches is very often <c>abstract</c> — which a
+        /// construction is right to refuse and a chain has to allow.
+        /// </remarks>
+        public BoundConstructorChain? BindConstructorChain(
+            ConstructorDeclarationSyntax syntax,
+            NamedTypeSymbol target,
+            bool isThis)
+        {
+            var written = syntax.ChainArguments ?? Array.Empty<ArgumentSyntax>();
+
+            if (!TryResolveConstructor(syntax, written, target, out var constructor, out var arguments))
+                return null;
+
+            if (constructor is null)
+            {
+                // Chaining to a type that declares no constructor is only legal with no arguments,
+                // and then there is nothing to call: the initializers the base does have run from
+                // the constructor the emitter synthesises for it.
+                return null;
+            }
+
+            return new BoundConstructorChain(syntax, constructor, arguments, isThis);
+        }
+
+        /// <summary>
+        /// Resolves which constructor of <paramref name="type"/> an argument list means, and binds
+        /// the arguments into parameter order.
+        /// </summary>
+        /// <returns>
+        /// <see langword="false"/> when nothing applied, in which case a diagnostic has been
+        /// reported. A <see langword="true"/> with a null constructor means the type declares none
+        /// and none was needed.
+        /// </returns>
+        private bool TryResolveConstructor(
+            SyntaxNode syntax,
+            IReadOnlyList<ArgumentSyntax> written,
+            NamedTypeSymbol type,
+            out MethodSymbol? constructor,
+            out IReadOnlyList<BoundExpression> ordered)
+        {
+            constructor = null;
+            ordered = NoArguments;
+
             var arguments = new BoundExpression[written.Count];
             var infos = new ArgumentInfo[written.Count];
 
@@ -1070,25 +1213,30 @@ namespace Surtr.Compiler.Binding
             if (constructors.Count == 0)
             {
                 if (arguments.Length == 0)
-                    return new BoundObjectCreationExpression(syntax, type, null, NoArguments);
+                    return true;
 
-                return Error(
-                    syntax,
+                Report(
                     SurtrDiagnosticCode.UnresolvedCall,
+                    syntax.Span,
                     $"'{type.Name}' declares no constructor, so it takes no arguments.");
+
+                return false;
             }
 
             var result = _overloads.Resolve(constructors, infos);
             if (!result.IsResolved)
             {
-                return Error(
-                    syntax,
+                Report(
                     SurtrDiagnosticCode.UnresolvedCall,
+                    syntax.Span,
                     $"No constructor of '{type.Name}' takes these arguments.");
+
+                return false;
             }
 
-            return new BoundObjectCreationExpression(
-                syntax, type, result.Method, OrderArguments(syntax, written, result.Method!, arguments));
+            constructor = result.Method;
+            ordered = OrderArguments(syntax, written, result.Method!, arguments);
+            return true;
         }
 
         private BoundExpression BindClosureInvocation(CallExpressionSyntax syntax, BoundExpression callee)

@@ -30,13 +30,19 @@ description of what exists, and a plan that outlives its execution is just a sta
 | `CodeGen/ConstFolder.cs`, `Binding/ConstFunctionCheck.cs` | Done (Step 4) |
 | `CodeGen/ModuleEmitter.cs`, `EmitContext.cs` — a whole module emitted, and its image | Done (Step 5) |
 
-**Steps 3, 4 and 5 are complete.** 1590 tests green, and Surtr source now compiles to a module that
+**Steps 3, 4 and 5 are complete.** 1624 tests green, and Surtr source compiles to a module that
 loads into a runtime and runs. `Sample.surtr` exercises every construct in the language and
 round-trips through lex + parse.
 
+**But the front end is not finished against the specification**, and §10 is the list of what is
+still owed — written down after an audit that ran ~90 programs through the whole pipeline rather
+than reading the code. Eight of the things that audit found were *silent*: the program compiled,
+loaded, and answered wrongly. Those eight are now closed and covered by tests (§10.1); the rest are
+not, and are listed so nothing rests on being remembered (§10.2).
+
 Everything `docs/VM-Plan.md` §4 asked the *runtime* for is implemented. §4.8 — the list of things
-the runtime deliberately does not do because the compiler must — is entirely owed, and is
-reproduced in §7 below so the plan is self-contained.
+the runtime deliberately does not do because the compiler must — is reproduced in §7 below so the
+plan is self-contained.
 
 ---
 
@@ -674,5 +680,82 @@ literal-only folder inside Step 3, and folding a `const fun` needed a real emitt
 which is why Step 5 started with most of a body emitter already written.
 
 Everything §5 once listed as owed is emitted, including the five it had left over — parameter
-defaults, `singleton`, bridges, calls on a `value class`, and nested lambda captures. The front end
-is finished against the specification.
+defaults, `singleton`, bridges, calls on a `value class`, and nested lambda captures.
+
+8. Step 6 — the audit's findings. §10.1 is closed; §10.2 is what remains before the front end really
+   is finished against the specification.
+
+---
+
+## 10. What the audit found
+
+Steps 1 through 5 were each checked against the code they added. What none of them checked was the
+specification *as a whole*, on programs, and that is what §10 exists for: every construct
+`Language-Syntax.md` describes, compiled and run. The findings split cleanly in two.
+
+### 10.1 The silent defects — closed
+
+Each of these compiled, loaded and returned the wrong answer, with no diagnostic anywhere. They are
+worth listing even though they are fixed, because most of them were the same mistake: **a node the
+parser produced that nothing downstream read**. A parser that records a construct and a binder that
+never asks for it produce exactly this — working syntax with no semantics — and nothing in the build
+complains, because every layer is internally consistent.
+
+The last one is the same mistake seen from the other side: not a construct nobody read, but a
+construct whose *absence* nobody checked.
+
+| | Was | Now |
+|---|---|---|
+| `: super(...)` / `: this(...)` | Parsed into `ChainArguments`, read by nothing. Base constructors never ran. | Bound in a pass after every signature exists, emitted before the instance initializers; `this(...)` suppresses them, since the constructor it chains to already ran them. |
+| `static { }` | `StaticBlockDeclarationSyntax` built and dropped. | Bound and emitted into its container's static initializer, merged with the field initializers by declaration position — which is what §2.5 means by "interleaved". |
+| a class from another module | Its synthesised constructor lived in the emitting module's `EmitContext`, so a creation site elsewhere allocated and ran nothing. | Carried across modules as metadata. It has no symbol, so it cannot travel the way every other member does. |
+| `?.` | Typed as nullable and emitted as a plain access: a null receiver faulted. | Lowered through `BoundNullConditionalExpression`, whose receiver is evaluated once into a slot and read through a placeholder. |
+| `!!` | Emitted the operand and nothing else. | Raises the library's `NullReferenceException`, resolved in the binder because the emitter cannot resolve a name. |
+| `native let` / `native var` / module-level `native fun` (§10) | Compiled to ordinary module statics — the module loaded with no host at all and read zeroes. | Declared into the module's native import table and reached with `Ldg`/`Stg`/`CallGlobalNative`, so a name the host never registered fails the load. |
+| a varargs parameter | Typed as its *element* type in the binder, so applicability never absorbed a surplus and an empty varargs packed an array typed `string`. | Typed as the array §3.5 says the body sees. `MetadataImporter` rebuilds it, since metadata carries the element type. |
+| a base with no parameterless constructor | An omitted chain silently reached nothing, so the base went unconstructed. | Reported at the constructor that omits it, or at the class when it declares none — `Binder.CheckBaseConstructorIsReachable`. |
+
+Two decisions inside that work are worth keeping:
+
+* **Absence in a nullable primitive is the absent tag, never a null reference.** A reference is its
+  32-bit payload, so a null one and a present `0` would otherwise be the same value — which is
+  exactly what §5.1 gave the encoding a second tag to avoid. The null *literal* pushes it, which is
+  what makes `n == null` a bit comparison and needs no rule of its own in the comparison path.
+* **A class declaring no constructor gets one whenever its base needs constructing**, decided from
+  symbols rather than from what has been emitted — a derived class may be declared before its base,
+  and the answer must not depend on which.
+
+### 10.2 What is still owed
+
+Not silent — each reports, refuses to compile, or is visibly absent — but each is the specification
+promising something the compiler does not do.
+
+* **Generics are declarable and unusable** (§6). A generic type cannot be constructed, a generic
+  call infers nothing, and a constraint exposes no members — §6's own `max<T : IComparable<T>>`
+  example does not compile. The descriptor side of §8 is done; this is the binder's half.
+* **A lambda does not infer its parameters from the parameter it is passed to** (§8, §5.9), only
+  from a variable's annotation — so §8's own `items.sort((a, b) => ...)` needs both annotated.
+* **`operator[]` never reaches a use site** (§5.6): indexing a type that declares one is an error.
+* **A `switch` expression over an enum with no `else` does not emit** (§4.3), which is the one form
+  exhaustiveness checking exists to allow.
+* **Accessibility is not enforced at all** (§3.1). All four modifiers reach metadata and govern
+  nothing; there is not even a diagnostic code reserved for it.
+* **A local may shadow a local** (§4.4), which the spec makes an error.
+* **Attributes stop at the AST** (§11), though the runtime stores them and the image carries them.
+* **A nested type inside an interface does not emit** (§2.3), and the module fails to load.
+* **A property implementing an interface property** keeps its `override`, which `SurtrTypeLinker`
+  rejects: `ModuleEmitter.OverridesABaseMethod` covers methods and not accessors.
+* **Cross-initializer dependencies are not rejected** (`docs/VM-Plan.md` §1.12, §3.4).
+* **`FlowAnalysis` rejects two terminating shapes**: a `switch` whose every arm returns, and
+  `while (true)` with a `return` inside.
+* **`for (let i = 0; ...; i += 1)`** — §4.2's own example does not compile, because `let` is
+  assign-once. Either the example becomes `var` or the loop header earns an exception; the
+  contradiction is what cannot stay.
+* **Tuple element access is unspecified.** The implementation chose `t[0]`, folded at compile time,
+  and it should be written down — without it §4.2's dict iteration yields pairs no documented syntax
+  can read.
+* **An emit failure reports once per module, with no span**, and abandons the rest of it.
+* **No build model** (§14.2): nothing enumerates a directory, writes a `.surtrc`, or reads a project
+  file. `SurtrProject` takes text in memory.
+* **The standard library is entirely C#**, where §13.1 puts the exception hierarchy below the root in
+  Surtr — which is also the largest program the compiler has never been asked to compile.

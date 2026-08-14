@@ -587,9 +587,17 @@ namespace Surtr.Compiler.Binding
             var parameters = new ParameterSymbol[declared.Length];
             for (int i = 0; i < declared.Length; i++)
             {
+                var parameterType = Import(declared[i].ParameterType.Reference, declaringType);
+
+                // Metadata carries a varargs parameter by its element type, which is what §3.5
+                // declares — so the array the body sees has to be rebuilt here, or an imported
+                // signature would differ from the same one in source.
+                if (declared[i].IsVarargs)
+                    parameterType = _factory.Array(parameterType);
+
                 parameters[i] = new ParameterSymbol(
                     declared[i].Name,
-                    Import(declared[i].ParameterType.Reference, declaringType),
+                    parameterType,
                     i,
                     symbol)
                 {

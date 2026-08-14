@@ -270,6 +270,16 @@ namespace Surtr.Compiler.Binding.Symbols
         public bool IsSynthetic { get; internal set; }
 
         /// <summary>
+        /// Whether it names a host global rather than storage of its own (§10).
+        /// </summary>
+        /// <remarks>
+        /// A <c>native</c> variable is the one genuinely global thing in the language: it has no
+        /// static slot in its module, it is reached through the module's native import table, and a
+        /// module naming one the host never registered fails to load rather than reading a zero.
+        /// </remarks>
+        public bool IsNative { get; internal set; }
+
+        /// <summary>
         /// The metadata this field was imported from, or <see langword="null"/> when source
         /// declared it.
         /// </summary>

@@ -53,6 +53,16 @@ namespace Surtr.Compiler.Binding
         private readonly List<InitializerBinding> _initializers = new List<InitializerBinding>();
         private readonly List<DefaultBinding> _defaults = new List<DefaultBinding>();
         private readonly List<BoundFieldInitializer> _boundInitializers = new List<BoundFieldInitializer>();
+        private readonly List<StaticBlockBinding> _staticBlocks = new List<StaticBlockBinding>();
+        private readonly List<BoundStaticBlock> _boundStaticBlocks = new List<BoundStaticBlock>();
+        private readonly List<ChainBinding> _chains = new List<ChainBinding>();
+
+        private readonly Dictionary<MethodSymbol, BoundConstructorChain> _boundChains =
+            new Dictionary<MethodSymbol, BoundConstructorChain>();
+
+        // One counter across field initializers and `static { }` blocks alike, because §2.5 and §3.2
+        // interleave them in source order and the emitter has to merge two lists back into one.
+        private int _nextInitializerOrder;
 
         private readonly Dictionary<IReadOnlyList<DeclarationSyntax>, IReadOnlyList<DeclarationSyntax>> _flattened =
             new Dictionary<IReadOnlyList<DeclarationSyntax>, IReadOnlyList<DeclarationSyntax>>(ByReference.Instance);
@@ -120,6 +130,22 @@ namespace Surtr.Compiler.Binding
         /// run in.
         /// </summary>
         public IReadOnlyList<BoundFieldInitializer> FieldInitializers => _boundInitializers;
+
+        /// <summary>
+        /// Every <c>static { }</c> block, carrying the position it runs at among the initializers
+        /// beside it (§2.5, §3.2).
+        /// </summary>
+        public IReadOnlyList<BoundStaticBlock> StaticBlocks => _boundStaticBlocks;
+
+        /// <summary>
+        /// The <c>super(...)</c> or <c>this(...)</c> each constructor chains to, by constructor (§3.2).
+        /// </summary>
+        /// <remarks>
+        /// A constructor with no entry here chains to nothing written; whether it still has to reach
+        /// its base's parameterless constructor is a question about the base, and one the emitter
+        /// answers rather than this table.
+        /// </remarks>
+        public IReadOnlyDictionary<MethodSymbol, BoundConstructorChain> ConstructorChains => _boundChains;
 
         /// <summary>The modules this compilation declares, by path.</summary>
         public IReadOnlyDictionary<string, ModuleSymbol> Modules => _modules;
@@ -514,7 +540,10 @@ namespace Surtr.Compiler.Binding
             // After every type has its members, because the question is about a base class's, and
             // nothing says a base is bound before what extends it.
             foreach (var binding in _declared)
+            {
                 CheckSealedOverrides(binding);
+                CheckBaseConstructorIsReachable(binding);
+            }
 
             // Last, because a bound like `<T : IComparable<T>>` names a type whose own hierarchy is
             // still being resolved while the signatures above are bound.
@@ -553,6 +582,81 @@ namespace Surtr.Compiler.Binding
                     break;
                 }
             }
+        }
+
+        /// <summary>
+        /// Rejects a constructor that chains to nothing when its base has no parameterless
+        /// constructor to reach implicitly (§3.2).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// §3.2 gives an omitted chain one meaning — the base's parameterless constructor — so where
+        /// the base has none, the omission names nothing. Nothing downstream can salvage it either:
+        /// <c>ObjNew</c> allocates and runs nothing, so what the author would get is an instance whose
+        /// base was never constructed, which is the shape of bug that shows up nowhere near its cause.
+        /// </para>
+        /// <para>
+        /// The question is asked of the syntax rather than of the symbols, because what matters is
+        /// whether a chain was <em>written</em> and a bound chain is not built until bodies are. A
+        /// class declaring no constructor at all is the same case: the emitter synthesises a
+        /// parameterless one, and it would have the same nothing to call.
+        /// </para>
+        /// <para>
+        /// "Parameterless" is strict, matching both §3.2's wording and what
+        /// <c>ModuleEmitter.EmitImplicitBaseChain</c> looks for — a base constructor whose arguments
+        /// all have defaults is reachable by writing <c>super()</c>, and writing it is what the
+        /// diagnostic asks for.
+        /// </para>
+        /// </remarks>
+        private void CheckBaseConstructorIsReachable(TypeBinding binding)
+        {
+            if (binding.Symbol.BaseType is not NamedTypeSymbol baseType)
+                return;
+
+            bool declaresAny = false;
+            bool takesNoArguments = false;
+
+            foreach (var member in MemberLookup.MembersOf(baseType))
+            {
+                if (member is not MethodSymbol { Role: MethodRole.Constructor } constructor)
+                    continue;
+
+                declaresAny = true;
+                takesNoArguments |= constructor.Parameters.Count == 0;
+            }
+
+            // A base that declares none needs nothing called: whatever initializers it has run from
+            // the parameterless constructor the emitter synthesises for it.
+            if (!declaresAny || takesNoArguments)
+                return;
+
+            bool declaredHere = false;
+
+            foreach (var member in binding.Members)
+            {
+                if (member is not ConstructorDeclarationSyntax constructor)
+                    continue;
+
+                declaredHere = true;
+
+                if (constructor.ChainArguments is not null)
+                    continue;
+
+                Report(
+                    SurtrDiagnosticCode.BaseConstructorUnreachable,
+                    binding,
+                    constructor.Span,
+                    $"'{baseType.Name}' has no parameterless constructor, so this constructor has to chain to one with 'super(...)'.");
+            }
+
+            if (declaredHere)
+                return;
+
+            Report(
+                SurtrDiagnosticCode.BaseConstructorUnreachable,
+                binding,
+                binding.Syntax.Span,
+                $"'{baseType.Name}' has no parameterless constructor, so '{binding.Symbol.Name}' has to declare one that chains to it with 'super(...)'.");
         }
 
         private static MethodSymbol? Overridden(NamedTypeSymbol baseType, MethodSymbol method)
@@ -758,6 +862,21 @@ namespace Surtr.Compiler.Binding
                         continue;
                     }
 
+                    case StaticBlockDeclarationSyntax block:
+                    {
+                        if (isInterface)
+                        {
+                            Report(SurtrDiagnosticCode.InvalidInterfaceMember, binding, block.Span,
+                                "An interface has no statics, so it cannot declare a 'static' block.");
+                            continue;
+                        }
+
+                        _staticBlocks.Add(new StaticBlockBinding(
+                            block, binding.Scope, binding.Module, symbol, binding.SourceName, _nextInitializerOrder++));
+
+                        continue;
+                    }
+
                     case OperatorDeclarationSyntax op:
                     {
                         var bound = BindOperator(op, symbol, binding);
@@ -782,7 +901,7 @@ namespace Surtr.Compiler.Binding
                 // A case is a static holding one instance the enum's own initializer builds, so it
                 // is an initializer like any other — with a construction on the right.
                 _initializers.Add(new InitializerBinding(
-                    field, null, enumCase, binding.Scope, binding.Module, symbol, binding.SourceName));
+                    field, null, enumCase, binding.Scope, binding.Module, symbol, binding.SourceName, _nextInitializerOrder++));
 
                 if (!names.Add(enumCase.Name))
                     Duplicate(binding, enumCase.Span, enumCase.Name);
@@ -863,7 +982,7 @@ namespace Surtr.Compiler.Binding
             symbol.SingletonInstance = instance;
 
             _initializers.Add(new InitializerBinding(
-                instance, null, null, binding.Scope, binding.Module, symbol, binding.SourceName, binding.Syntax));
+                instance, null, null, binding.Scope, binding.Module, symbol, binding.SourceName, _nextInitializerOrder++, binding.Syntax));
         }
 
         private void BindModuleMembers(ModuleSymbol module)
@@ -907,6 +1026,15 @@ namespace Surtr.Compiler.Binding
                             var bound = BindModuleMethod(method, module, scope, unit.File.Path);
                             signatures.Add(bound, method.Span);
                             methods.Add(bound);
+                            continue;
+
+                        case StaticBlockDeclarationSyntax block:
+                            // §2.5: a module body holds declarations only, and initialization logic
+                            // that does not fit a field initializer goes here — running at load in
+                            // the source position it appears among the other initializers.
+                            _staticBlocks.Add(new StaticBlockBinding(
+                                block, scope, module, null, unit.File.Path, _nextInitializerOrder++));
+
                             continue;
                     }
                 }
@@ -975,6 +1103,13 @@ namespace Surtr.Compiler.Binding
             foreach (var initializer in _initializers)
                 BindInitializer(initializer);
 
+            foreach (var block in _staticBlocks)
+                BindStaticBlock(block);
+
+            foreach (var chain in _chains)
+                BindChain(chain);
+
+            RejectChainCycles();
             VerifyConstantDeclarations();
             return _bound;
         }
@@ -1051,7 +1186,120 @@ namespace Surtr.Compiler.Binding
             else
                 value = binder.BindSingletonInstance(initializer.ContainingType!, initializer.Anchor);
 
-            _boundInitializers.Add(new BoundFieldInitializer(initializer.Field, value, initializer.ContainingType));
+            _boundInitializers.Add(new BoundFieldInitializer(
+                initializer.Field, value, initializer.ContainingType, initializer.Order));
+        }
+
+        /// <summary>
+        /// Binds one <c>static { ... }</c> block, in the scope its declaration sits in (§2.5, §3.2).
+        /// </summary>
+        /// <remarks>
+        /// The owner it is bound against is static and nameless, for the same reason a field
+        /// initializer's is: the block runs inside the container's static initializer, and this
+        /// exists so a <c>this</c> written inside one is reported rather than bound against nothing.
+        /// </remarks>
+        private void BindStaticBlock(StaticBlockBinding block)
+        {
+            var owner = new MethodSymbol(
+                "static",
+                (Symbol?)block.ContainingType ?? block.Module,
+                _factory.Void)
+            {
+                IsStatic = true,
+            };
+
+            var binder = new BodyBinder(
+                _factory,
+                _resolver,
+                Conversions,
+                MemberLookup,
+                OverloadResolution,
+                Constants,
+                _diagnostics,
+                block.SourceName,
+                block.Scope,
+                block.Module,
+                block.ContainingType,
+                owner,
+                ImportedBy(block.Module));
+
+            var body = binder.BindBody(block.Syntax.Body);
+            _boundStaticBlocks.Add(new BoundStaticBlock(body, block.ContainingType, block.Module, block.Order));
+        }
+
+        /// <summary>
+        /// Binds a constructor's <c>super(...)</c> or <c>this(...)</c> against the constructors of
+        /// the type it names (§3.2).
+        /// </summary>
+        private void BindChain(ChainBinding chain)
+        {
+            var target = chain.Syntax.ChainsToThis ? chain.Owner : chain.Owner.BaseType;
+
+            if (target is null)
+            {
+                ReportAt(
+                    chain.SourceName,
+                    chain.Syntax.Span,
+                    SurtrDiagnosticCode.InvalidConstructorChain,
+                    $"'{chain.Owner.Name}' has no base class, so there is no 'super' constructor to chain to.");
+
+                return;
+            }
+
+            var binder = new BodyBinder(
+                _factory,
+                _resolver,
+                Conversions,
+                MemberLookup,
+                OverloadResolution,
+                Constants,
+                _diagnostics,
+                chain.SourceName,
+                chain.Scope,
+                chain.Module,
+                chain.Owner,
+                chain.Constructor,
+                ImportedBy(chain.Module));
+
+            if (binder.BindConstructorChain(chain.Syntax, target, chain.Syntax.ChainsToThis) is BoundConstructorChain bound)
+                _boundChains.Add(chain.Constructor, bound);
+        }
+
+        /// <summary>
+        /// Rejects a <c>this(...)</c> chain that comes back round to where it started.
+        /// </summary>
+        /// <remarks>
+        /// Nothing downstream could survive one: the emitter would emit each constructor calling the
+        /// next, and the cycle would only show up as a stack overflow the first time an instance was
+        /// built. A <c>super</c> chain cannot loop, since the hierarchy itself is already acyclic.
+        /// </remarks>
+        private void RejectChainCycles()
+        {
+            foreach (var chain in _chains)
+            {
+                if (!chain.Syntax.ChainsToThis)
+                    continue;
+
+                var walk = chain.Constructor;
+                for (int step = 0; step < _chains.Count + 1; step++)
+                {
+                    if (!_boundChains.TryGetValue(walk, out var next) || !next.IsThis)
+                        break;
+
+                    walk = next.Target;
+
+                    if (!ReferenceEquals(walk, chain.Constructor))
+                        continue;
+
+                    ReportAt(
+                        chain.SourceName,
+                        chain.Syntax.Span,
+                        SurtrDiagnosticCode.InvalidConstructorChain,
+                        $"This 'this(...)' chain on '{chain.Owner.Name}' comes back to itself, so no constructor would ever run.");
+
+                    break;
+                }
+            }
         }
 
         private void BindOne(BodyBinding body)
@@ -1222,7 +1470,7 @@ namespace Surtr.Compiler.Binding
             if (syntax.Initializer is not null)
             {
                 _initializers.Add(new InitializerBinding(
-                    field, syntax.Initializer, null, binding.Scope, binding.Module, owner, binding.SourceName));
+                    field, syntax.Initializer, null, binding.Scope, binding.Module, owner, binding.SourceName, _nextInitializerOrder++));
             }
 
             return field;
@@ -1235,10 +1483,21 @@ namespace Surtr.Compiler.Binding
                 IsStatic = true,
                 IsReadOnly = !syntax.IsMutable,
                 Accessibility = Translate(syntax.Visibility, Accessibility.Internal),
+                IsNative = syntax.IsNative,
             };
 
+            // §10: the host owns the storage, so there is nothing here to initialize — and an
+            // initializer would be written against a value the host may already have set.
+            if (syntax.IsNative && syntax.Initializer is not null)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidNativeDeclaration,
+                    $"'{syntax.Name}' is native, so the host owns its value and it cannot have an initializer.");
+
+                return field;
+            }
+
             if (syntax.Initializer is not null)
-                _initializers.Add(new InitializerBinding(field, syntax.Initializer, null, scope, owner, null, sourceName));
+                _initializers.Add(new InitializerBinding(field, syntax.Initializer, null, scope, owner, null, sourceName, _nextInitializerOrder++));
 
             return field;
         }
@@ -1413,6 +1672,12 @@ namespace Surtr.Compiler.Binding
 
             method.Parameters = BindParameters(syntax.Parameters, method, binding.Scope, binding.SourceName);
             RecordBody(method, syntax.Body, binding.Scope, binding.Module, owner, binding.SourceName);
+
+            // Bound in a pass of its own, after every signature exists: a chain names a constructor
+            // of this class or of its base, and overload resolution needs both complete.
+            if (syntax.ChainArguments is not null)
+                _chains.Add(new ChainBinding(method, syntax, binding.Scope, binding.Module, owner, binding.SourceName));
+
             return method;
         }
 
@@ -1509,9 +1774,15 @@ namespace Surtr.Compiler.Binding
             var parameters = new ParameterSymbol[syntax.Count];
             for (int i = 0; i < parameters.Length; i++)
             {
+                var declared = ResolveOrInfer(syntax[i].Type, scope, sourceName);
+
+                // §3.5 declares varargs by its *element* type and says the body sees an array of
+                // it, so the array is what the symbol carries: everything downstream — applicability,
+                // the packing of the surplus, and the member lookup a body does on the parameter —
+                // reads the parameter's type and would otherwise be reading the element's.
                 parameters[i] = new ParameterSymbol(
                     syntax[i].Name,
-                    ResolveOrInfer(syntax[i].Type, scope, sourceName),
+                    syntax[i].IsVarargs && !declared.IsError ? _factory.Array(declared) : declared,
                     i,
                     owner)
                 {
@@ -1629,6 +1900,7 @@ namespace Surtr.Compiler.Binding
                 ModuleSymbol module,
                 NamedTypeSymbol? containingType,
                 string sourceName,
+                int order,
                 SyntaxNode? anchor = null)
             {
                 Field = field;
@@ -1638,6 +1910,7 @@ namespace Surtr.Compiler.Binding
                 Module = module;
                 ContainingType = containingType;
                 SourceName = sourceName;
+                Order = order;
                 Anchor = anchor ?? (SyntaxNode?)syntax ?? enumCase!;
             }
 
@@ -1657,6 +1930,73 @@ namespace Surtr.Compiler.Binding
             public ModuleSymbol Module { get; }
 
             public NamedTypeSymbol? ContainingType { get; }
+
+            public string SourceName { get; }
+
+            /// <summary>Its position among its container's initializers and <c>static</c> blocks.</summary>
+            public int Order { get; }
+        }
+
+        /// <summary>A <c>static { ... }</c> block waiting to be bound, and where it runs (§2.5, §3.2).</summary>
+        private readonly struct StaticBlockBinding
+        {
+            public StaticBlockBinding(
+                StaticBlockDeclarationSyntax syntax,
+                Scope scope,
+                ModuleSymbol module,
+                NamedTypeSymbol? containingType,
+                string sourceName,
+                int order)
+            {
+                Syntax = syntax;
+                Scope = scope;
+                Module = module;
+                ContainingType = containingType;
+                SourceName = sourceName;
+                Order = order;
+            }
+
+            public StaticBlockDeclarationSyntax Syntax { get; }
+
+            public Scope Scope { get; }
+
+            public ModuleSymbol Module { get; }
+
+            public NamedTypeSymbol? ContainingType { get; }
+
+            public string SourceName { get; }
+
+            public int Order { get; }
+        }
+
+        /// <summary>A constructor's written <c>super(...)</c> or <c>this(...)</c>, waiting to be bound (§3.2).</summary>
+        private readonly struct ChainBinding
+        {
+            public ChainBinding(
+                MethodSymbol constructor,
+                ConstructorDeclarationSyntax syntax,
+                Scope scope,
+                ModuleSymbol module,
+                NamedTypeSymbol owner,
+                string sourceName)
+            {
+                Constructor = constructor;
+                Syntax = syntax;
+                Scope = scope;
+                Module = module;
+                Owner = owner;
+                SourceName = sourceName;
+            }
+
+            public MethodSymbol Constructor { get; }
+
+            public ConstructorDeclarationSyntax Syntax { get; }
+
+            public Scope Scope { get; }
+
+            public ModuleSymbol Module { get; }
+
+            public NamedTypeSymbol Owner { get; }
 
             public string SourceName { get; }
         }

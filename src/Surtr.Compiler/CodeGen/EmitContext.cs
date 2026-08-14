@@ -130,8 +130,27 @@ namespace Surtr.Compiler.CodeGen
         public bool TryGetDefaultConstructor(NamedTypeSymbol symbol, out SurtrMethodBuilder builder)
             => _defaultConstructors.TryGetValue(symbol.Definition, out builder!);
 
+        /// <summary>
+        /// Records the metadata a synthesised constructor became, for a module built before this one.
+        /// </summary>
+        /// <remarks>
+        /// A synthesised constructor has no symbol, so it cannot travel through
+        /// <see cref="Bind(MethodSymbol, SurtrMethodInfo, SurtrModule)"/> like every other member —
+        /// and a creation site in this module still has to call it, or the instance it allocates runs
+        /// none of the initializers the constructor exists for.
+        /// </remarks>
+        public void BindDefaultConstructor(NamedTypeSymbol symbol, SurtrMethodInfo method)
+            => _builtDefaultConstructors[symbol.Definition] = method;
+
+        /// <summary>The metadata of a synthesised constructor from a module built earlier.</summary>
+        public bool TryGetBuiltDefaultConstructor(NamedTypeSymbol symbol, out SurtrMethodInfo method)
+            => _builtDefaultConstructors.TryGetValue(symbol.Definition, out method!);
+
         private readonly Dictionary<NamedTypeSymbol, SurtrMethodBuilder> _defaultConstructors =
             new Dictionary<NamedTypeSymbol, SurtrMethodBuilder>();
+
+        private readonly Dictionary<NamedTypeSymbol, SurtrMethodInfo> _builtDefaultConstructors =
+            new Dictionary<NamedTypeSymbol, SurtrMethodInfo>();
         #endregion
 
         #region Lookup
