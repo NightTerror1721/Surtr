@@ -1,0 +1,73 @@
+{
+  "name": "surtr-language",
+  "displayName": "Surtr Language",
+  "description": "Language support for the Surtr embedded scripting language: syntax highlighting, hover, go-to-definition and diagnostics",
+  "version": "0.1.0",
+  "publisher": "surtr-lang",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "surtr",
+    "language",
+    "scripting",
+    "unity"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:surtr"
+  ],
+  "scripts": {
+    "compile": "tsc -p ./"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "surtr",
+        "aliases": [
+          "Surtr",
+          "surtr"
+        ],
+        "extensions": [
+          ".surtr"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "surtr",
+        "scopeName": "source.surtr",
+        "path": "./syntaxes/surtr.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "surtr",
+        "path": "./snippets/surtr.code-snippets"
+      }
+    ],
+    "configuration": {
+      "title": "Surtr",
+      "properties": {
+        "surtr.languageServer.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the surtr-lsp executable (surtr-lsp.exe on Windows). A directory containing the executable also works. Leave empty to look for surtr-lsp on your PATH."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^8.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.3.3"
+  }
+}

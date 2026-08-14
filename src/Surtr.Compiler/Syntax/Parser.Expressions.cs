@@ -333,7 +333,13 @@ namespace Surtr.Compiler.Syntax
 
                 if (reader.Check(TokenType.LeftParen))
                 {
-                    expression = new CallExpressionSyntax(SpanFrom(start), expression, EmptyTypes, ParseArgumentList());
+                    // The argument list must be consumed before the span is captured: `SpanFrom`
+                    // measures up to whatever has been read, and the call's span runs from its callee
+                    // to the closing parenthesis. Captured too early it would be degenerate — the call
+                    // node would point at `(` alone, which is where every downstream diagnostic would
+                    // land.
+                    var arguments = ParseArgumentList();
+                    expression = new CallExpressionSyntax(SpanFrom(expression.Span.Start), expression, EmptyTypes, arguments);
                     continue;
                 }
 
@@ -343,7 +349,8 @@ namespace Surtr.Compiler.Syntax
                 if (reader.Check(TokenType.Less) && LooksLikeTypeArgumentList())
                 {
                     var typeArguments = ParseTypeArgumentList();
-                    expression = new CallExpressionSyntax(SpanFrom(start), expression, typeArguments, ParseArgumentList());
+                    var arguments = ParseArgumentList();
+                    expression = new CallExpressionSyntax(SpanFrom(expression.Span.Start), expression, typeArguments, arguments);
                     continue;
                 }
 
@@ -352,7 +359,9 @@ namespace Surtr.Compiler.Syntax
                     reader.Advance();
                     ExpressionSyntax index = ParseExpression();
                     reader.Expect(TokenType.RightBracket, "']' to close the index");
-                    expression = new IndexExpressionSyntax(SpanFrom(start), expression, index);
+                    // Same order as the call above: the index must be read before the span is
+                    // captured, or the node would point at `[` alone.
+                    expression = new IndexExpressionSyntax(SpanFrom(expression.Span.Start), expression, index);
                     continue;
                 }
 
