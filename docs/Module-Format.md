@@ -80,12 +80,17 @@ or a version mismatch, and both are reported as `SurtrImageFormatException` rath
 | Field | Type | Meaning |
 |---|---|---|
 | `magic` | `u64` | `0x444F4D5254525553` — `SURTRMOD` in ASCII, little-endian |
-| `formatVersion` | `u16` | Currently **1**. A reader refuses anything else outright. |
+| `formatVersion` | `u16` | Currently **2**. A reader refuses anything else outright. |
 | `strings` | `i32` count, then each: `i32` byte length + UTF-8 bytes | The string table. |
 
 `formatVersion` counts changes to how a module is **framed**. It is deliberately separate from the
 opcode set's own append-only rule, which counts changes to what runs *inside* it — the two evolve
 for different reasons and a bump in one says nothing about the other.
+
+**Version 2** added a type's own attribute list, written where a member's already was: a
+`SurtrTypeInfo` extends `SurtrMemberInfo` and `Language-Syntax.md` §11 decorates a class as readily
+as a field, so a class-level attribute that worked in the process that compiled it and vanished
+through an image was the worst of both.
 
 The string table is written in front of the body but is only complete once the body has been walked,
 so the writer builds the body into a buffer first and prepends the table.

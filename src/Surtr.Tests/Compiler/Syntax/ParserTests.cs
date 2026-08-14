@@ -456,6 +456,9 @@ namespace Surtr.Tests.Compiler.Syntax
         [Fact]
         public void BothForFormsParse()
         {
+            // Both keywords parse — `let` is rejected by the binder rather than by the grammar,
+            // since what makes it wrong is the step clause reassigning it (§4.2).
+            Assert.IsType<ForStatementSyntax>(ParseStatement("for (var i = 0; i < n; i += 1) { }"));
             Assert.IsType<ForStatementSyntax>(ParseStatement("for (let i = 0; i < n; i += 1) { }"));
             Assert.IsType<ForInStatementSyntax>(ParseStatement("for (item in items) { }"));
             Assert.IsType<ForInStatementSyntax>(ParseStatement("for (i in 0..10) { }"));

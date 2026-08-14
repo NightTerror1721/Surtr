@@ -93,6 +93,26 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <inheritdoc/>
         public override Symbol? ContainingSymbol => (Symbol?)ContainingType ?? ContainingModule;
 
+        /// <summary>Who may name this type (§3.1).</summary>
+        /// <remarks>
+        /// <para>
+        /// Read through the definition, so a construction and its nullable form answer what the
+        /// declaration says rather than carrying a copy that could drift from it.
+        /// </para>
+        /// <para>
+        /// Public by default rather than by §3.1's rule, because the default here is for types
+        /// nobody declared in source — the built-ins and anything a host published. What source
+        /// declares is set from the declaration, where §3.1's own defaults apply.
+        /// </para>
+        /// </remarks>
+        public Accessibility Accessibility
+        {
+            get => _definition?.Accessibility ?? _accessibility;
+            internal set => _accessibility = value;
+        }
+
+        private Accessibility _accessibility = Accessibility.Public;
+
         /// <summary>
         /// The declaration this type comes from: itself when it is the declaration, and the open
         /// generic when it is a construction or a nullable form.

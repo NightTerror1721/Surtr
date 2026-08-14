@@ -242,6 +242,32 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         CannotInferTypeArgument = 3038,
 
+        /// <summary>
+        /// A member reached from somewhere its accessibility does not allow (§3.1): a
+        /// <c>private</c> one from outside its type, a <c>protected</c> one from outside its
+        /// hierarchy, or an <c>internal</c> one from another module.
+        /// </summary>
+        Inaccessible = 3039,
+
+        /// <summary>
+        /// An <c>@Name(args)</c> naming something that is not a class extending <c>Attribute</c>
+        /// (§11).
+        /// </summary>
+        InvalidAttribute = 3040,
+
+        /// <summary>
+        /// A build's own settings are wrong rather than its source: a project file that is not
+        /// there, a directive it does not understand, or a reference that names no image (§14.2).
+        /// </summary>
+        ProjectFileInvalid = 3041,
+
+        /// <summary>
+        /// A static initializer reading a static that has not been given its value yet
+        /// (<c>docs/VM-Plan.md</c> §1.12): initializers run at load in declaration order, classes
+        /// before the module, so reading one declared later reads a zero rather than a value.
+        /// </summary>
+        InitializerOutOfOrder = 3042,
+
         #endregion
 
         #region Code generation — 4xxx

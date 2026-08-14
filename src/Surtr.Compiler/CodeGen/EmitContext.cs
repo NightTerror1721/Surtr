@@ -188,6 +188,31 @@ namespace Surtr.Compiler.CodeGen
             => _foreign.TryGetValue(symbol, out owner!)
                 || (symbol.OriginalDefinition is MethodSymbol original && _foreign.TryGetValue(original, out owner!));
 
+        /// <summary>
+        /// The built module a referenced module-level method belongs to, when this compilation did
+        /// not build it.
+        /// </summary>
+        /// <remarks>
+        /// The other half of <see cref="TryGetForeignModule"/>: that one covers a module built
+        /// earlier in this compilation, and this one a module referenced as an image. Both exist
+        /// because a module-level member records no owner, so a cross-module call has to be reached
+        /// through the caller's module reference table by path.
+        /// </remarks>
+        public bool TryGetReferencedModule(MethodSymbol symbol, out SurtrModule owner)
+        {
+            owner = null!;
+
+            return Importer is not null
+                && symbol.ContainingSymbol is ModuleSymbol module
+                && Importer.TryGetBuiltModule(module.Path, out owner);
+        }
+
+        /// <summary>
+        /// Where a referenced module's metadata came from, or <see langword="null"/> when this
+        /// emission references none.
+        /// </summary>
+        public Binding.MetadataImporter? Importer { get; set; }
+
         /// <summary>The metadata a field resolves to, declared here or imported.</summary>
         public SurtrFieldInfo? Resolve(FieldSymbol symbol)
         {

@@ -200,8 +200,10 @@ namespace Surtr.Tests.Compiler.Binding
         [Fact]
         public void ANestedTypeIsReachableThroughItsContainer()
         {
+            // §2.6: a nested type takes a visibility like any other member, so reaching it from
+            // outside its container needs one written.
             var binder = Bind(out var compilation, ("game/core/Test.surtr",
-                "class Entity { class Handle { } }\nclass Holder { public var h: Entity.Handle; }"));
+                "class Entity { public class Handle { } }\nclass Holder { public var h: Entity.Handle; }"));
 
             AssertNoErrors(compilation);
 
@@ -214,7 +216,7 @@ namespace Surtr.Tests.Compiler.Binding
         {
             // §2.1: an import is convenience, not a requirement to reference something.
             var binder = Bind(out var compilation,
-                ("game/math/Vec2.surtr", "class Vec2 { }"),
+                ("game/math/Vec2.surtr", "public class Vec2 { }"),
                 ("game/core/Entity.surtr", "class Entity { public var p: game.math.Vec2; }"));
 
             AssertNoErrors(compilation);
@@ -248,7 +250,7 @@ namespace Surtr.Tests.Compiler.Binding
         public void ANamedImportBringsOneTypeIntoScope()
         {
             var binder = Bind(out var compilation,
-                ("game/math/Vec2.surtr", "class Vec2 { }\nclass Vec3 { }"),
+                ("game/math/Vec2.surtr", "public class Vec2 { }\npublic class Vec3 { }"),
                 ("game/core/Entity.surtr", "import game.math.Vec2;\nclass Entity { public var p: Vec2; }"));
 
             AssertNoErrors(compilation);
@@ -262,7 +264,7 @@ namespace Surtr.Tests.Compiler.Binding
         public void AWildcardImportBringsThemAllIn()
         {
             var binder = Bind(out var compilation,
-                ("game/math/Vec2.surtr", "class Vec2 { }\nclass Vec3 { }"),
+                ("game/math/Vec2.surtr", "public class Vec2 { }\npublic class Vec3 { }"),
                 ("game/core/Entity.surtr", "import game.math.*;\nclass Entity { public var p: Vec3; }"));
 
             AssertNoErrors(compilation);

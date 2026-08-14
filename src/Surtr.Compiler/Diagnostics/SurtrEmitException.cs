@@ -1,5 +1,6 @@
 #nullable enable
 
+using Surtr.Compiler.Syntax;
 using System;
 
 namespace Surtr.Compiler.Diagnostics
@@ -30,9 +31,23 @@ namespace Surtr.Compiler.Diagnostics
         {
         }
 
+        /// <summary>Initializes the exception with a message and the construct that could not be emitted.</summary>
+        public SurtrEmitException(string message, SourceSpan span) : base(message) => Span = span;
+
         /// <summary>Initializes the exception with a message and the exception that caused it.</summary>
         public SurtrEmitException(string message, Exception innerException) : base(message, innerException)
         {
         }
+
+        /// <summary>
+        /// The source the construct covers, or an empty span where nothing narrower than the member
+        /// is known.
+        /// </summary>
+        /// <remarks>
+        /// Carried on the exception rather than filled in by whoever catches it, because the frame
+        /// that knows <em>which</em> construct failed is the one that gave up on it — several frames
+        /// below the one that turns it into something a reader sees.
+        /// </remarks>
+        public SourceSpan Span { get; }
     }
 }

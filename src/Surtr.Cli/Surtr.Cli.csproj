@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+
+    <!-- The one project in the solution that is a program rather than a library, so it targets a
+         runtime the SDK can execute rather than netstandard2.1. Nothing in Unity loads this: a host
+         embeds Surtr.Compiler directly and builds a SurtrProject itself. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Surtr.Cli</RootNamespace>
+    <AssemblyName>surtrc</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!-- A command-line program is never consumed as a library, so CS1591 would only be noise. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Surtr.Compiler\Surtr.Compiler.csproj" />
+  </ItemGroup>
+
+</Project>

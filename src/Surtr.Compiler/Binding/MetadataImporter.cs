@@ -237,6 +237,19 @@ namespace Surtr.Compiler.Binding
         public bool TryGetModuleSymbol(string modulePath, out ModuleSymbol module)
             => _moduleSymbols.TryGetValue(modulePath, out module!);
 
+        /// <summary>
+        /// The built module a path names, for a module this compilation references rather than
+        /// declares.
+        /// </summary>
+        /// <remarks>
+        /// A cross-module call names an entry in the <em>callee's</em> table and reaches it through
+        /// the caller's module reference table, so emitting one needs the callee's
+        /// <c>SurtrModule</c> — which the symbol side does not carry, because a module-level member
+        /// records no owner. This is where that is recovered.
+        /// </remarks>
+        public bool TryGetBuiltModule(string modulePath, out SurtrModule module)
+            => _modules.TryGetValue(modulePath, out module!);
+
         /// <summary>Finds the metadata a full name refers to, across every module and host type known.</summary>
         public bool TryResolve(string fullName, out SurtrTypeInfo type)
         {
@@ -402,6 +415,7 @@ namespace Surtr.Compiler.Binding
             // off and let the type parameters put it back.
             string name = StripArity(type.Name);
             var symbol = _factory.DeclareType(name, kind, containingModule, containingType);
+            symbol.Accessibility = Translate(type.Visibility);
 
             var declared = type.GenericParameters;
             if (declared.Length > 0)

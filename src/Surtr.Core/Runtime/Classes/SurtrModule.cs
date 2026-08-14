@@ -268,7 +268,15 @@ namespace Surtr.Runtime.Classes
                     : current.TryGetNestedClass(segment, out current);
 
                 if (!found)
-                    return null;
+                {
+                    // A type nested inside an *interface* has no container to walk into: nesting is
+                    // stored on SurtrClass and a contract holds none. `Language-Syntax.md` §2.3
+                    // allows one anyway - a nested type carries no state, so it does not reopen the
+                    // "pure contract" rule - and §2.6 makes nesting qualification, so such a type is
+                    // declared under its whole dotted name. One probe, only on a path the walk
+                    // already failed, and only at load.
+                    return _classes.TryGetValue(typePath, out var qualified) ? qualified : null;
+                }
 
                 if (separator < 0)
                     return current;

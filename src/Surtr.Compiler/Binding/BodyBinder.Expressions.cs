@@ -176,13 +176,59 @@ namespace Surtr.Compiler.Binding
         private BoundExpression? BindImplicitMember(SyntaxNode syntax, NamedTypeSymbol type, string name)
         {
             if (_lookup.FindField(type, name) is FieldSymbol field)
+            {
+                RequireAccessible(field, field.Accessibility, field.Name, syntax);
                 return new BoundFieldExpression(syntax, field.IsStatic ? null : ImplicitThis(syntax, type), field);
+            }
 
             if (_lookup.FindProperty(type, name) is PropertySymbol property)
+            {
+                RequireAccessible(property, property.Accessibility, property.Name, syntax);
                 return new BoundPropertyExpression(syntax, property.IsStatic ? null : ImplicitThis(syntax, type), property);
+            }
 
             return null;
         }
+
+        /// <summary>
+        /// Reports a member this body may not reach (§3.1), and carries on binding.
+        /// </summary>
+        /// <remarks>
+        /// Reported rather than hidden: a member that exists and is out of reach is a different
+        /// mistake from one that does not exist, and saying which is most of the value. Binding
+        /// continues with the member anyway, so one protection-level error does not cascade into
+        /// every expression its value would have flowed through.
+        /// </remarks>
+        private void RequireAccessible(Symbol member, Accessibility accessibility, string name, SyntaxNode syntax)
+        {
+            if (AccessCheck.IsAccessible(member, accessibility, _containingType, _module))
+                return;
+
+            Report(
+                SurtrDiagnosticCode.Inaccessible,
+                syntax.Span,
+                $"'{name}' is {Describe(accessibility)}, so it cannot be reached from here.");
+        }
+
+        /// <summary>Reports a type this body may not name (§3.1).</summary>
+        private void RequireAccessibleType(NamedTypeSymbol type, SyntaxNode syntax)
+        {
+            if (AccessCheck.IsAccessible(type, type.Accessibility, _containingType, _module))
+                return;
+
+            Report(
+                SurtrDiagnosticCode.Inaccessible,
+                syntax.Span,
+                $"'{type.Name}' is {Describe(type.Accessibility)}, so it cannot be named from here.");
+        }
+
+        private static string Describe(Accessibility accessibility) => accessibility switch
+        {
+            Accessibility.Private => "private",
+            Accessibility.Protected => "protected",
+            Accessibility.Internal => "internal to its module",
+            _ => "public",
+        };
 
         private BoundExpression? BindModuleMember(SyntaxNode syntax, string name)
         {
@@ -200,18 +246,24 @@ namespace Surtr.Compiler.Binding
             return null;
         }
 
-        private static BoundExpression? BindMemberOf(ModuleSymbol module, SyntaxNode syntax, string name)
+        private BoundExpression? BindMemberOf(ModuleSymbol module, SyntaxNode syntax, string name)
         {
             foreach (var field in module.Fields)
             {
                 if (string.Equals(field.Name, name, StringComparison.Ordinal))
+                {
+                    RequireAccessible(field, field.Accessibility, field.Name, syntax);
                     return new BoundFieldExpression(syntax, null, field);
+                }
             }
 
             foreach (var property in module.Properties)
             {
                 if (string.Equals(property.Name, name, StringComparison.Ordinal))
+                {
+                    RequireAccessible(property, property.Accessibility, property.Name, syntax);
                     return new BoundPropertyExpression(syntax, null, property);
+                }
             }
 
             return null;
@@ -359,10 +411,16 @@ namespace Surtr.Compiler.Binding
                 : receiver;
 
             if (_lookup.FindField(lookupType, syntax.Name) is FieldSymbol field)
+            {
+                RequireAccessible(field, field.Accessibility, field.Name, syntax);
                 return Guard(new BoundFieldExpression(syntax, field.IsStatic ? null : accessed, field), syntax);
+            }
 
             if (_lookup.FindProperty(lookupType, syntax.Name) is PropertySymbol property)
+            {
+                RequireAccessible(property, property.Accessibility, property.Name, syntax);
                 return Guard(new BoundPropertyExpression(syntax, property.IsStatic ? null : accessed, property), syntax);
+            }
 
             return Error(
                 syntax,
@@ -391,11 +449,19 @@ namespace Surtr.Compiler.Binding
 
         private BoundExpression BindStaticMember(MemberAccessExpressionSyntax syntax, NamedTypeSymbol type)
         {
+            RequireAccessibleType(type, syntax);
+
             if (_lookup.FindField(type, syntax.Name) is FieldSymbol field && field.IsStatic)
+            {
+                RequireAccessible(field, field.Accessibility, field.Name, syntax);
                 return new BoundFieldExpression(syntax, null, field);
+            }
 
             if (_lookup.FindProperty(type, syntax.Name) is PropertySymbol property && property.IsStatic)
+            {
+                RequireAccessible(property, property.Accessibility, property.Name, syntax);
                 return new BoundPropertyExpression(syntax, null, property);
+            }
 
             return Error(
                 syntax,
@@ -752,6 +818,15 @@ namespace Surtr.Compiler.Binding
         #region Assignment
         private BoundExpression BindAssignment(AssignmentExpressionSyntax syntax)
         {
+            // §5.6's write form. Taken before the target is bound, because binding it would bind the
+            // *read* operator — a call, which is not something to assign to.
+            if (syntax.Operator == AssignmentOperator.Assign
+                && syntax.Target is IndexExpressionSyntax indexed
+                && BindIndexedWrite(syntax, indexed) is BoundExpression write)
+            {
+                return write;
+            }
+
             var target = BindExpression(syntax.Target);
 
             if (target.Type.IsError)
@@ -763,10 +838,16 @@ namespace Surtr.Compiler.Binding
             if (!target.IsAssignable && !IsInitialisingWrite(target))
             {
                 BindExpression(syntax.Value);
+
+                // A `let` names itself, because the fix is one word and the shape it comes up in
+                // most is a loop counter: §4.2's three-clause `for` reassigns its variable, so it
+                // takes `var` while a `for-in` variable is rebound per step and needs neither.
                 return Error(
                     syntax,
                     SurtrDiagnosticCode.NotAssignable,
-                    "This cannot be assigned to; it is a value, a 'let', or a property with no setter.");
+                    target is BoundLocalExpression { Local.IsReadOnly: true } local
+                        ? $"'{local.Local.Name}' is declared 'let', which is assign-once; declare it 'var' to reassign it."
+                        : "This cannot be assigned to; it is a value, a 'let', or a property with no setter.");
             }
 
             if (syntax.Operator == AssignmentOperator.Assign)
@@ -884,9 +965,12 @@ namespace Surtr.Compiler.Binding
                     {
                         // A singleton's members are instance members reached through a type name
                         // (§2.8), so the instance is the receiver rather than nothing.
-                        return Singleton(member.Target, staticOwner) is BoundExpression instance
-                            ? BindMethodCall(syntax, instance, staticOwner, name, isVirtual: false)
-                            : BindMethodCall(syntax, null, staticOwner, name, isVirtual: false);
+                        var instance = Singleton(member.Target, staticOwner);
+
+                        if (ClosureValue(staticOwner, instance, name, member) is BoundExpression stored)
+                            return BindClosureInvocation(syntax, stored);
+
+                        return BindMethodCall(syntax, instance, staticOwner, name, isVirtual: false);
                     }
 
                     receiver = BindExpression(member.Target);
@@ -898,14 +982,17 @@ namespace Surtr.Compiler.Binding
                     {
                         RequireNullable(receiver, member);
 
-                        var guarded = _lookup.FindMethods(receiver.Type.NonNullable, name).Count > 0
-                            ? BindMethodCall(
-                                syntax,
-                                new BoundConditionalReceiver(member.Target, receiver.Type.NonNullable),
-                                receiver.Type.NonNullable,
-                                name,
-                                isVirtual)
-                            : Error(
+                        var lookupType = receiver.Type.NonNullable;
+                        var standIn = new BoundConditionalReceiver(member.Target, lookupType);
+
+                        BoundExpression guarded;
+
+                        if (_lookup.FindMethods(lookupType, name).Count > 0)
+                            guarded = BindMethodCall(syntax, standIn, lookupType, name, isVirtual);
+                        else if (ClosureValue(lookupType, standIn, name, member) is BoundExpression guardedValue)
+                            guarded = BindClosureInvocation(syntax, guardedValue);
+                        else
+                            guarded = Error(
                                 syntax,
                                 SurtrDiagnosticCode.UnresolvedName,
                                 $"'{receiver.Type.ToDisplayString()}' has no method called '{name}'.");
@@ -924,6 +1011,11 @@ namespace Surtr.Compiler.Binding
 
             if (owner is not null && _lookup.FindMethods(owner, name).Count > 0)
                 return BindMethodCall(syntax, receiver, owner, name, isVirtual);
+
+            // A member holding a closure is a callee too (§8), and is looked at only once no method
+            // answers to the name.
+            if (owner is not null && ClosureValue(owner, receiver, name, syntax.Callee) is BoundExpression held)
+                return BindClosureInvocation(syntax, held);
 
             if (DeclaresMethod(_module, name))
                 return BindModuleCall(syntax, _module, name);
@@ -949,6 +1041,51 @@ namespace Surtr.Compiler.Binding
         {
             var candidates = _lookup.FindMethods(owner, name);
             return Complete(syntax, receiver, candidates, name, isVirtual);
+        }
+
+        /// <summary>
+        /// The closure a callee names, when what it names is a value rather than a method (§8).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A closure is a first-class value, so where one is kept says nothing about how it is
+        /// called: a field, a property and a local are all callees, and only a bare local was
+        /// recognised as one. What decides is the owner — a method of that name wins, since that is
+        /// what a call usually means, and only when the owner declares none does a closure-typed
+        /// member answer.
+        /// </para>
+        /// <para>
+        /// The receiver is passed in rather than bound here, because the three shapes that reach
+        /// this differ by exactly that: a type name has none, a singleton has its instance, and
+        /// <c>a?.f()</c> has the stand-in the guard reads its receiver through.
+        /// </para>
+        /// </remarks>
+        private BoundExpression? ClosureValue(
+            TypeSymbol owner,
+            BoundExpression? receiver,
+            string name,
+            SyntaxNode syntax)
+        {
+            var lookupType = owner.NonNullable;
+
+            if (lookupType.IsError || _lookup.FindMethods(lookupType, name).Count > 0)
+                return null;
+
+            if (_lookup.FindField(lookupType, name) is FieldSymbol field
+                && field.Type.NonNullable is ClosureTypeSymbol)
+            {
+                RequireAccessible(field, field.Accessibility, field.Name, syntax);
+                return new BoundFieldExpression(syntax, field.IsStatic ? null : receiver, field);
+            }
+
+            if (_lookup.FindProperty(lookupType, name) is PropertySymbol property
+                && property.Type.NonNullable is ClosureTypeSymbol)
+            {
+                RequireAccessible(property, property.Accessibility, property.Name, syntax);
+                return new BoundPropertyExpression(syntax, property.IsStatic ? null : receiver, property);
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -1013,6 +1150,7 @@ namespace Surtr.Compiler.Binding
         {
             BindArguments(syntax.Arguments, out var arguments, out var infos);
 
+            candidates = Accessible(candidates, name, syntax);
             candidates = SubstituteGenericCandidates(syntax, candidates, infos, name);
             var result = _overloads.Resolve(candidates, infos);
 
@@ -1052,6 +1190,53 @@ namespace Surtr.Compiler.Binding
                 && !(receiver?.Type.NonNullable is NamedTypeSymbol { IsSealed: true });
 
             return new BoundCallExpression(syntax, method.IsStatic ? null : receiver, method, ordered, virtualCall);
+        }
+
+        /// <summary>
+        /// Drops the candidates this body may not reach, and reports when that leaves none (§3.1).
+        /// </summary>
+        /// <remarks>
+        /// Filtered rather than checked after the fact, because accessibility is part of what a name
+        /// means at a call site: a <c>private</c> overload alongside a <c>public</c> one must not win
+        /// and then be rejected — the public one was what the call meant. Reporting is left for the
+        /// case where filtering took everything, which is the one where the author needs to know that
+        /// the member exists and is out of reach rather than that it does not exist.
+        /// </remarks>
+        private IReadOnlyList<MethodSymbol> Accessible(
+            IReadOnlyList<MethodSymbol> candidates,
+            string name,
+            SyntaxNode syntax)
+        {
+            List<MethodSymbol>? reachable = null;
+
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                if (AccessCheck.IsAccessible(candidates[i], candidates[i].Accessibility, _containingType, _module))
+                {
+                    reachable?.Add(candidates[i]);
+                    continue;
+                }
+
+                if (reachable is null)
+                {
+                    reachable = new List<MethodSymbol>(candidates.Count);
+                    for (int j = 0; j < i; j++)
+                        reachable.Add(candidates[j]);
+                }
+            }
+
+            if (reachable is null)
+                return candidates;
+
+            if (reachable.Count == 0 && candidates.Count > 0)
+            {
+                Report(
+                    SurtrDiagnosticCode.Inaccessible,
+                    syntax.Span,
+                    $"'{name}' is {Describe(candidates[0].Accessibility)}, so it cannot be reached from here.");
+            }
+
+            return reachable;
         }
 
         /// <summary>
@@ -1570,6 +1755,11 @@ namespace Surtr.Compiler.Binding
                     $"'{type.Name}' is abstract and cannot be constructed.");
             }
 
+            // The resolver asks "is this name a type" without reporting, since a name that turns out
+            // to be a local is not a mistake — so a construction is where the answer is finally used
+            // and where the type's own visibility has to be asked (§3.1).
+            RequireAccessibleType(type, syntax);
+
             if (!TryResolveConstructor(syntax, written, type, out var constructor, out var arguments))
                 return Error(syntax);
 
@@ -1647,6 +1837,10 @@ namespace Surtr.Compiler.Binding
                 return false;
             }
 
+            constructors = new List<MethodSymbol>(Accessible(constructors, type.Name, syntax));
+            if (constructors.Count == 0)
+                return false;
+
             var result = _overloads.Resolve(constructors, infos);
             if (!result.IsResolved)
             {
@@ -1719,19 +1913,11 @@ namespace Surtr.Compiler.Binding
                     return BindTupleIndex(syntax, target, index, tuple);
             }
 
-            // Anything else has to declare `operator[]`.
-            var candidates = _lookup.FindMethods(target.Type, OperatorNames.For(TokenType.LeftBracket, 1));
-            var result = _overloads.Resolve(candidates, new[] { new ArgumentInfo(index.Type) });
-
-            if (result.IsResolved)
-            {
-                return new BoundCallExpression(
-                    syntax,
-                    target,
-                    result.Method!,
-                    new[] { Convert(index, result.Method!.Parameters[0].Type, syntax.Index.Span) },
-                    isVirtual: false);
-            }
+            // Anything else has to declare `operator[]` (§5.6). An overload is always static, so the
+            // receiver is its first parameter and the read form takes two — the same shape every
+            // other binary overload has, where `a + b` passes both operands.
+            if (BindIndexOperator(syntax, target, index, value: null) is BoundExpression indexed)
+                return indexed;
 
             return Error(
                 syntax,
@@ -1740,13 +1926,104 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
-        /// Binds <c>t[0]</c>, whose index is part of the type rather than a value (§5.5).
+        /// Binds <c>t[i] = v</c> where <c>t</c> declares an <c>operator[]</c> write form (§5.6).
         /// </summary>
         /// <remarks>
+        /// Only a plain assignment. A compound one would have to read, combine and write with the
+        /// receiver and the index evaluated once each, and §5.6 says nothing about that — so it is
+        /// left to report through the ordinary path rather than given semantics nobody specified.
+        /// </remarks>
+        private BoundExpression? BindIndexedWrite(AssignmentExpressionSyntax syntax, IndexExpressionSyntax indexed)
+        {
+            var target = BindExpression(indexed.Target);
+            if (target.Type.IsError || target.Type.NonNullable is ArrayTypeSymbol or DictionaryTypeSymbol or TupleTypeSymbol)
+                return null;
+
+            if (_lookup.FindMethods(target.Type, OperatorNames.For(TokenType.LeftBracket, 1)).Count == 0)
+                return null;
+
+            var index = BindExpression(indexed.Index);
+            var value = BindExpression(syntax.Value);
+
+            if (BindIndexOperator(syntax, target, index, value) is not BoundExpression call)
+            {
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.UnresolvedCall,
+                    $"'{target.Type.ToDisplayString()}' declares no 'operator[]' taking these and a value to write.");
+            }
+
+            return call;
+        }
+
+        /// <summary>
+        /// Binds a user-declared <c>operator[]</c>, in its read or its write form (§5.6).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// One method for both, because they differ only by what is passed: the read form is
+        /// <c>(receiver, index)</c> and the write form is <c>(receiver, index, value)</c> returning
+        /// nothing. §5.6's table counts the operands the <em>expression</em> has — one index for a
+        /// read, an index and a value for a write — while a declaration also names the receiver,
+        /// since an overload is always static.
+        /// </para>
+        /// <para>
+        /// Returns <see langword="null"/> rather than reporting, so the caller can say what it was
+        /// trying to do: "cannot be indexed" reads better at a read than at a write.
+        /// </para>
+        /// </remarks>
+        private BoundExpression? BindIndexOperator(
+            SyntaxNode syntax,
+            BoundExpression target,
+            BoundExpression index,
+            BoundExpression? value)
+        {
+            var candidates = _lookup.FindMethods(target.Type, OperatorNames.For(TokenType.LeftBracket, 1));
+            if (candidates.Count == 0)
+                return null;
+
+            var arguments = value is null
+                ? new[] { new ArgumentInfo(target.Type), new ArgumentInfo(index.Type) }
+                : new[] { new ArgumentInfo(target.Type), new ArgumentInfo(index.Type), new ArgumentInfo(value.Type) };
+
+            var result = _overloads.Resolve(candidates, arguments);
+            if (!result.IsResolved)
+                return null;
+
+            var method = result.Method!;
+            var bound = value is null
+                ? new[]
+                {
+                    Convert(target, method.Parameters[0].Type, syntax.Span),
+                    Convert(index, method.Parameters[1].Type, syntax.Span),
+                }
+                : new[]
+                {
+                    Convert(target, method.Parameters[0].Type, syntax.Span),
+                    Convert(index, method.Parameters[1].Type, syntax.Span),
+                    Convert(value, method.Parameters[2].Type, syntax.Span),
+                };
+
+            // Static, so there is no receiver: the target is argument zero like every other operand.
+            return new BoundCallExpression(syntax, null, method, bound, isVirtual: false);
+        }
+
+        /// <summary>
+        /// Binds <c>t[0]</c>, whose index is part of the type rather than a value (§5.3).
+        /// </summary>
+        /// <remarks>
+        /// <para>
         /// A tuple's element type varies per index, so nothing could type <c>t[i]</c> for a running
         /// <c>i</c> — which is exactly why <c>tuple</c> declares no generic parameter and no
-        /// <c>get(index)</c>. The index therefore has to fold here, and <c>TupGet</c> carries it as
-        /// an immediate.
+        /// <c>get(index)</c>. The index therefore has to fold here, and what it folds to becomes the
+        /// expression: <c>TupGet</c> reads its index off the stack, so leaving a <c>const</c>'s
+        /// declaration to be read at run time would emit a load for something already known.
+        /// </para>
+        /// <para>
+        /// A range check is part of the same answer rather than an extra rule. The arity is in the
+        /// type, so an index past the end names no element and there is nothing to give the
+        /// expression as a type.
+        /// </para>
         /// </remarks>
         private BoundExpression BindTupleIndex(
             IndexExpressionSyntax syntax,
@@ -1754,7 +2031,7 @@ namespace Surtr.Compiler.Binding
             BoundExpression index,
             TupleTypeSymbol tuple)
         {
-            if (Unwrap(index) is not BoundLiteralExpression { Value: long ordinal })
+            if (!TryFoldOrdinal(syntax.Index, index, out long ordinal))
             {
                 return Error(
                     syntax,
@@ -1770,7 +2047,35 @@ namespace Surtr.Compiler.Binding
                     $"'{tuple.ToDisplayString()}' has {tuple.ElementTypes.Count} element(s), so {ordinal} names none of them.");
             }
 
-            return new BoundIndexExpression(syntax, target, index, tuple.ElementTypes[(int)ordinal]);
+            return new BoundIndexExpression(
+                syntax,
+                target,
+                new BoundLiteralExpression(syntax.Index, _factory.Int, ordinal),
+                tuple.ElementTypes[(int)ordinal]);
+        }
+
+        /// <summary>What a tuple index is, when it is anything §7 calls a compile-time constant.</summary>
+        private bool TryFoldOrdinal(ExpressionSyntax written, BoundExpression bound, out long ordinal)
+        {
+            if (Unwrap(bound) is BoundLiteralExpression { Value: long literal })
+            {
+                ordinal = literal;
+                return true;
+            }
+
+            // §7.1 makes a `const` binding a compile-time constant, and a tuple index is a position
+            // that wants one — so the evaluator that answers a `const if` answers this too.
+            if (_constants.TryEvaluate(written, out object? value))
+            {
+                switch (value)
+                {
+                    case long folded: ordinal = folded; return true;
+                    case int folded: ordinal = folded; return true;
+                }
+            }
+
+            ordinal = 0;
+            return false;
         }
 
         private BoundExpression BindCast(CastExpressionSyntax syntax)
@@ -2006,13 +2311,27 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         private void CheckExhaustive(SwitchExpressionSyntax syntax, BoundExpression subject, IReadOnlyList<BoundSwitchArm> arms)
         {
-            if (subject.Type.NonNullable is not NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum } @enum)
-                return;
-
             foreach (var arm in arms)
             {
                 if (arm.IsDefault)
                     return;
+            }
+
+            // Everything else has an open set of values, so it needs an `else` to say what a switch
+            // produces when nothing matched — a switch *expression* has to produce something.
+            // Reported here rather than at emit, where it used to surface as "not lowered yet": it
+            // is a property of the program, not a construct the compiler has not got to.
+            if (subject.Type.NonNullable is not NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum } @enum
+                || subject.Type.IsNullable)
+            {
+                Report(
+                    SurtrDiagnosticCode.SwitchNotExhaustive,
+                    syntax.Span,
+                    subject.Type.IsNullable
+                        ? $"'{subject.Type.ToDisplayString()}' can also be null, so this switch needs an 'else' arm."
+                        : $"'{subject.Type.ToDisplayString()}' has no fixed set of values, so this switch needs an 'else' arm.");
+
+                return;
             }
 
             var covered = new HashSet<string>(StringComparer.Ordinal);
@@ -2084,8 +2403,14 @@ namespace Surtr.Compiler.Binding
             var frame = new LambdaFrame(_values);
             _lambdas.Add(frame);
 
-            foreach (var parameter in parameters)
-                _values.TryDeclare(parameter.Name, parameter);
+            // A lambda's parameter is a name in the enclosing body's chain like any other, so §4.4's
+            // rule reaches it: the body it belongs to is the same one, and the frame it will run on
+            // holds both.
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                ReportIfTaken(parameters[i].Name, syntax.Parameters[i].Span);
+                _values.TryDeclare(parameters[i].Name, parameters[i]);
+            }
 
             BoundStatement body;
             TypeSymbol returnType;

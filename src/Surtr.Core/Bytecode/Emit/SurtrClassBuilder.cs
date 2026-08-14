@@ -468,6 +468,21 @@ namespace Surtr.Bytecode.Emit
             return _setterBuilder = CreateAccessor("set_" + _name, SurtrClassReference.Void, parameters, dispatch, isOverride);
         }
 
+        /// <summary>
+        /// Attaches an attribute to this property (§11).
+        /// </summary>
+        /// <remarks>
+        /// Buffered rather than attached, for the reason a method's are: the metadata does not exist
+        /// until <see cref="Build"/> runs, and a member refuses an attribute once it is built.
+        /// </remarks>
+        public SurtrPropertyBuilder AddAttribute(SurtrAttributeUsage attribute)
+        {
+            _attributes.Add(attribute);
+            return this;
+        }
+
+        private readonly List<SurtrAttributeUsage> _attributes = new List<SurtrAttributeUsage>();
+
         /// <summary>Uses an already-built method as this property's getter.</summary>
         public SurtrPropertyBuilder BindGetter(SurtrMethodInfo getter)
         {
@@ -572,7 +587,7 @@ namespace Surtr.Bytecode.Emit
         {
             SurtrTypeHandle? declaringType = _class?.SelfHandle ?? _interface?.SelfHandle;
 
-            return new SurtrPropertyInfo(
+            var property = new SurtrPropertyInfo(
                 _name,
                 _module.TypeHandle(_propertyType),
                 _getterBuilder?.Built ?? _getter,
@@ -580,6 +595,11 @@ namespace Surtr.Bytecode.Emit
                 _static,
                 _visibility,
                 declaringType);
+
+            for (int i = 0; i < _attributes.Count; i++)
+                property.AddAttribute(_attributes[i]);
+
+            return property;
         }
     }
 }

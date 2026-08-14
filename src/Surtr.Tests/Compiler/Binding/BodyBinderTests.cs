@@ -161,10 +161,33 @@ namespace Surtr.Tests.Compiler.Binding
             AssertReports(compilation, SurtrDiagnosticCode.DuplicateDeclaration);
         }
 
+        /// <summary>§4.4: two locals of one name carry no information, wherever the inner one sits.</summary>
         [Fact]
-        public void ANestedBlockMayShadow()
+        public void ANestedBlockMayNotShadow()
         {
             BindIn(out var compilation, "let a = 1;\n{ let a = \"x\"; }");
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateDeclaration);
+        }
+
+        /// <summary>A lambda's parameter is a name in the same body, so §4.4 reaches it too.</summary>
+        [Fact]
+        public void ALambdaParameterMayNotShadowALocal()
+        {
+            BindIn(out var compilation, "let n = 1;\nlet f: (int) -> int = (n: int) => n;");
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateDeclaration);
+        }
+
+        /// <summary>§4.4's exception: a field is not in the value scope chain at all.</summary>
+        [Fact]
+        public void AParameterMayShadowAField()
+        {
+            Bind(
+                out var compilation,
+                "class Vec {\n"
+                    + "    public let x: float;\n"
+                    + "    public constructor(x: float) { this.x = x; }\n"
+                    + "}");
+
             AssertNoErrors(compilation);
         }
 
@@ -487,6 +510,71 @@ namespace Surtr.Tests.Compiler.Binding
             BindIn(out var compilation, "var n = 2;\nlet f: (int) -> int = (x: int) => x + n;");
             AssertReports(compilation, SurtrDiagnosticCode.NotAssignable);
         }
+
+        /// <summary>§8: where a closure is kept says nothing about how it is called.</summary>
+        [Fact]
+        public void AClosureInAStaticIsInvokedThroughItsTypeName()
+        {
+            var binder = Bind(
+                out var compilation,
+                "class First { public static let Make: () -> int = () => 5; }\n"
+                    + "class Test { public fun run(): int { return First.Make(); } }");
+
+            AssertNoErrors(compilation);
+            Assert.Same(compilation.TypeFactory.Int, First<BoundClosureInvocationExpression>(binder).Type);
+        }
+
+        [Fact]
+        public void AClosureInAnInstanceFieldIsInvokedThroughTheReceiver()
+        {
+            var binder = BindIn(
+                out var compilation,
+                "let b = Box();\nlet a = b.handler(2);",
+                extra: "class Box { public let handler: (int) -> int = (x: int) => x; }");
+
+            AssertNoErrors(compilation);
+            Assert.Same(compilation.TypeFactory.Int, First<BoundClosureInvocationExpression>(binder).Type);
+        }
+
+        /// <summary>A method of that name is what a call usually means, so it wins.</summary>
+        [Fact]
+        public void AMethodBeatsAClosureFieldOfTheSameName()
+        {
+            var binder = BindIn(
+                out var compilation,
+                "let a = Box().f();",
+                extra: "class Box {\n"
+                    + "  public let f: () -> int = () => 2;\n"
+                    + "  public fun f(): int { return 1; }\n"
+                    + "}");
+
+            AssertNoErrors(compilation);
+            Assert.Equal("f", First<BoundCallExpression>(binder).Method.Name);
+            Assert.Empty(Walk(Body(binder)).OfType<BoundClosureInvocationExpression>());
+        }
+
+        [Fact]
+        public void AFieldThatHoldsNoClosureIsStillNotCallable()
+        {
+            BindIn(out var compilation, "let a = Box().n();", extra: "class Box { public let n: int = 1; }");
+            AssertReports(compilation, SurtrDiagnosticCode.UnresolvedName);
+        }
+
+        /// <summary>§5.1: the guard wraps the invocation, so a null receiver calls nothing.</summary>
+        [Fact]
+        public void ANullConditionalReachesAClosureMemberToo()
+        {
+            var binder = BindIn(
+                out var compilation,
+                "let b: Box? = Box();\nlet a = b?.handler();",
+                extra: "class Box { public let handler: () -> int = () => 7; }");
+
+            AssertNoErrors(compilation);
+
+            var guarded = First<BoundNullConditionalExpression>(binder);
+            Assert.IsType<BoundClosureInvocationExpression>(guarded.Access);
+            Assert.True(guarded.Type.IsNullable);
+        }
         #endregion
 
         #region Casts, tests and indexing
@@ -574,6 +662,36 @@ namespace Surtr.Tests.Compiler.Binding
         {
             BindIn(out var compilation, "let t = (1, 2);\nt[0] = 3;");
             AssertReports(compilation, SurtrDiagnosticCode.NotAssignable);
+        }
+
+        /// <summary>§7.1 makes a <c>const</c> a compile-time constant, so it is one here too.</summary>
+        [Fact]
+        public void AConstIsAConstantEnoughToIndexATuple()
+        {
+            var binder = BindIn(
+                out var compilation,
+                "let t = (1, \"x\");\nlet a = t[Second];",
+                extra: "const Second: int = 1;");
+
+            AssertNoErrors(compilation);
+
+            var index = Walk(Body(binder)).OfType<BoundIndexExpression>().Single();
+            Assert.Same(compilation.TypeFactory.String, index.Type);
+        }
+
+        /// <summary>§4.2 yields a dict's entries as pairs, and this is what reads one.</summary>
+        [Fact]
+        public void ADictEntryIsAPairReadByPosition()
+        {
+            var binder = BindIn(
+                out var compilation,
+                "let scores: {string: int} = {};\nfor (entry in scores) { let k = entry[0]; let v = entry[1]; }");
+
+            AssertNoErrors(compilation);
+
+            var indexes = Walk(Body(binder)).OfType<BoundIndexExpression>().ToList();
+            Assert.Same(compilation.TypeFactory.String, indexes[0].Type);
+            Assert.Same(compilation.TypeFactory.Int, indexes[1].Type);
         }
         #endregion
 
@@ -704,6 +822,31 @@ namespace Surtr.Tests.Compiler.Binding
         {
             BindIn(out var compilation, "break;");
             AssertReports(compilation, SurtrDiagnosticCode.JumpOutsideLoop);
+        }
+
+        /// <summary>§4.2: a three-clause <c>for</c> reassigns its variable, so it takes <c>var</c>.</summary>
+        [Fact]
+        public void AThreeClauseForCounterCannotBeALet()
+        {
+            BindIn(out var compilation, "for (let i = 0; i < 3; i += 1) { }");
+
+            var reported = compilation.Diagnostics.Single(d => d.Code == SurtrDiagnosticCode.NotAssignable);
+            Assert.Contains("'var'", reported.Message);
+        }
+
+        [Fact]
+        public void WithVarItBinds()
+        {
+            BindIn(out var compilation, "for (var i = 0; i < 3; i += 1) { }");
+            AssertNoErrors(compilation);
+        }
+
+        /// <summary>A <c>for-in</c> variable is rebound per step, which is what makes it assign-once.</summary>
+        [Fact]
+        public void AForInVariableCannotBeWrittenTo()
+        {
+            BindIn(out var compilation, "for (i in 0..3) { i = 9; }");
+            AssertReports(compilation, SurtrDiagnosticCode.NotAssignable);
         }
 
         [Fact]

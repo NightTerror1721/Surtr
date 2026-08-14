@@ -54,7 +54,13 @@ namespace Surtr.Compiler.Binding
         private readonly List<DefaultBinding> _defaults = new List<DefaultBinding>();
         private readonly List<BoundFieldInitializer> _boundInitializers = new List<BoundFieldInitializer>();
         private readonly List<StaticBlockBinding> _staticBlocks = new List<StaticBlockBinding>();
+        private readonly List<AttributeBinding> _attributes = new List<AttributeBinding>();
         private readonly List<BoundStaticBlock> _boundStaticBlocks = new List<BoundStaticBlock>();
+
+        // Everything that runs when a module loads, in one list: what `InitializerOrder` needs is
+        // every fragment of a module at once, and which of them is a field's and which a block's is
+        // exactly what it compares.
+        private readonly List<InitializerOrder.Fragment> _loadFragments = new List<InitializerOrder.Fragment>();
         private readonly List<ChainBinding> _chains = new List<ChainBinding>();
 
         private readonly Dictionary<MethodSymbol, BoundConstructorChain> _boundChains =
@@ -81,6 +87,7 @@ namespace Surtr.Compiler.Binding
 
         private readonly Dictionary<MethodSymbol, BoundStatement> _bound =
             new Dictionary<MethodSymbol, BoundStatement>();
+        private readonly Dictionary<MethodSymbol, string> _bodyFiles = new Dictionary<MethodSymbol, string>();
         private readonly Dictionary<NamedTypeSymbol, TypeBinding> _typeBindings = new Dictionary<NamedTypeSymbol, TypeBinding>();
         private readonly List<TypeBinding> _declared = new List<TypeBinding>();
         private readonly List<ConstraintBinding> _constraints = new List<ConstraintBinding>();
@@ -128,6 +135,16 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>The bodies bound so far, by the method each belongs to.</summary>
         public IReadOnlyDictionary<MethodSymbol, BoundStatement> Bodies => _bound;
+
+        /// <summary>
+        /// The file each body was written in, by method.
+        /// </summary>
+        /// <remarks>
+        /// Not on the bound tree, which knows spans and not files, and not on the symbol, which a
+        /// module's several files share. It is here because emission raises diagnostics of its own
+        /// and a span with the wrong file underlines the wrong text.
+        /// </remarks>
+        public IReadOnlyDictionary<MethodSymbol, string> BodyFiles => _bodyFiles;
 
         /// <summary>
         /// Every field initializer and enum case, in declaration order — which is the order they
@@ -362,6 +379,18 @@ namespace Surtr.Compiler.Binding
 
             var symbol = _factory.DeclareType(syntax.Name, kind, module, containingType);
 
+            // §3.1's two defaults: a top-level declaration is internal to its module, and one nested
+            // inside a type is a member of it and private like any other — except inside an
+            // interface, where §2.3 makes every member implicitly public and a nested type is not
+            // the exception that would make an interface's own contract unreadable.
+            symbol.Accessibility = Translate(
+                syntax.Visibility,
+                containingType is null
+                    ? Accessibility.Internal
+                    : containingType.TypeKind == TypeSymbolKind.Interface
+                        ? Accessibility.Public
+                        : Accessibility.Private);
+
             if (syntax.TypeParameters.Count > 0)
             {
                 if (syntax.TypeParameters.Count > 10)
@@ -394,6 +423,7 @@ namespace Surtr.Compiler.Binding
             }
 
             scope.AddCandidate(syntax.Name, symbol);
+            RecordAttributes(symbol, syntax.Attributes, scope, sourceName);
 
             // A type's own parameters and its nested types are visible inside it and nowhere else.
             var typeScope = scope.CreateChild();
@@ -528,22 +558,51 @@ namespace Surtr.Compiler.Binding
         #endregion
 
         #region Phase 2 - hierarchy and members
+        /// <summary>
+        /// Tells the resolver where the source it is about to resolve sits, which is what §3.1's
+        /// accessibility is measured against.
+        /// </summary>
+        /// <remarks>
+        /// Set at each point that starts resolving a new piece of source rather than threaded through
+        /// every <c>Resolve</c> call: the module and type are the same for everything one of those
+        /// pieces contains, and a parameter would have to be carried through a dozen signatures that
+        /// have no other use for it.
+        /// </remarks>
+        private void EnterContext(ModuleSymbol? module, NamedTypeSymbol? type)
+        {
+            _resolver.CurrentModule = module;
+            _resolver.CurrentType = type;
+        }
+
         private void MemberPhase()
         {
             foreach (var binding in _declared)
+            {
+                EnterContext(binding.Module, binding.Symbol);
                 BindHierarchy(binding);
+            }
 
+            // Nothing says which module a constraint list belongs to, so it resolves with no context
+            // and the check fails open rather than inventing an answer.
+            EnterContext(null, null);
             BindConstraints();
 
             foreach (var binding in _declared)
+            {
+                EnterContext(binding.Module, binding.Symbol);
                 BindMembers(binding);
+            }
 
             foreach (var module in _modules.Values)
+            {
+                EnterContext(module, null);
                 BindModuleMembers(module);
+            }
 
             // Again, for the type parameters a method's own signature declared: those did not exist
             // when the first run went through, and a bound nobody resolved is a bound a body cannot
             // call anything through.
+            EnterContext(null, null);
             BindConstraints();
 
             // After every type has its members, because the question is about a base class's, and
@@ -1118,6 +1177,17 @@ namespace Surtr.Compiler.Binding
             foreach (var chain in _chains)
                 BindChain(chain);
 
+            // After the defaults have folded, so an attribute argument may be a `const` (§11 takes
+            // constants, §7.1 is where they come from) - and after every type exists, since the
+            // attribute class is resolved by name like any other.
+            foreach (var attribute in _attributes)
+                BindAttributes(attribute);
+
+            // After every fragment is bound and every body with it: a fragment reaching a static
+            // through a call is the same mistake as one reading it outright, and answering that
+            // needs the callee's tree.
+            InitializerOrder.Check(_modules.Values, _loadFragments, _bound, _diagnostics);
+
             RejectChainCycles();
             VerifyConstantDeclarations();
 
@@ -1167,6 +1237,7 @@ namespace Surtr.Compiler.Binding
         /// <summary>Binds one field initializer or enum case, in a scope that is its declaration's.</summary>
         private void BindInitializer(InitializerBinding initializer)
         {
+            EnterContext(initializer.Module, initializer.ContainingType);
             var owner = new MethodSymbol(
                 initializer.Field.Name,
                 (Symbol?)initializer.ContainingType ?? initializer.Module,
@@ -1203,6 +1274,103 @@ namespace Surtr.Compiler.Binding
 
             _boundInitializers.Add(new BoundFieldInitializer(
                 initializer.Field, value, initializer.ContainingType, initializer.Order));
+
+            _loadFragments.Add(new InitializerOrder.Fragment(
+                initializer.Module,
+                initializer.ContainingType,
+                initializer.Field,
+                initializer.Order,
+                value,
+                initializer.SourceName));
+        }
+
+        /// <summary>
+        /// Records a declaration's attributes to be resolved once every type exists (§11).
+        /// </summary>
+        private void RecordAttributes(Symbol target, IReadOnlyList<AttributeSyntax> syntax, Scope scope, string sourceName)
+        {
+            if (syntax.Count > 0)
+                _attributes.Add(new AttributeBinding(target, syntax, scope, sourceName));
+        }
+
+        /// <summary>
+        /// Resolves one declaration's attributes: the class each names, and the constants it is given.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// §11 fixes the syntax and leaves the vocabulary open, so nothing here knows any particular
+        /// attribute — what it checks is that the name resolves to a class extending
+        /// <c>Attribute</c>, which is what the runtime instantiates at load, and that every argument
+        /// is a constant, which is what the metadata can carry.
+        /// </para>
+        /// <para>
+        /// An attribute that does not resolve is reported and dropped rather than failing the
+        /// declaration it sits on: the declaration is still perfectly good, and §11's audience is
+        /// tooling and host reflection rather than the program's own meaning.
+        /// </para>
+        /// </remarks>
+        private void BindAttributes(AttributeBinding binding)
+        {
+            var uses = new List<AttributeUse>(binding.Syntax.Count);
+
+            foreach (var written in binding.Syntax)
+            {
+                var resolved = _resolver.Resolve(
+                    new NamedTypeSyntax(written.Span, new[] { written.Name }, System.Array.Empty<TypeSyntax>()),
+                    binding.Scope,
+                    binding.SourceName);
+
+                if (resolved.IsError)
+                    continue;
+
+                if (resolved.NonNullable is not NamedTypeSymbol type || !ExtendsAttribute(type))
+                {
+                    ReportAt(
+                        binding.SourceName,
+                        written.Span,
+                        SurtrDiagnosticCode.InvalidAttribute,
+                        $"'{written.Name}' is not an attribute; §11 attaches a class extending 'Attribute'.");
+
+                    continue;
+                }
+
+                var arguments = new object?[written.Arguments.Count];
+                bool folded = true;
+
+                for (int i = 0; i < arguments.Length; i++)
+                {
+                    if (Constants.TryEvaluate(written.Arguments[i], out object? value))
+                    {
+                        arguments[i] = value;
+                        continue;
+                    }
+
+                    ReportAt(
+                        binding.SourceName,
+                        written.Arguments[i].Span,
+                        SurtrDiagnosticCode.NotAConstant,
+                        $"An argument to '{written.Name}' has to fold at compile time; an attribute is built at load, before anything runs.");
+
+                    folded = false;
+                }
+
+                if (folded)
+                    uses.Add(new AttributeUse(type, arguments));
+            }
+
+            if (uses.Count > 0)
+                binding.Target.Attributes = uses;
+        }
+
+        private static bool ExtendsAttribute(NamedTypeSymbol type)
+        {
+            for (var walk = type; walk is not null; walk = walk.BaseType)
+            {
+                if (string.Equals(walk.Name, "Attribute", StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -1215,6 +1383,7 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         private void BindStaticBlock(StaticBlockBinding block)
         {
+            EnterContext(block.Module, block.ContainingType);
             var owner = new MethodSymbol(
                 "static",
                 (Symbol?)block.ContainingType ?? block.Module,
@@ -1240,6 +1409,9 @@ namespace Surtr.Compiler.Binding
 
             var body = binder.BindBody(block.Syntax.Body);
             _boundStaticBlocks.Add(new BoundStaticBlock(body, block.ContainingType, block.Module, block.Order));
+
+            _loadFragments.Add(new InitializerOrder.Fragment(
+                block.Module, block.ContainingType, field: null, block.Order, body, block.SourceName));
         }
 
         /// <summary>
@@ -1248,6 +1420,7 @@ namespace Surtr.Compiler.Binding
         /// </summary>
         private void BindChain(ChainBinding chain)
         {
+            EnterContext(chain.Module, chain.Owner);
             var target = chain.Syntax.ChainsToThis ? chain.Owner : chain.Owner.BaseType;
 
             if (target is null)
@@ -1322,6 +1495,8 @@ namespace Surtr.Compiler.Binding
             if (_bound.ContainsKey(body.Method))
                 return;
 
+            EnterContext(body.Module, body.ContainingType);
+
             var binder = new BodyBinder(
                 _factory,
                 _resolver,
@@ -1339,6 +1514,7 @@ namespace Surtr.Compiler.Binding
 
             var bound = binder.BindBody(body.Syntax);
             _bound.Add(body.Method, bound);
+            _bodyFiles[body.Method] = body.SourceName;
 
             // After binding, not during: reachability and definite assignment are questions
             // about a whole body, and the bound tree is the form that has one.
@@ -1488,6 +1664,7 @@ namespace Surtr.Compiler.Binding
                     field, syntax.Initializer, null, binding.Scope, binding.Module, owner, binding.SourceName, _nextInitializerOrder++));
             }
 
+            RecordAttributes(field, syntax.Attributes, binding.Scope, binding.SourceName);
             return field;
         }
 
@@ -1514,6 +1691,7 @@ namespace Surtr.Compiler.Binding
             if (syntax.Initializer is not null)
                 _initializers.Add(new InitializerBinding(field, syntax.Initializer, null, scope, owner, null, sourceName, _nextInitializerOrder++));
 
+            RecordAttributes(field, syntax.Attributes, scope, sourceName);
             return field;
         }
 
@@ -1536,6 +1714,7 @@ namespace Surtr.Compiler.Binding
                 property, syntax.Accessors, owner, syntax.Dispatch, isInterface, accessibility,
                 binding.Scope, binding.Module, owner, binding.SourceName);
 
+            RecordAttributes(property, syntax.Attributes, binding.Scope, binding.SourceName);
             return property;
         }
 
@@ -1555,6 +1734,7 @@ namespace Surtr.Compiler.Binding
                 property, syntax.Accessors, owner, DispatchModifier.None, isInterface: false, property.Accessibility,
                 scope, owner, containingType: null, sourceName);
 
+            RecordAttributes(property, syntax.Attributes, scope, sourceName);
             return property;
         }
 
@@ -1647,6 +1827,7 @@ namespace Surtr.Compiler.Binding
             method.ReturnType = _resolver.Resolve(syntax.ReturnType, scope, binding.SourceName);
             method.Parameters = BindParameters(syntax.Parameters, method, scope, binding.SourceName);
             RecordBody(method, syntax.Body, scope, binding.Module, owner, binding.SourceName);
+            RecordAttributes(method, syntax.Attributes, binding.Scope, binding.SourceName);
             return method;
         }
 
@@ -1671,6 +1852,7 @@ namespace Surtr.Compiler.Binding
             method.ReturnType = _resolver.Resolve(syntax.ReturnType, scope, sourceName);
             method.Parameters = BindParameters(syntax.Parameters, method, scope, sourceName);
             RecordBody(method, syntax.Body, scope, owner, containingType: null, sourceName);
+            RecordAttributes(method, syntax.Attributes, scope, sourceName);
             return method;
         }
 
@@ -1687,6 +1869,7 @@ namespace Surtr.Compiler.Binding
 
             method.Parameters = BindParameters(syntax.Parameters, method, binding.Scope, binding.SourceName);
             RecordBody(method, syntax.Body, binding.Scope, binding.Module, owner, binding.SourceName);
+            RecordAttributes(method, syntax.Attributes, binding.Scope, binding.SourceName);
 
             // Bound in a pass of its own, after every signature exists: a chain names a constructor
             // of this class or of its base, and overload resolution needs both complete.
@@ -1716,6 +1899,7 @@ namespace Surtr.Compiler.Binding
             method.ReturnType = _resolver.Resolve(syntax.ReturnType, binding.Scope, binding.SourceName);
             method.Parameters = BindParameters(syntax.Parameters, method, binding.Scope, binding.SourceName);
             RecordBody(method, syntax.Body, binding.Scope, binding.Module, owner, binding.SourceName);
+            RecordAttributes(method, syntax.Attributes, binding.Scope, binding.SourceName);
             return method;
         }
 
@@ -1963,6 +2147,26 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>A <c>static { ... }</c> block waiting to be bound, and where it runs (§2.5, §3.2).</summary>
+        /// <summary>A declaration's attributes, waiting for every type to exist (§11).</summary>
+        private readonly struct AttributeBinding
+        {
+            public AttributeBinding(Symbol target, IReadOnlyList<AttributeSyntax> syntax, Scope scope, string sourceName)
+            {
+                Target = target;
+                Syntax = syntax;
+                Scope = scope;
+                SourceName = sourceName;
+            }
+
+            public Symbol Target { get; }
+
+            public IReadOnlyList<AttributeSyntax> Syntax { get; }
+
+            public Scope Scope { get; }
+
+            public string SourceName { get; }
+        }
+
         private readonly struct StaticBlockBinding
         {
             public StaticBlockBinding(

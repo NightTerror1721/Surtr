@@ -35,10 +35,13 @@ namespace Surtr.Compiler.CodeGen
     /// synthesised when a class has initializers and declares none.
     /// </para>
     /// <para>
-    /// Anything it cannot emit raises <see cref="SurtrEmitException"/>, which
-    /// <see cref="TryEmit"/> turns into a diagnostic against the member that caused it. A
-    /// compilation with errors is not emitted at all: the bound tree of a failed compilation holds
-    /// error nodes, and emitting one would produce a module that runs.
+    /// Anything it cannot emit raises <see cref="SurtrEmitException"/>, carrying the span of the
+    /// construct it gave up on, which <see cref="Guarded"/> turns into a diagnostic against that
+    /// construct — one per member, so a module with two un-lowered lines reports both. What it does
+    /// not do is build that module or emit the ones after it: a half-emitted body is not a module,
+    /// and every module after it names entries in its method table. A compilation with errors is not
+    /// emitted at all: the bound tree of a failed compilation holds error nodes, and emitting one
+    /// would produce a module that runs.
     /// </para>
     /// </remarks>
     public sealed class ModuleEmitter
@@ -89,23 +92,89 @@ namespace Surtr.Compiler.CodeGen
                 if (!_binder.Modules.TryGetValue(source.Path, out var symbol))
                     continue;
 
+                _source = source;
+                _failed = false;
+
                 try
                 {
-                    _modules.Add(EmitModule(symbol, source));
+                    if (EmitModule(symbol, source) is not SurtrModule built)
+                        return (bool)(_emitted = false);
+
+                    _modules.Add(built);
                 }
                 catch (Exception exception) when (exception is SurtrCompilerException or InvalidOperationException or ArgumentException)
                 {
-                    _compilation.Diagnostics.ReportError(
-                        SurtrDiagnosticCode.NotLowered,
-                        $"Module '{source.Path}' could not be emitted: {exception.Message}",
-                        source.Units.Count > 0 ? source.Units[0].File.Path : source.Path,
-                        span: default);
-
+                    // What reaches here is a failure outside any one member: a declaration, or the
+                    // Build() that lays the module out. There is no narrower place to point at.
+                    Report(member: null, exception);
                     return (bool)(_emitted = false);
                 }
             }
 
             return (bool)(_emitted = true);
+        }
+
+        // The module being emitted, for the file a diagnostic belongs to, and whether a member of it
+        // has already failed.
+        private SurtrSourceModule? _source;
+        private bool _failed;
+
+        /// <summary>
+        /// Emits one member, turning a failure into a diagnostic against the construct that caused it.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Per member rather than per module, because "this module could not be emitted" is true of
+        /// every module that contains one bad line and tells a reader nothing about which. What a
+        /// <see cref="SurtrEmitException"/> carries is the span of the construct itself, so the
+        /// report lands where the source is.
+        /// </para>
+        /// <para>
+        /// The rest of the module is emitted afterwards, so one un-lowered construct does not hide
+        /// the others — but the module is not built and nothing after it is emitted either. A
+        /// half-emitted body is not a module, and a later module names entries in this one's method
+        /// table, so continuing would replace one real diagnostic with a cascade of invented ones.
+        /// </para>
+        /// </remarks>
+        private void Guarded(MethodSymbol? member, Action emit)
+        {
+            try
+            {
+                emit();
+            }
+            catch (Exception exception) when (exception is SurtrCompilerException or InvalidOperationException or ArgumentException)
+            {
+                Report(member, exception);
+                _failed = true;
+            }
+        }
+
+        private void Report(MethodSymbol? member, Exception exception)
+        {
+            // An emit failure already names the member it happened in; anything else is a message
+            // about the mechanism, so the member has to be said here.
+            string message = exception is SurtrEmitException
+                ? exception.Message
+                : member is null
+                    ? $"Module '{_source?.Path}' could not be emitted: {exception.Message}"
+                    : $"'{member.Name}' could not be emitted: {exception.Message}";
+
+            _compilation.Diagnostics.ReportError(
+                SurtrDiagnosticCode.NotLowered,
+                message,
+                FileOf(member),
+                exception is SurtrEmitException emit ? emit.Span : default);
+        }
+
+        /// <summary>The file a member was written in, falling back to the module's first.</summary>
+        private string FileOf(MethodSymbol? member)
+        {
+            if (member is not null && _binder.BodyFiles.TryGetValue(member, out string? file))
+                return file;
+
+            return _source is SurtrSourceModule source && source.Units.Count > 0
+                ? source.Units[0].File.Path
+                : _source?.Path ?? string.Empty;
         }
 
         // Emission is once per emitter: the modules it produced are already in Modules, and running
@@ -126,13 +195,14 @@ namespace Surtr.Compiler.CodeGen
         }
 
         #region One module
-        private SurtrModule EmitModule(ModuleSymbol symbol, SurtrSourceModule source)
+        private SurtrModule? EmitModule(ModuleSymbol symbol, SurtrSourceModule source)
         {
             var builder = new SurtrModuleBuilder(symbol.Path);
             var context = new EmitContext(builder, _descriptors)
             {
                 Bodies = _binder.Bodies,
                 Folder = _binder.ConstFolder,
+                Importer = _compilation.Importer,
             };
 
             // Everything built earlier is nameable from here: a symbol resolves to real metadata,
@@ -160,6 +230,11 @@ namespace Surtr.Compiler.CodeGen
                 EmitTypeBodies(context, emission);
 
             EmitModuleBodies(context, builder, symbol);
+
+            // Laying out a module whose bodies did not all emit would fail on a half-written one and
+            // replace a diagnostic that points at source with one that points at the emitter.
+            if (_failed)
+                return null;
 
             var built = builder.Build();
             Record(context, symbol, types, built);
@@ -210,14 +285,15 @@ namespace Surtr.Compiler.CodeGen
             List<TypeEmission> into)
         {
             TypeEmission emission;
+            string declaredName = DeclaredName(symbol, declaringClass);
 
             switch (symbol.TypeKind)
             {
                 case TypeSymbolKind.Interface:
                 {
                     var contract = declaringClass is null
-                        ? module.DefineInterface(symbol.MetadataName, Visibility(symbol))
-                        : declaringClass.DefineNestedInterface(symbol.MetadataName, Visibility(symbol));
+                        ? module.DefineInterface(declaredName, Visibility(symbol))
+                        : declaringClass.DefineNestedInterface(declaredName, Visibility(symbol));
 
                     Parameterise(contract.Interface, symbol);
                     context.Declare(symbol, contract);
@@ -228,8 +304,8 @@ namespace Surtr.Compiler.CodeGen
                 case TypeSymbolKind.Enum:
                 {
                     var @enum = declaringClass is null
-                        ? module.DefineEnum(symbol.MetadataName, Visibility(symbol))
-                        : declaringClass.DefineNestedEnum(symbol.MetadataName, Visibility(symbol));
+                        ? module.DefineEnum(declaredName, Visibility(symbol))
+                        : declaringClass.DefineNestedEnum(declaredName, Visibility(symbol));
 
                     context.Declare(symbol, @enum);
                     emission = new TypeEmission(symbol, @enum, null);
@@ -246,8 +322,8 @@ namespace Surtr.Compiler.CodeGen
                         : (SurtrClassReference?)null;
 
                     var @class = declaringClass is null
-                        ? module.DefineClass(symbol.MetadataName, baseType, symbol.IsAbstract, Visibility(symbol), symbol.IsSealed)
-                        : declaringClass.DefineNestedClass(symbol.MetadataName, baseType, symbol.IsAbstract, Visibility(symbol), symbol.IsSealed);
+                        ? module.DefineClass(declaredName, baseType, symbol.IsAbstract, Visibility(symbol), symbol.IsSealed)
+                        : declaringClass.DefineNestedClass(declaredName, baseType, symbol.IsAbstract, Visibility(symbol), symbol.IsSealed);
 
                     Parameterise(@class.Class, symbol);
                     context.Declare(symbol, @class);
@@ -256,10 +332,44 @@ namespace Surtr.Compiler.CodeGen
                 }
             }
 
+            Attach(context, symbol, emission.Class?.Class ?? (SurtrMemberInfo)emission.Contract!.Interface);
             into.Add(emission);
 
             foreach (var nested in symbol.NestedTypes)
                 DeclareType(context, module, emission.Class, nested, into);
+        }
+
+        /// <summary>
+        /// The name a type is declared under, which for one nested inside an <em>interface</em>
+        /// carries the qualification (§2.3).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Nesting is stored on <c>SurtrClass</c> and not on <c>SurtrInterface</c>, so a type nested
+        /// in a contract has no container to be added to — while §2.3 allows one, because a nested
+        /// type is not a member with state and does not reopen the "pure contract" rule.
+        /// </para>
+        /// <para>
+        /// It is declared at module level under its qualified name instead. That is not a workaround
+        /// as much as the naming model showing through: §2.6 makes nesting <em>qualification</em>, a
+        /// full name is <c>modulePath ':' segment ('.' segment)*</c>, and the descriptor the compiler
+        /// already emits for this type is exactly <c>module:IShape.Kind</c>. Declaring it under that
+        /// name is what makes the module's key and the descriptor agree. What it costs is that
+        /// nothing at runtime relates the two types — which nothing needs to, since a nested type
+        /// does not see its container's parameters (§6) and reaches nothing of its container's.
+        /// </para>
+        /// </remarks>
+        private static string DeclaredName(NamedTypeSymbol symbol, SurtrClassBuilder? declaringClass)
+        {
+            if (declaringClass is not null || symbol.ContainingType is not NamedTypeSymbol container)
+                return symbol.MetadataName;
+
+            var name = new System.Text.StringBuilder(symbol.MetadataName);
+
+            for (var walk = container; walk is not null; walk = walk.ContainingType)
+                name.Insert(0, '.').Insert(0, walk.MetadataName);
+
+            return name.ToString();
         }
 
         /// <summary>Copies a declaration's type parameter names onto its metadata.</summary>
@@ -390,7 +500,15 @@ namespace Surtr.Compiler.CodeGen
                 {
                     case PropertySymbol property:
                     {
-                        var declared = contract.DefineProperty(property.Name, _descriptors.Emit(property.Type));
+                        // Which accessors the contract requires is what the declaration wrote, and
+                        // the builder's default is read-only — so a `{ get; set; }` on an interface
+                        // would otherwise lose its setter, and every call site assigning through the
+                        // contract would name a method the interface does not declare.
+                        var declared = contract.DefineProperty(
+                            property.Name,
+                            _descriptors.Emit(property.Type),
+                            readable: property.Getter is not null,
+                            writable: property.Setter is not null);
 
                         if (property.Getter is MethodSymbol getter && declared.Getter is SurtrMethodInfo boundGetter)
                             context.Bind(getter, boundGetter);
@@ -423,17 +541,50 @@ namespace Surtr.Compiler.CodeGen
             // ordinal an exhaustive switch indexes on.
             if (owner.TypeKind == TypeSymbolKind.Enum && field.IsStatic && ReferenceEquals(field.Type, owner))
             {
-                context.Declare(field, @class.DefineEnumCase(field.Name, Visibility(field.Accessibility)).Field);
+                var @case = @class.DefineEnumCase(field.Name, Visibility(field.Accessibility)).Field;
+                context.Declare(field, @case);
+                Attach(context, field, @case);
                 return;
             }
 
             var descriptor = _descriptors.Emit(field.Type);
 
-            context.Declare(
-                field,
-                field.IsStatic
-                    ? @class.DefineStaticField(field.Name, descriptor, field.IsReadOnly, Visibility(field.Accessibility))
-                    : @class.DefineField(field.Name, descriptor, field.IsReadOnly, Visibility(field.Accessibility)));
+            var declared = field.IsStatic
+                ? @class.DefineStaticField(field.Name, descriptor, field.IsReadOnly, Visibility(field.Accessibility))
+                : @class.DefineField(field.Name, descriptor, field.IsReadOnly, Visibility(field.Accessibility));
+
+            context.Declare(field, declared);
+            Attach(context, field, declared);
+        }
+
+        /// <summary>
+        /// Copies a declaration's attributes onto the metadata the runtime instantiates them from (§11).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The attribute is a real class and its arguments fill its fields positionally, so what
+        /// travels is a type handle and a list of constants. The instance itself is built when the
+        /// declaring module loads, with the module's other statics — which is why nothing here runs
+        /// anything, and why an argument had to fold at compile time.
+        /// </para>
+        /// <para>
+        /// Attached at declaration time, because <c>SurtrMemberInfo</c> refuses one once the member
+        /// is built.
+        /// </para>
+        /// </remarks>
+        private void Attach(EmitContext context, Symbol symbol, SurtrMemberInfo member)
+        {
+            foreach (var use in symbol.Attributes)
+                member.AddAttribute(Usage(context, use));
+        }
+
+        private SurtrAttributeUsage Usage(EmitContext context, AttributeUse use)
+        {
+            var arguments = new SurtrConstant[use.Arguments.Count];
+            for (int i = 0; i < arguments.Length; i++)
+                arguments[i] = Constant(use.Arguments[i], use.Type.Name);
+
+            return context.Module.Attribute(_descriptors.Emit(use.Type), arguments);
         }
 
         /// <summary>
@@ -455,6 +606,9 @@ namespace Surtr.Compiler.CodeGen
             var declared = @class.DefineProperty(
                 property.Name, _descriptors.Emit(property.Type), property.IsStatic, Visibility(property.Accessibility));
 
+            foreach (var use in property.Attributes)
+                declared.AddAttribute(Usage(context, use));
+
             // Either accessor being bare is enough: §3.4 lets `{ get; set { ... } }` mix them, and
             // the bare half still needs somewhere to read from.
             bool auto =
@@ -474,16 +628,19 @@ namespace Surtr.Compiler.CodeGen
                 DeclareField(context, @class, emission.Symbol, backing);
             }
 
+            // `override` is dropped where it names no base accessor, for the reason it is dropped on
+            // a method: §2.2 makes a contract a promise rather than an inheritance, both are written
+            // `override`, and `SurtrTypeLinker` rejects an override with no base entry to replace.
             if (property.Getter is MethodSymbol getter)
             {
-                var builder = declared.DefineGetter(Dispatch(getter), getter.IsOverride);
+                var builder = declared.DefineGetter(Dispatch(getter), OverridesABaseMethod(getter));
                 context.Declare(getter, builder);
                 emission.Methods.Add((getter, builder));
             }
 
             if (property.Setter is MethodSymbol setter)
             {
-                var builder = declared.DefineSetter(Dispatch(setter), setter.IsOverride);
+                var builder = declared.DefineSetter(Dispatch(setter), OverridesABaseMethod(setter));
                 context.Declare(setter, builder);
                 emission.Methods.Add((setter, builder));
             }
@@ -497,6 +654,10 @@ namespace Surtr.Compiler.CodeGen
             if (method.Role == MethodRole.Constructor)
             {
                 var constructor = @class.DefineConstructor(parameters, Visibility(method.Accessibility));
+
+                foreach (var use in method.Attributes)
+                    constructor.AddAttribute(Usage(context, use));
+
                 context.Declare(method, constructor);
                 emission.Methods.Add((method, constructor));
                 emission.Constructors.Add((method, constructor));
@@ -540,6 +701,9 @@ namespace Surtr.Compiler.CodeGen
                 OverridesABaseMethod(method),
                 Visibility(method.Accessibility),
                 method.IsSealed);
+
+            foreach (var use in method.Attributes)
+                builder.AddAttribute(Usage(context, use));
 
             context.Declare(method, builder);
             emission.Methods.Add((method, builder));
@@ -588,7 +752,9 @@ namespace Surtr.Compiler.CodeGen
                     continue;
                 }
 
-                context.Declare(field, builder.DefineVariable(field.Name, _descriptors.Emit(field.Type), field.IsReadOnly, Visibility(field.Accessibility)));
+                var variable = builder.DefineVariable(field.Name, _descriptors.Emit(field.Type), field.IsReadOnly, Visibility(field.Accessibility));
+                context.Declare(field, variable);
+                Attach(context, field, variable);
             }
 
             foreach (var property in module.Properties)
@@ -614,13 +780,16 @@ namespace Surtr.Compiler.CodeGen
                     continue;
                 }
 
-                context.Declare(
-                    method,
-                    builder.DefineFunction(
-                        _descriptors.EmitMethodName(method),
-                        _descriptors.Emit(method.ReturnType),
-                        Parameters(context, method),
-                        Visibility(method.Accessibility)));
+                var function = builder.DefineFunction(
+                    _descriptors.EmitMethodName(method),
+                    _descriptors.Emit(method.ReturnType),
+                    Parameters(context, method),
+                    Visibility(method.Accessibility));
+
+                foreach (var use in method.Attributes)
+                    function.AddAttribute(Usage(context, use));
+
+                context.Declare(method, function);
             }
         }
 
@@ -672,6 +841,20 @@ namespace Surtr.Compiler.CodeGen
                 $"The default for '{parameter.Name}' folded to a '{parameter.DefaultValue.GetType().Name}', which metadata cannot carry."),
         };
 
+        /// <summary>One folded attribute argument, in the form metadata carries (§11).</summary>
+        private static SurtrConstant Constant(object? value, string attribute) => value switch
+        {
+            null => SurtrConstant.Null,
+            long integer => SurtrConstant.Integer((int)integer),
+            int integer => SurtrConstant.Integer(integer),
+            double real => SurtrConstant.Float(real),
+            bool boolean => SurtrConstant.Boolean(boolean),
+            char character => SurtrConstant.Character(character),
+            string text => SurtrConstant.String(text),
+            _ => throw new SurtrEmitException(
+                $"An argument to '{attribute}' folded to a '{value.GetType().Name}', which metadata cannot carry."),
+        };
+
         /// <summary>Splits a type's initializers into the two places they run from.</summary>
         private void SortInitializers(TypeEmission emission, NamedTypeSymbol symbol)
         {
@@ -696,8 +879,11 @@ namespace Surtr.Compiler.CodeGen
 
             if (emission.SyntheticConstructor is SurtrMethodBuilder synthetic)
             {
-                EmitConstructorPrologue(context, emission, constructor: null, synthetic);
-                synthetic.Code.ReturnVoid();
+                Guarded(null, () =>
+                {
+                    EmitConstructorPrologue(context, emission, constructor: null, synthetic);
+                    synthetic.Code.ReturnVoid();
+                });
             }
 
             foreach (var (symbol, builder) in emission.Methods)
@@ -713,36 +899,43 @@ namespace Surtr.Compiler.CodeGen
                         continue;
                     }
 
-                    EmitConstructorPrologue(context, emission, symbol, builder);
-                    EmitBody(context, symbol, builder, allowMissing: true);
+                    Guarded(symbol, () =>
+                    {
+                        EmitConstructorPrologue(context, emission, symbol, builder);
+                        EmitBody(context, symbol, builder, allowMissing: true);
+                    });
+
                     continue;
                 }
 
                 if (IsAutoAccessor(emission.Symbol, symbol))
                 {
-                    EmitAutoAccessor(context, emission.Symbol, symbol, builder);
+                    Guarded(symbol, () => EmitAutoAccessor(context, emission.Symbol, symbol, builder));
                     continue;
                 }
 
-                EmitBody(context, symbol, builder, allowMissing: false);
+                Guarded(symbol, () => EmitBody(context, symbol, builder, allowMissing: false));
             }
 
-            EmitBridges(context, emission, @class);
+            Guarded(null, () => EmitBridges(context, emission, @class));
 
             var blocks = StaticBlocksOf(emission.Symbol);
 
             if (emission.StaticInitializers.Count == 0 && blocks.Count == 0)
                 return;
 
-            var initializer = @class.DefineStaticInitializer();
-            var body = new MethodBodyEmitter(initializer, StaticInitializerSymbol(emission.Symbol), context);
+            Guarded(null, () =>
+            {
+                var initializer = @class.DefineStaticInitializer();
+                var body = new MethodBodyEmitter(initializer, StaticInitializerSymbol(emission.Symbol), context);
 
-            // One emitter across all of them, and fragments rather than bodies: each assignment is
-            // a statement in the same method, and letting any of them finish it would leave every
-            // later one unreachable.
-            EmitStaticFragments(body, emission.StaticInitializers, blocks);
+                // One emitter across all of them, and fragments rather than bodies: each assignment
+                // is a statement in the same method, and letting any of them finish it would leave
+                // every later one unreachable.
+                EmitStaticFragments(body, emission.StaticInitializers, blocks);
 
-            initializer.Code.ReturnVoid();
+                initializer.Code.ReturnVoid();
+            });
         }
 
         /// <summary>
@@ -958,16 +1151,16 @@ namespace Surtr.Compiler.CodeGen
             foreach (var method in module.Methods)
             {
                 if (context.TryGetBuilder(method, out var function))
-                    EmitBody(context, method, function, allowMissing: false);
+                    Guarded(method, () => EmitBody(context, method, function, allowMissing: false));
             }
 
             foreach (var property in module.Properties)
             {
                 if (property.Getter is MethodSymbol getter && context.TryGetBuilder(getter, out var read))
-                    EmitBody(context, getter, read, allowMissing: false);
+                    Guarded(getter, () => EmitBody(context, getter, read, allowMissing: false));
 
                 if (property.Setter is MethodSymbol setter && context.TryGetBuilder(setter, out var write))
-                    EmitBody(context, setter, write, allowMissing: false);
+                    Guarded(setter, () => EmitBody(context, setter, write, allowMissing: false));
             }
 
             var initializers = new List<BoundFieldInitializer>();
@@ -987,15 +1180,19 @@ namespace Surtr.Compiler.CodeGen
             if (initializers.Count == 0 && blocks.Count == 0)
                 return;
 
-            // A module-level variable is a static of its module, so its initializer runs from the
-            // module's own initializer — which the runtime runs after every class's. A module-level
-            // `static { }` block runs from the same place, in its own source position among them.
-            var moduleInitializer = builder.DefineStaticInitializer();
-            var body = new MethodBodyEmitter(moduleInitializer, StaticInitializerSymbol(null, module), context);
+            Guarded(null, () =>
+            {
+                // A module-level variable is a static of its module, so its initializer runs from
+                // the module's own initializer — which the runtime runs after every class's. A
+                // module-level `static { }` block runs from the same place, in its own source
+                // position among them.
+                var moduleInitializer = builder.DefineStaticInitializer();
+                var body = new MethodBodyEmitter(moduleInitializer, StaticInitializerSymbol(null, module), context);
 
-            EmitStaticFragments(body, initializers, blocks);
+                EmitStaticFragments(body, initializers, blocks);
 
-            moduleInitializer.Code.ReturnVoid();
+                moduleInitializer.Code.ReturnVoid();
+            });
         }
 
         private void EmitBody(EmitContext context, MethodSymbol symbol, SurtrMethodBuilder builder, bool allowMissing)
@@ -1292,7 +1489,7 @@ namespace Surtr.Compiler.CodeGen
         #region Translation
         // A type has no accessibility in the symbol model, because §2.1 gives one no meaning: a
         // module is the unit of visibility and every type it declares is reachable from it.
-        private static SurtrVisibility Visibility(NamedTypeSymbol type) => SurtrVisibility.Public;
+        private static SurtrVisibility Visibility(NamedTypeSymbol type) => Visibility(type.Accessibility);
 
         private static SurtrVisibility Visibility(Accessibility accessibility) => accessibility switch
         {

@@ -786,7 +786,7 @@ while (condition) {
     ...
 }
 
-for (let i = 0; i < items.length; i += 1) {
+for (var i = 0; i < items.length; i += 1) {
     ...
 }
 
@@ -798,6 +798,18 @@ for (i in 0..items.length) {
     ...
 }
 ```
+
+**The three-clause form takes `var`, and the `for-in` form takes no keyword at all.** That is not an
+inconsistency; it is the same rule twice. §1.1 makes `let` assign-once, and a three-clause loop is
+built on reassigning one binding — its step clause *is* the reassignment, so `let i = 0` would be a
+binding the header contradicts on its first iteration. A `for-in` variable is the opposite: it is
+**rebound once per step** rather than mutated, which is exactly what `let` describes, so it is
+assign-once implicitly and writing to it inside the body is an error.
+
+Giving the loop header an exception was the alternative and is worse than it looks. `let` says
+exactly one thing, and one place where it silently meant `var` would make it a spelling rather than
+a guarantee — the reader would have to check where a binding was declared before trusting it.
+Assigning to a `let` says so and names the fix.
 
 **What `for-in` can iterate is defined by an interface, `IIterable<T>`** (§13.2), so a user class can
 be iterated exactly like a built-in by implementing it. The alternative — hard-coding `for-in` to
@@ -1044,6 +1056,39 @@ Tuple and closure types reuse their literal/lambda shape outright rather than a 
 `(x: int, y: int) => ...` is how you write one. `->` (not `=>`) in the type keeps "the type of a
 function" visually distinct from "a function value" even though they're always used in matching
 positions.
+
+**A tuple element is read by position, and the position has to be a compile-time constant:**
+
+```
+let point: (int, string) = (3, "origin");
+
+let x = point[0];           // int
+let name = point[1];        // string
+let bad = point[2];         // error: a (int, string) has 2 elements
+```
+
+The constant requirement is not a restriction on the syntax; it is the type rule showing through.
+A tuple holds a **different type at each position**, so `point[i]` for a running `i` has no type the
+compiler could give the expression — which is also exactly why `tuple` declares no generic
+parameter and no `get(index)` where `array` declares both (§13.4). Anything §7 already calls a
+compile-time constant works, `const` bindings included:
+
+```
+const Name = 1;
+let name = point[Name];     // string, decided here rather than at run time
+```
+
+An index past the end is a compile error for the same reason a missing element type would be, so
+there is no runtime bounds check to pay for: the arity is in the type.
+
+This is also how a dictionary's `for-in` is read, since §4.2 makes one yield `(K, V)` pairs:
+
+```
+for (entry in scores) {
+    print(entry[0]);        // the key
+    print(entry[1]);        // the value
+}
+```
 
 ### 5.4 Collection and range literals
 
@@ -1624,7 +1669,8 @@ Two rules keep them predictable:
   invisible at the use site and is rejected rather than resolved.
 
 Where the build gets them from — a project file, a CLI switch, the host embedding the compiler —
-is a build-model question, and the build model does not exist yet (§14).
+is a build-model question, and §14.2's build model answers it: a `define` line in the project file,
+or `SurtrProject.Define` for a host that builds one in memory.
 
 ---
 
@@ -1654,6 +1700,26 @@ let g = (x: int) => x * 2;                     // fine
 ```
 
 A lambda's return type is always inferred from its body and is never written.
+
+**A closure is called wherever it is kept**, because it is a value and where a value lives says
+nothing about how it is used. A local, a parameter, a field, a property and a module-level variable
+are all callees:
+
+```
+class Button {
+    public var onClick: () -> void = () => { };
+}
+
+let b = Button();
+b.onClick();                  // the field's closure, invoked
+Registry.handler(1);          // a static's, through the type name
+b?.onClick();                 // guarded: a null receiver calls nothing
+```
+
+The one rule that decides between the two readings of `x.f()` is that **a method of that name
+wins**. A call usually means a method, so a closure-typed member only answers when the receiver's
+type declares no `f` at all — which also means adding a method can shadow a field of the same name,
+the same way it would anywhere else.
 
 **Captures are by value, not by reference to the variable slot** — this isn't a syntax choice, it
 falls directly out of how `SurtrClosure` is already built (`CLAUDE.md`: "method + captured values,
@@ -1913,9 +1979,9 @@ table, the value representation and the linker decisions each item has to be rec
 `docs/VM-Plan.md` §5 orders them into the build plan.
 
 > **All of it is now implemented.** The list below is what the syntax asked the runtime for and got;
-> read it as a map of where each feature's support lives rather than as work outstanding. What is
-> *not* done is the compiler side — §14.2 is untouched, and so is every compiler obligation in
-> `docs/VM-Plan.md` §4.8.
+> read it as a map of where each feature's support lives rather than as work outstanding. The
+> compiler side is built too; `docs/Compiler-Plan.md` §10.2 is the authoritative list of what it
+> still owes.
 
 In summary, the syntax obliged the runtime to grow:
 
@@ -1954,10 +2020,12 @@ compiler's overall shape rather than living inside one pass.
 - **Bytecode inlining** (§3.6) — the splice itself, remapping a callee's `SurtrExceptionHandler`
   ranges into the caller's chunk-absolute table, and diagnosing an impossible `forceinline` with
   the reason.
-- **The build model.** §7.4 has the build define constants, and §3.6 needs a callee's bytecode
-  available to inline across a module boundary. Neither has anywhere to come from yet: there is no
-  project format, no notion of a compilation unit larger than a file, and §2.1 already deferred the
-  source-root configuration for the same reason. All three want answering together.
+- ~~**The build model.**~~ **Built.** A project file (`root`, `module`, `output`, `define`,
+  `reference`), a directory walk, and `.surtrc` images out — `Compilation/SurtrProjectFile.cs`,
+  `Compilation/SurtrBuild.cs` and the `surtrc` command over them. §7.4's constants come from the
+  project file, and §2.1's source root is one of its settings. What it does **not** do is make
+  §3.6's cross-module `forceinline` possible: an image carries no bound bodies to splice, so that
+  stays a request the compiler declines rather than a promise it keeps.
 
 ### 14.3 Vocabulary, waiting on a consumer
 

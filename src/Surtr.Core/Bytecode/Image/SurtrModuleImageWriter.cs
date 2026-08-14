@@ -463,6 +463,12 @@ namespace Surtr.Bytecode.Image
 
             writer.Write(type.BaseType is null ? NoIndex : Intern(state, type.BaseType.Reference.Descriptor));
 
+            // A type carries attributes exactly as a member does - `SurtrTypeInfo` extends
+            // `SurtrMemberInfo` - and §11 decorates a class as readily as a field. Without this an
+            // attribute on a class would work in the process that compiled it and vanish through an
+            // image, which is the worst of both.
+            WriteAttributes(state, type);
+
             writer.Write(type.DeclaredInterfaces.Length);
             for (int i = 0; i < type.DeclaredInterfaces.Length; i++)
                 writer.Write(Intern(state, type.DeclaredInterfaces[i].Reference.Descriptor));
@@ -544,6 +550,8 @@ namespace Surtr.Bytecode.Image
 
             writer.Write(Intern(state, contract.Name));
             writer.Write((byte)contract.Visibility);
+
+            WriteAttributes(state, contract);
 
             writer.Write(contract.DeclaredExtendedInterfaces.Length);
             for (int i = 0; i < contract.DeclaredExtendedInterfaces.Length; i++)

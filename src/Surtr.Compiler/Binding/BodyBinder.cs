@@ -160,22 +160,41 @@ namespace Surtr.Compiler.Binding
         private void PopScope(Scope previous) => _values = previous;
 
         /// <summary>
-        /// Declares a local, reporting a name already taken in the same block.
+        /// Declares a local, reporting a name that is already taken anywhere it can be seen from.
         /// </summary>
         /// <remarks>
-        /// Shadowing an outer local is allowed and is what a nested block is for; declaring the
-        /// same name twice in one block is not.
+        /// §4.4 makes shadowing an outer local an error rather than a nested block's privilege: two
+        /// locals of the same name carry no information, so one of them is dead or the author lost
+        /// track. A field is the deliberate exception — fields are not in this chain at all, which is
+        /// what leaves <c>this.x = x</c> legal without a rule of its own.
         /// </remarks>
         private LocalSymbol DeclareLocal(string name, TypeSymbol type, bool isReadOnly, SourceSpan span)
         {
             var local = new LocalSymbol(name, type, isReadOnly);
+            ReportIfTaken(name, span);
 
-            if (!_values.TryDeclare(name, local))
+            // Declared even when it was taken, so what follows reads the declaration that was
+            // written rather than the one it shadowed - one report instead of a cascade.
+            _values.TryDeclare(name, local);
+            return local;
+        }
+
+        /// <summary>Reports a name a nearer or an enclosing scope has already given to something.</summary>
+        private void ReportIfTaken(string name, SourceSpan span)
+        {
+            if (_values.LookupLocal(name).IsFound)
             {
                 Report(SurtrDiagnosticCode.DuplicateDeclaration, span, $"'{name}' is already declared in this block.");
+                return;
             }
 
-            return local;
+            if (_values.Lookup(name).IsFound)
+            {
+                Report(
+                    SurtrDiagnosticCode.DuplicateDeclaration,
+                    span,
+                    $"'{name}' already exists in an enclosing scope, and a local may not shadow another local.");
+            }
         }
 
         /// <summary>

@@ -180,6 +180,214 @@ namespace Surtr.Tests.Compiler.Binding
         }
         #endregion
 
+        #region Terminating shapes
+        [Fact]
+        public void AnEndlessLoopWithAReturnInsideIsEnough()
+        {
+            AssertNoErrors(Bind("class Test { public fun run(): int { while (true) { return 1; } } }"));
+        }
+
+        [Fact]
+        public void AnEndlessLoopThatReturnsNothingStillFinishesNothing()
+        {
+            AssertNoErrors(Bind("class Test { public fun run(): int { while (true) { let a = 1; } } }"));
+        }
+
+        [Fact]
+        public void ABreakIsAWayOutOfAnEndlessLoop()
+        {
+            AssertReports(
+                Bind("class Test { public fun run(): int { while (true) { break; } } }"),
+                SurtrDiagnosticCode.NotAllPathsReturn);
+        }
+
+        [Fact]
+        public void AContinueIsNot()
+        {
+            AssertNoErrors(Bind("class Test { public fun run(): int { while (true) { continue; } } }"));
+        }
+
+        [Fact]
+        public void ABreakLeavesTheLoopItIsIn()
+        {
+            // The inner `break` is the inner loop's way out, not the outer one's.
+            AssertNoErrors(Bind(
+                "class Test { public fun run(): int { while (true) { for (i in 0..3) { break; } } } }"));
+        }
+
+        [Fact]
+        public void ALabelledBreakLeavesTheLoopItNames()
+        {
+            AssertReports(
+                Bind(
+                    "class Test { public fun run(): int {\n"
+                    + "  outer: while (true) { while (true) { break outer; } }\n"
+                    + "} }"),
+                SurtrDiagnosticCode.NotAllPathsReturn);
+        }
+
+        [Fact]
+        public void AForWithNoConditionIsEndlessToo()
+        {
+            AssertNoErrors(Bind("class Test { public fun run(): int { for (;;) { return 1; } } }"));
+        }
+
+        [Fact]
+        public void NothingRunsAfterAnEndlessLoop()
+        {
+            var compilation = BindIn("while (true) { }\nlet a = 1;");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnreachableCode);
+        }
+
+        [Fact]
+        public void ASwitchWhoseEverySectionReturnsIsEnough()
+        {
+            AssertNoErrors(Bind(
+                "class Test { public fun run(v: int): int {\n"
+                + "  switch (v) { case 1: return 1; default: return 0; }\n"
+                + "} }"));
+        }
+
+        [Fact]
+        public void WithoutADefaultSectionSomethingAlwaysFallsOut()
+        {
+            AssertReports(
+                Bind(
+                    "class Test { public fun run(v: int): int {\n"
+                    + "  switch (v) { case 1: return 1; case 2: return 2; }\n"
+                    + "} }"),
+                SurtrDiagnosticCode.NotAllPathsReturn);
+        }
+
+        [Fact]
+        public void ABreakOutOfASwitchIsAWayOutToo()
+        {
+            AssertReports(
+                Bind(
+                    "class Test { public fun run(v: int): int {\n"
+                    + "  switch (v) { case 1: break; default: return 0; }\n"
+                    + "} }"),
+                SurtrDiagnosticCode.NotAllPathsReturn);
+        }
+
+        [Fact]
+        public void ASectionRunningOffTheEndOfTheSwitchIsOne()
+        {
+            AssertReports(
+                Bind(
+                    "class Test { public fun run(v: int): int {\n"
+                    + "  switch (v) { case 1: return 1; default: let a = 0; }\n"
+                    + "} }"),
+                SurtrDiagnosticCode.NotAllPathsReturn);
+        }
+        #endregion
+
+        #region Initializer order (VM-Plan §1.12, §3.4)
+        [Fact]
+        public void ReadingAStaticOfAClassDeclaredEarlierIsFine()
+        {
+            AssertNoErrors(Bind(
+                "class First { public static let Value: int = 5; }\n"
+                + "class Second { public static let Copy: int = First.Value; }"));
+        }
+
+        [Fact]
+        public void ReadingOneDeclaredLaterIsReported()
+        {
+            AssertReports(
+                Bind(
+                    "class First { public static let Copy: int = Second.Value; }\n"
+                    + "class Second { public static let Value: int = 5; }"),
+                SurtrDiagnosticCode.InitializerOutOfOrder);
+        }
+
+        /// <summary>A module's own initializer runs after every class's, so this reads a zero.</summary>
+        [Fact]
+        public void AClassReadingAModuleVariableIsReported()
+        {
+            AssertReports(
+                Bind("class First { public static let Copy: int = Base; }\nlet Base: int = 5;"),
+                SurtrDiagnosticCode.InitializerOutOfOrder);
+        }
+
+        [Fact]
+        public void TheModuleReadingAClassIsNot()
+        {
+            AssertNoErrors(Bind("class First { public static let Value: int = 5; }\nlet Copy: int = First.Value;"));
+        }
+
+        [Fact]
+        public void OrderInsideOneClassCountsToo()
+        {
+            AssertReports(
+                Bind("class C {\n  public static let A: int = B;\n  public static let B: int = 5;\n}"),
+                SurtrDiagnosticCode.InitializerOutOfOrder);
+        }
+
+        [Fact]
+        public void ReadingOneAlreadyWrittenIsFine()
+        {
+            AssertNoErrors(Bind("class C {\n  public static let A: int = 8;\n  public static let B: int = A;\n}"));
+        }
+
+        [Fact]
+        public void ReachingItThroughACallIsCaught()
+        {
+            AssertReports(
+                Bind(
+                    "class First { public static let Copy: int = make(); }\n"
+                    + "class Second { public static let Value: int = 5; }\n"
+                    + "fun make(): int { return Second.Value; }"),
+                SurtrDiagnosticCode.InitializerOutOfOrder);
+        }
+
+        [Fact]
+        public void AStaticBlockIsCheckedAsWell()
+        {
+            AssertReports(
+                Bind(
+                    "class First {\n  public static var Copy: int = 0;\n  static { Copy = Second.Value; }\n}\n"
+                    + "class Second { public static let Value: int = 5; }"),
+                SurtrDiagnosticCode.InitializerOutOfOrder);
+        }
+
+        /// <summary>
+        /// §2.4 makes an enum case a static its own type initializes, so it obeys the same order.
+        /// </summary>
+        [Fact]
+        public void AnEnumCaseIsAStaticLikeAnyOther()
+        {
+            AssertReports(
+                Bind(
+                    "class Table { public static let Default: Suit = Suit.Hearts; }\n"
+                    + "enum Suit { Hearts, Spades }"),
+                SurtrDiagnosticCode.InitializerOutOfOrder);
+
+            AssertNoErrors(Bind(
+                "enum Suit { Hearts, Spades }\n"
+                + "class Table { public static let Default: Suit = Suit.Hearts; }"));
+        }
+
+        /// <summary>§8: a lambda is a value here and a body later, so what it reads is not read now.</summary>
+        [Fact]
+        public void ALambdaIsNotRunAtLoad()
+        {
+            AssertNoErrors(Bind(
+                "class First { public static let Make: () -> int = () => Second.Value; }\n"
+                + "class Second { public static let Value: int = 5; }"));
+        }
+
+        /// <summary>An instance field's initializer runs from a constructor, not at load.</summary>
+        [Fact]
+        public void AnInstanceInitializerIsNotChecked()
+        {
+            AssertNoErrors(Bind(
+                "class First { public var Copy: int = Second.Value; public constructor() { } }\n"
+                + "class Second { public static let Value: int = 5; }"));
+        }
+        #endregion
+
         #region Nullability narrowing
         [Fact]
         public void ANullCheckNarrowsInsideTheBranch()

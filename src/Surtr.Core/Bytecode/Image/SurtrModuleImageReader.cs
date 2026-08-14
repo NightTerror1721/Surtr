@@ -552,6 +552,9 @@ namespace Surtr.Bytecode.Image
 
             string? baseDescriptor = state.OptionalText();
 
+            // Read here because that is where they were written; attached once the type exists.
+            var attributes = ReadAttributeList(state);
+
             // The full name is rebuilt from where the class sits, exactly as SurtrClassBuilder
             // composes it, rather than written: a name and a position determine it, and two
             // spellings of one thing can disagree.
@@ -576,6 +579,9 @@ namespace Surtr.Bytecode.Image
 
             if (!selfHandle.IsResolved)
                 selfHandle.Resolve(type);
+
+            for (int i = 0; i < attributes.Length; i++)
+                type.AddAttribute(attributes[i]);
 
             int interfaceCount = state.Count();
             if (interfaceCount != 0)
@@ -644,6 +650,7 @@ namespace Surtr.Bytecode.Image
         {
             string name = state.Text();
             var visibility = (SurtrVisibility)state.Reader.ReadByte();
+            var attributes = ReadAttributeList(state);
 
             string separator = declaringType is null
                 ? SurtrClassReference.ModuleSeparator.ToString()
@@ -656,6 +663,9 @@ namespace Surtr.Bytecode.Image
 
             if (!selfHandle.IsResolved)
                 selfHandle.Resolve(contract);
+
+            for (int i = 0; i < attributes.Length; i++)
+                contract.AddAttribute(attributes[i]);
 
             int extendedCount = state.Count();
             if (extendedCount != 0)

@@ -343,7 +343,11 @@ Two things still do not travel, both stated rather than worked around:
 
 ### 3.4 Static initializer ordering is declaration order
 
-See §1.12. The compiler has to reject cross-initializer dependencies; nothing detects them today.
+See §1.12. ~~The compiler has to reject cross-initializer dependencies; nothing detects them
+today.~~ **Closed.** `Binding/InitializerOrder.cs` gives every load-time fragment a position — which
+container, and where inside it — and reports a read of a static whose own position is not strictly
+earlier. Only the same module is checked, which is exact rather than approximate: a module reaches
+another only by depending on it, and a dependency has finished loading before this one starts.
 
 ---
 
@@ -527,7 +531,8 @@ None of these need runtime work; all of them are things the runtime assumes and 
 
 * **Box a primitive into an erased slot, and `Cast` reading one back out** (§1.11).
 * **Emit `finally` on every exit path**, plus a catch-all that runs it and re-raises (§1.8).
-* **Reject cross-initializer dependencies** (§1.12, §3.4).
+* ~~**Reject cross-initializer dependencies** (§1.12, §3.4).~~ **Done** —
+  `Binding/InitializerOrder.cs`, and `docs/Compiler-Plan.md` §10.1g for the shape it took.
 * **Honour `SurtrMethodInfo.DeclaringType` naming the declaring interface** for interface methods
   (§3.1).
 * **Devirtualise calls on a `sealed` type** — `Language-Syntax.md` §2.2 justifies the modifier
@@ -740,9 +745,10 @@ enum one is why §4.13's case list is not optional.
 **~~Phase 1 — a real test project.~~ Done.** `src/Surtr.Tests` exists and `CLAUDE.md` records the
 command. The bytecode emitter (`Bytecode/Emit/`) landed alongside it.
 
-**~~Phase 2 — close §3.3 and §3.4.~~ §3.3 done.** `LoadModule` rejects a module that is already
-loaded, which turns a silent corruption into a clear failure. §3.4 stays open and stays the
-compiler's: nothing detects a cross-initializer dependency, and nothing at load can.
+**~~Phase 2 — close §3.3 and §3.4.~~ Done.** `LoadModule` rejects a module that is already loaded,
+which turns a silent corruption into a clear failure. §3.4 was always the compiler's, since nothing
+at load can detect a cross-initializer dependency, and it is now detected there:
+`Binding/InitializerOrder.cs`.
 
 **Phase 3 — the front end, against the syntax spec.** The **lexer, AST and parser are done**, in
 `src/Surtr.Compiler/Syntax/`, covering `Language-Syntax.md` end to end and verified against a

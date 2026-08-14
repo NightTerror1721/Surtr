@@ -193,7 +193,19 @@ namespace Surtr.Compiler.CodeGen
         public void EmitFragment(BoundStatement fragment) => Statement(fragment);
 
         #region Statements
+        /// <summary>The node being lowered, which is the span a failure here belongs to.</summary>
+        private SyntaxNode? _at;
+
         private void Statement(BoundStatement statement)
+        {
+            var previous = _at;
+            _at = statement.Syntax;
+
+            Lower(statement);
+            _at = previous;
+        }
+
+        private void Lower(BoundStatement statement)
         {
             switch (statement)
             {
@@ -342,8 +354,15 @@ namespace Surtr.Compiler.CodeGen
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Expression(loop.Condition);
-            Code.JumpIfFalse(end);
+
+            // `while (true)` tests nothing: flow analysis already reads it as a loop only a `break`
+            // leaves, and emitting the test anyway would put a load and a branch on every iteration
+            // to ask a question with one answer.
+            if (!IsAlwaysTrue(loop.Condition))
+            {
+                Expression(loop.Condition);
+                Code.JumpIfFalse(end);
+            }
 
             // `continue` re-tests the condition, so it targets the top rather than the body.
             PushLoop(top, end);
@@ -367,7 +386,7 @@ namespace Surtr.Compiler.CodeGen
 
             Code.MarkLabel(top);
 
-            if (loop.Condition is not null)
+            if (loop.Condition is not null && !IsAlwaysTrue(loop.Condition))
             {
                 Expression(loop.Condition);
                 Code.JumpIfFalse(end);
@@ -387,6 +406,16 @@ namespace Surtr.Compiler.CodeGen
             Code.Jump(top);
             Code.MarkLabel(end);
         }
+
+        /// <summary>Whether a loop's condition is written so that it never fails.</summary>
+        /// <remarks>
+        /// The same rule <see cref="FlowAnalysis"/> applies, and it has to be: that one decides
+        /// whether the code after the loop is reachable, and this one decides whether the loop can
+        /// reach it. Two different answers would be a body the analysis approved and the emitter
+        /// left a way out of.
+        /// </remarks>
+        private static bool IsAlwaysTrue(BoundExpression condition)
+            => condition is BoundLiteralExpression { Value: bool value } && value;
 
         /// <summary>
         /// Lowers a <c>for-in</c>, by index wherever that is possible.
@@ -1096,6 +1125,15 @@ namespace Surtr.Compiler.CodeGen
 
         #region Expressions
         private void Expression(BoundExpression expression)
+        {
+            var previous = _at;
+            _at = expression.Syntax;
+
+            Lower(expression);
+            _at = previous;
+        }
+
+        private void Lower(BoundExpression expression)
         {
             switch (expression)
             {
@@ -2127,7 +2165,12 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
-            if (method.ContainingType is null && _context.TryGetForeignModule(method, out var owner))
+            // A module-level member records no owner, so an access-table entry cannot name one in
+            // another module (`docs/VM-Plan.md` §3.3) - a cross-module call goes through the module
+            // reference table by path instead. Both halves are asked: a module built earlier in this
+            // compilation, and one referenced as an image.
+            if (method.ContainingType is null
+                && (_context.TryGetForeignModule(method, out var owner) || _context.TryGetReferencedModule(method, out owner)))
             {
                 Code.CallExternal(owner, built, discardResult);
                 return;
@@ -2473,11 +2516,18 @@ namespace Surtr.Compiler.CodeGen
                     fallback = arms[i];
             }
 
+            // With no `else`, the binder has already established that the arms cover every case of a
+            // non-nullable enum (§4.3), so the last arm is what is left over once the others have
+            // been tested — and testing it as well would be comparing against the only value the
+            // subject can still be. This is the whole point of checking exhaustiveness: the form
+            // that needs no fallback is the form the check exists to allow.
             if (fallback is null)
             {
-                // Exhaustiveness was checked over an enum only, so anything else needs something to
-                // produce when nothing matched.
-                throw Unsupported("a switch expression with no 'else' arm");
+                if (arms.Length == 0)
+                    throw Unsupported("a switch expression with no arms");
+
+                fallback = arms[arms.Length - 1];
+                labels[arms.Length - 1].Clear();
             }
 
             EmitDispatch(@switch.Subject.Type, subject, arms, labels, fallback.Value);
@@ -2630,8 +2680,20 @@ namespace Surtr.Compiler.CodeGen
             }
         }
 
+        /// <summary>
+        /// The failure every un-lowered construct raises, pointed at the construct itself.
+        /// </summary>
+        /// <remarks>
+        /// The span comes from <see cref="_at"/> rather than from an argument, so that the forty-odd
+        /// places that give up on something do not each have to remember to say where they were.
+        /// What keeps it accurate is that <see cref="Statement"/> and <see cref="Expression"/>
+        /// restore it on the way out: a node that finished lowering is no longer where we are, so by
+        /// the time its parent gives up, this names the parent.
+        /// </remarks>
         private SurtrEmitException Unsupported(string what)
-            => new SurtrEmitException($"'{_symbol.Name}' uses {what}, which code generation does not lower yet.");
+            => new SurtrEmitException(
+                $"'{_symbol.Name}' uses {what}, which code generation does not lower yet.",
+                _at?.Span ?? default);
         #endregion
     }
 }

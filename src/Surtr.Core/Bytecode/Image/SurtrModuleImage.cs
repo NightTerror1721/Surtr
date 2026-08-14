@@ -76,7 +76,7 @@ namespace Surtr.Bytecode.Image
         /// deliberately separate from the opcode set's own append-only rule: this counts changes to
         /// how a module is <em>framed</em>, and that one counts changes to what runs inside it.
         /// </remarks>
-        internal const ushort FormatVersion = 1;
+        internal const ushort FormatVersion = 2;
 
         private readonly byte[] _bytes;
         private readonly string _path;

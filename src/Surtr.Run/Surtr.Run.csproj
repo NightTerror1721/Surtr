@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+
+    <!-- `surtrc` turns source into `.surtrc` images; `surtr` is the other half of that pair - it
+         loads images into a real SurtrRuntime and calls into them, the way `java` runs what `javac`
+         produced. Neither is a program Unity loads: a host embeds Surtr.Core directly. This one
+         needs no compiler at all, so it references Surtr.Core only. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Surtr.Run</RootNamespace>
+    <AssemblyName>surtr</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!-- A command-line program is never consumed as a library, so CS1591 would only be noise. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Surtr.Core\Surtr.Core.csproj" />
+  </ItemGroup>
+
+</Project>

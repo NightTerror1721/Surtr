@@ -10,6 +10,7 @@ using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 
 namespace Surtr.Tests.Compiler.CodeGen
@@ -136,9 +137,11 @@ namespace Surtr.Tests.Compiler.CodeGen
         [Fact]
         public void AModuleReachesAnotherOneItDependsOn()
         {
+            // `public` is load-bearing: §3.1 defaults a module-level declaration to `internal`, which
+            // is exactly the module it is declared in.
             var runtime = Run(
                 "import game.math.*;\nfun run(): int { return twice(21); }",
-                ("/game/math/Math.surtr", "fun twice(x: int): int { return x + x; }"));
+                ("/game/math/Math.surtr", "public fun twice(x: int): int { return x + x; }"));
 
             Assert.Equal(42, Int(runtime, "run"));
         }
@@ -789,6 +792,65 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Closures held in members (§8)
+        [Fact]
+        public void AClosureInAStaticIsCalledThroughItsTypeName()
+        {
+            var runtime = Run(
+                "class First { public static let Make: () -> int = () => 5; }\n"
+                    + "fun run(): int { return First.Make(); }");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AClosureInAnInstanceFieldIsCalledThroughTheReceiver()
+        {
+            var runtime = Run(
+                "class Box {\n"
+                    + "  public let handler: (int) -> int;\n"
+                    + "  public constructor(h: (int) -> int) { this.handler = h; }\n"
+                    + "}\n"
+                    + "fun run(): int { return Box((x: int) => x * 3).handler(3); }");
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AClosureFromAPropertyIsCalledTheSameWay()
+        {
+            var runtime = Run(
+                "class Box { public handler: () -> int { get { return () => 4; } } }\n"
+                    + "fun run(): int { return Box().handler(); }");
+
+            Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ASingletonsClosureIsReachedThroughItsName()
+        {
+            var runtime = Run(
+                "singleton Registry { public let make: () -> int = () => 6; }\n"
+                    + "fun run(): int { return Registry.make(); }");
+
+            Assert.Equal(6, Int(runtime, "run"));
+        }
+
+        /// <summary>§5.1: the guard wraps the invocation, so a null receiver calls nothing.</summary>
+        [Fact]
+        public void ANullReceiverCallsNoClosureAtAll()
+        {
+            var runtime = Run(
+                "class Box { public let handler: () -> int = () => 7; }\n"
+                    + "fun call(b: Box?): int { let v = b?.handler(); return v == null ? 0 : v!!; }\n"
+                    + "fun present(): int { return call(Box()); }\n"
+                    + "fun absent(): int { return call(null); }");
+
+            Assert.Equal(7, Int(runtime, "present"));
+            Assert.Equal(0, Int(runtime, "absent"));
+        }
+        #endregion
+
         #region Refusals
         [Fact]
         public void OverridingASealedMemberIsReported()
@@ -818,6 +880,63 @@ namespace Surtr.Tests.Compiler.CodeGen
 
             Assert.True(compilation.HasErrors);
             Assert.False(new ModuleEmitter(compilation, binder).TryEmit());
+        }
+
+        /// <summary>
+        /// Compiles something emission gives up on, and hands back what it reported.
+        /// </summary>
+        /// <remarks>
+        /// An integer literal too wide for an <c>int</c> is the one construct that binds cleanly and
+        /// then cannot be lowered, which makes it the only way to reach these paths from source.
+        /// </remarks>
+        private IReadOnlyList<SurtrDiagnostic> Unlowerable(string source, params (string Path, string Text)[] extra)
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(Root + "/game/core/Test.surtr", source);
+
+            foreach (var (path, text) in extra)
+                project.AddSourceFile(Root + path, text);
+
+            var compilation = SurtrCompilation.Create(project);
+            _owned.Add(compilation);
+
+            var binder = compilation.Bind();
+            binder.BindBodies();
+
+            Assert.False(compilation.HasErrors, "This is meant to bind cleanly and fail at emit.");
+            Assert.False(new ModuleEmitter(compilation, binder).TryEmit());
+
+            return compilation.Diagnostics.Where(d => d.Code == SurtrDiagnosticCode.NotLowered).ToList();
+        }
+
+        [Fact]
+        public void AnEmitFailureUnderlinesWhatCausedIt()
+        {
+            var reported = Assert.Single(Unlowerable("fun run(): int { return 99999999999; }"));
+
+            Assert.Equal("99999999999".Length, reported.Span.Length);
+            Assert.Equal(1, reported.Span.Start.Line);
+        }
+
+        [Fact]
+        public void EveryMemberThatFailsIsReported()
+        {
+            var reported = Unlowerable(
+                "fun a(): int { return 99999999999; }\n"
+                + "fun b(): int { return 99999999999; }\n"
+                + "fun c(): int { return 1; }");
+
+            Assert.Equal(2, reported.Count);
+        }
+
+        [Fact]
+        public void ItIsReportedAgainstTheFileTheMemberIsIn()
+        {
+            var reported = Assert.Single(Unlowerable(
+                "fun run(): int { return 1; }",
+                ("/game/core/Other.surtr", "fun other(): int { return 99999999999; }")));
+
+            Assert.EndsWith("Other.surtr", reported.SourceName);
         }
         #endregion
 
@@ -1255,6 +1374,514 @@ namespace Surtr.Tests.Compiler.CodeGen
                 ("/game/util/M.surtr", "public fun tally(first: string, rest: string...): int { return rest.length; }"));
 
             Assert.Equal(2, Int(runtime, "run"));
+        }
+        #endregion
+
+        #region Interfaces (§2.3, §3.4)
+        /// <summary>
+        /// §2.3 allows a nested type in a contract: it carries no state, so it does not reopen the
+        /// "pure contract" rule.
+        /// </summary>
+        [Fact]
+        public void AnEnumNestedInAnInterfaceLoadsAndResolves()
+        {
+            var runtime = Run(
+                "interface IShape {\n"
+                    + "  enum Kind { Circle, Square }\n"
+                    + "  fun getKind(): Kind;\n"
+                    + "}\n"
+                    + "class Circle : IShape {\n"
+                    + "  public override fun getKind(): IShape.Kind { return IShape.Kind.Circle; }\n"
+                    + "}\n"
+                    + "fun run(): int { let c: IShape = Circle(); return c.getKind() === IShape.Kind.Circle ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AClassNestedInAnInterfaceLoadsAndResolves()
+        {
+            var runtime = Run(
+                "interface IFactory {\n"
+                    + "  public class Handle { public let id: int = 3; public constructor() { } }\n"
+                    + "  fun make(): Handle;\n"
+                    + "}\n"
+                    + "class F : IFactory { public override fun make(): IFactory.Handle { return IFactory.Handle(); } }\n"
+                    + "fun run(): int { let f: IFactory = F(); return f.make().id; }");
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A property satisfying a contract is written <c>override</c> like one replacing a base —
+        /// §2.2 makes a contract a promise — and the linker rejects an override with no base entry.
+        /// </summary>
+        [Fact]
+        public void APropertyCanImplementAnInterfaceProperty()
+        {
+            var runtime = Run(
+                "interface INamed { name: string { get; } }\n"
+                    + "class C : INamed { public override name: string { get { return \"x\"; } } }\n"
+                    + "fun run(): string { let n: INamed = C(); return n.name; }");
+
+            Assert.Equal("x", Text(runtime, "run"));
+        }
+
+        /// <summary>An interface property's setter has to reach the contract, or no call site can assign through it.</summary>
+        [Fact]
+        public void AnInterfacePropertyKeepsItsSetter()
+        {
+            var runtime = Run(
+                "interface ICounted { count: int { get; set; } }\n"
+                    + "class C : ICounted { public override count: int { get; set; } }\n"
+                    + "fun run(): int { let c: ICounted = C(); c.count = 7; return c.count; }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void APropertyOverrideStillReachesTheBase()
+        {
+            var runtime = Run(
+                "class Base { public virtual n: int { get { return 1; } } }\n"
+                    + "class Derived : Base { public override n: int { get { return 9; } } }\n"
+                    + "fun run(): int { let b: Base = Derived(); return b.n; }");
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+        #endregion
+
+        #region Exhaustive switch expressions (§4.3)
+        /// <summary>
+        /// The form exhaustiveness checking exists to allow: every case listed, so no <c>else</c> is
+        /// needed and the last arm is what is left over.
+        /// </summary>
+        [Fact]
+        public void AnExhaustiveSwitchOverAnEnumNeedsNoElse()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades }\n"
+                    + "fun run(): int { let s = Suit.Spades; return switch (s) { Suit.Hearts -> 1, Suit.Spades -> 2, }; }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnExhaustiveSwitchStillPicksAnEarlierArm()
+        {
+            var runtime = Run(
+                "enum Colour { Red, Green, Blue }\n"
+                    + "fun run(): int {\n"
+                    + "  let c = Colour.Green;\n"
+                    + "  return switch (c) { Colour.Red -> 1, Colour.Green -> 2, Colour.Blue -> 3, };\n"
+                    + "}");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// Anything without a fixed set of values still needs one — reported at binding, where it is
+        /// a property of the program, rather than at emit as something not lowered.
+        /// </summary>
+        [Fact]
+        public void ASwitchExpressionOverAnOpenTypeNeedsAnElse()
+        {
+            using var compilation = Reject("fun run(): int { return switch (2) { 1 -> 10, 2 -> 20, }; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.SwitchNotExhaustive);
+        }
+
+        /// <summary>A nullable enum can also be null, which no arm covers.</summary>
+        [Fact]
+        public void ASwitchExpressionOverANullableEnumNeedsAnElse()
+        {
+            using var compilation = Reject(
+                "enum Suit { Hearts, Spades }\n"
+                    + "fun run(): int { let s: Suit? = null; return switch (s) { Suit.Hearts -> 1, Suit.Spades -> 2, }; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.SwitchNotExhaustive);
+        }
+        #endregion
+
+        #region Indexers (§5.6)
+        /// <summary>
+        /// An overload is always static, so the read form takes the receiver and the index — the
+        /// same shape every other binary overload has.
+        /// </summary>
+        [Fact]
+        public void AnIndexerReadsThroughItsOperator()
+        {
+            var runtime = Run(
+                "class Bag {\n"
+                    + "  private var _items: int[] = [10, 20, 30];\n"
+                    + "  operator[](b: Bag, i: int): int { return b._items.get(i); }\n"
+                    + "}\n"
+                    + "fun run(): int { let b = Bag(); return b[1]; }");
+
+            Assert.Equal(20, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnIndexerWritesThroughItsOperator()
+        {
+            var runtime = Run(
+                "class Bag {\n"
+                    + "  private var _items: int[] = [10, 20, 30];\n"
+                    + "  operator[](b: Bag, i: int): int { return b._items.get(i); }\n"
+                    + "  operator[](b: Bag, i: int, v: int): void { b._items.set(i, v); }\n"
+                    + "}\n"
+                    + "fun run(): int { let b = Bag(); b[1] = 99; return b[1]; }");
+
+            Assert.Equal(99, Int(runtime, "run"));
+        }
+
+        /// <summary>§5.6 puts no restriction on the index's type; only on how many there are.</summary>
+        [Fact]
+        public void AnIndexerMayTakeAnyKeyType()
+        {
+            var runtime = Run(
+                "class Table {\n"
+                    + "  private var _d: {string: string} = {};\n"
+                    + "  operator[](t: Table, k: string): string { return t._d.get(k); }\n"
+                    + "  operator[](t: Table, k: string, v: string): void { t._d.set(k, v); }\n"
+                    + "}\n"
+                    + "fun run(): string { let t = Table(); t[\"x\"] = \"y\"; return t[\"x\"]; }");
+
+            Assert.Equal("y", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void IndexingATypeThatDeclaresNoOperatorIsReported()
+        {
+            using var compilation = Reject("class Plain { }\nfun run(): int { let p = Plain(); return p[0]; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.NotSupportedOnType);
+        }
+        #endregion
+
+        #region Attributes (§11)
+        /// <summary>
+        /// Through the image, because that is the form an attribute has to survive in: §11's audience
+        /// is host reflection, which reads a module someone compiled earlier.
+        /// </summary>
+        private SurtrModule Reload(string source)
+        {
+            var image = SurtrModuleImage.FromBytes(Build(source).EmitImages()[0].ToBytes());
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            var module = image.Instantiate();
+            runtime.LoadModule(module);
+            return module;
+        }
+
+        private static string Describe(SurtrMemberInfo member)
+        {
+            var parts = new List<string>();
+
+            foreach (var attribute in member.Attributes)
+            {
+                var arguments = new List<string>();
+                foreach (var argument in attribute.Arguments)
+                {
+                    arguments.Add(argument.Kind switch
+                    {
+                        SurtrConstantKind.Integer => argument.Value.AsInt.ToString(),
+                        SurtrConstantKind.Float => argument.Value.AsFloat.ToString(CultureInfo.InvariantCulture),
+                        SurtrConstantKind.Boolean => argument.Value.AsBool.ToString().ToLowerInvariant(),
+                        SurtrConstantKind.Character => argument.Value.AsChar.ToString(),
+                        SurtrConstantKind.String => argument.Text ?? "null",
+                        _ => "null",
+                    });
+                }
+
+                string name = attribute.AttributeType.Reference.ToDisplayString();
+                parts.Add(name.Substring(name.IndexOf(':') + 1) + "(" + string.Join(", ", arguments) + ")");
+            }
+
+            return string.Join(", ", parts);
+        }
+
+        [Fact]
+        public void AnAttributeOnAMethodSurvivesTheImage()
+        {
+            var module = Reload(
+                "class Marker : Attribute { public let n: int = 0; }\n"
+                    + "class Target {\n"
+                    + "  @Marker(3)\n"
+                    + "  public fun thing(): int { return 1; }\n"
+                    + "}");
+
+            Assert.True(module.FindClass("Target")!.TryGetMethods("thing", out var overloads));
+            Assert.Equal("Marker(3)", Describe(overloads[0]));
+        }
+
+        [Fact]
+        public void AnAttributeOnAClassSurvivesTheImage()
+        {
+            var module = Reload("class Marker : Attribute { public let n: int = 0; }\n@Marker(7)\nclass Target { }");
+
+            Assert.Equal("Marker(7)", Describe(module.FindClass("Target")!));
+        }
+
+        [Fact]
+        public void AnAttributeOnAFieldSurvivesTheImage()
+        {
+            var module = Reload(
+                "class SerializeField : Attribute { }\n"
+                    + "class Component {\n"
+                    + "  @SerializeField\n"
+                    + "  public var speed: float = 5.0;\n"
+                    + "}");
+
+            Assert.True(module.FindClass("Component")!.TryGetField("speed", out var field));
+            Assert.Equal("SerializeField()", Describe(field));
+        }
+
+        /// <summary>§11's own example, arguments and all.</summary>
+        [Fact]
+        public void AnAttributeOnAPropertyKeepsItsArguments()
+        {
+            var module = Reload(
+                "class Range : Attribute { public let lo: int = 0; public let hi: int = 0; }\n"
+                    + "class Player {\n"
+                    + "  @Range(0, 100)\n"
+                    + "  public health: int { get; set; }\n"
+                    + "}");
+
+            Assert.True(module.FindClass("Player")!.TryGetProperty("health", out var property));
+            Assert.Equal("Range(0, 100)", Describe(property));
+        }
+
+        [Fact]
+        public void ADeclarationMayCarrySeveralAttributes()
+        {
+            var module = Reload(
+                "class A : Attribute { }\nclass B : Attribute { }\n"
+                    + "class Target {\n"
+                    + "  @A\n"
+                    + "  @B\n"
+                    + "  public fun thing(): int { return 1; }\n"
+                    + "}");
+
+            Assert.True(module.FindClass("Target")!.TryGetMethods("thing", out var overloads));
+            Assert.Equal("A(), B()", Describe(overloads[0]));
+        }
+
+        /// <summary>An argument is a constant, and §7.1 is where a named one comes from.</summary>
+        [Fact]
+        public void AnAttributeArgumentMayBeAConst()
+        {
+            var module = Reload(
+                "const Limit: int = 42;\nclass Marker : Attribute { public let n: int = 0; }\n@Marker(Limit)\nclass Target { }");
+
+            Assert.Equal("Marker(42)", Describe(module.FindClass("Target")!));
+        }
+
+        [Fact]
+        public void SomethingThatIsNotAnAttributeIsReported()
+        {
+            using var compilation = Reject("class Plain { }\n@Plain\nclass Target { }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidAttribute);
+        }
+
+        /// <summary>
+        /// An attribute instance is built when its module loads, before anything runs — so an
+        /// argument that is not a constant has nothing to be.
+        /// </summary>
+        [Fact]
+        public void AnAttributeArgumentThatIsNotConstantIsReported()
+        {
+            using var compilation = Reject(
+                "class Marker : Attribute { public let n: int = 0; }\n"
+                    + "fun compute(): int { return 1; }\n"
+                    + "@Marker(compute())\n"
+                    + "class Target { }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.NotAConstant);
+        }
+        #endregion
+
+        #region Accessibility (§3.1)
+        private static SurtrCompilation Reject(string source, params (string Path, string Text)[] extra)
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(Root + "/game/core/Test.surtr", source);
+
+            foreach (var (path, text) in extra)
+                project.AddSourceFile(Root + path, text);
+
+            var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+            return compilation;
+        }
+
+        [Fact]
+        public void APrivateFieldIsNotReachableFromOutsideItsType()
+        {
+            using var compilation = Reject("class C { private let n: int = 1; }\nfun run(): int { return C().n; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.Inaccessible);
+        }
+
+        /// <summary>§3.1: a class member with no visibility written is private.</summary>
+        [Fact]
+        public void AMemberWithNoVisibilityWrittenIsPrivate()
+        {
+            using var compilation = Reject("class C { let n: int = 1; }\nfun run(): int { return C().n; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.Inaccessible);
+        }
+
+        [Fact]
+        public void APrivateMethodIsNotReachableFromOutsideItsType()
+        {
+            using var compilation = Reject(
+                "class C { private fun hidden(): int { return 1; } }\nfun run(): int { return C().hidden(); }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.Inaccessible);
+        }
+
+        [Fact]
+        public void AProtectedMemberIsNotReachableFromOutsideTheHierarchy()
+        {
+            using var compilation = Reject(
+                "class Base { protected fun step(): int { return 1; } }\n"
+                    + "class Other { public fun poke(b: Base): int { return b.step(); } }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.Inaccessible);
+        }
+
+        /// <summary>§3.1's other default: a top-level declaration is internal to its own module.</summary>
+        [Fact]
+        public void AModuleLevelFunctionIsNotReachableFromAnotherModule()
+        {
+            using var compilation = Reject(
+                "import game.util.*;\nfun run(): int { return secret(); }",
+                ("/game/util/M.surtr", "internal fun secret(): int { return 1; }"));
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.Inaccessible);
+        }
+
+        [Fact]
+        public void AnInternalTypeIsNotReachableFromAnotherModule()
+        {
+            using var compilation = Reject(
+                "import game.util.*;\nfun run(): int { let h = Hidden(); return 1; }",
+                ("/game/util/M.surtr", "internal class Hidden { public constructor() { } }"));
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.Inaccessible);
+        }
+
+        /// <summary>And writing it out in full does not get around it (§2.1's convenience, not a loophole).</summary>
+        [Fact]
+        public void AQualifiedNameDoesNotBypassVisibility()
+        {
+            using var compilation = Reject(
+                "fun run(): int { let t: game.util.Quiet? = null; return 1; }",
+                ("/game/util/M.surtr", "class Quiet { }"));
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.Inaccessible);
+        }
+
+        /// <summary>§2.6: a nested type takes a visibility like any other member.</summary>
+        [Fact]
+        public void APrivateNestedTypeIsNotReachableFromOutside()
+        {
+            using var compilation = Reject("class Outer { class Inner { } }\nfun run(): int { let x: Outer.Inner? = null; return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.Inaccessible);
+        }
+
+        [Fact]
+        public void APrivateMemberIsReachableFromItsOwnType()
+        {
+            var runtime = Run(
+                "class C {\n"
+                    + "  private let n: int = 1;\n"
+                    + "  public fun read(): int { return n; }\n"
+                    + "}\n"
+                    + "fun run(): int { return C().read(); }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// What <c>private</c> names is a declaration's whole text, so one instance reaches another's
+        /// — the rule C# and Java both have.
+        /// </summary>
+        [Fact]
+        public void APrivateMemberIsReachableOnAnotherInstanceOfTheSameType()
+        {
+            var runtime = Run(
+                "class C {\n"
+                    + "  private let n: int;\n"
+                    + "  constructor(n: int) { this.n = n; }\n"
+                    + "  public fun other(c: C): int { return c.n; }\n"
+                    + "}\n"
+                    + "fun run(): int { return C(1).other(C(2)); }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AProtectedMemberIsReachableFromADerivedType()
+        {
+            var runtime = Run(
+                "class Base { protected fun step(): int { return 5; } }\n"
+                    + "class Derived : Base { public fun go(): int { return step(); } }\n"
+                    + "fun run(): int { return Derived().go(); }");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        /// <summary>A nested type is written inside its container's text, so it sees its privates.</summary>
+        [Fact]
+        public void ANestedTypeReachesItsContainersPrivates()
+        {
+            var runtime = Run(
+                "class Outer {\n"
+                    + "  private static let Secret: int = 7;\n"
+                    + "  public class Inner { public fun read(): int { return Outer.Secret; } }\n"
+                    + "}\n"
+                    + "fun run(): int { return Outer.Inner().read(); }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// Accessibility filters the candidate set rather than judging the winner, so a public
+        /// overload is not shadowed by a private one it was never competing with.
+        /// </summary>
+        [Fact]
+        public void APublicOverloadWinsOverAnInaccessibleOne()
+        {
+            var runtime = Run(
+                "class C {\n"
+                    + "  private fun pick(x: int): int { return 1; }\n"
+                    + "  public fun pick(x: string): int { return 2; }\n"
+                    + "}\n"
+                    + "fun run(): int { return C().pick(\"a\"); }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnInternalMemberIsReachableWithinItsOwnModule()
+        {
+            var runtime = Run("internal fun helper(): int { return 3; }\nfun run(): int { return helper(); }");
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        /// <summary>The standard library is public, and every program leans on it (§13).</summary>
+        [Fact]
+        public void TheStandardLibraryStaysReachable()
+        {
+            var runtime = Run("fun run(): int { var xs: int[] = [1]; xs.push(2); return xs.length + \"abc\".length; }");
+
+            Assert.Equal(5, Int(runtime, "run"));
         }
         #endregion
 

@@ -376,6 +376,33 @@ namespace Surtr.Compiler.Binding
             return _factory.ErrorType;
         }
 
+        /// <summary>
+        /// The module whose source is being resolved, or <see langword="null"/> when that is not
+        /// known — which is what accessibility is measured against (§3.1).
+        /// </summary>
+        /// <remarks>
+        /// Ambient rather than a parameter, because a type reference is resolved from a dozen places
+        /// that each already carry a scope and a source name, and the module is the same for every
+        /// one of them at any given moment. Left null it fails open, which is the right way round: a
+        /// resolver that does not know where it is should not invent a protection error.
+        /// </remarks>
+        public ModuleSymbol? CurrentModule { get; set; }
+
+        /// <summary>The type a body is being resolved inside, for <c>private</c> and <c>protected</c>.</summary>
+        public NamedTypeSymbol? CurrentType { get; set; }
+
+        private void RequireAccessible(NamedTypeSymbol type, NamedTypeSyntax syntax, string sourceName)
+        {
+            if (_suppressed > 0 || AccessCheck.IsAccessible(type, type.Accessibility, CurrentType, CurrentModule))
+                return;
+
+            ReportError(
+                SurtrDiagnosticCode.Inaccessible,
+                $"'{type.Name}' is not visible from here; §3.1 defaults a top-level declaration to 'internal' and a nested one to 'private'.",
+                sourceName,
+                syntax.Span);
+        }
+
         private TypeSymbol Apply(NamedTypeSyntax syntax, Symbol symbol, TypeSymbol[] arguments, string sourceName)
         {
             switch (symbol)
@@ -392,6 +419,11 @@ namespace Surtr.Compiler.Binding
 
                         return _factory.ErrorType;
                     }
+
+                    // Every named resolution funnels through here — a name in scope, a fully
+                    // qualified one, and each step of a nested one — so accessibility is asked once,
+                    // where the type is finally settled on.
+                    RequireAccessible(named, syntax, sourceName);
 
                     if (arguments.Length == 0)
                         return named;

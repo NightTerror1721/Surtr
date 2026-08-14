@@ -30,7 +30,7 @@ description of what exists, and a plan that outlives its execution is just a sta
 | `CodeGen/ConstFolder.cs`, `Binding/ConstFunctionCheck.cs` | Done (Step 4) |
 | `CodeGen/ModuleEmitter.cs`, `EmitContext.cs` — a whole module emitted, and its image | Done (Step 5) |
 
-**Steps 3, 4 and 5 are complete.** 1624 tests green, and Surtr source compiles to a module that
+**Steps 3, 4 and 5 are complete.** 1710 tests green, and Surtr source compiles to a module that
 loads into a runtime and runs. `Sample.surtr` exercises every construct in the language and
 round-trips through lex + parse.
 
@@ -790,32 +790,140 @@ Found alongside it and fixed: **a field or property holding a closure could not 
 or parameter could, and where the closure is kept says nothing about how it is called (§8) — a
 method of the same name still wins, since that is what a bare call usually means.
 
+### 10.1d Accessibility, from decoration to rule
+
+All four modifiers reached metadata and governed nothing: a `private` field read from outside its
+class, a `private` method called, an `internal` function invoked from another module. There was not
+even a diagnostic code reserved for it. `Binding/AccessCheck.cs` is the rule, and it takes both halves
+of a use site's context — the type a body is in and the module it belongs to — because that is what
+the four levels each ask about.
+
+* **A member is filtered, not judged.** An inaccessible overload is dropped from the candidate set
+  before resolution, so a `public` overload is not shadowed by a `private` one it was never competing
+  with. Reporting is left for the case where filtering took everything, which is the one where the
+  author needs to hear that the member exists and is out of reach rather than that it does not exist.
+* **A type is checked where its name is finally used**, not where it is resolved: the resolver asks
+  "is this name a type" without reporting, since a name that turns out to be a local is not a
+  mistake. So a construction and a static access ask, and `TypeResolver` asks for every other
+  position — one check in `Apply`, which a name in scope, a fully qualified one and each step of a
+  nested one all funnel through. A qualified name is §2.1's convenience, not a loophole.
+* **A module-level member's `private` and `internal` mean the same thing**, because §2.5 makes it a
+  static of its module and a module has no inside for `private` to name.
+* **`private` names a declaration's whole text**, so one instance reaches another's, a nested type
+  reaches its container's, and a container reaches its nested type's — the rule C# and Java share.
+* Type visibility was not modelled at all: `NamedTypeSymbol` had no accessibility and the emitter
+  wrote `Public` for every type it built. It is now declared, imported and emitted.
+
+Four tests changed with it, all of the same kind: they were written when visibility governed nothing,
+and each was relying on a cross-module or cross-type reach that §3.1 and §2.6 spell out as needing
+`public`.
+
+### 10.1e The last five
+
+Five items closed together, because each was small and none was alone:
+
+* **A nested type in an interface** (§2.3) is declared at module level under its qualified name.
+  Nesting is stored on `SurtrClass` and a contract holds none, while §2.6 makes nesting
+  *qualification* — so `module:IShape.Kind` is what the descriptor already said, and declaring it
+  under that name is what makes the module's key agree. `SurtrModule.FindClass` probes the whole
+  dotted path once the segment walk fails, which costs a lookup only where one already failed. A
+  nested type in an interface defaults to **public**, since §2.3 makes every interface member so.
+* **An interface property keeps its setter.** The builder's default is read-only, so a
+  `{ get; set; }` on a contract silently lost half of itself and every assignment through it named a
+  method the interface did not declare. And a property satisfying a contract now drops its
+  `override` the way a method already did.
+* **An exhaustive `switch` expression** emits: with no `else`, the binder has already established
+  that the arms cover every case of a non-nullable enum, so the last arm is what is left once the
+  others are tested. The check and the lowering are two halves of one feature — the form the check
+  exists to allow was the form that did not compile. Anything without a fixed set of values is now
+  told it needs an `else` at *binding*, where it is a fact about the program, rather than at emit.
+* **`operator[]`** reaches its use site. An overload is always static, so the read form takes
+  `(receiver, index)` and the write form `(receiver, index, value)` — §5.6's table counts the
+  operands the *expression* has, and a declaration also names the receiver. A compound assignment
+  through an indexer is deliberately not given semantics nobody specified.
+* **Attributes** are bound and emitted (§11). The class is resolved by name and checked to extend
+  `Attribute`; the arguments fold through the constant evaluator, since the instance is built when
+  the module loads and nothing runs before that. Type-level attributes needed the image format to
+  carry them, which is the one **`formatVersion` bump** in this work: 1 → 2.
+
+### 10.1f The build model
+
+§14.2's last item, and deliberately thin. `SurtrProjectFile` reads one directive per line and
+`SurtrBuild` does the only part that was actually missing: find the sources, and write what came out.
+`src/Surtr.Cli` is `surtrc build [path]` over it.
+
+The format is a line at a time because the alternative is a dependency: the compiler targets
+`netstandard2.1` so it can sit beside the runtime in Unity, where a JSON serializer is a package the
+host would also have to ship — for six settings that is a bad trade. Building a `SurtrProject` in
+memory stays the primary API, and nothing here caches, watches or does incremental work: those are a
+host's questions, and answering them badly here would be worse than not answering.
+
+Referencing an image found the last real gap. A cross-module call goes through the caller's module
+reference table by path, because a module-level member records no owner (`docs/VM-Plan.md` §3.3) —
+but the emitter only knew the owning module for one built earlier *in the same compilation*. For a
+referenced image it fell through to the access table, which cannot name one. Two halves fixed it: the
+emitter asks the importer for the built module behind a path, and `SurtrModuleBuilder.ExternalMethod`
+matches the callee against the target's *pending* entries when its method table is still empty —
+which is what a module read from an image has until a runtime loads it.
+
+### 10.1g Flow, order, and the two contradictions
+
+Four smaller things, and the one place the specification disagreed with itself.
+
+* **Two terminating shapes reach `FlowAnalysis`**, and they turn out to be one question asked twice:
+  what ways out does this construct have. A `switch` with a default section whose every section
+  returns has none, and neither does a loop whose condition never fails and which nothing `break`s
+  out of — so one stack of break targets answers both, and a `continue` deliberately marks nothing,
+  since it re-enters the loop rather than leaving it. A `break` naming a label no target carries
+  marks every enclosing one, because it names something further out and leaving that leaves
+  everything between. `while (true)` also stopped emitting its test: the analysis reads it as a loop
+  only a `break` leaves, and the emitter has to agree or it would leave a way out of a body the
+  analysis approved.
+* **A local may no longer shadow a local** (§4.4). The check moved from the innermost scope to the
+  whole chain, which reaches a lambda's parameters too — a lambda's body is the same body, and the
+  frame it runs on holds both. §4.4's exception needed no rule at all: fields are not in the value
+  chain, which is what already left `this.x = x` legal.
+* **Cross-initializer dependencies are rejected** (`docs/VM-Plan.md` §1.12, §3.4). Position is a
+  pair — which container, and where inside it — because both orderings are real: between containers
+  it is declaration order with the module last, and inside one it is the counter that already
+  interleaves a `static { }` block with the initializers around it. Only the *same* module is
+  checked, and that is exact rather than approximate: a module reaches another only by depending on
+  it, dependencies load first, and a cycle is already a hard error. The walk follows calls and stops
+  at a lambda, which is a value here and a body later.
+* **An emit failure points at the construct that caused it.** `SurtrEmitException` carries a span,
+  filled from the node the emitter is lowering rather than from forty call sites — `Statement` and
+  `Expression` restore it on the way out, so by the time a parent gives up, it names the parent. The
+  report is per member, so a module with two un-lowered lines reports both; it still does not build
+  that module or emit the ones after it, because a half-emitted body is not a module and every
+  module after it names entries in this one's method table.
+
+And the two contradictions, both settled in favour of the language rather than the example:
+
+* **§4.2's `for (let i = 0; ...; i += 1)` becomes `var`.** `let` is assign-once and a three-clause
+  loop is built on reassigning one binding — its step clause *is* the reassignment. A `for-in`
+  variable is the opposite and needs no keyword: it is rebound once per step, which is what
+  assign-once describes. Giving the header an exception would have made `let` a spelling rather than
+  a guarantee. Writing to one now names itself and says to write `var`.
+* **Tuple element access is written down** (§5.3): `t[0]`, by a compile-time constant, `const`
+  bindings included — which is one thing the implementation did *not* do until now, since a `const`
+  binds as a read rather than a literal. The constant is the type rule showing through rather than a
+  restriction on the syntax: a tuple holds a different type per position, so `t[i]` for a running
+  `i` has no type to give the expression, which is the same fact that leaves `tuple` without a
+  generic parameter or a `get(index)`. An index past the end is a compile error, so there is no
+  bounds check to pay for.
+
+One more thing turned up while checking the above and is closed too: **a closure held in a member
+could not be called through it.** `f()` on a local worked and `First.Make()` did not — a call whose
+callee is a member access looked for a method of that name and stopped, rather than falling back to
+the value. §8 makes a closure a value, so where it is kept says nothing about how it is called;
+`ClosureValue` is the one rule, applied at each of the three shapes that reach it — a type name with
+no receiver, a singleton with its instance, and `a?.f()` with the stand-in the guard reads through.
+A method of that name still wins, since that is what a call usually means.
+
 ### 10.2 What is still owed
 
 Not silent — each reports, refuses to compile, or is visibly absent — but each is the specification
 promising something the compiler does not do.
 
-* **`operator[]` never reaches a use site** (§5.6): indexing a type that declares one is an error.
-* **A `switch` expression over an enum with no `else` does not emit** (§4.3), which is the one form
-  exhaustiveness checking exists to allow.
-* **Accessibility is not enforced at all** (§3.1). All four modifiers reach metadata and govern
-  nothing; there is not even a diagnostic code reserved for it.
-* **A local may shadow a local** (§4.4), which the spec makes an error.
-* **Attributes stop at the AST** (§11), though the runtime stores them and the image carries them.
-* **A nested type inside an interface does not emit** (§2.3), and the module fails to load.
-* **A property implementing an interface property** keeps its `override`, which `SurtrTypeLinker`
-  rejects: `ModuleEmitter.OverridesABaseMethod` covers methods and not accessors.
-* **Cross-initializer dependencies are not rejected** (`docs/VM-Plan.md` §1.12, §3.4).
-* **`FlowAnalysis` rejects two terminating shapes**: a `switch` whose every arm returns, and
-  `while (true)` with a `return` inside.
-* **`for (let i = 0; ...; i += 1)`** — §4.2's own example does not compile, because `let` is
-  assign-once. Either the example becomes `var` or the loop header earns an exception; the
-  contradiction is what cannot stay.
-* **Tuple element access is unspecified.** The implementation chose `t[0]`, folded at compile time,
-  and it should be written down — without it §4.2's dict iteration yields pairs no documented syntax
-  can read.
-* **An emit failure reports once per module, with no span**, and abandons the rest of it.
-* **No build model** (§14.2): nothing enumerates a directory, writes a `.surtrc`, or reads a project
-  file. `SurtrProject` takes text in memory.
 * **The standard library is entirely C#**, where §13.1 puts the exception hierarchy below the root in
   Surtr — which is also the largest program the compiler has never been asked to compile.

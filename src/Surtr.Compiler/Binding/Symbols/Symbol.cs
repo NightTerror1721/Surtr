@@ -1,5 +1,7 @@
 #nullable enable
 
+using System.Collections.Generic;
+
 namespace Surtr.Compiler.Binding.Symbols
 {
     /// <summary>What kind of declaration a <see cref="Symbol"/> stands for.</summary>
@@ -83,6 +85,16 @@ namespace Surtr.Compiler.Binding.Symbols
         public virtual Symbol? ContainingSymbol => null;
 
         /// <summary>
+        /// The attributes written on this declaration (§11), or an empty list.
+        /// </summary>
+        /// <remarks>
+        /// On the base rather than on each kind, because §11 attaches one to "any declaration" and
+        /// every kind that can carry one is a <see cref="Symbol"/>. What the runtime stores them on
+        /// is <c>SurtrMemberInfo</c>, which types and members share for the same reason.
+        /// </remarks>
+        public IReadOnlyList<AttributeUse> Attributes { get; internal set; } = System.Array.Empty<AttributeUse>();
+
+        /// <summary>
         /// How this symbol reads in a diagnostic — source spelling, never a descriptor.
         /// </summary>
         /// <remarks>
@@ -94,5 +106,29 @@ namespace Surtr.Compiler.Binding.Symbols
 
         /// <inheritdoc/>
         public override string ToString() => ToDisplayString();
+    }
+
+    /// <summary>
+    /// One <c>@Name(args)</c> written on a declaration (§11).
+    /// </summary>
+    /// <remarks>
+    /// An attribute is a real class and its arguments fill its fields positionally, so what a use
+    /// carries is a type and a list of constants — the shape <c>SurtrAttributeUsage</c> stores and
+    /// the image serializes. The arguments are folded here rather than at emit because folding needs
+    /// the constant evaluator, and a constant is a binding-time fact.
+    /// </remarks>
+    public sealed class AttributeUse
+    {
+        internal AttributeUse(NamedTypeSymbol type, IReadOnlyList<object?> arguments)
+        {
+            Type = type;
+            Arguments = arguments;
+        }
+
+        /// <summary>The attribute class the declaration named.</summary>
+        public NamedTypeSymbol Type { get; }
+
+        /// <summary>Its arguments, already folded to constants.</summary>
+        public IReadOnlyList<object?> Arguments { get; }
     }
 }
