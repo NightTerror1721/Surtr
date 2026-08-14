@@ -863,6 +863,12 @@ namespace Surtr.Compiler.Binding
                     if (_values.Lookup(name).Symbol is Symbol value && value is LocalSymbol or ParameterSymbol)
                         return BindClosureInvocation(syntax, BindExpression(syntax.Callee));
 
+                    // And so is a field or property holding one (§8): a closure is a value, and where
+                    // it is kept says nothing about how it is called. Methods come first, since a
+                    // method of that name is what a bare call usually means.
+                    if (HoldsClosure(name) && _lookup.FindMethods((TypeSymbol?)_containingType ?? _factory.ErrorType, name).Count == 0)
+                        return BindClosureInvocation(syntax, BindExpression(syntax.Callee));
+
                     receiver = _containingType is not null && !_method.IsStatic
                         ? This(syntax, _containingType, isSuper: false)
                         : null;
@@ -945,6 +951,36 @@ namespace Surtr.Compiler.Binding
             return Complete(syntax, receiver, candidates, name, isVirtual);
         }
 
+        /// <summary>
+        /// Whether a bare name reaches a field or property of closure type, on this type or on this
+        /// module.
+        /// </summary>
+        private bool HoldsClosure(string name)
+        {
+            if (_containingType is not null)
+            {
+                if (_lookup.FindField(_containingType, name)?.Type.NonNullable is ClosureTypeSymbol)
+                    return true;
+
+                if (_lookup.FindProperty(_containingType, name)?.Type.NonNullable is ClosureTypeSymbol)
+                    return true;
+            }
+
+            foreach (var field in _module.Fields)
+            {
+                if (string.Equals(field.Name, name, StringComparison.Ordinal))
+                    return field.Type.NonNullable is ClosureTypeSymbol;
+            }
+
+            foreach (var property in _module.Properties)
+            {
+                if (string.Equals(property.Name, name, StringComparison.Ordinal))
+                    return property.Type.NonNullable is ClosureTypeSymbol;
+            }
+
+            return false;
+        }
+
         private static bool DeclaresMethod(ModuleSymbol module, string name)
         {
             foreach (var method in module.Methods)
@@ -975,14 +1011,7 @@ namespace Surtr.Compiler.Binding
             string name,
             bool isVirtual)
         {
-            var arguments = new BoundExpression[syntax.Arguments.Count];
-            var infos = new ArgumentInfo[syntax.Arguments.Count];
-
-            for (int i = 0; i < arguments.Length; i++)
-            {
-                arguments[i] = BindExpression(syntax.Arguments[i].Value);
-                infos[i] = new ArgumentInfo(arguments[i].Type, syntax.Arguments[i].Name);
-            }
+            BindArguments(syntax.Arguments, out var arguments, out var infos);
 
             candidates = SubstituteGenericCandidates(syntax, candidates, infos, name);
             var result = _overloads.Resolve(candidates, infos);
@@ -992,6 +1021,10 @@ namespace Surtr.Compiler.Binding
                 case OverloadStatus.Resolved:
                     break;
 
+                // A deferred lambda is deliberately left unbound on these paths. Its parameter types
+                // were going to come from the overload that did not exist, so binding it would report
+                // that it has none — three diagnostics for one mistake, and the two extra ones point
+                // at the lambda rather than at the call that is actually wrong.
                 case OverloadStatus.NoCandidates:
                     return Error(syntax, SurtrDiagnosticCode.UnresolvedName, $"'{name}' does not name a method in scope.");
 
@@ -1009,7 +1042,8 @@ namespace Surtr.Compiler.Binding
             }
 
             var method = result.Method!;
-            var ordered = OrderArguments(syntax, syntax.Arguments, method, arguments);
+            var ordered = OrderArguments(
+                syntax, syntax.Arguments, method, BindDeferredLambdas(syntax.Arguments, arguments, method));
 
             // A call on a sealed type or through `super` can be bound directly, which is the
             // devirtualisation §2.2 calls out as a static fact rather than a guess.
@@ -1018,6 +1052,99 @@ namespace Surtr.Compiler.Binding
                 && !(receiver?.Type.NonNullable is NamedTypeSymbol { IsSealed: true });
 
             return new BoundCallExpression(syntax, method.IsStatic ? null : receiver, method, ordered, virtualCall);
+        }
+
+        /// <summary>
+        /// Binds a call's arguments, leaving a lambda that has nothing to go on for later.
+        /// </summary>
+        /// <remarks>
+        /// §5.9 lets a lambda's parameters go unwritten "where a target type supplies them", and at a
+        /// call site the target type is the parameter of whichever overload wins — which is not known
+        /// until the arguments are. The circle is broken by not binding those lambdas yet: they enter
+        /// overload resolution as an arity, and are bound once, afterwards, against the parameter that
+        /// took them. Binding one now and again later would report everything it found twice.
+        /// </remarks>
+        private void BindArguments(
+            IReadOnlyList<ArgumentSyntax> written,
+            out BoundExpression?[] arguments,
+            out ArgumentInfo[] infos)
+        {
+            arguments = new BoundExpression?[written.Count];
+            infos = new ArgumentInfo[written.Count];
+
+            for (int i = 0; i < arguments.Length; i++)
+            {
+                if (NeedsTargetType(written[i].Value) is LambdaExpressionSyntax lambda)
+                {
+                    infos[i] = ArgumentInfo.Lambda(lambda.Parameters.Count, _factory.ErrorType, written[i].Name);
+                    continue;
+                }
+
+                arguments[i] = BindExpression(written[i].Value);
+                infos[i] = new ArgumentInfo(arguments[i]!.Type, written[i].Name);
+            }
+        }
+
+        /// <summary>
+        /// The lambda an argument is, when it cannot be bound without being told its parameter types.
+        /// </summary>
+        private static LambdaExpressionSyntax? NeedsTargetType(ExpressionSyntax syntax)
+        {
+            if (syntax is not LambdaExpressionSyntax lambda)
+                return null;
+
+            foreach (var parameter in lambda.Parameters)
+            {
+                if (parameter.Type is null)
+                    return lambda;
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Binds the lambdas that were left for the winning overload to type.
+        /// </summary>
+        /// <param name="written">The argument list as written.</param>
+        /// <param name="arguments">The bound arguments, with a hole where each deferred lambda sits.</param>
+        /// <param name="method">
+        /// The overload that won, or <see langword="null"/> when none did — in which case the lambdas
+        /// are bound against nothing, so that what they are missing is reported rather than swallowed
+        /// by a call that failed for a reason the author cannot see.
+        /// </param>
+        private BoundExpression[] BindDeferredLambdas(
+            IReadOnlyList<ArgumentSyntax> written,
+            BoundExpression?[] arguments,
+            MethodSymbol? method)
+        {
+            var filled = new BoundExpression[arguments.Length];
+
+            for (int i = 0; i < arguments.Length; i++)
+            {
+                filled[i] = arguments[i]
+                    ?? BindExpression(written[i].Value, method is null ? null : ParameterFor(method, written, i));
+            }
+
+            return filled;
+        }
+
+        /// <summary>The parameter type an argument lands in, following a name where one was written.</summary>
+        private static TypeSymbol? ParameterFor(MethodSymbol method, IReadOnlyList<ArgumentSyntax> written, int index)
+        {
+            if (written[index].Name is string name)
+            {
+                foreach (var parameter in method.Parameters)
+                {
+                    if (string.Equals(parameter.Name, name, StringComparison.Ordinal))
+                        return parameter.Type;
+                }
+
+                return null;
+            }
+
+            // Positional, and a named argument may only follow positional ones (§3.5), so the index
+            // is the position.
+            return index < method.Parameters.Count ? method.Parameters[index].Type : null;
         }
 
         /// <summary>
@@ -1498,14 +1625,7 @@ namespace Surtr.Compiler.Binding
             constructor = null;
             ordered = NoArguments;
 
-            var arguments = new BoundExpression[written.Count];
-            var infos = new ArgumentInfo[written.Count];
-
-            for (int i = 0; i < arguments.Length; i++)
-            {
-                arguments[i] = BindExpression(written[i].Value);
-                infos[i] = new ArgumentInfo(arguments[i].Type, written[i].Name);
-            }
+            BindArguments(written, out var arguments, out var infos);
 
             var constructors = new List<MethodSymbol>();
             foreach (var member in _lookup.MembersOf(type))
@@ -1539,7 +1659,7 @@ namespace Surtr.Compiler.Binding
             }
 
             constructor = result.Method;
-            ordered = OrderArguments(syntax, written, result.Method!, arguments);
+            ordered = OrderArguments(syntax, written, result.Method!, BindDeferredLambdas(written, arguments, result.Method!));
             return true;
         }
 

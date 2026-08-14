@@ -16,13 +16,37 @@ namespace Surtr.Compiler.Binding
         {
             Type = type;
             Name = name;
+            LambdaArity = null;
         }
 
-        /// <summary>The argument's type.</summary>
+        private ArgumentInfo(int arity, string? name, TypeSymbol type)
+        {
+            Type = type;
+            Name = name;
+            LambdaArity = arity;
+        }
+
+        /// <summary>
+        /// A lambda whose parameters are not written out, so it has no type until it is told one
+        /// (§5.9, §8).
+        /// </summary>
+        /// <remarks>
+        /// The one argument that cannot say what it is before the overload is picked, because what it
+        /// is <em>is</em> what the parameter says. So it comes in as an arity: applicability asks
+        /// whether the parameter is a closure taking that many, and the lambda is bound afterwards
+        /// against the one that won.
+        /// </remarks>
+        public static ArgumentInfo Lambda(int arity, TypeSymbol errorType, string? name = null)
+            => new ArgumentInfo(arity, name, errorType);
+
+        /// <summary>The argument's type, or the error type for a lambda not yet bound.</summary>
         public TypeSymbol Type { get; }
 
         /// <summary>The parameter it names, or <see langword="null"/> when positional.</summary>
         public string? Name { get; }
+
+        /// <summary>How many parameters an unbound lambda takes, or <see langword="null"/> for anything else.</summary>
+        public int? LambdaArity { get; }
     }
 
     /// <summary>How a call site resolved.</summary>
@@ -199,6 +223,16 @@ namespace Surtr.Compiler.Binding
                     if (target >= parameters.Count)
                         return false;
 
+                    if (argument.LambdaArity is int arity)
+                    {
+                        if (!Accepts(parameters[target].Type, arity))
+                            return false;
+
+                        mapped[target] = parameters[target].Type;
+                        conversions.Add(Conversion.Of(ConversionKind.Identity));
+                        continue;
+                    }
+
                     var conversion = _conversions.Classify(argument.Type, parameters[target].Type);
                     if (!conversion.IsImplicit)
                         return false;
@@ -213,6 +247,16 @@ namespace Surtr.Compiler.Binding
                 int named = IndexOf(parameters, argument.Name);
                 if (named < 0 || mapped[named] is not null)
                     return false;
+
+                if (argument.LambdaArity is int namedArity)
+                {
+                    if (!Accepts(parameters[named].Type, namedArity))
+                        return false;
+
+                    mapped[named] = parameters[named].Type;
+                    conversions.Add(Conversion.Of(ConversionKind.Identity));
+                    continue;
+                }
 
                 var namedConversion = _conversions.Classify(argument.Type, parameters[named].Type);
                 if (!namedConversion.IsImplicit)
@@ -244,6 +288,19 @@ namespace Surtr.Compiler.Binding
             candidate = new Candidate(method, conversions, defaulted, expandsVarargs || varargIndex >= 0);
             return true;
         }
+
+        /// <summary>
+        /// Whether a parameter could receive a lambda taking <paramref name="arity"/> parameters.
+        /// </summary>
+        /// <remarks>
+        /// Arity and nothing else, because nothing else is known yet: the lambda's parameter types
+        /// come <em>from</em> this parameter, so asking whether they match would be asking whether it
+        /// matches itself. Two overloads taking closures of the same arity therefore tie, and §3.5's
+        /// rule 4 makes that an ambiguity the call site resolves — which is the honest answer, since a
+        /// reader could not tell them apart either.
+        /// </remarks>
+        private static bool Accepts(TypeSymbol parameter, int arity)
+            => parameter.NonNullable is ClosureTypeSymbol closure && closure.ParameterTypes.Count == arity;
 
         /// <summary>
         /// Whether <paramref name="left"/> beats <paramref name="right"/>, by §3.5's rule 3.

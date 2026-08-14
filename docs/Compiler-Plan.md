@@ -764,13 +764,37 @@ method, and reading a member off a type parameter were all errors — §6's own
 What generics still do not do is listed in §10.2: variance stays deliberately absent (§6), and
 inference stays single-pass by choice rather than by omission.
 
+### 10.1c A lambda typed by where it goes
+
+§5.9 lets a lambda's parameters go unwritten "where a target type supplies them", and §8 says that
+is most of the time, "since a lambda is usually being passed to a typed parameter". It worked from a
+variable's annotation and nowhere else, so §8's own `items.sort((a, b) => ...)` did not compile.
+
+**The circle is the whole problem**: the lambda's parameter types come from the overload, and the
+overload is picked from the argument types. It is broken by not binding those lambdas yet. One enters
+overload resolution as an *arity* — `ArgumentInfo.Lambda` — applicability asks only whether the
+parameter is a closure taking that many, and the lambda is bound once, afterwards, against the
+parameter that took it. Binding it eagerly and again later would report everything in its body twice.
+
+Three consequences worth keeping:
+
+* **Arity is all applicability can ask**, so two overloads taking closures of the same arity tie and
+  §3.5's rule 4 makes that an ambiguity. That is the honest answer: a reader could not tell them
+  apart either.
+* **A lambda of the wrong arity fails the call and only the call.** Binding it anyway would report
+  that its parameters have no types — pointing at the lambda rather than at the call that is wrong.
+* A lambda whose parameters *are* written is bound eagerly as before, so nothing about the existing
+  path moved.
+
+Found alongside it and fixed: **a field or property holding a closure could not be invoked**. A local
+or parameter could, and where the closure is kept says nothing about how it is called (§8) — a
+method of the same name still wins, since that is what a bare call usually means.
+
 ### 10.2 What is still owed
 
 Not silent — each reports, refuses to compile, or is visibly absent — but each is the specification
 promising something the compiler does not do.
 
-* **A lambda does not infer its parameters from the parameter it is passed to** (§8, §5.9), only
-  from a variable's annotation — so §8's own `items.sort((a, b) => ...)` needs both annotated.
 * **`operator[]` never reaches a use site** (§5.6): indexing a type that declares one is an error.
 * **A `switch` expression over an enum with no `else` does not emit** (§4.3), which is the one form
   exhaustiveness checking exists to allow.

@@ -1258,6 +1258,150 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Lambda inference (§8, §5.9)
+        /// <summary>
+        /// §5.9 lets a lambda's parameters go unwritten where a target type supplies them, and at a
+        /// call site that target is the parameter of whichever overload wins.
+        /// </summary>
+        [Fact]
+        public void ALambdaTakesItsParameterTypesFromTheParameterItIsPassedTo()
+        {
+            var runtime = Run(
+                "fun apply(f: (int) -> int): int { return f(3); }\nfun run(): int { return apply((x) => x * 2); }");
+
+            Assert.Equal(6, Int(runtime, "run"));
+        }
+
+        /// <summary>§8's own example, which needs both parameters typed from `sort`'s comparator.</summary>
+        [Fact]
+        public void TheComparatorInSpecSection8Compiles()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  var xs: int[] = [3, 1, 2];\n"
+                    + "  xs.sort((a, b) => a - b);\n"
+                    + "  return xs.get(0);\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnInferredLambdaTakesItsReturnTypeFromTheTargetToo()
+        {
+            var runtime = Run(
+                "fun test(f: (int) -> bool): bool { return f(2); }\nfun run(): bool { return test((n) => n > 1); }");
+
+            Assert.True(Call(runtime, "run").AsBool);
+        }
+
+        [Fact]
+        public void AnInferredLambdaStillCaptures()
+        {
+            var runtime = Run(
+                "fun apply(f: (int) -> int): int { return f(3); }\n"
+                    + "fun run(): int { let bonus = 7; return apply((x) => x + bonus); }");
+
+            Assert.Equal(10, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AConstructorsClosureParameterTypesALambdaToo()
+        {
+            var runtime = Run(
+                "class Runner {\n"
+                    + "  private let _f: (int) -> int;\n"
+                    + "  constructor(f: (int) -> int) { _f = f; }\n"
+                    + "  public fun run(n: int): int { return _f(n); }\n"
+                    + "}\n"
+                    + "fun run(): int { let r = Runner((x) => x * 2); return r.run(4); }");
+
+            Assert.Equal(8, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ANamedArgumentStillTypesItsLambda()
+        {
+            var runtime = Run(
+                "fun apply(label: string, f: (int) -> int): int { return f(3); }\n"
+                    + "fun run(): int { return apply(label: \"x\", f: (n) => n * 2); }");
+
+            Assert.Equal(6, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// Arity is all applicability can ask of an unbound lambda, since its parameter types come
+        /// <em>from</em> the parameter — but arity is enough to tell two overloads apart.
+        /// </summary>
+        [Fact]
+        public void ArityPicksBetweenTwoClosureOverloads()
+        {
+            var runtime = Run(
+                "fun on(f: (int) -> int): int { return 1; }\n"
+                    + "fun on(f: (int, int) -> int): int { return 2; }\n"
+                    + "fun run(): int { return on((a, b) => a + b); }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AGenericMethodsClosureParameterTypesItsLambda()
+        {
+            var runtime = Run(
+                "fun applyTo<T>(value: T, f: (T) -> T): T { return f(value); }\n"
+                    + "fun run(): int { return applyTo(5, (x) => x); }");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ALambdaWithNoTargetAtAllIsStillReported()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(Root + "/game/core/Test.surtr", "fun run(): int { let f = (x) => x * 2; return 1; }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.CannotInferType);
+        }
+
+        /// <summary>
+        /// A lambda of the wrong arity fails the <em>call</em>, and only that: binding it anyway
+        /// would report that its parameters have no types, which points at the lambda rather than at
+        /// the call that is actually wrong.
+        /// </summary>
+        [Fact]
+        public void ALambdaOfTheWrongArityReportsTheCallAndNothingElse()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "fun apply(f: (int) -> int): int { return f(3); }\nfun run(): int { return apply((a, b) => a + b); }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedCall);
+            Assert.DoesNotContain(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.CannotInferType);
+        }
+
+        /// <summary>And an error inside the body is reported once, from the one binding it gets.</summary>
+        [Fact]
+        public void AnErrorInsideAnInferredLambdaIsReportedOnce()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "fun apply(f: (int) -> int): int { return f(3); }\nfun run(): int { return apply((x) => nope(x)); }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Single(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedName);
+        }
+        #endregion
+
         #region Generics (§6)
         private const string Box =
             "class Box<T> {\n"
