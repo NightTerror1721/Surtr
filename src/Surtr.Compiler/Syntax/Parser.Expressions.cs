@@ -236,6 +236,83 @@ namespace Surtr.Compiler.Syntax
             return operand;
         }
 
+        /// <summary>
+        /// Whether the <c>&lt;</c> at the current position opens a call's type argument list rather
+        /// than being a comparison.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The one genuinely ambiguous shape in the expression grammar: <c>a &lt; b &gt; (c)</c> can
+        /// be read as two comparisons or as one generic call, and no amount of grammar settles it —
+        /// which is why this is a scan rather than a production. It looks ahead over the tokens a type
+        /// argument list can contain, and takes the generic reading only when the angles balance and
+        /// a <c>(</c> follows the close. Anything else — a literal, an operator, a <c>;</c> — ends the
+        /// scan and leaves the <c>&lt;</c> a comparison.
+        /// </para>
+        /// <para>
+        /// Nothing is consumed and nothing is reported, so the fallback costs a bounded look and no
+        /// diagnostic: a scan that fails must leave no trace, or a comparison would report the errors
+        /// of the type argument list it was never trying to be.
+        /// </para>
+        /// </remarks>
+        private bool LooksLikeTypeArgumentList()
+        {
+            const int Limit = 256;
+
+            int depth = 0;
+
+            for (int offset = 0; offset < Limit; offset++)
+            {
+                switch (reader.Peek(offset).Type)
+                {
+                    case TokenType.Less:
+                        depth++;
+                        break;
+
+                    case TokenType.Greater:
+                    case TokenType.ShiftRight:
+                    case TokenType.UnsignedShiftRight:
+                    {
+                        // Maximal munch hands back `>>` and `>>>` whole, and in a nested list they
+                        // close two and three levels — the same split ConsumeTypeArgumentClose makes.
+                        depth -= reader.Peek(offset).Type switch
+                        {
+                            TokenType.Greater => 1,
+                            TokenType.ShiftRight => 2,
+                            _ => 3,
+                        };
+
+                        if (depth > 0)
+                            break;
+
+                        // A list that closes more angles than it opened was never one.
+                        return depth == 0 && reader.Peek(offset + 1).Type == TokenType.LeftParen;
+                    }
+
+                    // Everything a type can be written with: a name, a qualification, a separator,
+                    // `?`, and the bracket forms of an array, a dict, a tuple and a closure.
+                    case TokenType.Identifier:
+                    case TokenType.Dot:
+                    case TokenType.Comma:
+                    case TokenType.Question:
+                    case TokenType.LeftBracket:
+                    case TokenType.RightBracket:
+                    case TokenType.LeftBrace:
+                    case TokenType.RightBrace:
+                    case TokenType.Colon:
+                    case TokenType.LeftParen:
+                    case TokenType.RightParen:
+                    case TokenType.Arrow:
+                        break;
+
+                    default:
+                        return false;
+                }
+            }
+
+            return false;
+        }
+
         /// <summary>Parses calls, indexing, member access, postfix increment and <c>!!</c>.</summary>
         private ExpressionSyntax ParsePostfix()
         {
@@ -257,6 +334,16 @@ namespace Surtr.Compiler.Syntax
                 if (reader.Check(TokenType.LeftParen))
                 {
                     expression = new CallExpressionSyntax(SpanFrom(start), expression, EmptyTypes, ParseArgumentList());
+                    continue;
+                }
+
+                // `pick<int>(1, 2)` — a call with its type arguments written out (§6). Only taken
+                // when the tokens really close a type argument list and a `(` follows, so
+                // `a < b` stays a comparison.
+                if (reader.Check(TokenType.Less) && LooksLikeTypeArgumentList())
+                {
+                    var typeArguments = ParseTypeArgumentList();
+                    expression = new CallExpressionSyntax(SpanFrom(start), expression, typeArguments, ParseArgumentList());
                     continue;
                 }
 

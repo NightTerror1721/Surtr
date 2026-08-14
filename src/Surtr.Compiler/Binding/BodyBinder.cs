@@ -363,6 +363,41 @@ namespace Surtr.Compiler.Binding
             return _resolver.TryResolveTypeName(path, _typeScope, syntax.Span, out type);
         }
 
+        /// <summary>
+        /// Resolves a callee that names a generic type <em>declaration</em> — the form a construction
+        /// takes before its type arguments are settled (§6).
+        /// </summary>
+        /// <remarks>
+        /// Separate from <see cref="TryBindAsType"/> and deliberately so: that one answers "is this a
+        /// type", and a generic declaration with no arguments is not one — <c>Box</c> is not a type,
+        /// <c>Box&lt;int&gt;</c> is. What it is, is the only thing a construction site can start from,
+        /// so this answers the narrower question and the caller finishes the job.
+        /// </remarks>
+        private bool TryBindAsGenericDefinition(ExpressionSyntax syntax, out List<NamedTypeSymbol> definitions)
+        {
+            definitions = null!;
+
+            var path = new List<string>();
+            if (!TryFlatten(syntax, path) || path.Count != 1)
+                return false;
+
+            var found = _typeScope.Lookup(path[0]);
+
+            // Every arity under the name, not the first: §6 makes `Result<T>` and `Result<T, E>` two
+            // unrelated declarations that share a spelling, and which one a construction means is
+            // decided by what fills its parameters rather than by declaration order.
+            foreach (var candidate in found.IsAmbiguous ? found.Candidates : Single(found.Symbol))
+            {
+                if (candidate is NamedTypeSymbol { Arity: > 0 } named && !named.IsConstructed)
+                    (definitions ??= new List<NamedTypeSymbol>()).Add(named);
+            }
+
+            return definitions is not null;
+
+            static IReadOnlyList<Symbol> Single(Symbol? symbol)
+                => symbol is null ? System.Array.Empty<Symbol>() : new[] { symbol };
+        }
+
         private static bool TryFlatten(ExpressionSyntax syntax, List<string> path)
         {
             switch (syntax)

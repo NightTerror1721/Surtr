@@ -131,14 +131,37 @@ namespace Surtr.Compiler.Binding
         /// Every member reachable on a type, in lookup order: its own first, then its bases, then
         /// the contracts it satisfies.
         /// </summary>
+        /// <remarks>
+        /// A <em>type parameter</em> reaches whatever its constraints promise and nothing else,
+        /// which is the whole point of writing one (§6): inside <c>max&lt;T : IComparable&lt;T&gt;&gt;</c>
+        /// the body may call <c>compareTo</c> because the bound says every <c>T</c> has it. An
+        /// unconstrained parameter reaches nothing, since nothing was promised — there is no root
+        /// class for it to fall back to.
+        /// </remarks>
         public IEnumerable<Symbol> Reachable(TypeSymbol type)
         {
-            if (BackingType(type.NonNullable) is not NamedTypeSymbol named)
-                yield break;
-
             var seen = new HashSet<NamedTypeSymbol>();
             var queue = new Queue<NamedTypeSymbol>();
-            queue.Enqueue(named);
+
+            if (type.NonNullable is TypeParameterSymbol parameter)
+            {
+                foreach (var bound in parameter.Constraints)
+                {
+                    if (BackingType(bound.NonNullable) is NamedTypeSymbol constrained)
+                        queue.Enqueue(constrained);
+                }
+
+                if (queue.Count == 0)
+                    yield break;
+            }
+            else if (BackingType(type.NonNullable) is NamedTypeSymbol named)
+            {
+                queue.Enqueue(named);
+            }
+            else
+            {
+                yield break;
+            }
 
             while (queue.Count > 0)
             {
@@ -231,7 +254,11 @@ namespace Surtr.Compiler.Binding
                         IsReadOnly = field.IsReadOnly,
                         Accessibility = field.Accessibility,
                         IsSynthetic = field.IsSynthetic,
+                        IsNative = field.IsNative,
                         ImportedFrom = field.ImportedFrom,
+
+                        // The way back to the one slot every construction shares.
+                        OriginalDefinition = field.OriginalDefinition ?? field,
                     };
                 }
 
@@ -245,20 +272,20 @@ namespace Surtr.Compiler.Binding
                     {
                         IsStatic = property.IsStatic,
                         Accessibility = property.Accessibility,
-                        Getter = property.Getter is null ? null : (MethodSymbol)Substitute(property.Getter, owner, substitution),
-                        Setter = property.Setter is null ? null : (MethodSymbol)Substitute(property.Setter, owner, substitution),
+                        Getter = property.Getter is null ? null : SubstituteMethodInto(property.Getter, owner, substitution),
+                        Setter = property.Setter is null ? null : SubstituteMethodInto(property.Setter, owner, substitution),
                     };
                 }
 
                 case MethodSymbol method:
-                    return Substitute(method, owner, substitution);
+                    return SubstituteMethodInto(method, owner, substitution);
 
                 default:
                     return member;
             }
         }
 
-        private MethodSymbol Substitute(MethodSymbol method, NamedTypeSymbol owner, TypeSubstitution substitution)
+        private MethodSymbol SubstituteMethodInto(MethodSymbol method, Symbol owner, TypeSubstitution substitution)
         {
             var returnType = substitution.Apply(method.ReturnType);
 
@@ -305,9 +332,21 @@ namespace Surtr.Compiler.Binding
                 // Carried across, or an `int[]`'s `push` would be a symbol no call site could
                 // emit: a substituted view is still the same method table entry.
                 ImportedFrom = method.ImportedFrom,
+
+                // And the same for a method of a generic this compilation is building, which has no
+                // metadata yet and is reached through its builder instead.
+                OriginalDefinition = method.OriginalDefinition ?? method,
             };
 
             return substituted;
         }
+
+        /// <summary>
+        /// Reads a method as one particular substitution makes it — the entry point generic method
+        /// inference needs, where the substitution comes from the call's arguments rather than from a
+        /// receiver's type arguments.
+        /// </summary>
+        public MethodSymbol SubstituteMethod(MethodSymbol method, TypeSubstitution substitution)
+            => substitution.IsEmpty ? method : SubstituteMethodInto(method, method.ContainingSymbol!, substitution);
     }
 }

@@ -83,6 +83,36 @@ namespace Surtr.Compiler.Diagnostics
             Report(new SurtrDiagnostic(code, SurtrDiagnosticSeverity.Warning, message, sourceName, span));
         }
 
+        /// <summary>
+        /// Drops everything reported after <paramref name="count"/>, which is what a pass that had to
+        /// bind something twice keeps from reporting it twice.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately narrow. Generic inference has to bind an argument to learn its type before
+        /// the parameter it will be checked against exists, so that first binding is speculative and
+        /// anything it found is found again — properly, and once — when the argument is bound against
+        /// the settled type. This is not a general "undo": a caller that truncates past work it did
+        /// not do itself is discarding someone else's diagnostics.
+        /// </remarks>
+        /// <param name="count">The <see cref="Count"/> to return to.</param>
+        public void TruncateTo(int count)
+        {
+            if (count < 0 || count > diagnostics.Count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(count));
+            }
+
+            for (int i = diagnostics.Count - 1; i >= count; i--)
+            {
+                if (diagnostics[i].IsError)
+                {
+                    errorCount--;
+                }
+
+                diagnostics.RemoveAt(i);
+            }
+        }
+
         /// <summary>Adds everything from another bag, keeping its order.</summary>
         /// <param name="other">The bag to drain into this one.</param>
         public void AddRange(SurtrDiagnosticBag other)

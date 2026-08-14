@@ -236,6 +236,12 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         BaseConstructorUnreachable = 3037,
 
+        /// <summary>
+        /// A generic call whose type arguments neither the arguments nor the call site settle (§6).
+        /// Inference is local and one-directional, so where it cannot decide, the call writes them.
+        /// </summary>
+        CannotInferTypeArgument = 3038,
+
         #endregion
 
         #region Code generation — 4xxx

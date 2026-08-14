@@ -725,14 +725,50 @@ Two decisions inside that work are worth keeping:
   symbols rather than from what has been emitted — a derived class may be declared before its base,
   and the answer must not depend on which.
 
+### 10.1b Generics, from declarable to usable
+
+§8 settled how much of a generic survives compilation and the descriptor side was built; the binder's
+half was not, so a generic could be *declared* and nothing else. Constructing one, calling a generic
+method, and reading a member off a type parameter were all errors — §6's own
+`max<T : IComparable<T>>` example did not compile. What closed it:
+
+* **A bound is what a type parameter reaches through.** `MemberLookup.Reachable` walks a parameter's
+  constraints; an unconstrained one reaches nothing, since there is no root class to fall back to.
+  The bounds themselves were the actual defect: a *method*'s type parameters are declared while its
+  signature binds, which is after the pass that resolved bounds had already run, so every one of them
+  stayed unbounded. Bound resolution now picks up where it left off, and runs again afterwards.
+* **A construction settles its arguments from three sources, in this order**: written at the call
+  (`Box<int>(5)`), the type it is going into (`let b: Box<int> = Box();` — §5.9's target typing, which
+  is the only source when there is no argument to look at), and unification against the constructor's
+  own parameters. Nothing to infer from is an error naming what to write, not a guess.
+* **A generic call is substituted *before* overload resolution**, which is the whole design:
+  applicability, specificity, the argument conversions and the call's type are then all decided
+  against concrete types, and nothing downstream knows a type parameter was involved. Resolving
+  against the open signature instead would ask whether an `int` converts to a `T`, which has no
+  answer.
+* **`TypeInference` is one mechanism for both**, a structural walk with first-binding-wins and no
+  lattice. Two answers for one parameter is a refusal rather than a widening — §3.5's "no silent pick"
+  applied to inference.
+* **A substituted member now knows its declaration.** `Box<int>.get()` is a clone of the declaration
+  typed as that construction sees it, and only the declaration was ever declared onto a builder;
+  `OriginalDefinition` is the way back. Erasure is exactly what makes that the right answer — one
+  class, one method table, one compiled body.
+* **Explicit type arguments parse in expression position** through a bounded token scan: the generic
+  reading is taken only when the angles balance and a `(` follows, so `a < b` stays a comparison.
+  Nothing is consumed and nothing is reported when the scan fails, or a comparison would report the
+  errors of the type argument list it was never trying to be.
+* **Bounds are checked wherever a construction happens**, including one the compiler inferred and one
+  written inside a body — the latter had been recorded and never verified, because the verifying pass
+  ran at the end of the member phase and a body binds after it.
+
+What generics still do not do is listed in §10.2: variance stays deliberately absent (§6), and
+inference stays single-pass by choice rather than by omission.
+
 ### 10.2 What is still owed
 
 Not silent — each reports, refuses to compile, or is visibly absent — but each is the specification
 promising something the compiler does not do.
 
-* **Generics are declarable and unusable** (§6). A generic type cannot be constructed, a generic
-  call infers nothing, and a constraint exposes no members — §6's own `max<T : IComparable<T>>`
-  example does not compile. The descriptor side of §8 is done; this is the binder's half.
 * **A lambda does not infer its parameters from the parameter it is passed to** (§8, §5.9), only
   from a variable's annotation — so §8's own `items.sort((a, b) => ...)` needs both annotated.
 * **`operator[]` never reaches a use site** (§5.6): indexing a type that declares one is an error.

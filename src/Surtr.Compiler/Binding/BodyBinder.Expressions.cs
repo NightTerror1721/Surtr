@@ -34,7 +34,9 @@ namespace Surtr.Compiler.Binding
                 case UnaryExpressionSyntax unary: return BindUnary(unary);
                 case AssignmentExpressionSyntax assignment: return BindAssignment(assignment);
                 case ConditionalExpressionSyntax conditional: return BindConditional(conditional, expected);
-                case CallExpressionSyntax call: return BindCall(call);
+                // The expected type reaches a call only to settle a generic construction's arguments
+                // (§6): `let b: Box<int> = Box();` has nothing else to infer them from.
+                case CallExpressionSyntax call: return BindCall(call, expected);
                 case IndexExpressionSyntax index: return BindIndex(index);
                 case MemberAccessExpressionSyntax member: return BindMemberAccess(member);
                 case CastExpressionSyntax cast: return BindCast(cast);
@@ -836,11 +838,16 @@ namespace Surtr.Compiler.Binding
         #endregion
 
         #region Calls
-        private BoundExpression BindCall(CallExpressionSyntax syntax)
+        private BoundExpression BindCall(CallExpressionSyntax syntax, TypeSymbol? expected = null)
         {
             // `Vec2(1.0, 2.0)` constructs; there is no `new`.
             if (TryBindAsType(syntax.Callee, out var constructed))
                 return BindObjectCreation(syntax, constructed);
+
+            // `Box(5)` and `Box<int>(5)` construct too, but the type they name is a declaration
+            // rather than a type until its arguments are settled — which is what this does.
+            if (TryBindAsGenericDefinition(syntax.Callee, out var definition))
+                return BindGenericObjectCreation(syntax, definition, expected);
 
             BoundExpression? receiver = null;
             string name;
@@ -977,6 +984,7 @@ namespace Surtr.Compiler.Binding
                 infos[i] = new ArgumentInfo(arguments[i].Type, syntax.Arguments[i].Name);
             }
 
+            candidates = SubstituteGenericCandidates(syntax, candidates, infos, name);
             var result = _overloads.Resolve(candidates, infos);
 
             switch (result.Status)
@@ -1010,6 +1018,148 @@ namespace Surtr.Compiler.Binding
                 && !(receiver?.Type.NonNullable is NamedTypeSymbol { IsSealed: true });
 
             return new BoundCallExpression(syntax, method.IsStatic ? null : receiver, method, ordered, virtualCall);
+        }
+
+        /// <summary>
+        /// Replaces each generic candidate with the substituted view its arguments infer (§6).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Before overload resolution rather than after, and that is the whole design: applicability,
+        /// specificity, the argument conversions and the call's own type are all decided against
+        /// concrete types, so nothing downstream has to know a type parameter was ever involved. The
+        /// alternative — resolving against the open signature and substituting afterwards — would ask
+        /// overload resolution whether an <c>int</c> converts to <c>T</c>, which has no answer.
+        /// </para>
+        /// <para>
+        /// A candidate whose parameters cannot all be inferred is dropped rather than reported here.
+        /// It may be one overload of several, and the call reports once, at the end, if nothing was
+        /// applicable — reporting per candidate would turn one mistake into a list.
+        /// </para>
+        /// </remarks>
+        private IReadOnlyList<MethodSymbol> SubstituteGenericCandidates(
+            CallExpressionSyntax syntax,
+            IReadOnlyList<MethodSymbol> candidates,
+            IReadOnlyList<ArgumentInfo> arguments,
+            string name)
+        {
+            bool anyGeneric = false;
+            for (int i = 0; i < candidates.Count && !anyGeneric; i++)
+                anyGeneric = candidates[i].TypeParameters.Count > 0;
+
+            if (!anyGeneric)
+                return candidates;
+
+            var written = ResolveWrittenTypeArguments(syntax);
+            var substituted = new List<MethodSymbol>(candidates.Count);
+
+            foreach (var candidate in candidates)
+            {
+                if (candidate.TypeParameters.Count == 0)
+                {
+                    substituted.Add(candidate);
+                    continue;
+                }
+
+                if (written is not null)
+                {
+                    // Written out at the call site, so there is nothing to infer — only to check.
+                    if (written.Count != candidate.TypeParameters.Count)
+                        continue;
+
+                    substituted.Add(Construct(candidate, written, syntax));
+                    continue;
+                }
+
+                var declared = new TypeSymbol[candidate.Parameters.Count];
+                for (int i = 0; i < declared.Length; i++)
+                    declared[i] = candidate.Parameters[i].Type;
+
+                var supplied = new TypeSymbol?[declared.Length];
+                for (int i = 0; i < supplied.Length && i < arguments.Count; i++)
+                    supplied[i] = arguments[i].Name is null ? arguments[i].Type : null;
+
+                if (TypeInference.TryInfer(candidate.TypeParameters, declared, supplied, _factory, out var inferred, out _))
+                    substituted.Add(Construct(candidate, inferred, syntax));
+            }
+
+            if (substituted.Count == 0)
+            {
+                Report(
+                    SurtrDiagnosticCode.CannotInferTypeArgument,
+                    syntax.Span,
+                    $"The type arguments of '{name}' cannot be inferred from these arguments; write them at the call.");
+            }
+
+            return substituted;
+        }
+
+        /// <summary>
+        /// Substitutes a generic method with the arguments a call site settled on, checking each
+        /// against the parameter's bounds.
+        /// </summary>
+        private MethodSymbol Construct(MethodSymbol method, IReadOnlyList<TypeSymbol> arguments, SyntaxNode syntax)
+        {
+            CheckConstraints(method.TypeParameters, arguments, syntax);
+
+            return _lookup.SubstituteMethod(
+                method,
+                TypeInference.Substitution(method.TypeParameters, arguments, _factory));
+        }
+
+        /// <summary>
+        /// Checks each type argument against its parameter's bounds, substituted (§6).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Substituted, because a bound is written in terms of the parameters it constrains:
+        /// <c>&lt;T : IComparable&lt;T&gt;&gt;</c> asked of a <c>Vec2</c> is asking about
+        /// <c>IComparable&lt;Vec2&gt;</c>, not about <c>IComparable&lt;T&gt;</c>. The same rule
+        /// <c>TypeResolver</c> applies to a type written out, applied where the arguments were
+        /// inferred instead — a construction nobody wrote the arguments for is still a construction,
+        /// and its bounds are not optional because the compiler filled them in.
+        /// </para>
+        /// </remarks>
+        private void CheckConstraints(
+            IReadOnlyList<TypeParameterSymbol> parameters,
+            IReadOnlyList<TypeSymbol> arguments,
+            SyntaxNode syntax)
+        {
+            var substitution = TypeInference.Substitution(parameters, arguments, _factory);
+
+            for (int i = 0; i < parameters.Count && i < arguments.Count; i++)
+            {
+                if (parameters[i].Constraints.Count == 0 || arguments[i].IsError)
+                    continue;
+
+                foreach (var bound in parameters[i].Constraints)
+                {
+                    var wanted = substitution.Apply(bound);
+
+                    if (wanted.IsError || _conversions.IsAssignable(arguments[i], wanted))
+                        continue;
+
+                    Report(
+                        SurtrDiagnosticCode.ConstraintNotSatisfied,
+                        syntax.Span,
+                        $"'{arguments[i].ToDisplayString()}' does not satisfy '{parameters[i].Name} : {wanted.ToDisplayString()}'.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// The type arguments written at a call site, or <see langword="null"/> when none were.
+        /// </summary>
+        private IReadOnlyList<TypeSymbol>? ResolveWrittenTypeArguments(CallExpressionSyntax syntax)
+        {
+            if (syntax.TypeArguments.Count == 0)
+                return null;
+
+            var resolved = new TypeSymbol[syntax.TypeArguments.Count];
+            for (int i = 0; i < resolved.Length; i++)
+                resolved[i] = _resolver.Resolve(syntax.TypeArguments[i], _typeScope, _sourceName);
+
+            return resolved;
         }
 
         /// <summary>
@@ -1117,6 +1267,160 @@ namespace Surtr.Compiler.Binding
 
         private BoundExpression BindObjectCreation(CallExpressionSyntax syntax, NamedTypeSymbol type)
             => BindObjectCreation(syntax, syntax.Arguments, type);
+
+        /// <summary>
+        /// Builds a construction of a generic type, settling its type arguments first (§6).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Three sources, in the order they are believed. Written at the call site
+        /// (<c>Box&lt;int&gt;(5)</c>) settles it outright. Otherwise the type being assigned to does,
+        /// which is what makes <c>let b: Box&lt;int&gt; = Box();</c> work with no constructor argument
+        /// to infer from — the same target typing §5.9 gives an empty <c>[]</c>. Failing both, the
+        /// constructor's own arguments are unified against its declared parameters.
+        /// </para>
+        /// <para>
+        /// A construction with nothing to infer from is an error rather than a guess, and the
+        /// diagnostic says to write the arguments — the same trade §5.9 makes for a bare <c>[]</c>.
+        /// </para>
+        /// </remarks>
+        private BoundExpression BindGenericObjectCreation(
+            CallExpressionSyntax syntax,
+            List<NamedTypeSymbol> definitions,
+            TypeSymbol? expected)
+        {
+            string name = definitions[0].Name;
+
+            if (ResolveWrittenTypeArguments(syntax) is IReadOnlyList<TypeSymbol> written)
+            {
+                foreach (var definition in definitions)
+                {
+                    if (definition.Arity == written.Count)
+                        return BindObjectCreation(syntax, syntax.Arguments, definition.Construct(written));
+                }
+
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.WrongTypeArgumentCount,
+                    $"Nothing called '{name}' takes {written.Count} type argument(s).");
+            }
+
+            if (expected?.NonNullable is NamedTypeSymbol { IsConstructed: true } target)
+            {
+                foreach (var definition in definitions)
+                {
+                    if (ReferenceEquals(definition.Definition, target.Definition))
+                        return BindObjectCreation(syntax, syntax.Arguments, target);
+                }
+            }
+
+            foreach (var definition in definitions)
+            {
+                if (!TryInferFromConstructor(syntax, definition, out var inferred))
+                    continue;
+
+                // Inferred rather than written, so nothing recorded a construction site for the
+                // resolver to verify later — the bounds are checked here instead.
+                CheckConstraints(definition.TypeParameters, inferred, syntax);
+                return BindObjectCreation(syntax, syntax.Arguments, definition.Construct(inferred));
+            }
+
+            return Error(
+                syntax,
+                SurtrDiagnosticCode.CannotInferTypeArgument,
+                $"Nothing says what '{name}' is being built with; write its type arguments, or the type it goes into.");
+        }
+
+        /// <summary>
+        /// Infers a generic type's arguments from what its constructor was given.
+        /// </summary>
+        /// <remarks>
+        /// The arguments are bound here and thrown away: what comes back is the type, and binding
+        /// them again against the constructed type is what puts the right conversions in the tree.
+        /// Binding twice is affordable because it is once per construction site, and the alternative
+        /// — carrying half-bound arguments through the constructor resolution — would mean two paths
+        /// into <see cref="BindObjectCreation(SyntaxNode, IReadOnlyList{ArgumentSyntax}, NamedTypeSymbol)"/>
+        /// that could disagree.
+        /// </remarks>
+        private bool TryInferFromConstructor(
+            CallExpressionSyntax syntax,
+            NamedTypeSymbol definition,
+            out TypeSymbol[] arguments)
+        {
+            arguments = System.Array.Empty<TypeSymbol>();
+
+            var supplied = new TypeSymbol?[syntax.Arguments.Count];
+            for (int i = 0; i < supplied.Length; i++)
+            {
+                supplied[i] = syntax.Arguments[i].Name is null
+                    ? Speculative(syntax.Arguments[i].Value)
+                    : null;
+            }
+
+            foreach (var member in definition.Members)
+            {
+                if (member is not MethodSymbol { Role: MethodRole.Constructor } constructor
+                    || !CouldTake(constructor, supplied.Length))
+                {
+                    continue;
+                }
+
+                var declared = new TypeSymbol[constructor.Parameters.Count];
+                for (int i = 0; i < declared.Length; i++)
+                    declared[i] = constructor.Parameters[i].Type;
+
+                if (TypeInference.TryInfer(definition.TypeParameters, declared, supplied, _factory, out arguments, out _))
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Whether a constructor could take that many positional arguments, so inference is worth
+        /// trying against it.
+        /// </summary>
+        /// <remarks>
+        /// A rough filter rather than applicability: the real check happens once the type is
+        /// constructed and overload resolution runs against it. All it has to avoid is unifying an
+        /// argument against a parameter that was never going to receive it — so it lets through a
+        /// call that stops short of a defaulted or varargs tail, and nothing else.
+        /// </remarks>
+        private static bool CouldTake(MethodSymbol constructor, int positional)
+        {
+            var parameters = constructor.Parameters;
+
+            if (positional > parameters.Count)
+                return parameters.Count > 0 && parameters[parameters.Count - 1].IsVararg;
+
+            for (int i = positional; i < parameters.Count; i++)
+            {
+                if (!parameters[i].HasDefaultValue && !parameters[i].IsVararg)
+                    return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Binds an expression only to learn its type, reporting nothing.
+        /// </summary>
+        /// <remarks>
+        /// Inference has to know what an argument <em>is</em> before the type it is being passed to
+        /// exists, so the argument is bound before there is anything to check it against. Whatever
+        /// that binding would have complained about is complained about later, when the same
+        /// expression is bound for real against a settled parameter type — reporting here would
+        /// report it twice.
+        /// </remarks>
+        private TypeSymbol? Speculative(ExpressionSyntax syntax)
+        {
+            int before = _diagnostics.Count;
+
+            var bound = BindExpression(syntax);
+
+            _diagnostics.TruncateTo(before);
+            return bound.Type.IsError ? null : bound.Type;
+        }
 
         /// <summary>
         /// Binds a construction from an argument list rather than from a call.

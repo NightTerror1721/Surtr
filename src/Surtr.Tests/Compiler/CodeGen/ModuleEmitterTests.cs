@@ -1258,6 +1258,341 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Generics (§6)
+        private const string Box =
+            "class Box<T> {\n"
+                + "  private let _value: T;\n"
+                + "  constructor(value: T) { _value = value; }\n"
+                + "  public fun get(): T { return _value; }\n"
+                + "}\n";
+
+        /// <summary>
+        /// §6's own example: a bound is what lets a body call anything on a <c>T</c> at all.
+        /// </summary>
+        [Fact]
+        public void AConstraintExposesItsMembersOnATypeParameter()
+        {
+            var runtime = Run(
+                "class Score : IComparable<Score> {\n"
+                    + "  public let value: int;\n"
+                    + "  constructor(value: int) { this.value = value; }\n"
+                    + "  public override fun compareTo(other: Score): int { return value - other.value; }\n"
+                    + "}\n"
+                    + "fun biggest<T : IComparable<T>>(a: T, b: T): T { return a.compareTo(b) >= 0 ? a : b; }\n"
+                    + "fun run(): int { let s: Score = biggest(Score(4), Score(9)); return s.value; }");
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+
+        /// <summary>An unconstrained parameter promises nothing, and there is no root class to fall back to.</summary>
+        [Fact]
+        public void AnUnconstrainedTypeParameterExposesNothing()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "fun nope<T>(a: T): int { return a.compareTo(a); }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedName);
+        }
+
+        [Fact]
+        public void AGenericTypeIsConstructedFromTheTypeItGoesInto()
+        {
+            var runtime = Run(Box + "fun run(): int { let b: Box<int> = Box(5); return b.get(); }");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AGenericTypeIsConstructedFromWrittenTypeArguments()
+        {
+            var runtime = Run(Box + "fun run(): int { let b = Box<int>(5); return b.get(); }");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AGenericTypeIsConstructedFromItsConstructorsArguments()
+        {
+            var runtime = Run(Box + "fun run(): int { let b = Box(5); return b.get(); }");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// One class, one method table, one compiled body — and two constructions that read as
+        /// different types. That is the whole of what erasure buys and what the compiler owes.
+        /// </summary>
+        [Fact]
+        public void TwoConstructionsOfOneGenericKeepTheirOwnTypes()
+        {
+            var runtime = Run(
+                Box + "fun run(): string { let a = Box(\"x\"); let b = Box(\"y\"); return a.get() + b.get(); }");
+
+            Assert.Equal("xy", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void ASubstitutedMemberRejectsTheWrongArgument()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                Box + "fun run(): int { let b: Box<int> = Box(\"x\"); return b.get(); }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.True(compilation.HasErrors);
+        }
+
+        [Fact]
+        public void AGenericTypeMayBeItsOwnTypeArgument()
+        {
+            var runtime = Run(
+                Box + "fun run(): int {\n"
+                    + "  let inner: Box<int> = Box(3);\n"
+                    + "  let outer: Box<Box<int>> = Box(inner);\n"
+                    + "  return outer.get().get();\n"
+                    + "}");
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        /// <summary>§6: arity is part of identity, so these are two declarations sharing a spelling.</summary>
+        [Fact]
+        public void ArityPicksBetweenTwoDeclarationsOfOneName()
+        {
+            var runtime = Run(
+                "class Result<T> { public fun n(): int { return 1; } }\n"
+                    + "class Result<T, E> { public fun n(): int { return 2; } }\n"
+                    + "fun run(): int { let r: Result<int, string> = Result(); return r.n(); }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AGenericCallInfersItsTypeArgumentsFromTheArguments()
+        {
+            var runtime = Run("fun pick<T>(a: T, b: T): T { return a; }\nfun run(): int { return pick(1, 2); }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AGenericCallMayWriteItsTypeArguments()
+        {
+            var runtime = Run("fun pick<T>(a: T, b: T): T { return a; }\nfun run(): int { return pick<int>(1, 2); }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>Inference walks into a composite: <c>T[]</c> against an <c>int[]</c> gives <c>int</c>.</summary>
+        [Fact]
+        public void InferenceWalksIntoACompositeParameter()
+        {
+            var runtime = Run("fun count<T>(items: T[]): int { return items.length; }\nfun run(): int { return count([1, 2, 3]); }");
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AGenericMethodInsideAGenericClassSubstitutesBoth()
+        {
+            var runtime = Run(
+                "class Holder<T> {\n"
+                    + "  private let _value: T;\n"
+                    + "  constructor(value: T) { _value = value; }\n"
+                    + "  public fun map<U>(other: U): U { return other; }\n"
+                    + "}\n"
+                    + "fun run(): int { let h: Holder<string> = Holder(\"x\"); return h.map(5); }");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// §6 checks a bound against the <em>substituted</em> type: <c>T : IComparable&lt;T&gt;</c>
+        /// asked of a <c>Plain</c> is asking about <c>IComparable&lt;Plain&gt;</c>.
+        /// </summary>
+        [Fact]
+        public void AnArgumentThatDoesNotSatisfyItsBoundIsReported()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "class Plain { }\n"
+                    + "fun biggest<T : IComparable<T>>(a: T, b: T): T { return a; }\n"
+                    + "fun run(): int { biggest(Plain(), Plain()); return 1; }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.ConstraintNotSatisfied);
+        }
+
+        /// <summary>Two answers for one parameter is a refusal, not a widening — §3.5's "no silent pick".</summary>
+        [Fact]
+        public void ContradictoryInferenceIsReported()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "fun pick<T>(a: T, b: T): T { return a; }\nfun run(): int { return pick(1, \"x\"); }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.CannotInferTypeArgument);
+        }
+
+        /// <summary>§1.11's two obligations, seen from source: box on the way in, cast on the way out.</summary>
+        [Fact]
+        public void APrimitiveSurvivesARoundTripThroughAnErasedSlot()
+        {
+            var runtime = Run(Box + "fun run(): int { let b: Box<int> = Box(42); let n: int = b.get(); return n + 0; }");
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AValueClassSurvivesARoundTripThroughAnErasedSlot()
+        {
+            var runtime = Run(
+                Box + "value class EntityId {\n"
+                    + "  public let value: int;\n"
+                    + "  constructor(value: int) { this.value = value; }\n"
+                    + "}\n"
+                    + "fun run(): int { let b: Box<EntityId> = Box(EntityId(7)); return b.get().value; }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AGenericFromAnotherModuleIsConstructedAndCalled()
+        {
+            var runtime = Run(
+                "import game.util.Box;\nfun run(): int { let b: Box<int> = Box(3); return b.get(); }",
+                ("/game/util/Box.surtr",
+                    "public class Box<T> {\n"
+                        + "  private let _value: T;\n"
+                        + "  public constructor(value: T) { _value = value; }\n"
+                        + "  public fun get(): T { return _value; }\n"
+                        + "}"));
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A generic class satisfying a generic contract, walked by <c>for-in</c> — which puts the
+        /// bridge, the erased slot and interface dispatch on one path.
+        /// </summary>
+        [Fact]
+        public void AGenericClassCanSatisfyAGenericContract()
+        {
+            var runtime = Run(
+                "class Single<T> : IIterable<T> {\n"
+                    + "  private let _value: T;\n"
+                    + "  constructor(value: T) { _value = value; }\n"
+                    + "  public override fun iterate(): IIterator<T> { return [_value].iterate(); }\n"
+                    + "}\n"
+                    + "fun run(): int { var total = 0; for (n in Single(4)) { total += n; } return total; }");
+
+            Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AConstructionMayStopShortOfADefaultedParameter()
+        {
+            var runtime = Run(
+                "class Counter<T> {\n"
+                    + "  private let _value: T;\n"
+                    + "  private let _n: int;\n"
+                    + "  constructor(value: T, n: int = 1) { _value = value; _n = n; }\n"
+                    + "  public fun n(): int { return _n; }\n"
+                    + "}\n"
+                    + "fun run(): int { let c = Counter(\"x\"); return c.n(); }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A construction with nothing to infer from is refused rather than guessed at, the same
+        /// trade §5.9 makes for a bare <c>[]</c>.
+        /// </summary>
+        [Fact]
+        public void AConstructionWithNothingToInferFromIsReported()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "class Empty<T> { public fun n(): int { return 1; } }\nfun run(): int { let e = Empty(); return e.n(); }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.CannotInferTypeArgument);
+        }
+
+        /// <summary>
+        /// A construction whose arguments the compiler inferred is still a construction, and its
+        /// bounds are not optional because nobody wrote them.
+        /// </summary>
+        [Fact]
+        public void AnInferredConstructionStillChecksItsBounds()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "class Plain { }\n"
+                    + "class Sorted<T : IComparable<T>> {\n"
+                    + "  private let _value: T;\n"
+                    + "  constructor(value: T) { _value = value; }\n"
+                    + "}\n"
+                    + "fun run(): int { let s = Sorted(Plain()); return 1; }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.ConstraintNotSatisfied);
+        }
+
+        /// <summary>
+        /// And one written inside a body: those sites are recorded while the body binds, which is
+        /// after the member phase verified the ones written on declarations.
+        /// </summary>
+        [Fact]
+        public void AConstructedTypeWrittenInABodyChecksItsBounds()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "class Plain { }\n"
+                    + "class Sorted<T : IComparable<T>> { }\n"
+                    + "fun run(): int { let s: Sorted<Plain>? = null; return 1; }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.ConstraintNotSatisfied);
+        }
+
+        /// <summary>
+        /// The other half of the type-argument scan: a <c>&lt;</c> that closes nothing is a
+        /// comparison, and stays one.
+        /// </summary>
+        [Fact]
+        public void AComparisonIsNotReadAsATypeArgumentList()
+        {
+            var runtime = Run("fun run(): bool { let a = 1; let b = 2; return a < b; }");
+
+            Assert.True(Call(runtime, "run").AsBool);
+        }
+        #endregion
+
         #region Module-level natives (§10)
         /// <summary>
         /// §10: a module naming a host global nobody registered fails to load, rather than reading a

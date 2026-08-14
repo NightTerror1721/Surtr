@@ -157,6 +157,20 @@ namespace Surtr.Compiler.Binding.Symbols
         /// </remarks>
         public Runtime.Classes.SurtrMethodInfo? ImportedFrom { get; internal set; }
 
+        /// <summary>
+        /// The declaration this is a substituted view of, or <see langword="null"/> when it
+        /// <em>is</em> the declaration.
+        /// </summary>
+        /// <remarks>
+        /// A member is declared once, on the open generic, and read through a substitution per
+        /// construction — so <c>Box&lt;int&gt;.get()</c> is a clone typed as that construction sees
+        /// it. The clone is what a call site names and what overload resolution compares, but the
+        /// method table has one entry, for the declaration. This is the way back to it. Without it a
+        /// call on a constructed generic of the module being built resolves to a symbol the emitter
+        /// has never seen, which is a symbol it cannot emit.
+        /// </remarks>
+        public MethodSymbol? OriginalDefinition { get; internal set; }
+
         /// <inheritdoc/>
         public override string ToDisplayString()
         {
@@ -289,6 +303,13 @@ namespace Surtr.Compiler.Binding.Symbols
         /// name a real <c>SurtrFieldInfo</c>, which the symbol alone cannot reconstruct.
         /// </remarks>
         public Runtime.Classes.SurtrFieldInfo? ImportedFrom { get; internal set; }
+
+        /// <summary>
+        /// The declaration this is a substituted view of, or <see langword="null"/> when it
+        /// <em>is</em> the declaration.
+        /// </summary>
+        /// <remarks>The field counterpart of <see cref="MethodSymbol.OriginalDefinition"/>.</remarks>
+        public FieldSymbol? OriginalDefinition { get; internal set; }
 
         /// <inheritdoc/>
         public override string ToDisplayString() => Name + ": " + Type.ToDisplayString();

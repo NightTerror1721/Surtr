@@ -84,6 +84,10 @@ namespace Surtr.Compiler.Binding
         private readonly Dictionary<NamedTypeSymbol, TypeBinding> _typeBindings = new Dictionary<NamedTypeSymbol, TypeBinding>();
         private readonly List<TypeBinding> _declared = new List<TypeBinding>();
         private readonly List<ConstraintBinding> _constraints = new List<ConstraintBinding>();
+
+        // How many of them have had their bounds resolved. A method's type parameters are declared
+        // while its signature is bound, which is after the first run, so the second picks up here.
+        private int _constraintsBound;
         private readonly List<ConstantDeclaration> _constantDeclarations = new List<ConstantDeclaration>();
 
         private readonly Dictionary<string, List<MethodSymbol>> _constFunctions =
@@ -536,6 +540,11 @@ namespace Surtr.Compiler.Binding
 
             foreach (var module in _modules.Values)
                 BindModuleMembers(module);
+
+            // Again, for the type parameters a method's own signature declared: those did not exist
+            // when the first run went through, and a bound nobody resolved is a bound a body cannot
+            // call anything through.
+            BindConstraints();
 
             // After every type has its members, because the question is about a base class's, and
             // nothing says a base is bound before what extends it.
@@ -1111,6 +1120,12 @@ namespace Surtr.Compiler.Binding
 
             RejectChainCycles();
             VerifyConstantDeclarations();
+
+            // Again, for the constructed types a body wrote: `let s: Sorted<Plain> = ...` records a
+            // construction site while its body binds, which is after the run at the end of the member
+            // phase. Sites are cleared as they are verified, so this checks the new ones only.
+            _resolver.VerifyConstraints(Conversions);
+
             return _bound;
         }
 
@@ -1723,10 +1738,20 @@ namespace Surtr.Compiler.Binding
         /// <summary>
         /// Resolves every type parameter's bounds, once every type exists.
         /// </summary>
+        /// <remarks>
+        /// Run twice, and it has to be: a <em>type</em>'s parameters are declared in the declaration
+        /// phase, so their bounds have to be resolved before any signature is bound against them —
+        /// while a <em>method</em>'s parameters are declared by binding its signature, which happens
+        /// after. Picking up where the last run stopped is what keeps a method's
+        /// <c>&lt;T : IComparable&lt;T&gt;&gt;</c> from staying unbounded, which would leave its body
+        /// unable to call anything on a <c>T</c>.
+        /// </remarks>
         private void BindConstraints()
         {
-            foreach (var binding in _constraints)
+            for (; _constraintsBound < _constraints.Count; _constraintsBound++)
             {
+                var binding = _constraints[_constraintsBound];
+
                 for (int i = 0; i < binding.Parameters.Count && i < binding.Syntax.Count; i++)
                 {
                     var written = binding.Syntax[i].Constraints;

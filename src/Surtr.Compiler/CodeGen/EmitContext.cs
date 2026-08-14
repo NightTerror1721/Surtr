@@ -155,26 +155,50 @@ namespace Surtr.Compiler.CodeGen
 
         #region Lookup
         /// <summary>The builder a method of this module is being emitted onto, if it is one.</summary>
+        /// <remarks>
+        /// A substituted view of a generic's member — what a call on a <c>Box&lt;int&gt;</c> resolves
+        /// to — is a clone of the declaration, and only the declaration was ever declared onto a
+        /// builder. Erasure is exactly what makes asking the declaration the right answer: one class,
+        /// one method table, one compiled body per declaration.
+        /// </remarks>
         public bool TryGetBuilder(MethodSymbol symbol, out SurtrMethodBuilder builder)
-            => _declared.TryGetValue(symbol, out builder!);
+            => _declared.TryGetValue(symbol, out builder!)
+                || (symbol.OriginalDefinition is MethodSymbol original && _declared.TryGetValue(original, out builder!));
 
         /// <summary>
         /// The metadata a method resolves to, from anywhere: bound during this emission, or carried
         /// on the symbol since it was imported.
         /// </summary>
         public SurtrMethodInfo? Resolve(MethodSymbol symbol)
-            => _bound.TryGetValue(symbol, out var bound) ? bound : symbol.ImportedFrom;
+        {
+            if (_bound.TryGetValue(symbol, out var bound))
+                return bound;
+
+            if (symbol.OriginalDefinition is MethodSymbol original)
+                return _bound.TryGetValue(original, out var declared) ? declared : original.ImportedFrom;
+
+            return symbol.ImportedFrom;
+        }
 
         /// <summary>
         /// The module a module-level function belongs to when it is not this one, which is what a
         /// cross-module call has to name.
         /// </summary>
         public bool TryGetForeignModule(MethodSymbol symbol, out SurtrModule owner)
-            => _foreign.TryGetValue(symbol, out owner!);
+            => _foreign.TryGetValue(symbol, out owner!)
+                || (symbol.OriginalDefinition is MethodSymbol original && _foreign.TryGetValue(original, out owner!));
 
         /// <summary>The metadata a field resolves to, declared here or imported.</summary>
         public SurtrFieldInfo? Resolve(FieldSymbol symbol)
-            => _fields.TryGetValue(symbol, out var field) ? field : symbol.ImportedFrom;
+        {
+            if (_fields.TryGetValue(symbol, out var field))
+                return field;
+
+            if (symbol.OriginalDefinition is FieldSymbol original)
+                return _fields.TryGetValue(original, out var declared) ? declared : original.ImportedFrom;
+
+            return symbol.ImportedFrom;
+        }
 
         /// <summary>The class builder a type symbol was declared onto, if this module declares it.</summary>
         public bool TryGetClass(NamedTypeSymbol symbol, out SurtrClassBuilder builder)
