@@ -16,17 +16,22 @@ namespace Surtr.LanguageServer.Workspace
     public sealed class Workspace
     {
         private readonly string _rootPath;
+        private readonly string _rootModulePath;
         private readonly Dictionary<string, string> _openDocuments = new Dictionary<string, string>(PathComparer);
 
         private CompilationSnapshot _snapshot = CompilationSnapshot.Empty;
 
-        public Workspace(string rootPath)
+        public Workspace(string rootPath, string rootModulePath = "")
         {
             _rootPath = rootPath;
+            _rootModulePath = rootModulePath ?? string.Empty;
         }
 
         /// <summary>The directory the compilation's module paths are derived from.</summary>
         public string RootPath => _rootPath;
+
+        /// <summary>What the source root itself is called, prefixed onto every derived module path.</summary>
+        public string RootModulePath => _rootModulePath;
 
         /// <summary>The most recent compilation, valid after the first <see cref="Rebuild"/>.</summary>
         public CompilationSnapshot Snapshot => _snapshot;
@@ -59,7 +64,7 @@ namespace Surtr.LanguageServer.Workspace
             var files = FindSourceFiles().ToList();
 
             Surtr.Compiler.Compilation.SurtrProject project =
-                new Surtr.Compiler.Compilation.SurtrProject(_rootPath, string.Empty);
+                new Surtr.Compiler.Compilation.SurtrProject(_rootPath, _rootModulePath);
 
             foreach (string file in files)
                 project.AddSourceFile(file, CurrentText(file));

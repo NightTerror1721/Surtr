@@ -105,11 +105,21 @@ namespace Surtr.LanguageServer
         {
             var parameters = Params<InitializeParams>(message);
             string root = FirstNonNull(parameters?.RootUri, parameters?.RootPath);
-            root = Workspace.Workspace.PathFromUri(root);
-
-            _workspace?.Dispose();
-            _workspace = new Workspace.Workspace(root);
-            PublishAll(_workspace.Rebuild());
+            if (root.Length > 0)
+            {
+                root = Workspace.Workspace.PathFromUri(root);
+                _workspace?.Dispose();
+                _workspace = new Workspace.Workspace(root);
+                PublishAll(_workspace.Rebuild());
+            }
+            else
+            {
+                // No folder in this session — a single file, opened without a workspace. The
+                // workspace is created from the first document that opens, whose directory then
+                // names its module.
+                _workspace?.Dispose();
+                _workspace = null;
+            }
 
             var result = new InitializeResult
             {
@@ -132,7 +142,15 @@ namespace Surtr.LanguageServer
                 return;
 
             if (_workspace is null)
-                return;
+            {
+                // A document is the first thing the session knows: its directory becomes the
+                // workspace root, and that directory's name the root module, so the file itself
+                // belongs to a module rather than to none (§2.1).
+                string path = Workspace.Workspace.PathFromUri(parameters.TextDocument.Uri);
+                string root = Path.GetDirectoryName(path) ?? path;
+                string rootModule = Path.GetFileName(root);
+                _workspace = new Workspace.Workspace(root, rootModule);
+            }
 
             _workspace.SetOpenDocument(parameters.TextDocument.Uri, parameters.TextDocument.Text);
             PublishAll(_workspace.Rebuild());
