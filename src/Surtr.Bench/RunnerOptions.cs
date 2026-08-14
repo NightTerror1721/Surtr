@@ -14,12 +14,23 @@ namespace Surtr.Bench
         public bool Warmup = true;
         public bool SurtrOnly;
         public bool LuaOnly;
+        public bool LuajitOnly;
         public bool BaselineOnly;
+        public bool NoLuajit;
         public string? CsvPath;
         public bool ShowHelp;
 
+        /// <summary>Whether the Surtr side runs. Only the baseline mode and the other engines' only-modes suppress it.</summary>
+        public bool RunSurtr => !LuaOnly && !LuajitOnly && !BaselineOnly;
+
+        /// <summary>Whether the MoonSharp side runs. <c>--no-luajit</c> does not touch it.</summary>
+        public bool RunMoonSharp => !SurtrOnly && !LuajitOnly && !BaselineOnly;
+
+        /// <summary>Whether the LuaJIT side runs. It is on by default and off under any only-mode.</summary>
+        public bool RunLuaJit => !NoLuajit && !SurtrOnly && !LuaOnly && !BaselineOnly;
+
         public const string Usage =
-            "surtrbench — the Surtr VM measured against MoonSharp (Lua) and a C# baseline\n"
+            "surtrbench — the Surtr VM measured against MoonSharp, LuaJIT and a C# baseline\n"
             + "\n"
             + "usage: dotnet run --project src/Surtr.Bench -- [options]\n"
             + "\n"
@@ -30,6 +41,8 @@ namespace Surtr.Bench
             + "  --no-warmup             skip the untimed warm-up run before each case\n"
             + "  --surtr-only            run only the Surtr side\n"
             + "  --lua-only              run only the MoonSharp side\n"
+            + "  --luajit-only           run only the LuaJIT side\n"
+            + "  --no-luajit             run Surtr and MoonSharp but not LuaJIT\n"
             + "  --baseline-only         run only the C# baseline\n"
             + "  --csv <path>            append the results to <path> as CSV\n"
             + "  -h, --help              show this help\n";
@@ -69,6 +82,12 @@ namespace Surtr.Bench
                     case "--lua-only":
                         options.LuaOnly = true;
                         break;
+                    case "--luajit-only":
+                        options.LuajitOnly = true;
+                        break;
+                    case "--no-luajit":
+                        options.NoLuajit = true;
+                        break;
                     case "--baseline-only":
                         options.BaselineOnly = true;
                         break;
@@ -80,9 +99,9 @@ namespace Surtr.Bench
                 }
             }
 
-            int modes = (options.SurtrOnly ? 1 : 0) + (options.LuaOnly ? 1 : 0) + (options.BaselineOnly ? 1 : 0);
+            int modes = (options.SurtrOnly ? 1 : 0) + (options.LuaOnly ? 1 : 0) + (options.LuajitOnly ? 1 : 0) + (options.BaselineOnly ? 1 : 0);
             if (modes > 1)
-                throw new ArgumentException("--surtr-only, --lua-only and --baseline-only are mutually exclusive.");
+                throw new ArgumentException("--surtr-only, --lua-only, --luajit-only and --baseline-only are mutually exclusive.");
 
             return options;
         }

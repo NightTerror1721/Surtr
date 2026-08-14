@@ -15,7 +15,7 @@ namespace Surtr.Bench
     /// Compiles the embedded Surtr module once, loads it into one runtime, and hands back cached
     /// <see cref="SurtrMethodInfo"/> handles so a timed loop pays only the call, never the front end.
     /// </summary>
-    internal sealed class SurtrDriver : IDisposable
+    internal sealed class SurtrDriver : IBenchEngine, IDisposable
     {
         // Mirrors the module-path derivation ModuleEmitterTests relies on: a file at
         // <root>/bench/Bench.surtr is module "bench". Nothing here touches the disk.
@@ -91,18 +91,16 @@ namespace Surtr.Bench
             }
         }
 
-        /// <summary>Calls one workload once and returns its int result.</summary>
-        public long CallInt(string function, long size)
-        {
-            _argument[0] = SurtrValue.CreateInt((int)size);
-            return _runtime.Invoke(_methods[function], _argument).AsInt;
-        }
+        public string Name => "surtr";
 
-        /// <summary>Calls one workload once and returns its float result.</summary>
-        public double CallFloat(string function, long size)
+        /// <summary>
+        /// Calls one workload once and returns its result as the numeric type its case returns.
+        /// </summary>
+        public double Call(Workload workload, long size)
         {
             _argument[0] = SurtrValue.CreateInt((int)size);
-            return _runtime.Invoke(_methods[function], _argument).AsFloat;
+            SurtrValue result = _runtime.Invoke(_methods[workload.Name], _argument);
+            return workload.Kind == WorkloadKind.Int ? result.AsInt : result.AsFloat;
         }
 
         /// <summary>

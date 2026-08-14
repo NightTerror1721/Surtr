@@ -284,13 +284,13 @@ Run the test suite:
 dotnet test Surtr.sln
 ```
 
-Benchmark the VM against MoonSharp (Lua) and a C# baseline. Always use `-c Release` — the Debug build roughly halves Surtr's throughput — and read the `spread` column before trusting a ratio:
+Benchmark the VM against MoonSharp and LuaJIT (both Lua) and a C# baseline. Always use `-c Release` — the Debug build roughly halves Surtr's throughput — and read the `spread` column before trusting a ratio:
 
 ```
 dotnet run --project src/Surtr.Bench -c Release
 ```
 
-`surtrbench --help` lists the flags (`--workload <substring>`, `--iters <n>`, `--scale <factor>`, `--surtr-only`/`--lua-only`/`--baseline-only`, `--csv <path>`). Run with a release build when the .NET 10 preview SDK is the one installed.
+LuaJIT runs through `luajit.native`'s x64 `lua51.dll` (copied to the output by the csproj; the driver is a P/Invoke over the Lua 5.1 C API), and is on by default. `surtrbench --help` lists the flags (`--workload <substring>`, `--iters <n>`, `--scale <factor>`, `--surtr-only`/`--lua-only`/`--luajit-only`/`--baseline-only`, `--no-luajit`, `--csv <path>`). Run with a release build when the .NET 10 preview SDK is the one installed.
 
 There is no lint config or CI yet — add commands here once those exist rather than assuming a standard `dotnet format` invocation applies.
 

@@ -37,15 +37,24 @@ namespace Surtr.Bench
         public int Run()
         {
             SurtrDriver? surtr = null;
-            LuaDriver? lua = null;
+            LuaDriver? moon = null;
+            NativeLuaDriver? luajit = null;
             try
             {
-                if (!_options.LuaOnly && !_options.BaselineOnly)
+                if (_options.RunSurtr)
                     surtr = SurtrDriver.Build(Workloads.ModuleSource);
-                if (!_options.SurtrOnly && !_options.BaselineOnly)
-                    lua = LuaDriver.Load(Workloads.LuaSource);
+                if (_options.RunMoonSharp)
+                    moon = LuaDriver.Load(Workloads.LuaSource);
+                if (_options.RunLuaJit)
+                    luajit = NativeLuaDriver.Load(Workloads.LuaSource);
 
-                PrintHeader(surtr != null, lua != null);
+                // Surtr first: it is the reference engine the ratios and the geomeans are relative to.
+                var engines = new List<IBenchEngine>();
+                if (surtr != null) engines.Add(surtr);
+                if (moon != null) engines.Add(moon);
+                if (luajit != null) engines.Add(luajit);
+
+                PrintHeader(engines);
 
                 var rows = new List<CsvRow>();
                 bool allOk = true;
@@ -58,38 +67,37 @@ namespace Surtr.Bench
                     long size = ScaledSize(workload.Size);
                     double expected = RunBaseline(workload, size);
 
-                    bool haveSurtr = surtr != null;
-                    bool haveLua = lua != null;
-
                     // One run per engine per case, checked against the C# reference. This also
                     // warms the code paths before the timed loop.
-                    double surtrResult = haveSurtr ? SurtrOnce(surtr!, workload, size) : 0;
-                    double luaResult = haveLua ? lua!.CallNumber(workload.Name, size) : 0;
-                    bool ok = Verified(workload, expected, surtrResult, luaResult, haveSurtr, haveLua);
+                    var results = new double[engines.Count];
+                    for (int i = 0; i < engines.Count; i++)
+                        results[i] = engines[i].Call(workload, size);
+                    bool ok = Verified(workload, expected, results);
                     allOk = allOk && ok;
 
-                    Measurement surtrMs = haveSurtr
-                        ? Measure(() => SurtrOnce(surtr!, workload, size), _options.Iterations, _options.Warmup, surtr!.Collect)
-                        : default;
-                    Measurement luaMs = haveLua
-                        ? Measure(() => lua!.CallNumber(workload.Name, size), _options.Iterations, _options.Warmup)
-                        : default;
+                    var engineMs = new Measurement[engines.Count];
+                    for (int i = 0; i < engines.Count; i++)
+                    {
+                        IBenchEngine engine = engines[i];
+                        engineMs[i] = Measure(() => engine.Call(workload, size), _options.Iterations, _options.Warmup, engine.Collect);
+                    }
                     Measurement baselineMs = Measure(() => RunBaseline(workload, size), _options.Iterations, _options.Warmup);
 
-                    PrintRow(workload, size, surtrMs, luaMs, baselineMs, ok, haveSurtr, haveLua);
-                    rows.Add(new CsvRow(workload.Name, size, surtrMs, luaMs, baselineMs, ok, haveSurtr, haveLua));
+                    PrintRow(workload, size, engineMs, baselineMs, ok, engines);
+                    rows.Add(new CsvRow(workload.Name, size, engineMs, baselineMs, ok));
                 }
 
-                PrintSummary(rows);
+                PrintSummary(rows, engines);
 
                 if (_options.CsvPath != null)
-                    AppendCsv(_options.CsvPath, rows);
+                    AppendCsv(_options.CsvPath, rows, engines);
 
                 return allOk ? 0 : 1;
             }
             finally
             {
                 surtr?.Dispose();
+                luajit?.Dispose();
             }
         }
 
@@ -99,23 +107,24 @@ namespace Surtr.Bench
         private long ScaledSize(long size)
             => Math.Max(1L, (long)(size * _options.Scale));
 
-        private static double SurtrOnce(SurtrDriver surtr, Workload workload, long size)
-            => workload.Kind == WorkloadKind.Int ? surtr.CallInt(workload.Name, size) : surtr.CallFloat(workload.Name, size);
-
         private static double RunBaseline(Workload workload, long size)
             => workload.Kind == WorkloadKind.Int ? workload.BaselineInt!(size) : workload.BaselineFloat!(size);
 
-        private static bool Verified(Workload workload, double expected, double surtrResult, double luaResult, bool haveSurtr, bool haveLua)
+        private static bool Verified(Workload workload, double expected, double[] results)
         {
             if (workload.Kind == WorkloadKind.Int)
             {
-                return (!haveSurtr || Math.Abs(surtrResult - expected) < 0.5)
-                    && (!haveLua || Math.Abs(luaResult - expected) < 0.5);
+                foreach (double result in results)
+                    if (Math.Abs(result - expected) >= 0.5)
+                        return false;
+                return true;
             }
 
             double tolerance = Math.Max(1.0, Math.Abs(expected)) * 1e-9;
-            return (!haveSurtr || Math.Abs(surtrResult - expected) <= tolerance)
-                && (!haveLua || Math.Abs(luaResult - expected) <= tolerance);
+            foreach (double result in results)
+                if (Math.Abs(result - expected) > tolerance)
+                    return false;
+            return true;
         }
 
         /// <summary>
@@ -155,13 +164,16 @@ namespace Surtr.Bench
             return new Measurement(samples[iterations / 2], min, max);
         }
 
-        private void PrintHeader(bool haveSurtr, bool haveLua)
+        private void PrintHeader(IReadOnlyList<IBenchEngine> engines)
         {
             Console.WriteLine("Surtr benchmark suite: median of {0} runs{1}, sizes fixed", _options.Iterations, _options.Warmup ? " after a warm-up run" : "");
-            string engines = haveSurtr && haveLua
-                ? "Surtr vs MoonSharp 2.0.0"
-                : haveSurtr ? "Surtr" : haveLua ? "MoonSharp 2.0.0" : "C# baseline";
-            Console.WriteLine("Engines: {0}", engines);
+
+            var names = new List<string>();
+            foreach (IBenchEngine engine in engines)
+                names.Add(engine.Name);
+            names.Add("C# baseline");
+            Console.WriteLine("Engines: {0}", string.Join(" vs ", names));
+
             Console.WriteLine("Surtr collects its heap between runs only, never inside the timed region.");
             Console.WriteLine();
         }
@@ -169,95 +181,122 @@ namespace Surtr.Bench
         private static void PrintRow(
             Workload workload,
             long size,
-            Measurement surtrMs,
-            Measurement luaMs,
+            Measurement[] engineMs,
             Measurement baselineMs,
             bool ok,
-            bool haveSurtr,
-            bool haveLua)
+            IReadOnlyList<IBenchEngine> engines)
         {
-            string surtrText = haveSurtr ? FormatMs(surtrMs.Median) : "  —  ";
-            string luaText = haveLua ? FormatMs(luaMs.Median) : "  —  ";
-            string baselineText = FormatMs(baselineMs.Median);
-
-            string ratioText;
-            string inverseText;
-            string spreadText;
-            if (haveSurtr && haveLua && luaMs.Median > 0 && surtrMs.Median > 0)
+            var cells = new List<string>
             {
-                double ratio = luaMs.Median / surtrMs.Median;
-                ratioText = FormatRatio(ratio);
-                inverseText = FormatRatio(1.0 / ratio);
-                spreadText = FormatPercent((surtrMs.Max - surtrMs.Min) / surtrMs.Median);
-            }
-            else
+                Pad(workload.Name, 13),
+                Pad(size.ToString(CultureInfo.InvariantCulture), 10),
+            };
+
+            foreach (Measurement measurement in engineMs)
+                cells.Add(Pad(FormatMs(measurement.Median), 12));
+            cells.Add(Pad(FormatMs(baselineMs.Median), 12));
+
+            // One ratio per engine after the first: how much slower that engine is than the
+            // reference (Surtr, which is always first in the list).
+            for (int i = 1; i < engines.Count; i++)
             {
-                ratioText = "  —  ";
-                inverseText = "  —  ";
-                spreadText = haveSurtr ? FormatPercent((surtrMs.Max - surtrMs.Min) / surtrMs.Median) : "  —  ";
+                string ratio = engineMs[0].Median > 0 && engineMs[i].Median > 0
+                    ? FormatRatio(engineMs[i].Median / engineMs[0].Median)
+                    : "  —  ";
+                cells.Add(Pad(ratio, 9));
             }
 
-            Console.WriteLine(
-                string.Join("  ",
-                    Pad(workload.Name, 13),
-                    Pad(size.ToString(CultureInfo.InvariantCulture), 10),
-                    Pad(surtrText, 12),
-                    Pad(luaText, 12),
-                    Pad(baselineText, 12),
-                    Pad(ratioText, 9),
-                    Pad(inverseText, 9),
-                    Pad(spreadText, 8),
-                    ok ? "ok" : "FAIL"));
+            string spread = engineMs.Length > 0 && engineMs[0].Median > 0
+                ? FormatPercent((engineMs[0].Max - engineMs[0].Min) / engineMs[0].Median)
+                : "  —  ";
+            cells.Add(Pad(spread, 8));
+            cells.Add(ok ? "ok" : "FAIL");
+
+            Console.WriteLine(string.Join("  ", cells));
         }
 
-        private void PrintSummary(List<CsvRow> rows)
+        private static void PrintSummary(List<CsvRow> rows, IReadOnlyList<IBenchEngine> engines)
         {
-            double logSum = 0;
-            int count = 0;
-            foreach (var row in rows)
+            bool wrote = false;
+            for (int i = 1; i < engines.Count; i++)
             {
-                if (row.HaveSurtr && row.HaveLua && row.SurtrMs > 0 && row.LuaMs > 0)
+                double logSum = 0;
+                int count = 0;
+                foreach (var row in rows)
                 {
-                    logSum += Math.Log(row.LuaMs / row.SurtrMs);
-                    count++;
+                    double referenceMs = row.EngineMeasurements[0].Median;
+                    double otherMs = row.EngineMeasurements[i].Median;
+                    if (referenceMs > 0 && otherMs > 0)
+                    {
+                        logSum += Math.Log(otherMs / referenceMs);
+                        count++;
+                    }
+                }
+
+                if (count > 0)
+                {
+                    if (!wrote)
+                    {
+                        Console.WriteLine();
+                        wrote = true;
+                    }
+
+                    double geometricMean = Math.Exp(logSum / count);
+                    Console.WriteLine(
+                        "geometric mean speed-up ({0} over {1}, {2} cases): {3}x",
+                        engines[0].Name,
+                        engines[i].Name,
+                        count,
+                        geometricMean.ToString("F1", CultureInfo.InvariantCulture));
                 }
             }
-
-            if (count > 0)
-            {
-                double geometricMean = Math.Exp(logSum / count);
-                Console.WriteLine();
-                Console.WriteLine("geometric mean speed-up (Surtr over MoonSharp, {0} cases): {1}x", count, geometricMean.ToString("F1", CultureInfo.InvariantCulture));
-            }
         }
 
-        private static void AppendCsv(string path, List<CsvRow> rows)
+        private static void AppendCsv(string path, List<CsvRow> rows, IReadOnlyList<IBenchEngine> engines)
         {
             bool appendHeader = !File.Exists(path) || new FileInfo(path).Length == 0;
             var line = new StringBuilder();
             using (var writer = new StreamWriter(path, append: true))
             {
                 if (appendHeader)
-                    writer.WriteLine("workload,size,surtr_ms,lua_ms,csharp_ms,surtr_over_lua,lua_over_surtr,spread_pct,ok");
+                {
+                    line.Append("workload,size");
+                    foreach (IBenchEngine engine in engines)
+                        line.Append(',').Append(engine.Name).Append("_ms");
+                    line.Append(",csharp_ms");
+                    for (int i = 1; i < engines.Count; i++)
+                    {
+                        line.Append(',').Append(engines[0].Name).Append("_over_").Append(engines[i].Name);
+                        line.Append(',').Append(engines[i].Name).Append("_over_").Append(engines[0].Name);
+                    }
+                    line.Append(",spread_pct,ok");
+                    writer.WriteLine(line);
+                }
 
                 foreach (var row in rows)
                 {
                     line.Clear();
                     line.Append(row.Name);
                     line.Append(',').Append(row.Size.ToString(CultureInfo.InvariantCulture));
-                    line.Append(',').Append(row.HaveSurtr ? row.SurtrMs.ToString("F3", CultureInfo.InvariantCulture) : "");
-                    line.Append(',').Append(row.HaveLua ? row.LuaMs.ToString("F3", CultureInfo.InvariantCulture) : "");
+                    foreach (Measurement measurement in row.EngineMeasurements)
+                        line.Append(',').Append(measurement.Median.ToString("F3", CultureInfo.InvariantCulture));
                     line.Append(',').Append(row.BaselineMs.ToString("F3", CultureInfo.InvariantCulture));
-                    if (row.HaveSurtr && row.HaveLua && row.LuaMs > 0 && row.SurtrMs > 0)
+                    for (int i = 1; i < row.EngineMeasurements.Length; i++)
                     {
-                        line.Append(',').Append((row.LuaMs / row.SurtrMs).ToString("F3", CultureInfo.InvariantCulture));
-                        line.Append(',').Append((row.SurtrMs / row.LuaMs).ToString("F3", CultureInfo.InvariantCulture));
+                        if (row.EngineMeasurements[0].Median > 0 && row.EngineMeasurements[i].Median > 0)
+                        {
+                            line.Append(',').Append((row.EngineMeasurements[i].Median / row.EngineMeasurements[0].Median).ToString("F3", CultureInfo.InvariantCulture));
+                            line.Append(',').Append((row.EngineMeasurements[0].Median / row.EngineMeasurements[i].Median).ToString("F3", CultureInfo.InvariantCulture));
+                        }
+                        else
+                        {
+                            line.Append(",,");
+                        }
                     }
+                    if (row.EngineMeasurements.Length > 0 && row.EngineMeasurements[0].Median > 0)
+                        line.Append(',').Append(FormatPercent((row.EngineMeasurements[0].Max - row.EngineMeasurements[0].Min) / row.EngineMeasurements[0].Median));
                     else
-                    {
-                        line.Append(",,");
-                    }
-                    line.Append(',').Append(row.HaveSurtr ? FormatPercent((row.MaxMs - row.MinMs) / row.SurtrMs) : "");
+                        line.Append(',');
                     line.Append(',').Append(row.Ok ? "ok" : "FAIL");
                     writer.WriteLine(line);
                 }
@@ -280,27 +319,17 @@ namespace Surtr.Bench
         {
             public readonly string Name;
             public readonly long Size;
-            public readonly double SurtrMs;
-            public readonly double MinMs;
-            public readonly double MaxMs;
-            public readonly double LuaMs;
+            public readonly Measurement[] EngineMeasurements;
             public readonly double BaselineMs;
             public readonly bool Ok;
-            public readonly bool HaveSurtr;
-            public readonly bool HaveLua;
 
-            public CsvRow(string name, long size, Measurement surtrMs, Measurement luaMs, Measurement baselineMs, bool ok, bool haveSurtr, bool haveLua)
+            public CsvRow(string name, long size, Measurement[] engineMeasurements, Measurement baselineMs, bool ok)
             {
                 Name = name;
                 Size = size;
-                SurtrMs = haveSurtr ? surtrMs.Median : 0;
-                MinMs = haveSurtr ? surtrMs.Min : 0;
-                MaxMs = haveSurtr ? surtrMs.Max : 0;
-                LuaMs = haveLua ? luaMs.Median : 0;
+                EngineMeasurements = engineMeasurements;
                 BaselineMs = baselineMs.Median;
                 Ok = ok;
-                HaveSurtr = haveSurtr;
-                HaveLua = haveLua;
             }
         }
     }

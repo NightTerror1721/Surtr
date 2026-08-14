@@ -10,7 +10,7 @@ namespace Surtr.Bench
     /// Loads the Lua chunk into one MoonSharp script and hands back the function values, so a timed
     /// loop pays only the call, never the parse.
     /// </summary>
-    internal sealed class LuaDriver
+    internal sealed class LuaDriver : IBenchEngine
     {
         private readonly Script _script;
         private readonly Dictionary<string, DynValue> _functions = new();
@@ -40,8 +40,10 @@ namespace Surtr.Bench
             _functions = functions;
         }
 
+        public string Name => "lua";
+
         /// <summary>Calls one workload once and returns its numeric result.</summary>
-        public double CallNumber(string function, long size)
-            => _script.Call(_functions[function], (int)size).Number;
+        public double Call(Workload workload, long size)
+            => _script.Call(_functions[workload.Name], (int)size).Number;
     }
 }
