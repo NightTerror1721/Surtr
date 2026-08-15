@@ -178,6 +178,8 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.Swap:
                 case OpCode.Swap2:
                 case OpCode.PushNull:
+                case OpCode.PushTrue:
+                case OpCode.PushFalse:
                 case OpCode.Pop:
                 case OpCode.Ldc0:
                 case OpCode.Ldc1:
@@ -257,7 +259,6 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.BoxChar:
                 case OpCode.Unbox:
                 case OpCode.StrLen:
-                case OpCode.StrCat:
                 case OpCode.StrHash:
                 case OpCode.StrGet:
                 case OpCode.ArrLen:
@@ -295,6 +296,20 @@ namespace Surtr.Bytecode.Emit
                     builder.Append(' ').Append((short)ReadU16(chunk, operand)).AppendLine();
                     return operand + 2;
 
+                case OpCode.PushChar:
+                {
+                    // A control character rendered as itself would corrupt the listing, so anything
+                    // outside printable ASCII is shown as its code unit instead.
+                    int unit = ReadU16(chunk, operand);
+
+                    if (unit >= 0x20 && unit < 0x7F)
+                        builder.Append(" '").Append((char)unit).Append('\'').AppendLine();
+                    else
+                        builder.Append(" U+").Append(unit.ToString("X4", CultureInfo.InvariantCulture)).AppendLine();
+
+                    return operand + 2;
+                }
+
                 case OpCode.PushI32:
                     builder.Append(' ').Append(ReadI32(chunk, operand)).AppendLine();
                     return operand + 4;
@@ -313,9 +328,18 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.LdlS:
                 case OpCode.StlS:
                 case OpCode.TupUnpack:
+                case OpCode.TupGetC:
                 case OpCode.UpValueGet:
+                case OpCode.StrCat:
+                case OpCode.PushAbsent:
                     builder.Append(' ').Append(chunk.Code[operand]).AppendLine();
                     return operand + 1;
+
+                case OpCode.IncLocal:
+                    builder.Append(' ').Append(chunk.Code[operand])
+                           .Append(" by ").Append((sbyte)chunk.Code[operand + 1])
+                           .AppendLine();
+                    return operand + 2;
 
                 case OpCode.Ldl:
                 case OpCode.Stl:
@@ -332,6 +356,7 @@ namespace Surtr.Bytecode.Emit
                 // ---- type access table -------------------------------------------------------
                 case OpCode.InstanceOf:
                 case OpCode.Cast:
+                case OpCode.CastOrNull:
                 case OpCode.ArrNew:
                 case OpCode.DictNew:
                 case OpCode.DictKeys:
@@ -342,6 +367,7 @@ namespace Surtr.Bytecode.Emit
 
                 case OpCode.InstanceOfX:
                 case OpCode.CastX:
+                case OpCode.CastOrNullX:
                 case OpCode.ObjNewX:
                 case OpCode.BoxAsX:
                     return AppendType(builder, chunk, operand, ReadI32(chunk, operand), 4);
@@ -389,6 +415,8 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.JPNZ:
                 case OpCode.JPN:
                 case OpCode.JPNN:
+                case OpCode.JPA:
+                case OpCode.JPNA:
                 case OpCode.JP:
                 case OpCode.JPEQ:
                 case OpCode.JPFEQ:
@@ -412,6 +440,8 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.JPNZX:
                 case OpCode.JPNX:
                 case OpCode.JPNNX:
+                case OpCode.JPAX:
+                case OpCode.JPNAX:
                 case OpCode.JPX:
                 case OpCode.JPEQX:
                 case OpCode.JPFEQX:

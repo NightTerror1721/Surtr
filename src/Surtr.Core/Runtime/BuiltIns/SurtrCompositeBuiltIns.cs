@@ -26,8 +26,9 @@ namespace Surtr.Runtime.BuiltIns
     /// <c>tuple</c> and <c>closure</c> declare no parameters and keep the thin surface, and that
     /// is not an oversight either: both are parameterised by a list whose length varies per value,
     /// and a tuple's element type varies per <em>index</em>, so no fixed parameter could name what
-    /// <c>get(index)</c> returns. Element access there stays what it always was - <c>TupGet</c>
-    /// with a statically known index, which the compiler already types exactly.
+    /// <c>get(index)</c> returns. Element access there stays an opcode with a statically known
+    /// index, which the compiler already types exactly - <c>TupGetC</c>, which carries that index
+    /// as an immediate precisely because it can never be anything but a constant.
     /// </para>
     /// <para>
     /// Every member here mirrors behaviour that also lives as an ordinary method on

@@ -231,5 +231,66 @@ namespace Surtr.Tests.VM
         }
 
         #endregion
+
+        #region CastOrNull
+
+        [Fact]
+        public void CastOrNull_ToAMatchingType_KeepsTheReference()
+        {
+            using var runtime = new SurtrRuntime();
+            var fixture = new Fixture();
+            var instance = runtime.NewInstance(fixture.B);
+
+            var builder = new BytecodeBuilder();
+            int typeIndex = builder.AddType(VmMetadataHelpers.HandleFor(fixture.Module, fixture.A));
+            builder.LoadReference(instance).Op(OpCode.CastOrNull).I16(typeIndex).Op(OpCode.ReturnValue);
+
+            var result = Run(runtime, fixture.Module, builder);
+            Assert.Same(instance, runtime.Resolve<SurtrInstance>(result));
+        }
+
+        [Fact]
+        public void CastOrNull_ToAnUnrelatedType_YieldsNullRatherThanTrapping()
+        {
+            using var runtime = new SurtrRuntime();
+            var fixture = new Fixture();
+            var instance = runtime.NewInstance(fixture.A);
+
+            var builder = new BytecodeBuilder();
+            int typeIndex = builder.AddType(VmMetadataHelpers.HandleFor(fixture.Module, fixture.C));
+            builder.LoadReference(instance).Op(OpCode.CastOrNull).I16(typeIndex).Op(OpCode.ReturnValue);
+
+            var result = Run(runtime, fixture.Module, builder);
+            Assert.True(result.IsNullReference);
+        }
+
+        [Fact]
+        public void CastOrNull_ANullReference_StaysNull()
+        {
+            using var runtime = new SurtrRuntime();
+            var fixture = new Fixture();
+
+            var builder = new BytecodeBuilder();
+            int typeIndex = builder.AddType(VmMetadataHelpers.HandleFor(fixture.Module, fixture.C));
+            builder.Op(OpCode.PushNull).Op(OpCode.CastOrNull).I16(typeIndex).Op(OpCode.IsNull).Op(OpCode.ReturnValue);
+
+            Assert.True(Run(runtime, fixture.Module, builder).AsBool);
+        }
+
+        [Fact]
+        public void CastOrNullX_UsesAFourByteTypeIndex()
+        {
+            using var runtime = new SurtrRuntime();
+            var fixture = new Fixture();
+            var instance = runtime.NewInstance(fixture.A);
+
+            var builder = new BytecodeBuilder();
+            int typeIndex = builder.AddType(VmMetadataHelpers.HandleFor(fixture.Module, fixture.C));
+            builder.LoadReference(instance).Op(OpCode.CastOrNullX).I32(typeIndex).Op(OpCode.ReturnValue);
+
+            Assert.True(Run(runtime, fixture.Module, builder).IsNullReference);
+        }
+
+        #endregion
     }
 }

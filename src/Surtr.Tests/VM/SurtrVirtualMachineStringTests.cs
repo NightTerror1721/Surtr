@@ -37,11 +37,54 @@ namespace Surtr.Tests.VM
             var right = runtime.NewString("bar");
 
             var builder = new BytecodeBuilder();
-            builder.LoadReference(left).LoadReference(right).Op(OpCode.StrCat).Op(OpCode.ReturnValue);
+            builder.LoadReference(left).LoadReference(right).Op(OpCode.StrCat).U8(2).Op(OpCode.ReturnValue);
 
             var result = Run(runtime, builder);
             var resultString = runtime.Resolve<SurtrString>(result);
             Assert.Equal("foobar", resultString!.Value);
+        }
+
+        /// <summary>
+        /// The count is what makes an interpolation one allocation instead of n - 1, so the wide
+        /// path has to join in stack order and get the length right in one pass.
+        /// </summary>
+        [Fact]
+        public void StrCat_JoinsSeveralOperandsInStackOrder()
+        {
+            using var runtime = new SurtrRuntime();
+
+            var builder = new BytecodeBuilder();
+            builder
+                .LoadReference(runtime.NewString("a"))
+                .LoadReference(runtime.NewString("bb"))
+                .LoadReference(runtime.NewString(string.Empty))
+                .LoadReference(runtime.NewString("ccc"))
+                .LoadReference(runtime.NewString("d"))
+                .Op(OpCode.StrCat).U8(5)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal("abbcccd", runtime.Resolve<SurtrString>(Run(runtime, builder))!.Value);
+        }
+
+        /// <summary>Past the reusable buffer's initial size, so the growth path runs too.</summary>
+        [Fact]
+        public void StrCat_JoinsMoreOperandsThanTheBufferStartsWith()
+        {
+            using var runtime = new SurtrRuntime();
+
+            const int count = 20;
+            var builder = new BytecodeBuilder();
+
+            for (int i = 0; i < count; i++)
+                builder.LoadReference(runtime.NewString(i.ToString()));
+
+            builder.Op(OpCode.StrCat).U8(count).Op(OpCode.ReturnValue);
+
+            var expected = new System.Text.StringBuilder();
+            for (int i = 0; i < count; i++)
+                expected.Append(i);
+
+            Assert.Equal(expected.ToString(), runtime.Resolve<SurtrString>(Run(runtime, builder, maxStackSize: 64))!.Value);
         }
 
         [Fact]

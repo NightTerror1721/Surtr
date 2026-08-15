@@ -80,17 +80,23 @@ or a version mismatch, and both are reported as `SurtrImageFormatException` rath
 | Field | Type | Meaning |
 |---|---|---|
 | `magic` | `u64` | `0x444F4D5254525553` — `SURTRMOD` in ASCII, little-endian |
-| `formatVersion` | `u16` | Currently **2**. A reader refuses anything else outright. |
+| `formatVersion` | `u16` | Currently **3**. A reader refuses anything else outright. |
 | `strings` | `i32` count, then each: `i32` byte length + UTF-8 bytes | The string table. |
 
-`formatVersion` counts changes to how a module is **framed**. It is deliberately separate from the
-opcode set's own append-only rule, which counts changes to what runs *inside* it — the two evolve
-for different reasons and a bump in one says nothing about the other.
+`formatVersion` counts changes to how a module is **framed**. It is normally separate from the
+opcode set, which evolves under its own rule — every value in `OpCode.cs` is written out and final,
+so a new instruction takes a free value and no already-written image means anything different.
 
 **Version 2** added a type's own attribute list, written where a member's already was: a
 `SurtrTypeInfo` extends `SurtrMemberInfo` and `Language-Syntax.md` §11 decorates a class as readily
 as a field, so a class-level attribute that worked in the process that compiled it and vanished
 through an image was the worst of both.
+
+**Version 3** is the one exception to that separation, and the reason the rule now exists. The
+instruction set was regrouped by family and renumbered once, deliberately, to fix its values before
+anything shipped — so every code byte of a version 2 image means something different under this
+reader. Refusing to load one is the whole point of the field; there is no upgrade path, and none is
+wanted. Recompile.
 
 The string table is written in front of the body but is only complete once the body has been walked,
 so the writer builds the body into a buffer first and prepends the table.
@@ -379,8 +385,10 @@ member a back-pointer to its module.
 
 For anyone changing the format or the instruction set:
 
-1. **Opcode values are append-only.** Every value is on disk somewhere. A new opcode goes at the end
-   of the enum, whatever family it belongs to.
+1. **Opcode values are written out and final.** `OpCode.cs` spells every value, so nothing is
+   renumbered by inserting a member. A new opcode takes a free value from the tail of the byte
+   space — 0xDD onwards — and is filed with its family; a retired value stays retired rather than
+   being handed to something else.
 2. **A layout change bumps `formatVersion`.** Readers refuse a version they do not know rather than
    attempting a partial read; there is no forward compatibility and none is promised.
 3. **A section's field order is part of the format.** The reader is a straight sequential pass with

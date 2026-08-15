@@ -21,7 +21,7 @@ This file is the orientation; each of these goes deep on one thing. Read the rel
 |---|---|
 | `docs/Language-Syntax.md` | The surface language, and the reasoning behind each choice. §1.2 is the authoritative reserved word list, §5.7 the operator table. |
 | `docs/Runtime-Model.md` | How classes, methods, properties, enums, interfaces and modules fit together, what linking builds, and what the compiler owes the runtime. |
-| `docs/Opcodes.md` | All 214 opcodes by family, with values, encodings and stack effects. Generated from `OpCode.cs`, which stays the source of truth. |
+| `docs/Opcodes.md` | All 221 opcodes by family, with values, encodings and stack effects. Generated from `OpCode.cs`, which stays the source of truth. |
 | `docs/Module-Format.md` | The `.surtrc` byte layout, and what is bound at load rather than written. |
 | `docs/VM-Plan.md` | The interpreter's design decisions, the remaining gaps, and the ordered plan. |
 
@@ -181,11 +181,11 @@ A member implementing a generic interface is matched on the **erased** signature
 
 ## The instruction set
 
-`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — currently **214 opcodes**, leaving 42 free values in the `byte` space. It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
+`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — **221 opcodes**, `0x00`–`0xDC`, leaving 35 free values in the `byte` space. It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
 
 Surtr is a stack machine. Operands come from the evaluation stack; pool indices, jump offsets and argument counts are encoded inline after the opcode byte as little-endian immediates.
 
-**The enum value is the on-disk encoding.** Members are implicitly numbered from `Nop = 0x00`, so inserting one in the middle renumbers everything after it and silently invalidates every previously compiled chunk. Treat the list as append-only.
+**The enum value is the on-disk encoding, and every value is now written out and final.** The set is grouped by family, and each member's value is spelled rather than implied — which is what separates where an opcode is *filed* (readability) from what it is *numbered* (the format). Under implicit numbering the two were welded together, so a member inserted in the middle silently renumbered everything after it, which is why the set used to grow at the tail regardless of family. A new opcode now takes a free value from `0xDD` up and is filed with its family; a retired value stays retired. `src/Surtr.Tests/Bytecode/OpCodeValueTests.cs` pins the whole table, so renumbering is deliberate or it is a failing test.
 
 Naming conventions that run through the whole set:
 
@@ -196,9 +196,12 @@ Naming conventions that run through the whole set:
 | `Str` prefix | string operands compared by text rather than by identity |
 | `X` suffix | widens an immediate to 4 bytes |
 | `S` suffix | narrows an immediate to 1 byte |
+| `C` suffix | moves an operand off the stack into the instruction as a constant (`TupGetC`) |
 | trailing digit | dedicated opcode for that fixed index, no immediate at all |
 
 **There is no separate opcode for calling host code.** Where a call lands is a property of the `SurtrMethodInfo` the call site names, not of the call site, and the interpreter reads it anyway — a virtual call can resolve onto a native override, so the `ImplKind` test exists in the shared entry sequence regardless. Every `Invoke`/`Call` reaches bytecode and host bodies alike, for one byte load and a perfectly predicted branch. `CallGlobalNative` is the exception, and only because host globals live in a different *table*, not because they are native.
+
+**Four instructions exist to move work out of the stack and into the instruction**, and each is the compiler's default rather than an option: `PushTrue`/`PushFalse`/`PushChar` keep booleans and characters out of the constant pool entirely; `TupGetC` carries a tuple index that §5.3 already makes a constant; `IncLocal` is a whole `i += 1` — load, add, store — in one dispatch that never touches the operand stack; and `CastOrNull` is `as?` in one type test where `InstanceOf` plus a branch costs two plus a spill. `StrCat` takes a **count**, so a whole `+` spine or a whole interpolation is one instruction and one allocation instead of n − 1 of each — `MethodBodyEmitter` flattens both shapes before emitting.
 
 Allocation opcodes carry the full parameterised type (`ArrNew`, `ArrNewX`, `ArrPack`, `TupPack`, `DictNew`, `DictPack`, `DictKeys`, `DictValues`): one immediate gives both the descriptor the object keeps and the element family its slots are initialised from. `StaticFieldGet`/`StaticFieldSet` cover statics *and* module-level variables — Surtr has no true globals, so a module variable is a static of its module and reaches its storage the same way. `Switch`/`SwitchLookup` measure their offsets from their own opcode byte, unlike every other branch, because a variable-length instruction has no fixed "next address" at emit time.
 
@@ -374,7 +377,7 @@ Runtime-side gaps are in `docs/VM-Plan.md` §3; what the language design newly o
 
 The VM opcode suites in `src/Surtr.Tests/VM` predate the emitter and still use their own `BytecodeBuilder`, which pokes at `SurtrChunk` directly. That is deliberate: an opcode test should exercise the byte layout it is testing, not whatever the emitter decided to emit. New tests that are *about* a whole module belong in `src/Surtr.Tests/Bytecode/Emit` and should go through `SurtrModuleBuilder`.
 
-**The append-only rule in `OpCode.cs` is now in force.** `Bytecode/Image/` serializes bytecode, so the enum value of every existing member is on disk somewhere: inserting one in the middle renumbers everything after it and silently invalidates every image already written. New opcodes go at the end, whatever family they belong to, and `SurtrModuleImage.FormatVersion` covers changes to how a module is *framed* rather than to what runs inside it.
+**Opcode values are final, not append-only.** `Bytecode/Image/` serializes bytecode, so an enum value is on disk somewhere. The set was regrouped by family and renumbered once — the pass that also wrote every value out explicitly — and `SurtrModuleImage.FormatVersion` went to **3** so an image written before it is refused rather than misread. That is the last renumbering: from here a new opcode takes a free value (`0xDD`+) and is filed with its family, and `SurtrModuleImage.FormatVersion` goes back to covering only how a module is *framed* rather than what runs inside it.
 
 ## Coding conventions
 

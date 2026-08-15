@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode.Emit;
 using Surtr.Compiler.Binding;
@@ -300,6 +300,16 @@ namespace Surtr.Compiler.CodeGen
                     EmitAssignment(assignment, keepValue: false);
                     return;
 
+                // `i++;` and a `for` loop's step clause. Prefix and postfix differ only in which
+                // value they leave behind, and here neither leaves one — so the distinction the
+                // long form exists to make has nothing to make it about, and the update is one
+                // instruction.
+                case BoundUnaryExpression unary when IsIncrementOrDecrement(unary.Operator):
+                    if (TryEmitInPlaceStep(unary))
+                        return;
+
+                    break;
+
                 // `a?.f();` still has to skip the call when `a` is null, but neither path leaves a
                 // value — so the guard is emitted without one rather than pushed and popped.
                 case BoundNullConditionalExpression access:
@@ -533,10 +543,7 @@ namespace Surtr.Compiler.CodeGen
             PopTargets();
 
             Code.MarkLabel(step);
-            Code.LoadLocal(variable);
-            Code.LoadInt(1);
-            Code.Add(SurtrValueTypeCode.Integer);
-            Code.StoreLocal(variable);
+            Code.IncrementLocal(variable, 1);
             Code.Jump(top);
             Code.MarkLabel(end);
         }
@@ -577,10 +584,7 @@ namespace Surtr.Compiler.CodeGen
             PopTargets();
 
             Code.MarkLabel(step);
-            Code.LoadLocal(index);
-            Code.LoadInt(1);
-            Code.Add(SurtrValueTypeCode.Integer);
-            Code.StoreLocal(index);
+            Code.IncrementLocal(index, 1);
             Code.Jump(top);
             Code.MarkLabel(end);
         }
@@ -659,10 +663,7 @@ namespace Surtr.Compiler.CodeGen
             PopTargets();
 
             Code.MarkLabel(step);
-            Code.LoadLocal(index);
-            Code.LoadInt(1);
-            Code.Add(SurtrValueTypeCode.Integer);
-            Code.StoreLocal(index);
+            Code.IncrementLocal(index, 1);
             Code.Jump(top);
             Code.MarkLabel(end);
         }
@@ -1405,11 +1406,27 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Emits <c>as?</c>, which §4.8 states as the compiler's: <c>InstanceOf</c> plus a branch.
+        /// Emits <c>as?</c>: one <c>CastOrNull</c> to a reference type, and a tested unbox to a
+        /// primitive.
         /// </summary>
+        /// <remarks>
+        /// <c>CastOrNull</c> exists because a reference target needs nothing else — the failure
+        /// answer occupies the same slot as the subject, so the whole conversion is one type test.
+        /// A primitive target still needs the branch: the success path unboxes and the failure path
+        /// has no unboxed value to give, so the two arms differ by more than which value they
+        /// carry.
+        /// </remarks>
         private void EmitSafeCast(BoundConversionExpression conversion)
         {
             var target = conversion.Type.NonNullable;
+
+            if (!target.IsPrimitive || target.IsVoid)
+            {
+                Expression(conversion.Operand);
+                Code.CastToOrNull(Descriptors.Emit(target));
+                return;
+            }
+
             var value = _method.DeclareLocal("$candidate");
             var failed = Code.NewLabel();
             var end = Code.NewLabel();
@@ -1421,11 +1438,7 @@ namespace Surtr.Compiler.CodeGen
             Code.JumpIfFalse(failed);
 
             Code.LoadLocal(value);
-
-            if (target.IsPrimitive && !target.IsVoid)
-                Code.Unbox();
-            else
-                Code.CastTo(Descriptors.Emit(target));
+            Code.Unbox();
 
             Code.Jump(end);
             Code.MarkLabel(failed);
@@ -1463,16 +1476,21 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
+            // `a + b + c` is one concatenation, not two: joined pairwise it allocates an
+            // intermediate nothing reads, and copies `a` twice. The whole spine goes in one go.
+            if (binary.Operator == BinaryOperator.Add && operands == SurtrValueTypeCode.String)
+            {
+                EmitStringConcat(binary);
+                return;
+            }
+
             Expression(binary.Left);
             Expression(binary.Right);
 
             switch (binary.Operator)
             {
                 case BinaryOperator.Add:
-                    if (operands == SurtrValueTypeCode.String)
-                        Code.StrCat();
-                    else
-                        Code.Add(operands);
+                    Code.Add(operands);
                     return;
 
                 case BinaryOperator.Subtract: Code.Subtract(operands); return;
@@ -1538,6 +1556,51 @@ namespace Surtr.Compiler.CodeGen
                     _ => SurtrComparison.GreaterOrEqual,
                 },
                 SurtrValueTypeCode.Integer);
+        }
+
+        /// <summary>How many operands one <c>StrCat</c> can take: its count immediate is a byte.</summary>
+        private const int MaxConcatOperands = 255;
+
+        /// <summary>Emits a whole <c>+</c> spine over strings as one counted concatenation.</summary>
+        /// <remarks>
+        /// The spine is walked in order, so operands are evaluated left to right exactly as the
+        /// pairwise emission did — flattening changes what is allocated, not when anything runs.
+        /// </remarks>
+        private void EmitStringConcat(BoundBinaryExpression binary)
+        {
+            var parts = new List<BoundExpression>();
+            FlattenStringConcat(binary, parts);
+
+            int pending = 0;
+
+            foreach (var part in parts)
+            {
+                Expression(part);
+
+                if (++pending == MaxConcatOperands)
+                {
+                    Code.StrCat(MaxConcatOperands);
+                    pending = 1;
+                }
+            }
+
+            if (pending > 1)
+                Code.StrCat(pending);
+        }
+
+        private void FlattenStringConcat(BoundExpression expression, List<BoundExpression> parts)
+        {
+            // Only a string-typed `+` is a concatenation; anything else — a user-defined operator,
+            // an interpolation, a call returning a string — is one operand of this one.
+            if (expression is BoundBinaryExpression { Operator: BinaryOperator.Add } nested &&
+                TypeCodeOf(nested.Type) == SurtrValueTypeCode.String)
+            {
+                FlattenStringConcat(nested.Left, parts);
+                FlattenStringConcat(nested.Right, parts);
+                return;
+            }
+
+            parts.Add(expression);
         }
 
         private SurtrMethodInfo StringCompareTo()
@@ -1814,6 +1877,9 @@ namespace Surtr.Compiler.CodeGen
         {
             if (!keepValue)
             {
+                if (TryEmitInPlaceIncrement(assignment))
+                    return;
+
                 Store(assignment.Target, () => Expression(assignment.Value));
                 return;
             }
@@ -1824,6 +1890,86 @@ namespace Surtr.Compiler.CodeGen
 
             Store(assignment.Target, () => Code.LoadLocal(value));
             Code.LoadLocal(value);
+        }
+
+        /// <summary>
+        /// Recognises <c>i = i + k</c> over an integer local and emits it as one instruction.
+        /// </summary>
+        /// <remarks>
+        /// §5.7's compound assignments arrive expanded — <c>i += 1</c> is already <c>i = i + 1</c>
+        /// in the bound tree — so this one shape covers both spellings, and covers the step of
+        /// every hand-written counted loop with it. Only statement position qualifies: an
+        /// assignment whose value something reads has to leave that value behind, and
+        /// <c>IncLocal</c> leaves nothing.
+        /// </remarks>
+        private bool TryEmitInPlaceIncrement(BoundAssignmentExpression assignment)
+        {
+            if (assignment.Value is not BoundBinaryExpression binary)
+                return false;
+
+            if (binary.Operator is not (BinaryOperator.Add or BinaryOperator.Subtract))
+                return false;
+
+            if (TypeCodeOf(assignment.Target.Type) != SurtrValueTypeCode.Integer)
+                return false;
+
+            if (binary.Right is not BoundLiteralExpression { Value: long written })
+                return false;
+
+            if (!TryLocalSlot(assignment.Target, out int slot) ||
+                !TryLocalSlot(binary.Left, out int operand) ||
+                slot != operand)
+            {
+                return false;
+            }
+
+            long delta = binary.Operator == BinaryOperator.Subtract ? -written : written;
+
+            if (delta < int.MinValue || delta > int.MaxValue)
+                return false;
+
+            // Out-of-range slots and deltas fall back to load-add-store inside the emitter, which
+            // is what this path would otherwise have emitted anyway.
+            Code.IncrementLocal(slot, (int)delta);
+            return true;
+        }
+
+        private static bool IsIncrementOrDecrement(UnaryOperator @operator) => @operator
+            is UnaryOperator.PreIncrement or UnaryOperator.PostIncrement
+            or UnaryOperator.PreDecrement or UnaryOperator.PostDecrement;
+
+        /// <summary>Emits a discarded <c>++</c> or <c>--</c> over an integer local in place.</summary>
+        private bool TryEmitInPlaceStep(BoundUnaryExpression unary)
+        {
+            if (TypeCodeOf(unary.Operand.Type) != SurtrValueTypeCode.Integer)
+                return false;
+
+            if (!TryLocalSlot(unary.Operand, out int slot))
+                return false;
+
+            bool up = unary.Operator is UnaryOperator.PreIncrement or UnaryOperator.PostIncrement;
+
+            Code.IncrementLocal(slot, up ? 1 : -1);
+            return true;
+        }
+
+        /// <summary>The frame slot an expression names, when it names one directly.</summary>
+        private bool TryLocalSlot(BoundExpression expression, out int slot)
+        {
+            switch (expression)
+            {
+                case BoundLocalExpression local:
+                    slot = Slot(local.Local).Index;
+                    return true;
+
+                case BoundParameterExpression parameter:
+                    slot = ParameterSlot(parameter.Parameter).Index;
+                    return true;
+
+                default:
+                    slot = -1;
+                    return false;
+            }
         }
 
         /// <summary>
@@ -2394,10 +2540,19 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitIndexRead(BoundIndexExpression index)
         {
+            var target = index.Target.Type.NonNullable;
+
+            // §5.3 makes a tuple index a constant — the binder folds it and hands back a literal —
+            // so it belongs in the instruction rather than on the stack.
+            if (target.TypeKind == TypeSymbolKind.Tuple && index.Index is BoundLiteralExpression { Value: long ordinal })
+            {
+                Expression(index.Target);
+                Code.TupleElement((int)ordinal);
+                return;
+            }
+
             Expression(index.Target);
             Expression(index.Index);
-
-            var target = index.Target.Type.NonNullable;
 
             switch (target.TypeKind)
             {
@@ -2445,12 +2600,17 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Emits an interpolated string as a left-to-right chain of concatenations.
+        /// Emits an interpolated string as one concatenation over all of its parts.
         /// </summary>
         /// <remarks>
         /// Every primitive already declares a native <c>toString</c>, so a non-string part is a call
         /// to that rather than a new opcode — which also means interpolation means exactly what
         /// writing <c>.toString()</c> means.
+        /// <para>
+        /// One <c>StrCat</c> over n parts rather than n - 1 over two each: joined pairwise, every
+        /// intermediate result is a string nothing reads and the leading part is copied once per
+        /// hole. The counted form allocates the answer and fills it.
+        /// </para>
         /// </remarks>
         private void EmitInterpolatedString(BoundInterpolatedStringExpression interpolated)
         {
@@ -2460,13 +2620,23 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
+            int pending = 0;
+
             for (int i = 0; i < interpolated.Parts.Count; i++)
             {
                 EmitAsString(interpolated.Parts[i]);
 
-                if (i > 0)
-                    Code.StrCat();
+                // The count is one byte, so an interpolation with more parts than that folds what
+                // it has so far and carries the result in as the next group's first operand.
+                if (++pending == MaxConcatOperands)
+                {
+                    Code.StrCat(MaxConcatOperands);
+                    pending = 1;
+                }
             }
+
+            if (pending > 1)
+                Code.StrCat(pending);
         }
 
         private void EmitAsString(BoundExpression part)

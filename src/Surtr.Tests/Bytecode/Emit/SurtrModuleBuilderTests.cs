@@ -154,7 +154,7 @@ namespace Surtr.Tests.Bytecode.Emit
                 .LoadString("ab")
                 .LoadString("a")
                 .LoadString("b")
-                .StrCat()
+                .StrCat(2)
                 .StrEQ()
                 .ReturnValue();
 

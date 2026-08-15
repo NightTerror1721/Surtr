@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Binding.Symbols;
 using System;
@@ -188,7 +188,7 @@ namespace Surtr.Compiler.Binding
         /// <c>tuple</c> and <c>closure</c> take no arguments, since both are parameterised by a
         /// <em>list</em> whose length varies per value — so what is reachable on one is the thin
         /// surface the class declares, and element access stays the statically typed
-        /// <c>TupGet</c>.
+        /// <c>TupGetC</c>.
         /// </remarks>
         public NamedTypeSymbol? BackingType(TypeSymbol type)
         {

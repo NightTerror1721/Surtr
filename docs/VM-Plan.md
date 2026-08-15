@@ -211,11 +211,15 @@ fixed "next address" to measure from at emit time.
 
 ## 2. What is implemented
 
-All **214 opcodes** execute; 42 byte values remain free. The twelve added since are the nullable
-primitive family (`PushAbsent`, `IsAbsent`, `IsPresent`, `JPA`/`JPAX`, `JPNA`/`JPNAX`), the boxing
-pair that names a class (`BoxAs`, `BoxAsX`), range construction (`RangeNew`,
-`RangeNewInclusive`), and `StrHash`. All were appended rather than filed next to their families,
-because the enum value is the on-disk encoding. Verified by a throwaway harness covering:
+All **221 opcodes** execute; 35 byte values remain free, `0xDD` onwards. The set has been
+regrouped by family and every value written out explicitly, which is what ended the append-at-the-
+tail rule that had the nullable primitives, `BoxAs`, the ranges and `StrHash` filed nowhere near
+their families. The seven newest are `PushTrue`/`PushFalse`/`PushChar`, which keep booleans and
+characters out of the constant pool; `IncLocal`, a whole `i += 1` in one dispatch; `TupGetC`, a
+tuple index carried as an immediate; and `CastOrNull`/`CastOrNullX`, which close §4.8's `as?`
+obligation. `StrCat` gained a count, so a whole interpolation is one instruction and one
+allocation. That renumbering bumped `SurtrModuleImage.FormatVersion` to 3, once, and is the last
+one: a value is now final. Verified by a throwaway harness covering:
 integer and float arithmetic, loops with backward jumps, intra-module calls, typed array
 allocation and element ops, dictionaries, strings and interned literals, closures with upvalues,
 module-level variables and their static initializer, both switch forms, tag conversions, catching a
@@ -555,9 +559,13 @@ None of these need runtime work; all of them are things the runtime assumes and 
   new instruction — but "to the comparison opcodes that already exist" holds only for the numeric
   ones. `string` has `StrEQ`/`StrNE` and no ordering opcode at all, so `<=>` and all four
   relational operators over strings lower to a call to the existing native `string.compareTo`.
-* **Lower `as?` to `InstanceOf` plus a branch** (`Language-Syntax.md` §5.7). There is no
-  non-throwing cast opcode, and it does not obviously need one; the cost is two type tests on the
-  success path, which is worth measuring before a third cast opcode is added to the set.
+* ~~**Lower `as?` to `InstanceOf` plus a branch**~~ (`Language-Syntax.md` §5.7). **Closed with the
+  third cast opcode this entry was reluctant to add.** The reluctance was misplaced: the failure
+  answer for a reference target is null, which occupies the same slot the subject already does, so
+  `CastOrNull` is one type test and no branch where the written-out lowering was a spill to a
+  local, two type tests, a branch and a join. A *primitive* target still gets the old lowering,
+  and for a reason that is not about cost — the success path unboxes and the failure path has no
+  unboxed value to give, so the two arms genuinely differ.
 * **Reject instantiating an `abstract` class.** `ObjNew` resolves its type index and allocates with
   no `IsAbstract` test — consistent with §1.9, but nothing else checks it either.
 * **Emit a bridge into a generic interface's erased slot.** `SurtrMethodInfo.SignatureKey()` writes

@@ -51,6 +51,29 @@ namespace Surtr.Bytecode.Emit
             _ => throw new ArgumentOutOfRangeException(nameof(index), index, "A frame cannot hold more than 65536 locals; there is no wider form of Stl."),
         };
 
+        /// <summary>Adds a constant to an integer local, in whichever form reaches it.</summary>
+        public SurtrCodeEmitter IncrementLocal(SurtrLocal local, int delta) => IncrementLocal(LocalIndex(local), delta);
+
+        /// <summary>Adds a constant to the integer local at <paramref name="index"/>, in whichever form reaches it.</summary>
+        /// <remarks>
+        /// <c>IncLocal</c> is three bytes and one dispatch, but its immediates are one byte each.
+        /// Past either limit this falls back to what the update always was - load, push, add,
+        /// store - so a caller never has to ask whether the fused form applies.
+        /// </remarks>
+        public SurtrCodeEmitter IncrementLocal(int index, int delta)
+        {
+            if (delta == 0)
+                return this;
+
+            if (index <= byte.MaxValue && delta >= sbyte.MinValue && delta <= sbyte.MaxValue)
+                return IncLocal(index, delta);
+
+            return LoadLocal(index)
+                .LoadInt(delta)
+                .Add()
+                .StoreLocal(index);
+        }
+
         private int LocalIndex(SurtrLocal local)
         {
             if (!local.IsValid)
@@ -104,16 +127,20 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Loads a float literal through the constant pool.</summary>
         public SurtrCodeEmitter LoadFloat(double value) => LoadConstant(_module.ConstantFloat(value));
 
-        /// <summary>Loads a boolean literal through the constant pool.</summary>
+        /// <summary>Materialises a boolean literal without touching the constant pool.</summary>
         /// <remarks>
-        /// A pool entry rather than <c>PushI8</c> followed by <c>I2B</c>: booleans carry their own
-        /// tag, there are exactly two of them, and the pool deduplicates - so the whole module pays
-        /// at most two slots and every use is a single-byte load.
+        /// There are exactly two booleans, so each has its own single-byte opcode. That is as cheap
+        /// as a pool load and costs no pool slot - and the first ten slots, the ones with dedicated
+        /// opcodes behind them, are worth reserving for values with no inline form at all.
         /// </remarks>
-        public SurtrCodeEmitter LoadBool(bool value) => LoadConstant(_module.ConstantBool(value));
+        public SurtrCodeEmitter LoadBool(bool value) => value ? PushTrue() : PushFalse();
 
-        /// <summary>Loads a character literal through the constant pool.</summary>
-        public SurtrCodeEmitter LoadChar(char value) => LoadConstant(_module.ConstantChar(value));
+        /// <summary>Materialises a character literal without touching the constant pool.</summary>
+        /// <remarks>
+        /// A character is a UTF-16 code unit, so it fits an inline 2-byte immediate exactly and
+        /// never needs the pool.
+        /// </remarks>
+        public SurtrCodeEmitter LoadChar(char value) => PushChar(value);
 
         /// <summary>Loads a string literal, interned into one object per distinct text at load time.</summary>
         public SurtrCodeEmitter LoadString(string text) => LoadConstant(_module.StringLiteral(text));
@@ -219,6 +246,13 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Casts the top value to the named type.</summary>
         public SurtrCodeEmitter CastTo(SurtrClassReference type) => CastTo(_module.Type(type));
 
+        /// <summary>Casts the top value or replaces it with null, in the narrowest encoding that reaches the type.</summary>
+        public SurtrCodeEmitter CastToOrNull(SurtrTypeToken type)
+            => TypeIndex(type) <= ushort.MaxValue ? CastOrNull(type) : CastOrNullX(type);
+
+        /// <summary>Emits <c>as?</c> against the named type.</summary>
+        public SurtrCodeEmitter CastToOrNull(SurtrClassReference type) => CastToOrNull(_module.Type(type));
+
         /// <summary>Tests the top value's type, in the narrowest encoding that reaches it.</summary>
         public SurtrCodeEmitter TestInstanceOf(SurtrTypeToken type)
             => TypeIndex(type) <= ushort.MaxValue ? InstanceOf(type) : InstanceOfX(type);
@@ -241,6 +275,14 @@ namespace Surtr.Bytecode.Emit
 
         /// <summary>Expands a tuple into <paramref name="size"/> stack entries.</summary>
         public SurtrCodeEmitter UnpackTuple(int size) => TupUnpack(size);
+
+        /// <summary>Reads the tuple element at a statically known index.</summary>
+        /// <remarks>
+        /// The form an element access should use. A tuple's element types vary per index, so a
+        /// written index is always a constant - <see cref="TupGet"/> is for the one case where it
+        /// genuinely is not, a lowered <c>for-in</c>.
+        /// </remarks>
+        public SurtrCodeEmitter TupleElement(int index) => TupGetC(index);
 
         /// <summary>Allocates an empty dictionary.</summary>
         public SurtrCodeEmitter NewDictionary(SurtrClassReference dictionaryType) => DictNew(_module.Type(dictionaryType));

@@ -72,11 +72,20 @@ namespace Surtr.Bytecode.Image
         /// The layout version these bytes were written in.
         /// </summary>
         /// <remarks>
-        /// Bumped whenever the layout changes in a way an older reader would misread. It is
-        /// deliberately separate from the opcode set's own append-only rule: this counts changes to
-        /// how a module is <em>framed</em>, and that one counts changes to what runs inside it.
+        /// <para>
+        /// Bumped whenever the layout changes in a way an older reader would misread. It normally
+        /// counts changes to how a module is <em>framed</em> rather than to what runs inside it,
+        /// since the opcode set has its own rule - every value in <c>OpCode.cs</c> is written out
+        /// and final, so a new instruction takes a free value and breaks nothing.
+        /// </para>
+        /// <para>
+        /// Version 3 is the exception, and the reason the rule exists. The set was regrouped by
+        /// family and renumbered once, deliberately, to fix its values before anything shipped -
+        /// so every byte of every version 2 image means something different now. Refusing to load
+        /// one is the whole point of the version, and there is no upgrade path: recompile.
+        /// </para>
         /// </remarks>
-        internal const ushort FormatVersion = 2;
+        internal const ushort FormatVersion = 3;
 
         private readonly byte[] _bytes;
         private readonly string _path;

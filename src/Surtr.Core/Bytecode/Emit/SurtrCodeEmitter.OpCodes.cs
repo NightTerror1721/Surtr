@@ -135,6 +135,31 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Emits <see cref="OpCode.PushNull"/>.</summary>
         public SurtrCodeEmitter PushNull() => Simple(OpCode.PushNull, 0, 1);
 
+        /// <summary>Emits <see cref="OpCode.PushTrue"/>.</summary>
+        public SurtrCodeEmitter PushTrue() => Simple(OpCode.PushTrue, 0, 1);
+
+        /// <summary>Emits <see cref="OpCode.PushFalse"/>.</summary>
+        public SurtrCodeEmitter PushFalse() => Simple(OpCode.PushFalse, 0, 1);
+
+        /// <summary>Emits <see cref="OpCode.PushChar"/>.</summary>
+        /// <param name="value">The literal, carried inline as a UTF-16 code unit.</param>
+        public SurtrCodeEmitter PushChar(char value) => WithU16(OpCode.PushChar, value, 0, 1, "value");
+
+        /// <summary>Emits <see cref="OpCode.PushAbsent"/>.</summary>
+        /// <param name="typeCode">Which primitive family the missing value belongs to.</param>
+        /// <exception cref="ArgumentException"><paramref name="typeCode"/> is not a primitive.</exception>
+        public SurtrCodeEmitter PushAbsent(SurtrValueTypeCode typeCode)
+        {
+            // Only a primitive has a nullable form that needs a tag: a nullable reference is just
+            // a reference, and null is already representable there.
+            if (!typeCode.IsPrimitive)
+                throw new ArgumentException(
+                    $"PushAbsent needs a primitive type code; {typeCode} is not one.",
+                    nameof(typeCode));
+
+            return WithU8(OpCode.PushAbsent, typeCode.ToByte(), 0, 1, nameof(typeCode));
+        }
+
         /// <summary>Emits <see cref="OpCode.PushI8"/>.</summary>
         /// <param name="value">The literal, sign-extended to a full integer at run time.</param>
         public SurtrCodeEmitter PushI8(int value) => WithI8(OpCode.PushI8, value, 0, 1, "value");
@@ -260,6 +285,26 @@ namespace Surtr.Bytecode.Emit
         /// <param name="import">A module-local import from <see cref="SurtrModuleBuilder.NativeVariable"/>.</param>
         public SurtrCodeEmitter StgX(SurtrNativeVariableToken import) => WithI32(OpCode.StgX, import.Index, 1, 0);
 
+        /// <summary>Emits <see cref="OpCode.IncLocal"/>.</summary>
+        /// <param name="localIndex">The slot to update, which must be within the first 256.</param>
+        /// <param name="delta">How much to add, as a signed byte; a negative value decrements.</param>
+        /// <remarks>
+        /// Nothing here falls back to the long form when either operand is out of range - that is
+        /// <see cref="IncrementLocal(int, int)"/>'s job, in the tier above. This is the literal
+        /// instruction, and it touches the operand stack not at all.
+        /// </remarks>
+        public SurtrCodeEmitter IncLocal(int localIndex, int delta)
+        {
+            ThrowIfFinished();
+            CheckRange(localIndex, 0, byte.MaxValue, OpCode.IncLocal, "localIdx");
+            CheckRange(delta, sbyte.MinValue, sbyte.MaxValue, OpCode.IncLocal, "delta");
+
+            _code.Add((byte)OpCode.IncLocal);
+            _code.Add((byte)localIndex);
+            _code.Add((byte)delta);
+            return this;
+        }
+
         #endregion
 
         #region Arithmetic Operations
@@ -367,21 +412,6 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Emits <see cref="OpCode.IsNotNull"/>.</summary>
         public SurtrCodeEmitter IsNotNull() => Simple(OpCode.IsNotNull, 1, 1);
 
-        /// <summary>Emits <see cref="OpCode.PushAbsent"/>.</summary>
-        /// <param name="typeCode">Which primitive family the missing value belongs to.</param>
-        /// <exception cref="ArgumentException"><paramref name="typeCode"/> is not a primitive.</exception>
-        public SurtrCodeEmitter PushAbsent(SurtrValueTypeCode typeCode)
-        {
-            // Only a primitive has a nullable form that needs a tag: a nullable reference is just
-            // a reference, and null is already representable there.
-            if (!typeCode.IsPrimitive)
-                throw new ArgumentException(
-                    $"PushAbsent needs a primitive type code; {typeCode} is not one.",
-                    nameof(typeCode));
-
-            return WithU8(OpCode.PushAbsent, typeCode.ToByte(), 0, 1, nameof(typeCode));
-        }
-
         /// <summary>Emits <see cref="OpCode.IsAbsent"/>.</summary>
         public SurtrCodeEmitter IsAbsent() => Simple(OpCode.IsAbsent, 1, 1);
 
@@ -480,6 +510,14 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter CastX(SurtrTypeToken type)
             => WithI32(OpCode.CastX, TypeIndex(type), 1, 1);
 
+        /// <summary>Emits <see cref="OpCode.CastOrNull"/>: the <c>as?</c> form, which yields null rather than trapping.</summary>
+        public SurtrCodeEmitter CastOrNull(SurtrTypeToken type)
+            => WithU16(OpCode.CastOrNull, TypeIndex(type), 1, 1, "typeIdx");
+
+        /// <summary>Emits <see cref="OpCode.CastOrNullX"/>.</summary>
+        public SurtrCodeEmitter CastOrNullX(SurtrTypeToken type)
+            => WithI32(OpCode.CastOrNullX, TypeIndex(type), 1, 1);
+
         #endregion
 
         #region String Operations
@@ -487,8 +525,20 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Emits <see cref="OpCode.StrLen"/>.</summary>
         public SurtrCodeEmitter StrLen() => Simple(OpCode.StrLen, 1, 1);
 
-        /// <summary>Emits <see cref="OpCode.StrCat"/>.</summary>
-        public SurtrCodeEmitter StrCat() => Simple(OpCode.StrCat, 2, 1);
+        /// <summary>Emits <see cref="OpCode.StrCat"/>, joining the top <paramref name="count"/> strings.</summary>
+        /// <param name="count">How many operands to join, from 2 to 255.</param>
+        /// <remarks>
+        /// A whole <c>+</c> spine or a whole interpolation should reach this as one call. Joining
+        /// them two at a time builds every intermediate string, which is n - 1 allocations and a
+        /// prefix copied n times, where one instruction with a count allocates exactly once.
+        /// </remarks>
+        public SurtrCodeEmitter StrCat(int count)
+        {
+            if (count < 2)
+                throw new ArgumentOutOfRangeException(nameof(count), count, "StrCat joins at least two strings.");
+
+            return WithU8(OpCode.StrCat, count, count, 1, nameof(count));
+        }
 
         /// <summary>Emits <see cref="OpCode.StrHash"/>.</summary>
         public SurtrCodeEmitter StrHash() => Simple(OpCode.StrHash, 1, 1);
@@ -567,8 +617,16 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Emits <see cref="OpCode.TupLen"/>.</summary>
         public SurtrCodeEmitter TupLen() => Simple(OpCode.TupLen, 1, 1);
 
-        /// <summary>Emits <see cref="OpCode.TupGet"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.TupGet"/>, taking the index off the stack.</summary>
+        /// <remarks>
+        /// For an index that is genuinely computed - a lowered <c>for-in</c>'s loop counter. A
+        /// written tuple index is a constant, and <see cref="TupGetC"/> is the form for that.
+        /// </remarks>
         public SurtrCodeEmitter TupGet() => Simple(OpCode.TupGet, 2, 1);
+
+        /// <summary>Emits <see cref="OpCode.TupGetC"/>, with the index as an immediate.</summary>
+        /// <param name="index">Which element, from 0 to 254 - a tuple's arity is capped at 255.</param>
+        public SurtrCodeEmitter TupGetC(int index) => WithU8(OpCode.TupGetC, index, 1, 1, nameof(index));
 
         #endregion
 

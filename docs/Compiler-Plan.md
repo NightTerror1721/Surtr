@@ -395,9 +395,12 @@ Each is a decision about where code *runs*, not about what a program means:
 | `for-in` over an `IIterable<T>` | `iterate()` + `moveNext()`/`current` through the dispatch table |
 | `finally` | the block on every exit path, plus a catch-all that runs it and re-raises |
 | `try`/`catch` | protected regions on the method builder, plus handler labels |
-| `as?` | `InstanceOf` + branch |
+| `as?` | `CastOrNull` to a reference type; `InstanceOf` + branch + `Unbox` to a primitive |
 | `<=>` and the relational operators on `string` | a call to native `string.compareTo` |
 | string `switch` | `StrHash` + `SwitchOn` + an equality confirm per hash |
+| a `+` spine or an interpolation over strings | one counted `StrCat`, so one allocation rather than n − 1 |
+| a tuple element read | `TupGetC`, the index as an immediate — §5.3 already made it a constant |
+| a discarded `i++`, `i -= k` or a `for` step over an `int` local | `IncLocal`, one dispatch that never touches the operand stack |
 | an integer or `char` `switch` | `SwitchOn`, which picks a jump table or a key table |
 | lambda | a **static synthetic method** plus a closure whose upvalues are its captures |
 | object creation, field and property access, `this`/`super` | `ObjNew`, `FieldGet`/`FieldSet`, the accessor calls |
@@ -572,7 +575,8 @@ assume, and anything that stops holding is a miscompile rather than a missing fe
   vtable entry either way, so `Binder.CheckSealedOverrides` is the only thing between `sealed` and a
   member that says it closes its branch and does not.
 * **Lower `<=>` and the relational operators on `string`** to `string.compareTo`.
-* **Lower `as?`** to `InstanceOf` plus a branch.
+* **Lower `as?`** to `CastOrNull`, or to `InstanceOf` plus a branch where the target is a primitive
+  and the success path has to unbox.
 * **Check argument counts, types and defaults at the call site.** The interpreter trusts them.
 
 ---

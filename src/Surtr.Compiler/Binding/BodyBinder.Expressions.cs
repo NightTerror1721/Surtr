@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Binding.BoundTree;
 using Surtr.Compiler.Binding.Symbols;
@@ -2016,8 +2016,9 @@ namespace Surtr.Compiler.Binding
         /// A tuple's element type varies per index, so nothing could type <c>t[i]</c> for a running
         /// <c>i</c> — which is exactly why <c>tuple</c> declares no generic parameter and no
         /// <c>get(index)</c>. The index therefore has to fold here, and what it folds to becomes the
-        /// expression: <c>TupGet</c> reads its index off the stack, so leaving a <c>const</c>'s
-        /// declaration to be read at run time would emit a load for something already known.
+        /// expression: <c>TupGetC</c> carries its index as an immediate, so leaving a
+        /// <c>const</c>'s declaration to be read at run time would emit a load for something the
+        /// instruction can spell itself.
         /// </para>
         /// <para>
         /// A range check is part of the same answer rather than an extra rule. The arity is in the

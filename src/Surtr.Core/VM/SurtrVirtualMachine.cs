@@ -7,6 +7,7 @@ using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using Surtr.Runtime.Utilities;
 using System;
+using System.Buffers;
 using System.Runtime.CompilerServices;
 
 namespace Surtr.VM
@@ -84,6 +85,33 @@ namespace Surtr.VM
         /// the collector from sweeping either.
         /// </remarks>
         private readonly SurtrRawValue[] _roots;
+
+        /// <summary>Scratch for <c>StrCat</c>'s operands when it joins more than two strings.</summary>
+        /// <remarks>
+        /// A field rather than a local array so a wide concatenation allocates the result and
+        /// nothing else. Reusing it is sound because <c>StrCat</c> reads its operands, builds the
+        /// string and is done - it transfers control nowhere in between, so no second use of the
+        /// buffer can overlap the first, not even through a re-entrant native call.
+        /// </remarks>
+        private string[] _concatBuffer = new string[8];
+
+        /// <summary>Writes <c>StrCat</c>'s gathered operands into the result it has just sized.</summary>
+        /// <remarks>
+        /// A cached static delegate, so the wide path costs one allocation - the string itself.
+        /// Only the first <c>count</c> entries of the buffer belong to this instruction; the rest
+        /// are whatever a previous concatenation left there.
+        /// </remarks>
+        private static readonly SpanAction<char, (string[] Parts, int Count)> ConcatParts =
+            static (span, state) =>
+            {
+                int at = 0;
+                for (int i = 0; i < state.Count; i++)
+                {
+                    string part = state.Parts[i];
+                    part.AsSpan().CopyTo(span.Slice(at));
+                    at += part.Length;
+                }
+            };
 
         private SurtrRawValue* _stack;
         private SurtrRawValue* _stackLimit;
@@ -715,6 +743,23 @@ namespace Surtr.VM
                     ip += 4;
                     goto Dispatch;
 
+                // The two booleans and every character literal are pushed inline. They could go
+                // through the constant pool, but the pool's first ten slots have single-byte
+                // opcodes behind them and are better spent on the values that have no inline form
+                // at all - floats and strings.
+                case OpCode.PushTrue:
+                    *sp++ = SurtrValue.TagMaskBool | 1UL;
+                    goto Dispatch;
+
+                case OpCode.PushFalse:
+                    *sp++ = SurtrValue.TagMaskBool;
+                    goto Dispatch;
+
+                case OpCode.PushChar:
+                    *sp++ = SurtrValue.TagMaskChar | (uint)(ip[0] | (ip[1] << 8));
+                    ip += 2;
+                    goto Dispatch;
+
                 case OpCode.Pop:
                     sp--;
                     goto Dispatch;
@@ -802,6 +847,17 @@ namespace Surtr.VM
                     globals[nativeVariableSlots[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))]] = *--sp;
                     ip += 4;
                     goto Dispatch;
+
+                // A whole `i += 1` without the operand stack: one load, one add, one store, and the
+                // slot never leaves the frame. Written out it is Ldl, PushI8, Add, Stl - four
+                // dispatches for an update that a counted loop performs once per iteration.
+                case OpCode.IncLocal:
+                {
+                    SurtrRawValue* slot = frameBase + ip[0];
+                    *slot = SurtrValue.TagMaskInt | (uint)((int)*slot + (sbyte)ip[1]);
+                    ip += 2;
+                    goto Dispatch;
+                }
                 #endregion
 
                 #region Arithmetic Operations
@@ -1305,6 +1361,49 @@ namespace Surtr.VM
 
                     goto Dispatch;
                 }
+
+                // `as?`. One type test where the lowering it replaces - spill, InstanceOf, branch,
+                // Cast - pays for two, and the failure answer is already representable in the slot
+                // the subject occupies.
+                case OpCode.CastOrNull:
+                {
+                    var target = typeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
+                    ip += 2;
+
+                    SurtrRef subject = (SurtrRef)(*(sp - 1));
+                    if (subject != 0)
+                    {
+                        var subjectClass = ((SurtrObject)entities[subject]!).Class;
+                        bool matches = target.Kind == SurtrMemberKind.Interface
+                            ? subjectClass.Implements((SurtrInterface)target)
+                            : subjectClass.IsSubclassOf((SurtrClass)target);
+
+                        if (!matches)
+                            *(sp - 1) = SurtrValue.TagMaskReference;
+                    }
+
+                    goto Dispatch;
+                }
+
+                case OpCode.CastOrNullX:
+                {
+                    var target = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
+                    ip += 4;
+
+                    SurtrRef subject = (SurtrRef)(*(sp - 1));
+                    if (subject != 0)
+                    {
+                        var subjectClass = ((SurtrObject)entities[subject]!).Class;
+                        bool matches = target.Kind == SurtrMemberKind.Interface
+                            ? subjectClass.Implements((SurtrInterface)target)
+                            : subjectClass.IsSubclassOf((SurtrClass)target);
+
+                        if (!matches)
+                            *(sp - 1) = SurtrValue.TagMaskReference;
+                    }
+
+                    goto Dispatch;
+                }
                 #endregion
 
                 #region String Operations
@@ -1323,16 +1422,43 @@ namespace Surtr.VM
 
                 case OpCode.StrCat:
                 {
+                    int count = *ip++;
                     current.IP = ip;
                     _sp = sp;
-                    string right = ((SurtrString)entities[(SurtrRef)(*(sp - 1))]!).Value;
-                    string left = ((SurtrString)entities[(SurtrRef)(*(sp - 2))]!).Value;
 
-                    SurtrRef reference = context.EntityRegistry.Register(new SurtrString(string.Concat(left, right)));
+                    sp -= count;
+
+                    // Two operands is what every `a + b` is, and it needs no buffer at all. Anything
+                    // wider gathers into the reusable one and writes the result in a single pass,
+                    // so an n-part concatenation allocates one string rather than n - 1.
+                    string joined;
+                    if (count == 2)
+                    {
+                        joined = string.Concat(
+                            ((SurtrString)entities[(SurtrRef)sp[0]]!).Value,
+                            ((SurtrString)entities[(SurtrRef)sp[1]]!).Value);
+                    }
+                    else
+                    {
+                        var parts = _concatBuffer;
+                        if (parts.Length < count)
+                            parts = _concatBuffer = new string[count];
+
+                        int total = 0;
+                        for (int i = 0; i < count; i++)
+                        {
+                            string part = ((SurtrString)entities[(SurtrRef)sp[i]]!).Value;
+                            parts[i] = part;
+                            total += part.Length;
+                        }
+
+                        joined = string.Create(total, (parts, count), ConcatParts);
+                    }
+
+                    SurtrRef reference = context.EntityRegistry.Register(new SurtrString(joined));
                     entities = context.EntityRegistry.Entities;
 
-                    sp--;
-                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
                     goto Dispatch;
                 }
 
@@ -1621,6 +1747,25 @@ namespace Surtr.VM
                 case OpCode.TupGet:
                 {
                     int index = (int)*--sp;
+                    var elements = ((SurtrTuple)entities[(SurtrRef)(*(sp - 1))]!).Elements;
+
+                    if ((uint)index >= (uint)elements.Length)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw IndexOutOfRange(index, elements.Length, "tuple");
+                    }
+
+                    *(sp - 1) = elements[index].Raw;
+                    goto Dispatch;
+                }
+
+                // What an element access actually compiles to: a tuple index has to be a constant
+                // for the element's type to be known, so the push TupGet needs is one the compiler
+                // can always fold into the instruction.
+                case OpCode.TupGetC:
+                {
+                    int index = *ip++;
                     var elements = ((SurtrTuple)entities[(SurtrRef)(*(sp - 1))]!).Elements;
 
                     if ((uint)index >= (uint)elements.Length)
