@@ -140,7 +140,8 @@ namespace Surtr.Compiler.Syntax
 
             if (reader.Match(TokenType.Arrow))
             {
-                return new ClosureTypeSyntax(SpanFrom(start), elements, ParseType());
+                TypeSyntax closureReturn = ParseType();
+                return new ClosureTypeSyntax(SpanFrom(start), elements, closureReturn);
             }
 
             return new TupleTypeSyntax(SpanFrom(start), elements);

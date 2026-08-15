@@ -39,7 +39,21 @@ namespace Surtr.LanguageServer
                 if (message.IsResponse)
                     continue;
 
-                Handle(message);
+                // One request must never take the server down with it. A handler that throws would
+                // otherwise unwind out of the loop and kill the process, which the editor sees only
+                // as a server that vanished — it restarts it, the next request kills it again, and
+                // the actual fault is never reported anywhere the user can see it.
+                try
+                {
+                    Handle(message);
+                }
+                catch (Exception ex)
+                {
+                    Log(ex);
+
+                    if (message.IsRequest)
+                        Fail(message, RpcErrorCodes.InternalError, ex.Message);
+                }
             }
         }
 
@@ -324,6 +338,30 @@ namespace Surtr.LanguageServer
                         Diagnostics = diagnostics,
                     }));
             }
+
+            // A diagnostic that names something which is not a source file belongs to the workspace
+            // as a whole — Rebuild attributes a failed compilation to the root directory — so no
+            // document publishes it and it would be lost. That is the case where every feature goes
+            // quiet at once, which is exactly when the reason has to reach the user.
+            var workspaceFailures = new List<string>();
+            foreach (var pair in grouped)
+            {
+                if (touched.Contains(pair.Key))
+                    continue;
+
+                foreach (SurtrDiagnostic diagnostic in pair.Value)
+                    workspaceFailures.Add(diagnostic.Message);
+            }
+
+            if (workspaceFailures.Count > 0)
+            {
+                _connection.Write(RpcMessage.Notification("window/showMessage",
+                    new ShowMessageParams
+                    {
+                        Type = 1,
+                        Message = "Surtr: " + string.Join(" | ", workspaceFailures),
+                    }));
+            }
         }
 
         private static LspDiagnostic ToLsp(SurtrDiagnostic source, TextLines lines)
@@ -358,6 +396,24 @@ namespace Surtr.LanguageServer
             }
 
             return string.Empty;
+        }
+
+        /// <summary>
+        /// Records a fault that a request survived. Nothing may go to the console — that is the
+        /// protocol's own channel — so the one place left is a file beside the server's crash log.
+        /// </summary>
+        private static void Log(Exception exception)
+        {
+            try
+            {
+                File.AppendAllText(
+                    Path.Combine(Path.GetTempPath(), "surtr-lsp.log"),
+                    exception + Environment.NewLine);
+            }
+            catch (IOException)
+            {
+                // Nowhere to write and nothing to report it on; the request already failed cleanly.
+            }
         }
 
         private void Reply(RpcMessage request, object? result)

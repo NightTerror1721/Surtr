@@ -29,7 +29,9 @@ export function activate(): void {
     };
 
     client = new LanguageClient('surtr', 'Surtr Language Server', server, options);
-    void client.start();
+    client.start().catch((error: unknown) => {
+        void window.showErrorMessage(`Surtr language server failed to start: ${String(error)}`);
+    });
 }
 
 export function deactivate(): Thenable<void> | undefined {

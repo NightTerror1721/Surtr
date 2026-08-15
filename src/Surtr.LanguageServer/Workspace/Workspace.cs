@@ -178,12 +178,32 @@ namespace Surtr.LanguageServer.Workspace
         }
 
         /// <summary>Converts a <c>file://</c> URI (or a plain path) to a local path.</summary>
+        /// <remarks>
+        /// An editor percent-encodes the drive's colon — VSCode sends <c>file:///d%3A/Projects</c> —
+        /// and that stops <see cref="Uri"/> from recognizing a DOS path, so <c>LocalPath</c> hands
+        /// back <c>/d:/Projects</c> with the URI's leading slash still on it. Resolving that would
+        /// name a directory on whichever drive the server happens to be running from, and the
+        /// workspace would then find no source files at all rather than fail: every feature goes
+        /// quiet at once, with nothing reported anywhere. The slash is dropped here instead.
+        /// </remarks>
         public static string PathFromUri(string uri)
         {
-            if (Uri.TryCreate(uri, UriKind.Absolute, out var parsed) && parsed.IsFile)
-                return Path.GetFullPath(parsed.LocalPath);
+            if (string.IsNullOrEmpty(uri))
+                return string.Empty;
 
-            return Path.GetFullPath(uri);
+            string path = Uri.TryCreate(uri, UriKind.Absolute, out var parsed) && parsed.IsFile
+                ? parsed.LocalPath
+                : uri;
+
+            if (path.Length >= 3
+                && (path[0] == '/' || path[0] == '\\')
+                && char.IsLetter(path[1])
+                && path[2] == ':')
+            {
+                path = path.Substring(1);
+            }
+
+            return path.Length == 0 ? string.Empty : Path.GetFullPath(path);
         }
 
         /// <summary>Converts a local path to the <c>file://</c> URI LSP uses.</summary>

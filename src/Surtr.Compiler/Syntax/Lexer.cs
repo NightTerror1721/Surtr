@@ -66,6 +66,20 @@ namespace Surtr.Compiler.Syntax
             reader = new CharReader(source);
         }
 
+        /// <summary>Scans a fragment of a buffer, starting at <paramref name="origin"/>.</summary>
+        /// <param name="source">
+        /// The buffer, cut off where the fragment ends — the end is what stops the scan, since a
+        /// lexer runs to the end of what it is given.
+        /// </param>
+        /// <param name="origin">Where the fragment starts, in that buffer's coordinates.</param>
+        /// <param name="diagnostics">Where to report problems.</param>
+        internal Lexer(SurtrSourceBuffer source, SourceLocation origin, SurtrDiagnosticBag? diagnostics)
+        {
+            this.source = source;
+            this.diagnostics = diagnostics ?? new SurtrDiagnosticBag();
+            reader = new CharReader(source, origin);
+        }
+
         /// <summary>Everything the lexer has found wrong with the source.</summary>
         public SurtrDiagnosticBag Diagnostics => diagnostics;
 

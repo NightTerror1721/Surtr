@@ -80,12 +80,7 @@ namespace Surtr.LanguageServer.Workspace
             BoundExpression? receiver = FindReceiverEndingAt(binder, filePath, text.Length, dot.Span.Start.Position);
             if (receiver is not null)
             {
-                foreach (var member in binder.MemberLookup.Reachable(receiver.Type))
-                {
-                    if (MemberItem(member, includeStatics: false) is CompletionItem item)
-                        items.Add(item);
-                }
-
+                AddReachableMembers(binder, receiver.Type, includeStatics: false, items);
                 return new CompletionList { IsIncomplete = false, Items = items };
             }
 
@@ -102,12 +97,7 @@ namespace Surtr.LanguageServer.Workspace
             {
                 if (scope.ThisType is not null)
                 {
-                    foreach (var member in binder.MemberLookup.Reachable(scope.ThisType))
-                    {
-                        if (MemberItem(member, includeStatics: false) is CompletionItem item)
-                            items.Add(item);
-                    }
-
+                    AddReachableMembers(binder, scope.ThisType, includeStatics: false, items);
                     return new CompletionList { IsIncomplete = false, Items = items };
                 }
             }
@@ -128,12 +118,7 @@ namespace Surtr.LanguageServer.Workspace
                     if (valueType is null)
                         continue;
 
-                    foreach (var member in binder.MemberLookup.Reachable(valueType))
-                    {
-                        if (MemberItem(member, includeStatics: false) is CompletionItem item)
-                            items.Add(item);
-                    }
-
+                    AddReachableMembers(binder, valueType, includeStatics: false, items);
                     return new CompletionList { IsIncomplete = false, Items = items };
                 }
             }
@@ -143,12 +128,7 @@ namespace Surtr.LanguageServer.Workspace
             NamedTypeSymbol? type = module is null ? null : FindType(binder, snapshot, filePath, module, receiverText);
             if (type is not null)
             {
-                foreach (var member in binder.MemberLookup.Reachable(type))
-                {
-                    if (MemberItem(member, includeStatics: true) is CompletionItem item)
-                        items.Add(item);
-                }
-
+                AddReachableMembers(binder, type, includeStatics: true, items);
                 return new CompletionList { IsIncomplete = false, Items = items };
             }
 
@@ -1022,6 +1002,73 @@ namespace Surtr.LanguageServer.Workspace
         // Rendering
         // ------------------------------------------------------------------------------------
 
+        /// <summary>Adds every member reachable on a receiver, as the suggestions for one dot.</summary>
+        /// <remarks>
+        /// <para>
+        /// Two things have to be squeezed out here, and neither is visible from one member alone.
+        /// </para>
+        /// <para>
+        /// A property's <c>get_x</c>/<c>set_x</c> accessors are the property over again under a name
+        /// source cannot write. A source-declared one says so in its <see cref="MethodRole"/>, but an
+        /// imported one cannot: the runtime models three roles only, so metadata brings an accessor
+        /// back as an ordinary method and the property it belongs to is the sole thing identifying
+        /// it. Matching the names a property implies covers both, which is what keeps a built-in
+        /// like <c>array</c> reading the same as a class declared in source.
+        /// </para>
+        /// <para>
+        /// And a member a class shares with an interface it implements is reached twice, once down
+        /// each path. A name alone cannot tell that from a genuine overload, so the parameters are
+        /// part of the key — <c>push(T)</c> and <c>push(T, int)</c> are two suggestions, while the
+        /// two paths to one <c>iterate()</c> are one.
+        /// </para>
+        /// </remarks>
+        private static void AddReachableMembers(Binder binder, TypeSymbol receiver, bool includeStatics, List<CompletionItem> items)
+        {
+            var members = new List<Symbol>(binder.MemberLookup.Reachable(receiver));
+
+            var accessorNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (Symbol member in members)
+            {
+                if (member is PropertySymbol property)
+                {
+                    accessorNames.Add(MemberNames.Getter(property.Name));
+                    accessorNames.Add(MemberNames.Setter(property.Name));
+                }
+            }
+
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (Symbol member in members)
+            {
+                if (member is MethodSymbol accessor && accessorNames.Contains(accessor.Name))
+                    continue;
+
+                if (MemberItem(member, includeStatics) is not CompletionItem item)
+                    continue;
+
+                if (seen.Add(MemberKey(member)))
+                    items.Add(item);
+            }
+        }
+
+        /// <summary>What makes two suggestions the same member: the name, plus a method's parameters.</summary>
+        private static string MemberKey(Symbol member)
+        {
+            if (member is not MethodSymbol method)
+                return member.Name;
+
+            var builder = new StringBuilder(method.Name);
+            builder.Append('(');
+            for (int i = 0; i < method.Parameters.Count; i++)
+            {
+                if (i > 0)
+                    builder.Append(',');
+                builder.Append(method.Parameters[i].Type.ToDisplayString());
+            }
+
+            builder.Append(')');
+            return builder.ToString();
+        }
+
         /// <summary>The completion item for one reachable member, or <see langword="null"/> to skip it.</summary>
         private static CompletionItem? MemberItem(Symbol member, bool includeStatics)
         {
@@ -1029,6 +1076,14 @@ namespace Surtr.LanguageServer.Workspace
             {
                 case MethodSymbol method:
                     if (method.IsSynthetic || method.Role == MethodRole.StaticInitializer || method.Role == MethodRole.Constructor)
+                        return null;
+
+                    // A property is offered under its own name, so its accessors would be the same
+                    // member listed a second and third time in a spelling source cannot write.
+                    // They are not synthetic — `SurtrTypeLinker` matches a property on `get_x`/
+                    // `set_x`, so marking them so would hide them from the layer that needs them —
+                    // which is why the role, not the name, is what rules them out here.
+                    if (method.Role == MethodRole.PropertyGetter || method.Role == MethodRole.PropertySetter)
                         return null;
                     if (!includeStatics && method.IsStatic)
                         return null;

@@ -118,7 +118,13 @@ namespace Surtr.LanguageServer.Protocol
         private readonly Stream _input;
         private readonly Stream _output;
         private readonly JsonSerializerOptions _options;
-        private readonly byte[] _headerBuffer = new byte[256];
+
+        /// <summary>
+        /// Scratch space for one header block. It grows rather than overflowing: a header block is
+        /// normally under a hundred bytes, but a fixed buffer turns any unexpectedly long one into a
+        /// fatal error, and one malformed block would then take the whole server down with it.
+        /// </summary>
+        private byte[] _headerBuffer = new byte[256];
 
         public JsonRpcConnection(Stream input, Stream output)
         {
@@ -141,7 +147,12 @@ namespace Surtr.LanguageServer.Protocol
                 if (trimmed.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
                 {
                     string value = trimmed.Substring("Content-Length:".Length).Trim();
-                    int.TryParse(value, out contentLength);
+
+                    // A failed parse must leave the length negative rather than zero: reading a
+                    // zero-length body would consume none of a real one, and every message after it
+                    // would then be read starting in the middle of this one's JSON.
+                    if (!int.TryParse(value, out contentLength))
+                        contentLength = -1;
                 }
             }
 
@@ -188,7 +199,7 @@ namespace Surtr.LanguageServer.Protocol
                 }
 
                 if (index == _headerBuffer.Length)
-                    throw new InvalidDataException("Header block exceeded its buffer.");
+                    Array.Resize(ref _headerBuffer, _headerBuffer.Length * 2);
             }
         }
 

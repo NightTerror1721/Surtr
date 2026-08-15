@@ -56,10 +56,22 @@ namespace Surtr.LanguageServer.Workspace
         {
             var tokens = new Lexer(SurtrSourceBuffer.FromString(text, filePath)).Tokenize();
             Token? hovered = TokenAt(tokens, position);
-            if (hovered is null || !IsNameLike(hovered.Value))
+            if (hovered is null)
                 return null;
 
-            Token anchor = hovered.Value;
+            Token anchor;
+            if (IsNameLike(hovered.Value))
+            {
+                anchor = hovered.Value;
+            }
+            else if (NameInsideInterpolation(text, hovered.Value, position) is Token inside)
+            {
+                anchor = inside;
+            }
+            else
+            {
+                return null;
+            }
 
             Hit? hit = BoundHit(snapshot, filePath, text, tokens, position, anchor)
                 ?? DeclarationHit(snapshot, filePath, text, tokens, position, anchor)
@@ -248,11 +260,25 @@ namespace Surtr.LanguageServer.Workspace
             }
         }
 
+        /// <summary>Visits an expression and everything under it, looking for the hovered name.</summary>
+        /// <remarks>
+        /// <para>
+        /// Deliberately not pruned on whether the node's own span holds the cursor, which is a
+        /// robustness choice rather than a necessary one. A parent whose span fails to cover a child
+        /// makes pruning discard the very subtree the cursor is in, and the symptom is invisible: a
+        /// hover that answers everywhere except over one kind of sub-expression. Every span covers
+        /// its children today, but nothing enforces that, and hover should not be what fails when a
+        /// new production gets it wrong.
+        /// </para>
+        /// <para>
+        /// Nothing is matched more loosely as a result: both name tests require the anchor to fall
+        /// within the node being considered, so a node the cursor is outside of still cannot claim
+        /// it. The statement walk keeps its own containment check, which bounds the work to the one
+        /// statement the cursor is in.
+        /// </para>
+        /// </remarks>
         private static void WalkExpression(BoundExpression expression, int position, Token anchor, List<Token> tokens, ref Best best, CompilationSnapshot snapshot)
         {
-            if (!expression.Span.Contains(position))
-                return;
-
             switch (expression)
             {
                 case BoundErrorExpression:
@@ -410,6 +436,39 @@ namespace Surtr.LanguageServer.Workspace
             return last.HasValue && last.Value.Span.Equals(anchor.Span);
         }
 
+        /// <summary>Whether the hovered token is the one spelling this node's symbol.</summary>
+        /// <remarks>
+        /// <para>
+        /// Taking the last name token of a node's span only identifies the symbol when the node ends
+        /// with its own name, which is one shape among several: a call runs on through its argument
+        /// list, so the last name in <c>arr.push(t.val2)</c> is <c>val2</c> and the method the node
+        /// actually names can never match. That left a hover on any called method, and on any
+        /// receiver in front of one, resolving to nothing at all.
+        /// </para>
+        /// <para>
+        /// Matching the name by text within the node's own span covers every shape instead. Two
+        /// occurrences of one name stay apart because the anchor has to fall inside the node being
+        /// considered, and <see cref="Best"/> keeps the smallest span — in <c>this.value = value</c>
+        /// the field's span holds only the left one and the parameter's only the right.
+        /// </para>
+        /// </remarks>
+        private static bool NameTokenMatchesSymbol(SourceSpan nodeSpan, object symbolOrType, Token anchor)
+        {
+            string name = symbolOrType switch
+            {
+                TypeSymbol type => type.Name,
+                Symbol symbol => symbol.Name,
+                _ => string.Empty,
+            };
+
+            if (name.Length == 0)
+                return false;
+
+            return anchor.Span.Start.Position >= nodeSpan.Start.Position
+                && anchor.Span.End <= nodeSpan.End
+                && string.Equals(anchor.Lexeme.ToString(), name, StringComparison.Ordinal);
+        }
+
         private static bool NameTokenMatchesFirst(SourceSpan nodeSpan, Token anchor, List<Token> tokens)
         {
             Token? first = FirstNameToken(nodeSpan, tokens);
@@ -418,8 +477,11 @@ namespace Surtr.LanguageServer.Workspace
 
         private static void ConsiderName(BoundNode node, object symbolOrType, SourceSpan nodeSpan, Token anchor, List<Token> tokens, ref Best best, CompilationSnapshot snapshot)
         {
-            if (!NameTokenMatchesLast(node.Syntax.Span, anchor, tokens))
+            if (!NameTokenMatchesLast(node.Syntax.Span, anchor, tokens)
+                && !NameTokenMatchesSymbol(node.Syntax.Span, symbolOrType, anchor))
+            {
                 return;
+            }
 
             Hit hit;
             int priority;
@@ -449,6 +511,59 @@ namespace Surtr.LanguageServer.Workspace
 
         private static bool IsNameLike(Token token)
             => token.Type == TokenType.Identifier || token.Type == TokenType.KeywordConstructor;
+
+        /// <summary>
+        /// The name the cursor is on inside an interpolated literal, or <see langword="null"/>.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The lexer hands an interpolated literal back whole — splitting it means parsing the
+        /// spliced expressions, which is the parser's job — so a cursor anywhere inside one lands on
+        /// a string token and never on the name under it. The name has to be recovered from the text
+        /// to have an anchor at all.
+        /// </para>
+        /// <para>
+        /// What makes the anchor usable is that the parser scans a <c>${...}</c> hole in place, so
+        /// the nodes inside it are spanned against this same file: an anchor cut from the text lines
+        /// up with them. Only an interpolated literal is opened up this way. An ordinary string is
+        /// text, and a hover over the word <c>total</c> in <c>"total"</c> should stay silent.
+        /// </para>
+        /// </remarks>
+        private static Token? NameInsideInterpolation(string text, Token literal, int position)
+        {
+            if (literal.Type != TokenType.InterpolatedStringLiteral)
+                return null;
+
+            if (position < literal.Span.Start.Position || position >= literal.Span.End || position >= text.Length)
+                return null;
+
+            if (!IsIdentifierPart(text[position]))
+                return null;
+
+            int start = position;
+            while (start > literal.Span.Start.Position && IsIdentifierPart(text[start - 1]))
+                start--;
+
+            int end = position;
+            while (end + 1 < literal.Span.End && IsIdentifierPart(text[end + 1]))
+                end++;
+
+            // A run starting with a digit is a number, not a name.
+            if (!IsIdentifierStart(text[start]))
+                return null;
+
+            // A literal cannot span lines, so the column is a count of characters from its start.
+            var location = new SourceLocation(
+                literal.Span.Start.Line,
+                literal.Span.Start.Column + (start - literal.Span.Start.Position),
+                start);
+
+            return new Token(TokenType.Identifier, text.AsMemory(start, end - start + 1), location);
+        }
+
+        private static bool IsIdentifierStart(char c) => char.IsLetter(c) || c == '_';
+
+        private static bool IsIdentifierPart(char c) => char.IsLetterOrDigit(c) || c == '_';
 
         /// <summary>The token a position falls on, if any.</summary>
         private static Token? TokenAt(List<Token> tokens, int position)

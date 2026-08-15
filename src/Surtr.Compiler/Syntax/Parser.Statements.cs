@@ -103,7 +103,8 @@ namespace Surtr.Compiler.Syntax
                     {
                         string label = reader.Advance().ToString();
                         reader.Advance();
-                        return new LabeledStatementSyntax(SpanFrom(start), label, ParseStatement());
+                        StatementSyntax labeled = ParseStatement();
+                        return new LabeledStatementSyntax(SpanFrom(start), label, labeled);
                     }
 
                     ExpressionSyntax expression = ParseExpression();
@@ -183,7 +184,8 @@ namespace Surtr.Compiler.Syntax
             ExpressionSyntax condition = ParseExpression();
             reader.Expect(TokenType.RightParen, "')' after the condition");
 
-            return new WhileStatementSyntax(SpanFrom(start), condition, ParseEmbeddedStatement());
+            StatementSyntax whileBody = ParseEmbeddedStatement();
+            return new WhileStatementSyntax(SpanFrom(start), condition, whileBody);
         }
 
         /// <summary>
@@ -210,7 +212,8 @@ namespace Surtr.Compiler.Syntax
                 ExpressionSyntax sequence = ParseExpression();
                 reader.Expect(TokenType.RightParen, "')' after the sequence");
 
-                return new ForInStatementSyntax(SpanFrom(start), variableName, variableType, sequence, ParseEmbeddedStatement());
+                StatementSyntax forInBody = ParseEmbeddedStatement();
+                return new ForInStatementSyntax(SpanFrom(start), variableName, variableType, sequence, forInBody);
             }
 
             StatementSyntax? initializer = null;
@@ -227,7 +230,8 @@ namespace Surtr.Compiler.Syntax
             ExpressionSyntax? step = reader.Check(TokenType.RightParen) ? null : ParseExpression();
             reader.Expect(TokenType.RightParen, "')' after the for clauses");
 
-            return new ForStatementSyntax(SpanFrom(start), initializer, condition, step, ParseEmbeddedStatement());
+            StatementSyntax forBody = ParseEmbeddedStatement();
+            return new ForStatementSyntax(SpanFrom(start), initializer, condition, step, forBody);
         }
 
         /// <summary>
@@ -341,7 +345,8 @@ namespace Surtr.Compiler.Syntax
                 TypeSyntax exceptionType = ParseType();
 
                 reader.Expect(TokenType.RightParen, "')' after the catch clause");
-                catches.Add(new CatchClauseSyntax(SpanFrom(catchStart), variableName, exceptionType, ParseBlock()));
+                BlockStatementSyntax catchBody = ParseBlock();
+                catches.Add(new CatchClauseSyntax(SpanFrom(catchStart), variableName, exceptionType, catchBody));
             }
 
             BlockStatementSyntax? finallyBlock = reader.Match(TokenType.KeywordFinally) ? ParseBlock() : null;

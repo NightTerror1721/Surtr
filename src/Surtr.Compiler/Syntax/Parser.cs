@@ -50,6 +50,13 @@ namespace Surtr.Compiler.Syntax
         private readonly TokenReader reader;
         private readonly SurtrDiagnosticBag diagnostics;
 
+        /// <summary>
+        /// The buffer this parser was built over, or <see langword="null"/> when it was handed a
+        /// token stream instead. Kept for the one production that has to go back to the characters:
+        /// an interpolated literal arrives whole and its holes are lexed out of it (§5.2).
+        /// </summary>
+        private readonly SurtrSourceBuffer? source;
+
         /// <summary>Creates a parser over a source buffer, lexing it first.</summary>
         /// <param name="source">The source to parse.</param>
         /// <param name="diagnostics">
@@ -59,6 +66,7 @@ namespace Surtr.Compiler.Syntax
         public Parser(SurtrSourceBuffer source, SurtrDiagnosticBag? diagnostics = null)
         {
             this.diagnostics = diagnostics ?? new SurtrDiagnosticBag();
+            this.source = source;
 
             List<Token> tokens = new Lexer(source, this.diagnostics).Tokenize();
             reader = new TokenReader(tokens.ToArray(), source.Name, this.diagnostics);

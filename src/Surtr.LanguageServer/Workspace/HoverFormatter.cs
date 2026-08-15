@@ -10,11 +10,31 @@ namespace Surtr.LanguageServer.Workspace
 {
     /// <summary>
     /// Renders a symbol or type as the markdown shown in a hover and used as the label for a
-    /// definition location. Every line starts with the value in <c>**...**</c>, which is what an
-    /// LSP client renders as the signature; the lines after it describe what the thing is.
+    /// definition location. A card is one fenced declaration followed by lines describing it.
     /// </summary>
     public static class HoverFormatter
     {
+        /// <summary>The language a fenced block is tagged with, so an editor colours it.</summary>
+        private const string LanguageId = "surtr";
+
+        /// <summary>
+        /// Ends a line of description. Markdown treats a bare newline as a space, so without the two
+        /// trailing spaces every line of a card runs together into one paragraph.
+        /// </summary>
+        private const string Break = "  \n";
+
+        /// <summary>
+        /// Wraps a declaration in a fenced block tagged with the language.
+        /// </summary>
+        /// <remarks>
+        /// This is what gets a hover coloured: a client renders a tagged block with the same grammar
+        /// it highlights the file with, while inline code only comes out monospaced. Both spellings
+        /// were in use — <c>SymbolResolver</c> fences the source text it reads, this type used to
+        /// emit inline code — so the same hover looked different depending on which of the two
+        /// answered it.
+        /// </remarks>
+        private static string Fence(string code) => "```" + LanguageId + "\n" + code + "\n```";
+
         public static string FormatSymbol(Symbol symbol)
         {
             switch (symbol)
@@ -29,12 +49,10 @@ namespace Surtr.LanguageServer.Workspace
                     return FormatProperty(property);
 
                 case LocalSymbol local:
-                    return "**`" + local.Name + "`** : `" + local.Type.ToDisplayString() + "`"
-                        + Environment.NewLine + "local variable";
+                    return Fence(local.Name + ": " + local.Type.ToDisplayString()) + Break + "local variable";
 
                 case ParameterSymbol parameter:
-                    return "**`" + parameter.Name + "`** : `" + parameter.Type.ToDisplayString() + "`"
-                        + Environment.NewLine + "parameter";
+                    return Fence(parameter.Name + ": " + parameter.Type.ToDisplayString()) + Break + "parameter";
 
                 case NamedTypeSymbol type:
                     return FormatType(type);
@@ -46,7 +64,7 @@ namespace Surtr.LanguageServer.Workspace
                     return FormatTypeParameter(typeParameter);
 
                 default:
-                    return "**`" + symbol.Name + "`**";
+                    return Fence(symbol.Name);
             }
         }
 
@@ -67,18 +85,16 @@ namespace Surtr.LanguageServer.Workspace
                 _ => "type",
             };
 
-            return "**`" + type.ToDisplayString() + "`**"
-                + Environment.NewLine + kindLabel;
+            return Fence(type.ToDisplayString()) + Break + kindLabel;
         }
 
         public static string FormatAlias(AliasSymbol alias)
         {
-            var builder = new StringBuilder();
-            builder.Append("**`").Append(alias.Name).Append("`**");
-            if (alias.Target is not null)
-                builder.Append(" : `").Append(alias.Target.ToDisplayString()).Append('`');
-            builder.Append(Environment.NewLine).Append("type alias");
-            return builder.ToString();
+            string declaration = alias.Target is not null
+                ? "alias " + alias.Name + " = " + alias.Target.ToDisplayString()
+                : "alias " + alias.Name;
+
+            return Fence(declaration) + Break + "type alias";
         }
 
         /// <summary>The label card for a built-in primitive reached by name rather than by symbol.</summary>
@@ -107,7 +123,7 @@ namespace Surtr.LanguageServer.Workspace
                     break;
             }
 
-            return "**`" + name + "`**" + Environment.NewLine + kind;
+            return Fence(name) + Break + kind;
         }
 
         /// <summary>What a written composite type reference is, for a hover on an annotation.</summary>
@@ -132,13 +148,13 @@ namespace Surtr.LanguageServer.Workspace
             string heading = MethodHeading(method);
 
             var builder = new StringBuilder();
-            builder.Append("**`").Append(heading).Append('`');
+            builder.Append(Fence(heading));
 
             string? modifiers = MethodModifiers(method);
             if (modifiers is not null)
-                builder.Append(Environment.NewLine).Append(modifiers);
+                builder.Append(Break).Append(modifiers);
 
-            builder.Append(Environment.NewLine).Append(ContainingLabel(method.ContainingSymbol, "method", "function"));
+            builder.Append(Break).Append(ContainingLabel(method.ContainingSymbol, "method", "function"));
             return builder.ToString();
         }
 
@@ -215,7 +231,7 @@ namespace Surtr.LanguageServer.Workspace
         private static string FormatField(FieldSymbol field)
         {
             var builder = new StringBuilder();
-            builder.Append("**`").Append(field.Name).Append("`** : `").Append(field.Type.ToDisplayString()).Append('`');
+            builder.Append(Fence(field.Name + ": " + field.Type.ToDisplayString()));
 
             var modifiers = new List<string>();
             if (field.IsStatic)
@@ -225,29 +241,31 @@ namespace Surtr.LanguageServer.Workspace
             if (field.IsNative)
                 modifiers.Add("native");
             if (modifiers.Count > 0)
-                builder.Append(Environment.NewLine).Append(string.Join(" ", modifiers));
+                builder.Append(Break).Append(string.Join(" ", modifiers));
 
-            builder.Append(Environment.NewLine).Append(ContainingLabel(field.ContainingSymbol, "field", "variable"));
+            builder.Append(Break).Append(ContainingLabel(field.ContainingSymbol, "field", "variable"));
             return builder.ToString();
         }
 
         private static string FormatProperty(PropertySymbol property)
         {
-            var builder = new StringBuilder();
-            builder.Append("**`").Append(property.Name).Append("`** : `").Append(property.Type.ToDisplayString()).Append('`');
-
-            if (property.IsStatic)
-                builder.Append(Environment.NewLine).Append("static");
-
             var accessors = new List<string>();
             if (property.Getter is not null)
-                accessors.Add("get");
+                accessors.Add("get;");
             if (property.Setter is not null)
-                accessors.Add("set");
-            if (accessors.Count > 0)
-                builder.Append(Environment.NewLine).Append(string.Join(" / ", accessors));
+                accessors.Add("set;");
 
-            builder.Append(Environment.NewLine).Append(ContainingLabel(property.ContainingSymbol, "property", "property"));
+            var builder = new StringBuilder();
+            string declaration = property.Name + ": " + property.Type.ToDisplayString();
+            if (accessors.Count > 0)
+                declaration += " { " + string.Join(" ", accessors) + " }";
+
+            builder.Append(Fence(declaration));
+
+            if (property.IsStatic)
+                builder.Append(Break).Append("static");
+
+            builder.Append(Break).Append(ContainingLabel(property.ContainingSymbol, "property", "property"));
             return builder.ToString();
         }
 
@@ -256,9 +274,7 @@ namespace Surtr.LanguageServer.Workspace
             string kind = TypeKindLabel(type.TypeKind);
 
             var builder = new StringBuilder();
-            string display = type.ToDisplayString();
-            builder.Append("**`").Append(display).Append("`**");
-            builder.Append(Environment.NewLine).Append(kind);
+            builder.Append(Fence(kind + " " + type.ToDisplayString()));
 
             var relations = new List<string>();
             if (type.BaseType is not null)
@@ -266,10 +282,10 @@ namespace Surtr.LanguageServer.Workspace
             if (type.Interfaces.Count > 0)
                 relations.Add("implements " + "`" + string.Join("`, `", TypeNames(type.Interfaces)) + "`");
             if (relations.Count > 0)
-                builder.Append(Environment.NewLine).Append(string.Join(", ", relations));
+                builder.Append(Break).Append(string.Join(", ", relations));
 
             if (type.ContainingModule is not null && type.SpecialType == SpecialType.None)
-                builder.Append(Environment.NewLine).Append("in module `" + type.ContainingModule.Path + "`");
+                builder.Append(Break).Append("in module `" + type.ContainingModule.Path + "`");
 
             return builder.ToString();
         }
@@ -277,17 +293,17 @@ namespace Surtr.LanguageServer.Workspace
         private static string FormatTypeParameter(TypeParameterSymbol typeParameter)
         {
             var builder = new StringBuilder();
-            builder.Append("**`").Append(typeParameter.Name).Append("`**");
+            builder.Append(Fence(typeParameter.Name));
 
             if (typeParameter.Constraints.Count > 0)
             {
                 var names = new List<string>();
                 foreach (TypeSymbol constraint in typeParameter.Constraints)
                     names.Add("`" + constraint.ToDisplayString() + "`");
-                builder.Append(Environment.NewLine).Append("constraint: " + string.Join(", ", names));
+                builder.Append(Break).Append("constraint: " + string.Join(", ", names));
             }
 
-            builder.Append(Environment.NewLine).Append("type parameter");
+            builder.Append(Break).Append("type parameter");
             return builder.ToString();
         }
 

@@ -791,5 +791,50 @@ namespace Surtr.Tests.Compiler.Syntax
             Assert.Equal(array.ElementType.Span.Start.Position, array.Span.Start.Position);
             Assert.Equal("int[]".Length, array.Span.Length);
         }
+
+        /// <summary>
+        /// An expression written around a left operand starts at that operand, not at the operator
+        /// that introduced it.
+        /// </summary>
+        /// <remarks>
+        /// Each of these parses its left side before it knows which node it is building, so it is
+        /// easy to capture the start position one token too late and span only the operator's own
+        /// half — <c>.value</c> for an access, <c>= v</c> for an assignment. That leaves a node whose
+        /// span does not cover its own child, which reads as a missing feature rather than a wrong
+        /// underline: anything walking the tree by position prunes the subtree the cursor is in.
+        /// </remarks>
+        [Theory]
+        [InlineData("target.member")]
+        [InlineData("target?.member")]
+        [InlineData("target++")]
+        [InlineData("target--")]
+        [InlineData("target!!")]
+        [InlineData("target is int")]
+        [InlineData("target as int")]
+        [InlineData("target as? int")]
+        [InlineData("target ? 1 : 2")]
+        public void AnExpressionSpansTheOperandItWasBuiltAround(string expression)
+        {
+            ExpressionSyntax parsed = ParseExpression(expression);
+
+            // The operand is written first, so the node has to start where the whole expression does.
+            Assert.Equal(0, parsed.Span.Start.Position - LeadingOffset(expression));
+            Assert.Equal(expression.Length, parsed.Span.Length);
+        }
+
+        /// <summary>An assignment spans its target, which is written before the <c>=</c>.</summary>
+        [Fact]
+        public void AnAssignmentSpansItsTarget()
+        {
+            var statement = Assert.IsType<ExpressionStatementSyntax>(ParseStatement("target.member = 1;"));
+            AssignmentExpressionSyntax assignment = Assert.IsType<AssignmentExpressionSyntax>(statement.Expression);
+
+            Assert.Equal(assignment.Target.Span.Start.Position, assignment.Span.Start.Position);
+            Assert.Equal(assignment.Value.Span.End, assignment.Span.End);
+        }
+
+        /// <summary>Where the expression under test begins inside the wrapper it is parsed in.</summary>
+        private static int LeadingOffset(string expression)
+            => $"fun f(): void {{ let x = ".Length;
     }
 }

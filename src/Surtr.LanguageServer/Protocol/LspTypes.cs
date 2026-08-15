@@ -306,6 +306,15 @@ namespace Surtr.LanguageServer.Protocol
         public TextDocumentIdentifier TextDocument { get; set; } = new TextDocumentIdentifier();
     }
 
+    /// <summary>Parameters of <c>window/showMessage</c>: a notice the editor shows to the user.</summary>
+    public sealed class ShowMessageParams
+    {
+        /// <summary>1 error, 2 warning, 3 info, 4 log.</summary>
+        public int Type { get; set; } = 1;
+
+        public string Message { get; set; } = string.Empty;
+    }
+
     /// <summary>Parameters of <c>textDocument/publishDiagnostics</c>.</summary>
     public sealed class PublishDiagnosticsParams
     {

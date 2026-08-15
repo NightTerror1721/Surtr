@@ -28,8 +28,13 @@ namespace Surtr.Compiler.Syntax
         private DeclarationSyntax ParseDeclaration()
         {
             IReadOnlyList<string> docComment = ParseDocComment();
-            IReadOnlyList<AttributeSyntax> attributes = ParseAttributes();
+
+            // Captured before the attributes, so a declaration covers the ones written on it: they
+            // are its first tokens, and they are child nodes, so a span that began after them would
+            // leave a child outside the parent that owns it. The doc comment stays outside, since it
+            // is carried as text rather than as a node.
             SourceLocation start = reader.CurrentLocation;
+            IReadOnlyList<AttributeSyntax> attributes = ParseAttributes();
 
             // A declaration-level `const if` wraps declarations rather than carrying modifiers, so
             // it is checked before anything tries to read one (§7.3).
@@ -414,8 +419,9 @@ namespace Surtr.Compiler.Syntax
                 chainArguments = ParseArgumentList();
             }
 
+            BlockStatementSyntax body = ParseBlock();
             return new ConstructorDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility,
-                parameters, chainArguments, chainsToThis, ParseBlock());
+                parameters, chainArguments, chainsToThis, body);
         }
 
         /// <summary>Parses an operator overload (§5.6). Public and static are implied, so neither is written.</summary>
@@ -474,7 +480,8 @@ namespace Surtr.Compiler.Syntax
                 returnType = conversionTarget;
             }
 
-            return new OperatorDeclarationSyntax(SpanFrom(start), attributes, docComment, op, parameters, returnType, ParseBlock());
+            BlockStatementSyntax operatorBody = ParseBlock();
+            return new OperatorDeclarationSyntax(SpanFrom(start), attributes, docComment, op, parameters, returnType, operatorBody);
         }
 
         /// <summary>
