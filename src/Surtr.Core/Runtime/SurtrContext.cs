@@ -46,6 +46,19 @@ namespace Surtr.Runtime
         internal Dictionary<string, SurtrClass> NativeClasses;
 
         /// <summary>
+        /// Bodies the host has published for native <em>members</em>, keyed by link name.
+        /// </summary>
+        /// <remarks>
+        /// Distinct from <see cref="Globals"/>, which holds host functions Surtr code calls by
+        /// name through <c>CallGlobalNative</c>. These are bodies for methods a module
+        /// <em>declares</em>: a module read from an image carries the name and the signature, and
+        /// the address has to come from whichever runtime is loading it. Keeping the two tables
+        /// apart means a global and a method body can share a name without either shadowing the
+        /// other.
+        /// </remarks>
+        internal Dictionary<string, SurtrNativeEntryPoint> NativeBodies;
+
+        /// <summary>
         /// Type handles for signatures the host declares outside any module - global functions and
         /// native class members. Interned here for the same reason a module interns its own: one
         /// handle per distinct descriptor, resolved once.
@@ -91,6 +104,11 @@ namespace Surtr.Runtime
         /// Hands out the dense interface ids the linker assigns, across every module and native
         /// class this context links, so two interfaces from different modules never collide.
         /// </summary>
+        /// <remarks>
+        /// Starts at <see cref="BuiltIns.SurtrBuiltIns.ReservedInterfaceIds"/>, not at zero: the
+        /// built-in interfaces were numbered before any runtime existed, and a class implementing
+        /// one of those alongside one of its own keys both into the same dispatch table.
+        /// </remarks>
         internal int NextInterfaceId;
 
         /// <inheritdoc/>
@@ -110,6 +128,7 @@ namespace Surtr.Runtime
             Globals = new SurtrNativeGlobalTable();
             Modules = new Dictionary<string, SurtrModule>(StringComparer.Ordinal);
             NativeClasses = new Dictionary<string, SurtrClass>(StringComparer.Ordinal);
+            NativeBodies = new Dictionary<string, SurtrNativeEntryPoint>(StringComparer.Ordinal);
             HostTypeHandles = new SurtrTypeHandleTable();
             InternedStrings = new Dictionary<string, SurtrString>(StringComparer.Ordinal);
 
@@ -117,7 +136,7 @@ namespace Surtr.Runtime
             RootCount = 0;
             StaticBlocks = new SurtrStaticBlock[InitialRootCapacity];
             StaticBlockCount = 0;
-            NextInterfaceId = 0;
+            NextInterfaceId = BuiltIns.SurtrBuiltIns.ReservedInterfaceIds;
 
             // Only after every allocation above has succeeded, so a failed init cannot leave a
             // half-alive context behind - the same rule the registry follows.
@@ -222,6 +241,10 @@ namespace Surtr.Runtime
 
                 NativeClasses.Clear();
             }
+
+            // Entry points hold at most a delegate the CLR already tracks, so dropping the table is
+            // the whole of releasing them.
+            NativeBodies?.Clear();
 
             Globals?.Dispose();
             EntityRegistry.Dispose();

@@ -66,6 +66,39 @@ namespace Surtr.Tests.VM
         }
 
         [Fact]
+        public void TupGetC_ReadsTheElementNamedByItsImmediate()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+            var builder = new BytecodeBuilder();
+            int tupleType = builder.AddType(module.TypeHandles.GetOrAdd(
+                SurtrClassReference.Tuple(SurtrClassReference.Integer, SurtrClassReference.Integer, SurtrClassReference.Integer)));
+
+            builder
+                .Op(OpCode.PushI32).I32(10)
+                .Op(OpCode.PushI32).I32(20)
+                .Op(OpCode.PushI32).I32(30)
+                .Op(OpCode.TupPack).I16(tupleType).U8(3)
+                .Op(OpCode.TupGetC).U8(2)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(30, Run(runtime, module, builder).AsInt);
+        }
+
+        [Fact]
+        public void TupGetC_OutOfRange_Traps()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+            var tuple = runtime.NewTuple(SurtrClassReference.Tuple(SurtrClassReference.Integer), 1);
+
+            var builder = new BytecodeBuilder();
+            builder.LoadReference(tuple).Op(OpCode.TupGetC).U8(5).Op(OpCode.ReturnValue);
+
+            Assert.Throws<SurtrExecutionException>(() => Run(runtime, module, builder));
+        }
+
+        [Fact]
         public void TupUnpack_PushesEveryElementInOrder()
         {
             using var runtime = new SurtrRuntime();

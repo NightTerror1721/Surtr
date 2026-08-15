@@ -211,11 +211,15 @@ fixed "next address" to measure from at emit time.
 
 ## 2. What is implemented
 
-All **213 opcodes** execute; 43 byte values remain free. The eleven added since are the nullable
-primitive family (`PushAbsent`, `IsAbsent`, `IsPresent`, `JPA`/`JPAX`, `JPNA`/`JPNAX`), the boxing
-pair that names a class (`BoxAs`, `BoxAsX`), and range construction (`RangeNew`,
-`RangeNewInclusive`). All were appended rather than filed next to their families, because the enum
-value is the on-disk encoding. Verified by a throwaway harness covering:
+All **221 opcodes** execute; 35 byte values remain free, `0xDD` onwards. The set has been
+regrouped by family and every value written out explicitly, which is what ended the append-at-the-
+tail rule that had the nullable primitives, `BoxAs`, the ranges and `StrHash` filed nowhere near
+their families. The seven newest are `PushTrue`/`PushFalse`/`PushChar`, which keep booleans and
+characters out of the constant pool; `IncLocal`, a whole `i += 1` in one dispatch; `TupGetC`, a
+tuple index carried as an immediate; and `CastOrNull`/`CastOrNullX`, which close §4.8's `as?`
+obligation. `StrCat` gained a count, so a whole interpolation is one instruction and one
+allocation. That renumbering bumped `SurtrModuleImage.FormatVersion` to 3, once, and is the last
+one: a value is now final. Verified by a throwaway harness covering:
 integer and float arithmetic, loops with backward jumps, intra-module calls, typed array
 allocation and element ops, dictionaries, strings and interned literals, closures with upvalues,
 module-level variables and their static initializer, both switch forms, tag conversions, catching a
@@ -249,16 +253,30 @@ of §5 below, and is done).
 
 ## 3. Known gaps
 
-### 3.1 `InvokeInterface` does a linear scan
+### 3.1 `InvokeInterface` does a linear scan — closed
 
-Resolving the receiver's index for a contract goes through `SurtrClass.IndexOfInterface`, a
-reference-comparing scan of `Interfaces`. `k` is small in practice, but it is on a hot path.
-Options, cheapest first: scan an `int[]` of interface *ids*; give each class a direct map from
-interface id to index; or append an opcode carrying the interface index, which the compiler knows
-statically.
+Resolving the receiver's index for a contract went through `SurtrClass.IndexOfInterface`, a
+reference-comparing scan of `Interfaces`, on a hot path.
 
-It also depends on `SurtrMethodInfo.DeclaringType` naming the declaring *interface* for an interface
-method. The compiler must honour that.
+**Closed with the second of the three options this section used to list**: each class now carries
+`InterfaceIndexById`, an open-addressed table of `(interfaceId, index)` pairs in unmanaged memory,
+sized to at least twice its interface count and rounded to a power of two. Resolving a contract is
+a mask, a load and a compare, and the pairs are interleaved so a hit reads both halves off one
+cache line. The interpreter writes the probe out by hand rather than calling `IndexOfInterface`,
+which would be a real call from a method that size.
+
+The third option — an opcode carrying the interface index — was rejected on inspection rather than
+on cost: the *contract* is static at a call site, but the index is a property of the **receiver's**
+class, and not knowing the receiver's class is the entire point of interface dispatch.
+
+**Keying on the id turned a latent defect into a live one, which is how it was found.** Interface
+ids are dense and were handed out from zero twice: once when the built-in module is linked, and
+again by each `SurtrContext`. Reference comparison did not care; an id-keyed table does, and a
+class implementing `IIterable` alongside its own first interface would have resolved one through
+the other's block. A context now starts its numbering at `SurtrBuiltIns.ReservedInterfaceIds`.
+
+This section still depends on `SurtrMethodInfo.DeclaringType` naming the declaring *interface* for
+an interface method. The compiler must honour that.
 
 ### 3.2 Array element access pays two bounds checks
 
@@ -267,22 +285,196 @@ because it compares against `Items.Length` rather than `Count`. Removing the sec
 `Unsafe.Add`, which netstandard2.1 does not carry without a NuGet package a Unity host would also
 have to ship. Revisit if the target framework moves.
 
-### 3.3 A module belongs to one runtime — closed
+### 3.3 A module belongs to one runtime — closed twice over
 
-String literals are patched with references from the heap that loaded them, and native imports are
-bound to that runtime's global table, so loading the same `SurtrModule` instance into two runtimes
-would corrupt the second. `LoadModule` now rejects it: a module already marked loaded cannot be
-loaded again, and a module meant for two runtimes is built twice.
+String literals are patched with references from the heap that loaded them, native imports are
+bound to that runtime's global table, and every class gets static storage the collector traces
+through that runtime's registry — so loading the same `SurtrModule` instance into two runtimes
+would corrupt the second. `LoadModule` rejects it.
 
 What made this worth closing alongside §4.14 is that the two are the same defect from different
 directions — one is state from the loading runtime baked into the module, the other was the
 module's instructions carrying indices that only meant anything in one runtime.
 
+**The restriction is now lifted at the level that mattered, by moving it.** `SurtrModuleImage`
+(`Bytecode/Image/`) is a compiled module as bytes, and it can be instantiated any number of times:
+
+```csharp
+var image = SurtrModuleImage.FromModule(builder.Build());
+first.LoadModule(image);
+second.LoadModule(image);
+```
+
+The alternative was to split every piece of per-runtime state out of `SurtrModule` and reach it
+through an indirection. That would have put a test on the hot path of every static access — one
+indirect load is what §"the instruction set" buys with `SurtrFieldInfo.StaticAddress` — to answer a
+question a second `SurtrModule` answers for nothing. Sharing the *bytes* rather than the object is
+what the JVM and the CLR do for the same reason, and it is also the only form a compiler can write
+to disk, which §4.8's build model needs anyway.
+
+**A native member travels as a name.** A host writes modules too — some entirely native, some
+mixing compiled Surtr bodies with host ones, which is the shape `Language-Syntax.md` §13.1 gives the
+standard library. An address cannot travel and a name can, so a native method carries a
+`LinkName` and each runtime publishes its own body under it:
+
+```csharp
+facade.DeclareNativeMethod("answer", SurtrClassReference.Integer, "host:Facade.answer()");
+…
+runtime.DefineNativeBody("host:Facade.answer()", SurtrNativeEntryPoint.FromFunctionPointer(&Answer));
+```
+
+A link name is derived from the owner and the signature (`host:Facade.answer()`) when the
+declaration does not give one, so a host that never ships an image pays nothing for it. A name
+nothing was published under fails the load, beside an unresolved type and an unregistered host
+global, and for the same reason. Native *properties* need no separate mechanism — a property is
+already a pair of `get_x`/`set_x` methods.
+
+An unbound method points at a body that **reports the mistake** rather than at null. That costs
+nothing — the interpreter makes the same indirect call — and the alternative, testing validity per
+native call, would put a branch on the hot path to catch what `LoadModule` already refuses to let
+through. The difference is between an exception naming the problem and an access violation taking
+the process with it, which is what the regression test for this actually did before the trap
+existed.
+
+Two things still do not travel, both stated rather than worked around:
+
+* **The built-in module**, which is process-wide and shared by every runtime. A copy read back from
+  an image would shadow the real one rather than extend it.
+* **A module-level member of *another* module** named in the field or method access table. Nothing
+  on a module-level member records which module declares it, so an image cannot name one. Ordinary
+  cross-module calls are unaffected — those go through the module reference table by path, which is
+  resolved per runtime at load.
+
 ### 3.4 Static initializer ordering is declaration order
 
-See §1.12. The compiler has to reject cross-initializer dependencies; nothing detects them today.
+See §1.12. ~~The compiler has to reject cross-initializer dependencies; nothing detects them
+today.~~ **Closed.** `Binding/InitializerOrder.cs` gives every load-time fragment a position — which
+container, and where inside it — and reports a read of a static whose own position is not strictly
+earlier. Only the same module is checked, which is exact rather than approximate: a module reaches
+another only by depending on it, and a dependency has finished loading before this one starts.
 
----
+### 3.5 The dictionary pays an interface call per key operation — closed
+
+~~`SurtrDictionary` is a `Dictionary<SurtrValue, SurtrValue>` constructed with the runtime's
+`SurtrValueComparer`.~~ **Closed by specialising the storage on the declared key type.**
+
+The problem was that the BCL dictionary is the tuned one, but it can only see a custom comparer
+through `IEqualityComparer<T>` — an interface call the JIT cannot devirtualise, on every `HashOf`
+and `ValuesEqual`. The fast paths inside the comparer (`ValuesEqual`/`HashOf` are public, sealed and
+inlineable) were never reached from a dictionary; only the interface form was. That is why `dictOps`
+and `dictMembers` sat around **2x** the C# baseline while `intLoop` reached **3.8x** — the other
+workloads do not spend every iteration inside a custom-compared `Dictionary`.
+
+A Surtr dictionary is strongly typed by key — the compiler proves every key of a `{int: V}` is an
+`int` — so the representation is chosen once, at construction:
+
+* A `{int: V}` dictionary stores in `IntEntries`, a `Dictionary<int, SurtrValue>` keyed on the
+  extracted payload, which uses the BCL's default `int` comparer: no interface call, no
+  `SurtrValueComparer` in the way, and a comparison the JIT turns into `==`. The value half stays
+  NaN-boxed `SurtrValue`, so this covers `{int: int}`, `{int: string}` and `{int: object}` alike.
+* Anything else — float/char/string/tuple/boxed keys, where `SurtrValueComparer` semantics are
+  load-bearing — keeps `Entries` and the runtime's comparer. So does `{int?: V}`: the key is read
+  off the descriptor as `?` rather than `I`, and the absent tag is an ordinary key on the general
+  store.
+
+Exactly one of the two fields is non-null at a time, and the choice is a **field load plus a
+predicted branch** rather than a dispatch. Both are `internal`, because the interpreter writes each
+arm out by hand at all ten `Dict*` opcodes rather than calling in — the same rule as everywhere else
+in `Execute`: the JIT will not inline into a method that size, and a real call is what the
+specialisation exists to avoid.
+
+The two things that made this risky are settled rather than avoided:
+
+1. **The strong typing is not the dictionary's to assume.** The compiler guarantees the declared key
+   type, but a host calling `Set`/`TryGet`/`ContainsKey`/`Remove` directly is not bound by Surtr's
+   type system. A key that arrives **boxed** is unwrapped — `SurtrValueComparer.TryUnwrapBoxedInt`,
+   which applies `BoxEquals`'s own rule, so a boxed `value class EntityId` wrapping an int is *not*
+   an int key and does not alias onto one. Anything else **de-specialises** the dictionary back onto
+   the general store, rehashing once, rather than changing its semantics quietly. Compiled Surtr
+   code cannot reach that path at all.
+2. **The two stores agree on order.** `CopyKeysTo`, `CopyValuesTo`, `SnapshotKeys` and
+   `VisitReferences` each read whichever store is live, and de-specialisation carries insertion
+   order across, so `keys()`, `values()` and `for-in` answer the same either side of it. Tracing gets
+   cheaper as a side effect: on the specialised store the keys are ints, so only the values are
+   walked.
+
+**Measured, same session, `--workload dict --iters 15`:** `dictOps` 2.683 → 1.825 ms and
+`dictMembers` 5.408 → 3.490 ms, a **32% and 35% cut**, and no other workload moved. The
+Surtr-against-Surtr figure is the one to trust here: `dictOps` also lands where this section
+predicted against the C# baseline — **2.2x → 1.5x**, off a baseline stable at 1.19–1.26 ms across
+every run — while `dictMembers`' baseline was swinging 6.4x between runs for reasons that turned out
+to be the harness rather than the workload (§3.7). The lowering of the dict member
+*surface* (`clear`/`containsKey`/`remove`/`keys`/`values`/`length`) to opcodes was already done and
+removed the native-dispatch overhead; this was the remaining, larger piece under the storage.
+
+The counterpart is now measured too: `dictString` is the same shape over string keys, which still
+goes through `SurtrValueComparer` and sits at 6.4x the C# baseline where `dictOps` sits at 4.5x.
+Specialising *that* would mean keying on the CLR string behind a `SurtrString`, which costs a
+registry lookup per operation and is not obviously a win — but it is now a question with a number
+attached to it rather than a guess.
+
+### 3.6 A nullable primitive holding 1 read as null — closed
+
+Not a performance gap but a **miscompilation**, and the one the benchmark suite found rather than
+the test suite. `x == null` on a nullable primitive was emitted as `PushAbsent` against `EQ`/`NE`.
+Those are the *integer* comparison opcodes: they compare the low 32 bits, because int, bool and
+char share a representation and differ only in their tag. Absence differs from a present value in
+nothing **but** its tag — and the payload `PushAbsent` leaves behind is the missing primitive's
+`SurtrValueTypeCode`. `Integer` is 1, so:
+
+```
+let v: int? = 1;
+if (v == null) { ... }      // taken
+let w = v ?? 0;             // 0
+```
+
+`char?` had the same collision at `U+0004` (`Character` is 4). The float side failed the other way:
+absent-float is a NaN, and `FEQ` answers false however it is asked, so an absent `float?` compared
+*unequal* to null. `bool?` was safe by luck, since a bool payload is 0 or 1 and `Boolean` is 3.
+
+**Closed in `CodeGen/MethodBodyEmitter.TryEmitAbsenceTest`**, which emits `IsAbsent`/`IsPresent`
+when either operand of `==`/`!=` is the null literal and the other is a nullable primitive. Those
+opcodes test the tag, which is what they are in the instruction set for and why nothing had to be
+added; the result is also a byte shorter and one stack slot shallower than the pair it replaces.
+`!!` and `??`-on-a-*reference* were already correct (`JPNA`, `JPN`), and `EmitNullCoalesce`'s own
+`JPA` path was correct — but the binder expands `a ?? b` on a nullable primitive into a comparison
+before the emitter ever sees it, so it went through the broken path anyway.
+
+Worth reading as a warning about coverage rather than about nullables. There *was* a test for this
+— `APresentZeroIsNotAbsent` — and it passed throughout, because 0 is the single int whose payload
+cannot collide with a type code. Its replacement sweeps a range.
+
+### 3.7 The harness was measuring the JIT — closed
+
+`dictMembers` reported 3.18 ms when it ran after `dictOps` in the same process and 2.5 ms when it
+ran alone, off a C# baseline that moved **6.4x** (0.39 ms against 2.5 ms) for identical work. That
+is not noise; it reproduced 5 times out of 5 either way.
+
+The cause is tiered compilation. A method is promoted to tier 1 after 30 calls, and a benchmark
+calls each workload a handful of times, so which code was optimized depended on what had run before
+it and on when OSR happened to fire — and the **interpreter loop itself** was among the code that
+sometimes never got promoted. Every Surtr number in this document from before that was measured
+against a partially unoptimized `Execute`: forcing loop-bearing methods straight to optimized code
+moved `dictOps` from 1.73 ms to 0.87 ms and `dictMembers` from 3.18 ms to 1.35 ms, with no change
+to the VM at all.
+
+The csproj now sets `TieredCompilationQuickJitForLoops=false`. Only loop-bearing methods are
+forced, rather than `TieredCompilation=false` outright: the latter also switches off TieredPGO,
+which MoonSharp's virtual-heavy interpreter loses more to than it gains (its `intLoop` went 88 ms
+to 115 ms), and flattering Surtr for a reason that has nothing to do with Surtr is the failure mode
+being fixed, not a bonus. It is also the representative configuration for where Surtr actually
+runs, since Unity's Mono JIT and IL2CPP AOT have no tiering to warm up.
+
+Two harness defects were fixed alongside it, and neither was cosmetic. **Six of the fourteen C#
+baselines were timing an empty loop** — `exceptions` was `=> n` and threw nothing, `methodCalls`
+folded the call into `acc + 7 + i` against a `const`, `virtualCalls` was `acc + 4`, `forIn` never
+built an array — so those ratios measured the harness rather than the language. With a real
+`throw`/`catch` on the C# side, `exceptions` turns out to be one of Surtr's strongest results
+(0.34 ms against 21.3 ms) instead of its worst; the handler-table walk never becomes a CLR
+exception, and that is worth a great deal. And the **warm-up was a single run**, which is what left
+the spread column at 16–66%; a real warm-up phase plus an interquartile spread instead of
+min-to-max puts most cases under 10%.
+
 
 ## 4. What the language syntax commits the runtime to
 
@@ -382,13 +574,16 @@ escapes into a variable, parameter or return is materialised.
 
 ### 4.5 `for-in` lowering
 
-The general path goes through `IIterable<T>` (§4.2 above), which means interface dispatch — today a
-linear scan (§3.1) — once per loop, plus an interface call per iteration. That is unacceptable per
-iteration, so `Language-Syntax.md` §4.2 requires the compiler to emit a direct indexed loop, with
-no interface call and no iterator object, for the shapes it can prove: an inline range, a
-statically-known `array`/`tuple`/`dict`, and any `sealed` type.
+The general path goes through `IIterable<T>` (§4.2 above), which means an interface call per
+iteration on top of an iterator object per loop. That is unacceptable per iteration, so
+`Language-Syntax.md` §4.2 requires the compiler to emit a direct indexed loop, with no interface
+call and no iterator object, for the shapes it can prove: an inline range, a statically-known
+`array`/`tuple`/`dict`, and any `sealed` type.
 
-Closing §3.1 makes the general path cheaper but does not remove the need for the special cases.
+Closing §3.1 made the general path cheaper and did not remove the need for the special cases. The
+built-ins now genuinely implement `IIterable<T>` — one shared `iterator` class walks all five, and
+a dict yields `(K, V)` pairs over a snapshot of its keys — so the contract holds for an `int[]` as
+much as for a user collection, while a compiled loop over one still touches none of it.
 
 ### 4.6 The element-polymorphic built-in members — closed with real generic parameters
 
@@ -447,13 +642,22 @@ evaluation has to run as its own earlier pass, because `const if` decides what g
 which means the declare → emit → `Build()` → `LoadModule` order has to run twice over different
 subsets of a module.
 
+**That half is now built** — `docs/Compiler-Plan.md` §4 has the shape it took. Two things about it
+are worth knowing from this side. The const-evaluable functions go into **one scratch module of
+their own**, loaded into a scratch runtime, so the second pass is a whole separate module rather
+than a re-entry into the one being compiled. And the budget's re-arming rule is load-bearing exactly
+as written above: `ConstFolder` sets `InstructionBudget` before *every* evaluation, because a run
+that exceeded it leaves it exhausted, and a folder that armed it once would abort every fold after
+the first one that ran away.
+
 ### 4.8 Compiler obligations, recorded so they are not lost
 
 None of these need runtime work; all of them are things the runtime assumes and will not check.
 
 * **Box a primitive into an erased slot, and `Cast` reading one back out** (§1.11).
 * **Emit `finally` on every exit path**, plus a catch-all that runs it and re-raises (§1.8).
-* **Reject cross-initializer dependencies** (§1.12, §3.4).
+* ~~**Reject cross-initializer dependencies** (§1.12, §3.4).~~ **Done** —
+  `Binding/InitializerOrder.cs`, and `docs/Compiler-Plan.md` §10.1g for the shape it took.
 * **Honour `SurtrMethodInfo.DeclaringType` naming the declaring interface** for interface methods
   (§3.1).
 * **Devirtualise calls on a `sealed` type** — `Language-Syntax.md` §2.2 justifies the modifier
@@ -476,11 +680,21 @@ None of these need runtime work; all of them are things the runtime assumes and 
   new instruction — but "to the comparison opcodes that already exist" holds only for the numeric
   ones. `string` has `StrEQ`/`StrNE` and no ordering opcode at all, so `<=>` and all four
   relational operators over strings lower to a call to the existing native `string.compareTo`.
-* **Lower `as?` to `InstanceOf` plus a branch** (`Language-Syntax.md` §5.7). There is no
-  non-throwing cast opcode, and it does not obviously need one; the cost is two type tests on the
-  success path, which is worth measuring before a third cast opcode is added to the set.
+* ~~**Lower `as?` to `InstanceOf` plus a branch**~~ (`Language-Syntax.md` §5.7). **Closed with the
+  third cast opcode this entry was reluctant to add.** The reluctance was misplaced: the failure
+  answer for a reference target is null, which occupies the same slot the subject already does, so
+  `CastOrNull` is one type test and no branch where the written-out lowering was a spill to a
+  local, two type tests, a branch and a join. A *primitive* target still gets the old lowering,
+  and for a reason that is not about cost — the success path unboxes and the failure path has no
+  unboxed value to give, so the two arms genuinely differ.
 * **Reject instantiating an `abstract` class.** `ObjNew` resolves its type index and allocates with
   no `IsAbstract` test — consistent with §1.9, but nothing else checks it either.
+* **Emit a bridge into a generic interface's erased slot.** `SurtrMethodInfo.SignatureKey()` writes
+  `G<n>` as `E`, so an implementation is bound to a contract slot by the erased parameter list —
+  which is what lets a class implement `IComparable<T>` at all. A class that also wants a
+  `compareTo(other: Vec2)` its own callers can bind directly therefore needs two members: the
+  typed one, and a bridge occupying the erased slot that casts and forwards. Exactly javac's
+  obligation, for exactly its reason.
 
 ### 4.9 `unknown` is the erased slot with a surface name
 
@@ -636,9 +850,16 @@ instance *through*; the root set is what keeps it alive, and metadata's lifetime
 both over an `int` popped off the stack (§1.13). `Language-Syntax.md` §4.3 puts no type restriction
 on a `switch`, and two ordinary cases have nothing to lower onto:
 
-* **`switch` over a `string`.** Only `StrEQ`/`StrNE` exist, so it degrades to a compare chain. The
-  usual answer — hash, `SwitchLookup`, then verify — needs no new opcode, but it does need
-  `SurtrString`'s cached hash to be reachable from bytecode, which today it is not.
+* **`switch` over a `string`.** ~~Only `StrEQ`/`StrNE` exist, so it degrades to a compare chain.~~
+  **Closed by `StrHash`**, which replaces a string with its hash in one load, so the usual
+  lowering — hash, `SwitchLookup`, then `StrEQ` to settle collisions — is now expressible. Closing
+  it turned out to need more than reaching the cached hash: `SurtrString.Hash` was
+  `string.GetHashCode()`, which .NET Core seeds *per process*, so a compiler hashing the case
+  labels and a program hashing the subject would have disagreed on every run but the one that
+  built the module. The hash is now FNV-1a over the text and nothing else. That trades away
+  hash-flooding resistance, which an embedded language running its host's own scripts was never
+  buying anything with, for compiled bytecode that means the same thing in every process — which
+  is the entire point of compiling it.
 * **`switch` over an enum.** Cases are instances (§2.4), so the keys are references. A dense table
   needs an ordinal, which is the metadata §4.13 asks for; with it, this is `FieldGet` plus an
   ordinary `Switch`.
@@ -653,18 +874,26 @@ enum one is why §4.13's case list is not optional.
 **~~Phase 1 — a real test project.~~ Done.** `src/Surtr.Tests` exists and `CLAUDE.md` records the
 command. The bytecode emitter (`Bytecode/Emit/`) landed alongside it.
 
-**~~Phase 2 — close §3.3 and §3.4.~~ §3.3 done.** `LoadModule` rejects a module that is already
-loaded, which turns a silent corruption into a clear failure. §3.4 stays open and stays the
-compiler's: nothing detects a cross-initializer dependency, and nothing at load can.
+**~~Phase 2 — close §3.3 and §3.4.~~ Done.** `LoadModule` rejects a module that is already loaded,
+which turns a silent corruption into a clear failure. §3.4 was always the compiler's, since nothing
+at load can detect a cross-initializer dependency, and it is now detected there:
+`Binding/InitializerOrder.cs`.
 
 **Phase 3 — the front end, against the syntax spec.** The **lexer, AST and parser are done**, in
 `src/Surtr.Compiler/Syntax/`, covering `Language-Syntax.md` end to end and verified against a
-sample file exercising every construct in it. **Binding is next** — name resolution, type checking,
-overload resolution — and then lowering onto `Bytecode/Emit`. Two things the parser deliberately
-leaves for later: error *recovery* (it throws on the first mismatch, which is the wrong behaviour
-for an editor but the right one until diagnostics exist to report alongside it), and every rule
-that needs more than syntax to check, which is all of them — a `sealed` on a non-`override`, an
-`abstract` member in a non-`abstract` class, two overloads differing only by an alias.
+sample file exercising every construct in it.
+
+**Diagnostics are done too**, and were done first because every pass after this one reports through
+them: `SourceSpan` on every token and node, stable `SurtrDiagnosticCode`s, an accumulating
+`SurtrDiagnosticBag` the lexer and parser share, and recovery at declaration and statement
+boundaries. Parsing no longer throws on a syntax error — a production still aborts by throwing, but
+that is control flow the recovery points catch. The lexer recovers too, skipping a failed literal
+whole so that its closing quote never opens another one.
+
+**Binding is next** — name resolution, type checking, overload resolution — and then lowering onto
+`Bytecode/Emit`. What the parser still leaves for later is every rule that needs more than syntax to
+check, which is all of them: a `sealed` on a non-`override`, an `abstract` member in a
+non-`abstract` class, two overloads differing only by an alias.
 
 **~~Phase 4 — the runtime work the language needs.~~ Done.** Every item in §4 is implemented and
 covered by `src/Surtr.Tests`. What landed, in the order it landed:
@@ -697,13 +926,15 @@ by a Surtr catch-all, which handed a spinning program an unlimited run; and the 
 not reachable from a runtime's module table, so nothing could extend `Exception`.
 
 **Phase 4b — what §4 did not close.** §4.8 is untouched and still entirely owed: every item on it is
-the compiler's. §4.16's string switch still needs `SurtrString`'s cached hash reachable from
-bytecode, and its enum half now only needs the lowering, since the ordinal exists.
+the compiler's. §4.16 is now closed on the runtime's side — `StrHash` exists and the hash behind it
+is deterministic — so both halves of it are lowerings the compiler owes, the enum one needing only
+the ordinal that already exists.
 
-**Phase 5 — measure, then optimise.** Not before. Candidates: §3.1, §3.2, and an inline cache on
-`InvokeVirtual` if profiling shows monomorphic call sites dominating. All local changes; none
-disturbs the frame protocol. §4.5 raises the priority of §3.1, since `for-in`'s general path goes
-through interface dispatch.
+**Phase 5 — measure, then optimise.** Not before. §3.5 is **done**: the dictionary's per-key
+interface call is gone for `{int: V}`, measured at a third off both dict workloads. Remaining
+candidates: §3.1, §3.2, and an inline cache on `InvokeVirtual` if profiling shows monomorphic call
+sites dominating. All local changes; none disturbs the frame protocol. §4.5 raises the priority of
+§3.1, since `for-in`'s general path goes through interface dispatch.
 
 **Phase 6 — diagnostics.** Frames already carry enough for a stack trace (method, chunk, saved
 `IP`), and the handler search already walks them. `SurtrThrownException` does not yet include one.

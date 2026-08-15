@@ -35,6 +35,24 @@ namespace Surtr.Compiler.Syntax
             Column = 1;
         }
 
+        /// <summary>Starts reading part-way into a buffer, at a position already known.</summary>
+        /// <param name="source">The buffer to read.</param>
+        /// <param name="origin">Where to start, in that buffer's own coordinates.</param>
+        /// <remarks>
+        /// For scanning a fragment in place rather than in a buffer of its own: an interpolated
+        /// literal's <c>${...}</c> hole is lexed out of the file it was written in, so that what
+        /// comes out is measured against that file like everything else. Reading a copy of the
+        /// fragment would restart every offset at zero, and those offsets are what slice the buffer
+        /// back into lexemes — they have to mean the same thing on both sides.
+        /// </remarks>
+        internal CharReader(SurtrSourceBuffer source, SourceLocation origin) : base(source.Text)
+        {
+            SourceName = source.Name;
+            Line = origin.Line;
+            Column = origin.Column;
+            Position = origin.Position;
+        }
+
         /// <inheritdoc/>
         internal override char Advance()
         {

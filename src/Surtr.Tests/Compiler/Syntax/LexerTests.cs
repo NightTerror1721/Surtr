@@ -633,12 +633,81 @@ namespace Surtr.Tests.Compiler.Syntax
         [InlineData("0x")]
         [InlineData("0b")]
         [InlineData("#")]
-        public void MalformedInputThrowsWithALocation(string source)
+        public void MalformedInputIsReportedAndSkipped(string source)
         {
-            SurtrLexerException exception = Assert.Throws<SurtrLexerException>(() => Lex(source));
+            Lexer lexer = new Lexer(SurtrSourceBuffer.FromString(source));
+            List<Token> tokens = lexer.Tokenize();
 
-            Assert.True(exception.Location.Line >= 1);
-            Assert.Contains("<memory>", exception.Message);
+            SurtrDiagnostic diagnostic = lexer.Diagnostics[0];
+
+            Assert.True(lexer.Diagnostics.HasErrors);
+            Assert.True(diagnostic.IsError);
+            Assert.True(diagnostic.Span.Start.Line >= 1);
+            Assert.StartsWith("SURTR1", diagnostic.Id);
+            Assert.Contains("<memory>", diagnostic.ToString());
+
+            // Scanning still reaches the end, which is what lets the parser run and report what
+            // else is wrong with the file.
+            Assert.Equal(TokenType.EndOfFile, tokens[tokens.Count - 1].Type);
+        }
+
+        /// <summary>
+        /// One bad literal does not hide the next: recovery is what makes a second problem
+        /// reachable at all.
+        /// </summary>
+        [Fact]
+        public void SeveralProblemsAreAllReported()
+        {
+            Lexer lexer = new Lexer(SurtrSourceBuffer.FromString("let a = #; let b = 0x; let c = '';"));
+            lexer.Tokenize();
+
+            SurtrDiagnosticCode[] reported = lexer.Diagnostics.Select(diagnostic => diagnostic.Code).ToArray();
+
+            Assert.Contains(SurtrDiagnosticCode.UnexpectedCharacter, reported);
+            Assert.Contains(SurtrDiagnosticCode.InvalidNumericLiteral, reported);
+            Assert.Contains(SurtrDiagnosticCode.InvalidCharacterLiteral, reported);
+        }
+
+        /// <summary>
+        /// Recovering inside a bad literal must not invent a second problem out of the first: a
+        /// failed literal is skipped whole, so its closing quote is never read as opening another.
+        /// </summary>
+        [Theory]
+        [InlineData("\"bad \\q escape\"")]
+        [InlineData("\"\\u12\"")]
+        [InlineData("''")]
+        [InlineData("'ab'")]
+        public void ABadLiteralReportsOnce(string source)
+        {
+            Lexer lexer = new Lexer(SurtrSourceBuffer.FromString(source));
+            lexer.Tokenize();
+
+            Assert.Single(lexer.Diagnostics);
+        }
+
+        /// <summary>A diagnostic covers the whole offending construct, not just its first character.</summary>
+        [Fact]
+        public void ADiagnosticSpansWhatWentWrong()
+        {
+            Lexer lexer = new Lexer(SurtrSourceBuffer.FromString("\"unterminated"));
+            lexer.Tokenize();
+
+            SurtrDiagnostic diagnostic = Assert.Single(lexer.Diagnostics);
+
+            Assert.Equal(SurtrDiagnosticCode.UnterminatedStringLiteral, diagnostic.Code);
+            Assert.Equal(0, diagnostic.Span.Start.Position);
+            Assert.Equal(13, diagnostic.Span.Length);
+        }
+
+        /// <summary>The simple behaviour is still one call away.</summary>
+        [Fact]
+        public void ThrowIfErrorsRaisesTheFirstProblem()
+        {
+            Lexer lexer = new Lexer(SurtrSourceBuffer.FromString("#"));
+            lexer.Tokenize();
+
+            SurtrDiagnosticException failure = Assert.Throws<SurtrDiagnosticException>(() => lexer.Diagnostics.ThrowIfErrors());
+            Assert.Equal(SurtrDiagnosticCode.UnexpectedCharacter, failure.Diagnostic.Code);
         }
 
         // ---- a realistic slice of the language ----------------------------------------------

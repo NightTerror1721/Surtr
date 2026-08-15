@@ -93,7 +93,7 @@ namespace Surtr.Runtime.Classes
         /// binding happen <em>by name at load</em>: the alternative, which is what this used to be,
         /// was for the instruction to carry a direct index into the runtime's global table, which
         /// silently ties a compiled module to one host's registration order and gives
-        /// <see cref="SurtrRuntime.LoadModule"/> nothing to fail on when a name was never
+        /// <see cref="SurtrRuntime.LoadModule(SurtrModule)"/> nothing to fail on when a name was never
         /// registered at all.
         /// </para>
         /// <para>
@@ -119,6 +119,28 @@ namespace Surtr.Runtime.Classes
         /// <summary>The resolved counterpart of <see cref="NativeFunctionImports"/>, filled in at load.</summary>
         internal SurtrNativeGlobalFunction[] NativeFunctionTable;
 
+        /// <summary>
+        /// The paths behind <see cref="ModuleTable"/> when this chunk came from an image, in the
+        /// same order; empty for a chunk the emitter produced.
+        /// </summary>
+        /// <remarks>
+        /// A serialized module cannot name another module by instance - the instance it should
+        /// name is whichever one the <em>loading</em> runtime has under that path, and there may be
+        /// several. So an image writes paths and the load resolves them, which is the same shape
+        /// <see cref="NativeVariableImports"/> already has for the same reason.
+        /// </remarks>
+        internal string[] PendingModulePaths;
+
+        /// <summary>What <see cref="FieldTable"/> should point at, when this chunk came from an image.</summary>
+        internal SurtrPendingMember[] PendingFields;
+
+        /// <summary>What <see cref="MethodTable"/> should point at, when this chunk came from an image.</summary>
+        internal SurtrPendingMember[] PendingMethods;
+
+        /// <summary>Whether this chunk still has by-name references waiting to be bound at load.</summary>
+        internal bool HasPendingReferences =>
+            PendingModulePaths.Length != 0 || PendingFields.Length != 0 || PendingMethods.Length != 0;
+
         private bool _disposed;
         private SurtrBuildState _buildState;
 
@@ -133,6 +155,9 @@ namespace Surtr.Runtime.Classes
             NativeVariableImports = Array.Empty<string>();
             NativeFunctionImports = Array.Empty<string>();
             NativeFunctionTable = Array.Empty<SurtrNativeGlobalFunction>();
+            PendingModulePaths = Array.Empty<string>();
+            PendingFields = Array.Empty<SurtrPendingMember>();
+            PendingMethods = Array.Empty<SurtrPendingMember>();
         }
 
         /// <summary>Whether the chunk's unmanaged buffers have been released.</summary>
@@ -175,6 +200,9 @@ namespace Surtr.Runtime.Classes
             NativeVariableImports = Array.Empty<string>();
             NativeFunctionImports = Array.Empty<string>();
             NativeFunctionTable = Array.Empty<SurtrNativeGlobalFunction>();
+            PendingModulePaths = Array.Empty<string>();
+            PendingFields = Array.Empty<SurtrPendingMember>();
+            PendingMethods = Array.Empty<SurtrPendingMember>();
 
             _disposed = true;
         }

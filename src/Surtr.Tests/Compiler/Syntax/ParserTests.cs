@@ -40,6 +40,20 @@ namespace Surtr.Tests.Compiler.Syntax
             return method.Body!.Statements.Single();
         }
 
+        /// <summary>Asserts that a source is rejected, and with which diagnostic.</summary>
+        /// <remarks>
+        /// Asserting the code rather than the message: a code is the stable name for a problem, and
+        /// a test keyed on wording breaks the next time the wording improves.
+        /// </remarks>
+        private static void AssertRejected(string source, SurtrDiagnosticCode expected)
+        {
+            Parser parser = new Parser(SurtrSourceBuffer.FromString(source));
+            parser.ParseCompilationUnit();
+
+            Assert.True(parser.Diagnostics.HasErrors, $"'{source}' was expected to be rejected.");
+            Assert.Contains(parser.Diagnostics, diagnostic => diagnostic.Code == expected);
+        }
+
         // ---- §2.1 imports --------------------------------------------------------------------
 
         [Fact]
@@ -205,7 +219,7 @@ namespace Surtr.Tests.Compiler.Syntax
         [InlineData("operator++(v: V): V { }", TokenType.Increment)]
         [InlineData("operator!(v: V): bool { }", TokenType.LogicalNot)]
         [InlineData("operator[](i: int): float { }", TokenType.LeftBracket)]
-        [InlineData("operator as(v: V): Vec3 { }", TokenType.KeywordAs)]
+        [InlineData("operator as Vec3(v: V) { }", TokenType.KeywordAs)]
         public void OperatorOverloadsParse(string source, TokenType expected)
         {
             TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>($"class V {{ {source} }}");
@@ -213,17 +227,63 @@ namespace Surtr.Tests.Compiler.Syntax
             Assert.Equal(expected, Assert.IsType<OperatorDeclarationSyntax>(type.Members.Single()).Operator);
         }
 
+        /// <summary>§5.6: a conversion's target is written after the keyword and is its return type.</summary>
+        [Fact]
+        public void ConversionOperatorTakesItsTargetAsReturnType()
+        {
+            TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>("class V { operator as Vec3(v: V) { } }");
+            OperatorDeclarationSyntax declared = Assert.IsType<OperatorDeclarationSyntax>(type.Members.Single());
+
+            Assert.Equal(TokenType.KeywordAs, declared.Operator);
+            Assert.Equal("Vec3", Assert.IsType<NamedTypeSyntax>(declared.ReturnType).Path.Single());
+        }
+
+        /// <summary>
+        /// §5.6: two conversions from the same operand are told apart by their target, which is
+        /// the whole reason the target moved in front of the parameter list.
+        /// </summary>
+        [Fact]
+        public void ConversionsFromOneOperandDifferByTarget()
+        {
+            TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>(
+                "class V { operator as Vec3(v: V) { } operator as string(v: V) { } }");
+
+            string[] targets = type.Members
+                .Cast<OperatorDeclarationSyntax>()
+                .Select(op => ((NamedTypeSyntax)op.ReturnType).Path.Single())
+                .ToArray();
+
+            Assert.Equal(new[] { "Vec3", "string" }, targets);
+        }
+
+        /// <summary>A composite target keeps its suffixes: `operator as int[]` converts to an array.</summary>
+        [Fact]
+        public void ConversionTargetMayBeComposite()
+        {
+            TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>("class V { operator as int[](v: V) { } }");
+            OperatorDeclarationSyntax declared = Assert.IsType<OperatorDeclarationSyntax>(type.Members.Single());
+
+            Assert.IsType<ArrayTypeSyntax>(declared.ReturnType);
+        }
+
+        /// <summary>The pre-§5.6 spelling, with the target as a trailing return type, is rejected outright.</summary>
+        [Fact]
+        public void ConversionRejectsTrailingReturnTypeForm()
+        {
+            AssertRejected("class V { operator as(v: V): Vec3 { } }", SurtrDiagnosticCode.InvalidOperatorDeclaration);
+        }
+
         /// <summary>§5.6: an overload is always public and static, so writing either is an error, not a redundancy.</summary>
         [Fact]
         public void OperatorRejectsRedundantModifiers()
         {
-            Assert.Throws<SurtrParserException>(() => Parse("class V { public static operator+(a: V, b: V): V { } }"));
+            AssertRejected("class V { public static operator+(a: V, b: V): V { } }", SurtrDiagnosticCode.InvalidModifier);
         }
 
         [Fact]
         public void NonOverloadableOperatorIsRejected()
         {
-            Assert.Throws<SurtrParserException>(() => Parse("class V { operator&&(a: V, b: V): V { } }"));
+            AssertRejected("class V { operator&&(a: V, b: V): V { } }", SurtrDiagnosticCode.InvalidOperatorDeclaration);
         }
 
         // ---- §5.7 precedence -----------------------------------------------------------------
@@ -390,12 +450,15 @@ namespace Surtr.Tests.Compiler.Syntax
         public void UnbracedBodyRejectsADeclaration()
         {
             Assert.IsType<ReturnStatementSyntax>(Assert.IsType<IfStatementSyntax>(ParseStatement("if (a) return;")).Then);
-            Assert.Throws<SurtrParserException>(() => ParseStatement("if (a) let x = 1;"));
+            AssertRejected("fun f(): void { if (a) let x = 1; }", SurtrDiagnosticCode.DeclarationAsEmbeddedStatement);
         }
 
         [Fact]
         public void BothForFormsParse()
         {
+            // Both keywords parse — `let` is rejected by the binder rather than by the grammar,
+            // since what makes it wrong is the step clause reassigning it (§4.2).
+            Assert.IsType<ForStatementSyntax>(ParseStatement("for (var i = 0; i < n; i += 1) { }"));
             Assert.IsType<ForStatementSyntax>(ParseStatement("for (let i = 0; i < n; i += 1) { }"));
             Assert.IsType<ForInStatementSyntax>(ParseStatement("for (item in items) { }"));
             Assert.IsType<ForInStatementSyntax>(ParseStatement("for (i in 0..10) { }"));
@@ -451,7 +514,7 @@ namespace Surtr.Tests.Compiler.Syntax
         [Fact]
         public void TryWithNeitherCatchNorFinallyIsRejected()
         {
-            Assert.Throws<SurtrParserException>(() => ParseStatement("try { a(); }"));
+            AssertRejected("fun f(): void { try { a(); } }", SurtrDiagnosticCode.IncompleteTryStatement);
         }
 
         // ---- §7 compile-time evaluation ------------------------------------------------------
@@ -575,12 +638,203 @@ namespace Surtr.Tests.Compiler.Syntax
         [InlineData("fun f(): void { let = 1; }")]
         [InlineData("fun f(): void { if a { } }")]
         [InlineData("fun f(): void { let x: Box<int = 1; }")]
-        public void MalformedSourceThrowsWithALocation(string source)
+        public void MalformedSourceIsReportedAndRecoveredFrom(string source)
         {
-            SurtrParserException exception = Assert.Throws<SurtrParserException>(() => Parse(source));
+            Parser parser = new Parser(SurtrSourceBuffer.FromString(source));
+            parser.ParseCompilationUnit();
 
-            Assert.True(exception.Location.Line >= 1);
-            Assert.Contains("<memory>", exception.Message);
+            Assert.True(parser.Diagnostics.HasErrors);
+
+            SurtrDiagnostic diagnostic = parser.Diagnostics[0];
+            Assert.True(diagnostic.Span.Start.Line >= 1);
+            Assert.StartsWith("SURTR2", diagnostic.Id);
+            Assert.Contains("<memory>", diagnostic.ToString());
         }
+
+        // ---- recovery -------------------------------------------------------------------------
+
+        /// <summary>
+        /// The point of recovery: a broken declaration is reported, and the ones after it are still
+        /// parsed rather than being hidden behind it.
+        /// </summary>
+        [Fact]
+        public void ABrokenDeclarationDoesNotHideTheOnesAfterIt()
+        {
+            Parser parser = new Parser(SurtrSourceBuffer.FromString(
+                "fun a(): void { }\n" +
+                "fun b(: void { }\n" +
+                "fun c(): void { }\n"));
+
+            CompilationUnitSyntax unit = parser.ParseCompilationUnit();
+
+            Assert.True(parser.Diagnostics.HasErrors);
+
+            string[] parsed = unit.Declarations
+                .OfType<MethodDeclarationSyntax>()
+                .Select(method => method.Name)
+                .ToArray();
+
+            Assert.Contains("a", parsed);
+            Assert.Contains("c", parsed);
+        }
+
+        /// <summary>Several independent problems are all reported, not just the first.</summary>
+        [Fact]
+        public void SeveralBrokenDeclarationsAreAllReported()
+        {
+            Parser parser = new Parser(SurtrSourceBuffer.FromString(
+                "fun a(: void { }\n" +
+                "fun b(: void { }\n"));
+
+            parser.ParseCompilationUnit();
+
+            Assert.True(parser.Diagnostics.ErrorCount >= 2);
+        }
+
+        /// <summary>
+        /// A statement that does not parse costs its statement, not the method around it.
+        /// </summary>
+        [Fact]
+        public void ABrokenStatementDoesNotDiscardItsMethod()
+        {
+            Parser parser = new Parser(SurtrSourceBuffer.FromString(
+                "fun f(): void {\n" +
+                "    let a = 1;\n" +
+                "    let = 2;\n" +
+                "    let c = 3;\n" +
+                "}\n"));
+
+            CompilationUnitSyntax unit = parser.ParseCompilationUnit();
+
+            Assert.True(parser.Diagnostics.HasErrors);
+
+            MethodDeclarationSyntax method = Assert.IsType<MethodDeclarationSyntax>(unit.Declarations.Single());
+            string[] locals = method.Body!.Statements
+                .OfType<LocalDeclarationStatementSyntax>()
+                .Select(local => local.Name)
+                .ToArray();
+
+            Assert.Contains("a", locals);
+            Assert.Contains("c", locals);
+        }
+
+        /// <summary>Recovery must terminate, whatever it is handed.</summary>
+        [Theory]
+        [InlineData("}}}}")]
+        [InlineData("class")]
+        [InlineData("fun fun fun")]
+        [InlineData("{{{{{{")]
+        [InlineData(")")]
+        public void RecoveryTerminatesOnAnyGarbage(string source)
+        {
+            Parser parser = new Parser(SurtrSourceBuffer.FromString(source));
+            parser.ParseCompilationUnit();
+
+            Assert.True(parser.Diagnostics.HasErrors);
+        }
+
+        /// <summary>A file with nothing wrong reports nothing.</summary>
+        [Fact]
+        public void AValidFileReportsNothing()
+        {
+            Parser parser = new Parser(SurtrSourceBuffer.FromString("fun f(): int { return 1; }"));
+            parser.ParseCompilationUnit();
+
+            Assert.Empty(parser.Diagnostics);
+            Assert.False(parser.Diagnostics.HasErrors);
+        }
+
+        /// <summary>The lexer and the parser report into the same bag, in source order.</summary>
+        [Fact]
+        public void LexicalAndSyntacticProblemsShareOneBag()
+        {
+            Parser parser = new Parser(SurtrSourceBuffer.FromString("fun f(): void { let a = #; }\nfun b(: void { }"));
+            parser.ParseCompilationUnit();
+
+            Assert.Contains(parser.Diagnostics, d => d.Id.StartsWith("SURTR1"));
+            Assert.Contains(parser.Diagnostics, d => d.Id.StartsWith("SURTR2"));
+        }
+
+        // ---- spans ----------------------------------------------------------------------------
+
+        /// <summary>A node covers its whole construct, not just the token it started at.</summary>
+        [Fact]
+        public void ANodeSpansItsWholeConstruct()
+        {
+            const string source = "fun f(): int { return 1; }";
+
+            CompilationUnitSyntax unit = new Parser(SurtrSourceBuffer.FromString(source)).ParseCompilationUnit();
+            MethodDeclarationSyntax method = Assert.IsType<MethodDeclarationSyntax>(unit.Declarations.Single());
+
+            Assert.Equal(0, method.Span.Start.Position);
+            Assert.Equal(source.Length, method.Span.End);
+        }
+
+        /// <summary>A binary expression spans both operands, so an error about it underlines both.</summary>
+        [Fact]
+        public void ABinaryExpressionSpansBothOperands()
+        {
+            BinaryExpressionSyntax sum = Assert.IsType<BinaryExpressionSyntax>(ParseExpression("alpha + beta"));
+
+            Assert.Equal("alpha".Length + " + ".Length + "beta".Length, sum.Span.Length);
+            Assert.Equal(sum.Left.Span.Start.Position, sum.Span.Start.Position);
+            Assert.Equal(sum.Right.Span.End, sum.Span.End);
+        }
+
+        /// <summary>A suffixed type spans the type it wraps plus the suffix.</summary>
+        [Fact]
+        public void ASuffixedTypeSpansTheWholeType()
+        {
+            MethodDeclarationSyntax method = ParseSingle<MethodDeclarationSyntax>("fun f(): int[] { }");
+            ArrayTypeSyntax array = Assert.IsType<ArrayTypeSyntax>(method.ReturnType);
+
+            Assert.Equal(array.ElementType.Span.Start.Position, array.Span.Start.Position);
+            Assert.Equal("int[]".Length, array.Span.Length);
+        }
+
+        /// <summary>
+        /// An expression written around a left operand starts at that operand, not at the operator
+        /// that introduced it.
+        /// </summary>
+        /// <remarks>
+        /// Each of these parses its left side before it knows which node it is building, so it is
+        /// easy to capture the start position one token too late and span only the operator's own
+        /// half — <c>.value</c> for an access, <c>= v</c> for an assignment. That leaves a node whose
+        /// span does not cover its own child, which reads as a missing feature rather than a wrong
+        /// underline: anything walking the tree by position prunes the subtree the cursor is in.
+        /// </remarks>
+        [Theory]
+        [InlineData("target.member")]
+        [InlineData("target?.member")]
+        [InlineData("target++")]
+        [InlineData("target--")]
+        [InlineData("target!!")]
+        [InlineData("target is int")]
+        [InlineData("target as int")]
+        [InlineData("target as? int")]
+        [InlineData("target ? 1 : 2")]
+        public void AnExpressionSpansTheOperandItWasBuiltAround(string expression)
+        {
+            ExpressionSyntax parsed = ParseExpression(expression);
+
+            // The operand is written first, so the node has to start where the whole expression does.
+            Assert.Equal(0, parsed.Span.Start.Position - LeadingOffset(expression));
+            Assert.Equal(expression.Length, parsed.Span.Length);
+        }
+
+        /// <summary>An assignment spans its target, which is written before the <c>=</c>.</summary>
+        [Fact]
+        public void AnAssignmentSpansItsTarget()
+        {
+            var statement = Assert.IsType<ExpressionStatementSyntax>(ParseStatement("target.member = 1;"));
+            AssignmentExpressionSyntax assignment = Assert.IsType<AssignmentExpressionSyntax>(statement.Expression);
+
+            Assert.Equal(assignment.Target.Span.Start.Position, assignment.Span.Start.Position);
+            Assert.Equal(assignment.Value.Span.End, assignment.Span.End);
+        }
+
+        /// <summary>Where the expression under test begins inside the wrapper it is parsed in.</summary>
+        private static int LeadingOffset(string expression)
+            => $"fun f(): void {{ let x = ".Length;
     }
 }

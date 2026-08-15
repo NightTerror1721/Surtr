@@ -26,8 +26,9 @@ namespace Surtr.Runtime.BuiltIns
     /// <c>tuple</c> and <c>closure</c> declare no parameters and keep the thin surface, and that
     /// is not an oversight either: both are parameterised by a list whose length varies per value,
     /// and a tuple's element type varies per <em>index</em>, so no fixed parameter could name what
-    /// <c>get(index)</c> returns. Element access there stays what it always was - <c>TupGet</c>
-    /// with a statically known index, which the compiler already types exactly.
+    /// <c>get(index)</c> returns. Element access there stays an opcode with a statically known
+    /// index, which the compiler already types exactly - <c>TupGetC</c>, which carries that index
+    /// as an immediate precisely because it can never be anything but a constant.
     /// </para>
     /// <para>
     /// Every member here mirrors behaviour that also lives as an ordinary method on
@@ -65,6 +66,105 @@ namespace Surtr.Runtime.BuiltIns
             builder.Method("indexOf", integer, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayIndexOf), builder.Params(("value", element)));
             builder.Method("contains", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayContains), builder.Params(("value", element)));
             builder.Method("remove", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayRemove), builder.Params(("value", element)));
+
+            // `items.sort((a, b) => a.score - b.score)` is written out in Language-Syntax.md §8, so
+            // the comparator form is the one that has to exist. There is deliberately no
+            // parameterless `sort()`: ordering elements by nothing in particular would mean
+            // dispatching IComparable on an erased slot, and saying which order you want is one
+            // lambda.
+            builder.Method(
+                "sort",
+                SurtrClassReference.Void,
+                SurtrNativeEntryPoint.FromFunctionPointer(&ArraySort),
+                builder.Params(("comparator", SurtrClassReference.Closure(integer, element, element))));
+        }
+
+        /// <summary>
+        /// Sorts in place through a Surtr comparator, stably.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A merge sort rather than <see cref="Array.Sort(Array)"/>, for two reasons that both
+        /// come back to a comparator being <em>Surtr code</em>. It is stable, so equal elements
+        /// keep the order they were in - which a script sorting by one field of several depends on
+        /// and introsort does not give. And it is the algorithm written here, so its result cannot
+        /// change with the BCL underneath: the same array and the same comparator sort the same way
+        /// on every platform and every runtime version, which is the same reason
+        /// <c>SurtrString.ComputeHash</c> is not <c>string.GetHashCode</c>.
+        /// </para>
+        /// <para>
+        /// Every comparison re-enters the VM. That is inherent to a comparator written in the
+        /// language rather than a cost this shape adds, and the frame protocol supports it - but it
+        /// does mean sorting is not something to do per frame.
+        /// </para>
+        /// </remarks>
+        private static SurtrValue ArraySort(SurtrCallArguments arguments)
+        {
+            var self = arguments.GetUnchecked<SurtrArray>(0);
+            var comparator = arguments.Get<SurtrClosure>(1);
+            var runtime = arguments.Runtime;
+
+            int length = self.Count;
+            if (length < 2)
+                return SurtrValue.Null;
+
+            var items = self.Items;
+            var scratch = new SurtrValue[length];
+
+            // Reused across every comparison rather than allocated per call: a sort makes
+            // n log n of them.
+            var operands = new SurtrValue[2];
+
+            for (int width = 1; width < length; width <<= 1)
+            {
+                for (int start = 0; start < length; start += width << 1)
+                {
+                    int middle = Math.Min(start + width, length);
+                    int end = Math.Min(start + (width << 1), length);
+
+                    Merge(items, scratch, start, middle, end, runtime, comparator, operands);
+                }
+
+                Array.Copy(scratch, items, length);
+            }
+
+            return SurtrValue.Null;
+        }
+
+        private static void Merge(
+            SurtrValue[] items,
+            SurtrValue[] scratch,
+            int start,
+            int middle,
+            int end,
+            SurtrRuntime runtime,
+            SurtrClosure comparator,
+            SurtrValue[] operands)
+        {
+            int left = start;
+            int right = middle;
+
+            for (int next = start; next < end; next++)
+            {
+                // `<= 0` rather than `< 0` is what makes this stable: on a tie the left run, which
+                // held the earlier element, goes first.
+                bool takeLeft = left < middle && (right >= end || Compare(runtime, comparator, operands, items[left], items[right]) <= 0);
+
+                scratch[next] = takeLeft ? items[left++] : items[right++];
+            }
+        }
+
+        private static int Compare(
+            SurtrRuntime runtime,
+            SurtrClosure comparator,
+            SurtrValue[] operands,
+            SurtrValue left,
+            SurtrValue right)
+        {
+            operands[0] = left;
+            operands[1] = right;
+
+            return runtime.InvokeClosure(comparator, operands).AsInt;
         }
 
         // A G0 argument arrives as whatever the caller had on the stack, tag and all - the
@@ -240,7 +340,7 @@ namespace Surtr.Runtime.BuiltIns
             var self = arguments.GetUnchecked<SurtrDictionary>(0);
             var keys = arguments.Runtime.NewArray(
                 SurtrClassReference.Array(self.TypeReference.GetDictionaryKeyType()),
-                self.Entries.Count);
+                self.Count);
 
             self.CopyKeysTo(keys);
             return SurtrValue.CreateReference(keys.GetSurtrReference());
@@ -251,17 +351,17 @@ namespace Surtr.Runtime.BuiltIns
             var self = arguments.GetUnchecked<SurtrDictionary>(0);
             var values = arguments.Runtime.NewArray(
                 SurtrClassReference.Array(self.TypeReference.GetDictionaryValueType()),
-                self.Entries.Count);
+                self.Count);
 
             self.CopyValuesTo(values);
             return SurtrValue.CreateReference(values.GetSurtrReference());
         }
 
         private static SurtrValue DictionaryCount(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrDictionary>(0).Entries.Count);
+            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrDictionary>(0).Count);
 
         private static SurtrValue DictionaryIsEmpty(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrDictionary>(0).Entries.Count == 0);
+            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrDictionary>(0).IsEmpty);
 
         private static SurtrValue DictionaryClear(SurtrCallArguments arguments)
         {

@@ -7,6 +7,7 @@ using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using Surtr.Runtime.Utilities;
 using System;
+using System.Buffers;
 using System.Runtime.CompilerServices;
 
 namespace Surtr.VM
@@ -84,6 +85,33 @@ namespace Surtr.VM
         /// the collector from sweeping either.
         /// </remarks>
         private readonly SurtrRawValue[] _roots;
+
+        /// <summary>Scratch for <c>StrCat</c>'s operands when it joins more than two strings.</summary>
+        /// <remarks>
+        /// A field rather than a local array so a wide concatenation allocates the result and
+        /// nothing else. Reusing it is sound because <c>StrCat</c> reads its operands, builds the
+        /// string and is done - it transfers control nowhere in between, so no second use of the
+        /// buffer can overlap the first, not even through a re-entrant native call.
+        /// </remarks>
+        private string[] _concatBuffer = new string[8];
+
+        /// <summary>Writes <c>StrCat</c>'s gathered operands into the result it has just sized.</summary>
+        /// <remarks>
+        /// A cached static delegate, so the wide path costs one allocation - the string itself.
+        /// Only the first <c>count</c> entries of the buffer belong to this instruction; the rest
+        /// are whatever a previous concatenation left there.
+        /// </remarks>
+        private static readonly SpanAction<char, (string[] Parts, int Count)> ConcatParts =
+            static (span, state) =>
+            {
+                int at = 0;
+                for (int i = 0; i < state.Count; i++)
+                {
+                    string part = state.Parts[i];
+                    part.AsSpan().CopyTo(span.Slice(at));
+                    at += part.Length;
+                }
+            };
 
         private SurtrRawValue* _stack;
         private SurtrRawValue* _stackLimit;
@@ -715,6 +743,23 @@ namespace Surtr.VM
                     ip += 4;
                     goto Dispatch;
 
+                // The two booleans and every character literal are pushed inline. They could go
+                // through the constant pool, but the pool's first ten slots have single-byte
+                // opcodes behind them and are better spent on the values that have no inline form
+                // at all - floats and strings.
+                case OpCode.PushTrue:
+                    *sp++ = SurtrValue.TagMaskBool | 1UL;
+                    goto Dispatch;
+
+                case OpCode.PushFalse:
+                    *sp++ = SurtrValue.TagMaskBool;
+                    goto Dispatch;
+
+                case OpCode.PushChar:
+                    *sp++ = SurtrValue.TagMaskChar | (uint)(ip[0] | (ip[1] << 8));
+                    ip += 2;
+                    goto Dispatch;
+
                 case OpCode.Pop:
                     sp--;
                     goto Dispatch;
@@ -802,6 +847,17 @@ namespace Surtr.VM
                     globals[nativeVariableSlots[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))]] = *--sp;
                     ip += 4;
                     goto Dispatch;
+
+                // A whole `i += 1` without the operand stack: one load, one add, one store, and the
+                // slot never leaves the frame. Written out it is Ldl, PushI8, Add, Stl - four
+                // dispatches for an update that a counted loop performs once per iteration.
+                case OpCode.IncLocal:
+                {
+                    SurtrRawValue* slot = frameBase + ip[0];
+                    *slot = SurtrValue.TagMaskInt | (uint)((int)*slot + (sbyte)ip[1]);
+                    ip += 2;
+                    goto Dispatch;
+                }
                 #endregion
 
                 #region Arithmetic Operations
@@ -1305,6 +1361,49 @@ namespace Surtr.VM
 
                     goto Dispatch;
                 }
+
+                // `as?`. One type test where the lowering it replaces - spill, InstanceOf, branch,
+                // Cast - pays for two, and the failure answer is already representable in the slot
+                // the subject occupies.
+                case OpCode.CastOrNull:
+                {
+                    var target = typeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
+                    ip += 2;
+
+                    SurtrRef subject = (SurtrRef)(*(sp - 1));
+                    if (subject != 0)
+                    {
+                        var subjectClass = ((SurtrObject)entities[subject]!).Class;
+                        bool matches = target.Kind == SurtrMemberKind.Interface
+                            ? subjectClass.Implements((SurtrInterface)target)
+                            : subjectClass.IsSubclassOf((SurtrClass)target);
+
+                        if (!matches)
+                            *(sp - 1) = SurtrValue.TagMaskReference;
+                    }
+
+                    goto Dispatch;
+                }
+
+                case OpCode.CastOrNullX:
+                {
+                    var target = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
+                    ip += 4;
+
+                    SurtrRef subject = (SurtrRef)(*(sp - 1));
+                    if (subject != 0)
+                    {
+                        var subjectClass = ((SurtrObject)entities[subject]!).Class;
+                        bool matches = target.Kind == SurtrMemberKind.Interface
+                            ? subjectClass.Implements((SurtrInterface)target)
+                            : subjectClass.IsSubclassOf((SurtrClass)target);
+
+                        if (!matches)
+                            *(sp - 1) = SurtrValue.TagMaskReference;
+                    }
+
+                    goto Dispatch;
+                }
                 #endregion
 
                 #region String Operations
@@ -1313,18 +1412,53 @@ namespace Surtr.VM
                         | (uint)((SurtrString)entities[(SurtrRef)(*(sp - 1))]!).Value.Length;
                     goto Dispatch;
 
+                case OpCode.StrHash:
+                    // A load, not a walk: the hash is computed once, on first need, and cached on
+                    // the string - and is the same in any process, which is what a compiled string
+                    // switch needs.
+                    *(sp - 1) = SurtrValue.TagMaskInt
+                        | (uint)((SurtrString)entities[(SurtrRef)(*(sp - 1))]!).Hash;
+                    goto Dispatch;
+
                 case OpCode.StrCat:
                 {
+                    int count = *ip++;
                     current.IP = ip;
                     _sp = sp;
-                    string right = ((SurtrString)entities[(SurtrRef)(*(sp - 1))]!).Value;
-                    string left = ((SurtrString)entities[(SurtrRef)(*(sp - 2))]!).Value;
 
-                    SurtrRef reference = context.EntityRegistry.Register(new SurtrString(string.Concat(left, right)));
+                    sp -= count;
+
+                    // Two operands is what every `a + b` is, and it needs no buffer at all. Anything
+                    // wider gathers into the reusable one and writes the result in a single pass,
+                    // so an n-part concatenation allocates one string rather than n - 1.
+                    string joined;
+                    if (count == 2)
+                    {
+                        joined = string.Concat(
+                            ((SurtrString)entities[(SurtrRef)sp[0]]!).Value,
+                            ((SurtrString)entities[(SurtrRef)sp[1]]!).Value);
+                    }
+                    else
+                    {
+                        var parts = _concatBuffer;
+                        if (parts.Length < count)
+                            parts = _concatBuffer = new string[count];
+
+                        int total = 0;
+                        for (int i = 0; i < count; i++)
+                        {
+                            string part = ((SurtrString)entities[(SurtrRef)sp[i]]!).Value;
+                            parts[i] = part;
+                            total += part.Length;
+                        }
+
+                        joined = string.Create(total, (parts, count), ConcatParts);
+                    }
+
+                    SurtrRef reference = context.EntityRegistry.Register(new SurtrString(joined));
                     entities = context.EntityRegistry.Entities;
 
-                    sp--;
-                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
                     goto Dispatch;
                 }
 
@@ -1625,6 +1759,25 @@ namespace Surtr.VM
                     *(sp - 1) = elements[index].Raw;
                     goto Dispatch;
                 }
+
+                // What an element access actually compiles to: a tuple index has to be a constant
+                // for the element's type to be known, so the push TupGet needs is one the compiler
+                // can always fold into the instruction.
+                case OpCode.TupGetC:
+                {
+                    int index = *ip++;
+                    var elements = ((SurtrTuple)entities[(SurtrRef)(*(sp - 1))]!).Elements;
+
+                    if ((uint)index >= (uint)elements.Length)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw IndexOutOfRange(index, elements.Length, "tuple");
+                    }
+
+                    *(sp - 1) = elements[index].Raw;
+                    goto Dispatch;
+                }
                 #endregion
 
                 #region Dictionary Operations
@@ -1656,24 +1809,56 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     sp -= count * 2;
+
+                    // The specialised arm is written out here rather than reached through
+                    // SurtrDictionary.Set: the JIT will not inline into a method this size, and a
+                    // real call is exactly what the specialisation exists to avoid. The store is
+                    // re-read after the general arm, which may have de-specialised the dictionary.
+                    var packInts = dictionary.IntEntries;
                     for (int i = 0; i < count; i++)
-                        dictionary.Entries[SurtrValue.FromRaw(sp[i * 2])] = SurtrValue.FromRaw(sp[i * 2 + 1]);
+                    {
+                        SurtrRawValue packKey = sp[i * 2];
+                        SurtrValue packValue = SurtrValue.FromRaw(sp[i * 2 + 1]);
+
+                        if (packInts != null && (packKey & SurtrValue.TagMask) == SurtrValue.TagMaskInt)
+                        {
+                            packInts[(SurtrInt)packKey] = packValue;
+                        }
+                        else
+                        {
+                            dictionary.SetGeneral(SurtrValue.FromRaw(packKey), packValue);
+                            packInts = dictionary.IntEntries;
+                        }
+                    }
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
                     goto Dispatch;
                 }
 
                 case OpCode.DictLen:
+                {
+                    var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
+                    var ints = dictionary.IntEntries;
                     *(sp - 1) = SurtrValue.TagMaskInt
-                        | (uint)((SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!).Entries.Count;
+                        | (uint)(ints != null ? ints.Count : dictionary.Entries!.Count);
                     goto Dispatch;
+                }
 
                 case OpCode.DictGet:
                 {
-                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    SurtrRawValue rawKey = *--sp;
                     var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
 
-                    if (!dictionary.Entries.TryGetValue(key, out SurtrValue found))
+                    var ints = dictionary.IntEntries;
+                    bool present;
+                    SurtrValue found;
+
+                    if (ints != null && (rawKey & SurtrValue.TagMask) == SurtrValue.TagMaskInt)
+                        present = ints.TryGetValue((SurtrInt)rawKey, out found);
+                    else
+                        present = dictionary.TryGetGeneral(SurtrValue.FromRaw(rawKey), out found);
+
+                    if (!present)
                     {
                         current.IP = ip;
                         _sp = sp;
@@ -1687,24 +1872,47 @@ namespace Surtr.VM
                 case OpCode.DictSet:
                 {
                     SurtrValue value = SurtrValue.FromRaw(*--sp);
-                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    SurtrRawValue rawKey = *--sp;
                     current.IP = ip;
                     _sp = sp;
-                    ((SurtrDictionary)entities[(SurtrRef)(*--sp)]!).Entries[key] = value;
+
+                    var dictionary = (SurtrDictionary)entities[(SurtrRef)(*--sp)]!;
+                    var ints = dictionary.IntEntries;
+
+                    if (ints != null && (rawKey & SurtrValue.TagMask) == SurtrValue.TagMaskInt)
+                        ints[(SurtrInt)rawKey] = value;
+                    else
+                        dictionary.SetGeneral(SurtrValue.FromRaw(rawKey), value);
+
                     goto Dispatch;
                 }
 
                 case OpCode.DictDel:
                 {
-                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    SurtrRawValue rawKey = *--sp;
                     var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
-                    *(sp - 1) = SurtrValue.TagMaskBool | (dictionary.Entries.Remove(key) ? 1UL : 0UL);
+                    var ints = dictionary.IntEntries;
+
+                    bool removed = ints != null && (rawKey & SurtrValue.TagMask) == SurtrValue.TagMaskInt
+                        ? ints.Remove((SurtrInt)rawKey)
+                        : dictionary.RemoveGeneral(SurtrValue.FromRaw(rawKey));
+
+                    *(sp - 1) = SurtrValue.TagMaskBool | (removed ? 1UL : 0UL);
                     goto Dispatch;
                 }
 
                 case OpCode.DictClear:
-                    ((SurtrDictionary)entities[(SurtrRef)(*--sp)]!).Entries.Clear();
+                {
+                    var dictionary = (SurtrDictionary)entities[(SurtrRef)(*--sp)]!;
+                    var ints = dictionary.IntEntries;
+
+                    if (ints != null)
+                        ints.Clear();
+                    else
+                        dictionary.Entries!.Clear();
+
                     goto Dispatch;
+                }
 
                 case OpCode.DictKeys:
                 {
@@ -1714,7 +1922,7 @@ namespace Surtr.VM
                     _sp = sp;
 
                     var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
-                    var keys = new SurtrArray(arrayType, dictionary.Entries.Count);
+                    var keys = new SurtrArray(arrayType, dictionary.Count);
                     dictionary.CopyKeysTo(keys);
 
                     SurtrRef reference = context.EntityRegistry.Register(keys);
@@ -1732,7 +1940,7 @@ namespace Surtr.VM
                     _sp = sp;
 
                     var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
-                    var values = new SurtrArray(arrayType, dictionary.Entries.Count);
+                    var values = new SurtrArray(arrayType, dictionary.Count);
                     dictionary.CopyValuesTo(values);
 
                     SurtrRef reference = context.EntityRegistry.Register(values);
@@ -1744,17 +1952,29 @@ namespace Surtr.VM
 
                 case OpCode.DictIn:
                 {
-                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    SurtrRawValue rawKey = *--sp;
                     var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
-                    *(sp - 1) = SurtrValue.TagMaskBool | (dictionary.Entries.ContainsKey(key) ? 1UL : 0UL);
+                    var ints = dictionary.IntEntries;
+
+                    bool contains = ints != null && (rawKey & SurtrValue.TagMask) == SurtrValue.TagMaskInt
+                        ? ints.ContainsKey((SurtrInt)rawKey)
+                        : dictionary.ContainsKeyGeneral(SurtrValue.FromRaw(rawKey));
+
+                    *(sp - 1) = SurtrValue.TagMaskBool | (contains ? 1UL : 0UL);
                     goto Dispatch;
                 }
 
                 case OpCode.DictNIn:
                 {
-                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    SurtrRawValue rawKey = *--sp;
                     var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
-                    *(sp - 1) = SurtrValue.TagMaskBool | (dictionary.Entries.ContainsKey(key) ? 0UL : 1UL);
+                    var ints = dictionary.IntEntries;
+
+                    bool contains = ints != null && (rawKey & SurtrValue.TagMask) == SurtrValue.TagMaskInt
+                        ? ints.ContainsKey((SurtrInt)rawKey)
+                        : dictionary.ContainsKeyGeneral(SurtrValue.FromRaw(rawKey));
+
+                    *(sp - 1) = SurtrValue.TagMaskBool | (contains ? 0UL : 1UL);
                     goto Dispatch;
                 }
                 #endregion
@@ -2510,10 +2730,21 @@ namespace Surtr.VM
                     var receiverClass = ((SurtrObject)entities[(SurtrRef)(*(sp - pendingArguments))]!).Class;
                     var contract = (SurtrInterface)declared.DeclaringType!.ResolvedType!;
 
+                    // Which block of the receiver's dispatch table this contract owns. Written out
+                    // rather than calling SurtrClass.IndexOfInterface, which would be a real call
+                    // from a method this size - the two have to stay in step.
+                    int contractId = contract.InterfaceId;
+                    int indexMask = receiverClass.InterfaceIndexMask;
+                    int probe = contractId & indexMask;
+
+                    while (receiverClass.InterfaceIndexById[probe << 1] != contractId)
+                        probe = (probe + 1) & indexMask;
+
+                    int contractIndex = receiverClass.InterfaceIndexById[(probe << 1) + 1];
+
                     // One extra indirection over a virtual call: the interface's block in the
                     // class's dispatch table maps the contract's slot onto a vtable index, so an
                     // override reached through the vtable applies here for free.
-                    int contractIndex = receiverClass.IndexOfInterface(contract);
                     int vtableSlot = receiverClass.InterfaceMethodSlots[
                         receiverClass.InterfaceSlotOffsets[contractIndex] + declared.VTableSlot];
 

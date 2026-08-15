@@ -144,6 +144,49 @@ namespace Surtr.Tests.VM
             Assert.Equal(value, Run(builder).AsInt);
         }
 
+        [Fact]
+        public void PushTrue_PushesATaggedBoolean()
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushTrue)
+                .Op(OpCode.ReturnValue);
+
+            var result = Run(builder);
+            Assert.True(result.IsBool);
+            Assert.True(result.AsBool);
+        }
+
+        [Fact]
+        public void PushFalse_PushesATaggedBoolean()
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushFalse)
+                .Op(OpCode.ReturnValue);
+
+            var result = Run(builder);
+            Assert.True(result.IsBool);
+            Assert.False(result.AsBool);
+        }
+
+        /// <summary>
+        /// The tag is the point: an untagged 1 would still read as true, but it would report the
+        /// wrong class and box as an <c>int</c>.
+        /// </summary>
+        [Theory]
+        [InlineData('a')]
+        [InlineData('\0')]
+        [InlineData('￿')]
+        public void PushChar_CarriesTheWholeCodeUnitRangeInline(char value)
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushChar).I16(value)
+                .Op(OpCode.ReturnValue);
+
+            var result = Run(builder);
+            Assert.True(result.IsChar);
+            Assert.Equal(value, result.AsChar);
+        }
+
         [Theory]
         [InlineData(0)]
         [InlineData(int.MaxValue)]
@@ -283,6 +326,37 @@ namespace Surtr.Tests.VM
                 .Op(OpCode.ReturnValue);
 
             Assert.Equal(555, Run(builder, localCount: 24).AsInt);
+        }
+
+        [Theory]
+        [InlineData(1, 41)]
+        [InlineData(-1, 39)]
+        [InlineData(127, 167)]
+        [InlineData(-128, -88)]
+        public void IncLocal_AddsItsSignedDeltaInPlace(int delta, int expected)
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(40)
+                .Op(OpCode.StlS).U8(2)
+                .Op(OpCode.IncLocal).U8(2).U8(delta)
+                .Op(OpCode.LdlS).U8(2)
+                .Op(OpCode.ReturnValue);
+
+            var result = Run(builder);
+            Assert.True(result.IsInt);
+            Assert.Equal(expected, result.AsInt);
+        }
+
+        /// <summary>The update never touches the operand stack, so a value under it is undisturbed.</summary>
+        [Fact]
+        public void IncLocal_LeavesTheOperandStackAlone()
+        {
+            var builder = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(9)
+                .Op(OpCode.IncLocal).U8(0).U8(5)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(9, Run(builder).AsInt);
         }
 
         [Fact]

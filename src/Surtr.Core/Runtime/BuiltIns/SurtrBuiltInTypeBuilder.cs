@@ -51,23 +51,56 @@ namespace Surtr.Runtime.BuiltIns
         }
 
         /// <summary>
+        /// Builds a parameter list ending in a varargs parameter, whose declared type is the
+        /// <em>element</em> type - the body sees an array of it.
+        /// </summary>
+        /// <remarks>
+        /// The call site packs the array, so a native body reading one is reading an ordinary
+        /// <see cref="Objects.SurtrArray"/> argument and nothing about the calling convention
+        /// changes.
+        /// </remarks>
+        internal SurtrParameterInfo[] ParamsWithVarargs(
+            (string Name, SurtrClassReference Type) varargs,
+            params (string Name, SurtrClassReference Type)[] leading)
+        {
+            var built = new SurtrParameterInfo[leading.Length + 1];
+            for (int i = 0; i < leading.Length; i++)
+                built[i] = new SurtrParameterInfo(leading[i].Name, Handle(leading[i].Type));
+
+            built[leading.Length] = new SurtrParameterInfo(varargs.Name, Handle(varargs.Type), SurtrConstant.None, isVarargs: true);
+            return built;
+        }
+
+        /// <summary>
         /// Declares a native method on the class.
         /// </summary>
         /// <remarks>
-        /// Always <see cref="SurtrMethodDispatch.Direct"/>. Built-in classes are sealed by
+        /// <para>
+        /// <see cref="SurtrMethodDispatch.Direct"/> by default. Built-in classes are sealed by
         /// construction - nothing extends <c>string</c> - so there is nothing an override could
         /// come from, and a vtable slot would be an indirection with only ever one occupant.
+        /// </para>
+        /// <para>
+        /// The exception is a member that satisfies an interface. Interface dispatch resolves
+        /// through the class's vtable, so an implementation has to occupy a slot in it -
+        /// <c>SurtrTypeLinker.BuildInterfaceDispatch</c> looks the contract's signature up among
+        /// the virtual methods and nowhere else. Those are declared
+        /// <see cref="SurtrMethodDispatch.Virtual"/>, which costs the interface-typed call site an
+        /// indirection it was always going to pay and costs a statically-typed one nothing, since
+        /// the compiler can still bind it directly.
+        /// </para>
         /// </remarks>
         internal SurtrMethodInfo Method(
             string name,
             SurtrClassReference returnType,
             SurtrNativeEntryPoint entryPoint,
             SurtrParameterInfo[]? parameters = null,
-            bool isStatic = false)
+            bool isStatic = false,
+            SurtrMethodDispatch dispatch = SurtrMethodDispatch.Direct)
         {
             var method = new SurtrNativeMethodInfo(
                 name,
-                SurtrMethodDispatch.Direct,
+                dispatch,
                 SurtrMethodRole.Normal,
                 isOverride: false,
                 Handle(returnType),
@@ -79,6 +112,20 @@ namespace Surtr.Runtime.BuiltIns
 
             _class.AddMethod(method);
             return method;
+        }
+
+        /// <summary>Declares the interfaces this built-in class satisfies.</summary>
+        /// <remarks>
+        /// The handles are interned unresolved and bound by the built-in module's own binding pass,
+        /// which is what lets a collection name an interface declared after it.
+        /// </remarks>
+        internal void Implements(params SurtrClassReference[] interfaces)
+        {
+            var handles = new SurtrTypeHandle[interfaces.Length];
+            for (int i = 0; i < interfaces.Length; i++)
+                handles[i] = Handle(interfaces[i]);
+
+            _class.SetDeclaredInterfaces(handles);
         }
 
         /// <summary>Declares an instance field on the class.</summary>
@@ -128,16 +175,17 @@ namespace Surtr.Runtime.BuiltIns
             SurtrClassReference propertyType,
             SurtrNativeEntryPoint getter,
             SurtrNativeEntryPoint setter = default,
-            bool isStatic = false)
+            bool isStatic = false,
+            SurtrMethodDispatch dispatch = SurtrMethodDispatch.Direct)
         {
             SurtrMethodInfo? getterMethod = null;
             SurtrMethodInfo? setterMethod = null;
 
             if (getter.IsValid)
-                getterMethod = Method("get_" + name, propertyType, getter, NoParameters, isStatic);
+                getterMethod = Method("get_" + name, propertyType, getter, NoParameters, isStatic, dispatch);
 
             if (setter.IsValid)
-                setterMethod = Method("set_" + name, SurtrClassReference.Void, setter, Params(("value", propertyType)), isStatic);
+                setterMethod = Method("set_" + name, SurtrClassReference.Void, setter, Params(("value", propertyType)), isStatic, dispatch);
 
             var property = new SurtrPropertyInfo(
                 name,

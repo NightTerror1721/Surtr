@@ -125,6 +125,32 @@ namespace Surtr.Runtime.BuiltIns
             AddAbstractMethod(equatable, handles, "equals", SurtrClassReference.Boolean, ("other", element));
         }
 
+        /// <summary>
+        /// The descriptor naming one of the core contracts, with its arity mangled into the name
+        /// and its own type parameters supplied as arguments.
+        /// </summary>
+        /// <remarks>
+        /// A generic contract's self reference is the <em>constructed</em> form
+        /// (<c>Osurtr:IIterable`1;G0</c>), not an open one. Arity lives in the name and says how
+        /// many argument descriptors follow, so a name promising one argument and supplying none is
+        /// simply malformed - there is no open form to write.
+        /// </remarks>
+        internal static SurtrClassReference ContractReference(string name, int arity)
+        {
+            string fullName = SurtrBuiltIns.ModulePath
+                + SurtrClassReference.ModuleSeparator
+                + SurtrClassReference.MangleArity(name, arity);
+
+            if (arity == 0)
+                return SurtrClassReference.Object(fullName);
+
+            var arguments = new SurtrClassReference[arity];
+            for (int i = 0; i < arity; i++)
+                arguments[i] = SurtrClassReference.GenericParameter(i);
+
+            return SurtrClassReference.Constructed(fullName, arguments);
+        }
+
         private static SurtrInterface DeclareInterface(
             SurtrModule module,
             SurtrTypeHandleTable handles,
@@ -132,8 +158,8 @@ namespace Surtr.Runtime.BuiltIns
             params string[] genericParameters)
         {
             var contract = new SurtrInterface(
-                name,
-                SurtrClassReference.Object(SurtrBuiltIns.ModulePath + SurtrClassReference.ModuleSeparator + name),
+                SurtrClassReference.MangleArity(name, genericParameters.Length),
+                ContractReference(name, genericParameters.Length),
                 SurtrVisibility.Public,
                 declaringType: null);
 

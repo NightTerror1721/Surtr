@@ -53,6 +53,17 @@ namespace Surtr.Runtime.BuiltIns
 
             builder.Method("fromChar", text, SurtrNativeEntryPoint.FromFunctionPointer(&FromChar), builder.Params(("value", character)), isStatic: true);
             builder.Method("join", text, SurtrNativeEntryPoint.FromFunctionPointer(&Join), builder.Params(("separator", text), ("parts", textArray)), isStatic: true);
+
+            // Takes strings, not a heterogeneous argument list. A statically typed language knows
+            // what every argument is, so converting at the call site with `.toString()` is one
+            // visible call rather than a runtime type walk hidden inside this one - the same
+            // discipline §5.2's interpolation is lowered under.
+            builder.Method(
+                "format",
+                text,
+                SurtrNativeEntryPoint.FromFunctionPointer(&Format),
+                builder.ParamsWithVarargs(("args", text), ("pattern", text)),
+                isStatic: true);
         }
 
         private static SurtrValue GetLength(SurtrCallArguments arguments)
@@ -228,6 +239,81 @@ namespace Surtr.Runtime.BuiltIns
                     builder.Append(separator);
 
                 builder.Append(runtime.Dereference<SurtrString>(parts[i].Raw).Value);
+            }
+
+            return runtime.NewStringValue(builder.ToString());
+        }
+
+        /// <summary>
+        /// Substitutes <c>{0}</c>-style placeholders in a pattern with the arguments that follow it.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <c>{{</c> and <c>}}</c> are literal braces, matching every other language that uses this
+        /// placeholder shape; a lone <c>}</c> is literal too, since nothing is ambiguous about it.
+        /// An index naming an argument that was not passed is an error rather than an empty string:
+        /// a format string and its arguments drifting apart is a bug, and printing nothing hides it
+        /// exactly where it would be hardest to notice.
+        /// </para>
+        /// <para>
+        /// The varargs array arrives already packed by the call site, so this reads it as an
+        /// ordinary array argument.
+        /// </para>
+        /// </remarks>
+        private static SurtrValue Format(SurtrCallArguments arguments)
+        {
+            var runtime = arguments.Runtime;
+            string pattern = arguments.GetUnchecked<SurtrString>(0).Value;
+            var args = arguments.GetUnchecked<SurtrArray>(1);
+
+            var builder = new System.Text.StringBuilder(pattern.Length);
+
+            for (int i = 0; i < pattern.Length; i++)
+            {
+                char current = pattern[i];
+
+                if (current == '}')
+                {
+                    // A doubled brace is one literal brace; a lone one is also just a brace.
+                    if (i + 1 < pattern.Length && pattern[i + 1] == '}')
+                        i++;
+
+                    builder.Append('}');
+                    continue;
+                }
+
+                if (current != '{')
+                {
+                    builder.Append(current);
+                    continue;
+                }
+
+                if (i + 1 < pattern.Length && pattern[i + 1] == '{')
+                {
+                    builder.Append('{');
+                    i++;
+                    continue;
+                }
+
+                int index = 0;
+                int digits = 0;
+                int scan = i + 1;
+
+                while (scan < pattern.Length && pattern[scan] >= '0' && pattern[scan] <= '9')
+                {
+                    index = (index * 10) + (pattern[scan] - '0');
+                    digits++;
+                    scan++;
+                }
+
+                if (digits == 0 || scan >= pattern.Length || pattern[scan] != '}')
+                    throw new ArgumentException($"'{pattern}' has a '{{' that does not open a placeholder like '{{0}}'.", "pattern");
+
+                if (index >= args.Length)
+                    throw new ArgumentException($"'{pattern}' names argument {index}, but only {args.Length} were passed.", "pattern");
+
+                builder.Append(runtime.Dereference<SurtrString>(args[index].Raw).Value);
+                i = scan;
             }
 
             return runtime.NewStringValue(builder.ToString());

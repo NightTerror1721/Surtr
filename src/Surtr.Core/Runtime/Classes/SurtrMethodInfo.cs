@@ -415,6 +415,15 @@ namespace Surtr.Runtime.Classes
         /// One method rather than two private copies, because the linker and the declaration-time
         /// duplicate check have to agree exactly or an illegal overload pair slips through.
         /// </para>
+        /// <para>
+        /// Parameter descriptors are written <em>erased</em>: a <c>G0</c> is spelled <c>E</c>,
+        /// because after erasure they are the same type - both resolve to
+        /// <c>SurtrBuiltIns.Erased</c>, both occupy a reference slot, and no call site can tell
+        /// them apart. Without that, a class could never implement a generic interface whose
+        /// members mention the parameter: <c>IComparable</c> declares <c>compareTo(G0)</c>, and an
+        /// implementation naming the same erased slot would miss the contract's slot by spelling
+        /// alone.
+        /// </para>
         /// </remarks>
         public string SignatureKey() => _signatureKey ??= BuildSignatureKey();
 
@@ -457,10 +466,21 @@ namespace Surtr.Runtime.Classes
             builder.Append(name).Append('(');
 
             for (int i = 0; i < _parameters.Length; i++)
-                builder.Append(_parameters[i].ParameterType.Reference.Descriptor);
+                AppendErased(builder, _parameters[i].ParameterType.Reference.Descriptor);
 
             return builder.Append(')').ToString();
         }
+
+        /// <summary>
+        /// Appends a descriptor with every generic parameter rewritten to the erased symbol.
+        /// </summary>
+        /// <remarks>
+        /// Delegated to <see cref="SurtrClassReference.AppendErased"/> rather than written out
+        /// again: a compiler emitting a bridge has to produce exactly the descriptor this key
+        /// compares, and two copies of that rule would agree until one of them was edited.
+        /// </remarks>
+        private static void AppendErased(StringBuilder builder, string descriptor)
+            => SurtrClassReference.AppendErased(builder, descriptor);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private SurtrClassReference BuildSignature()

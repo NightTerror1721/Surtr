@@ -64,6 +64,19 @@ namespace Surtr.Runtime.Objects
         private long _lastCollectionElapsedTicks;
 
         public readonly int Capacity => _capacity;
+
+        /// <summary>
+        /// How many entities are registered right now.
+        /// </summary>
+        /// <remarks>
+        /// Derived from the id watermark and the free list rather than kept as a counter, so
+        /// <see cref="Register"/> pays nothing for it: ids are handed out from the free list first
+        /// and from <c>_nextId</c> only when that is empty, which makes everything below the
+        /// watermark either live or free and nothing else. Id 0 is the null reference and is never
+        /// handed out, hence the -1.
+        /// </remarks>
+        public readonly int LiveCount => _nextId - 1 - _freeCount;
+
         public readonly long TotalCollections => _totalCollections;
         public readonly long TotalFullCollections => _totalFullCollections;
         public readonly long TotalNurseryCollections => _totalNurseryCollections;

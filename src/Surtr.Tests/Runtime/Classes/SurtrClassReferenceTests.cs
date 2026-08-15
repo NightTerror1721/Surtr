@@ -460,5 +460,152 @@ namespace Surtr.Tests.Runtime.Classes
         }
 
         #endregion
+
+        #region Generic types
+        // docs/Compiler-Plan.md §8: arity is part of a type's identity and is mangled into its
+        // name; the type arguments follow the name terminator with neither brackets nor a count,
+        // because the arity already said how many to expect.
+
+        [Fact]
+        public void MangleArity_LeavesANonGenericNameAlone()
+        {
+            Assert.Equal("Entity", SurtrClassReference.MangleArity("Entity", 0));
+            Assert.Equal("Box`1", SurtrClassReference.MangleArity("Box", 1));
+            Assert.Equal("Pair`2", SurtrClassReference.MangleArity("Pair", 2));
+        }
+
+        [Fact]
+        public void ArityOf_ReadsOnlyTheLastSegment()
+        {
+            // A type nested inside a generic one does not see its container's parameters, so only
+            // the segment being named counts and the earlier ones are qualification.
+            Assert.Equal(0, SurtrClassReference.ArityOf("game.core:Entity"));
+            Assert.Equal(1, SurtrClassReference.ArityOf("box:Box`1"));
+            Assert.Equal(2, SurtrClassReference.ArityOf("box:Pair`2"));
+            Assert.Equal(0, SurtrClassReference.ArityOf("box:Box`1.Entry"));
+            Assert.Equal(1, SurtrClassReference.ArityOf("box:Box`1.Pair`1"));
+        }
+
+        [Fact]
+        public void Constructed_WritesTheArgumentsAfterTheTerminator()
+        {
+            Assert.Equal(
+                "Obox:Box`1;I",
+                SurtrClassReference.Constructed("box:Box`1", SurtrClassReference.Integer).Descriptor);
+
+            Assert.Equal(
+                "Obox:Pair`2;IS",
+                SurtrClassReference.Constructed("box:Pair`2", SurtrClassReference.Integer, SurtrClassReference.String)
+                    .Descriptor);
+        }
+
+        [Fact]
+        public void Constructed_RejectsAnArgumentCountTheNameDisagreesWith()
+        {
+            Assert.Throws<System.ArgumentException>(
+                () => SurtrClassReference.Constructed("box:Box`1"));
+
+            Assert.Throws<System.ArgumentException>(
+                () => SurtrClassReference.Constructed(
+                    "box:Box`1", SurtrClassReference.Integer, SurtrClassReference.String));
+        }
+
+        [Fact]
+        public void ANestedTypeInAGenericContainerTakesNoArgumentsOfItsOwn()
+        {
+            var entry = SurtrClassReference.Constructed("box:Box`1.Entry");
+
+            Assert.Equal("Obox:Box`1.Entry;", entry.Descriptor);
+            Assert.True(SurtrClassReference.IsWellFormed(entry.Descriptor));
+            Assert.Equal(0, entry.GenericArity);
+        }
+
+        [Fact]
+        public void AConstructedDescriptorIsWellFormedAndSkipsWhole()
+        {
+            // The point of putting arity in the name: this parses left to right with one character
+            // of lookahead, and a nested construction ends exactly where its arguments do.
+            const string nested = "Obox:Pair`2;IObox:Box`1;S";
+
+            Assert.True(SurtrClassReference.IsWellFormed(nested));
+            Assert.Equal(nested.Length, SurtrClassReference.SkipDescriptor(nested, 0));
+
+            // The same construction as an array element leaves the array's descriptor well formed.
+            Assert.True(SurtrClassReference.IsWellFormed("A" + nested));
+        }
+
+        [Fact]
+        public void AMissingArgumentMakesTheDescriptorMalformed()
+        {
+            // A name that promises one argument and supplies none is not an "open" form - it is
+            // unreadable, which is why a generic contract names itself with its own parameter.
+            Assert.False(SurtrClassReference.IsWellFormed("Obox:Box`1;"));
+            Assert.False(SurtrClassReference.IsWellFormed("Obox:Pair`2;I"));
+            Assert.False(SurtrClassReference.IsWellFormed("Obox:Box`;I"));
+        }
+
+        [Fact]
+        public void GetTypeArguments_ReturnsEachArgumentWhole()
+        {
+            var pair = SurtrClassReference.FromDescriptor("Obox:Pair`2;IObox:Box`1;S");
+
+            Assert.Equal(2, pair.GenericArity);
+
+            var arguments = pair.GetTypeArguments();
+            Assert.Equal(2, arguments.Length);
+            Assert.Equal("I", arguments[0].Descriptor);
+            Assert.Equal("Obox:Box`1;S", arguments[1].Descriptor);
+        }
+
+        [Fact]
+        public void TwoConstructionsOfOneDeclarationShareAFullName()
+        {
+            var ofInt = SurtrClassReference.Constructed("box:Box`1", SurtrClassReference.Integer);
+            var ofString = SurtrClassReference.Constructed("box:Box`1", SurtrClassReference.String);
+
+            // Different descriptors, so they are different types to a signature - but one name, so
+            // both resolve to the same SurtrClass. Nothing is reified.
+            Assert.NotEqual(ofInt, ofString);
+
+            Assert.True(ofInt.TryGetFullName(out string left));
+            Assert.True(ofString.TryGetFullName(out string right));
+            Assert.Equal(left, right);
+        }
+
+        [Fact]
+        public void ADisplayStringHidesTheManglingAndShowsTheArguments()
+        {
+            Assert.Equal(
+                "box:Box<int>",
+                SurtrClassReference.Constructed("box:Box`1", SurtrClassReference.Integer).ToDisplayString());
+
+            Assert.Equal(
+                "box:Pair<int, string>",
+                SurtrClassReference
+                    .Constructed("box:Pair`2", SurtrClassReference.Integer, SurtrClassReference.String)
+                    .ToDisplayString());
+
+            Assert.Equal(
+                "box:Box<box:Box<string>>",
+                SurtrClassReference.Constructed(
+                    "box:Box`1",
+                    SurtrClassReference.Constructed("box:Box`1", SurtrClassReference.String)).ToDisplayString());
+
+            Assert.Equal(
+                "box:Box.Entry",
+                SurtrClassReference.Constructed("box:Box`1.Entry").ToDisplayString());
+        }
+
+        [Fact]
+        public void ANonGenericDescriptorIsUnchangedByAllOfThis()
+        {
+            var entity = SurtrClassReference.Object("game.core:Entity");
+
+            Assert.Equal("Ogame.core:Entity;", entity.Descriptor);
+            Assert.Equal(0, entity.GenericArity);
+            Assert.Empty(entity.GetTypeArguments());
+            Assert.True(SurtrClassReference.IsWellFormed(entity.Descriptor));
+        }
+        #endregion
     }
 }

@@ -5,32 +5,44 @@ using Surtr.Compiler.Syntax;
 namespace Surtr.Compiler.Diagnostics
 {
     /// <summary>
-    /// Thrown when the token stream does not match the grammar: a missing <c>;</c>, an unexpected
+    /// Raised when the token stream does not match the grammar: a missing <c>;</c>, an unexpected
     /// keyword where an expression was due, a modifier on a declaration that cannot take it.
     /// </summary>
     /// <remarks>
-    /// The parser throws on the first problem rather than recovering and continuing. Error
-    /// recovery — resynchronising at a statement boundary so one bad line does not hide the next
-    /// twenty — is worth having in a compiler people use interactively, but it is a design in its
-    /// own right and would be guesswork before there is a binder to report alongside it.
+    /// <para>
+    /// Inside the parser this is <b>control flow, not failure</b>. A production that cannot
+    /// continue throws, and the nearest recovery point — a declaration boundary or a statement
+    /// boundary — catches it, resynchronises and carries on, so the diagnostic it already reported
+    /// is joined by whatever else the file has wrong rather than hiding it.
+    /// </para>
+    /// <para>
+    /// It reaches a caller only through <see cref="SurtrDiagnosticBag.ThrowIfErrors"/>, or from one
+    /// of the narrower entry points that parses a fragment with no boundary to recover at.
+    /// </para>
     /// </remarks>
     public sealed class SurtrParserException : SurtrCompilerException
     {
-        /// <summary>Where in the source the offending token starts.</summary>
-        public SourceLocation Location { get; }
-
-        /// <summary>Identifies the source the failure occurred in — a file path, or a placeholder for in-memory sources.</summary>
-        public string SourceName { get; }
-
-        /// <summary>Initializes the exception with what went wrong and where.</summary>
-        /// <param name="message">A description of the mismatch.</param>
-        /// <param name="sourceName">Identifies the source being parsed.</param>
-        /// <param name="location">Where the offending token starts.</param>
-        public SurtrParserException(string message, string sourceName, SourceLocation location)
-            : base($"{sourceName}({location.Line},{location.Column}): {message}")
+        /// <summary>Initializes the exception from the diagnostic it reports.</summary>
+        /// <param name="diagnostic">The diagnostic being raised.</param>
+        public SurtrParserException(SurtrDiagnostic diagnostic)
+            : base(diagnostic.ToString())
         {
-            Location = location;
-            SourceName = sourceName;
+            Diagnostic = diagnostic;
         }
+
+        /// <summary>The diagnostic this exception reports.</summary>
+        public SurtrDiagnostic Diagnostic { get; }
+
+        /// <summary>What kind of problem this is.</summary>
+        public SurtrDiagnosticCode Code => Diagnostic.Code;
+
+        /// <summary>The range of source the offending tokens cover.</summary>
+        public SourceSpan Span => Diagnostic.Span;
+
+        /// <summary>Where in the source the offending token starts.</summary>
+        public SourceLocation Location => Diagnostic.Span.Start;
+
+        /// <summary>Identifies the source the failure occurred in.</summary>
+        public string SourceName => Diagnostic.SourceName;
     }
 }

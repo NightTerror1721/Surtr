@@ -1,5 +1,6 @@
 #nullable enable
 
+using Surtr.Compiler.Diagnostics;
 using System.Collections.Generic;
 using Surtr.Compiler.Syntax.Ast;
 
@@ -13,14 +14,31 @@ namespace Surtr.Compiler.Syntax
             SourceLocation start = reader.CurrentLocation;
             reader.Expect(TokenType.LeftBrace, "'{' to open the block");
 
+            // A statement that does not parse is reported and skipped, and the block carries on
+            // with the next one. Recovering here rather than only at declaration level is what
+            // keeps one bad line inside a long method from discarding the whole method.
             List<StatementSyntax> statements = new List<StatementSyntax>();
             while (!reader.Check(TokenType.RightBrace) && !reader.Check(TokenType.EndOfFile))
             {
-                statements.Add(ParseStatement());
+                int before = reader.Position;
+
+                try
+                {
+                    statements.Add(ParseStatement());
+                }
+                catch (SurtrParserException)
+                {
+                    SynchronizeToStatement();
+                }
+
+                if (reader.Position == before)
+                {
+                    reader.Advance();
+                }
             }
 
             reader.Expect(TokenType.RightBrace, "'}' to close the block");
-            return new BlockStatementSyntax(start, statements);
+            return new BlockStatementSyntax(SpanFrom(start), statements);
         }
 
         /// <summary>Parses one statement.</summary>
@@ -36,7 +54,7 @@ namespace Surtr.Compiler.Syntax
 
                 case TokenType.Semicolon:
                     reader.Advance();
-                    return new EmptyStatementSyntax(start);
+                    return new EmptyStatementSyntax(SpanFrom(start));
 
                 case TokenType.KeywordLet:
                 case TokenType.KeywordVar:
@@ -65,13 +83,13 @@ namespace Surtr.Compiler.Syntax
                     reader.Advance();
                     ExpressionSyntax thrown = ParseExpression();
                     reader.Expect(TokenType.Semicolon, "';' after the thrown value");
-                    return new ThrowStatementSyntax(start, thrown);
+                    return new ThrowStatementSyntax(SpanFrom(start), thrown);
 
                 case TokenType.KeywordReturn:
                     reader.Advance();
                     ExpressionSyntax? returned = reader.Check(TokenType.Semicolon) ? null : ParseExpression();
                     reader.Expect(TokenType.Semicolon, "';' after the return");
-                    return new ReturnStatementSyntax(start, returned);
+                    return new ReturnStatementSyntax(SpanFrom(start), returned);
 
                 case TokenType.KeywordBreak:
                 case TokenType.KeywordContinue:
@@ -85,12 +103,13 @@ namespace Surtr.Compiler.Syntax
                     {
                         string label = reader.Advance().ToString();
                         reader.Advance();
-                        return new LabeledStatementSyntax(start, label, ParseStatement());
+                        StatementSyntax labeled = ParseStatement();
+                        return new LabeledStatementSyntax(SpanFrom(start), label, labeled);
                     }
 
                     ExpressionSyntax expression = ParseExpression();
                     reader.Expect(TokenType.Semicolon, "';' after the expression");
-                    return new ExpressionStatementSyntax(start, expression);
+                    return new ExpressionStatementSyntax(SpanFrom(start), expression);
             }
         }
 
@@ -113,7 +132,7 @@ namespace Surtr.Compiler.Syntax
             ExpressionSyntax? initializer = reader.Match(TokenType.Assign) ? ParseExpression() : null;
 
             reader.Expect(TokenType.Semicolon, "';' after the declaration");
-            return new LocalDeclarationStatementSyntax(start, name, type, initializer, isMutable, isConst);
+            return new LocalDeclarationStatementSyntax(SpanFrom(start), name, type, initializer, isMutable, isConst);
         }
 
         /// <summary>Parses <c>if</c> and <c>const if</c>, with the dangling <c>else</c> bound to the nearest one (§4.1).</summary>
@@ -137,7 +156,7 @@ namespace Surtr.Compiler.Syntax
                 elseBranch = ParseEmbeddedStatement();
             }
 
-            return new IfStatementSyntax(start, condition, then, elseBranch, isConst);
+            return new IfStatementSyntax(SpanFrom(start), condition, then, elseBranch, isConst);
         }
 
         /// <summary>
@@ -150,7 +169,7 @@ namespace Surtr.Compiler.Syntax
             if (reader.Check(TokenType.KeywordLet) || reader.Check(TokenType.KeywordVar)
                 || (reader.Check(TokenType.KeywordConst) && !reader.CheckAt(1, TokenType.KeywordIf)))
             {
-                throw reader.Error("A declaration cannot be the unbraced body of an 'if' or a loop — its binding would immediately leave scope.");
+                throw reader.Error(SurtrDiagnosticCode.DeclarationAsEmbeddedStatement, "A declaration cannot be the unbraced body of an 'if' or a loop — its binding would immediately leave scope.");
             }
 
             return ParseStatement();
@@ -165,7 +184,8 @@ namespace Surtr.Compiler.Syntax
             ExpressionSyntax condition = ParseExpression();
             reader.Expect(TokenType.RightParen, "')' after the condition");
 
-            return new WhileStatementSyntax(start, condition, ParseEmbeddedStatement());
+            StatementSyntax whileBody = ParseEmbeddedStatement();
+            return new WhileStatementSyntax(SpanFrom(start), condition, whileBody);
         }
 
         /// <summary>
@@ -192,7 +212,8 @@ namespace Surtr.Compiler.Syntax
                 ExpressionSyntax sequence = ParseExpression();
                 reader.Expect(TokenType.RightParen, "')' after the sequence");
 
-                return new ForInStatementSyntax(start, variableName, variableType, sequence, ParseEmbeddedStatement());
+                StatementSyntax forInBody = ParseEmbeddedStatement();
+                return new ForInStatementSyntax(SpanFrom(start), variableName, variableType, sequence, forInBody);
             }
 
             StatementSyntax? initializer = null;
@@ -209,7 +230,8 @@ namespace Surtr.Compiler.Syntax
             ExpressionSyntax? step = reader.Check(TokenType.RightParen) ? null : ParseExpression();
             reader.Expect(TokenType.RightParen, "')' after the for clauses");
 
-            return new ForStatementSyntax(start, initializer, condition, step, ParseEmbeddedStatement());
+            StatementSyntax forBody = ParseEmbeddedStatement();
+            return new ForStatementSyntax(SpanFrom(start), initializer, condition, step, forBody);
         }
 
         /// <summary>
@@ -256,7 +278,7 @@ namespace Surtr.Compiler.Syntax
             SourceLocation start = reader.CurrentLocation;
             ExpressionSyntax expression = ParseExpression();
             reader.Expect(TokenType.Semicolon, "';' after the expression");
-            return new ExpressionStatementSyntax(start, expression);
+            return new ExpressionStatementSyntax(SpanFrom(start), expression);
         }
 
         /// <summary>Parses the statement form of <c>switch</c>, which allows fallthrough (§4.3).</summary>
@@ -296,11 +318,11 @@ namespace Surtr.Compiler.Syntax
                     statements.Add(ParseStatement());
                 }
 
-                sections.Add(new SwitchSectionSyntax(sectionStart, labels, statements));
+                sections.Add(new SwitchSectionSyntax(SpanFrom(sectionStart), labels, statements));
             }
 
             reader.Expect(TokenType.RightBrace, "'}' to close the switch body");
-            return new SwitchStatementSyntax(start, subject, sections);
+            return new SwitchStatementSyntax(SpanFrom(start), subject, sections);
         }
 
         /// <summary>Parses <c>try</c> with its <c>catch</c> clauses and optional <c>finally</c> (§9).</summary>
@@ -323,17 +345,18 @@ namespace Surtr.Compiler.Syntax
                 TypeSyntax exceptionType = ParseType();
 
                 reader.Expect(TokenType.RightParen, "')' after the catch clause");
-                catches.Add(new CatchClauseSyntax(catchStart, variableName, exceptionType, ParseBlock()));
+                BlockStatementSyntax catchBody = ParseBlock();
+                catches.Add(new CatchClauseSyntax(SpanFrom(catchStart), variableName, exceptionType, catchBody));
             }
 
             BlockStatementSyntax? finallyBlock = reader.Match(TokenType.KeywordFinally) ? ParseBlock() : null;
 
             if (catches.Count == 0 && finallyBlock is null)
             {
-                throw reader.Error("A 'try' needs at least one 'catch' or a 'finally'.", start);
+                throw reader.Error(SurtrDiagnosticCode.IncompleteTryStatement, "A 'try' needs at least one 'catch' or a 'finally'.", start);
             }
 
-            return new TryStatementSyntax(start, body, catches, finallyBlock);
+            return new TryStatementSyntax(SpanFrom(start), body, catches, finallyBlock);
         }
 
         /// <summary>Parses <c>break</c>/<c>continue</c>, with an optional loop label (§4.2).</summary>
@@ -346,7 +369,7 @@ namespace Surtr.Compiler.Syntax
             string? label = reader.Check(TokenType.Identifier) ? reader.Advance().ToString() : null;
             reader.Expect(TokenType.Semicolon, isContinue ? "';' after 'continue'" : "';' after 'break'");
 
-            return new BreakStatementSyntax(start, isContinue, label);
+            return new BreakStatementSyntax(SpanFrom(start), isContinue, label);
         }
     }
 }

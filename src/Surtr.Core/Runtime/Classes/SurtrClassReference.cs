@@ -37,17 +37,36 @@ namespace Surtr.Runtime.Classes
     ///             | 'D' descriptor descriptor          dictionary from K to V
     ///             | 'T' '(' descriptor* ')'            tuple
     ///             | 'L' '(' descriptor* ')' descriptor closure (params) -> return
-    ///             | 'O' fullname ';'                   Surtr object type
-    ///             | 'N' fullname ';'                   host-defined native type
+    ///             | 'O' fullname ';' descriptor{arity} Surtr object type
+    ///             | 'N' fullname ';' descriptor{arity} host-defined native type
     ///             | 'R'                                range of ints
     ///             | 'E'                                erased generic type parameter
     ///             | 'G' digit                          the declaring type's n-th generic parameter
     ///             | '?' primitive                      nullable primitive (?I, ?F, ?B, ?C)
-    /// fullname   := modulePath ':' typeName ('.' nestedTypeName)*
+    /// fullname   := modulePath ':' segment ('.' segment)*
+    /// segment    := typeName ('`' arity)?
     /// </code>
     /// <para>
     /// The <c>':'</c> in a full name separates the module path from the type path, so a resolver
     /// splits it in one pass instead of probing prefixes to find where the module ends.
+    /// </para>
+    /// <para>
+    /// A generic type mangles its arity into its name segment (<c>Box`1</c>), which makes arity
+    /// part of the type's identity - <c>Box&lt;T&gt;</c> and <c>Box&lt;T, U&gt;</c> are unrelated
+    /// declarations - and is also what lets the argument list follow the terminator with neither
+    /// brackets nor a count: <c>{arity}</c> above is read off the name before the arguments are
+    /// reached, so the whole thing still parses in one pass with one character of lookahead.
+    /// <b>Only the last segment's arity counts</b>; the earlier ones are qualification, because a
+    /// type nested inside a generic one does not see its container's parameters. So
+    /// <c>Obox:Box`1;I</c> is <c>Box&lt;int&gt;</c>, and <c>Obox:Box`1.Entry;</c> is an
+    /// <c>Entry</c> that takes nothing.
+    /// </para>
+    /// <para>
+    /// The arguments say nothing to the runtime: two constructions of one declaration share a full
+    /// name and resolve to the same <see cref="SurtrClass"/>, exactly as <c>AI</c> and <c>AS</c>
+    /// both resolve to the shared array class. What they buy is that a signature can tell
+    /// <c>f(Box&lt;int&gt;)</c> from <c>f(Box&lt;string&gt;)</c>. See
+    /// <c>docs/Compiler-Plan.md</c> §8.
     /// </para>
     /// </remarks>
     public readonly struct SurtrClassReference : IEquatable<SurtrClassReference>
@@ -165,6 +184,26 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>Separates path segments within the module path, and enclosing types from nested ones.</summary>
         public const char NameSeparator = '.';
+
+        /// <summary>
+        /// Introduces the arity mangled into a generic type's name segment, so <c>Box`1</c> and
+        /// <c>Box`2</c> are different types rather than a collision.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Backtick is not a legal Surtr identifier character, so a mangled name can never collide
+        /// with a declared one. Arity is part of a type's identity - the argument list is not:
+        /// <c>Box&lt;int&gt;</c> and <c>Box&lt;string&gt;</c> are two descriptors resolving to one
+        /// <see cref="SurtrClass"/>, exactly as <c>AI</c> and <c>AS</c> both resolve to the shared
+        /// array class. Nothing is reified.
+        /// </para>
+        /// <para>
+        /// Putting the arity in the name is also what lets the argument list follow
+        /// <see cref="NameTerminator"/> with neither brackets nor a count: a reader knows how many
+        /// descriptors to expect before it reaches them. See <c>docs/Compiler-Plan.md</c> §8.
+        /// </para>
+        /// </remarks>
+        public const char ArityMarker = '`';
         #endregion
 
         private readonly string? _descriptor;
@@ -327,6 +366,90 @@ namespace Surtr.Runtime.Classes
             => new(SymbolNative + fullName + NameTerminator);
 
         /// <summary>
+        /// Builds a reference to a constructed generic type: a full name whose last segment carries
+        /// its arity, followed by that many argument descriptors.
+        /// </summary>
+        /// <remarks>
+        /// The caller supplies the mangled name (<c>box:Box`1</c>), because the arity belongs to
+        /// the declaration and this only writes what it is told. Passing a count that disagrees
+        /// with the name produces a descriptor nothing can parse, so the two are checked here
+        /// rather than at the first read.
+        /// </remarks>
+        /// <exception cref="ArgumentException">
+        /// The arity mangled into <paramref name="fullName"/> does not match the number of
+        /// arguments given.
+        /// </exception>
+        public static SurtrClassReference Constructed(string fullName, params SurtrClassReference[] typeArguments)
+            => Constructed(SymbolObject, fullName, typeArguments);
+
+        /// <summary>Builds a reference to a constructed generic host-defined native type.</summary>
+        /// <exception cref="ArgumentException">
+        /// The arity mangled into <paramref name="fullName"/> does not match the number of
+        /// arguments given.
+        /// </exception>
+        public static SurtrClassReference ConstructedNative(string fullName, params SurtrClassReference[] typeArguments)
+            => Constructed(SymbolNative, fullName, typeArguments);
+
+        private static SurtrClassReference Constructed(char symbol, string fullName, SurtrClassReference[] typeArguments)
+        {
+            if (fullName is null)
+                throw new ArgumentNullException(nameof(fullName));
+
+            int declared = ArityOf(fullName);
+            int supplied = typeArguments?.Length ?? 0;
+
+            if (declared != supplied)
+            {
+                throw new ArgumentException(
+                    $"'{fullName}' declares an arity of {declared} but {supplied} type argument(s) were given.",
+                    nameof(typeArguments));
+            }
+
+            var builder = new StringBuilder();
+            builder.Append(symbol).Append(fullName).Append(NameTerminator);
+
+            for (int i = 0; i < supplied; i++)
+                builder.Append(typeArguments![i].Descriptor);
+
+            return new SurtrClassReference(builder.ToString());
+        }
+
+        /// <summary>
+        /// Mangles an arity onto a type name segment, so <c>Box</c> with one parameter becomes
+        /// <c>Box`1</c>. A non-generic name is returned unchanged.
+        /// </summary>
+        public static string MangleArity(string name, int arity)
+        {
+            if (arity < 0)
+                throw new ArgumentOutOfRangeException(nameof(arity), arity, "An arity cannot be negative.");
+
+            return arity == 0 ? name : name + ArityMarker + arity.ToString();
+        }
+
+        /// <summary>
+        /// The arity mangled into a full name's last segment, or zero when it names a non-generic
+        /// type. Only the last segment counts - the earlier ones are qualification.
+        /// </summary>
+        public static int ArityOf(string fullName)
+        {
+            int marker = fullName.LastIndexOf(ArityMarker);
+            if (marker < 0 || marker < fullName.LastIndexOf(NameSeparator))
+                return 0;
+
+            int arity = 0;
+            for (int i = marker + 1; i < fullName.Length; i++)
+            {
+                char digit = fullName[i];
+                if (digit < '0' || digit > '9')
+                    return 0;
+
+                arity = (arity * 10) + (digit - '0');
+            }
+
+            return marker + 1 < fullName.Length ? arity : 0;
+        }
+
+        /// <summary>
         /// Builds a reference to the declaring type's <paramref name="index"/>-th generic
         /// parameter.
         /// </summary>
@@ -360,6 +483,66 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>Wraps an already-encoded descriptor without validating it. Intended for metadata loaded from trusted bytecode.</summary>
         public static SurtrClassReference FromDescriptor(string descriptor) => new(descriptor);
+
+        /// <summary>
+        /// The same type with every generic parameter rewritten to <see cref="SymbolErased"/>.
+        /// </summary>
+        /// <remarks>
+        /// This is the form a signature key compares, so it is also the form a bridge method's
+        /// parameters have to be declared in: a class implementing <c>IComparable&lt;Vec2&gt;</c>
+        /// occupies a slot keyed on <c>compareTo(E)</c>, which nothing spelled <c>Vec2</c> can
+        /// match. Returns the reference unchanged when it mentions no parameter, so the common case
+        /// allocates nothing.
+        /// </remarks>
+        public static SurtrClassReference Erase(SurtrClassReference reference)
+        {
+            string descriptor = reference.Descriptor;
+
+            if (descriptor.IndexOf(SymbolGenericParameter) < 0)
+                return reference;
+
+            var builder = new StringBuilder(descriptor.Length);
+            AppendErased(builder, descriptor);
+            return new SurtrClassReference(builder.ToString());
+        }
+
+        /// <summary>
+        /// Appends a descriptor with every generic parameter rewritten to the erased symbol.
+        /// </summary>
+        /// <remarks>
+        /// A single left-to-right pass, because <c>G</c> is always followed by exactly one digit
+        /// and nothing else in the grammar can produce that pair - the same one-character-of-
+        /// lookahead property the descriptor encoding is built on. Nested forms are covered for
+        /// free: <c>AG0</c> becomes <c>AE</c> without the loop having to know it is inside an
+        /// array.
+        /// </remarks>
+        internal static void AppendErased(StringBuilder builder, string descriptor)
+        {
+            for (int i = 0; i < descriptor.Length; i++)
+            {
+                char symbol = descriptor[i];
+
+                if (symbol == SymbolGenericParameter && i + 1 < descriptor.Length)
+                {
+                    builder.Append(SymbolErased);
+                    i++;
+                    continue;
+                }
+
+                builder.Append(symbol);
+
+                // A full name runs to its terminator verbatim: a type called `G0` inside one is a
+                // name, not a parameter, and must not be rewritten.
+                if (symbol != SymbolObject && symbol != SymbolNative)
+                    continue;
+
+                int terminator = descriptor.IndexOf(NameTerminator, i + 1);
+                int end = terminator < 0 ? descriptor.Length : terminator + 1;
+
+                builder.Append(descriptor, i + 1, end - i - 1);
+                i = end - 1;
+            }
+        }
 
         // Interned so a generic parameter reference never allocates: ten one-off strings against
         // a descriptor that appears in every element-polymorphic built-in signature.
@@ -422,6 +605,54 @@ namespace Surtr.Runtime.Classes
 
             fullName = string.Empty;
             return false;
+        }
+
+        /// <summary>
+        /// How many type arguments this reference carries: the arity mangled into its full name's
+        /// last segment, or zero for anything that is not a constructed object or native type.
+        /// </summary>
+        public int GenericArity
+        {
+            get
+            {
+                string descriptor = Descriptor;
+                if (descriptor.Length <= 1 || (descriptor[0] != SymbolObject && descriptor[0] != SymbolNative))
+                    return 0;
+
+                return SkipFullName(descriptor, 1, out int arity) < 0 ? 0 : arity;
+            }
+        }
+
+        /// <summary>
+        /// The type arguments this reference supplies, empty when it names a non-generic type.
+        /// </summary>
+        /// <remarks>
+        /// Diagnostics and host interop only. Nothing on an execution path needs these - two
+        /// constructions of one declaration resolve to the same <see cref="SurtrClass"/>, so the
+        /// arguments change no layout, no dispatch and no tracing.
+        /// </remarks>
+        public SurtrClassReference[] GetTypeArguments()
+        {
+            string descriptor = Descriptor;
+            if (descriptor.Length <= 1 || (descriptor[0] != SymbolObject && descriptor[0] != SymbolNative))
+                return System.Array.Empty<SurtrClassReference>();
+
+            int index = SkipFullName(descriptor, 1, out int arity);
+            if (index < 0 || arity == 0)
+                return System.Array.Empty<SurtrClassReference>();
+
+            var arguments = new SurtrClassReference[arity];
+            for (int i = 0; i < arity; i++)
+            {
+                int end = SkipDescriptor(descriptor, index);
+                if (end < 0)
+                    return System.Array.Empty<SurtrClassReference>();
+
+                arguments[i] = Slice(index, end);
+                index = end;
+            }
+
+            return arguments;
         }
 
         /// <summary>
@@ -495,8 +726,21 @@ namespace Surtr.Runtime.Classes
                 case SymbolObject:
                 case SymbolNative:
                 {
-                    int end = descriptor.IndexOf(NameTerminator, index + 1);
-                    return end < 0 ? -1 : end + 1;
+                    int afterName = SkipFullName(descriptor, index + 1, out int arity);
+                    if (afterName < 0)
+                        return -1;
+
+                    // The arity mangled into the last name segment says how many argument
+                    // descriptors follow, so the list needs neither brackets nor a count and this
+                    // stays one left-to-right pass.
+                    for (int i = 0; i < arity; i++)
+                    {
+                        afterName = SkipDescriptor(descriptor, afterName);
+                        if (afterName < 0)
+                            return -1;
+                    }
+
+                    return afterName;
                 }
 
                 case SymbolGenericParameter:
@@ -526,6 +770,62 @@ namespace Surtr.Runtime.Classes
         /// <summary>Whether <paramref name="descriptor"/> is a single well-formed descriptor with nothing trailing it.</summary>
         public static bool IsWellFormed(string descriptor)
             => !string.IsNullOrEmpty(descriptor) && SkipDescriptor(descriptor, 0) == descriptor.Length;
+
+        /// <summary>
+        /// Skips a full name and reports the arity mangled into its last segment.
+        /// </summary>
+        /// <remarks>
+        /// Only the last segment counts. The earlier ones are qualification - a type nested inside
+        /// a generic one does not see its container's parameters (<c>docs/Compiler-Plan.md</c> §8),
+        /// so <c>Box`1.Entry</c> names an <c>Entry</c> of arity zero and takes no arguments. The
+        /// arity resets at every <see cref="NameSeparator"/>, which is what makes that one pass.
+        /// </remarks>
+        private static int SkipFullName(string descriptor, int index, out int arity)
+        {
+            arity = 0;
+
+            while (index < descriptor.Length)
+            {
+                char symbol = descriptor[index];
+
+                if (symbol == NameTerminator)
+                    return index + 1;
+
+                if (symbol == NameSeparator)
+                {
+                    arity = 0;
+                    index++;
+                    continue;
+                }
+
+                if (symbol == ArityMarker)
+                {
+                    index++;
+
+                    int digits = 0;
+                    while (index < descriptor.Length && descriptor[index] >= '0' && descriptor[index] <= '9')
+                    {
+                        arity = (arity * 10) + (descriptor[index] - '0');
+                        index++;
+                        digits++;
+                    }
+
+                    // A marker with no digits after it is malformed, not an arity of zero.
+                    if (digits == 0)
+                    {
+                        arity = 0;
+                        return -1;
+                    }
+
+                    continue;
+                }
+
+                index++;
+            }
+
+            arity = 0;
+            return -1;
+        }
 
         private static int SkipList(string descriptor, int index)
         {
@@ -679,8 +979,43 @@ namespace Surtr.Runtime.Classes
                     int end = descriptor.IndexOf(NameTerminator, index + 1);
                     if (end < 0)
                         return -1;
-                    builder.Append(descriptor, index + 1, end - index - 1);
-                    return end + 1;
+
+                    // The mangled arity is machinery, not something to read: print `Box<int>`,
+                    // never ``Box`1<int>``.
+                    for (int i = index + 1; i < end; i++)
+                    {
+                        char symbol = descriptor[i];
+                        if (symbol == ArityMarker)
+                        {
+                            while (i + 1 < end && descriptor[i + 1] >= '0' && descriptor[i + 1] <= '9')
+                                i++;
+
+                            continue;
+                        }
+
+                        builder.Append(symbol);
+                    }
+
+                    int next = SkipFullName(descriptor, index + 1, out int arity);
+                    if (next < 0)
+                        return -1;
+
+                    if (arity == 0)
+                        return next;
+
+                    builder.Append('<');
+                    for (int i = 0; i < arity; i++)
+                    {
+                        if (i > 0)
+                            builder.Append(", ");
+
+                        next = AppendDisplay(builder, descriptor, next);
+                        if (next < 0)
+                            return -1;
+                    }
+
+                    builder.Append('>');
+                    return next;
                 }
 
                 default:

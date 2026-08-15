@@ -100,6 +100,32 @@ namespace Surtr.Runtime.Objects
             return ReferenceHash(value.AsReference);
         }
 
+        /// <summary>
+        /// Reads the <c>int</c> out of a boxed one, for a dictionary whose storage is specialised
+        /// on raw int keys.
+        /// </summary>
+        /// <remarks>
+        /// The same rule <see cref="BoxEquals"/> applies, and for the same reason: the box has to
+        /// be a box of an <c>int</c>, not merely of something holding an int's bits. A boxed
+        /// <c>value class EntityId</c> also wraps an int and is a distinct type, so it is not this
+        /// key and must keep the dictionary off the specialised store rather than aliasing onto it.
+        /// </remarks>
+        /// <returns><see langword="false"/> if the value is not a boxed <c>int</c>.</returns>
+        internal bool TryUnwrapBoxedInt(SurtrValue value, out SurtrInt key)
+        {
+            if (value.IsReference
+                && _runtime.Context.EntityRegistry.Get(value.AsReference) is SurtrBoxed boxed
+                && ReferenceEquals(boxed.Class, SurtrBuiltIns.Integer)
+                && boxed.Value.IsInt)
+            {
+                key = boxed.Value.AsInt;
+                return true;
+            }
+
+            key = 0;
+            return false;
+        }
+
         [MethodImpl(MethodImplOptions.NoInlining)]
         private bool ReferencesEqual(SurtrRef left, SurtrRef right)
         {

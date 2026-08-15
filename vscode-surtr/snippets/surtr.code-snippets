@@ -1,0 +1,262 @@
+{
+  "Module function": {
+    "prefix": "fun",
+    "scope": "surtr",
+    "description": "A module-level function",
+    "body": [
+      "fun ${1:name}(${2:args}): ${3:int} {",
+      "\t$4",
+      "}"
+    ]
+  },
+  "Public method": {
+    "prefix": "pfun",
+    "scope": "surtr",
+    "description": "A public method inside a class",
+    "body": [
+      "public fun ${1:name}(${2:args}): ${3:int} {",
+      "\t$4",
+      "}"
+    ]
+  },
+  "Constructor": {
+    "prefix": "ctor",
+    "scope": "surtr",
+    "description": "A constructor",
+    "body": [
+      "constructor(${1:args}) {",
+      "\t$2",
+      "}"
+    ]
+  },
+  "Class": {
+    "prefix": "class",
+    "scope": "surtr",
+    "description": "A class",
+    "body": [
+      "public class ${1:Name}${2:: ${3:Base}} {",
+      "\t$4",
+      "}"
+    ]
+  },
+  "Abstract class": {
+    "prefix": "aclass",
+    "scope": "surtr",
+    "description": "An abstract class",
+    "body": [
+      "public abstract class ${1:Name} {",
+      "\t$2",
+      "}"
+    ]
+  },
+  "Interface": {
+    "prefix": "interface",
+    "scope": "surtr",
+    "description": "An interface (pure contract)",
+    "body": [
+      "public interface ${1:Name} {",
+      "\t$2",
+      "}"
+    ]
+  },
+  "Enum": {
+    "prefix": "enum",
+    "scope": "surtr",
+    "description": "An enum (sealed class with named static instances)",
+    "body": [
+      "public enum ${1:Name} {",
+      "\t${2:First},",
+      "\t${3:Second},",
+      "}"
+    ]
+  },
+  "Singleton": {
+    "prefix": "singleton",
+    "scope": "surtr",
+    "description": "A singleton — a class plus one instance",
+    "body": [
+      "public singleton ${1:Name}${2:: ${3:IContract}} {",
+      "\t$4",
+      "}"
+    ]
+  },
+  "Value class": {
+    "prefix": "vclass",
+    "scope": "surtr",
+    "description": "A value class — a distinct type wrapping one field",
+    "body": [
+      "public value class ${1:Name} {",
+      "\tpublic let ${2:value}: ${3:int};",
+      "\tconstructor(${2:value}: ${3:int}) { this.${2:value} = ${2:value}; }",
+      "}"
+    ]
+  },
+  "Field": {
+    "prefix": "field",
+    "scope": "surtr",
+    "description": "A mutable field",
+    "body": [
+      "public var ${1:name}: ${2:int};"
+    ]
+  },
+  "Read-only field": {
+    "prefix": "let",
+    "scope": "surtr",
+    "description": "A read-only field or local",
+    "body": [
+      "public let ${1:name}: ${2:int};"
+    ]
+  },
+  "Property": {
+    "prefix": "property",
+    "scope": "surtr",
+    "description": "A property with explicit accessor bodies",
+    "body": [
+      "public ${1:name}: ${2:string} {",
+      "\tget { return ${3:_${1}}; }",
+      "\tset { ${4} }",
+      "}"
+    ]
+  },
+  "Auto-property": {
+    "prefix": "aprop",
+    "scope": "surtr",
+    "description": "An auto-property (compiler-synthesised backing field)",
+    "body": [
+      "public ${1:name}: ${2:string} { get; set; }"
+    ]
+  },
+  "Type alias": {
+    "prefix": "alias",
+    "scope": "surtr",
+    "description": "A type alias — another name for an existing type",
+    "body": [
+      "alias ${1:Name} = ${2:int};"
+    ]
+  },
+  "Import": {
+    "prefix": "import",
+    "scope": "surtr",
+    "description": "Import a named type from another module",
+    "body": [
+      "import ${1:module}.${2:Type};"
+    ]
+  },
+  "Wildcard import": {
+    "prefix": "import*",
+    "scope": "surtr",
+    "description": "Import every public declaration of a module",
+    "body": [
+      "import ${1:module}.*;"
+    ]
+  },
+  "If / else": {
+    "prefix": "if",
+    "scope": "surtr",
+    "body": [
+      "if (${1:condition}) {",
+      "\t$2",
+      "} else {",
+      "\t$3",
+      "}"
+    ]
+  },
+  "For over a range": {
+    "prefix": "for",
+    "scope": "surtr",
+    "body": [
+      "for (${1:i} in ${2:0}..${3:count}) {",
+      "\t$4",
+      "}"
+    ]
+  },
+  "For-in": {
+    "prefix": "forin",
+    "scope": "surtr",
+    "description": "Iterate a collection (dicts yield (K, V) pairs)",
+    "body": [
+      "for (${1:item} in ${2:items}) {",
+      "\t$3",
+      "}"
+    ]
+  },
+  "While": {
+    "prefix": "while",
+    "scope": "surtr",
+    "body": [
+      "while (${1:condition}) {",
+      "\t$2",
+      "}"
+    ]
+  },
+  "Switch statement": {
+    "prefix": "switch",
+    "scope": "surtr",
+    "body": [
+      "switch (${1:subject}) {",
+      "\tcase ${2:value}:",
+      "\t\tbreak;",
+      "\tdefault:",
+      "\t\tbreak;",
+      "}"
+    ]
+  },
+  "Switch expression": {
+    "prefix": "switche",
+    "scope": "surtr",
+    "description": "A switch expression (must cover every case or have an else)",
+    "body": [
+      "let ${1:result} = switch (${2:subject}) {",
+      "\t${3:case1} -> ${4:value1},",
+      "\telse -> ${5:value2},",
+      "};"
+    ]
+  },
+  "Try / catch / finally": {
+    "prefix": "try",
+    "scope": "surtr",
+    "body": [
+      "try {",
+      "\t${1}",
+      "}",
+      "catch (e: ${2:Exception}) {",
+      "\t${3}",
+      "}",
+      "finally {",
+      "\t$4",
+      "}"
+    ]
+  },
+  "Throw": {
+    "prefix": "throw",
+    "scope": "surtr",
+    "body": [
+      "throw ${1:OutOfRangeException}(\"${2:message}\");"
+    ]
+  },
+  "Const function": {
+    "prefix": "cfun",
+    "scope": "surtr",
+    "description": "A compile-time function, folded by running real bytecode",
+    "body": [
+      "const fun ${1:name}(${2:args}): ${3:int} {",
+      "\t$4",
+      "}"
+    ]
+  },
+  "Lambda": {
+    "prefix": "lambda",
+    "scope": "surtr",
+    "body": [
+      "(${1:args}) => ${2:expression}"
+    ]
+  },
+  "Native import": {
+    "prefix": "native",
+    "scope": "surtr",
+    "description": "A host-provided global function (no body)",
+    "body": [
+      "native fun ${1:name}(${2:args}): ${3:int};"
+    ]
+  }
+}

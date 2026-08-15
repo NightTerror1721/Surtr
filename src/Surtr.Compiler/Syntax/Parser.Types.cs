@@ -1,5 +1,6 @@
 #nullable enable
 
+using Surtr.Compiler.Diagnostics;
 using System.Collections.Generic;
 using Surtr.Compiler.Syntax.Ast;
 
@@ -19,20 +20,20 @@ namespace Surtr.Compiler.Syntax
             // of nullable ints. Looping here rather than recursing keeps that order obvious.
             while (true)
             {
+                // A suffixed type spans the type it wraps plus the suffix: `int[]` starts where
+                // `int` did, not at the bracket.
                 if (reader.Check(TokenType.LeftBracket) && reader.CheckAt(1, TokenType.RightBracket))
                 {
-                    SourceLocation bracket = reader.CurrentLocation;
                     reader.Advance();
                     reader.Advance();
-                    type = new ArrayTypeSyntax(bracket, type);
+                    type = new ArrayTypeSyntax(SourceSpan.FromBounds(type.Location, reader.ConsumedEnd), type);
                     continue;
                 }
 
                 if (reader.Check(TokenType.Question))
                 {
-                    SourceLocation question = reader.CurrentLocation;
                     reader.Advance();
-                    type = new NullableTypeSyntax(question, type);
+                    type = new NullableTypeSyntax(SourceSpan.FromBounds(type.Location, reader.ConsumedEnd), type);
                     continue;
                 }
 
@@ -57,7 +58,7 @@ namespace Surtr.Compiler.Syntax
 
             if (!reader.Check(TokenType.Identifier))
             {
-                throw reader.Error("Expected a type.");
+                throw reader.Error(SurtrDiagnosticCode.ExpectedType, "Expected a type.");
             }
 
             List<string> path = new List<string> { reader.Advance().ToString() };
@@ -71,7 +72,7 @@ namespace Surtr.Compiler.Syntax
                 ? ParseTypeArgumentList()
                 : EmptyTypes;
 
-            return new NamedTypeSyntax(start, path, typeArguments);
+            return new NamedTypeSyntax(SpanFrom(start), path, typeArguments);
         }
 
         /// <summary>Parses <c>&lt;A, B&gt;</c>, closing through <see cref="TokenReader.ConsumeTypeArgumentClose"/>.</summary>
@@ -113,7 +114,7 @@ namespace Surtr.Compiler.Syntax
             TypeSyntax value = ParseType();
 
             reader.Expect(TokenType.RightBrace, "'}' to close the dictionary type");
-            return new DictTypeSyntax(start, key, value);
+            return new DictTypeSyntax(SpanFrom(start), key, value);
         }
 
         /// <summary>
@@ -139,10 +140,11 @@ namespace Surtr.Compiler.Syntax
 
             if (reader.Match(TokenType.Arrow))
             {
-                return new ClosureTypeSyntax(start, elements, ParseType());
+                TypeSyntax closureReturn = ParseType();
+                return new ClosureTypeSyntax(SpanFrom(start), elements, closureReturn);
             }
 
-            return new TupleTypeSyntax(start, elements);
+            return new TupleTypeSyntax(SpanFrom(start), elements);
         }
 
         /// <summary>Parses <c>&lt;T, U : IComparable&lt;U&gt; &amp; IEquatable&lt;U&gt;&gt;</c> (§6).</summary>
@@ -171,7 +173,7 @@ namespace Surtr.Compiler.Syntax
                     while (reader.Match(TokenType.Ampersand));
                 }
 
-                parameters.Add(new TypeParameterSyntax(start, name, constraints));
+                parameters.Add(new TypeParameterSyntax(SpanFrom(start), name, constraints));
 
                 if (reader.Match(TokenType.Comma))
                 {

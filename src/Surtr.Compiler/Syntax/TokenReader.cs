@@ -48,12 +48,17 @@ namespace Surtr.Compiler.Syntax
         /// <summary>Identifies the source being parsed, for diagnostics.</summary>
         internal string SourceName { get; }
 
+        /// <summary>Where problems are recorded.</summary>
+        internal SurtrDiagnosticBag Diagnostics { get; }
+
         /// <summary>Creates a reader over an already-lexed token stream.</summary>
         /// <param name="tokens">The tokens, ending with <see cref="TokenType.EndOfFile"/>.</param>
         /// <param name="sourceName">Identifies the source, for diagnostics.</param>
-        internal TokenReader(Token[] tokens, string sourceName) : base(tokens)
+        /// <param name="diagnostics">Where to record problems.</param>
+        internal TokenReader(Token[] tokens, string sourceName, SurtrDiagnosticBag diagnostics) : base(tokens)
         {
             SourceName = sourceName;
+            Diagnostics = diagnostics;
         }
 
         /// <summary>The type of the token at the current position.</summary>
@@ -61,6 +66,18 @@ namespace Surtr.Compiler.Syntax
 
         /// <summary>Where the current token starts.</summary>
         internal SourceLocation CurrentLocation => Current.Location;
+
+        /// <summary>
+        /// The offset one past the last token consumed, or the current token's start when nothing
+        /// has been consumed yet.
+        /// </summary>
+        /// <remarks>
+        /// What closes a node's span. A production knows where it started because it kept the
+        /// location; where it <em>ended</em> is wherever the reader got to, which is the previous
+        /// token's end rather than the current one's start — the two differ by whatever trivia sat
+        /// between them, and a node should not claim the whitespace after it.
+        /// </remarks>
+        internal int ConsumedEnd => Position > 0 ? Peek(-1).Span.End : Current.Location.Position;
 
         /// <summary>True when the current token is of the given type and no split is in progress.</summary>
         /// <param name="type">The type to test for.</param>
@@ -99,7 +116,7 @@ namespace Surtr.Compiler.Syntax
         {
             if (!Check(type))
             {
-                throw Error($"Expected {what}.");
+                throw Error(SurtrDiagnosticCode.UnexpectedToken, $"Expected {what}.");
             }
 
             return Advance();
@@ -117,7 +134,7 @@ namespace Surtr.Compiler.Syntax
         {
             if (pendingCloseAngles > 0)
             {
-                throw Error("Expected '>' to close the type argument list.");
+                throw Error(SurtrDiagnosticCode.UnclosedTypeArgumentList, "Expected '>' to close the type argument list.");
             }
 
             return base.Advance();
@@ -167,26 +184,47 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.GreaterEqual:
                 case TokenType.ShiftRightAssign:
                 case TokenType.UnsignedShiftRightAssign:
-                    throw Error("A type argument list cannot be closed by a token ending in '='; put a space before the '='.");
+                    throw Error(SurtrDiagnosticCode.UnclosedTypeArgumentList, "A type argument list cannot be closed by a token ending in '='; put a space before the '='.");
 
                 default:
-                    throw Error("Expected '>' to close the type argument list.");
+                    throw Error(SurtrDiagnosticCode.UnclosedTypeArgumentList, "Expected '>' to close the type argument list.");
             }
         }
 
-        /// <summary>Builds a parse error carrying the current position.</summary>
+        /// <summary>
+        /// Reports a problem at the current token and hands back the exception that abandons the
+        /// production.
+        /// </summary>
+        /// <remarks>
+        /// One step for both, because they are one decision: the diagnostic is recorded whether or
+        /// not anything catches the exception, so a recovery point can carry on parsing while the
+        /// problem is already on the record.
+        /// </remarks>
+        /// <param name="code">What kind of problem this is.</param>
         /// <param name="message">What went wrong.</param>
-        internal SurtrParserException Error(string message)
+        internal SurtrParserException Error(SurtrDiagnosticCode code, string message)
         {
-            return new SurtrParserException(message, SourceName, CurrentLocation);
+            return Error(code, message, Current.Span);
         }
 
-        /// <summary>Builds a parse error carrying an explicit position.</summary>
+        /// <summary>Reports a problem covering an explicit range.</summary>
+        /// <param name="code">What kind of problem this is.</param>
         /// <param name="message">What went wrong.</param>
-        /// <param name="location">Where the problem is.</param>
-        internal SurtrParserException Error(string message, SourceLocation location)
+        /// <param name="span">The source the problem is about.</param>
+        internal SurtrParserException Error(SurtrDiagnosticCode code, string message, SourceSpan span)
         {
-            return new SurtrParserException(message, SourceName, location);
+            var diagnostic = new SurtrDiagnostic(code, SurtrDiagnosticSeverity.Error, message, SourceName, span);
+            Diagnostics.Report(diagnostic);
+            return new SurtrParserException(diagnostic);
+        }
+
+        /// <summary>Reports a problem starting at <paramref name="start"/> and running to the last token read.</summary>
+        /// <param name="code">What kind of problem this is.</param>
+        /// <param name="message">What went wrong.</param>
+        /// <param name="start">Where the offending construct began.</param>
+        internal SurtrParserException Error(SurtrDiagnosticCode code, string message, SourceLocation start)
+        {
+            return Error(code, message, SourceSpan.FromBounds(start, ConsumedEnd));
         }
     }
 }

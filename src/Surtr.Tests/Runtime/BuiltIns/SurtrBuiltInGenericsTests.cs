@@ -101,9 +101,13 @@ namespace Surtr.Tests.Runtime.BuiltIns
 
             Assert.Equal("G0", MemberOf(SurtrBuiltIns.Array, "get").ReturnType.Reference.Descriptor);
             Assert.Equal("G0", MemberOf(SurtrBuiltIns.Array, "pop").ReturnType.Reference.Descriptor);
-            Assert.Equal("push(G0)", MemberOf(SurtrBuiltIns.Array, "push").SignatureKey());
-            Assert.Equal("set(IG0)", MemberOf(SurtrBuiltIns.Array, "set").SignatureKey());
-            Assert.Equal("indexOf(G0)", MemberOf(SurtrBuiltIns.Array, "indexOf").SignatureKey());
+            Assert.Equal("G0", MemberOf(SurtrBuiltIns.Array, "push").Parameters[0].ParameterType.Reference.Descriptor);
+
+            // The declarations keep G0; the signature key erases it, since G0 and E are the same
+            // slot once the compiler has checked the parameterisation away.
+            Assert.Equal("push(E)", MemberOf(SurtrBuiltIns.Array, "push").SignatureKey());
+            Assert.Equal("set(IE)", MemberOf(SurtrBuiltIns.Array, "set").SignatureKey());
+            Assert.Equal("indexOf(E)", MemberOf(SurtrBuiltIns.Array, "indexOf").SignatureKey());
         }
 
         [Fact]
@@ -111,9 +115,10 @@ namespace Surtr.Tests.Runtime.BuiltIns
         {
             SurtrBuiltIns.EnsureBuilt();
 
-            Assert.Equal("get(G0)", MemberOf(SurtrBuiltIns.Dictionary, "get").SignatureKey());
+            Assert.Equal("G0", MemberOf(SurtrBuiltIns.Dictionary, "get").Parameters[0].ParameterType.Reference.Descriptor);
             Assert.Equal("G1", MemberOf(SurtrBuiltIns.Dictionary, "get").ReturnType.Reference.Descriptor);
-            Assert.Equal("set(G0G1)", MemberOf(SurtrBuiltIns.Dictionary, "set").SignatureKey());
+            Assert.Equal("get(E)", MemberOf(SurtrBuiltIns.Dictionary, "get").SignatureKey());
+            Assert.Equal("set(EE)", MemberOf(SurtrBuiltIns.Dictionary, "set").SignatureKey());
             Assert.Equal("AG0", MemberOf(SurtrBuiltIns.Dictionary, "keys").ReturnType.Reference.Descriptor);
             Assert.Equal("AG1", MemberOf(SurtrBuiltIns.Dictionary, "values").ReturnType.Reference.Descriptor);
         }

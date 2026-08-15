@@ -169,6 +169,27 @@ namespace Surtr.Runtime
             get => _context.EntityRegistry.Capacity;
         }
 
+        /// <summary>How many objects the heap holds right now.</summary>
+        public int LiveObjectCount
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _context.EntityRegistry.LiveCount;
+        }
+
+        /// <summary>
+        /// How many objects every collection so far has reclaimed, in total.
+        /// </summary>
+        /// <remarks>
+        /// Paired with <see cref="LiveObjectCount"/> this gives how many objects a stretch of
+        /// execution allocated, without a counter on the registration path: what is live now, plus
+        /// what has been reclaimed since, less what was live before.
+        /// </remarks>
+        public long TotalCollectedObjects
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _context.EntityRegistry.TotalCollectedEntities;
+        }
+
         /// <summary>Whether the runtime has been disposed and is no longer usable.</summary>
         public bool IsDisposed
         {
@@ -258,6 +279,49 @@ namespace Surtr.Runtime
         public SurtrDictionary NewDictionary(SurtrClassReference typeReference = default, int capacity = 0)
         {
             var value = new SurtrDictionary(typeReference, _valueComparer, capacity);
+            _context.EntityRegistry.Register(value);
+            return value;
+        }
+
+        /// <summary>Allocates a range, as <c>RangeNew</c> and <c>RangeNewInclusive</c> do.</summary>
+        /// <param name="start">The lower bound, always included.</param>
+        /// <param name="end">The upper bound, as written.</param>
+        /// <param name="inclusive">Whether <paramref name="end"/> is part of the range: the <c>..=</c> form.</param>
+        /// <remarks>
+        /// For a range that genuinely escapes into a value. A range written inline in a loop header
+        /// must not reach this - the compiler lowers that to a counted loop over two ints, with no
+        /// object at all (<c>Language-Syntax.md</c> §5.4).
+        /// </remarks>
+        public SurtrRange NewRange(SurtrInt start, SurtrInt end, bool inclusive = false)
+        {
+            var value = new SurtrRange(start, end, inclusive);
+            _context.EntityRegistry.Register(value);
+            return value;
+        }
+
+        /// <summary>
+        /// Allocates a cursor over one of the built-in collections, as <c>iterate()</c> does.
+        /// </summary>
+        /// <param name="kind">Which kind of source is being walked.</param>
+        /// <param name="source">The collection to walk. Must match <paramref name="kind"/>.</param>
+        /// <param name="keys">
+        /// A dictionary's keys, snapshotted at this moment. Required for
+        /// <see cref="SurtrIteratorKind.Dictionary"/> and meaningless otherwise.
+        /// </param>
+        /// <remarks>
+        /// This is the general iteration path, which a compiled <c>for-in</c> over a built-in
+        /// should never reach - see <see cref="SurtrIterator"/>. It is public because a host
+        /// handing Surtr code an <c>IIterable</c> needs the same door the built-ins go through.
+        /// </remarks>
+        public SurtrIterator NewIterator(SurtrIteratorKind kind, SurtrObject source, SurtrValue[]? keys = null)
+        {
+            if (source is null)
+                throw new ArgumentNullException(nameof(source));
+
+            if (kind == SurtrIteratorKind.Dictionary && keys is null)
+                throw new ArgumentException("A dictionary iterator walks a snapshot of its keys, which must be supplied.", nameof(keys));
+
+            var value = new SurtrIterator(kind, source, keys);
             _context.EntityRegistry.Register(value);
             return value;
         }
@@ -416,7 +480,7 @@ namespace Surtr.Runtime
         /// <remarks>
         /// Built-ins bind immediately, since they exist before any runtime does. A reference to a
         /// Surtr class only binds once its module is loaded, so a handle taken before that stays
-        /// unresolved and is picked up by <see cref="LoadModule"/>.
+        /// unresolved and is picked up by <see cref="LoadModule(SurtrModule)"/>.
         /// </remarks>
         public SurtrTypeHandle TypeHandle(SurtrClassReference reference)
         {
@@ -550,6 +614,9 @@ namespace Surtr.Runtime
                             $"Module '{module.Path}' refers to '{handle.Reference.ToDisplayString()}' ({handle.Reference.Descriptor}), which no loaded module declares.");
                 }
 
+                BindPendingReferences(module);
+                BindNativeBodies(module);
+
                 SurtrTypeLinker.LinkModule(module, ref _context.NextInterfaceId);
 
                 BindNativeImports(module);
@@ -569,6 +636,198 @@ namespace Surtr.Runtime
                 _context.Modules.Remove(module.Path);
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Loads a module from an image, instantiating a fresh one for this runtime.
+        /// </summary>
+        /// <remarks>
+        /// The overload to reach for when the same compiled module is wanted in more than one
+        /// runtime. An image can be instantiated any number of times; a
+        /// <see cref="SurtrModule"/> is loadable exactly once, because loading is what ties it to a
+        /// heap, a global table and a set of static storage - see <see cref="Bytecode.Image.SurtrModuleImage"/>.
+        /// </remarks>
+        /// <returns>The module this runtime now holds.</returns>
+        public SurtrModule LoadModule(Bytecode.Image.SurtrModuleImage image)
+        {
+            if (image is null)
+                throw new ArgumentNullException(nameof(image));
+
+            var module = image.Instantiate();
+
+            try
+            {
+                LoadModule(module);
+            }
+            catch
+            {
+                module.Dispose();
+                throw;
+            }
+
+            return module;
+        }
+
+        /// <summary>
+        /// Binds the by-name access-table entries a module read from an image still carries.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Runs after every type handle is resolved and before linking, because what it needs is
+        /// exactly what handle resolution just produced - the class behind each descriptor - and
+        /// what it produces is what the interpreter will index. A module the emitter built has
+        /// nothing pending and skips all of it.
+        /// </para>
+        /// <para>
+        /// Members are found by name and, for a method, by signature key. That is the same key the
+        /// linker matches an override on, so a call site written against one overload cannot bind
+        /// to another.
+        /// </para>
+        /// </remarks>
+        private void BindPendingReferences(SurtrModule module)
+        {
+            var chunk = module.Chunk;
+            if (!chunk.HasPendingReferences)
+                return;
+
+            var modulePaths = chunk.PendingModulePaths;
+            for (int i = 0; i < modulePaths.Length; i++)
+            {
+                if (!TryGetModule(modulePaths[i], out var referenced))
+                    throw new InvalidOperationException(
+                        $"Module '{module.Path}' calls into '{modulePaths[i]}', which is not loaded.");
+
+                chunk.ModuleTable[i] = referenced;
+            }
+
+            var pendingFields = chunk.PendingFields;
+            for (int i = 0; i < pendingFields.Length; i++)
+                chunk.FieldTable[i] = ResolvePendingField(module, pendingFields[i]);
+
+            var pendingMethods = chunk.PendingMethods;
+            for (int i = 0; i < pendingMethods.Length; i++)
+                chunk.MethodTable[i] = ResolvePendingMethod(module, pendingMethods[i]);
+
+            chunk.PendingModulePaths = Array.Empty<string>();
+            chunk.PendingFields = Array.Empty<SurtrPendingMember>();
+            chunk.PendingMethods = Array.Empty<SurtrPendingMember>();
+        }
+
+        private SurtrFieldInfo ResolvePendingField(SurtrModule module, in SurtrPendingMember pending)
+        {
+            if (pending.OwnerDescriptor is null)
+            {
+                if (module.TryGetField(pending.Name, out var moduleField))
+                    return moduleField;
+
+                throw new InvalidOperationException(
+                    $"Module '{module.Path}' names module-level field '{pending.Name}', which it does not declare.");
+            }
+
+            var owner = ResolvePendingOwner(module, pending.OwnerDescriptor);
+
+            if (owner is SurtrClass declaring && declaring.TryGetField(pending.Name, out var field))
+                return field;
+
+            throw new InvalidOperationException(
+                $"Module '{module.Path}' names field '{pending.Name}' on '{pending.OwnerDescriptor}', which does not declare it.");
+        }
+
+        private SurtrMethodInfo ResolvePendingMethod(SurtrModule module, in SurtrPendingMember pending)
+        {
+            SurtrMethodInfo[]? overloads;
+
+            if (pending.OwnerDescriptor is null)
+            {
+                if (!module.TryGetMethods(pending.Name, out overloads))
+                    throw new InvalidOperationException(
+                        $"Module '{module.Path}' names module-level function '{pending.Name}', which it does not declare.");
+            }
+            else
+            {
+                var owner = ResolvePendingOwner(module, pending.OwnerDescriptor);
+
+                bool found = owner is SurtrClass declaring
+                    ? declaring.TryGetMethods(pending.Name, out overloads)
+                    : ((SurtrInterface)owner).TryGetMethods(pending.Name, out overloads);
+
+                if (!found)
+                    throw new InvalidOperationException(
+                        $"Module '{module.Path}' names method '{pending.Name}' on '{pending.OwnerDescriptor}', which does not declare it.");
+            }
+
+            for (int i = 0; i < overloads!.Length; i++)
+            {
+                if (string.Equals(overloads[i].SignatureKey(), pending.SignatureKey, StringComparison.Ordinal))
+                    return overloads[i];
+            }
+
+            throw new InvalidOperationException(
+                $"Module '{module.Path}' names the overload '{pending.SignatureKey}' of '{pending.Name}', which no declaration matches.");
+        }
+
+        /// <summary>
+        /// Gives every native member that is still waiting for one the body this runtime published
+        /// under its link name.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Runs before linking, so a member with no body is rejected before anything can reach it
+        /// - a static initializer runs at the end of this same load, and it can call one.
+        /// </para>
+        /// <para>
+        /// A method that already carries an entry point is left alone. That is the module a host
+        /// built in this process, where the address was known at declaration; it is not a second
+        /// mechanism, just the case where the binding already happened.
+        /// </para>
+        /// </remarks>
+        private void BindNativeBodies(SurtrModule module)
+        {
+            // Module level too, not only classes. Nothing in the emitter declares a native
+            // function there - a host global is what Surtr calls that - but SurtrModule.AddMethod
+            // is public, and a member the binder skipped would be an unbound address the
+            // interpreter jumps to.
+            foreach (var overloads in module.Methods)
+                BindNativeBodiesIn(module, module.Path, overloads);
+
+            foreach (var type in module.Classes)
+                BindNativeBodiesOn(module, type);
+        }
+
+        private void BindNativeBodiesOn(SurtrModule module, SurtrClass type)
+        {
+            foreach (var overloads in type.Methods)
+                BindNativeBodiesIn(module, type.Name, overloads);
+
+            foreach (var nested in type.NestedClasses)
+                BindNativeBodiesOn(module, nested);
+        }
+
+        private void BindNativeBodiesIn(SurtrModule module, string ownerName, SurtrMethodInfo[] overloads)
+        {
+            for (int i = 0; i < overloads.Length; i++)
+            {
+                if (overloads[i] is not SurtrNativeMethodInfo native || native.IsBound)
+                    continue;
+
+                if (!_context.NativeBodies.TryGetValue(native.LinkName, out var entryPoint))
+                    throw new InvalidOperationException(
+                        $"Module '{module.Path}' declares native member '{ownerName}.{native.Name}', whose body this runtime has no registration for. " +
+                        $"Publish it with DefineNativeBody(\"{native.LinkName}\", …) before loading the module.");
+
+                native.BindEntryPoint(entryPoint);
+            }
+        }
+
+        private SurtrTypeInfo ResolvePendingOwner(SurtrModule module, string descriptor)
+        {
+            var handle = module.TypeHandles.GetOrAdd(SurtrClassReference.FromDescriptor(descriptor));
+
+            if (!handle.IsResolved && !TryResolveHandle(handle))
+                throw new InvalidOperationException(
+                    $"Module '{module.Path}' names a member of '{descriptor}', which no loaded module declares.");
+
+            return handle.ResolvedType!;
         }
 
         /// <summary>
@@ -880,6 +1139,39 @@ namespace Surtr.Runtime
             _context.Globals.Register(variable);
             return variable;
         }
+
+        /// <summary>
+        /// Publishes the body of a native member, under the name its declaration links against.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// What a module carrying native members needs in order to be loadable at all when it came
+        /// from an image: the image holds the name and the signature, and the address can only come
+        /// from the process doing the loading. Register every body a module needs <em>before</em>
+        /// loading it - a name nothing was published under fails the load, next to where an
+        /// unresolved type or an unregistered host global fails it, and for the same reason.
+        /// </para>
+        /// <para>
+        /// Publishing the same name twice replaces the body, which is what makes re-registering
+        /// after a reload harmless rather than an error to work around.
+        /// </para>
+        /// </remarks>
+        /// <param name="linkName">The name declarations bind against, as <see cref="SurtrNativeMethodInfo.LinkName"/> spells it.</param>
+        /// <param name="entryPoint">The host function to call.</param>
+        public void DefineNativeBody(string linkName, SurtrNativeEntryPoint entryPoint)
+        {
+            if (string.IsNullOrEmpty(linkName))
+                throw new ArgumentException("A native body needs a link name to be published under.", nameof(linkName));
+
+            if (!entryPoint.IsValid)
+                throw new ArgumentException($"The body published for '{linkName}' is a null entry point.", nameof(entryPoint));
+
+            _context.NativeBodies[linkName] = entryPoint;
+        }
+
+        /// <summary>Looks up a native member body this runtime has been given.</summary>
+        public bool TryGetNativeBody(string linkName, out SurtrNativeEntryPoint entryPoint)
+            => _context.NativeBodies.TryGetValue(linkName, out entryPoint);
 
         /// <summary>Publishes a host global function and freezes its table index.</summary>
         public SurtrNativeGlobalFunction DefineGlobalFunction(

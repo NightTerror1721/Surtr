@@ -1,0 +1,68 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+
+    <!-- A standalone benchmark harness, run by hand with `dotnet run` on this project. It is
+         deliberately not part of the test suite: timings are not deterministic and must not gate
+         it. It compares Surtr against MoonSharp and LuaJIT (both Lua) on the same workloads, and
+         needs the compiler to turn embedded Surtr source into a module, which is why it references
+         Surtr.Compiler rather than Surtr.Core alone.
+
+         It does gate correctness in one way that the tests do not: every case is written three
+         times over and the three must agree on a checksum, so a workload where the engines have
+         drifted apart fails the run. That is how the `int?`-holding-1 miscompilation was found. -->
+
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Surtr.Bench</RootNamespace>
+    <AssemblyName>surtrbench</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!-- A command-line program is never consumed as a library, so CS1591 would only be noise. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+
+    <!-- Only the native-function registration site takes &HostAdd, and that is all. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Methods containing a loop skip quick JIT and are compiled optimized on first call.
+
+         This is not a tuning knob, it is what makes the numbers mean anything. Under the default
+         tiered policy a method is promoted to tier 1 after 30 calls, and a benchmark calls each
+         workload a handful of times - so the *interpreter loop itself* stayed at tier 0 for whole
+         runs and got promoted, or not, depending on when OSR happened to fire. Measured before this
+         line: `dictMembers` reported 3.18 ms when run after `dictOps` in the same process and
+         2.5 ms when run alone, off a C# baseline that swung 6.4x (0.39 ms vs 2.5 ms) for the same
+         work, purely on which cases had run first and warmed the shared generic instantiations.
+
+         Only loop-bearing methods are forced, rather than TieredCompilation=false outright: full
+         opt-on-first-call also switches off TieredPGO, and MoonSharp's virtual-heavy interpreter
+         loses more to that than it gains (its intLoop went 88 ms -> 115 ms), which would flatter
+         Surtr for a reason that has nothing to do with Surtr. This setting fixes the interpreter
+         loops on every engine and leaves the profile-guided work in place for the rest.
+
+         It is also the more representative configuration for where Surtr actually runs: Unity's
+         Mono JIT and IL2CPP AOT have no tiering to warm up, so fully optimized code is the normal
+         case there, not the steady state you have to wait for. -->
+    <TieredCompilationQuickJitForLoops>false</TieredCompilationQuickJitForLoops>
+
+    <!-- Server GC would change collection behaviour between a bench run and a Unity player. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Surtr.Core\Surtr.Core.csproj" />
+    <ProjectReference Include="..\Surtr.Compiler\Surtr.Compiler.csproj" />
+    <PackageReference Include="MoonSharp" Version="2.0.0" />
+    <PackageReference Include="luajit.native" Version="2.1.1785598229" GeneratePathProperty="true" />
+  </ItemGroup>
+
+  <!-- luajit.native is a C++-style package: its targets glob bin\$(Platform)\*.dll and $(Platform)
+       is AnyCPU here, so the glob matches nothing and lua51.dll would never reach the output. Copy
+       the x64 build explicitly. The native driver is x64-only by construction; a bench run on any
+       other architecture will fail to load it, which is the honest failure to get. -->
+  <ItemGroup>
+    <None Include="$(Pkgluajit_native)\build\native\bin\x64\lua51.dll" Link="lua51.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

@@ -73,6 +73,19 @@ namespace Surtr.Runtime.Classes
             get => MethodSlots.Length;
         }
 
+        /// <summary>
+        /// The contracts this one declares that it extends, as written rather than flattened.
+        /// </summary>
+        /// <remarks>
+        /// The counterpart of <see cref="SurtrClass.DeclaredInterfaceHandles"/>, and there for the
+        /// same reason: a front end importing this contract wants what it said about itself.
+        /// </remarks>
+        public ReadOnlySpan<SurtrTypeHandle> DeclaredExtendedInterfaceHandles
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => DeclaredExtendedInterfaces;
+        }
+
         /// <summary>Looks up the overload group declared on this interface under a name.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TryGetMethods(string name, out SurtrMethodInfo[] overloads) => _methods.TryGetValue(name, out overloads!);

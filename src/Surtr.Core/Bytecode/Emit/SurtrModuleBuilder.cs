@@ -369,6 +369,26 @@ namespace Surtr.Bytecode.Emit
                     return new SurtrExternalMethodToken(token.Index, i);
             }
 
+            // A module read from an image has a method table sized but empty until it is loaded:
+            // its entries travel as names and are bound against the runtime (§3.3). A compiler
+            // referencing that image has nothing to compare by identity, so it matches the pending
+            // entry instead — the same slot, named rather than resolved, which is exactly what the
+            // instruction encodes.
+            var pending = other.Chunk.PendingMethods;
+            string wanted = callee.SignatureKey();
+
+            for (int i = 0; i < pending.Length; i++)
+            {
+                if (table[i] is not null || pending[i].OwnerDescriptor is not null)
+                    continue;
+
+                if (string.Equals(pending[i].Name, callee.Name, StringComparison.Ordinal)
+                    && string.Equals(pending[i].SignatureKey, wanted, StringComparison.Ordinal))
+                {
+                    return new SurtrExternalMethodToken(token.Index, i);
+                }
+            }
+
             throw new ArgumentException(
                 $"Module '{other.Path}' does not carry '{callee.Name}' in its method table, so no cross-module call can name it.",
                 nameof(callee));
@@ -610,6 +630,8 @@ namespace Surtr.Bytecode.Emit
             }
 
             chunk.MethodTable = methodTable;
+
+            _module.MarkEmitted();
 
             _built = true;
             return _module;

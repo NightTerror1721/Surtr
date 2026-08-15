@@ -15,8 +15,8 @@ namespace Surtr.Compiler.Syntax.Ast
     public abstract class TypeSyntax : SyntaxNode
     {
         /// <summary>Initializes the node with the position it starts at.</summary>
-        /// <param name="location">Where in the source the type begins.</param>
-        protected TypeSyntax(SourceLocation location) : base(location)
+        /// <param name="span">The source the type covers.</param>
+        protected TypeSyntax(SourceSpan span) : base(span)
         {
         }
     }
@@ -36,11 +36,11 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<TypeSyntax> TypeArguments { get; }
 
         /// <summary>Initializes a named type.</summary>
-        /// <param name="location">Where in the source the type begins.</param>
+        /// <param name="span">The source the type covers.</param>
         /// <param name="path">The dotted name's segments.</param>
         /// <param name="typeArguments">The type arguments, or an empty list.</param>
-        public NamedTypeSyntax(SourceLocation location, IReadOnlyList<string> path, IReadOnlyList<TypeSyntax> typeArguments)
-            : base(location)
+        public NamedTypeSyntax(SourceSpan span, IReadOnlyList<string> path, IReadOnlyList<TypeSyntax> typeArguments)
+            : base(span)
         {
             Path = path;
             TypeArguments = typeArguments;
@@ -54,9 +54,9 @@ namespace Surtr.Compiler.Syntax.Ast
         public TypeSyntax ElementType { get; }
 
         /// <summary>Initializes an array type.</summary>
-        /// <param name="location">Where in the source the type begins.</param>
+        /// <param name="span">The source the type covers.</param>
         /// <param name="elementType">The element type.</param>
-        public ArrayTypeSyntax(SourceLocation location, TypeSyntax elementType) : base(location)
+        public ArrayTypeSyntax(SourceSpan span, TypeSyntax elementType) : base(span)
         {
             ElementType = elementType;
         }
@@ -72,10 +72,10 @@ namespace Surtr.Compiler.Syntax.Ast
         public TypeSyntax ValueType { get; }
 
         /// <summary>Initializes a dictionary type.</summary>
-        /// <param name="location">Where in the source the type begins.</param>
+        /// <param name="span">The source the type covers.</param>
         /// <param name="keyType">The key type.</param>
         /// <param name="valueType">The value type.</param>
-        public DictTypeSyntax(SourceLocation location, TypeSyntax keyType, TypeSyntax valueType) : base(location)
+        public DictTypeSyntax(SourceSpan span, TypeSyntax keyType, TypeSyntax valueType) : base(span)
         {
             KeyType = keyType;
             ValueType = valueType;
@@ -89,9 +89,9 @@ namespace Surtr.Compiler.Syntax.Ast
         public IReadOnlyList<TypeSyntax> ElementTypes { get; }
 
         /// <summary>Initializes a tuple type.</summary>
-        /// <param name="location">Where in the source the type begins.</param>
+        /// <param name="span">The source the type covers.</param>
         /// <param name="elementTypes">The element types, in order.</param>
-        public TupleTypeSyntax(SourceLocation location, IReadOnlyList<TypeSyntax> elementTypes) : base(location)
+        public TupleTypeSyntax(SourceSpan span, IReadOnlyList<TypeSyntax> elementTypes) : base(span)
         {
             ElementTypes = elementTypes;
         }
@@ -111,11 +111,11 @@ namespace Surtr.Compiler.Syntax.Ast
         public TypeSyntax ReturnType { get; }
 
         /// <summary>Initializes a closure type.</summary>
-        /// <param name="location">Where in the source the type begins.</param>
+        /// <param name="span">The source the type covers.</param>
         /// <param name="parameterTypes">The parameter types, in order.</param>
         /// <param name="returnType">The return type.</param>
-        public ClosureTypeSyntax(SourceLocation location, IReadOnlyList<TypeSyntax> parameterTypes, TypeSyntax returnType)
-            : base(location)
+        public ClosureTypeSyntax(SourceSpan span, IReadOnlyList<TypeSyntax> parameterTypes, TypeSyntax returnType)
+            : base(span)
         {
             ParameterTypes = parameterTypes;
             ReturnType = returnType;
@@ -133,9 +133,9 @@ namespace Surtr.Compiler.Syntax.Ast
         public TypeSyntax ElementType { get; }
 
         /// <summary>Initializes a nullable type.</summary>
-        /// <param name="location">Where in the source the type begins.</param>
+        /// <param name="span">The source the type covers.</param>
         /// <param name="elementType">The type being made nullable.</param>
-        public NullableTypeSyntax(SourceLocation location, TypeSyntax elementType) : base(location)
+        public NullableTypeSyntax(SourceSpan span, TypeSyntax elementType) : base(span)
         {
             ElementType = elementType;
         }

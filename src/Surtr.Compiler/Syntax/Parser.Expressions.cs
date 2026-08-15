@@ -1,5 +1,6 @@
 #nullable enable
 
+using Surtr.Compiler.Diagnostics;
 using System.Collections.Generic;
 using Surtr.Compiler.Syntax.Ast;
 
@@ -119,12 +120,14 @@ namespace Surtr.Compiler.Syntax
                 return left;
             }
 
-            SourceLocation start = reader.CurrentLocation;
             reader.Advance();
 
             // Right-associative: `a = b = c` is `a = (b = c)`, so recurse rather than loop.
             ExpressionSyntax value = ParseExpression();
-            return new AssignmentExpressionSyntax(start, assignment.Value, left, value);
+
+            // From the target, as the binary operators do: the assignment is `a = b`, and a span
+            // starting at the `=` would leave the target outside the node that assigns to it.
+            return new AssignmentExpressionSyntax(SpanFrom(left.Span.Start), assignment.Value, left, value);
         }
 
         /// <summary>Parses the ternary, which sits just above assignment and is also right-associative.</summary>
@@ -137,14 +140,14 @@ namespace Surtr.Compiler.Syntax
                 return condition;
             }
 
-            SourceLocation start = reader.CurrentLocation;
             reader.Advance();
 
             ExpressionSyntax whenTrue = ParseExpression();
             reader.Expect(TokenType.Colon, "':' in the conditional expression");
             ExpressionSyntax whenFalse = ParseExpression();
 
-            return new ConditionalExpressionSyntax(start, condition, whenTrue, whenFalse);
+            // The whole conditional, condition included, not the `? :` part of it.
+            return new ConditionalExpressionSyntax(SpanFrom(condition.Span.Start), condition, whenTrue, whenFalse);
         }
 
         /// <summary>
@@ -161,9 +164,14 @@ namespace Surtr.Compiler.Syntax
                 // `is` binds at the relational level (10) and takes a type.
                 if (reader.Check(TokenType.KeywordIs) && 10 >= minPrecedence)
                 {
-                    SourceLocation start = reader.CurrentLocation;
                     reader.Advance();
-                    left = new TypeTestExpressionSyntax(start, left, ParseType());
+
+                    // Spans the operand as the other binary operators do: the test is `x is T`. The
+                    // type is read into a local first, for the reason the call below gives: arguments
+                    // evaluate left to right, so `SpanFrom` inlined here would measure up to `is` and
+                    // stop before the type it is testing against.
+                    TypeSyntax tested = ParseType();
+                    left = new TypeTestExpressionSyntax(SpanFrom(left.Span.Start), left, tested);
                     continue;
                 }
 
@@ -173,13 +181,15 @@ namespace Surtr.Compiler.Syntax
                     return left;
                 }
 
-                SourceLocation operatorLocation = reader.CurrentLocation;
                 BinaryOperator op = ToBinaryOperator(reader.CurrentType);
                 reader.Advance();
 
                 // Everything here is left-associative, so the right operand binds one level tighter.
                 ExpressionSyntax right = ParseBinary(precedence + 1);
-                left = new BinaryExpressionSyntax(operatorLocation, op, left, right);
+
+                // The whole operation, not the operator: an error about `a + b` should underline
+                // both operands.
+                left = new BinaryExpressionSyntax(left.Span.To(right.Span), op, left, right);
             }
         }
 
@@ -192,23 +202,28 @@ namespace Surtr.Compiler.Syntax
             {
                 case TokenType.Minus:
                     reader.Advance();
-                    return new UnaryExpressionSyntax(start, UnaryOperator.Negate, ParseUnary());
+                    ExpressionSyntax negated = ParseUnary();
+                    return new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.Negate, negated);
 
                 case TokenType.LogicalNot:
                     reader.Advance();
-                    return new UnaryExpressionSyntax(start, UnaryOperator.Not, ParseUnary());
+                    ExpressionSyntax negatedLogically = ParseUnary();
+                    return new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.Not, negatedLogically);
 
                 case TokenType.Tilde:
                     reader.Advance();
-                    return new UnaryExpressionSyntax(start, UnaryOperator.Complement, ParseUnary());
+                    ExpressionSyntax complemented = ParseUnary();
+                    return new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.Complement, complemented);
 
                 case TokenType.Increment:
                     reader.Advance();
-                    return new UnaryExpressionSyntax(start, UnaryOperator.PreIncrement, ParseUnary());
+                    ExpressionSyntax incremented = ParseUnary();
+                    return new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.PreIncrement, incremented);
 
                 case TokenType.Decrement:
                     reader.Advance();
-                    return new UnaryExpressionSyntax(start, UnaryOperator.PreDecrement, ParseUnary());
+                    ExpressionSyntax decremented = ParseUnary();
+                    return new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.PreDecrement, decremented);
 
                 default:
                     return ParseCast();
@@ -222,15 +237,96 @@ namespace Surtr.Compiler.Syntax
 
             while (reader.Check(TokenType.KeywordAs))
             {
-                SourceLocation start = reader.CurrentLocation;
                 reader.Advance();
 
                 // §5.7: a type must follow `as`, so a `?` here can only be the safe-cast form.
                 bool safe = reader.Match(TokenType.Question);
-                operand = new CastExpressionSyntax(start, operand, ParseType(), safe);
+
+                // Spans the operand: the conversion is `x as T`, and a span starting at `as` would
+                // put the very value being converted outside the node converting it. The type is
+                // read first so the span reaches its end — see the call below.
+                TypeSyntax target = ParseType();
+                operand = new CastExpressionSyntax(SpanFrom(operand.Span.Start), operand, target, safe);
             }
 
             return operand;
+        }
+
+        /// <summary>
+        /// Whether the <c>&lt;</c> at the current position opens a call's type argument list rather
+        /// than being a comparison.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The one genuinely ambiguous shape in the expression grammar: <c>a &lt; b &gt; (c)</c> can
+        /// be read as two comparisons or as one generic call, and no amount of grammar settles it —
+        /// which is why this is a scan rather than a production. It looks ahead over the tokens a type
+        /// argument list can contain, and takes the generic reading only when the angles balance and
+        /// a <c>(</c> follows the close. Anything else — a literal, an operator, a <c>;</c> — ends the
+        /// scan and leaves the <c>&lt;</c> a comparison.
+        /// </para>
+        /// <para>
+        /// Nothing is consumed and nothing is reported, so the fallback costs a bounded look and no
+        /// diagnostic: a scan that fails must leave no trace, or a comparison would report the errors
+        /// of the type argument list it was never trying to be.
+        /// </para>
+        /// </remarks>
+        private bool LooksLikeTypeArgumentList()
+        {
+            const int Limit = 256;
+
+            int depth = 0;
+
+            for (int offset = 0; offset < Limit; offset++)
+            {
+                switch (reader.Peek(offset).Type)
+                {
+                    case TokenType.Less:
+                        depth++;
+                        break;
+
+                    case TokenType.Greater:
+                    case TokenType.ShiftRight:
+                    case TokenType.UnsignedShiftRight:
+                    {
+                        // Maximal munch hands back `>>` and `>>>` whole, and in a nested list they
+                        // close two and three levels — the same split ConsumeTypeArgumentClose makes.
+                        depth -= reader.Peek(offset).Type switch
+                        {
+                            TokenType.Greater => 1,
+                            TokenType.ShiftRight => 2,
+                            _ => 3,
+                        };
+
+                        if (depth > 0)
+                            break;
+
+                        // A list that closes more angles than it opened was never one.
+                        return depth == 0 && reader.Peek(offset + 1).Type == TokenType.LeftParen;
+                    }
+
+                    // Everything a type can be written with: a name, a qualification, a separator,
+                    // `?`, and the bracket forms of an array, a dict, a tuple and a closure.
+                    case TokenType.Identifier:
+                    case TokenType.Dot:
+                    case TokenType.Comma:
+                    case TokenType.Question:
+                    case TokenType.LeftBracket:
+                    case TokenType.RightBracket:
+                    case TokenType.LeftBrace:
+                    case TokenType.RightBrace:
+                    case TokenType.Colon:
+                    case TokenType.LeftParen:
+                    case TokenType.RightParen:
+                    case TokenType.Arrow:
+                        break;
+
+                    default:
+                        return false;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>Parses calls, indexing, member access, postfix increment and <c>!!</c>.</summary>
@@ -247,13 +343,34 @@ namespace Surtr.Compiler.Syntax
                     bool nullConditional = reader.CurrentType == TokenType.QuestionDot;
                     reader.Advance();
                     string name = reader.ExpectIdentifier("a member name after '.'");
-                    expression = new MemberAccessExpressionSyntax(start, expression, name, nullConditional);
+
+                    // From the receiver, like the call and index below: an access is `t.value`, not
+                    // the `.value` half of it. A span that skips its own receiver is one a tool
+                    // cannot walk into — the receiver sits outside the node that owns it.
+                    expression = new MemberAccessExpressionSyntax(SpanFrom(expression.Span.Start), expression, name, nullConditional);
                     continue;
                 }
 
                 if (reader.Check(TokenType.LeftParen))
                 {
-                    expression = new CallExpressionSyntax(start, expression, EmptyTypes, ParseArgumentList());
+                    // The argument list must be consumed before the span is captured: `SpanFrom`
+                    // measures up to whatever has been read, and the call's span runs from its callee
+                    // to the closing parenthesis. Captured too early it would be degenerate — the call
+                    // node would point at `(` alone, which is where every downstream diagnostic would
+                    // land.
+                    var arguments = ParseArgumentList();
+                    expression = new CallExpressionSyntax(SpanFrom(expression.Span.Start), expression, EmptyTypes, arguments);
+                    continue;
+                }
+
+                // `pick<int>(1, 2)` — a call with its type arguments written out (§6). Only taken
+                // when the tokens really close a type argument list and a `(` follows, so
+                // `a < b` stays a comparison.
+                if (reader.Check(TokenType.Less) && LooksLikeTypeArgumentList())
+                {
+                    var typeArguments = ParseTypeArgumentList();
+                    var arguments = ParseArgumentList();
+                    expression = new CallExpressionSyntax(SpanFrom(expression.Span.Start), expression, typeArguments, arguments);
                     continue;
                 }
 
@@ -262,28 +379,31 @@ namespace Surtr.Compiler.Syntax
                     reader.Advance();
                     ExpressionSyntax index = ParseExpression();
                     reader.Expect(TokenType.RightBracket, "']' to close the index");
-                    expression = new IndexExpressionSyntax(start, expression, index);
+                    // Same order as the call above: the index must be read before the span is
+                    // captured, or the node would point at `[` alone.
+                    expression = new IndexExpressionSyntax(SpanFrom(expression.Span.Start), expression, index);
                     continue;
                 }
 
+                // A postfix operator spans its operand too: `x++` is the operation, `++` alone is not.
                 if (reader.Check(TokenType.Increment))
                 {
                     reader.Advance();
-                    expression = new UnaryExpressionSyntax(start, UnaryOperator.PostIncrement, expression);
+                    expression = new UnaryExpressionSyntax(SpanFrom(expression.Span.Start), UnaryOperator.PostIncrement, expression);
                     continue;
                 }
 
                 if (reader.Check(TokenType.Decrement))
                 {
                     reader.Advance();
-                    expression = new UnaryExpressionSyntax(start, UnaryOperator.PostDecrement, expression);
+                    expression = new UnaryExpressionSyntax(SpanFrom(expression.Span.Start), UnaryOperator.PostDecrement, expression);
                     continue;
                 }
 
                 if (reader.Check(TokenType.BangBang))
                 {
                     reader.Advance();
-                    expression = new UnaryExpressionSyntax(start, UnaryOperator.NullAssert, expression);
+                    expression = new UnaryExpressionSyntax(SpanFrom(expression.Span.Start), UnaryOperator.NullAssert, expression);
                     continue;
                 }
 
@@ -310,7 +430,8 @@ namespace Surtr.Compiler.Syntax
                     reader.Advance();
                 }
 
-                arguments.Add(new ArgumentSyntax(start, name, ParseExpression()));
+                ExpressionSyntax argumentValue = ParseExpression();
+                arguments.Add(new ArgumentSyntax(SpanFrom(start), name, argumentValue));
 
                 if (!reader.Match(TokenType.Comma))
                 {
@@ -358,19 +479,22 @@ namespace Surtr.Compiler.Syntax
                     if (CheckContextual("this"))
                     {
                         reader.Advance();
-                        return new ThisExpressionSyntax(start);
+                        return new ThisExpressionSyntax(SpanFrom(start));
                     }
 
                     if (CheckContextual("super"))
                     {
                         reader.Advance();
-                        return new SuperExpressionSyntax(start);
+                        return new SuperExpressionSyntax(SpanFrom(start));
                     }
 
-                    return new IdentifierExpressionSyntax(start, reader.Advance().ToString());
+                    // Consumed first: arguments evaluate left to right, so a SpanFrom sitting
+                    // beside the Advance would close the span before the token was read.
+                    string name = reader.Advance().ToString();
+                    return new IdentifierExpressionSyntax(SpanFrom(start), name);
 
                 default:
-                    throw reader.Error($"Expected an expression, found {reader.CurrentType}.");
+                    throw reader.Error(SurtrDiagnosticCode.ExpectedExpression, $"Expected an expression, found {reader.CurrentType}.");
             }
         }
 
@@ -419,10 +543,10 @@ namespace Surtr.Compiler.Syntax
 
                     if (depth != 0)
                     {
-                        throw reader.Error("Unterminated '${' in the interpolated string.", token.Location);
+                        throw reader.Error(SurtrDiagnosticCode.InvalidInterpolation, "Unterminated '${' in the interpolated string.", token.Span);
                     }
 
-                    parts.Add(ParseInterpolationHole(raw.Substring(expressionStart, j - expressionStart), token));
+                    parts.Add(ParseInterpolationHole(token, expressionStart, j - expressionStart));
                     i = j;
                     continue;
                 }
@@ -436,26 +560,75 @@ namespace Surtr.Compiler.Syntax
 
                 if (nameEnd == nameStart)
                 {
-                    throw reader.Error("A '$' in an interpolated string must be followed by a name or '{'.", token.Location);
+                    throw reader.Error(SurtrDiagnosticCode.InvalidInterpolation, "A '$' in an interpolated string must be followed by a name or '{'.", token.Span);
                 }
 
-                parts.Add(new IdentifierExpressionSyntax(token.Location, raw.Substring(nameStart, nameEnd - nameStart)));
+                // Every part takes the whole literal's span. The text a part was decoded from does
+                // not sit at a fixed offset in the source — escapes and `${` holes shift it — and a
+                // hole's own nodes come from a nested parser working in its own coordinates, so
+                // precise sub-spans would mean remapping a whole subtree. Worth doing when a binder
+                // starts reporting inside interpolations; not before.
+                parts.Add(new IdentifierExpressionSyntax(token.Span, raw.Substring(nameStart, nameEnd - nameStart)));
                 i = nameEnd - 1;
             }
 
             FlushInterpolationText(parts, text, token);
-            return new InterpolatedStringExpressionSyntax(token.Location, parts);
+            return new InterpolatedStringExpressionSyntax(token.Span, parts);
         }
 
-        /// <summary>Parses one <c>${ ... }</c> hole by running a nested parser over its text.</summary>
-        private ExpressionSyntax ParseInterpolationHole(string source, Token token)
+        /// <summary>Parses one <c>${ ... }</c> hole, in place in the file that holds it.</summary>
+        /// <param name="token">The literal the hole was written in.</param>
+        /// <param name="offset">Where the hole's expression starts inside the literal's raw text.</param>
+        /// <param name="length">How long that expression is.</param>
+        /// <remarks>
+        /// <para>
+        /// Scanned out of the file rather than out of a copy, so its nodes carry the file's own
+        /// coordinates. Two facts of the lexer are what make the mapping exact, and both are worth
+        /// knowing before touching this: an interpolated literal's payload is a verbatim slice of
+        /// the source — the escapes are left undecoded precisely so this stage can still see them —
+        /// so an index into it is an offset from the literal's first content character; and a string
+        /// literal cannot span lines, so the hole is on the literal's own line and its column is a
+        /// count of characters from there.
+        /// </para>
+        /// <para>
+        /// The buffer is cut off at the hole's end because that is what stops the scan: a lexer runs
+        /// to the end of what it is handed, and cutting it there costs nothing, since a slice from
+        /// zero leaves every index meaning what it did.
+        /// </para>
+        /// </remarks>
+        private ExpressionSyntax ParseInterpolationHole(Token token, int offset, int length)
         {
-            Parser inner = new Parser(SurtrSourceBuffer.FromString(source, reader.SourceName));
+            // The payload starts one character past the opening quote.
+            int contentStart = token.Span.Start.Position + 1;
+            int holeStart = contentStart + offset;
+
+            if (source is null)
+            {
+                // Built from a token stream, so there are no characters to go back to. The hole is
+                // still parsed, out of its own text, and only its positions are unusable.
+                Parser detached = new Parser(SurtrSourceBuffer.FromString(
+                    token.Payload.AsString.Substring(offset, length), reader.SourceName));
+                return SingleExpression(detached, token);
+            }
+
+            var window = SurtrSourceBuffer.FromMemory(source.Text.Slice(0, holeStart + length), source.Name);
+            var origin = new SourceLocation(
+                token.Span.Start.Line,
+                token.Span.Start.Column + 1 + offset,
+                holeStart);
+
+            List<Token> tokens = new Lexer(window, origin, diagnostics).Tokenize();
+            return SingleExpression(new Parser(tokens, reader.SourceName, diagnostics), token);
+        }
+
+        /// <summary>Reads the one expression a hole is allowed to hold.</summary>
+        private ExpressionSyntax SingleExpression(Parser inner, Token token)
+        {
             ExpressionSyntax expression = inner.ParseExpression();
 
             if (!inner.reader.Check(TokenType.EndOfFile))
             {
-                throw reader.Error("An interpolation hole must hold exactly one expression.", token.Location);
+                throw reader.Error(SurtrDiagnosticCode.InvalidInterpolation, "An interpolation hole must hold exactly one expression.", token.Span);
             }
 
             return expression;
@@ -510,7 +683,7 @@ namespace Surtr.Compiler.Syntax
             }
 
             reader.Expect(TokenType.RightBracket, "']' to close the array literal");
-            return new ArrayLiteralExpressionSyntax(start, elements);
+            return new ArrayLiteralExpressionSyntax(SpanFrom(start), elements);
         }
 
         /// <summary>Parses <c>{ k: v }</c>. Only reachable in expression position, per §5.4.</summary>
@@ -525,7 +698,8 @@ namespace Surtr.Compiler.Syntax
                 SourceLocation entryStart = reader.CurrentLocation;
                 ExpressionSyntax key = ParseExpression();
                 reader.Expect(TokenType.Colon, "':' between the key and value");
-                entries.Add(new DictEntrySyntax(entryStart, key, ParseExpression()));
+                ExpressionSyntax entryValue = ParseExpression();
+                entries.Add(new DictEntrySyntax(SpanFrom(entryStart), key, entryValue));
 
                 if (!reader.Match(TokenType.Comma))
                 {
@@ -534,7 +708,7 @@ namespace Surtr.Compiler.Syntax
             }
 
             reader.Expect(TokenType.RightBrace, "'}' to close the dictionary literal");
-            return new DictLiteralExpressionSyntax(start, entries);
+            return new DictLiteralExpressionSyntax(SpanFrom(start), entries);
         }
 
         /// <summary>Parses <c>(a)</c> as a grouping and <c>(a, b)</c> as a tuple.</summary>
@@ -557,11 +731,11 @@ namespace Surtr.Compiler.Syntax
 
             if (elements.Count == 0)
             {
-                throw reader.Error("Expected an expression inside the parentheses.", start);
+                throw reader.Error(SurtrDiagnosticCode.ExpectedExpression, "Expected an expression inside the parentheses.", start);
             }
 
             // One element is a grouping, not a one-element tuple; the node it wrapped is enough.
-            return elements.Count == 1 ? elements[0] : new TupleLiteralExpressionSyntax(start, elements);
+            return elements.Count == 1 ? elements[0] : new TupleLiteralExpressionSyntax(SpanFrom(start), elements);
         }
 
         /// <summary>
@@ -614,7 +788,7 @@ namespace Surtr.Compiler.Syntax
 
                 // §5.9: the annotation is optional when a target type supplies it.
                 TypeSyntax? type = reader.Match(TokenType.Colon) ? ParseType() : null;
-                parameters.Add(new ParameterSyntax(parameterStart, name, type, null, false));
+                parameters.Add(new ParameterSyntax(SpanFrom(parameterStart), name, type, null, false));
 
                 if (!reader.Match(TokenType.Comma))
                 {
@@ -627,10 +801,12 @@ namespace Surtr.Compiler.Syntax
 
             if (reader.Check(TokenType.LeftBrace))
             {
-                return new LambdaExpressionSyntax(start, parameters, null, ParseBlock());
+                BlockStatementSyntax lambdaBody = ParseBlock();
+                return new LambdaExpressionSyntax(SpanFrom(start), parameters, null, lambdaBody);
             }
 
-            return new LambdaExpressionSyntax(start, parameters, ParseExpression(), null);
+            ExpressionSyntax lambdaResult = ParseExpression();
+            return new LambdaExpressionSyntax(SpanFrom(start), parameters, lambdaResult, null);
         }
 
         /// <summary>Parses the expression form of <c>switch</c> (§4.3).</summary>
@@ -659,7 +835,8 @@ namespace Surtr.Compiler.Syntax
                 }
 
                 reader.Expect(TokenType.Arrow, "'->' in the switch arm");
-                arms.Add(new SwitchExpressionArmSyntax(armStart, values, ParseExpression()));
+                ExpressionSyntax armResult = ParseExpression();
+                arms.Add(new SwitchExpressionArmSyntax(SpanFrom(armStart), values, armResult));
 
                 if (!reader.Match(TokenType.Comma))
                 {
@@ -668,7 +845,7 @@ namespace Surtr.Compiler.Syntax
             }
 
             reader.Expect(TokenType.RightBrace, "'}' to close the switch arms");
-            return new SwitchExpressionSyntax(start, subject, arms);
+            return new SwitchExpressionSyntax(SpanFrom(start), subject, arms);
         }
     }
 }

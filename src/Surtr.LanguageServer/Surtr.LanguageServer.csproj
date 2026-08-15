@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+
+    <!-- The language server half of the Surtr editor story: it speaks the Language Server
+         Protocol over stdio and answers hover, definition and diagnostic questions by running the
+         real compiler's binder against the workspace's .surtr files. It is a companion to
+         `surtr`/`surtrc`, never a library Unity loads, so like them it is a plain console program
+         and CS1591 would only be noise. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Surtr.LanguageServer</RootNamespace>
+    <AssemblyName>surtr-lsp</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!-- A command-line program is never consumed as a library, so CS1591 would only be noise. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Surtr.Core\Surtr.Core.csproj" />
+    <ProjectReference Include="..\Surtr.Compiler\Surtr.Compiler.csproj" />
+  </ItemGroup>
+
+</Project>
