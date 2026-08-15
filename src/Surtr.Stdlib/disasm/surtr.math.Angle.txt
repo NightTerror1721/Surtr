@@ -1,0 +1,10 @@
+module surtr.math.Angle
+  constants: 0   types: 0   fields: 0   methods: 2   modules: 0
+
+ctor(float) -> void   [entry 0, locals 2, stack 0, code 0..1]
+  0000  ReturnVoid
+
+get_radians() -> float   [entry 1, locals 1, stack 1, code 1..4]
+  0001  Ldl0
+  0002  Unbox
+  0003  ReturnValue

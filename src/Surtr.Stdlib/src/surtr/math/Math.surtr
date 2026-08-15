@@ -1,0 +1,122 @@
+public const Pi: float = 3.14159265358979323846;
+public const TwoPi: float = 6.28318530717958647692;
+public const HalfPi: float = 1.57079632679489661923;
+public const QuarterPi: float = 0.78539816339744830961;
+public const E: float = 2.71828182845904523536;
+public const Epsilon: float = 0.00001;
+public const Infinity: float = 1.0 / 0.0;
+public const NegativeInfinity: float = -1.0 / 0.0;
+public const NaN: float = 0.0 / 0.0;
+public const GoldenRatio: float = 1.61803398874989484820;
+public const DegreesToRadians: float = Pi / 180.0;
+public const RadiansToDegrees: float = 180.0 / Pi;
+
+
+public native fun sin(x: float): float;
+
+public native fun cos(x: float): float;
+
+public native fun tan(x: float): float;
+
+public native fun asin(x: float): float;
+
+public native fun acos(x: float): float;
+
+public native fun atan(x: float): float;
+
+public native fun atan2(y: float, x: float): float;
+
+public native fun sqrt(x: float): float;
+
+public native fun pow(x: float, y: float): float;
+
+public native fun exp(x: float): float;
+
+public native fun log(x: float): float;
+
+public native fun log10(x: float): float;
+
+public native fun floor(x: float): float;
+
+public native fun ceil(x: float): float;
+
+public native fun round(x: float): float;
+
+
+public forceinline const fun isNaN(value: float): bool { return value != value; }
+
+public forceinline const fun isInfinity(value: float): bool { return value == Infinity || value == NegativeInfinity; }
+
+
+public forceinline const fun degreesToRadians(degrees: float): float { return degrees * DegreesToRadians; }
+
+public forceinline const fun radiansToDegrees(radians: float): float { return radians * RadiansToDegrees; }
+
+
+public forceinline const fun abs(n: int): int { return n < 0 ? -n : n; }
+
+public forceinline const fun abs(n: float): float { return n < 0.0 ? -n : n; }
+
+public forceinline const fun min(a: int, b: int): int { return a < b ? a : b; }
+
+public forceinline const fun max(a: int, b: int): int { return a > b ? a : b; }
+
+public forceinline const fun min(a: float, b: float): float { return a < b ? a : b; }
+
+public forceinline const fun max(a: float, b: float): float { return a > b ? a : b; }
+
+
+public forceinline const fun clamp(value: int, low: int, high: int): int
+{
+    if (value < low) return low;
+    if (value > high) return high;
+    return value;
+}
+
+public forceinline const fun clamp(value: float, low: float, high: float): float
+{
+    if (value < low) return low;
+    if (value > high) return high;
+    return value;
+}
+
+public forceinline const fun clamp01(value: float): float
+{
+    if (value < 0.0) return 0.0;
+    if (value > 1.0) return 1.0;
+    return value;
+}
+
+public forceinline const fun lerp(a: float, b: float, t: float): float
+{
+    return a + (b - a) * clamp01(t);
+}
+
+public forceinline const fun lerpUnclamped(a: float, b: float, t: float): float
+{
+    return a + (b - a) * t;
+}
+
+public forceinline const fun approximately(a: float, b: float): bool
+{
+    return abs(a - b) < Epsilon;
+}
+
+public forceinline const fun sign(n: float): int
+{
+    if (n > 0.0) return 1;
+    if (n < 0.0) return -1;
+    return 0;
+}
+
+public forceinline const fun sign(n: int): int
+{
+    if (n > 0) return 1;
+    if (n < 0) return -1;
+    return 0;
+}
+
+public inline fun repeat(value: float, length: float): float
+{
+    return clamp(value - floor(value / length) * length, 0.0, length);
+}

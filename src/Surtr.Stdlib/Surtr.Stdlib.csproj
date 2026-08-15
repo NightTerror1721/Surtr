@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <RootNamespace>Surtr.Stdlib</RootNamespace>
+    <AssemblyName>Surtr.Stdlib</AssemblyName>
+
+    <!-- This project is a source container for the Surtr-written half of the standard library,
+         plus the build wiring that compiles it. It has no C# of its own: the .surtr files under
+         src/surtr/ are compiled to .surtrc images by Surtr.Stdlib.Tool, which the
+         BuildStdlibImages target runs on every build. The images land in build/ and are what
+         Surtr.Core consumes. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- This project (netstandard2.1) cannot reference the tool (net8.0) - the target framework is
+       narrower - so there is no ProjectReference. Instead the tool is built and run on demand with
+       `dotnet run`. No circularity and no build recursion: Surtr.Stdlib.Tool references only
+       Surtr.Compiler, never this project, so running it does not rebuild this assembly (which is
+       what previously caused a hang). -->
+  <Target Name="BuildStdlibImages" AfterTargets="Build">
+    <PropertyGroup>
+      <StdlibSourceRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)src'))</StdlibSourceRoot>
+      <StdlibOutputDirectory>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)build'))</StdlibOutputDirectory>
+      <StdlibDisassemblyDirectory>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)disasm'))</StdlibDisassemblyDirectory>
+      <StdlibToolProject>$(MSBuildThisFileDirectory)..\Surtr.Stdlib.Tool\Surtr.Stdlib.Tool.csproj</StdlibToolProject>
+    </PropertyGroup>
+    <MakeDir Directories="$(StdlibOutputDirectory)" />
+    <Exec Command="dotnet run --project &quot;$(StdlibToolProject)&quot; --configuration $(Configuration) -- &quot;$(StdlibSourceRoot)&quot; &quot;$(StdlibOutputDirectory)&quot; &quot;$(StdlibDisassemblyDirectory)&quot;"
+          WorkingDirectory="$(MSBuildThisFileDirectory)"
+          ConsoleToMSBuild="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="StdlibToolOutput" />
+    </Exec>
+    <Message Importance="high" Text="$(StdlibToolOutput)" />
+  </Target>
+
+</Project>

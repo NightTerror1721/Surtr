@@ -1,0 +1,13 @@
+public value class Angle
+{
+    private let _radians: float;
+
+    public constructor(radians: float) {
+        this._radians = radians;
+    }
+
+    public radians: float
+    {
+        get { return this._radians; }
+    }
+}

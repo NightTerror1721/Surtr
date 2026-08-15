@@ -1,0 +1,308 @@
+module surtr.math.Math
+  constants: 10   types: 0   fields: 12   methods: 20   modules: 0
+
+static isNaN(float) -> bool   [entry 0, locals 1, stack 2, code 0..4]
+  0000  Ldl0
+  0001  Ldl0
+  0002  FNE
+  0003  ReturnValue
+
+static isInfinity(float) -> bool   [entry 1, locals 1, stack 2, code 4..23]
+  0004  Ldl0
+  0005  StaticFieldGet 0 (Infinity)
+  0008  FEQ
+  0009  Dup
+  000A  JPNZ +9 -> 0016
+  000D  Pop
+  000E  Ldl0
+  000F  StaticFieldGet 1 (NegativeInfinity)
+  0012  FEQ
+  0013  JP +0 -> 0016
+  0016  ReturnValue
+
+static degreesToRadians(float) -> float   [entry 2, locals 1, stack 2, code 23..29]
+  0017  Ldl0
+  0018  StaticFieldGet 2 (DegreesToRadians)
+  001B  FMul
+  001C  ReturnValue
+
+static radiansToDegrees(float) -> float   [entry 3, locals 1, stack 2, code 29..35]
+  001D  Ldl0
+  001E  StaticFieldGet 3 (RadiansToDegrees)
+  0021  FMul
+  0022  ReturnValue
+
+static abs(int) -> int   [entry 4, locals 1, stack 2, code 35..49]
+  0023  Ldl0
+  0024  PushI8 0
+  0026  LT
+  0027  JPZ +5 -> 002F
+  002A  Ldl0
+  002B  Neg
+  002C  JP +1 -> 0030
+  002F  Ldl0
+  0030  ReturnValue
+
+static abs(float) -> float   [entry 5, locals 1, stack 2, code 49..62]
+  0031  Ldl0
+  0032  Ldc0
+  0033  FLT
+  0034  JPZ +5 -> 003C
+  0037  Ldl0
+  0038  FNeg
+  0039  JP +1 -> 003D
+  003C  Ldl0
+  003D  ReturnValue
+
+static min(int, int) -> int   [entry 6, locals 2, stack 2, code 62..74]
+  003E  Ldl0
+  003F  Ldl1
+  0040  LT
+  0041  JPZ +4 -> 0048
+  0044  Ldl0
+  0045  JP +1 -> 0049
+  0048  Ldl1
+  0049  ReturnValue
+
+static max(int, int) -> int   [entry 7, locals 2, stack 2, code 74..86]
+  004A  Ldl0
+  004B  Ldl1
+  004C  GT
+  004D  JPZ +4 -> 0054
+  0050  Ldl0
+  0051  JP +1 -> 0055
+  0054  Ldl1
+  0055  ReturnValue
+
+static min(float, float) -> float   [entry 8, locals 2, stack 2, code 86..98]
+  0056  Ldl0
+  0057  Ldl1
+  0058  FLT
+  0059  JPZ +4 -> 0060
+  005C  Ldl0
+  005D  JP +1 -> 0061
+  0060  Ldl1
+  0061  ReturnValue
+
+static max(float, float) -> float   [entry 9, locals 2, stack 2, code 98..110]
+  0062  Ldl0
+  0063  Ldl1
+  0064  FGT
+  0065  JPZ +4 -> 006C
+  0068  Ldl0
+  0069  JP +1 -> 006D
+  006C  Ldl1
+  006D  ReturnValue
+
+static clamp(int, int, int) -> int   [entry 10, locals 3, stack 2, code 110..128]
+  006E  Ldl0
+  006F  Ldl1
+  0070  LT
+  0071  JPZ +2 -> 0076
+  0074  Ldl1
+  0075  ReturnValue
+  0076  Ldl0
+  0077  Ldl2
+  0078  GT
+  0079  JPZ +2 -> 007E
+  007C  Ldl2
+  007D  ReturnValue
+  007E  Ldl0
+  007F  ReturnValue
+
+static clamp(float, float, float) -> float   [entry 11, locals 3, stack 2, code 128..146]
+  0080  Ldl0
+  0081  Ldl1
+  0082  FLT
+  0083  JPZ +2 -> 0088
+  0086  Ldl1
+  0087  ReturnValue
+  0088  Ldl0
+  0089  Ldl2
+  008A  FGT
+  008B  JPZ +2 -> 0090
+  008E  Ldl2
+  008F  ReturnValue
+  0090  Ldl0
+  0091  ReturnValue
+
+static clamp01(float) -> float   [entry 12, locals 1, stack 2, code 146..164]
+  0092  Ldl0
+  0093  Ldc0
+  0094  FLT
+  0095  JPZ +2 -> 009A
+  0098  Ldc0
+  0099  ReturnValue
+  009A  Ldl0
+  009B  Ldc1
+  009C  FGT
+  009D  JPZ +2 -> 00A2
+  00A0  Ldc1
+  00A1  ReturnValue
+  00A2  Ldl0
+  00A3  ReturnValue
+
+static lerp(float, float, float) -> float   [entry 13, locals 5, stack 4, code 164..201]
+  00A4  Ldl0
+  00A5  Ldl1
+  00A6  Ldl0
+  00A7  FSub
+  00A8  Ldl2
+  00A9  Stl3
+  00AA  Ldl3
+  00AB  Ldc0
+  00AC  FLT
+  00AD  JPZ +5 -> 00B5
+  00B0  Ldc0
+  00B1  Stl4
+  00B2  JP +16 -> 00C5
+  00B5  Ldl3
+  00B6  Ldc1
+  00B7  FGT
+  00B8  JPZ +5 -> 00C0
+  00BB  Ldc1
+  00BC  Stl4
+  00BD  JP +5 -> 00C5
+  00C0  Ldl3
+  00C1  Stl4
+  00C2  JP +0 -> 00C5
+  00C5  Ldl4
+  00C6  FMul
+  00C7  FAdd
+  00C8  ReturnValue
+
+static lerpUnclamped(float, float, float) -> float   [entry 14, locals 3, stack 3, code 201..209]
+  00C9  Ldl0
+  00CA  Ldl1
+  00CB  Ldl0
+  00CC  FSub
+  00CD  Ldl2
+  00CE  FMul
+  00CF  FAdd
+  00D0  ReturnValue
+
+static approximately(float, float) -> bool   [entry 15, locals 4, stack 2, code 209..235]
+  00D1  Ldl0
+  00D2  Ldl1
+  00D3  FSub
+  00D4  Stl2
+  00D5  Ldl2
+  00D6  Ldc0
+  00D7  FLT
+  00D8  JPZ +5 -> 00E0
+  00DB  Ldl2
+  00DC  FNeg
+  00DD  JP +1 -> 00E1
+  00E0  Ldl2
+  00E1  Stl3
+  00E2  JP +0 -> 00E5
+  00E5  Ldl3
+  00E6  StaticFieldGet 4 (Epsilon)
+  00E9  FLT
+  00EA  ReturnValue
+
+static sign(float) -> int   [entry 16, locals 1, stack 2, code 235..257]
+  00EB  Ldl0
+  00EC  Ldc0
+  00ED  FGT
+  00EE  JPZ +3 -> 00F4
+  00F1  PushI8 1
+  00F3  ReturnValue
+  00F4  Ldl0
+  00F5  Ldc0
+  00F6  FLT
+  00F7  JPZ +4 -> 00FE
+  00FA  PushI8 1
+  00FC  Neg
+  00FD  ReturnValue
+  00FE  PushI8 0
+  0100  ReturnValue
+
+static sign(int) -> int   [entry 17, locals 1, stack 2, code 257..281]
+  0101  Ldl0
+  0102  PushI8 0
+  0104  GT
+  0105  JPZ +3 -> 010B
+  0108  PushI8 1
+  010A  ReturnValue
+  010B  Ldl0
+  010C  PushI8 0
+  010E  LT
+  010F  JPZ +4 -> 0116
+  0112  PushI8 1
+  0114  Neg
+  0115  ReturnValue
+  0116  PushI8 0
+  0118  ReturnValue
+
+static repeat(float, float) -> float   [entry 18, locals 6, stack 3, code 281..327]
+  0119  Ldl0
+  011A  Ldl0
+  011B  Ldl1
+  011C  FDiv
+  011D  CallGlobalNative global#12 args=1 ret=1
+  0122  Ldl1
+  0123  FMul
+  0124  FSub
+  0125  Stl2
+  0126  Ldc0
+  0127  Stl3
+  0128  Ldl1
+  0129  Stl4
+  012A  Ldl2
+  012B  Ldl3
+  012C  FLT
+  012D  JPZ +5 -> 0135
+  0130  Ldl3
+  0131  Stl5
+  0132  JP +16 -> 0145
+  0135  Ldl2
+  0136  Ldl4
+  0137  FGT
+  0138  JPZ +5 -> 0140
+  013B  Ldl4
+  013C  Stl5
+  013D  JP +5 -> 0145
+  0140  Ldl2
+  0141  Stl5
+  0142  JP +0 -> 0145
+  0145  Ldl5
+  0146  ReturnValue
+
+static minit() -> void   [entry 19, locals 0, stack 2, code 327..391]
+  0147  Ldc2
+  0148  StaticFieldSet 5 (Pi)
+  014B  Ldc3
+  014C  StaticFieldSet 6 (TwoPi)
+  014F  Ldc4
+  0150  StaticFieldSet 7 (HalfPi)
+  0153  Ldc5
+  0154  StaticFieldSet 8 (QuarterPi)
+  0157  Ldc6
+  0158  StaticFieldSet 9 (E)
+  015B  Ldc7
+  015C  StaticFieldSet 4 (Epsilon)
+  015F  Ldc1
+  0160  Ldc0
+  0161  FDiv
+  0162  StaticFieldSet 0 (Infinity)
+  0165  Ldc1
+  0166  FNeg
+  0167  Ldc0
+  0168  FDiv
+  0169  StaticFieldSet 1 (NegativeInfinity)
+  016C  Ldc0
+  016D  Ldc0
+  016E  FDiv
+  016F  StaticFieldSet 10 (NaN)
+  0172  Ldc8
+  0173  StaticFieldSet 11 (GoldenRatio)
+  0176  StaticFieldGet 5 (Pi)
+  0179  Ldc9
+  017A  FDiv
+  017B  StaticFieldSet 2 (DegreesToRadians)
+  017E  Ldc9
+  017F  StaticFieldGet 5 (Pi)
+  0182  FDiv
+  0183  StaticFieldSet 3 (RadiansToDegrees)
+  0186  ReturnVoid
