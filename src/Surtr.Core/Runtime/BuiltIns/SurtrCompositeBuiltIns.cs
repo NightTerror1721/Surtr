@@ -340,7 +340,7 @@ namespace Surtr.Runtime.BuiltIns
             var self = arguments.GetUnchecked<SurtrDictionary>(0);
             var keys = arguments.Runtime.NewArray(
                 SurtrClassReference.Array(self.TypeReference.GetDictionaryKeyType()),
-                self.Entries.Count);
+                self.Count);
 
             self.CopyKeysTo(keys);
             return SurtrValue.CreateReference(keys.GetSurtrReference());
@@ -351,17 +351,17 @@ namespace Surtr.Runtime.BuiltIns
             var self = arguments.GetUnchecked<SurtrDictionary>(0);
             var values = arguments.Runtime.NewArray(
                 SurtrClassReference.Array(self.TypeReference.GetDictionaryValueType()),
-                self.Entries.Count);
+                self.Count);
 
             self.CopyValuesTo(values);
             return SurtrValue.CreateReference(values.GetSurtrReference());
         }
 
         private static SurtrValue DictionaryCount(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrDictionary>(0).Entries.Count);
+            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrDictionary>(0).Count);
 
         private static SurtrValue DictionaryIsEmpty(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrDictionary>(0).Entries.Count == 0);
+            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrDictionary>(0).IsEmpty);
 
         private static SurtrValue DictionaryClear(SurtrCallArguments arguments)
         {

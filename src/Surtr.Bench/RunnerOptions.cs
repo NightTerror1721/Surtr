@@ -9,9 +9,15 @@ namespace Surtr.Bench
     internal sealed class RunnerOptions
     {
         public string? WorkloadFilter;
-        public int Iterations = 5;
+        public int Iterations = 9;
         public double Scale = 1.0;
-        public bool Warmup = true;
+
+        /// <summary>
+        /// Untimed runs before the timed ones. Three rather than one: a single warm-up leaves the
+        /// heap unsized and any method without a loop still tiering up on call count, both of which
+        /// land on the first timed sample and widen the spread the median is drawn from.
+        /// </summary>
+        public int WarmupIterations = 3;
         public bool SurtrOnly;
         public bool LuaOnly;
         public bool LuajitOnly;
@@ -19,6 +25,9 @@ namespace Surtr.Bench
         public bool NoLuajit;
         public string? CsvPath;
         public bool ShowHelp;
+
+        /// <summary>List the catalogue and what each case measures, then exit without running.</summary>
+        public bool ListOnly;
 
         /// <summary>Whether the Surtr side runs. Only the baseline mode and the other engines' only-modes suppress it.</summary>
         public bool RunSurtr => !LuaOnly && !LuajitOnly && !BaselineOnly;
@@ -36,15 +45,17 @@ namespace Surtr.Bench
             + "\n"
             + "options:\n"
             + "  --workload <substring>  run only cases whose name contains <substring>\n"
-            + "  --iters <n>             timed iterations per case (default 5); the median is reported\n"
+            + "  --iters <n>             timed iterations per case (default 9); the median is reported\n"
             + "  --scale <factor>        multiply every workload size by <factor> (default 1.0)\n"
-            + "  --no-warmup             skip the untimed warm-up run before each case\n"
+            + "  --warmup <n>            untimed runs before the timed ones (default 3)\n"
+            + "  --no-warmup             skip the warm-up entirely; expect a much wider spread\n"
             + "  --surtr-only            run only the Surtr side\n"
             + "  --lua-only              run only the MoonSharp side\n"
             + "  --luajit-only           run only the LuaJIT side\n"
             + "  --no-luajit             run Surtr and MoonSharp but not LuaJIT\n"
             + "  --baseline-only         run only the C# baseline\n"
             + "  --csv <path>            append the results to <path> as CSV\n"
+            + "  --list                  list the catalogue and what each case measures, then exit\n"
             + "  -h, --help              show this help\n";
 
         public static RunnerOptions Parse(string[] args)
@@ -73,8 +84,13 @@ namespace Surtr.Bench
                         if (options.Scale <= 0)
                             throw new ArgumentException("--scale must be positive.");
                         break;
+                    case "--warmup":
+                        options.WarmupIterations = ParseInt(NextValue(args, ref i, arg), arg);
+                        if (options.WarmupIterations < 0)
+                            throw new ArgumentException("--warmup cannot be negative.");
+                        break;
                     case "--no-warmup":
-                        options.Warmup = false;
+                        options.WarmupIterations = 0;
                         break;
                     case "--surtr-only":
                         options.SurtrOnly = true;
@@ -93,6 +109,9 @@ namespace Surtr.Bench
                         break;
                     case "--csv":
                         options.CsvPath = NextValue(args, ref i, arg);
+                        break;
+                    case "--list":
+                        options.ListOnly = true;
                         break;
                     default:
                         throw new ArgumentException($"unknown option '{arg}'.");

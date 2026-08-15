@@ -626,6 +626,8 @@ namespace Surtr.Compiler.CodeGen
             var source = _method.DeclareLocal("$dict");
             var keys = _method.DeclareLocal("$keys");
             var index = _method.DeclareLocal("$index");
+            var key = _method.DeclareLocal("$key");
+            var value = _method.DeclareLocal("$value");
             var variable = Declare(loop.Variable);
 
             Expression(loop.Sequence);
@@ -646,15 +648,23 @@ namespace Surtr.Compiler.CodeGen
             Code.ArrLen();
             Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
 
-            // The pair is packed per iteration, which is what the variable's own type says it is.
+            // The key is read from the snapshot once and reused — for the value lookup and for the
+            // packed pair — instead of re-indexing the snapshot's array a second time. The pair is
+            // still materialised per iteration, because the loop variable's own type is a tuple and
+            // the body reads it as one (§4.2 has no destructuring for-in); what is avoided is the
+            // second array read, which carries a bounds check the first one already paid.
             Code.LoadLocal(keys);
             Code.LoadLocal(index);
             Code.ArrGet();
+            Code.StoreLocal(key);
+
             Code.LoadLocal(source);
-            Code.LoadLocal(keys);
-            Code.LoadLocal(index);
-            Code.ArrGet();
+            Code.LoadLocal(key);
             Code.DictGet();
+            Code.StoreLocal(value);
+
+            Code.LoadLocal(key);
+            Code.LoadLocal(value);
             Code.PackTuple(Descriptors.Emit(pair), 2);
             Code.StoreLocal(variable);
 
@@ -1460,6 +1470,16 @@ namespace Surtr.Compiler.CodeGen
                     return;
             }
 
+            // Absence is a *tag*, and only the tagged opcodes can see it. Left to the ordinary
+            // comparison this becomes `PushAbsent` against EQ/NE, which are the integer opcodes and
+            // compare the 32-bit payload alone — while PushAbsent carries the missing primitive's
+            // type code in exactly that payload. An `int?` holding 1 then has the same payload as
+            // absent-int (SurtrValueTypeCode.Integer == 1) and reads as null; a `char?` holding
+            // '' would do the same. On the float side it fails the other way, since
+            // absent-float is a NaN and FEQ answers false however it is asked.
+            if (TryEmitAbsenceTest(binary))
+                return;
+
             var operands = TypeCodeOf(binary.Left.Type);
 
             // §4.8 hands ordering on strings to the compiler: there is no opcode that orders one,
@@ -1732,6 +1752,62 @@ namespace Surtr.Compiler.CodeGen
         private static bool IsNullablePrimitive(TypeSymbol type)
             => type.IsNullable && type.NonNullable.SpecialType is SpecialType.Int or SpecialType.Float
                 or SpecialType.Bool or SpecialType.Char;
+
+        /// <summary>
+        /// Emits <c>x == null</c> / <c>x != null</c> on a nullable primitive as a tag test, and
+        /// reports whether it did.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// This is the only correct way to ask the question. The comparison opcodes are chosen by
+        /// operand family, so a nullable primitive picks the primitive ones — <c>EQ</c>/<c>NE</c>
+        /// for the integer family, which compare the low 32 bits because int, bool and char share
+        /// a representation and differ only in their tag. Absence differs from a present value in
+        /// nothing <em>but</em> its tag, so that comparison cannot see it, and the payload it does
+        /// see is the type code <c>PushAbsent</c> put there: an <c>int?</c> holding
+        /// <c>SurtrValueTypeCode.Integer</c> — that is, 1 — compares equal to null.
+        /// </para>
+        /// <para>
+        /// <c>IsAbsent</c> and <c>IsPresent</c> test the tag, which is the whole reason they are in
+        /// the instruction set. The value is pushed once and answered in one instruction, so this
+        /// is also a byte shorter than the pair it replaces.
+        /// </para>
+        /// </remarks>
+        private bool TryEmitAbsenceTest(BoundBinaryExpression binary)
+        {
+            if (binary.Operator is not (BinaryOperator.Equal or BinaryOperator.NotEqual))
+                return false;
+
+            // Either side may be the literal — `null == x` is as legal as `x == null`.
+            BoundExpression? value = null;
+            if (IsNullLiteral(binary.Right) && IsNullablePrimitive(binary.Left.Type))
+                value = binary.Left;
+            else if (IsNullLiteral(binary.Left) && IsNullablePrimitive(binary.Right.Type))
+                value = binary.Right;
+
+            if (value is null)
+                return false;
+
+            Expression(value);
+
+            if (binary.Operator == BinaryOperator.Equal)
+                Code.IsAbsent();
+            else
+                Code.IsPresent();
+
+            return true;
+        }
+
+        /// <summary>
+        /// Whether an expression is the <c>null</c> literal, looking through the conversion the
+        /// binder wraps it in to give it the other operand's type.
+        /// </summary>
+        private static bool IsNullLiteral(BoundExpression expression) => expression switch
+        {
+            BoundLiteralExpression { Value: null } => true,
+            BoundConversionExpression conversion => IsNullLiteral(conversion.Operand),
+            _ => false,
+        };
 
         // A stack, because `a?.b?.c` nests one guarded access inside another and each has its own
         // receiver slot; the innermost is the one a placeholder reads.
@@ -2106,6 +2182,21 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitPropertyRead(BoundPropertyExpression property)
         {
+            // `dict.length` is a native getter, but `DictLen` reads the count in one dispatch with
+            // no frame — the same thing, matched by the getter's identity so a user `length` on
+            // another type is untouched. The array's `length` is intentionally left to its native
+            // getter: it shares the opcode's shape only here, in a property read, and the array's
+            // `ArrLen` is reserved for the `for-in` lowering that actually walks by it.
+            if (IsDictionaryLength(property.Property))
+            {
+                if (property.Property.IsStatic)
+                    throw Unsupported($"a read of 'dict.{property.Property.Name}', which is not static");
+
+                Expression(property.Receiver!);
+                Code.DictLen();
+                return;
+            }
+
             var getter = property.Property.Getter
                 ?? throw Unsupported($"a read of '{property.Property.Name}', which has no getter");
 
@@ -2114,6 +2205,10 @@ namespace Surtr.Compiler.CodeGen
 
             EmitResolvedCall(getter, virtualCall: getter.Dispatch != MethodDispatch.Direct, discardResult: false);
         }
+
+        /// <summary>Whether <paramref name="property"/> is, by identity, the built-in dictionary's <c>length</c>.</summary>
+        private static bool IsDictionaryLength(PropertySymbol property)
+            => property.Getter is { } getter && IsDictionaryMember(getter, MemberNames.Getter("length"));
 
         private void EmitObjectCreation(BoundObjectCreationExpression creation)
         {
@@ -2240,6 +2335,14 @@ namespace Surtr.Compiler.CodeGen
             if (TryFoldConstCall(call, discardResult))
                 return;
 
+            // A method on the built-in `dict` is a native body the compiler could emit a call to,
+            // but each of these operations also has a dedicated opcode that does the same thing in
+            // one dispatch and no frame. Where the callee is one of them, this call site takes the
+            // opcode — the member is matched by identity so a user type that happens to declare its
+            // own `remove` is not confused with the dictionary's.
+            if (TryEmitDictionaryOperation(call, discardResult))
+                return;
+
             if (call.Method.IsInline || call.Method.IsForceInline)
             {
                 if (TryInline(call, discardResult))
@@ -2334,6 +2437,92 @@ namespace Surtr.Compiler.CodeGen
         /// <summary>Emits a call whose arguments are already emitted and which takes no receiver.</summary>
         private void EmitDirectCall(MethodSymbol method, bool discardResult)
             => EmitResolvedCall(method, virtualCall: false, discardResult);
+
+        /// <summary>
+        /// Replaces a call to a member of the built-in <c>dict</c> by the opcode that does the same
+        /// thing, so a host of these operations need not pay for a native frame.
+        /// </summary>
+        /// <remarks>
+        /// The members lowered here are the ones with a dedicated opcode of identical semantics:
+        /// <c>clear</c>, <c>containsKey</c>, <c>remove</c>, <c>keys</c> and <c>values</c>.
+        /// <c>get</c>/<c>set</c> are deliberately left alone — the index form <c>m[i]</c> already
+        /// reaches the same <c>DictGet</c>/<c>DictSet</c>, so lowering the method spelling would
+        /// duplicate a path that exists. <c>length</c> is handled separately, in
+        /// <see cref="EmitPropertyRead"/>.
+        /// </remarks>
+        private bool TryEmitDictionaryOperation(BoundCallExpression call, bool discardResult)
+        {
+            if (call.Receiver is null)
+                return false;
+
+            if (IsDictionaryMember(call.Method, "clear"))
+            {
+                Expression(call.Receiver);
+                Code.DictClear();
+                return true;
+            }
+
+            if (IsDictionaryMember(call.Method, "containsKey"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.DictIn();
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            if (IsDictionaryMember(call.Method, "remove"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.DictDel();
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            if (IsDictionaryMember(call.Method, "keys"))
+            {
+                Expression(call.Receiver);
+                Code.DictionaryKeys(Descriptors.Emit(call.Method.ReturnType.NonNullable));
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            if (IsDictionaryMember(call.Method, "values"))
+            {
+                Expression(call.Receiver);
+                Code.DictionaryValues(Descriptors.Emit(call.Method.ReturnType.NonNullable));
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Whether <paramref name="method"/> is, by identity, the built-in dictionary's member of
+        /// the given <paramref name="name"/>.
+        /// </summary>
+        /// <remarks>
+        /// Identity is the point: an imported symbol keeps the very <c>SurtrMethodInfo</c> the
+        /// built-in declares, and that survives the generic substitution <c>MemberLookup</c>
+        /// performs — so a constructed <c>{K: V}</c> and its definition share one
+        /// <c>ImportedFrom</c>. Comparing it by reference keeps a user class that declares its own
+        /// <c>remove</c>/<c>clear</c>/… from being mistaken for the dictionary's.
+        /// </remarks>
+        private static bool IsDictionaryMember(MethodSymbol method, string name)
+            => method.ImportedFrom is { } imported
+               && ReferenceEquals(imported, DictionaryMethod(name));
+
+        /// <summary>The single overload of a named built-in dictionary method, or <see langword="null"/>.</summary>
+        private static SurtrMethodInfo? DictionaryMethod(string name)
+            => SurtrBuiltIns.Dictionary.TryGetMethods(name, out var overloads) && overloads.Length == 1
+                ? overloads[0]
+                : null;
 
         /// <summary>
         /// Replaces a call to a <c>const fun</c> with constant arguments by the value it folds to

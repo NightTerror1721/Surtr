@@ -139,7 +139,7 @@ A host's function body needs **no `unsafe` and no `AllowUnsafeBlocks`** even tho
 | `SurtrString` | a CLR `string` + its cached hash | built-in, shared |
 | `SurtrArray` | growable `SurtrValue[]` + count | built-in, shared |
 | `SurtrTuple` | fixed `SurtrValue[]`, immutable | built-in, shared |
-| `SurtrDictionary` | `Dictionary<SurtrValue, SurtrValue>` under the runtime's comparer | built-in, shared |
+| `SurtrDictionary` | `Dictionary<SurtrValue, SurtrValue>` under the runtime's comparer — or `Dictionary<int, SurtrValue>` when the key is declared `int` | built-in, shared |
 | `SurtrClosure` | method + captured values, with the dispatch payload copied out flat | built-in, shared |
 | `SurtrBoxed` | one primitive `SurtrValue` | the *same* class the unboxed primitive has |
 | `SurtrInstance` | `SurtrValue[]` field slots | whatever Surtr source declared |
@@ -152,6 +152,7 @@ Rules that run through all of them:
 - **No per-element type tags.** Static typing means the compiler already knows an `int[]` from a `string[]`, and NaN boxing means each element self-describes to the collector. What each composite keeps instead is one interned `TypeReference` descriptor (`AI`, `T(IS)`, `DIS`, `L(II)F`) naming its whole parameterised type — full information for diagnostics and host interop at one field per object rather than one per element.
 - **Class metadata is never registered with the entity registry** and is never traced. It is owned outright — by `SurtrBuiltIns` for the built-ins, by `SurtrContext` for everything else — and lives as long as its owner, which is why `SurtrObject.VisitReferences` does not mark `Class`. It also *cannot* be registered: an entity holds a single `SurtrRef`, so one shared class in two registries would have the second silently inherit the first's id.
 - **`SurtrValueComparer` decides equality**, not raw bits, and lives one-per-runtime. Bits are too strict for strings (two objects, same text, one key) and boxes (a boxed 5 *is* an unboxed 5, in both directions), and too loose for floats (`+0.0`/`-0.0`, NaN). Tuples compare structurally because immutability makes that stable; every other composite compares by identity.
+- **A `{int: V}` dictionary skips the comparer entirely.** A `Dictionary<,>` can only reach a custom comparer through `IEqualityComparer<T>`, which is a dispatch per lookup; a statically typed language already knows every key of a `{int: V}` is an `int`, so those store in `IntEntries` keyed on the raw payload under the BCL's own comparer. Exactly one of the two stores is live, chosen at construction and tested with a field load, and the interpreter writes both arms out by hand at each `Dict*` opcode. A boxed int key unwraps onto the specialised store; a key that cannot live there at all — only reachable from a host, never from compiled Surtr — de-specialises the dictionary rather than changing its semantics. `docs/VM-Plan.md` §3.5 has the full rationale.
 
 ### The built-in classes
 
@@ -293,7 +294,14 @@ Benchmark the VM against MoonSharp and LuaJIT (both Lua) and a C# baseline. Alwa
 dotnet run --project src/Surtr.Bench -c Release
 ```
 
-LuaJIT runs through `luajit.native`'s x64 `lua51.dll` (copied to the output by the csproj; the driver is a P/Invoke over the Lua 5.1 C API), and is on by default. `surtrbench --help` lists the flags (`--workload <substring>`, `--iters <n>`, `--scale <factor>`, `--surtr-only`/`--lua-only`/`--luajit-only`/`--baseline-only`, `--no-luajit`, `--csv <path>`). Run with a release build when the .NET 10 preview SDK is the one installed.
+**30 cases, each written three times over**, and the three must agree on a checksum or the run fails. `--list` prints the catalogue with what each one puts under load. LuaJIT runs through `luajit.native`'s x64 `lua51.dll` (copied to the output by the csproj; the driver is a P/Invoke over the Lua 5.1 C API), and is on by default. `surtrbench --help` lists the flags (`--workload <substring>`, `--iters <n>`, `--warmup <n>`, `--scale <factor>`, `--list`, `--surtr-only`/`--lua-only`/`--luajit-only`/`--baseline-only`, `--no-luajit`, `--csv <path>`). Run with a release build when the .NET 10 preview SDK is the one installed.
+
+Four things about the harness are load-bearing, and each was a defect before it was a feature:
+
+- **The csproj sets `TieredCompilationQuickJitForLoops=false`,** and it is not a tuning knob. A method is promoted to tier 1 after 30 calls and a benchmark calls each workload a handful of times, so the *interpreter loop itself* was being measured at tier 0 for whole runs. `dictMembers` reported 3.18 ms after `dictOps` and 2.5 ms alone, off a C# baseline that swung **6.4x** on nothing but which cases had run first. Only loop-bearing methods are forced: full `TieredCompilation=false` also switches off TieredPGO, which MoonSharp's virtual-heavy interpreter loses more to than it gains, and that would flatter Surtr for a reason unrelated to Surtr. It is also the honest configuration for where Surtr runs — Unity's Mono JIT and IL2CPP AOT have no tiering to warm up.
+- **A baseline is the same algorithm written naturally in the target language.** Six of the fourteen original C# baselines were timing an empty loop — `exceptions` was `=> n` and threw nothing, `virtualCalls` was `acc + 4`, `forIn` never built an array — so their ratios measured the harness. Where the JIT then inlines an abstraction away that is C#'s honest answer and is left alone; writing the abstraction out of the source by hand is not.
+- **The checksum agreement is a correctness gate the test suite does not have.** Three independent implementations agreeing is what caught the `int?`-holding-1 miscompilation (see `docs/VM-Plan.md` §3.6) — no unit test did, because the one that came closest happened to use the value 0.
+- **`alloc` is a first-class column.** A VM inside a frame budget is judged on allocation as much as on time, and a run that hands the collector a megabyte pays for it in some later frame that the timing column cannot show.
 
 There is no lint config or CI yet — add commands here once those exist rather than assuming a standard `dotnet format` invocation applies.
 

@@ -169,6 +169,27 @@ namespace Surtr.Runtime
             get => _context.EntityRegistry.Capacity;
         }
 
+        /// <summary>How many objects the heap holds right now.</summary>
+        public int LiveObjectCount
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _context.EntityRegistry.LiveCount;
+        }
+
+        /// <summary>
+        /// How many objects every collection so far has reclaimed, in total.
+        /// </summary>
+        /// <remarks>
+        /// Paired with <see cref="LiveObjectCount"/> this gives how many objects a stretch of
+        /// execution allocated, without a counter on the registration path: what is live now, plus
+        /// what has been reclaimed since, less what was live before.
+        /// </remarks>
+        public long TotalCollectedObjects
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _context.EntityRegistry.TotalCollectedEntities;
+        }
+
         /// <summary>Whether the runtime has been disposed and is no longer usable.</summary>
         public bool IsDisposed
         {

@@ -136,12 +136,7 @@ namespace Surtr.Runtime.BuiltIns
 
             // The snapshot is taken here rather than lazily, so the pairs a loop sees are settled
             // by the moment iteration began - see SurtrIterator's remarks on mutation.
-            var keys = new SurtrValue[source.Count];
-            int next = 0;
-            foreach (var entry in source.Entries)
-                keys[next++] = entry.Key;
-
-            return Register(arguments, SurtrIteratorKind.Dictionary, source, keys);
+            return Register(arguments, SurtrIteratorKind.Dictionary, source, source.SnapshotKeys());
         }
 
         private static SurtrValue Register(

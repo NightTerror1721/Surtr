@@ -401,6 +401,7 @@ Each is a decision about where code *runs*, not about what a program means:
 | a `+` spine or an interpolation over strings | one counted `StrCat`, so one allocation rather than n − 1 |
 | a tuple element read | `TupGetC`, the index as an immediate — §5.3 already made it a constant |
 | a discarded `i++`, `i -= k` or a `for` step over an `int` local | `IncLocal`, one dispatch that never touches the operand stack |
+| `dict` member calls: `m.clear()`, `m.containsKey(k)`, `m.remove(k)`, `m.keys()`, `m.values()`, and the `m.length` read | the `DictClear` / `DictIn` / `DictDel` / `DictKeys` / `DictValues` / `DictLen` opcodes, skipping the native dispatch |
 | an integer or `char` `switch` | `SwitchOn`, which picks a jump table or a key table |
 | lambda | a **static synthetic method** plus a closure whose upvalues are its captures |
 | object creation, field and property access, `this`/`super` | `ObjNew`, `FieldGet`/`FieldSet`, the accessor calls |
@@ -425,6 +426,19 @@ Three of those took a decision worth recording:
   reads its subject as a reference unconditionally, so casting one would check whichever entity its
   value happens to number. A reference element is checked; a primitive one already is what it
   should be.
+
+* **`dict` member calls lower only when they are the built-in's own members, matched by identity.**
+  `clear`/`containsKey`/`remove`/`keys`/`values` and the `length` read become their opcodes
+  (`DictClear`/`DictIn`/`DictDel`/`DictKeys`/`DictValues`/`DictLen`) because each has a dedicated
+  opcode; `get`/`set` are not lowered because indexing already reaches `DictGet`/`DictSet`, and
+  `isEmpty` because there is no opcode for it. The match is `MethodSymbol.ImportedFrom` compared by
+  identity against `SurtrBuiltIns.Dictionary`'s members — the same test `RangeAccessor` and
+  `StringCompareTo` use — so a user class declaring a same-named method is never mistaken for the
+  built-in. When the returned value is discarded, the emit pops it (`DictIn` and `DictDel` both
+  leave   a bool). This is measurement-driven, not blanket: it exists so `dictMembers` is not measured
+  as an index-only loop while the member surface still pays a native call. A `for-in` over a `dict`
+  gets the same treatment on its snapshot: the key is read out of the `DictKeys` array once and the
+  value is read under it with one `DictGet`, instead of a second array read per iteration.
 
 ### Notes
 

@@ -17,9 +17,19 @@ namespace Surtr.Bench
 
         public static LuaDriver Load(string source)
         {
-            // The workloads use only plain arithmetic, pcall/error, and ipairs, so the module set
-            // stays deliberately small instead of taking the whole preset.
-            var script = new Script(CoreModules.Basic | CoreModules.TableIterators | CoreModules.Math | CoreModules.ErrorHandling);
+            // Named rather than taken as a preset, so what the Lua side is allowed to reach stays
+            // an explicit list. Metatables are here because Lua has no classes: methodCalls,
+            // virtualCalls and interfaceCalls dispatch through one, which is what Lua code wanting
+            // those things would write and the only honest analogue of the Surtr side. Table is
+            // here for table.sort, which sortArray needs.
+            var script = new Script(
+                CoreModules.Basic
+                | CoreModules.TableIterators
+                | CoreModules.Table
+                | CoreModules.Metatables
+                | CoreModules.Math
+                | CoreModules.ErrorHandling
+                | CoreModules.String);
             script.DoString(source);
 
             var functions = new Dictionary<string, DynValue>();

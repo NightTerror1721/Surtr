@@ -477,7 +477,7 @@ type.
 | `SurtrString` | a CLR string + its cached hash | built-in, shared |
 | `SurtrArray` | growable `SurtrValue[]` + count | built-in, shared |
 | `SurtrTuple` | fixed `SurtrValue[]`, immutable | built-in, shared |
-| `SurtrDictionary` | `Dictionary<SurtrValue, SurtrValue>` under the runtime's comparer | built-in, shared |
+| `SurtrDictionary` | `Dictionary<SurtrValue, SurtrValue>` under the runtime's comparer, or `Dictionary<int, SurtrValue>` when the declared key is `int` | built-in, shared |
 | `SurtrClosure` | method + captured values, dispatch payload copied out flat | built-in, shared |
 | `SurtrRange` | two ints and an inclusivity flag | built-in, shared |
 | `SurtrIterator` | a collection + a position | built-in, shared |
@@ -499,7 +499,11 @@ Rules that run through all of them:
   keeps instead is one interned descriptor naming its whole parameterised type.
 * **`SurtrValueComparer` decides equality**, not raw bits, and lives one per runtime. Bits are too
   strict for strings (two objects, same text, one key) and boxes (a boxed 5 *is* an unboxed 5), and
-  too loose for floats (`+0.0`/`-0.0`, `NaN`).
+  too loose for floats (`+0.0`/`-0.0`, `NaN`). A dictionary reaches it only through
+  `IEqualityComparer<T>`, which is a dispatch — so a `{int: V}` dictionary skips it entirely and
+  keys on the raw payload under the BCL's own comparer, since the compiler has already proved every
+  key is an `int`. See `docs/VM-Plan.md` §3.5 for what keeps that an optimisation rather than a
+  change of semantics.
 
 ---
 

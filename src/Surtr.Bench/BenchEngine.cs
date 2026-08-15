@@ -23,5 +23,21 @@ namespace Surtr.Bench
         /// is a no-op; only the Surtr driver overrides it with its own collector.
         /// </summary>
         void Collect() { }
+
+        /// <summary>
+        /// The engine's memory counters right now, for the harness to difference across a run.
+        /// </summary>
+        /// <remarks>
+        /// The default reports the CLR allocation counter, which is the right answer for every
+        /// engine whose objects are CLR objects — Surtr, MoonSharp and the baseline all allocate on
+        /// the managed heap, so the same counter sees all three and the figures are comparable. An
+        /// engine with a heap of its own overrides this; LuaJIT does, and Surtr extends it with the
+        /// object-level counts only it can give.
+        /// </remarks>
+        MemorySample SampleMemory() => new MemorySample(
+            GC.GetAllocatedBytesForCurrentThread(),
+            MemorySample.Unavailable,
+            MemorySample.Unavailable,
+            MemorySample.Unavailable);
     }
 }

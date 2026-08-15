@@ -353,7 +353,128 @@ container, and where inside it — and reports a read of a static whose own posi
 earlier. Only the same module is checked, which is exact rather than approximate: a module reaches
 another only by depending on it, and a dependency has finished loading before this one starts.
 
----
+### 3.5 The dictionary pays an interface call per key operation — closed
+
+~~`SurtrDictionary` is a `Dictionary<SurtrValue, SurtrValue>` constructed with the runtime's
+`SurtrValueComparer`.~~ **Closed by specialising the storage on the declared key type.**
+
+The problem was that the BCL dictionary is the tuned one, but it can only see a custom comparer
+through `IEqualityComparer<T>` — an interface call the JIT cannot devirtualise, on every `HashOf`
+and `ValuesEqual`. The fast paths inside the comparer (`ValuesEqual`/`HashOf` are public, sealed and
+inlineable) were never reached from a dictionary; only the interface form was. That is why `dictOps`
+and `dictMembers` sat around **2x** the C# baseline while `intLoop` reached **3.8x** — the other
+workloads do not spend every iteration inside a custom-compared `Dictionary`.
+
+A Surtr dictionary is strongly typed by key — the compiler proves every key of a `{int: V}` is an
+`int` — so the representation is chosen once, at construction:
+
+* A `{int: V}` dictionary stores in `IntEntries`, a `Dictionary<int, SurtrValue>` keyed on the
+  extracted payload, which uses the BCL's default `int` comparer: no interface call, no
+  `SurtrValueComparer` in the way, and a comparison the JIT turns into `==`. The value half stays
+  NaN-boxed `SurtrValue`, so this covers `{int: int}`, `{int: string}` and `{int: object}` alike.
+* Anything else — float/char/string/tuple/boxed keys, where `SurtrValueComparer` semantics are
+  load-bearing — keeps `Entries` and the runtime's comparer. So does `{int?: V}`: the key is read
+  off the descriptor as `?` rather than `I`, and the absent tag is an ordinary key on the general
+  store.
+
+Exactly one of the two fields is non-null at a time, and the choice is a **field load plus a
+predicted branch** rather than a dispatch. Both are `internal`, because the interpreter writes each
+arm out by hand at all ten `Dict*` opcodes rather than calling in — the same rule as everywhere else
+in `Execute`: the JIT will not inline into a method that size, and a real call is what the
+specialisation exists to avoid.
+
+The two things that made this risky are settled rather than avoided:
+
+1. **The strong typing is not the dictionary's to assume.** The compiler guarantees the declared key
+   type, but a host calling `Set`/`TryGet`/`ContainsKey`/`Remove` directly is not bound by Surtr's
+   type system. A key that arrives **boxed** is unwrapped — `SurtrValueComparer.TryUnwrapBoxedInt`,
+   which applies `BoxEquals`'s own rule, so a boxed `value class EntityId` wrapping an int is *not*
+   an int key and does not alias onto one. Anything else **de-specialises** the dictionary back onto
+   the general store, rehashing once, rather than changing its semantics quietly. Compiled Surtr
+   code cannot reach that path at all.
+2. **The two stores agree on order.** `CopyKeysTo`, `CopyValuesTo`, `SnapshotKeys` and
+   `VisitReferences` each read whichever store is live, and de-specialisation carries insertion
+   order across, so `keys()`, `values()` and `for-in` answer the same either side of it. Tracing gets
+   cheaper as a side effect: on the specialised store the keys are ints, so only the values are
+   walked.
+
+**Measured, same session, `--workload dict --iters 15`:** `dictOps` 2.683 → 1.825 ms and
+`dictMembers` 5.408 → 3.490 ms, a **32% and 35% cut**, and no other workload moved. The
+Surtr-against-Surtr figure is the one to trust here: `dictOps` also lands where this section
+predicted against the C# baseline — **2.2x → 1.5x**, off a baseline stable at 1.19–1.26 ms across
+every run — while `dictMembers`' baseline was swinging 6.4x between runs for reasons that turned out
+to be the harness rather than the workload (§3.7). The lowering of the dict member
+*surface* (`clear`/`containsKey`/`remove`/`keys`/`values`/`length`) to opcodes was already done and
+removed the native-dispatch overhead; this was the remaining, larger piece under the storage.
+
+The counterpart is now measured too: `dictString` is the same shape over string keys, which still
+goes through `SurtrValueComparer` and sits at 6.4x the C# baseline where `dictOps` sits at 4.5x.
+Specialising *that* would mean keying on the CLR string behind a `SurtrString`, which costs a
+registry lookup per operation and is not obviously a win — but it is now a question with a number
+attached to it rather than a guess.
+
+### 3.6 A nullable primitive holding 1 read as null — closed
+
+Not a performance gap but a **miscompilation**, and the one the benchmark suite found rather than
+the test suite. `x == null` on a nullable primitive was emitted as `PushAbsent` against `EQ`/`NE`.
+Those are the *integer* comparison opcodes: they compare the low 32 bits, because int, bool and
+char share a representation and differ only in their tag. Absence differs from a present value in
+nothing **but** its tag — and the payload `PushAbsent` leaves behind is the missing primitive's
+`SurtrValueTypeCode`. `Integer` is 1, so:
+
+```
+let v: int? = 1;
+if (v == null) { ... }      // taken
+let w = v ?? 0;             // 0
+```
+
+`char?` had the same collision at `U+0004` (`Character` is 4). The float side failed the other way:
+absent-float is a NaN, and `FEQ` answers false however it is asked, so an absent `float?` compared
+*unequal* to null. `bool?` was safe by luck, since a bool payload is 0 or 1 and `Boolean` is 3.
+
+**Closed in `CodeGen/MethodBodyEmitter.TryEmitAbsenceTest`**, which emits `IsAbsent`/`IsPresent`
+when either operand of `==`/`!=` is the null literal and the other is a nullable primitive. Those
+opcodes test the tag, which is what they are in the instruction set for and why nothing had to be
+added; the result is also a byte shorter and one stack slot shallower than the pair it replaces.
+`!!` and `??`-on-a-*reference* were already correct (`JPNA`, `JPN`), and `EmitNullCoalesce`'s own
+`JPA` path was correct — but the binder expands `a ?? b` on a nullable primitive into a comparison
+before the emitter ever sees it, so it went through the broken path anyway.
+
+Worth reading as a warning about coverage rather than about nullables. There *was* a test for this
+— `APresentZeroIsNotAbsent` — and it passed throughout, because 0 is the single int whose payload
+cannot collide with a type code. Its replacement sweeps a range.
+
+### 3.7 The harness was measuring the JIT — closed
+
+`dictMembers` reported 3.18 ms when it ran after `dictOps` in the same process and 2.5 ms when it
+ran alone, off a C# baseline that moved **6.4x** (0.39 ms against 2.5 ms) for identical work. That
+is not noise; it reproduced 5 times out of 5 either way.
+
+The cause is tiered compilation. A method is promoted to tier 1 after 30 calls, and a benchmark
+calls each workload a handful of times, so which code was optimized depended on what had run before
+it and on when OSR happened to fire — and the **interpreter loop itself** was among the code that
+sometimes never got promoted. Every Surtr number in this document from before that was measured
+against a partially unoptimized `Execute`: forcing loop-bearing methods straight to optimized code
+moved `dictOps` from 1.73 ms to 0.87 ms and `dictMembers` from 3.18 ms to 1.35 ms, with no change
+to the VM at all.
+
+The csproj now sets `TieredCompilationQuickJitForLoops=false`. Only loop-bearing methods are
+forced, rather than `TieredCompilation=false` outright: the latter also switches off TieredPGO,
+which MoonSharp's virtual-heavy interpreter loses more to than it gains (its `intLoop` went 88 ms
+to 115 ms), and flattering Surtr for a reason that has nothing to do with Surtr is the failure mode
+being fixed, not a bonus. It is also the representative configuration for where Surtr actually
+runs, since Unity's Mono JIT and IL2CPP AOT have no tiering to warm up.
+
+Two harness defects were fixed alongside it, and neither was cosmetic. **Six of the fourteen C#
+baselines were timing an empty loop** — `exceptions` was `=> n` and threw nothing, `methodCalls`
+folded the call into `acc + 7 + i` against a `const`, `virtualCalls` was `acc + 4`, `forIn` never
+built an array — so those ratios measured the harness rather than the language. With a real
+`throw`/`catch` on the C# side, `exceptions` turns out to be one of Surtr's strongest results
+(0.34 ms against 21.3 ms) instead of its worst; the handler-table walk never becomes a CLR
+exception, and that is worth a great deal. And the **warm-up was a single run**, which is what left
+the spread column at 16–66%; a real warm-up phase plus an interquartile spread instead of
+min-to-max puts most cases under 10%.
+
 
 ## 4. What the language syntax commits the runtime to
 
@@ -809,10 +930,11 @@ the compiler's. §4.16 is now closed on the runtime's side — `StrHash` exists 
 is deterministic — so both halves of it are lowerings the compiler owes, the enum one needing only
 the ordinal that already exists.
 
-**Phase 5 — measure, then optimise.** Not before. Candidates: §3.1, §3.2, and an inline cache on
-`InvokeVirtual` if profiling shows monomorphic call sites dominating. All local changes; none
-disturbs the frame protocol. §4.5 raises the priority of §3.1, since `for-in`'s general path goes
-through interface dispatch.
+**Phase 5 — measure, then optimise.** Not before. §3.5 is **done**: the dictionary's per-key
+interface call is gone for `{int: V}`, measured at a third off both dict workloads. Remaining
+candidates: §3.1, §3.2, and an inline cache on `InvokeVirtual` if profiling shows monomorphic call
+sites dominating. All local changes; none disturbs the frame protocol. §4.5 raises the priority of
+§3.1, since `for-in`'s general path goes through interface dispatch.
 
 **Phase 6 — diagnostics.** Frames already carry enough for a stack trace (method, chunk, saved
 `IP`), and the handler search already walks them. `SurtrThrownException` does not yet include one.

@@ -1809,24 +1809,56 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     sp -= count * 2;
+
+                    // The specialised arm is written out here rather than reached through
+                    // SurtrDictionary.Set: the JIT will not inline into a method this size, and a
+                    // real call is exactly what the specialisation exists to avoid. The store is
+                    // re-read after the general arm, which may have de-specialised the dictionary.
+                    var packInts = dictionary.IntEntries;
                     for (int i = 0; i < count; i++)
-                        dictionary.Entries[SurtrValue.FromRaw(sp[i * 2])] = SurtrValue.FromRaw(sp[i * 2 + 1]);
+                    {
+                        SurtrRawValue packKey = sp[i * 2];
+                        SurtrValue packValue = SurtrValue.FromRaw(sp[i * 2 + 1]);
+
+                        if (packInts != null && (packKey & SurtrValue.TagMask) == SurtrValue.TagMaskInt)
+                        {
+                            packInts[(SurtrInt)packKey] = packValue;
+                        }
+                        else
+                        {
+                            dictionary.SetGeneral(SurtrValue.FromRaw(packKey), packValue);
+                            packInts = dictionary.IntEntries;
+                        }
+                    }
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
                     goto Dispatch;
                 }
 
                 case OpCode.DictLen:
+                {
+                    var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
+                    var ints = dictionary.IntEntries;
                     *(sp - 1) = SurtrValue.TagMaskInt
-                        | (uint)((SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!).Entries.Count;
+                        | (uint)(ints != null ? ints.Count : dictionary.Entries!.Count);
                     goto Dispatch;
+                }
 
                 case OpCode.DictGet:
                 {
-                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    SurtrRawValue rawKey = *--sp;
                     var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
 
-                    if (!dictionary.Entries.TryGetValue(key, out SurtrValue found))
+                    var ints = dictionary.IntEntries;
+                    bool present;
+                    SurtrValue found;
+
+                    if (ints != null && (rawKey & SurtrValue.TagMask) == SurtrValue.TagMaskInt)
+                        present = ints.TryGetValue((SurtrInt)rawKey, out found);
+                    else
+                        present = dictionary.TryGetGeneral(SurtrValue.FromRaw(rawKey), out found);
+
+                    if (!present)
                     {
                         current.IP = ip;
                         _sp = sp;
@@ -1840,24 +1872,47 @@ namespace Surtr.VM
                 case OpCode.DictSet:
                 {
                     SurtrValue value = SurtrValue.FromRaw(*--sp);
-                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    SurtrRawValue rawKey = *--sp;
                     current.IP = ip;
                     _sp = sp;
-                    ((SurtrDictionary)entities[(SurtrRef)(*--sp)]!).Entries[key] = value;
+
+                    var dictionary = (SurtrDictionary)entities[(SurtrRef)(*--sp)]!;
+                    var ints = dictionary.IntEntries;
+
+                    if (ints != null && (rawKey & SurtrValue.TagMask) == SurtrValue.TagMaskInt)
+                        ints[(SurtrInt)rawKey] = value;
+                    else
+                        dictionary.SetGeneral(SurtrValue.FromRaw(rawKey), value);
+
                     goto Dispatch;
                 }
 
                 case OpCode.DictDel:
                 {
-                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    SurtrRawValue rawKey = *--sp;
                     var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
-                    *(sp - 1) = SurtrValue.TagMaskBool | (dictionary.Entries.Remove(key) ? 1UL : 0UL);
+                    var ints = dictionary.IntEntries;
+
+                    bool removed = ints != null && (rawKey & SurtrValue.TagMask) == SurtrValue.TagMaskInt
+                        ? ints.Remove((SurtrInt)rawKey)
+                        : dictionary.RemoveGeneral(SurtrValue.FromRaw(rawKey));
+
+                    *(sp - 1) = SurtrValue.TagMaskBool | (removed ? 1UL : 0UL);
                     goto Dispatch;
                 }
 
                 case OpCode.DictClear:
-                    ((SurtrDictionary)entities[(SurtrRef)(*--sp)]!).Entries.Clear();
+                {
+                    var dictionary = (SurtrDictionary)entities[(SurtrRef)(*--sp)]!;
+                    var ints = dictionary.IntEntries;
+
+                    if (ints != null)
+                        ints.Clear();
+                    else
+                        dictionary.Entries!.Clear();
+
                     goto Dispatch;
+                }
 
                 case OpCode.DictKeys:
                 {
@@ -1867,7 +1922,7 @@ namespace Surtr.VM
                     _sp = sp;
 
                     var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
-                    var keys = new SurtrArray(arrayType, dictionary.Entries.Count);
+                    var keys = new SurtrArray(arrayType, dictionary.Count);
                     dictionary.CopyKeysTo(keys);
 
                     SurtrRef reference = context.EntityRegistry.Register(keys);
@@ -1885,7 +1940,7 @@ namespace Surtr.VM
                     _sp = sp;
 
                     var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
-                    var values = new SurtrArray(arrayType, dictionary.Entries.Count);
+                    var values = new SurtrArray(arrayType, dictionary.Count);
                     dictionary.CopyValuesTo(values);
 
                     SurtrRef reference = context.EntityRegistry.Register(values);
@@ -1897,17 +1952,29 @@ namespace Surtr.VM
 
                 case OpCode.DictIn:
                 {
-                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    SurtrRawValue rawKey = *--sp;
                     var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
-                    *(sp - 1) = SurtrValue.TagMaskBool | (dictionary.Entries.ContainsKey(key) ? 1UL : 0UL);
+                    var ints = dictionary.IntEntries;
+
+                    bool contains = ints != null && (rawKey & SurtrValue.TagMask) == SurtrValue.TagMaskInt
+                        ? ints.ContainsKey((SurtrInt)rawKey)
+                        : dictionary.ContainsKeyGeneral(SurtrValue.FromRaw(rawKey));
+
+                    *(sp - 1) = SurtrValue.TagMaskBool | (contains ? 1UL : 0UL);
                     goto Dispatch;
                 }
 
                 case OpCode.DictNIn:
                 {
-                    SurtrValue key = SurtrValue.FromRaw(*--sp);
+                    SurtrRawValue rawKey = *--sp;
                     var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
-                    *(sp - 1) = SurtrValue.TagMaskBool | (dictionary.Entries.ContainsKey(key) ? 0UL : 1UL);
+                    var ints = dictionary.IntEntries;
+
+                    bool contains = ints != null && (rawKey & SurtrValue.TagMask) == SurtrValue.TagMaskInt
+                        ? ints.ContainsKey((SurtrInt)rawKey)
+                        : dictionary.ContainsKeyGeneral(SurtrValue.FromRaw(rawKey));
+
+                    *(sp - 1) = SurtrValue.TagMaskBool | (contains ? 0UL : 1UL);
                     goto Dispatch;
                 }
                 #endregion

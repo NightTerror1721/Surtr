@@ -63,6 +63,14 @@ namespace Surtr.Bench
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
         private static extern void lua_close(IntPtr state);
 
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int lua_gc(IntPtr state, int what, int data);
+
+        // lua_gc's `what` selector. COUNT is whole kilobytes in use and COUNTB the remainder in
+        // bytes, so the two together give the heap exactly rather than rounded to a kilobyte.
+        private const int LuaGcCount = 3;
+        private const int LuaGcCountB = 4;
+
         public string Name => "luajit";
 
         public static NativeLuaDriver Load(string source)
@@ -105,6 +113,23 @@ namespace Surtr.Bench
             double result = lua_tonumberx(_state, -1, IntPtr.Zero);
             lua_settop(_state, -2);
             return result;
+        }
+
+        /// <summary>
+        /// LuaJIT's own heap, which the CLR allocation counter cannot see: its objects are not CLR
+        /// objects and none of them touch the managed heap.
+        /// </summary>
+        /// <remarks>
+        /// This is the heap's <em>level</em>, not a total allocated, because that is all
+        /// <c>lua_gc</c> offers — Lua 5.1 exposes how much is in use and no running total. So the
+        /// figure the harness derives from it is what a run left behind, and it under-reports a run
+        /// that allocated heavily and then had it reclaimed. The column says so rather than
+        /// pretending the two are the same measurement.
+        /// </remarks>
+        public MemorySample SampleMemory()
+        {
+            long bytes = ((long)lua_gc(_state, LuaGcCount, 0) * 1024) + lua_gc(_state, LuaGcCountB, 0);
+            return new MemorySample(MemorySample.Unavailable, MemorySample.Unavailable, MemorySample.Unavailable, bytes);
         }
 
         private string LastError()

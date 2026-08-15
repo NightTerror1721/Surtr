@@ -1314,6 +1314,98 @@ namespace Surtr.Tests.Compiler.CodeGen
 
             Assert.Equal(0, Int(runtime, "run"));
         }
+
+        /// <summary>
+        /// Every value of a nullable primitive is present, and <c>1</c> is not a special case.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// It was. Comparing a nullable primitive against <c>null</c> used to emit <c>PushAbsent</c>
+        /// against <c>EQ</c>/<c>NE</c>, and those are the integer opcodes: they compare the low 32
+        /// bits, because int, bool and char share a representation and differ only in their tag.
+        /// Absence differs from a present value in nothing <em>but</em> its tag, and the payload
+        /// <c>PushAbsent</c> leaves there is the missing primitive's type code — so an <c>int?</c>
+        /// holding <c>SurtrValueTypeCode.Integer</c>, which is 1, compared equal to null.
+        /// </para>
+        /// <para>
+        /// The neighbouring test could never have caught it: 0 is the one int whose payload does
+        /// not collide with a type code. This one sweeps a range, which is what it takes.
+        /// </para>
+        /// </remarks>
+        [Fact]
+        public void NoValueOfANullablePrimitiveReadsAsAbsent()
+        {
+            var runtime = Run("""
+                fun mask(n: int): int {
+                    var m: int = 0;
+                    for (var i = 0; i < n; i += 1) {
+                        let v: int? = i;
+                        if (v == null) { m = m + (1 << i); }
+                        if (!(v != null)) { m = m + (1 << i); }
+                        if ((v ?? -1) != i) { m = m + (1 << i); }
+                    }
+                    return m;
+                }
+                """);
+
+            Assert.Equal(0, Int(runtime, "mask", SurtrValue.CreateInt(24)));
+        }
+
+        [Fact]
+        public void ACharacterWhoseCodeUnitIsATypeCodeIsStillPresent()
+        {
+            // The char type code is 4, so U+0004 is the char-shaped form of the same
+            // collision. Written as an escape rather than as the raw control character,
+            // which no editor, encoding or diff viewer along the way can be trusted to carry.
+            var runtime = Run("""
+                fun run(): int {
+                    let c: char? = '\u0004';
+                    if (c == null) { return 1; }
+                    return 0;
+                }
+                """);
+
+            Assert.Equal(0, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The float side failed the other way: absent-float is a NaN, and <c>FEQ</c> answers false
+        /// however it is asked, so an absent <c>float?</c> compared <em>unequal</em> to null.
+        /// </summary>
+        [Fact]
+        public void AnAbsentFloatComparesEqualToNull()
+        {
+            var runtime = Run("""
+                fun run(): int {
+                    let absent: float? = null;
+                    let present: float? = 1.5;
+                    var acc: int = 0;
+                    if (absent == null) { acc = acc + 1; }
+                    if (present != null) { acc = acc + 2; }
+                    if (null == absent) { acc = acc + 4; }
+                    return acc;
+                }
+                """);
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ABooleanNullableDistinguishesFalseFromAbsent()
+        {
+            var runtime = Run("""
+                fun run(): int {
+                    let no: bool? = false;
+                    let absent: bool? = null;
+                    var acc: int = 0;
+                    if (no == null) { acc = acc + 1; }
+                    if (absent == null) { acc = acc + 2; }
+                    return acc;
+                }
+                """);
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
         #endregion
 
         #region Varargs (§3.5)

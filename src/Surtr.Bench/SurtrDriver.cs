@@ -109,6 +109,31 @@ namespace Surtr.Bench
         /// </summary>
         public void Collect() => _runtime.Collect();
 
+        /// <summary>
+        /// The CLR allocation counter, plus the object-level counts the registry can give and no
+        /// other engine here can.
+        /// </summary>
+        /// <remarks>
+        /// Objects allocated is reconstructed rather than counted: what is live now, plus
+        /// everything collection has reclaimed, is everything ever registered, and differencing two
+        /// of those across a run gives what the run allocated. That keeps the registration path —
+        /// which runs once per object the VM creates — free of a counter it would otherwise carry
+        /// forever for the benefit of a benchmark.
+        /// </remarks>
+        public MemorySample SampleMemory() => new MemorySample(
+            GC.GetAllocatedBytesForCurrentThread(),
+            _runtime.LiveObjectCount + _runtime.TotalCollectedObjects,
+            _runtime.LiveObjectCount,
+            (long)_runtime.HeapCapacity * SlotBytes);
+
+        /// <summary>
+        /// Bytes of registry per object slot: the entity reference, the free-list id, the age byte
+        /// and the mark bit. The managed entities themselves are on the CLR heap and are counted by
+        /// <see cref="MemorySample.AllocatedBytes"/>; this is what the registry costs on top, and it
+        /// is charged for every slot whether occupied or not.
+        /// </summary>
+        private const int SlotBytes = 8 + 4 + 1;
+
         public void Dispose()
         {
             _runtime.Dispose();

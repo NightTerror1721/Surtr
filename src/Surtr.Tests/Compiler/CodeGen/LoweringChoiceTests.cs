@@ -217,5 +217,94 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         #endregion
+
+        #region Dictionary operations
+
+        /// <summary>
+        /// A member on the built-in <c>dict</c> with a dedicated opcode of identical semantics is
+        /// lowered to that opcode rather than to a call of its native body — so <c>m.length</c> is
+        /// one <c>DictLen</c>, not a getter call through a native frame.
+        /// </summary>
+        [Fact]
+        public void ALengthOnADictionaryIsDictLen()
+        {
+            string code = Disassemble(
+                "fun run(m: {int: int}): int { return m.length; }");
+
+            Assert.Equal(1, Count(code, "DictLen"));
+            Assert.Equal(0, Count(code, "CallModule"));
+        }
+
+        [Fact]
+        public void AContainsKeyOnADictionaryIsDictIn()
+        {
+            string code = Disassemble(
+                "fun run(m: {int: int}, k: int): bool { return m.containsKey(k); }");
+
+            Assert.Equal(1, Count(code, "DictIn"));
+        }
+
+        [Fact]
+        public void ARemoveOnADictionaryIsDictDel()
+        {
+            string code = Disassemble(
+                "fun run(m: {int: int}, k: int): bool { return m.remove(k); }");
+
+            Assert.Equal(1, Count(code, "DictDel"));
+        }
+
+        [Fact]
+        public void AClearOnADictionaryIsDictClear()
+        {
+            string code = Disassemble(
+                "fun run(m: {int: int}): void { m.clear(); }");
+
+            Assert.Equal(1, Count(code, "DictClear"));
+        }
+
+        [Fact]
+        public void AValuesOnADictionaryIsDictValues()
+        {
+            string code = Disassemble(
+                "fun run(m: {int: string}): string[] { return m.values(); }");
+
+            Assert.Equal(1, Count(code, "DictValues"));
+        }
+
+        [Fact]
+        public void AKeysOnADictionaryIsDictKeys()
+        {
+            string code = Disassemble(
+                "fun run(m: {int: string}): int[] { return m.keys(); }");
+
+            Assert.Equal(1, Count(code, "DictKeys"));
+        }
+
+        /// <summary>
+        /// A <c>containsKey</c> or <c>remove</c> in statement position has its bool discarded, but
+        /// the value is still produced by <c>DictIn</c>/<c>DictDel</c> — so a pop has to follow it
+        /// for the statement to leave the stack as it found it.
+        /// </summary>
+        [Fact]
+        public void ADiscardedContainsKeyStillPopsTheBool()
+        {
+            string code = Disassemble(
+                "fun run(m: {int: int}, k: int): void { m.containsKey(k); }");
+
+            Assert.Equal(1, Count(code, "DictIn"));
+        }
+
+        /// <summary>A user class that declares its own <c>length</c> is not the dictionary's.</summary>
+        [Fact]
+        public void AUserLengthIsNotLowered()
+        {
+            string code = Disassemble(
+                "class Box { public var n: int; public fun length(): int { return this.n; } }\n"
+                    + "fun run(b: Box): int { return b.length(); }");
+
+            Assert.Equal(0, Count(code, "DictLen"));
+        }
+
+        #endregion
     }
 }
