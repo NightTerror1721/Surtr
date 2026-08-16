@@ -530,6 +530,20 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(36, Int(runtime, "run", SurtrValue.CreateInt(6)));
         }
 
+        /// <summary>
+        /// A constant *expression* argument folds exactly like a literal one — the disassembly-level
+        /// confirmation that the call site itself disappears is in <c>LoweringChoiceTests</c>.
+        /// </summary>
+        [Fact]
+        public void AConstFunctionFoldsAConstantExpressionArgumentToo()
+        {
+            var runtime = Run(
+                "const fun square(x: int): int { return x * x; }\n"
+                    + "fun run(): int { return square(2 + 3); }");
+
+            Assert.Equal(25, Int(runtime, "run"));
+        }
+
         [Fact]
         public void IncrementLeavesTheRightValueBehind()
         {

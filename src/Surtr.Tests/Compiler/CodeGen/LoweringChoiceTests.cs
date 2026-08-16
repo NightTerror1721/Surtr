@@ -495,5 +495,46 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         #endregion
+
+        #region Const function folding (§7.2)
+
+        /// <summary>
+        /// A literal argument folds a `const fun` call away entirely, per §7.2 — the baseline this
+        /// region's other cases compare against.
+        /// </summary>
+        [Fact]
+        public void AConstFunCallWithALiteralArgumentFoldsAway()
+        {
+            string code = Disassemble(
+                "const fun square(x: int): int { return x * x; }\nfun run(): int { return square(5); }");
+
+            Assert.Equal(0, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// An argument that is itself a constant expression — not a literal written directly — used
+        /// to defeat folding entirely: `ConstantOf` only ever recognised a literal, so `2 + 3` fell
+        /// straight through to an ordinary call even though it is exactly as constant as `5`.
+        /// </summary>
+        [Fact]
+        public void AConstFunCallWithAConstantExpressionArgumentStillFolds()
+        {
+            string code = Disassemble(
+                "const fun square(x: int): int { return x * x; }\nfun run(): int { return square(2 + 3); }");
+
+            Assert.Equal(0, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>A variable argument is genuinely not constant, and still has to call.</summary>
+        [Fact]
+        public void AConstFunCallWithAVariableArgumentDoesNotFold()
+        {
+            string code = Disassemble(
+                "const fun square(x: int): int { return x * x; }\nfun run(a: int): int { return square(a); }");
+
+            Assert.Equal(1, Count(code, "CallLocalModule"));
+        }
+
+        #endregion
     }
 }

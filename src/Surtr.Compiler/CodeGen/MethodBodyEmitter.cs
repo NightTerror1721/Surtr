@@ -3112,16 +3112,85 @@ namespace Surtr.Compiler.CodeGen
         /// const-fun argument.
         /// </summary>
         /// <remarks>
-        /// Deliberately only literals and the conversions the binder wrapped them in. Anything
-        /// wider belongs to <c>ConstantEvaluator</c>, which folds over syntax and is the layer that
-        /// already answers this question for the language.
+        /// A literal, a conversion the binder wrapped one in, or a unary/binary expression built out
+        /// of more of the same — so a <c>const fun</c> argument like <c>2 + 3</c> folds here too, not
+        /// only a literal written directly. This works over the <em>bound</em> tree rather than
+        /// syntax on purpose: a bound operand has already gone through the binder's own name
+        /// resolution (locals, parameters, and — since a <c>const</c> field folds to a literal at
+        /// bind time already — even a module or class constant), so nothing here can answer a
+        /// local's name from an unrelated same-named constant the way a second, syntax-based lookup
+        /// against <c>ConstantEvaluator</c>'s flat, module-wide name table could. It still does not
+        /// duplicate that evaluator's full reach — no calls, no conditionals — only the arithmetic a
+        /// `const fun` argument realistically needs one instruction lower than its declaration.
         /// </remarks>
         private static object? ConstantOf(BoundExpression expression) => expression switch
         {
             BoundLiteralExpression literal => literal.Value,
-            BoundConversionExpression { Conversion.Kind: ConversionKind.Identity } conversion => ConstantOf(conversion.Operand),
+            BoundConversionExpression { Conversion.Kind: ConversionKind.Identity } identity => ConstantOf(identity.Operand),
+            BoundConversionExpression { Conversion.Kind: ConversionKind.ImplicitNumeric } widened =>
+                ConstantOf(widened.Operand) is long widenedInt ? (double)widenedInt : null,
+            BoundBinaryExpression binary => ConstantBinary(binary),
+            BoundUnaryExpression unary => ConstantUnary(unary),
             _ => null,
         };
+
+        /// <summary>Folds a binary expression once both its operands already fold. See <see cref="ConstantOf"/>.</summary>
+        private static object? ConstantBinary(BoundBinaryExpression binary)
+        {
+            if (ConstantOf(binary.Left) is not object left || ConstantOf(binary.Right) is not object right)
+                return null;
+
+            if (left is long li && right is long ri)
+            {
+                return binary.Operator switch
+                {
+                    BinaryOperator.Add => li + ri,
+                    BinaryOperator.Subtract => li - ri,
+                    BinaryOperator.Multiply => li * ri,
+                    BinaryOperator.Divide => ri != 0 ? li / ri : (object?)null,
+                    BinaryOperator.Modulo => ri != 0 ? li % ri : (object?)null,
+                    BinaryOperator.BitAnd => li & ri,
+                    BinaryOperator.BitOr => li | ri,
+                    BinaryOperator.BitXor => li ^ ri,
+                    BinaryOperator.ShiftLeft => li << (int)(ri & 31),
+                    BinaryOperator.ShiftRight => li >> (int)(ri & 31),
+                    _ => null,
+                };
+            }
+
+            if (left is double || right is double)
+            {
+                double ld = left is double ldd ? ldd : (long)left;
+                double rd = right is double rdd ? rdd : (long)right;
+
+                return binary.Operator switch
+                {
+                    BinaryOperator.Add => ld + rd,
+                    BinaryOperator.Subtract => ld - rd,
+                    BinaryOperator.Multiply => ld * rd,
+                    BinaryOperator.Divide => ld / rd,
+                    _ => null,
+                };
+            }
+
+            return null;
+        }
+
+        /// <summary>Folds a unary expression once its operand already folds. See <see cref="ConstantOf"/>.</summary>
+        private static object? ConstantUnary(BoundUnaryExpression unary)
+        {
+            if (ConstantOf(unary.Operand) is not object operand)
+                return null;
+
+            return (unary.Operator, operand) switch
+            {
+                (UnaryOperator.Not, bool b) => !b,
+                (UnaryOperator.Negate, long i) => -i,
+                (UnaryOperator.Negate, double d) => -d,
+                (UnaryOperator.Complement, long c) => ~c,
+                _ => null,
+            };
+        }
 
         /// <summary>
         /// The operand family a type belongs to, which is what every arithmetic, comparison and
