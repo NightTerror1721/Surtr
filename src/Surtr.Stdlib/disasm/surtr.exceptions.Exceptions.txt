@@ -1,50 +1,85 @@
 module surtr.exceptions.Exceptions
   constants: 0   types: 0   fields: 0   methods: 9   modules: 0
 
-ctor(string) -> void   [entry 0, locals 2, stack 2, code 0..8]
-  0000  Ldl0
-  0001  Ldl1
-  0002  InvokeSpecial 8 (ctor) args=2 ret=0
-  0007  ReturnVoid
+  method table:
+    #0  surtr.exceptions.Exceptions:ArgumentException.ctor(string) -> void
+    #1  surtr.exceptions.Exceptions:IndexOutOfRangeException.ctor(string) -> void
+    #2  surtr.exceptions.Exceptions:KeyNotFoundException.ctor(string) -> void
+    #3  surtr.exceptions.Exceptions:NullReferenceException.ctor(string) -> void
+    #4  surtr.exceptions.Exceptions:DivideByZeroException.ctor(string) -> void
+    #5  surtr.exceptions.Exceptions:InvalidCastException.ctor(string) -> void
+    #6  surtr.exceptions.Exceptions:StackOverflowException.ctor(string) -> void
+    #7  surtr.exceptions.Exceptions:InvalidOperationException.ctor(string) -> void
+    #8  surtr:Exception.ctor(string) -> void
 
-ctor(string) -> void   [entry 1, locals 2, stack 2, code 8..16]
-  0008  Ldl0
-  0009  Ldl1
-  000A  InvokeSpecial 8 (ctor) args=2 ret=0
-  000F  ReturnVoid
+class ArgumentException : surtr:Exception  [public]
 
-ctor(string) -> void   [entry 2, locals 2, stack 2, code 16..24]
-  0010  Ldl0
-  0011  Ldl1
-  0012  InvokeSpecial 8 (ctor) args=2 ret=0
-  0017  ReturnVoid
+  [public] ctor (message: string): void
+    ; entry 0, locals 2, stack 2, code 0000..0008
+      0000  Ldl0
+      0001  Ldl1
+      0002  InvokeSpecial 8 (ctor) args=2 ret=0
+      0007  ReturnVoid
 
-ctor(string) -> void   [entry 3, locals 2, stack 2, code 24..32]
-  0018  Ldl0
-  0019  Ldl1
-  001A  InvokeSpecial 8 (ctor) args=2 ret=0
-  001F  ReturnVoid
+class DivideByZeroException : surtr:Exception  [public]
 
-ctor(string) -> void   [entry 4, locals 2, stack 2, code 32..40]
-  0020  Ldl0
-  0021  Ldl1
-  0022  InvokeSpecial 8 (ctor) args=2 ret=0
-  0027  ReturnVoid
+  [public] ctor (message: string): void
+    ; entry 4, locals 2, stack 2, code 0020..0028
+      0020  Ldl0
+      0021  Ldl1
+      0022  InvokeSpecial 8 (ctor) args=2 ret=0
+      0027  ReturnVoid
 
-ctor(string) -> void   [entry 5, locals 2, stack 2, code 40..48]
-  0028  Ldl0
-  0029  Ldl1
-  002A  InvokeSpecial 8 (ctor) args=2 ret=0
-  002F  ReturnVoid
+class IndexOutOfRangeException : surtr:Exception  [public]
 
-ctor(string) -> void   [entry 6, locals 2, stack 2, code 48..56]
-  0030  Ldl0
-  0031  Ldl1
-  0032  InvokeSpecial 8 (ctor) args=2 ret=0
-  0037  ReturnVoid
+  [public] ctor (message: string): void
+    ; entry 1, locals 2, stack 2, code 0008..0010
+      0008  Ldl0
+      0009  Ldl1
+      000A  InvokeSpecial 8 (ctor) args=2 ret=0
+      000F  ReturnVoid
 
-ctor(string) -> void   [entry 7, locals 2, stack 2, code 56..64]
-  0038  Ldl0
-  0039  Ldl1
-  003A  InvokeSpecial 8 (ctor) args=2 ret=0
-  003F  ReturnVoid
+class InvalidCastException : surtr:Exception  [public]
+
+  [public] ctor (message: string): void
+    ; entry 5, locals 2, stack 2, code 0028..0030
+      0028  Ldl0
+      0029  Ldl1
+      002A  InvokeSpecial 8 (ctor) args=2 ret=0
+      002F  ReturnVoid
+
+class InvalidOperationException : surtr:Exception  [public]
+
+  [public] ctor (message: string): void
+    ; entry 7, locals 2, stack 2, code 0038..0040
+      0038  Ldl0
+      0039  Ldl1
+      003A  InvokeSpecial 8 (ctor) args=2 ret=0
+      003F  ReturnVoid
+
+class KeyNotFoundException : surtr:Exception  [public]
+
+  [public] ctor (message: string): void
+    ; entry 2, locals 2, stack 2, code 0010..0018
+      0010  Ldl0
+      0011  Ldl1
+      0012  InvokeSpecial 8 (ctor) args=2 ret=0
+      0017  ReturnVoid
+
+class NullReferenceException : surtr:Exception  [public]
+
+  [public] ctor (message: string): void
+    ; entry 3, locals 2, stack 2, code 0018..0020
+      0018  Ldl0
+      0019  Ldl1
+      001A  InvokeSpecial 8 (ctor) args=2 ret=0
+      001F  ReturnVoid
+
+class StackOverflowException : surtr:Exception  [public]
+
+  [public] ctor (message: string): void
+    ; entry 6, locals 2, stack 2, code 0030..0038
+      0030  Ldl0
+      0031  Ldl1
+      0032  InvokeSpecial 8 (ctor) args=2 ret=0
+      0037  ReturnVoid

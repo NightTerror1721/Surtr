@@ -685,6 +685,18 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
+        public void ANativeLetCannotBeTheFieldAValueClassWraps()
+        {
+            // A native `let` has no backing storage - it is a property in disguise - so it cannot
+            // be the one field §2.9 needs a value class to erase to. Excluded from BindMembers's
+            // `letFields` count on purpose, this reports zero instance fields rather than one.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "value class EntityId { public native let raw: int; }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidValueClass);
+        }
+
+        [Fact]
         public void AValueClassCannotExtend()
         {
             Bind(out var compilation, ("game/core/Test.surtr",
@@ -715,6 +727,27 @@ namespace Surtr.Tests.Compiler.Binding
         {
             Bind(out var compilation, ("game/core/Test.surtr",
                 "interface IThing { fun doThing(): void { } }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
+        }
+
+        [Fact]
+        public void AnInterfaceCannotDeclareANativeMethod()
+        {
+            // A native method has a real body - the host's - so it is exactly as much a default
+            // implementation as one written in Surtr, and §2.3 allows neither. Body is null for a
+            // native declaration, so the check just above (no body) does not catch this on its own.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { native fun doThing(): void; }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
+        }
+
+        [Fact]
+        public void AnInterfaceCannotDeclareANativeProperty()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { native x: int { get; } }"));
 
             AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
         }

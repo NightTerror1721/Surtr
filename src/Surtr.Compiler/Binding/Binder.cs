@@ -998,6 +998,33 @@ namespace Surtr.Compiler.Binding
                             continue;
                         }
 
+                        // §10: a `native let`/`native var` inside a class is a native property, not
+                        // a field with real storage - the host owns the value, exactly as a
+                        // module-level one does (BindModuleNativeVariable). It is excluded from
+                        // `letFields` on purpose: a value class's "exactly one let field" count
+                        // (BindValueClassField below) means a field with real storage to erase to,
+                        // and a native property has none.
+                        if (field.IsNative)
+                        {
+                            if (!names.Add(field.Name))
+                                Duplicate(binding, field.Span, field.Name);
+
+                            var nativeProperty = BindClassNativeField(field, symbol, binding);
+                            members.Add(nativeProperty);
+                            if (nativeProperty.Getter is not null)
+                            {
+                                members.Add(nativeProperty.Getter);
+                                signatures.Add(nativeProperty.Getter, binding.SourceName, field.Span);
+                            }
+                            if (nativeProperty.Setter is not null)
+                            {
+                                members.Add(nativeProperty.Setter);
+                                signatures.Add(nativeProperty.Setter, binding.SourceName, field.Span);
+                            }
+
+                            continue;
+                        }
+
                         if (!field.IsMutable)
                             letFields++;
 
@@ -1015,6 +1042,16 @@ namespace Surtr.Compiler.Binding
                         {
                             Report(SurtrDiagnosticCode.InvalidInterfaceMember, binding, property.Span,
                                 $"An interface has no statics, so '{property.Name}' cannot be one.");
+                            continue;
+                        }
+
+                        // A native accessor has a real body - the host's - so it is exactly as much
+                        // a default implementation as one written in Surtr, and an interface allows
+                        // neither (§2.3).
+                        if (isInterface && property.IsNative)
+                        {
+                            Report(SurtrDiagnosticCode.InvalidInterfaceMember, binding, property.Span,
+                                $"An interface declares no default implementations, so '{property.Name}' cannot be native either.");
                             continue;
                         }
 
@@ -1050,6 +1087,16 @@ namespace Surtr.Compiler.Binding
                         {
                             Report(SurtrDiagnosticCode.InvalidInterfaceMember, binding, method.Span,
                                 $"An interface declares no default implementations, so '{method.Name}' cannot have a body.");
+                            continue;
+                        }
+
+                        // A native method has no Surtr body, so the check above misses it - but its
+                        // body is the host's, exactly as real a default implementation as one
+                        // written in Surtr, and an interface allows neither (§2.3).
+                        if (isInterface && method.IsNative)
+                        {
+                            Report(SurtrDiagnosticCode.InvalidInterfaceMember, binding, method.Span,
+                                $"An interface declares no default implementations, so '{method.Name}' cannot be native either.");
                             continue;
                         }
 
@@ -1937,6 +1984,64 @@ namespace Surtr.Compiler.Binding
             }
 
             RecordAttributes(property, syntax.Attributes, scope, sourceName);
+            return property;
+        }
+
+        /// <summary>
+        /// Binds a class-level <c>native let/var</c> as a native property (§10) — the class-member
+        /// twin of <see cref="BindModuleNativeVariable"/>.
+        /// </summary>
+        /// <remarks>
+        /// Written as a field for the same readability reason a module-level one is, but there is
+        /// no backing storage: the host owns the value, so a read is a call to a native
+        /// <c>get_x</c> and a write (for <c>var</c>) to a native <c>set_x</c>, both published by
+        /// link name the same way any other native member of the class is. Static or instance
+        /// follows <c>syntax.IsStatic</c> — unlike the module-level form, which is always static
+        /// because a module has no instances.
+        /// </remarks>
+        private PropertySymbol BindClassNativeField(FieldDeclarationSyntax syntax, NamedTypeSymbol owner, TypeBinding binding)
+        {
+            var type = ResolveOrInfer(syntax.Type, binding.Scope, binding.SourceName);
+            var accessibility = Translate(syntax.Visibility, Accessibility.Private);
+
+            var property = new PropertySymbol(syntax.Name, owner, type)
+            {
+                IsStatic = syntax.IsStatic,
+                Accessibility = accessibility,
+            };
+
+            var getter = new MethodSymbol(MemberNames.Getter(syntax.Name), owner, type)
+            {
+                IsStatic = syntax.IsStatic,
+                Accessibility = accessibility,
+                Role = MethodRole.PropertyGetter,
+                IsNative = true,
+            };
+            property.Getter = getter;
+
+            // `native let` is read-only: no setter, the same rule a module-level one follows.
+            if (syntax.IsMutable)
+            {
+                var setter = new MethodSymbol(MemberNames.Setter(syntax.Name), owner, _factory.Void)
+                {
+                    IsStatic = syntax.IsStatic,
+                    Accessibility = accessibility,
+                    Role = MethodRole.PropertySetter,
+                    IsNative = true,
+                };
+                setter.Parameters = new[] { new ParameterSymbol("value", type, 0, setter) };
+                property.Setter = setter;
+            }
+
+            // §10: the host owns the value, so there is nothing here to initialize — and an
+            // initializer would be written against a value the host may already have set.
+            if (syntax.Initializer is not null)
+            {
+                ReportAt(binding.SourceName, syntax.Span, SurtrDiagnosticCode.InvalidNativeDeclaration,
+                    $"'{syntax.Name}' is native, so the host owns its value and it cannot have an initializer.");
+            }
+
+            RecordAttributes(property, syntax.Attributes, binding.Scope, binding.SourceName);
             return property;
         }
 

@@ -615,11 +615,43 @@ namespace Surtr.Compiler.CodeGen
             foreach (var use in property.Attributes)
                 declared.AddAttribute(Usage(context, use));
 
+            bool getterIsNative = property.Getter is { IsNative: true };
+            bool setterIsNative = property.Setter is { IsNative: true };
+
+            // A native accessor's body is the host's, published by link name (§10) - the same path
+            // DeclareMethod already takes for a plain native method (below). It needs neither a
+            // bytecode builder nor a backing field, so it is handled before the auto-property check
+            // that follows - which would otherwise mistake its bodyless accessor (a native accessor
+            // is never written with a `{ ... }` block either) for one to synthesize a field for, and
+            // silently turn a hybrid Surtr/host property into an ordinary auto-property that never
+            // reaches the host at all.
+            if (property.Getter is MethodSymbol nativeGetter && getterIsNative)
+            {
+                var native = @class.DeclareNativeMethod(
+                    nativeGetter.Name, _descriptors.Emit(nativeGetter.ReturnType), LinkName(nativeGetter),
+                    Array.Empty<SurtrParameterInfo>(), nativeGetter.IsStatic, Dispatch(nativeGetter),
+                    nativeGetter.IsOverride, Visibility(nativeGetter.Accessibility));
+                declared.BindGetter(native);
+                context.Bind(nativeGetter, native);
+            }
+
+            if (property.Setter is MethodSymbol nativeSetter && setterIsNative)
+            {
+                var native = @class.DeclareNativeMethod(
+                    nativeSetter.Name, _descriptors.Emit(nativeSetter.ReturnType), LinkName(nativeSetter),
+                    Parameters(context, nativeSetter), nativeSetter.IsStatic, Dispatch(nativeSetter),
+                    nativeSetter.IsOverride, Visibility(nativeSetter.Accessibility));
+                declared.BindSetter(native);
+                context.Bind(nativeSetter, native);
+            }
+
             // Either accessor being bare is enough: §3.4 lets `{ get; set { ... } }` mix them, and
-            // the bare half still needs somewhere to read from.
+            // the bare half still needs somewhere to read from. A native accessor is excluded here
+            // even though it is bare too - it has a body, the host's, so it never needs a backing
+            // field and must not contribute to `auto`.
             bool auto =
-                (property.Getter is not null && !_binder.Bodies.ContainsKey(property.Getter))
-                || (property.Setter is not null && !_binder.Bodies.ContainsKey(property.Setter));
+                (property.Getter is not null && !getterIsNative && !_binder.Bodies.ContainsKey(property.Getter))
+                || (property.Setter is not null && !setterIsNative && !_binder.Bodies.ContainsKey(property.Setter));
 
             if (auto)
             {
@@ -637,14 +669,14 @@ namespace Surtr.Compiler.CodeGen
             // `override` is dropped where it names no base accessor, for the reason it is dropped on
             // a method: §2.2 makes a contract a promise rather than an inheritance, both are written
             // `override`, and `SurtrTypeLinker` rejects an override with no base entry to replace.
-            if (property.Getter is MethodSymbol getter)
+            if (property.Getter is MethodSymbol getter && !getterIsNative)
             {
                 var builder = declared.DefineGetter(Dispatch(getter), OverridesABaseMethod(getter));
                 context.Declare(getter, builder);
                 emission.Methods.Add((getter, builder));
             }
 
-            if (property.Setter is MethodSymbol setter)
+            if (property.Setter is MethodSymbol setter && !setterIsNative)
             {
                 var builder = declared.DefineSetter(Dispatch(setter), OverridesABaseMethod(setter));
                 context.Declare(setter, builder);

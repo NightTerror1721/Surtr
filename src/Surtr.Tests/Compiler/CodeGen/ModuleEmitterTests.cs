@@ -3260,5 +3260,267 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidNativeDeclaration);
         }
         #endregion
+
+        #region Class-level natives (§10)
+        //
+        // A `native` member inside a class binds by link name exactly like a module-level one does
+        // (§10): `moduleName:ClassName.memberName`, derived by ModuleEmitter.LinkName from the
+        // owning type's FullMetadataName plus the accessor's own name - no signature, since the
+        // compiler always supplies an explicit link name and never falls back to deriving one.
+
+        [Fact]
+        public unsafe void ANativeInstanceMethodInsideAClassReachesTheHostsBody()
+        {
+            var emitter = Build(
+                "class Sprite {\n"
+                    + "  public native fun doubled(x: int): int;\n"
+                    + "}\n"
+                    + "fun run(): int { return Sprite().doubled(21); }");
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            // Argument 0 is the receiver for an instance native member; the declared parameter
+            // follows it.
+            runtime.DefineNativeBody("game.core:Sprite.doubled", SurtrNativeEntryPoint.FromFunctionPointer(&DoubleSecondArgument));
+            runtime.LoadModule(emitter.Modules[0]);
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        private static SurtrValue DoubleSecondArgument(SurtrCallArguments arguments) => SurtrValue.CreateInt(arguments.GetInt(1) * 2);
+
+        [Fact]
+        public unsafe void AStaticNativeMethodInsideAClassReachesTheHostsBody()
+        {
+            var emitter = Build(
+                "class MathHost {\n"
+                    + "  public static native fun triple(x: int): int;\n"
+                    + "}\n"
+                    + "fun run(): int { return MathHost.triple(7); }");
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            // No receiver for a static member, so the declared parameter is argument 0.
+            runtime.DefineNativeBody("game.core:MathHost.triple", SurtrNativeEntryPoint.FromFunctionPointer(&TripleFirstArgument));
+            runtime.LoadModule(emitter.Modules[0]);
+
+            Assert.Equal(21, Int(runtime, "run"));
+        }
+
+        private static SurtrValue TripleFirstArgument(SurtrCallArguments arguments) => SurtrValue.CreateInt(arguments.GetInt(0) * 3);
+
+        /// <summary>
+        /// A native property written the explicit `{ get; set; }` way, compiled through the real
+        /// front end rather than built directly with <c>SurtrModuleBuilder</c> - the class-level
+        /// mechanism a `native let`/`native var` (below) is sugar for.
+        /// </summary>
+        [Fact]
+        public unsafe void ANativeInstancePropertyInsideAClassReachesTheHostsBody()
+        {
+            var emitter = Build(
+                "class Box {\n"
+                    + "  public native value: int { get; set; }\n"
+                    + "}\n"
+                    + "fun run(): int { let b = Box(); b.value = 5; return b.value; }");
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            _boxValue = 0;
+            runtime.DefineNativeBody("game.core:Box.get_value", SurtrNativeEntryPoint.FromFunctionPointer(&GetBoxValue));
+            runtime.DefineNativeBody("game.core:Box.set_value", SurtrNativeEntryPoint.FromFunctionPointer(&SetBoxValue));
+            runtime.LoadModule(emitter.Modules[0]);
+
+            // +1000 on the read is deliberate: a write-then-read through an *ordinary* auto-property
+            // (a real backing field, the exact shape this used to be silently downgraded to before
+            // the fix - ModuleEmitter.DeclareProperty never checked IsNative) would echo back plain
+            // 5, passing even though no host code ever ran. Only a genuine call into GetBoxValue can
+            // produce 1005.
+            Assert.Equal(1005, Int(runtime, "run"));
+        }
+
+        private static int _boxValue;
+        private static SurtrValue GetBoxValue(SurtrCallArguments arguments) => SurtrValue.CreateInt(_boxValue + 1000);
+        private static SurtrValue SetBoxValue(SurtrCallArguments arguments)
+        {
+            _boxValue = arguments.GetInt(1);
+            return SurtrValue.Null;
+        }
+
+        /// <summary>
+        /// The fix: a `native let` inside a class used to silently bind as an ordinary field with
+        /// real storage (<c>Binder.BindField</c> never read <c>syntax.IsNative</c>), so this used to
+        /// read back <c>0</c> with no error and no need to register a host body at all.
+        /// </summary>
+        [Fact]
+        public unsafe void ANativeLetInsideAClassBindsAsANativeGetterOnlyProperty()
+        {
+            var emitter = Build(
+                "class Foo {\n"
+                    + "  public native let x: int;\n"
+                    + "  public fun run(): int { return this.x; }\n"
+                    + "}\n"
+                    + "fun run(): int { return Foo().run(); }");
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            runtime.DefineNativeBody("game.core:Foo.get_x", SurtrNativeEntryPoint.FromFunctionPointer(&GetNinetyNine));
+            runtime.LoadModule(emitter.Modules[0]);
+
+            Assert.Equal(99, Int(runtime, "run"));
+        }
+
+        private static SurtrValue GetNinetyNine(SurtrCallArguments arguments) => SurtrValue.CreateInt(99);
+
+        /// <summary>The read-write twin: a `native var` inside a class gets both accessors.</summary>
+        [Fact]
+        public unsafe void ANativeVarInsideAClassBindsAsANativeReadWriteProperty()
+        {
+            var emitter = Build(
+                "class Foo {\n"
+                    + "  public native var x: int;\n"
+                    + "  public fun run(): int { this.x = 7; return this.x; }\n"
+                    + "}\n"
+                    + "fun run(): int { return Foo().run(); }");
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            _fooX = 0;
+            runtime.DefineNativeBody("game.core:Foo.get_x", SurtrNativeEntryPoint.FromFunctionPointer(&GetFooX));
+            runtime.DefineNativeBody("game.core:Foo.set_x", SurtrNativeEntryPoint.FromFunctionPointer(&SetFooX));
+            runtime.LoadModule(emitter.Modules[0]);
+
+            // +2000, for the same reason ANativeInstancePropertyInsideAClassReachesTheHostsBody
+            // offsets its read: an ordinary auto-property's backing field would echo back plain 7.
+            Assert.Equal(2007, Int(runtime, "run"));
+        }
+
+        private static int _fooX;
+        private static SurtrValue GetFooX(SurtrCallArguments arguments) => SurtrValue.CreateInt(_fooX + 2000);
+        private static SurtrValue SetFooX(SurtrCallArguments arguments)
+        {
+            _fooX = arguments.GetInt(1);
+            return SurtrValue.Null;
+        }
+
+        /// <summary>A `native let`/`native var` inside a class can be static too, same as an
+        /// explicit native property can.</summary>
+        [Fact]
+        public unsafe void AStaticNativeLetInsideAClassIsStatic()
+        {
+            var emitter = Build(
+                "class Config {\n"
+                    + "  public static native let x: int;\n"
+                    + "}\n"
+                    + "fun run(): int { return Config.x; }");
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            // No receiver: a static native accessor's argument list is empty here.
+            runtime.DefineNativeBody("game.core:Config.get_x", SurtrNativeEntryPoint.FromFunctionPointer(&GetFiftyFive));
+            runtime.LoadModule(emitter.Modules[0]);
+
+            Assert.Equal(55, Int(runtime, "run"));
+        }
+
+        private static SurtrValue GetFiftyFive(SurtrCallArguments arguments) => SurtrValue.CreateInt(55);
+
+        [Fact]
+        public void ANativeLetInsideAClassCannotHaveAnInitializer()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(Root + "/game/core/Test.surtr", "class Foo {\n  public native let x: int = 5;\n}\n");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidNativeDeclaration);
+        }
+
+        [Fact]
+        public unsafe void ANativeMethodOnAValueClassReachesTheHostsBody()
+        {
+            var emitter = Build(
+                "value class EntityId {\n"
+                    + "  public let raw: int;\n"
+                    + "  public constructor(raw: int) { this.raw = raw; }\n"
+                    + "  public native fun validate(): bool;\n"
+                    + "}\n"
+                    + "fun run(): int { return EntityId(5).validate() ? 1 : 0; }");
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            runtime.DefineNativeBody("game.core:EntityId.validate", SurtrNativeEntryPoint.FromFunctionPointer(&AlwaysTrue));
+            runtime.LoadModule(emitter.Modules[0]);
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        private static SurtrValue AlwaysTrue(SurtrCallArguments arguments) => SurtrValue.CreateBool(true);
+
+        [Fact]
+        public unsafe void ANativeMethodOnAnEnumReachesTheHostsBody()
+        {
+            var emitter = Build(
+                "enum Suit {\n"
+                    + "  Hearts, Spades;\n"
+                    + "  public native fun describe(): int;\n"
+                    + "}\n"
+                    + "fun run(): int { return Suit.Hearts.describe(); }");
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            runtime.DefineNativeBody("game.core:Suit.describe", SurtrNativeEntryPoint.FromFunctionPointer(&GetSeven));
+            runtime.LoadModule(emitter.Modules[0]);
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        private static SurtrValue GetSeven(SurtrCallArguments arguments) => SurtrValue.CreateInt(7);
+
+        [Fact]
+        public unsafe void ANativeMethodOnANestedClassReachesTheHostsBody()
+        {
+            var emitter = Build(
+                "class Outer {\n"
+                    + "  public class Inner {\n"
+                    + "    public native fun ping(): int;\n"
+                    + "  }\n"
+                    + "}\n"
+                    + "fun run(): int { return Outer.Inner().ping(); }");
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            // A nested type's FullMetadataName chains with '.', same as its display name: §2.6.
+            runtime.DefineNativeBody("game.core:Outer.Inner.ping", SurtrNativeEntryPoint.FromFunctionPointer(&GetThree));
+            runtime.LoadModule(emitter.Modules[0]);
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        private static SurtrValue GetThree(SurtrCallArguments arguments) => SurtrValue.CreateInt(3);
+
+        /// <summary>§10 for a class member, mirroring <see cref="AModuleNamingAnUnregisteredNativeFunctionFailsToLoad"/>.</summary>
+        [Fact]
+        public void AClassNamingAnUnregisteredNativeMemberFailsToLoad()
+        {
+            var emitter = Build(
+                "class Foo {\n"
+                    + "  public native fun bar(): int;\n"
+                    + "}\n"
+                    + "fun run(): int { return Foo().bar(); }");
+
+            using var runtime = new SurtrRuntime();
+            Assert.Throws<InvalidOperationException>(() => runtime.LoadModule(emitter.Modules[0]));
+        }
+        #endregion
     }
 }
