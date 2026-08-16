@@ -2041,7 +2041,104 @@ namespace Surtr.Compiler.Binding
             method.Parameters = BindParameters(syntax.Parameters, method, binding.Scope, binding.SourceName);
             RecordBody(method, syntax.Body, binding.Scope, binding.Module, owner, binding.SourceName);
             RecordAttributes(method, syntax.Attributes, binding.Scope, binding.SourceName);
+            CheckOperatorSignature(syntax, method, binding);
             return method;
+        }
+
+        /// <summary>
+        /// Rejects an operator overload whose arity or return type does not match the shape §5.6's
+        /// own table fixes for the token it overloads.
+        /// </summary>
+        /// <remarks>
+        /// Nothing checked this before this fix: the parser accepts any parameter list and any
+        /// return type after any overloadable token, and the only thing that ever noticed a wrong
+        /// one was <c>OverloadResolution</c> quietly never finding it — leaving a real, wrong
+        /// declaration to sit in the method table as a method nothing could ever call, with no
+        /// diagnostic anywhere pointing at why.
+        /// </remarks>
+        private void CheckOperatorSignature(OperatorDeclarationSyntax syntax, MethodSymbol method, TypeBinding binding)
+        {
+            int count = method.Parameters.Count;
+            string symbol = OperatorNames.TryGetSymbol(syntax.Operator, out string spelling) ? spelling : "?";
+
+            switch (syntax.Operator)
+            {
+                case TokenType.Plus:
+                case TokenType.Star:
+                case TokenType.Slash:
+                case TokenType.Percent:
+                case TokenType.Ampersand:
+                case TokenType.Pipe:
+                case TokenType.Caret:
+                case TokenType.ShiftLeft:
+                case TokenType.ShiftRight:
+                case TokenType.UnsignedShiftRight:
+                    if (count != 2)
+                        ReportOperatorArity(binding, syntax, symbol, "2 parameters", count);
+                    break;
+
+                case TokenType.Minus:
+                    // §5.6: unary negation and binary subtraction share the token, told apart by arity.
+                    if (count != 1 && count != 2)
+                        ReportOperatorArity(binding, syntax, symbol, "1 parameter (unary) or 2 (binary)", count);
+                    break;
+
+                case TokenType.LogicalNot:
+                case TokenType.Tilde:
+                case TokenType.Increment:
+                case TokenType.Decrement:
+                case TokenType.KeywordAs:
+                    if (count != 1)
+                        ReportOperatorArity(binding, syntax, symbol, "1 parameter", count);
+                    break;
+
+                case TokenType.Equal:
+                    if (count != 2)
+                        ReportOperatorArity(binding, syntax, symbol, "2 parameters", count);
+                    else if (!ReferenceEquals(method.ReturnType, _factory.Bool))
+                        ReportOperatorReturn(binding, syntax, symbol, "bool", method.ReturnType);
+                    break;
+
+                case TokenType.Spaceship:
+                    if (count != 2)
+                        ReportOperatorArity(binding, syntax, symbol, "2 parameters", count);
+                    else if (!ReferenceEquals(method.ReturnType, _factory.Int))
+                        ReportOperatorReturn(binding, syntax, symbol, "int", method.ReturnType);
+                    break;
+
+                case TokenType.LeftBracket:
+                    if (count != 2 && count != 3)
+                    {
+                        ReportOperatorArity(
+                            binding, syntax, symbol,
+                            "2 parameters (the receiver and the index) or 3 (the receiver, the index, then the value)",
+                            count);
+                    }
+                    else if (count == 3 && !ReferenceEquals(method.ReturnType, _factory.Void))
+                    {
+                        ReportOperatorReturn(binding, syntax, symbol, "void", method.ReturnType);
+                    }
+
+                    break;
+            }
+        }
+
+        private void ReportOperatorArity(TypeBinding binding, OperatorDeclarationSyntax syntax, string symbol, string expected, int actual)
+        {
+            Report(
+                SurtrDiagnosticCode.InvalidOperatorSignature,
+                binding,
+                syntax.Span,
+                $"'operator{symbol}' takes {expected} (§5.6), not {actual}.");
+        }
+
+        private void ReportOperatorReturn(TypeBinding binding, OperatorDeclarationSyntax syntax, string symbol, string expected, TypeSymbol actual)
+        {
+            Report(
+                SurtrDiagnosticCode.InvalidOperatorSignature,
+                binding,
+                syntax.Span,
+                $"'operator{symbol}' has to return '{expected}' (§5.6), not '{actual.ToDisplayString()}'.");
         }
 
         private void BindTypeParameters(MethodSymbol method, IReadOnlyList<TypeParameterSyntax> syntax, Scope scope, string sourceName)

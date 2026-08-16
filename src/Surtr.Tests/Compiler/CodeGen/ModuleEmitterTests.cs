@@ -1799,6 +1799,99 @@ namespace Surtr.Tests.Compiler.CodeGen
 
             Assert.False(Call(runtime, "run").AsBool);
         }
+
+        /// <summary>
+        /// `<`, `<=`, `>` and `>=` are declared through `operator<=>` alone (§5.6) — a type never
+        /// writes them separately — so the relational form has to reduce the three-way `int` result
+        /// to a `bool` itself, and used to surface the raw `int` as the whole expression's type.
+        /// </summary>
+        [Fact]
+        public void ARelationalOperatorReducesUserSpaceshipToABool()
+        {
+            var runtime = Run(
+                "class Score {\n"
+                    + "  public let value: int;\n"
+                    + "  constructor(value: int) { this.value = value; }\n"
+                    + "  operator<=>(a: Score, b: Score): int { return a.value - b.value; }\n"
+                    + "}\n"
+                    + "fun run(): bool { return Score(4) < Score(9); }");
+
+            Assert.True(Call(runtime, "run").AsBool);
+        }
+
+        [Fact]
+        public void EveryRelationalFormReducesTheSameSpaceshipCorrectly()
+        {
+            var runtime = Run(
+                "class Score {\n"
+                    + "  public let value: int;\n"
+                    + "  constructor(value: int) { this.value = value; }\n"
+                    + "  operator<=>(a: Score, b: Score): int { return a.value - b.value; }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "  let a = Score(4); let b = Score(9);\n"
+                    + "  var n = 0;\n"
+                    + "  if (a < b) { n = n + 1; }\n"
+                    + "  if (a <= b) { n = n + 10; }\n"
+                    + "  if (b > a) { n = n + 100; }\n"
+                    + "  if (b >= a) { n = n + 1000; }\n"
+                    + "  if (a > b) { n = n + 10000; }\n"
+                    + "  return n;\n"
+                    + "}");
+
+            Assert.Equal(1111, Int(runtime, "run"));
+        }
+
+        /// <summary>An operator declared with the wrong arity is rejected where it is declared.</summary>
+        [Theory]
+        [InlineData("operator+(a: Plain): Plain { return a; }")]
+        [InlineData("operator-(a: Plain, b: Plain, c: Plain): Plain { return a; }")]
+        [InlineData("operator!(a: Plain, b: Plain): bool { return true; }")]
+        [InlineData("operator++(a: Plain, b: Plain): Plain { return a; }")]
+        public void AnOperatorWithTheWrongArityIsReported(string declaration)
+        {
+            using var compilation = Reject("class Plain { " + declaration + " }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AnEqualityOperatorMustReturnBool()
+        {
+            using var compilation = Reject(
+                "class Plain { operator==(a: Plain, b: Plain): int { return 0; } }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void ASpaceshipOperatorMustReturnInt()
+        {
+            using var compilation = Reject(
+                "class Plain { operator<=>(a: Plain, b: Plain): bool { return true; } }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AnIndexerWriteFormMustReturnVoid()
+        {
+            using var compilation = Reject(
+                "class Plain {\n"
+                    + "  operator[](p: Plain, i: int): int { return i; }\n"
+                    + "  operator[](p: Plain, i: int, v: int): int { return v; }\n"
+                    + "}");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AnIndexerWithTheWrongArityIsReported()
+        {
+            using var compilation = Reject("class Plain { operator[](p: Plain, i: int, j: int, v: int): void { } }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
         #endregion
 
         #region Indexers (§5.6)

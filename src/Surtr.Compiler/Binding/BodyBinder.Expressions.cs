@@ -676,7 +676,7 @@ namespace Surtr.Compiler.Binding
                 return null;
 
             var method = result.Method!;
-            return new BoundCallExpression(
+            BoundExpression call = new BoundCallExpression(
                 syntax,
                 null,
                 method,
@@ -686,6 +686,20 @@ namespace Surtr.Compiler.Binding
                     Convert(right, method.Parameters[1].Type, syntax.Span),
                 },
                 isVirtual: false);
+
+            // `<`, `<=`, `>` and `>=` are all declared through `operator<=>` alone (§5.6) — the user
+            // writes only the three-way form, so the relational ones compare its `int` result
+            // against zero here. `TokenFor` maps all five to the same lookup, so `call` above is
+            // already the `compareTo`-shaped result for every one of them; `Compare` itself (`<=>`)
+            // is the one case that is already the answer and needs no further wrapping.
+            return @operator switch
+            {
+                BinaryOperator.Less or BinaryOperator.LessEqual
+                    or BinaryOperator.Greater or BinaryOperator.GreaterEqual =>
+                        new BoundBinaryExpression(
+                            syntax, @operator, call, new BoundLiteralExpression(syntax, _factory.Int, 0L), _factory.Bool),
+                _ => call,
+            };
         }
 
         private static TokenType TokenFor(BinaryOperator @operator) => @operator switch

@@ -280,6 +280,13 @@ namespace Surtr.Compiler.Diagnostics
         /// </remarks>
         MissingImplementation = 3043,
 
+        /// <summary>
+        /// An operator overload's arity or return type does not match what §5.6's table fixes for
+        /// the token it overloads — checked at the declaration, not left to surface only as an
+        /// unreachable overload the first time something tries to use it.
+        /// </summary>
+        InvalidOperatorSignature = 3044,
+
         #endregion
 
         #region Code generation — 4xxx
