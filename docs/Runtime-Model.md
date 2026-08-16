@@ -64,17 +64,20 @@ SurtrModule
 └── StaticFields / StaticStorage / Functions / StaticInitializer     the runtime's view, by index
 ```
 
-**There are no true globals.** A module-level variable *is* a static of its module, and reaches its
-storage through the same `StaticFieldGet`/`StaticFieldSet` a class static does — the module simply
-carries the same static tables a class does. The only genuinely global names are host-declared
-native variables and functions, which can never be written in Surtr source and live in the runtime's
-`SurtrNativeGlobalTable` instead.
+**There are no true globals — not even a host-declared one.** A module-level variable *is* a static
+of its module, and reaches its storage through the same `StaticFieldGet`/`StaticFieldSet` a class
+static does — the module simply carries the same static tables a class does. A module-level
+`native fun`/`native let`/`native var` is likewise an ordinary member, module-level or on a class,
+carrying a **link name** the host publishes a body under with `SurtrRuntime.DefineNativeBody` — the
+same mechanism a class's own native member uses. There used to be a genuinely separate global
+namespace, host-declared native variables and functions that could never be written in Surtr
+source, living in the runtime's own global table; that mechanism is retired, along with the table.
 
 **A module belongs to one runtime.** Loading patches its string literals with references from that
-runtime's heap, binds its native imports to that runtime's global table, and hands its classes
-static storage the collector traces through that runtime's registry. `LoadModule` rejects a second
-attempt. The shareable artefact is the *image* (`docs/Module-Format.md`), which instantiates a fresh
-module per runtime.
+runtime's heap, binds every native member's body against that runtime's registrations (by link
+name), and hands its classes static storage the collector traces through that runtime's registry.
+`LoadModule` rejects a second attempt. The shareable artefact is the *image*
+(`docs/Module-Format.md`), which instantiates a fresh module per runtime.
 
 ---
 
@@ -548,7 +551,6 @@ internal struct, reached by `ref` so nothing copies it — holding:
 
 ```
 EntityRegistry     the object heap, addressed by SurtrRef
-Globals            host variables and functions, the only true globals
 NativeBodies       host bodies for native members, by link name
 Modules            loaded modules, by path
 NativeClasses      host-declared native classes, by full name
@@ -578,9 +580,8 @@ LoadModule(module)
  ├─ register it              (its own types must be findable while resolving)
  ├─ resolve every type handle    ── the handle table is the dependency list
  ├─ bind pending access tables   ── images only: names -> objects
- ├─ bind native bodies           ── by link name, from NativeBodies
+ ├─ bind native bodies           ── every native member, module-level or on a class, by link name
  ├─ LINK every type              ── SurtrTypeLinker, depth-first
- ├─ bind native imports          ── host globals, by name
  ├─ materialise string literals  ── intern, patch into the constant pool
  ├─ materialise attributes       ── one instance per usage, rooted permanently
  ├─ register static blocks       ── so the collector can trace them

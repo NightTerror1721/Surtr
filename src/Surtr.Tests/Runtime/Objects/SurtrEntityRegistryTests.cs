@@ -44,9 +44,9 @@ namespace Surtr.Tests.Runtime.Objects
             return registry;
         }
 
-        /// <summary>Runs a collection with no stack, host globals or static blocks - just the given explicit roots.</summary>
+        /// <summary>Runs a collection with no stack or static blocks - just the given explicit roots.</summary>
         private static int Collect(ref SurtrEntityRegistry registry, ReadOnlySpan<SurtrRawValue> explicitRoots, bool fullCollection)
-            => registry.CollectGarbage(null, null, null, null, 0, ReadOnlySpan<SurtrStaticBlock>.Empty, explicitRoots, fullCollection);
+            => registry.CollectGarbage(null, null, ReadOnlySpan<SurtrStaticBlock>.Empty, explicitRoots, fullCollection);
 
         private static SurtrRawValue RootOf(SurtrRuntimeEntity entity)
             => SurtrValue.CreateReference(entity.GetSurtrReference()).Raw;
@@ -445,7 +445,7 @@ namespace Surtr.Tests.Runtime.Objects
 
         #endregion
 
-        #region CollectGarbage - stack, host globals and static blocks
+        #region CollectGarbage - stack and static blocks
 
         [Fact]
         public void CollectGarbage_MarksReferencesLiveOnTheDataStack()
@@ -461,7 +461,7 @@ namespace Surtr.Tests.Runtime.Objects
                 stack[1] = RootOf(entity);
 
                 int released = registry.CollectGarbage(
-                    stack, stack + 2, null, null, 0, ReadOnlySpan<SurtrStaticBlock>.Empty, ReadOnlySpan<SurtrRawValue>.Empty, fullCollection: true);
+                    stack, stack + 2, ReadOnlySpan<SurtrStaticBlock>.Empty, ReadOnlySpan<SurtrRawValue>.Empty, fullCollection: true);
 
                 Assert.Equal(0, released);
                 Assert.NotNull(registry.Get(entity.GetSurtrReference()));
@@ -485,36 +485,9 @@ namespace Surtr.Tests.Runtime.Objects
                 stack[2] = RootOf(entity); // beyond [stackStart, stackTop)
 
                 int released = registry.CollectGarbage(
-                    stack, stack + 1, null, null, 0, ReadOnlySpan<SurtrStaticBlock>.Empty, ReadOnlySpan<SurtrRawValue>.Empty, fullCollection: true);
+                    stack, stack + 1, ReadOnlySpan<SurtrStaticBlock>.Empty, ReadOnlySpan<SurtrRawValue>.Empty, fullCollection: true);
 
                 Assert.Equal(1, released);
-            }
-            finally
-            {
-                registry.Dispose();
-            }
-        }
-
-        [Fact]
-        public void CollectGarbage_MarksReferencesThroughTheHostGlobalTable()
-        {
-            var registry = CreateRegistry();
-            try
-            {
-                var entity = new FakeEntity();
-                registry.Register(entity);
-
-                SurtrRawValue* globals = stackalloc SurtrRawValue[3];
-                globals[0] = SurtrValue.CreateInt(7).Raw; // not a reference slot; must not be read as one
-                globals[2] = RootOf(entity);
-
-                int* referenceSlots = stackalloc int[1] { 2 };
-
-                int released = registry.CollectGarbage(
-                    null, null, globals, referenceSlots, 1, ReadOnlySpan<SurtrStaticBlock>.Empty, ReadOnlySpan<SurtrRawValue>.Empty, fullCollection: true);
-
-                Assert.Equal(0, released);
-                Assert.NotNull(registry.Get(entity.GetSurtrReference()));
             }
             finally
             {
@@ -539,7 +512,7 @@ namespace Surtr.Tests.Runtime.Objects
                 Span<SurtrStaticBlock> blocks = stackalloc SurtrStaticBlock[1] { block };
 
                 int released = registry.CollectGarbage(
-                    null, null, null, null, 0, blocks, ReadOnlySpan<SurtrRawValue>.Empty, fullCollection: true);
+                    null, null, blocks, ReadOnlySpan<SurtrRawValue>.Empty, fullCollection: true);
 
                 Assert.Equal(0, released);
                 Assert.NotNull(registry.Get(entity.GetSurtrReference()));

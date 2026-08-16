@@ -429,6 +429,12 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>True when an <c>override</c> was also declared <c>sealed</c> (§3.3).</summary>
         public bool IsSealed { get; }
 
+        /// <summary>The <c>inline</c>/<c>forceinline</c> hint (§3.6), applied to its accessors.</summary>
+        public InlineModifier Inline { get; }
+
+        /// <summary>True when declared <c>native</c> — an accessor published by link name, not a body.</summary>
+        public bool IsNative { get; }
+
         /// <summary>Initializes a property declaration.</summary>
         /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">Attributes attached to it.</param>
@@ -440,8 +446,11 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="isStatic">True when declared <c>static</c>.</param>
         /// <param name="dispatch">How it dispatches.</param>
         /// <param name="isSealed">True when the override was also declared <c>sealed</c>.</param>
+        /// <param name="inline">The inline hint to apply to its accessors.</param>
+        /// <param name="isNative">True when its accessors are published by link name.</param>
         public PropertyDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
-            string name, TypeSyntax type, IReadOnlyList<AccessorSyntax> accessors, bool isStatic, DispatchModifier dispatch, bool isSealed)
+            string name, TypeSyntax type, IReadOnlyList<AccessorSyntax> accessors, bool isStatic, DispatchModifier dispatch, bool isSealed,
+            InlineModifier inline, bool isNative)
             : base(span, attributes, docComment, visibility)
         {
             Name = name;
@@ -450,6 +459,8 @@ namespace Surtr.Compiler.Syntax.Ast
             IsStatic = isStatic;
             Dispatch = dispatch;
             IsSealed = isSealed;
+            Inline = inline;
+            IsNative = isNative;
         }
     }
 
@@ -559,7 +570,11 @@ namespace Surtr.Compiler.Syntax.Ast
         }
     }
 
-    /// <summary>An operator overload (§5.6). Always public and static, so neither is written.</summary>
+    /// <summary>
+    /// An operator overload (§5.6). Always public; <c>static</c> is the default, and a dispatch
+    /// modifier or an interface declaration makes it an instance method whose receiver is the first
+    /// parameter.
+    /// </summary>
     public sealed class OperatorDeclarationSyntax : DeclarationSyntax
     {
         /// <summary>
@@ -582,8 +597,14 @@ namespace Surtr.Compiler.Syntax.Ast
         /// </remarks>
         public TypeSyntax ReturnType { get; }
 
-        /// <summary>Its body.</summary>
-        public BlockStatementSyntax Body { get; }
+        /// <summary>How the operator dispatches (§3.3): <c>virtual</c>, <c>override</c> or <c>abstract</c> make it an instance method.</summary>
+        public DispatchModifier Dispatch { get; }
+
+        /// <summary>Whether <c>sealed</c> was written, which closes a virtual operator's branch.</summary>
+        public bool IsSealed { get; }
+
+        /// <summary>Its body, or <see langword="null"/> when the declaration ends at <c>;</c> — an abstract operator.</summary>
+        public BlockStatementSyntax? Body { get; }
 
         /// <summary>Initializes an operator declaration.</summary>
         /// <param name="span">The source the declaration covers.</param>
@@ -592,14 +613,19 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="op">The overloaded operator's token type.</param>
         /// <param name="parameters">Its parameters.</param>
         /// <param name="returnType">Its return type.</param>
-        /// <param name="body">Its body.</param>
+        /// <param name="dispatch">Its dispatch modifier, if one was written.</param>
+        /// <param name="isSealed">Whether <c>sealed</c> was written.</param>
+        /// <param name="body">Its body, or <see langword="null"/> for an abstract operator.</param>
         public OperatorDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment,
-            TokenType op, IReadOnlyList<ParameterSyntax> parameters, TypeSyntax returnType, BlockStatementSyntax body)
+            TokenType op, IReadOnlyList<ParameterSyntax> parameters, TypeSyntax returnType,
+            DispatchModifier dispatch, bool isSealed, BlockStatementSyntax? body)
             : base(span, attributes, docComment, Visibility.Public)
         {
             Operator = op;
             Parameters = parameters;
             ReturnType = returnType;
+            Dispatch = dispatch;
+            IsSealed = isSealed;
             Body = body;
         }
     }

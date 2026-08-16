@@ -297,14 +297,54 @@ namespace Surtr.Tests.Bytecode.Image
             Assert.Equal(9, runtime.Invoke(property.Getter!, receiver).AsInt);
         }
 
-        /// <summary>A module-level property has no receiver, so it cannot be native — that is a host global.</summary>
-        [Fact]
-        public void AModuleLevelNativeAccessor_IsRejected()
+        private const string ModuleGetterLink = "globals:get_value()";
+        private const string ModuleSetterLink = "globals:set_value(I)";
+
+        private static int _moduleValue;
+        private static SurtrValue ReadModuleValue(SurtrCallArguments arguments) => SurtrValue.CreateInt(_moduleValue);
+        private static SurtrValue WriteModuleValue(SurtrCallArguments arguments)
+        {
+            _moduleValue = arguments.GetInt(0);
+            return SurtrValue.Null;
+        }
+
+        /// <summary>A module-level property whose whole accessor pair is host code — no receiver.</summary>
+        private static SurtrModuleImage ModuleLevelNativePropertyImage()
         {
             var builder = new SurtrModuleBuilder("globals");
 
-            Assert.Throws<InvalidOperationException>(
-                () => builder.DefineProperty("value", SurtrClassReference.Integer).DeclareNativeGetter("x"));
+            builder.DefineProperty("value", SurtrClassReference.Integer)
+                .DeclareNativeGetter(ModuleGetterLink)
+                .DeclareNativeSetter(ModuleSetterLink);
+
+            return SurtrModuleImage.FromModule(builder.Build());
+        }
+
+        /// <summary>
+        /// A module-level `native` property has no receiver, but it is still an ordinary member
+        /// (§10): the compiler already relies on exactly this for `native let`/`native var` at
+        /// module scope, so the builder has to accept it rather than reject it as a leftover
+        /// host-global concept.
+        /// </summary>
+        [Fact]
+        public void AModuleLevelNativeAccessor_RoundTripsAndRuns()
+        {
+            var image = ModuleLevelNativePropertyImage();
+
+            using var runtime = new SurtrRuntime();
+            _moduleValue = 5;
+            runtime.DefineNativeBody(ModuleGetterLink, Entry(&ReadModuleValue));
+            runtime.DefineNativeBody(ModuleSetterLink, Entry(&WriteModuleValue));
+
+            var module = runtime.LoadModule(image);
+
+            Assert.True(module.TryGetMethods("get_value", out var getters));
+            Assert.True(module.TryGetMethods("set_value", out var setters));
+
+            Assert.Equal(5, runtime.Invoke(getters[0]).AsInt);
+
+            runtime.Invoke(setters[0], SurtrValue.CreateInt(9));
+            Assert.Equal(9, _moduleValue);
         }
 
         #endregion

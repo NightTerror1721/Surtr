@@ -754,15 +754,6 @@ namespace Surtr.Compiler.CodeGen
                 if (field.IsConst)
                     continue;
 
-                // §10: a `native` variable declares nothing here. It has no static slot — the host
-                // owns the storage — and the import that reaches it is interned at each use site, so
-                // defining a variable of the same name would give the module a second, dead one.
-                if (field.IsNative)
-                {
-                    builder.NativeVariable(field.Name);
-                    continue;
-                }
-
                 var variable = builder.DefineVariable(field.Name, _descriptors.Emit(field.Type), field.IsReadOnly, Visibility(field.Accessibility));
                 context.Declare(field, variable);
                 Attach(context, field, variable);
@@ -773,21 +764,56 @@ namespace Surtr.Compiler.CodeGen
                 var declared = builder.DefineProperty(property.Name, _descriptors.Emit(property.Type), Visibility(property.Accessibility));
 
                 if (property.Getter is MethodSymbol getter)
-                    context.Declare(getter, declared.DefineGetter());
+                {
+                    if (getter.IsNative)
+                    {
+                        // §10: a native accessor travels as its link name; every runtime that loads
+                        // the image publishes its own body with `DefineNativeBody` (§3).
+                        var native = builder.DeclareNativeFunction(
+                            getter.Name, _descriptors.Emit(getter.ReturnType), LinkName(getter));
+                        declared.BindGetter(native);
+                        context.Bind(getter, native);
+                    }
+                    else
+                    {
+                        context.Declare(getter, declared.DefineGetter());
+                    }
+                }
 
                 if (property.Setter is MethodSymbol setter)
-                    context.Declare(setter, declared.DefineSetter());
+                {
+                    if (setter.IsNative)
+                    {
+                        var native = builder.DeclareNativeFunction(
+                            setter.Name,
+                            _descriptors.Emit(setter.ReturnType),
+                            LinkName(setter),
+                            new[] { new SurtrParameterInfo("value", builder.TypeHandle(_descriptors.Emit(property.Type))) });
+                        declared.BindSetter(native);
+                        context.Bind(setter, native);
+                    }
+                    else
+                    {
+                        context.Declare(setter, declared.DefineSetter());
+                    }
+                }
             }
 
             foreach (var method in module.Methods)
             {
-                // A module-level `native fun` is a host global (§10): it goes in the import table
-                // rather than the method table, and a call site emits `CallGlobalNative`. Declared
-                // here as well as at each use so a module that only ever passes it around still
-                // fails to load when the host never registered it.
+                // A module-level `native fun` is a native method like any other (§10): it lands in
+                // the method table and its body is published by link name, so a module that only
+                // ever passes it around still fails to load when the host never registered it.
                 if (method.IsNative)
                 {
-                    builder.NativeFunction(method.Name);
+                    var native = builder.DeclareNativeFunction(
+                        _descriptors.EmitMethodName(method),
+                        _descriptors.Emit(method.ReturnType),
+                        LinkName(method),
+                        Parameters(context, method),
+                        Visibility(method.Accessibility));
+
+                    context.Bind(method, native);
                     continue;
                 }
 
@@ -806,11 +832,15 @@ namespace Surtr.Compiler.CodeGen
 
         private SurtrParameterInfo[] Parameters(EmitContext context, MethodSymbol method)
         {
-            var parameters = new SurtrParameterInfo[method.Parameters.Count];
+            var parameters = new SurtrParameterInfo[method.Parameters.Count - (method.Role == MethodRole.Operator && !method.IsStatic ? 1 : 0)];
+
+            // An instance operator names its receiver as its first parameter (§5.6); the runtime's
+            // receiver is implicit, so that one never enters the declared parameter list.
+            int first = method.Role == MethodRole.Operator && !method.IsStatic ? 1 : 0;
 
             for (int i = 0; i < parameters.Length; i++)
             {
-                var parameter = method.Parameters[i];
+                var parameter = method.Parameters[first + i];
 
                 // A varargs parameter is declared by its element type: the body sees an array of it,
                 // and the call site is what packs one.

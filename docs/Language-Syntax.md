@@ -614,6 +614,8 @@ switches that accessor to custom logic while leaving the other one auto-generate
 error. This is exactly the `get_x`/`set_x` accessor-method shape `SurtrPropertyBuilder` already
 wires for built-ins, applied to user-declared classes too.
 
+An `inline`/`forceinline` on the property applies to its accessors (§3.6).
+
 ### 3.5 Signatures: overloading and parameter lists
 
 ```
@@ -698,6 +700,25 @@ that machinery dwarfs the work.
   if inlining is *impossible* rather than merely unattractive, it is a **compile error naming the
   reason**, never a silent fallback to a normal call. A `forceinline` that quietly did nothing
   would fail exactly when you most wanted to know.
+
+**There is also a default, written nothing.** A call site with no modifier consults a cost heuristic
+(`CodeGen/InlineCost.cs`) that walks the callee's bound body and splices it when the body is cheap
+enough — the allowance is deliberately small, tuned to the shapes that make the machine's own
+overhead look silly: a field read, a constant, a single arithmetic step, an auto-property's
+`get`/`set`. `inline` raises the allowance to admit bodies of moderate size; `forceinline` admits
+everything the impossibility guards below let through. The heuristic never overrides those guards,
+and a body it declines is an ordinary call, so it can only make code smaller or leave it alone.
+
+Two decisions the heuristic makes that are worth spelling out:
+
+- **A constructor is never spliced.** What runs on construction is not its body alone but the chain
+  and the initializers the emitter prepends to it, so a splice would silently skip the base's
+  construction. A `super(...)` call names exactly such a body, and the cost heuristic or a stray
+  `inline` must not get it there.
+- **A property read honours `inline` and the heuristic on its getter.** Auto-properties go further:
+  both accessors are one instruction — a field load and a field store — so both always lower to the
+  backing field at the call site, virtual ones excepted (they have to dispatch for an override). The
+  setter side of a *computed* property is left as a direct call; the hint may be declined there.
 
 Four things make inlining genuinely impossible, and they are limits rather than policy, so
 `forceinline` rejects them at the declaration:
@@ -1197,11 +1218,31 @@ class Vec2 {
 
 An overload is declared with `operator` followed by the token it overloads, taking the operator's
 operands as ordinary parameters. `operator` is an introducer keyword in its own right (§3.2) —
-there is no `fun`, no `static` and no `public`, because **an overload is always public and always
-static and can be nothing else**, so writing either would be three tokens that carry no
-information. A use site resolves through it: `a + b` becomes `Vec2.operator+(a, b)` when both
-operands are `Vec2`. This is aimed squarely at game-math types (`Vec2`/`Vec3`/`Quaternion` and
-friends), where writing `a.add(b)` everywhere would cost real readability for no benefit.
+there is no `fun`, no `static` and no `public`, because **an overload is always public and `static`
+is its default**, so writing either would be three tokens that carry no information. A use site
+resolves through it: `a + b` becomes `Vec2.operator+(a, b)` when both operands are `Vec2`. This is
+aimed squarely at game-math types (`Vec2`/`Vec3`/`Quaternion` and friends), where writing
+`a.add(b)` everywhere would cost real readability for no benefit.
+
+**A dispatch modifier makes an operator an instance method.** `virtual`, `override`, `abstract` or
+`sealed` — or declaring the operator on an *interface* — turns it from a static method taking every
+operand into an instance method whose receiver is the first parameter, written as an ordinary
+parameter like any other:
+
+```
+virtual operator+(self: Vec2, other: Vec2): Vec2   // `this` is `self`
+abstract operator+(self: IAddable, other: IAddable): IAddable;   // a contract
+```
+
+The call still reads `a + b`, but it dispatches through `a` like any virtual or interface call:
+a `virtual operator` reaches a vtable slot, an interface's operator is reached through the
+interface's method slots, and an `override` in a class implements a base's or an interface's
+operator the same way it implements a method — an interface implementation may use the interface
+as the receiver, since the receiver never enters the method table's signature. The receiver of an
+instance operator has to be the declaring type, or an ancestor when overriding one; a plain
+(static) operator has to take the declaring type among its operands. `operator as` is the
+exception and stays static always: its single parameter is the source and its target is the
+return, and nothing about a conversion ever dispatches.
 
 **What may be overloaded**, and what each declaration gives you for free:
 
@@ -1267,7 +1308,9 @@ Four of these need their behaviour pinned down, because the declaration alone do
   site check for a user-defined operator.
 
 At least one operand must be the declaring type: a type cannot define how two types that are both
-foreign to it interact.
+foreign to it interact. An instance operator is stricter — its receiver is its first parameter, so
+that parameter must be the declaring type or an ancestor, since the receiver is what the operator
+operates on.
 
 ### 5.7 Operators and precedence
 
@@ -1784,26 +1827,47 @@ fun report(): void {
     log("width is $ScreenWidth");
     TimeScale = 0.5;
 }
+
+class Sprite {
+    public let handle: int;
+    constructor(handle: int) { this.handle = handle; }
+
+    // A hybrid Surtr/host class: `move` is compiled Surtr, `setPosition` is a member whose body
+    // is host code — both live in the same method table, and nothing about a call site tells
+    // them apart.
+    public fun move(dx: float, dy: float): void { this.setPosition(dx, dy); }
+    public native fun setPosition(dx: float, dy: float): void;
+}
 ```
 
-A `native` declaration is a signature with no body, in the same "just the shape, no
-implementation" spirit as an interface member (§2.3) — it cannot legally be given one; the body
-lives on the host side, wired through `SurtrNativeFunction`/`FromFunctionPointer`. What it gives
-the compiler is a name and a type to check call sites against, and a slot in the module's native
-import table — distinct from the module's regular call table, matching `CLAUDE.md`'s note that
-`CallGlobalNative` is the one opcode split out by *which table* the target lives in, not by
-`ImplKind`. A module that declares a `native` the host never registers under that exact name fails
-to load, the same way an unresolved `SurtrTypeHandle` does.
+`native` is a modifier on an ordinary member — a method, or a property's accessor(s) — not a
+declaration form of its own. It says *where the body lives*, exactly the way `SurtrMethodImplKind`
+distinguishes bytecode from host code at the runtime level (`CLAUDE.md`): a `native` member is a
+signature with no Surtr body, the same "just the shape" spirit as an interface member (§2.3), and
+the body lives on the host side instead, published under the member's **link name** — derived from
+the owning type and the signature (`game:Sprite.setPosition(FF)`) unless declared explicitly, or
+just the bare name for a module-level member, since there is no owning type to prefix it with. A
+module naming a `native` member the host never publishes a body for under that exact link name
+fails to load, the same way an unresolved `SurtrTypeHandle` does — `SurtrRuntime.DefineNativeBody`
+is what a host calls to satisfy one, before `LoadModule`.
 
-`native` declarations live at module scope only — host globals are genuinely global per
-`CLAUDE.md` ("the single exception is host-defined native variables and functions"), not
-per-class, so there's no `native` member inside a `class`/`interface` body.
+There is **no separate table for a `native` member** — module-level or inside a class, it lands in
+the same method table every other member does, and a call to it is an ordinary `CallLocalModule`,
+`CallModule` or dispatch opcode like any other. Only `ImplKind` (Bytecode vs. Native) says how the
+body is reached; nothing about where the *declaration* lives changes that shape. This is what makes
+a hybrid class possible: `Sprite` above compiles `move`'s body and links `setPosition`'s, and a
+caller of either sees one method table with no seam between them.
+
+`native` is legal on a module-level member or a member inside a `class` — never inside an
+`interface`, which cannot carry a body of any kind (§2.3), native or otherwise.
 
 **`native let` is read-only, `native var` is writable** from Surtr, mirroring the same distinction
-everywhere else in the language. The host chooses which it registers, so a value it needs to keep
-authority over (a frame counter, a screen dimension) is exposed as `let` and can only change on the
-host's own terms, while genuinely shared state (`TimeScale`) can be exposed as `var`. There is no
-third form — a host global that Surtr should never see simply isn't registered.
+everywhere else in the language — a `native let` compiles to a property with a native getter only,
+a `native var` to one with both accessors, exactly as `let`/`var` do for an ordinary field. The host
+chooses which it registers, so a value it needs to keep authority over (a frame counter, a screen
+dimension) is exposed as `let` and can only change on the host's own terms, while genuinely shared
+state (`TimeScale`) can be exposed as `var`. There is no third form — state a host does not want
+Surtr to see simply is not declared.
 
 ---
 
@@ -1993,8 +2057,9 @@ In summary, the syntax obliged the runtime to grow:
   attributes (§11);
 - **natively-tagged nullable primitives** (§5.1);
 - **a `range` type** (§5.4) and the `for-in` lowering that keeps it from allocating (§4.2);
-- **a per-module native import table**, so a `native` declaration binds by name at load and a
-  missing one fails there rather than at the instruction that reaches it (§10);
+- **binding by name at load**, so a `native` declaration — module-level or on a class — resolves
+  against the host's published bodies when its module loads, and a missing one fails there rather
+  than at the instruction that reaches it (§10);
 - **a boxing path that can name a class**, for `value class` (§2.9);
 - **a descriptor form for a built-in's own type parameter** (§13.4);
 - **an instruction budget on a run**, so a `const fun` cannot hang the compiler (§7.2).

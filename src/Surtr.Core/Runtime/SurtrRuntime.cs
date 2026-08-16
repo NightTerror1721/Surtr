@@ -155,13 +155,6 @@ namespace Surtr.Runtime
             }
         }
 
-        /// <summary>The host's global variables and functions.</summary>
-        public SurtrNativeGlobalTable Globals
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => _context.Globals;
-        }
-
         /// <summary>How many objects the heap currently holds room for.</summary>
         public int HeapCapacity
         {
@@ -619,7 +612,6 @@ namespace Surtr.Runtime
 
                 SurtrTypeLinker.LinkModule(module, ref _context.NextInterfaceId);
 
-                BindNativeImports(module);
                 MaterializeStringConstants(module);
                 MaterializeAttributes(module);
                 RegisterStaticBlocks(module);
@@ -932,56 +924,6 @@ namespace Surtr.Runtime
         }
 
         /// <summary>
-        /// Binds every <c>native</c> the module declares to the host global of that name.
-        /// </summary>
-        /// <remarks>
-        /// A module that names a host global nobody registered fails here, the same way an
-        /// unresolved <see cref="SurtrTypeHandle"/> does, rather than at whichever instruction
-        /// eventually reaches it. Binding by name is also what unties a compiled module from the
-        /// order a particular host happened to register its globals in.
-        /// </remarks>
-        private void BindNativeImports(SurtrModule module)
-        {
-            var chunk = module.Chunk;
-            var globals = _context.Globals;
-
-            var variableNames = chunk.NativeVariableImports;
-            if (variableNames.Length != 0)
-            {
-                var slots = new SurtrNativeArray<int>(variableNames.Length);
-                for (int i = 0; i < variableNames.Length; i++)
-                {
-                    if (!globals.TryGetVariable(variableNames[i], out var variable))
-                    {
-                        slots.Dispose();
-                        throw new InvalidOperationException(
-                            $"Module '{module.Path}' declares native variable '{variableNames[i]}', which this runtime has no host global for.");
-                    }
-
-                    slots[i] = variable.Index;
-                }
-
-                chunk.NativeVariableSlots = slots;
-            }
-
-            var functionNames = chunk.NativeFunctionImports;
-            if (functionNames.Length != 0)
-            {
-                var functions = new SurtrNativeGlobalFunction[functionNames.Length];
-                for (int i = 0; i < functionNames.Length; i++)
-                {
-                    if (!globals.TryGetFunction(functionNames[i], out var function))
-                        throw new InvalidOperationException(
-                            $"Module '{module.Path}' declares native function '{functionNames[i]}', which this runtime has no host global for.");
-
-                    functions[i] = function;
-                }
-
-                chunk.NativeFunctionTable = functions;
-            }
-        }
-
-        /// <summary>
         /// Turns the chunk's CLR string literals into real string objects and patches their
         /// references into the constant pool.
         /// </summary>
@@ -1132,14 +1074,6 @@ namespace Surtr.Runtime
         public bool TryGetNativeClass(string fullName, out SurtrClass nativeClass)
             => _context.NativeClasses.TryGetValue(fullName, out nativeClass!);
 
-        /// <summary>Publishes a host global variable and freezes its table index.</summary>
-        public SurtrNativeGlobalVariable DefineGlobal(string name, SurtrClassReference variableType, bool isReadOnly = false)
-        {
-            var variable = new SurtrNativeGlobalVariable(name, TypeHandle(variableType), isReadOnly);
-            _context.Globals.Register(variable);
-            return variable;
-        }
-
         /// <summary>
         /// Publishes the body of a native member, under the name its declaration links against.
         /// </summary>
@@ -1149,7 +1083,7 @@ namespace Surtr.Runtime
         /// from an image: the image holds the name and the signature, and the address can only come
         /// from the process doing the loading. Register every body a module needs <em>before</em>
         /// loading it - a name nothing was published under fails the load, next to where an
-        /// unresolved type or an unregistered host global fails it, and for the same reason.
+        /// unresolved type does, and for the same reason.
         /// </para>
         /// <para>
         /// Publishing the same name twice replaces the body, which is what makes re-registering
@@ -1172,18 +1106,6 @@ namespace Surtr.Runtime
         /// <summary>Looks up a native member body this runtime has been given.</summary>
         public bool TryGetNativeBody(string linkName, out SurtrNativeEntryPoint entryPoint)
             => _context.NativeBodies.TryGetValue(linkName, out entryPoint);
-
-        /// <summary>Publishes a host global function and freezes its table index.</summary>
-        public SurtrNativeGlobalFunction DefineGlobalFunction(
-            string name,
-            SurtrClassReference returnType,
-            SurtrParameterInfo[] parameters,
-            SurtrNativeEntryPoint entryPoint)
-        {
-            var function = new SurtrNativeGlobalFunction(name, TypeHandle(returnType), parameters, entryPoint);
-            _context.Globals.Register(function);
-            return function;
-        }
         #endregion
 
         #region Execution
@@ -1289,8 +1211,6 @@ namespace Surtr.Runtime
             ReadOnlySpan<SurtrRawValue> extraRoots,
             bool fullCollection)
         {
-            var globals = _context.Globals;
-
             // The runtime's own roots (interned strings, anything the host pinned) and the
             // caller's transient ones have to reach the collector as one span. Staging the
             // transients in the root buffer's slack past RootCount keeps that free of an
@@ -1308,9 +1228,6 @@ namespace Surtr.Runtime
             return _context.EntityRegistry.CollectGarbage(
                 stackStart,
                 stackTop,
-                globals.VariableTable.Pointer,
-                globals.ReferenceVariableSlots.Pointer,
-                globals.ReferenceVariableSlots.Length,
                 _context.LiveStaticBlocks,
                 new ReadOnlySpan<SurtrRawValue>(_context.Roots, 0, rootCount + extraCount),
                 fullCollection);

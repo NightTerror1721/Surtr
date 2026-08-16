@@ -701,16 +701,7 @@ namespace Surtr.Compiler.Binding
                 return null;
 
             var method = result.Method!;
-            BoundExpression call = new BoundCallExpression(
-                syntax,
-                null,
-                method,
-                new[]
-                {
-                    Convert(left, method.Parameters[0].Type, syntax.Span),
-                    Convert(right, method.Parameters[1].Type, syntax.Span),
-                },
-                isVirtual: false);
+            BoundExpression call = BindOperatorCall(syntax, left, new[] { right }, method);
 
             // `<`, `<=`, `>` and `>=` are all declared through `operator<=>` alone (§5.6) — the user
             // writes only the three-way form, so the relational ones compare its `int` result
@@ -725,6 +716,45 @@ namespace Surtr.Compiler.Binding
                             syntax, @operator, call, new BoundLiteralExpression(syntax, _factory.Int, 0L), _factory.Bool),
                 _ => call,
             };
+        }
+
+        /// <summary>
+        /// Builds the call an operator expression lowers to. A plain operator is a static method
+        /// taking every operand; one declared <c>virtual</c>/<c>override</c>/<c>abstract</c>, or in
+        /// an interface, is an instance method whose receiver is the first parameter (§5.6) — so
+        /// the call goes through the receiver instead of naming a static, which is what lets the
+        /// dispatch reach a vtable slot or an interface's method slots like any other method call.
+        /// </summary>
+        private BoundExpression BindOperatorCall(
+            SyntaxNode syntax,
+            BoundExpression receiver,
+            IReadOnlyList<BoundExpression> operands,
+            MethodSymbol method)
+        {
+            if (method.IsStatic)
+            {
+                // Static: the receiver is argument zero like every other operand, and the call
+                // names the method directly.
+                var arguments = new BoundExpression[operands.Count + 1];
+                arguments[0] = Convert(receiver, method.Parameters[0].Type, syntax.Span);
+                for (int i = 0; i < operands.Count; i++)
+                    arguments[i + 1] = Convert(operands[i], method.Parameters[i + 1].Type, syntax.Span);
+
+                return new BoundCallExpression(syntax, null, method, arguments, isVirtual: false);
+            }
+
+            // Instance: parameter zero is the receiver and the call is dispatched through it —
+            // virtually when the operator dispatches and the receiver could be overridden.
+            var boundReceiver = Convert(receiver, method.Parameters[0].Type, syntax.Span);
+
+            var callArguments = new BoundExpression[operands.Count];
+            for (int i = 0; i < operands.Count; i++)
+                callArguments[i] = Convert(operands[i], method.Parameters[i + 1].Type, syntax.Span);
+
+            bool virtualCall = method.Dispatch != MethodDispatch.Direct
+                && !(boundReceiver.Type.NonNullable is NamedTypeSymbol { IsSealed: true });
+
+            return new BoundCallExpression(syntax, boundReceiver, method, callArguments, virtualCall);
         }
 
         private static TokenType TokenFor(BinaryOperator @operator) => @operator switch
@@ -861,7 +891,7 @@ namespace Surtr.Compiler.Binding
             var result = _overloads.Resolve(candidates, new[] { new ArgumentInfo(operand.Type) });
 
             return result.IsResolved
-                ? new BoundCallExpression(syntax, null, result.Method!, new[] { operand }, isVirtual: false)
+                ? BindOperatorCall(syntax, operand, Array.Empty<BoundExpression>(), result.Method!)
                 : null;
         }
         #endregion
@@ -2043,20 +2073,10 @@ namespace Surtr.Compiler.Binding
 
             var method = result.Method!;
             var bound = value is null
-                ? new[]
-                {
-                    Convert(target, method.Parameters[0].Type, syntax.Span),
-                    Convert(index, method.Parameters[1].Type, syntax.Span),
-                }
-                : new[]
-                {
-                    Convert(target, method.Parameters[0].Type, syntax.Span),
-                    Convert(index, method.Parameters[1].Type, syntax.Span),
-                    Convert(value, method.Parameters[2].Type, syntax.Span),
-                };
+                ? new[] { index }
+                : new[] { index, value };
 
-            // Static, so there is no receiver: the target is argument zero like every other operand.
-            return new BoundCallExpression(syntax, null, method, bound, isVirtual: false);
+            return BindOperatorCall(syntax, target, bound, method);
         }
 
         /// <summary>

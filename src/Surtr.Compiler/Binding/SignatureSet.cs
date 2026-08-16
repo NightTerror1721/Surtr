@@ -46,24 +46,31 @@ namespace Surtr.Compiler.Binding
     {
         private readonly TypeSymbolFactory _factory;
         private readonly SurtrDiagnosticBag _diagnostics;
-        private readonly string _sourceName;
 
         private readonly Dictionary<Signature, MethodSymbol> _seen =
             new Dictionary<Signature, MethodSymbol>(SignatureComparer.Instance);
 
-        internal SignatureSet(TypeSymbolFactory factory, SurtrDiagnosticBag diagnostics, string sourceName)
+        internal SignatureSet(TypeSymbolFactory factory, SurtrDiagnosticBag diagnostics)
         {
             _factory = factory;
             _diagnostics = diagnostics;
-            _sourceName = sourceName;
         }
 
         /// <summary>Records a method, reporting it if something already occupies its signature.</summary>
-        internal void Add(MethodSymbol method, SourceSpan span)
+        /// <param name="method">The method to record.</param>
+        /// <param name="sourceName">Which source it was declared in — a module's members span several files.</param>
+        /// <param name="span">The range of source the method was declared over.</param>
+        internal void Add(MethodSymbol method, string sourceName, SourceSpan span)
         {
-            var parameters = new TypeSymbol[method.Parameters.Count];
-            for (int i = 0; i < parameters.Length; i++)
-                parameters[i] = Erase(method.Parameters[i].Type);
+            // An instance operator's first parameter is its receiver (§5.6), which the runtime
+            // keeps implicit — so its signature key excludes it, exactly as a method's does, and
+            // two operators differing only in the receiver would collide in the real method table
+            // with nothing here to catch it.
+            int first = method.Role == MethodRole.Operator && !method.IsStatic ? 1 : 0;
+
+            var parameters = new TypeSymbol[method.Parameters.Count - first];
+            for (int i = first; i < method.Parameters.Count; i++)
+                parameters[i - first] = Erase(method.Parameters[i].Type);
 
             var signature = new Signature(
                 method.Name,
@@ -75,7 +82,7 @@ namespace Surtr.Compiler.Binding
                 _diagnostics.ReportError(
                     SurtrDiagnosticCode.DuplicateOverload,
                     $"'{method.ToDisplayString()}' has the same signature as an overload already declared here.",
-                    _sourceName,
+                    sourceName,
                     span);
 
                 return;

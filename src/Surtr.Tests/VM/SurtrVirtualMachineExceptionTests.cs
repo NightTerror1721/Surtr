@@ -298,16 +298,19 @@ namespace Surtr.Tests.VM
         public void AHostExceptionWithNoCounterpart_StaysANativeProxy()
         {
             using var runtime = new SurtrRuntime();
-            runtime.DefineGlobalFunction(
-                "boom", SurtrClassReference.Void, Array.Empty<SurtrParameterInfo>(),
-                SurtrNativeEntryPoint.FromDelegate(ThrowUnmapped));
 
             var module = new SurtrModule("test");
+            var native = new SurtrNativeMethodInfo(
+                "boom", SurtrMethodDispatch.Direct, SurtrMethodRole.Normal, isOverride: false,
+                module.TypeHandles.GetOrAdd(SurtrClassReference.Void), Array.Empty<SurtrParameterInfo>(),
+                isStatic: true, SurtrVisibility.Public, declaringType: null,
+                SurtrNativeEntryPoint.FromDelegate(ThrowUnmapped));
+
             var builder = new BytecodeBuilder();
-            int import = builder.AddNativeFunction(runtime.Globals.TryGetFunction("boom", out var fn) ? fn : throw new InvalidOperationException());
+            int methodIndex = builder.AddMethod(native);
 
             int tryStart = builder.Position;
-            builder.Op(OpCode.CallGlobalNative).I16(import).U8(0).U8(0);
+            builder.Op(OpCode.InvokeStatic).I16(methodIndex).U8(0).U8(0);
             int tryEnd = builder.Position;
 
             int handlerOffset = builder.Position;
@@ -350,14 +353,17 @@ namespace Surtr.Tests.VM
                 .Op(OpCode.PushI32).I32(41).Op(OpCode.ReturnValue)
                 .Build(innerModule, localCount: 0, maxStackSize: 4);
 
-            var function = runtime.DefineGlobalFunction(
-                "reenter", SurtrClassReference.Integer, Array.Empty<SurtrParameterInfo>(),
+            var outerModule = new SurtrModule("outer");
+            var native = new SurtrNativeMethodInfo(
+                "reenter", SurtrMethodDispatch.Direct, SurtrMethodRole.Normal, isOverride: false,
+                outerModule.TypeHandles.GetOrAdd(SurtrClassReference.Integer), Array.Empty<SurtrParameterInfo>(),
+                isStatic: true, SurtrVisibility.Public, declaringType: null,
                 SurtrNativeEntryPoint.FromDelegate(ReentrantBody));
 
-            var outerModule = new SurtrModule("outer");
             var outerBuilder = new BytecodeBuilder();
+            int methodIndex = outerBuilder.AddMethod(native);
             var outer = outerBuilder
-                .Op(OpCode.CallGlobalNative).I16(outerBuilder.AddNativeFunction(function)).U8(0).U8(1) // -> reenters, returns 41 + 1 = 42
+                .Op(OpCode.InvokeStatic).I16(methodIndex).U8(0).U8(1) // -> reenters, returns 41 + 1 = 42
                 .Op(OpCode.PushI32).I32(1)
                 .Op(OpCode.Add)                                              // proves the outer frame resumed: 42 + 1
                 .Op(OpCode.ReturnValue)

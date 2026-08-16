@@ -2192,17 +2192,8 @@ namespace Surtr.Compiler.CodeGen
                     Code.StoreLocal(ParameterSlot(parameter.Parameter));
                     return;
 
-                case BoundFieldExpression field:
+case BoundFieldExpression field:
                 {
-                    // §10: a `native var` is the host's storage, reached through this module's import
-                    // table rather than through a static slot it does not have.
-                    if (field.Field.IsNative)
-                    {
-                        value();
-                        Code.StoreGlobal(field.Field.Name);
-                        return;
-                    }
-
                     var info = Field(field.Field);
 
                     if (field.Field.IsStatic)
@@ -2212,7 +2203,8 @@ namespace Surtr.Compiler.CodeGen
                         return;
                     }
 
-                    Expression(field.Receiver ?? throw Unsupported($"a write to '{field.Field.Name}' with no receiver"));
+                    var receiver = field.Receiver ?? throw Unsupported($"a write to '{field.Field.Name}' with no receiver");
+                    Expression(receiver);
                     value();
                     Code.StoreField(info);
                     return;
@@ -2222,6 +2214,12 @@ namespace Surtr.Compiler.CodeGen
                 {
                     var setter = property.Property.Setter
                         ?? throw Unsupported($"a write to '{property.Property.Name}', which has no setter");
+
+                    if (TryInlineAutoAccessorSet(property.Property, property.Receiver, value))
+                        return;
+
+                    if (TryInlinePropertySetter(property.Property, property.Receiver, value))
+                        return;
 
                     if (!property.Property.IsStatic)
                     {
@@ -2273,14 +2271,6 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitFieldRead(BoundFieldExpression field)
         {
-            // §10: a host global has no field slot to read — it lives in the runtime's global table
-            // and the module names it by an import bound when the module loads.
-            if (field.Field.IsNative)
-            {
-                Code.LoadGlobal(field.Field.Name);
-                return;
-            }
-
             var info = Field(field.Field);
 
             if (field.Field.IsStatic)
@@ -2322,6 +2312,12 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
+            if (TryInlineAutoAccessorGet(property.Property, property.Receiver, discardResult: false))
+                return;
+
+            if (TryInlinePropertyGetter(property))
+                return;
+
             var getter = property.Property.Getter
                 ?? throw Unsupported($"a read of '{property.Property.Name}', which has no getter");
 
@@ -2338,6 +2334,230 @@ namespace Surtr.Compiler.CodeGen
         /// <summary>Whether <paramref name="property"/> is, by identity, the built-in dictionary's <c>length</c>.</summary>
         private static bool IsDictionaryLength(PropertySymbol property)
             => property.Getter is { } getter && IsDictionaryMember(getter, MemberNames.Getter("length"));
+
+        /// <summary>
+        /// Replaces a read of an auto-property by the field load that is its whole body (§3.4, §3.6).
+        /// </summary>
+        /// <remarks>
+        /// An auto-accessor has no bound body for <see cref="TryInline"/> to splice, so the read is
+        /// lowered here, in the shape <see cref="ModuleEmitter.EmitAutoAccessor"/> would have given
+        /// the body: a static one is the backing field, an instance one is the field off the
+        /// receiver. Only a non-virtual accessor can be replaced — a virtual one has to dispatch so
+        /// an override runs — and a value class's receiver is the wrapped field, not an instance to
+        /// read a field from (§2.9).
+        /// </remarks>
+        private bool TryInlineAutoAccessorGet(PropertySymbol property, BoundExpression? receiver, bool discardResult)
+        {
+            var getter = property.Getter;
+            if (getter is null || getter.Dispatch != MethodDispatch.Direct || !IsAutoAccessor(property, getter))
+                return false;
+
+            if (property.IsStatic)
+            {
+                Code.LoadStaticField(Field(property.BackingField!));
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            if (receiver is null || receiver.Type.NonNullable.TypeKind == TypeSymbolKind.ValueClass)
+                return false;
+
+            Expression(receiver);
+            Code.LoadField(Field(property.BackingField!));
+            if (discardResult)
+                Code.Pop();
+            return true;
+        }
+
+        /// <summary>
+        /// Replaces a write to an auto-property by the field store that is its whole body (§3.4, §3.6).
+        /// </summary>
+        /// <remarks>
+        /// The inverse of <see cref="TryInlineAutoAccessorGet"/>: a static one stores the backing
+        /// field, an instance one stores the field off the receiver. The value is still emitted by
+        /// the caller's <paramref name="value"/> callback, between the receiver and the store, which
+        /// is the order every other write target uses.
+        /// </remarks>
+        private bool TryInlineAutoAccessorSet(PropertySymbol property, BoundExpression? receiver, Action value)
+        {
+            var setter = property.Setter;
+            if (setter is null || setter.Dispatch != MethodDispatch.Direct || !IsAutoAccessor(property, setter))
+                return false;
+
+            if (property.IsStatic)
+            {
+                value();
+                Code.StoreStaticField(Field(property.BackingField!));
+                return true;
+            }
+
+            if (receiver is null || receiver.Type.NonNullable.TypeKind == TypeSymbolKind.ValueClass)
+                return false;
+
+            Expression(receiver);
+            value();
+            Code.StoreField(Field(property.BackingField!));
+            return true;
+        }
+
+        /// <summary>Whether an accessor is one the emitter supplies against a backing field, rather than one a body was bound for.</summary>
+        private bool IsAutoAccessor(PropertySymbol property, MethodSymbol accessor)
+            => property.BackingField is not null
+                && !accessor.IsNative
+                && (_context.Bodies is null || !_context.Bodies.ContainsKey(accessor));
+
+        /// <summary>
+        /// Splices an explicit getter at its read site (§3.6), by the hint written on the property or
+        /// by the cost heuristic, whichever lets it in.
+        /// </summary>
+        /// <remarks>
+        /// A property read reaches the getter through <see cref="EmitPropertyRead"/>, not through
+        /// <see cref="EmitCall"/> — so without this the <c>inline</c> a property declares would never
+        /// be honoured. The getter is shaped as the zero-argument call it is, and the rest is the
+        /// ordinary splice. Only a non-virtual getter can be replaced: the read dispatches a virtual
+        /// one so an override runs, exactly as the auto-accessor path requires.
+        /// </remarks>
+        private bool TryInlinePropertyGetter(BoundPropertyExpression property)
+        {
+            var getter = property.Property.Getter;
+            if (getter is null)
+                return false;
+
+            // A virtual or native getter can never be spliced - the synthetic zero-argument call
+            // built below always claims non-virtual, so TryInline's own dispatch guard cannot catch
+            // it and this check has to stand in for it. forceinline still has to fail loudly here
+            // rather than silently fall through to an ordinary (possibly virtual) call the way the
+            // `inline` hint is allowed to.
+            if (getter.Dispatch != MethodDispatch.Direct || getter.IsNative)
+            {
+                if (getter.IsForceInline)
+                    throw Unsupported($"'forceinline {getter.Name}', whose body is not available to splice");
+
+                return false;
+            }
+
+            if (!getter.IsInline && !getter.IsForceInline)
+            {
+                if (_context.Bodies is null || !_context.Bodies.TryGetValue(getter, out var body))
+                    return false;
+
+                if (!InlineCost.WorthInline(body, declaredInline: false))
+                    return false;
+            }
+
+            var call = new BoundCallExpression(property.Syntax, property.Receiver, getter, Array.Empty<BoundExpression>(), isVirtual: false);
+            if (TryInline(call, discardResult: false))
+                return true;
+
+            if (getter.IsForceInline)
+                throw Unsupported($"'forceinline {getter.Name}', whose body is not available to splice");
+
+            return false;
+        }
+
+        /// <summary>
+        /// Splices an explicit setter at its write site (§3.6), by the hint written on the property
+        /// or by the cost heuristic, whichever lets it in — the write-side twin of
+        /// <see cref="TryInlinePropertyGetter"/>.
+        /// </summary>
+        /// <remarks>
+        /// A property write reaches the setter through <see cref="Store"/>, which does not always
+        /// have a <see cref="BoundExpression"/> for the value to hand <see cref="TryInline"/> — a
+        /// compound assignment or an increment/decrement has already lowered it into a plain local
+        /// by the time <see cref="Store"/> runs, and only hands over an <c>Action</c> that emits
+        /// whatever the value turned out to be. <see cref="TryInlineSetterBody"/> below is that same
+        /// splice, built directly against <paramref name="value"/> instead of a bound argument list.
+        /// Only a non-virtual setter can be replaced: a write dispatches a virtual one so an override
+        /// runs, exactly as the getter and the auto-accessor paths require.
+        /// </remarks>
+        private bool TryInlinePropertySetter(PropertySymbol property, BoundExpression? receiver, Action value)
+        {
+            var setter = property.Setter;
+            if (setter is null)
+                return false;
+
+            // Mirrors the same guard on TryInlinePropertyGetter, for the same reason: a virtual or
+            // native setter can never be spliced, but forceinline still has to fail loudly here
+            // instead of silently falling through to an ordinary (possibly virtual) call.
+            if (setter.Dispatch != MethodDispatch.Direct || setter.IsNative)
+            {
+                if (setter.IsForceInline)
+                    throw Unsupported($"'forceinline {setter.Name}', whose body is not available to splice");
+
+                return false;
+            }
+
+            if (!setter.IsInline && !setter.IsForceInline)
+            {
+                if (_context.Bodies is null || !_context.Bodies.TryGetValue(setter, out var costBody))
+                    return false;
+
+                if (!InlineCost.WorthInline(costBody, declaredInline: false))
+                    return false;
+            }
+
+            if (TryInlineSetterBody(setter, receiver, value))
+                return true;
+
+            if (setter.IsForceInline)
+                throw Unsupported($"'forceinline {setter.Name}', whose body is not available to splice");
+
+            return false;
+        }
+
+        /// <summary>
+        /// The actual splice for <see cref="TryInlinePropertySetter"/>, once the hint or the
+        /// heuristic has already let the setter in. Mirrors <see cref="TryInline"/>'s guards and
+        /// receiver handling, but feeds the setter's one parameter from <paramref name="value"/>
+        /// rather than a bound argument, and never carries a result — a setter always returns void,
+        /// so there is nothing here that plays <see cref="TryInline"/>'s tail-return or result-local
+        /// role.
+        /// </summary>
+        private bool TryInlineSetterBody(MethodSymbol setter, BoundExpression? receiver, Action value)
+        {
+            if (_context.Bodies is null || !_context.Bodies.TryGetValue(setter, out var body))
+                return false;
+
+            if (_inlines.Count >= MaxInlineDepth)
+                return false;
+
+            // Guards against a setter splicing itself, directly or through another inline function -
+            // see TryInline's identical checks for why.
+            if (ReferenceEquals(setter, _symbol))
+                return false;
+
+            foreach (var frame in _inlines)
+            {
+                if (ReferenceEquals(frame.Method, setter))
+                    return false;
+            }
+
+            SurtrLocal? receiverSlot = null;
+            if (receiver is not null)
+            {
+                var slot = _method.DeclareLocal("$inlineThis");
+                Expression(receiver);
+                Code.StoreLocal(slot);
+                receiverSlot = slot;
+            }
+
+            var valueSlot = _method.DeclareLocal("$inline$" + setter.Parameters[0].Name);
+            value();
+            Code.StoreLocal(valueSlot);
+            _splicedParameters[setter.Parameters[0]] = valueSlot;
+
+            var exit = Code.NewLabel();
+            _inlines.Add(new InlineFrame(setter, exit, default, false, receiverSlot, _finallies.Count));
+            Statement(body);
+            _inlines.RemoveAt(_inlines.Count - 1);
+
+            if (Code.IsReachable)
+                Code.Jump(exit);
+
+            Code.MarkLabel(exit);
+            return true;
+        }
 
         private void EmitObjectCreation(BoundObjectCreationExpression creation)
         {
@@ -2472,13 +2692,20 @@ namespace Surtr.Compiler.CodeGen
             if (TryEmitDictionaryOperation(call, discardResult))
                 return;
 
-            if (call.Method.IsInline || call.Method.IsForceInline)
+            if (call.Method.IsForceInline)
             {
                 if (TryInline(call, discardResult))
                     return;
 
-                if (call.Method.IsForceInline)
-                    throw Unsupported($"'forceinline fun {call.Method.Name}', whose body is not available to splice");
+                throw Unsupported($"'forceinline fun {call.Method.Name}', whose body is not available to splice");
+            }
+
+            // `inline` is a hint and the heuristic a guess: a body either of them names that cannot
+            // be spliced falls through to a real call rather than failing the whole module.
+            if (call.Method.IsInline || ShouldInlineByCost(call))
+            {
+                if (TryInline(call, discardResult))
+                    return;
             }
 
             if (call.Receiver is not null)
@@ -2509,19 +2736,6 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private void EmitResolvedCall(MethodSymbol method, bool virtualCall, bool discardResult)
         {
-            // §10's one genuinely global category. `CallGlobalNative` is not about the body being
-            // native — a native class member is called like anything else — but about the target
-            // living in the host's table rather than in a module's, which is a different namespace.
-            if (method.IsNative && method.ContainingType is null)
-            {
-                Code.CallGlobal(
-                    method.Name,
-                    method.Parameters.Count,
-                    discardResult || method.ReturnType.IsVoid ? 0 : 1);
-
-                return;
-            }
-
             if (_context.TryGetBuilder(method, out var local))
             {
                 // The one case where the call site rather than the callee decides: a `super` call,
@@ -2695,6 +2909,35 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
+        /// Whether the default heuristic — no <c>inline</c> written — still wants this body spliced
+        /// (§3.6).
+        /// </summary>
+        /// <remarks>
+        /// The cheap guards <see cref="TryInline"/> would apply are checked here too, so a body the
+        /// splice could not reach is not walked for nothing; the guards stay authoritative and are
+        /// re-checked there, since the cost walk can never be wrong in the permissive direction.
+        /// </remarks>
+        private bool ShouldInlineByCost(BoundCallExpression call)
+        {
+            if (call.IsVirtual || call.Method.IsNative || call.Method.Role == MethodRole.Constructor)
+                return false;
+
+            if (_context.Bodies is null || !_context.Bodies.TryGetValue(call.Method, out var body))
+                return false;
+
+            if (ReferenceEquals(call.Method, _symbol))
+                return false;
+
+            foreach (var frame in _inlines)
+            {
+                if (ReferenceEquals(frame.Method, call.Method))
+                    return false;
+            }
+
+            return InlineCost.WorthInline(body, declaredInline: false);
+        }
+
+        /// <summary>
         /// Splices an <c>inline</c> call site (§3.6), if the body is available and it is safe to.
         /// </summary>
         /// <remarks>
@@ -2709,6 +2952,12 @@ namespace Surtr.Compiler.CodeGen
                 return false;
 
             if (_inlines.Count >= MaxInlineDepth || call.IsVirtual)
+                return false;
+
+            // A constructor is never spliced: what runs is not its body alone but the chain and the
+            // initializers the emitter prepends to it, so the splice would silently skip the base's
+            // construction. A `super(...)` call names exactly such a body.
+            if (call.Method.Role == MethodRole.Constructor)
                 return false;
 
             // A body that splices itself, directly or through another inline function, would expand
@@ -3086,6 +3335,12 @@ namespace Surtr.Compiler.CodeGen
 
             if (!ReferenceEquals(parameter.ContainingSymbol, _symbol) && parameter.ContainingSymbol is not null)
                 throw Unsupported($"a read of '{parameter.Name}', which belongs to another method");
+
+            // An instance operator's first parameter is its receiver (§5.6), and the runtime keeps
+            // the receiver as an implicit slot rather than a declared parameter — so parameter 0 is
+            // local 0, and every later parameter shifts down by one to match.
+            if (_symbol.Role == MethodRole.Operator && !_symbol.IsStatic)
+                return parameter.Ordinal == 0 ? _method.Receiver : _method.Parameter(parameter.Ordinal - 1);
 
             return _method.Parameter(parameter.Ordinal);
         }

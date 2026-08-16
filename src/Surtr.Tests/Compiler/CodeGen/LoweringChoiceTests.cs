@@ -494,6 +494,138 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.True(Count(code, "JP") + Count(code, "JPX") >= 1);
         }
 
+        /// <summary>
+        /// The cost heuristic (§3.6) splices a body no <c>inline</c> was written on, when the body is
+        /// cheap enough — so a call site for a two-instruction function no longer survives into the
+        /// bytecode at all. Value correctness is
+        /// <see cref="ModuleEmitterTests.ATrivialFunctionIsSplicedWithoutAnyModifier"/>.
+        /// </summary>
+        [Fact]
+        public void ATrivialFunctionIsSplicedByDefault()
+        {
+            string code = Disassemble(
+                "fun twice(x: int): int { return x + x; }\n"
+                    + "fun run(a: int): int { return twice(a); }");
+
+            Assert.Equal(0, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// A body above the default threshold still calls without <c>inline</c> — three binary
+        /// operations cost three, past the default allowance of two.
+        /// </summary>
+        [Fact]
+        public void ABodyAboveTheDefaultThresholdStillCallsWithoutInline()
+        {
+            string code = Disassemble(
+                "fun heavy(x: int): int { return x * x + 7 * 3; }\n"
+                    + "fun run(a: int): int { return heavy(a); }");
+
+            Assert.Equal(1, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// <c>inline</c> raises the allowance: the same body that the default heuristic declines —
+        /// a branch and two returns, five by the cost model — splices when the hint is written.
+        /// </summary>
+        [Fact]
+        public void AnInlineHintSplicesABodyTooLargeForTheDefaultHeuristic()
+        {
+            string code = Disassemble(
+                "inline fun moderate(x: int): int { if (x < 0) { return -1; } return 1; }\n"
+                    + "fun run(a: int): int { return moderate(a); }");
+
+            Assert.Equal(0, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// An auto-property's read is the field load that is its whole body (§3.6), and its write the
+        /// matching store — neither pays for a frame. Value correctness is
+        /// <see cref="ModuleEmitterTests.AnAutoPropertyReadAndWriteLowerToTheBackingField"/>.
+        /// </summary>
+        [Fact]
+        public void AnAutoPropertyIsAccessedByFieldOpcodeNotByACall()
+        {
+            string code = Disassemble(
+                "class A { public n: int { get; set; } }\n"
+                    + "fun run(): int { let a = A(); a.n = 9; return a.n; }");
+
+            Assert.Equal(0, Count(code, "InvokeSpecial"));
+        }
+
+        /// <summary>
+        /// A virtual auto-property must still dispatch: an override on a subclass has to run, so the
+        /// field-load lowering is only sound where the accessor is non-virtual.
+        /// </summary>
+        [Fact]
+        public void AVirtualAutoPropertyReadStillDispatches()
+        {
+            string code = Disassemble(
+                "class A { public virtual n: int { get; set; } }\n"
+                    + "fun run(a: A): int { return a.n; }");
+
+            Assert.Equal(1, Count(code, "InvokeVirtual"));
+        }
+
+        /// <summary>
+        /// The <c>inline</c> hint reaches a property's accessors: a getter whose body the default
+        /// heuristic would decline — five by the cost model — still splices at the read site when
+        /// the property declares <c>inline</c>.
+        /// </summary>
+        [Fact]
+        public void AnInlinePropertyGetterIsSplicedAtItsCallSite()
+        {
+            string body = "if (this._n < 0) { return 0; } return this._n;";
+
+            string plain = Disassemble(
+                "class A { private let _n: int; public constructor(n: int) { this._n = n; } public n: int { get { "
+                    + body + " } } }\nfun run(a: A): int { return a.n; }");
+            Assert.Equal(1, Count(plain, "InvokeSpecial"));
+
+            string inline = Disassemble(
+                "class A { private let _n: int; public constructor(n: int) { this._n = n; } public inline n: int { get { "
+                    + body + " } } }\nfun run(a: A): int { return a.n; }");
+            Assert.Equal(0, Count(inline, "InvokeSpecial"));
+        }
+
+        /// <summary>
+        /// <c>forceinline</c> splices even a body well above the <c>inline</c> threshold (8) —
+        /// unlike <c>inline</c>, which is a hint the heuristic can still decline. Value correctness
+        /// is <see cref="ModuleEmitterTests.AForceInlineFunctionSplicesRegardlessOfCost"/>.
+        /// </summary>
+        [Fact]
+        public void AForceInlineFunctionSplicesEvenAboveTheInlineThreshold()
+        {
+            string code = Disassemble(
+                "forceinline fun heavy(x: int): int {\n"
+                    + "  if (x < 0) { return -1; }\n"
+                    + "  if (x == 0) { return 0; }\n"
+                    + "  return x * x + x + 1;\n"
+                    + "}\n"
+                    + "fun run(a: int): int { return heavy(a); }");
+
+            Assert.Equal(0, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// The write-side twin of <see cref="AnInlinePropertyGetterIsSplicedAtItsCallSite"/>: a
+        /// computed setter splices at its write site too, once <c>forceinline</c> is written on the
+        /// property. Value correctness is
+        /// <see cref="ModuleEmitterTests.AForceInlinePropertySetterSplicesAndAppliesItsBody"/>.
+        /// </summary>
+        [Fact]
+        public void AForceInlinePropertySetterIsSplicedAtItsCallSite()
+        {
+            string code = Disassemble(
+                "class A {\n"
+                    + "  public var _n: int;\n"
+                    + "  public forceinline n: int { get { return this._n; } set { this._n = value * 2; } }\n"
+                    + "}\n"
+                    + "fun run(): int { let a = A(); a.n = 5; return a._n; }");
+
+            Assert.Equal(0, Count(code, "InvokeSpecial"));
+        }
+
         #endregion
 
         #region Const function folding (§7.2)
@@ -525,12 +657,16 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(0, Count(code, "CallLocalModule"));
         }
 
-        /// <summary>A variable argument is genuinely not constant, and still has to call.</summary>
+        /// <summary>
+        /// A variable argument is genuinely not constant, and still has to call. The body is kept
+        /// above the default inline threshold so the heuristic does not splice it and make the call
+        /// vanish for a different reason.
+        /// </summary>
         [Fact]
         public void AConstFunCallWithAVariableArgumentDoesNotFold()
         {
             string code = Disassemble(
-                "const fun square(x: int): int { return x * x; }\nfun run(a: int): int { return square(a); }");
+                "const fun square(x: int): int { return x * x + 7 * 3; }\nfun run(a: int): int { return square(a); }");
 
             Assert.Equal(1, Count(code, "CallLocalModule"));
         }

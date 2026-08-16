@@ -539,30 +539,35 @@ namespace Surtr.Bytecode.Emit
             SurtrParameterInfo[] parameters,
             SurtrNativeEntryPoint entryPoint,
             string? linkName)
-            => RequireClass(name).DefineNativeMethod(
-                name, returnType, entryPoint, parameters, _static,
-                SurtrMethodDispatch.Direct, false, _visibility, false, linkName);
+        {
+            if (_class is not null)
+                return _class.DefineNativeMethod(
+                    name, returnType, entryPoint, parameters, _static,
+                    SurtrMethodDispatch.Direct, false, _visibility, false, linkName);
+
+            if (_interface is not null)
+                throw new InvalidOperationException(
+                    $"Property '{_name}' is declared on an interface, which cannot carry a body; bind abstract accessors instead.");
+
+            return _module.DefineNativeFunction(name, returnType, entryPoint, parameters, _visibility, linkName);
+        }
 
         private SurtrMethodInfo DeclaredAccessor(
             string name,
             SurtrClassReference returnType,
             SurtrParameterInfo[] parameters,
             string linkName)
-            => RequireClass(name).DeclareNativeMethod(
-                name, returnType, linkName, parameters, _static,
-                SurtrMethodDispatch.Direct, false, _visibility);
-
-        private SurtrClassBuilder RequireClass(string accessorName)
         {
+            if (_class is not null)
+                return _class.DeclareNativeMethod(
+                    name, returnType, linkName, parameters, _static,
+                    SurtrMethodDispatch.Direct, false, _visibility);
+
             if (_interface is not null)
                 throw new InvalidOperationException(
                     $"Property '{_name}' is declared on an interface, which cannot carry a body; bind abstract accessors instead.");
 
-            // A module-level property's accessors are module-level functions, and a module-level
-            // function is never native - a host global is what Surtr calls that, and it binds
-            // through the global table rather than through a member's link name.
-            return _class ?? throw new InvalidOperationException(
-                $"'{accessorName}' is a module-level accessor, which cannot be native; publish a host global instead.");
+            return _module.DeclareNativeFunction(name, returnType, linkName, parameters, _visibility);
         }
 
         private SurtrMethodBuilder CreateAccessor(

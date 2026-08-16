@@ -127,7 +127,7 @@ namespace Surtr.VM
             : this(runtime, DefaultDataStackSlots, DefaultCallDepth) { }
 
         /// <summary>Creates a machine with explicit stack sizes.</summary>
-        /// <param name="runtime">The runtime whose heap, globals and modules this machine executes against.</param>
+        /// <param name="runtime">The runtime whose heap and modules this machine executes against.</param>
         /// <param name="dataStackSlots">How many value slots the data stack holds. Never grows.</param>
         /// <param name="maxCallDepth">How many nested calls are allowed before the call stack traps.</param>
         internal SurtrVirtualMachine(SurtrRuntime runtime, int dataStackSlots, int maxCallDepth)
@@ -602,11 +602,10 @@ namespace Surtr.VM
             bool budgeted = _stepsRemaining != 0;
             long steps = budgeted ? _stepsRemaining : long.MaxValue;
 
-            // Both of these can move: registering an entity may grow the registry's array, and the
-            // host may declare a global from inside a native call. Every site that can cause either
-            // reloads them, and nothing else has to.
+            // Both of these can move: registering an entity may grow the registry's array, and a
+            // native call may register one. Every site that can cause either reloads them, and
+            // nothing else has to.
             var entities = context.EntityRegistry.Entities;
-            SurtrRawValue* globals = context.Globals.VariableTable.Pointer;
 
             // Per-frame state, reloaded at LoadFrame whenever the executing frame changes. `current`
             // is what makes publishing the instruction pointer a single store with no bounds check,
@@ -620,12 +619,6 @@ namespace Surtr.VM
             SurtrFieldInfo[] fieldTable;
             SurtrMethodInfo[] methodTable;
             SurtrModule[] moduleTable;
-
-            // The module's own view of the host globals it declared as `native`. Both tables are
-            // per-chunk and bound by name at load, so a compiled module is not tied to the order a
-            // particular host registered its globals in.
-            int* nativeVariableSlots;
-            SurtrNativeGlobalFunction[] nativeFunctionTable;
 
             SurtrClosure? closure;
 
@@ -651,8 +644,6 @@ namespace Surtr.VM
                 fieldTable = chunk.FieldTable;
                 methodTable = chunk.MethodTable;
                 moduleTable = chunk.ModuleTable;
-                nativeVariableSlots = chunk.NativeVariableSlots.Pointer;
-                nativeFunctionTable = chunk.NativeFunctionTable;
             }
 
             // Inline immediates are read a byte at a time and recomposed with shifts rather than
@@ -807,21 +798,6 @@ namespace Surtr.VM
                     *sp++ = frameBase[*ip++];
                     goto Dispatch;
 
-                // The immediate indexes the *module's* import table, not the runtime's global
-                // table, so one extra load stands between the instruction and the storage. That
-                // load is what buys binding by name at load time - and with it a clear failure
-                // when a host never registered the global, instead of a silent read of whatever
-                // that index happens to name in this runtime.
-                case OpCode.Ldg:
-                    *sp++ = globals[nativeVariableSlots[(ip[0] | (ip[1] << 8))]];
-                    ip += 2;
-                    goto Dispatch;
-
-                case OpCode.LdgX:
-                    *sp++ = globals[nativeVariableSlots[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))]];
-                    ip += 4;
-                    goto Dispatch;
-
                 case OpCode.Stl:
                     frameBase[(ip[0] | (ip[1] << 8))] = *--sp;
                     ip += 2;
@@ -836,16 +812,6 @@ namespace Surtr.VM
 
                 case OpCode.StlS:
                     frameBase[*ip++] = *--sp;
-                    goto Dispatch;
-
-                case OpCode.Stg:
-                    globals[nativeVariableSlots[(ip[0] | (ip[1] << 8))]] = *--sp;
-                    ip += 2;
-                    goto Dispatch;
-
-                case OpCode.StgX:
-                    globals[nativeVariableSlots[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))]] = *--sp;
-                    ip += 4;
                     goto Dispatch;
 
                 // A whole `i += 1` without the operand stack: one load, one add, one store, and the
@@ -2628,56 +2594,6 @@ namespace Surtr.VM
                     pendingClosure = null;
                     goto InvokeResolved;
                 }
-
-                case OpCode.CallGlobalNative:
-                {
-                    var function = nativeFunctionTable[(ip[0] | (ip[1] << 8))];
-                    ip += 2;
-                    int argumentCount = *ip++;
-                    int resultCount = *ip++;
-
-                    SurtrRawValue* argumentBase = sp - argumentCount;
-
-                    // Published before the transfer, so a collection triggered inside host code sees
-                    // the arguments as live and a re-entrant call knows where the stack really is.
-                    _sp = sp;
-                    current.IP = ip;
-
-                    SurtrValue nativeResult = function.EntryPoint
-                        .Invoke(new SurtrCallArguments(runtime, argumentBase, argumentCount));
-
-                    sp = argumentBase;
-                    if (resultCount != 0) *sp++ = nativeResult.Raw;
-                    _sp = sp;
-
-                    entities = context.EntityRegistry.Entities;
-                    globals = context.Globals.VariableTable.Pointer;
-                    goto Dispatch;
-                }
-
-                case OpCode.CallGlobalNativeX:
-                {
-                    var function = nativeFunctionTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
-                    ip += 4;
-                    int argumentCount = *ip++;
-                    int resultCount = *ip++;
-
-                    SurtrRawValue* argumentBase = sp - argumentCount;
-
-                    _sp = sp;
-                    current.IP = ip;
-
-                    SurtrValue nativeResult = function.EntryPoint
-                        .Invoke(new SurtrCallArguments(runtime, argumentBase, argumentCount));
-
-                    sp = argumentBase;
-                    if (resultCount != 0) *sp++ = nativeResult.Raw;
-                    _sp = sp;
-
-                    entities = context.EntityRegistry.Entities;
-                    globals = context.Globals.VariableTable.Pointer;
-                    goto Dispatch;
-                }
                 #endregion
 
                 #region Method Operations
@@ -3004,7 +2920,6 @@ namespace Surtr.VM
                 _sp = sp;
 
                 entities = context.EntityRegistry.Entities;
-                globals = context.Globals.VariableTable.Pointer;
                 goto Dispatch;
             }
 

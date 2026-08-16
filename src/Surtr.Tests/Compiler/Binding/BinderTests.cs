@@ -520,6 +520,71 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
+        public void APropertyAccessorCollidesWithAMethodOfTheSameName()
+        {
+            // The runtime only ever sees get_x/set_x, so a declared get_x is the same table entry
+            // a property's synthesized getter occupies - a collision no name check can catch.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Entity {\n"
+                + "  public health: int { get; set; }\n"
+                + "  public fun get_health(): int { return 0; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
+        }
+
+        [Fact]
+        public void APropertySetterCollidesWithAMethodOfTheSameName()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Entity {\n"
+                + "  public health: int { get; set; }\n"
+                + "  public fun set_health(value: int): void { }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
+        }
+
+        [Fact]
+        public void AModulePropertyAccessorCollidesWithAModuleMethod()
+        {
+            // A module property synthesizes static get_x/set_x methods just like a class one does.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "public health: int { get; set; }\n"
+                + "public fun get_health(): int { return 0; }\n"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
+        }
+
+        [Fact]
+        public void TwoUnitsOfOneModuleCollideOnASharedSignature()
+        {
+            // A module's method table is one table no matter how many files declared it, so a
+            // duplicate must be found across units, not just within one.
+            Bind(out var compilation,
+                ("game/core/A.surtr", "public fun f(): int { return 1; }\n"),
+                ("game/core/B.surtr", "public fun f(): int { return 2; }\n"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
+        }
+
+        [Fact]
+        public void AModuleFunctionAndAClassMethodOfTheSameNameDoNotCollide()
+        {
+            // A class's SignatureSet and its containing module's are separate instances (one per
+            // type, one per module), so a class method never contends for the same table slot as
+            // a module-level function of the same name - unlike an accessor and a written method,
+            // which really do share one.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "public fun greet(): int { return 1; }\n"
+                + "class Greeter {\n"
+                + "  public fun greet(): int { return 2; }\n"
+                + "}"));
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
         public void AMethodKeepsItsModifiers()
         {
             var binder = Bind(out var compilation, ("game/core/Test.surtr",
@@ -775,6 +840,209 @@ namespace Surtr.Tests.Compiler.Binding
                 + "}"));
 
             AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void AnOperatorMustTakeTheDeclaringTypeAmongItsOperands()
+        {
+            // §5.6: a type cannot define how two types foreign to it interact.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Foo {\n"
+                + "  operator+(a: int, b: int): int { return a + b; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AStaticOperatorInASubclassMustTakeTheSubclassItselfAmongItsOperands()
+        {
+            // §5.6: a *static* operator has no override to preserve a slot for, so a subclass
+            // cannot satisfy the rule merely because its own ancestor happens to be one of the
+            // operand types - the ancestor-walking leniency belongs to an instance operator's
+            // receiver alone, never to a static operator's operands.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Base { }\n"
+                + "class Foo : Base {\n"
+                + "  operator+(a: Base, b: Base): Base { return a; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AnIndexerMustTakeTheDeclaringTypeAsItsReceiver()
+        {
+            // The index and value operate on the receiver, so only the receiver has to be the
+            // declaring type — a foreign receiver is an indexer that belongs to nobody.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Foo {\n"
+                + "  operator[](a: int, i: int): int { return i; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AConversionMustTakeTheDeclaringTypeAsItsSource()
+        {
+            // operator as names its target as the return, so its single parameter is the only
+            // operand — and it has to be the type declaring the conversion.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Vec2 { }\n"
+                + "class Foo {\n"
+                + "  operator as string(a: Vec2) { return \"vec\"; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AGenericClasssOwnConstructionIsItsDeclaringType()
+        {
+            // Inside class Matrix<T>, the operands are Matrix<T> itself — a construction of the
+            // declaring definition, which still counts as the declaring type.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Matrix<T> {\n"
+                + "  operator+(a: Matrix<T>, b: Matrix<T>): Matrix<T> { return a; }\n"
+                + "}"));
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void ANullableOperandStillCountsAsTheDeclaringType()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Foo {\n"
+                + "  operator==(a: Foo?, b: Foo): bool { return true; }\n"
+                + "}"));
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void AVirtualOperatorBecomesAnInstanceMethod()
+        {
+            // §5.6: a dispatch modifier makes the operator an instance method whose receiver is its
+            // first parameter — the one spelling that can reach a vtable slot.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Base {\n"
+                + "  virtual operator==(self: Base, other: Base): bool { return true; }\n"
+                + "}\n"
+                + "class Foo : Base {\n"
+                + "  virtual operator+(self: Foo, other: Foo): Foo { return self; }\n"
+                + "  override operator==(self: Base, other: Base): bool { return true; }\n"
+                + "}"));
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void AStaticOperatorWithADispatchModifierIsRejected()
+        {
+            // `static virtual` is contradictory: instance is what a dispatch modifier *means*.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Foo {\n"
+                + "  static virtual operator+(self: Foo, other: Foo): Foo { return self; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidModifier);
+        }
+
+        [Fact]
+        public void AConversionCannotBeInstance()
+        {
+            // `operator as` names its source as its only parameter; its target lives in the return,
+            // and nothing about a conversion ever dispatches — so a dispatch modifier is rejected.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Foo {\n"
+                + "  virtual operator as string(self: Foo) { return \"foo\"; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AnAbstractOperatorCannotHaveABody()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Foo {\n"
+                + "  abstract operator+(self: Foo, other: Foo): Foo { return self; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AConcreteInstanceOperatorNeedsABody()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Foo {\n"
+                + "  virtual operator+(self: Foo, other: Foo): Foo;\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AnInterfaceOperatorIsAbstractAndInstance()
+        {
+            // An interface operator is a promise, exactly like an interface method: no body, and
+            // the runtime reaches it through the interface's method slots.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IAddable {\n"
+                + "  operator+(self: IAddable, other: IAddable): IAddable;\n"
+                + "}\n"
+                + "class Vec2 : IAddable {\n"
+                + "  override operator+(self: IAddable, other: IAddable): IAddable { return self; }\n"
+                + "}"));
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void AnInterfaceOperatorCannotHaveABody()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IAddable {\n"
+                + "  operator+(self: IAddable, other: IAddable): IAddable { return self; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
+        }
+
+        [Fact]
+        public void AnInstanceOperatorsReceiverMustBeTheClassOrAnAncestor()
+        {
+            // The receiver of an instance operator is its first parameter, and it has to be the
+            // declaring type — or, for an override implementing a base or interface, that ancestor,
+            // since the receiver never enters the method table's signature and an interface slot
+            // routes onto a vtable entry without it.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IAddable {\n"
+                + "  operator+(self: IAddable, other: IAddable): IAddable;\n"
+                + "}\n"
+                + "class Bar : IAddable {\n"
+                + "  override operator+(self: string, other: IAddable): IAddable { return self; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void TwoInstanceOperatorsDifferingOnlyByReceiverAreADuplicate()
+        {
+            // The receiver is implicit in the method table, so both would land on the same key and
+            // a module that compiled clean would fail to load.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Base { }\n"
+                + "class Foo : Base {\n"
+                + "  virtual operator+(self: Foo, other: int): Foo { return self; }\n"
+                + "  virtual operator+(self: Base, other: int): Foo { return self; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
         }
         #endregion
 

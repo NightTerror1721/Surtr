@@ -366,7 +366,7 @@ namespace Surtr.Compiler.Syntax
             reader.Expect(TokenType.RightBrace, "'}' to close the property accessors");
 
             return new PropertyDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, name, type,
-                accessors, modifiers.IsStatic, modifiers.Dispatch, modifiers.IsSealed);
+                accessors, modifiers.IsStatic, modifiers.Dispatch, modifiers.IsSealed, modifiers.Inline, modifiers.IsNative);
         }
 
         /// <summary>Parses a method, or a module-level function (§3.2, §2.5).</summary>
@@ -424,13 +424,17 @@ namespace Surtr.Compiler.Syntax
                 parameters, chainArguments, chainsToThis, body);
         }
 
-        /// <summary>Parses an operator overload (§5.6). Public and static are implied, so neither is written.</summary>
+        /// <summary>
+        /// Parses an operator overload (§5.6). Public is implied and never written; <c>static</c> is
+        /// the default, and a dispatch modifier (<c>virtual</c>, <c>override</c>, <c>abstract</c>) or
+        /// <c>sealed</c> makes the operator an instance method whose receiver is its first parameter.
+        /// </summary>
         private DeclarationSyntax ParseOperator(SourceLocation start, IReadOnlyList<string> docComment,
             IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers)
         {
             if (modifiers.Visibility != Visibility.Default || modifiers.IsStatic)
             {
-                throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "An operator overload is always public and static; neither is written.", start);
+                throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "An operator overload is always public; 'static' is never written.", start);
             }
 
             reader.Advance();
@@ -480,8 +484,16 @@ namespace Surtr.Compiler.Syntax
                 returnType = conversionTarget;
             }
 
-            BlockStatementSyntax operatorBody = ParseBlock();
-            return new OperatorDeclarationSyntax(SpanFrom(start), attributes, docComment, op, parameters, returnType, operatorBody);
+            // No body means an abstract operator, declared for a subclass to override — signature-only,
+            // exactly as a method's (§3.2). An interface's operators are always written this way.
+            BlockStatementSyntax? operatorBody = null;
+            if (!reader.Match(TokenType.Semicolon))
+            {
+                operatorBody = ParseBlock();
+            }
+
+            return new OperatorDeclarationSyntax(SpanFrom(start), attributes, docComment, op, parameters, returnType,
+                modifiers.Dispatch, modifiers.IsSealed, operatorBody);
         }
 
         /// <summary>

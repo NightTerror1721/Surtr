@@ -150,56 +150,6 @@ namespace Surtr.Bytecode.Emit
 
         #endregion
 
-        #region Host globals
-
-        // A host global is reached by *name*: the module declares the import, and the name is
-        // bound to the host's global table when the module loads. Nothing here needs a runtime,
-        // which is the point - a module can be compiled before any runtime exists, and loaded into
-        // more than one.
-
-        /// <summary>Reads a host global this module imported, in the narrowest encoding that reaches it.</summary>
-        public SurtrCodeEmitter LoadGlobal(SurtrNativeVariableToken import)
-            => import.Index <= ushort.MaxValue ? Ldg(import) : LdgX(import);
-
-        /// <summary>Declares an import for <paramref name="name"/> if needed, then reads it.</summary>
-        public SurtrCodeEmitter LoadGlobal(string name)
-            => LoadGlobal(_method.Module.NativeVariable(name));
-
-        /// <summary>Reads a host global the host has already described, by its name.</summary>
-        public SurtrCodeEmitter LoadGlobal(SurtrNativeGlobalVariable variable)
-        {
-            if (variable is null)
-                throw new ArgumentNullException(nameof(variable));
-
-            return LoadGlobal(variable.Name);
-        }
-
-        /// <summary>Writes a host global this module imported, in the narrowest encoding that reaches it.</summary>
-        public SurtrCodeEmitter StoreGlobal(SurtrNativeVariableToken import)
-            => import.Index <= ushort.MaxValue ? Stg(import) : StgX(import);
-
-        /// <summary>Declares an import for <paramref name="name"/> if needed, then writes it.</summary>
-        public SurtrCodeEmitter StoreGlobal(string name)
-            => StoreGlobal(_method.Module.NativeVariable(name));
-
-        /// <summary>Writes a host global the host has already described, by its name.</summary>
-        /// <exception cref="ArgumentException">The variable was declared read-only to Surtr code.</exception>
-        public SurtrCodeEmitter StoreGlobal(SurtrNativeGlobalVariable variable)
-        {
-            if (variable is null)
-                throw new ArgumentNullException(nameof(variable));
-
-            // The interpreter does not enforce this - Stg is a raw indexed store - so rejecting it
-            // here is the only thing standing between a read-only host global and compiled code
-            // that writes it anyway.
-            if (variable.IsReadOnly)
-                throw new ArgumentException($"Host global '{variable.Name}' is read-only to Surtr code.", nameof(variable));
-
-            return StoreGlobal(variable.Name);
-        }
-
-        #endregion
-
         #region Fields
 
         /// <summary>Reads an instance field.</summary>
@@ -699,30 +649,6 @@ namespace Surtr.Bytecode.Emit
             return token.ModuleIndex <= ushort.MaxValue && token.FunctionIndex <= ushort.MaxValue
                 ? CallModule(token, arguments, results)
                 : CallModuleX(token, arguments, results);
-        }
-
-        /// <summary>Calls a host global this module imported.</summary>
-        public SurtrCodeEmitter CallGlobal(SurtrNativeFunctionToken import, int argumentCount, int resultCount)
-            => import.Index <= ushort.MaxValue
-                ? CallGlobalNative(import, argumentCount, resultCount)
-                : CallGlobalNativeX(import, argumentCount, resultCount);
-
-        /// <summary>Declares an import for <paramref name="name"/> if needed, then calls it.</summary>
-        public SurtrCodeEmitter CallGlobal(string name, int argumentCount, int resultCount)
-            => CallGlobal(_method.Module.NativeFunction(name), argumentCount, resultCount);
-
-        /// <summary>
-        /// Calls a host global the host has already described, taking its arity and return from
-        /// the signature it was registered with.
-        /// </summary>
-        public SurtrCodeEmitter CallGlobal(SurtrNativeGlobalFunction function, bool discardResult = false)
-        {
-            if (function is null)
-                throw new ArgumentNullException(nameof(function));
-
-            int results = discardResult || function.ReturnType.Reference.TypeCode.IsVoid ? 0 : 1;
-
-            return CallGlobal(function.Name, function.ParameterCount, results);
         }
 
         /// <summary>Calls the closure sitting below <paramref name="argumentCount"/> arguments on the stack.</summary>

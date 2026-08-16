@@ -47,10 +47,6 @@ namespace Surtr.Bytecode.Emit
         private readonly Dictionary<string, int> _stringByText = new Dictionary<string, int>(StringComparer.Ordinal);
 
         private readonly List<SurtrTypeHandle> _typeTable = new List<SurtrTypeHandle>();
-        private readonly List<string> _nativeVariableImports = new List<string>();
-        private readonly Dictionary<string, int> _nativeVariableSlots = new Dictionary<string, int>(StringComparer.Ordinal);
-        private readonly List<string> _nativeFunctionImports = new List<string>();
-        private readonly Dictionary<string, int> _nativeFunctionSlots = new Dictionary<string, int>(StringComparer.Ordinal);
 
         private readonly Dictionary<string, int> _typeSlots = new Dictionary<string, int>(StringComparer.Ordinal);
 
@@ -195,48 +191,6 @@ namespace Surtr.Bytecode.Emit
         /// </summary>
         public SurtrParameterInfo VarargsParameter(string name, SurtrClassReference elementType)
             => new SurtrParameterInfo(name, TypeHandle(elementType), SurtrConstant.None, isVarargs: true);
-
-        /// <summary>
-        /// Declares a host global this module reads or writes as a <c>native</c> variable, and
-        /// interns it into the module's import table.
-        /// </summary>
-        /// <remarks>
-        /// Nothing is resolved here: the name is checked against the host's globals when the module
-        /// is loaded, and a name nobody registered fails the load rather than the instruction that
-        /// would have reached it.
-        /// </remarks>
-        public SurtrNativeVariableToken NativeVariable(string name)
-        {
-            if (name is null)
-                throw new ArgumentNullException(nameof(name));
-
-            if (_nativeVariableSlots.TryGetValue(name, out int existing))
-                return new SurtrNativeVariableToken(existing);
-
-            ThrowIfBuilt();
-
-            int slot = _nativeVariableImports.Count;
-            _nativeVariableImports.Add(name);
-            _nativeVariableSlots.Add(name, slot);
-            return new SurtrNativeVariableToken(slot);
-        }
-
-        /// <summary>Declares a host function this module calls, and interns it into the import table.</summary>
-        public SurtrNativeFunctionToken NativeFunction(string name)
-        {
-            if (name is null)
-                throw new ArgumentNullException(nameof(name));
-
-            if (_nativeFunctionSlots.TryGetValue(name, out int existing))
-                return new SurtrNativeFunctionToken(existing);
-
-            ThrowIfBuilt();
-
-            int slot = _nativeFunctionImports.Count;
-            _nativeFunctionImports.Add(name);
-            _nativeFunctionSlots.Add(name, slot);
-            return new SurtrNativeFunctionToken(slot);
-        }
 
         /// <summary>
         /// Builds an attribute usage against this module's handle table, ready to be attached to a
@@ -477,6 +431,63 @@ namespace Surtr.Bytecode.Emit
             return builder;
         }
 
+        /// <summary>
+        /// Declares a module-level <c>native fun</c> whose body is a host function, already linked.
+        /// </summary>
+        /// <remarks>
+        /// A module-level native function is an ordinary static module method whose body is host
+        /// code: it lands in the module's method table like any <see cref="DefineFunction"/> does,
+        /// its calls are <c>CallLocalModule</c> from inside the module and <c>CallModule</c> from
+        /// outside, and <c>linkName</c> is the name a host supplies the body under if the module is
+        /// ever written to an image. There is no separate global namespace for it to live in.
+        /// </remarks>
+        public SurtrNativeMethodInfo DefineNativeFunction(
+            string name,
+            SurtrClassReference returnType,
+            SurtrNativeEntryPoint entryPoint,
+            SurtrParameterInfo[]? parameters = null,
+            SurtrVisibility visibility = SurtrVisibility.Public,
+            string? linkName = null)
+        {
+            var method = new SurtrNativeMethodInfo(
+                name, SurtrMethodDispatch.Direct, SurtrMethodRole.Normal, false,
+                TypeHandle(returnType),
+                parameters ?? Array.Empty<SurtrParameterInfo>(),
+                true, visibility, null, entryPoint, false, linkName);
+
+            _module.AddMethod(method);
+            Method(method);
+            return method;
+        }
+
+        /// <summary>
+        /// Declares a module-level <c>native fun</c> whose body the loading runtime will supply,
+        /// by name.
+        /// </summary>
+        /// <remarks>
+        /// The form to use for a module meant to travel: the declaration says what the member looks
+        /// like and what it is called, and every runtime that loads it publishes its own body with
+        /// <c>SurtrRuntime.DefineNativeBody</c> under <paramref name="linkName"/>. A name nothing
+        /// published fails the load rather than the call that would have reached it.
+        /// </remarks>
+        public SurtrNativeMethodInfo DeclareNativeFunction(
+            string name,
+            SurtrClassReference returnType,
+            string linkName,
+            SurtrParameterInfo[]? parameters = null,
+            SurtrVisibility visibility = SurtrVisibility.Public)
+        {
+            var method = new SurtrNativeMethodInfo(
+                name, SurtrMethodDispatch.Direct, SurtrMethodRole.Normal, false,
+                TypeHandle(returnType),
+                parameters ?? Array.Empty<SurtrParameterInfo>(),
+                true, visibility, null, linkName);
+
+            _module.AddMethod(method);
+            Method(method);
+            return method;
+        }
+
         /// <summary>Declares a module-level property, whose accessors become module-level functions.</summary>
         public SurtrPropertyBuilder DefineProperty(
             string name,
@@ -617,8 +628,6 @@ namespace Surtr.Bytecode.Emit
             for (int i = 0; i < _stringSlots.Count; i++)
                 chunk.StringConstantSlots[i] = _stringSlots[i];
 
-            chunk.NativeVariableImports = _nativeVariableImports.ToArray();
-            chunk.NativeFunctionImports = _nativeFunctionImports.ToArray();
             chunk.TypeTable = _typeTable.ToArray();
             chunk.FieldTable = _fieldTable.ToArray();
             chunk.ModuleTable = _moduleTable.ToArray();

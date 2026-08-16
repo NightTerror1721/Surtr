@@ -36,9 +36,6 @@ namespace Surtr.Runtime
         /// <summary>The runtime's object heap: every collectable value, addressed by <see cref="SurtrRef"/>.</summary>
         internal SurtrEntityRegistry EntityRegistry;
 
-        /// <summary>The host's global variables and functions - the only truly global names in Surtr.</summary>
-        internal SurtrNativeGlobalTable Globals;
-
         /// <summary>Every loaded module, keyed by its dot-separated path.</summary>
         internal Dictionary<string, SurtrModule> Modules;
 
@@ -46,22 +43,18 @@ namespace Surtr.Runtime
         internal Dictionary<string, SurtrClass> NativeClasses;
 
         /// <summary>
-        /// Bodies the host has published for native <em>members</em>, keyed by link name.
+        /// Bodies the host has published for native members, keyed by link name.
         /// </summary>
         /// <remarks>
-        /// Distinct from <see cref="Globals"/>, which holds host functions Surtr code calls by
-        /// name through <c>CallGlobalNative</c>. These are bodies for methods a module
-        /// <em>declares</em>: a module read from an image carries the name and the signature, and
-        /// the address has to come from whichever runtime is loading it. Keeping the two tables
-        /// apart means a global and a method body can share a name without either shadowing the
-        /// other.
+        /// A module read from an image carries the name and the signature of each of its native
+        /// members, and the address has to come from whichever runtime is loading it.
         /// </remarks>
         internal Dictionary<string, SurtrNativeEntryPoint> NativeBodies;
 
         /// <summary>
-        /// Type handles for signatures the host declares outside any module - global functions and
-        /// native class members. Interned here for the same reason a module interns its own: one
-        /// handle per distinct descriptor, resolved once.
+        /// Type handles for signatures the host declares outside any module - native class
+        /// members. Interned here for the same reason a module interns its own: one handle per
+        /// distinct descriptor, resolved once.
         /// </summary>
         internal SurtrTypeHandleTable HostTypeHandles;
 
@@ -125,7 +118,6 @@ namespace Surtr.Runtime
             EntityRegistry = default;
             EntityRegistry.Initialize(initialEntityCapacity);
 
-            Globals = new SurtrNativeGlobalTable();
             Modules = new Dictionary<string, SurtrModule>(StringComparer.Ordinal);
             NativeClasses = new Dictionary<string, SurtrClass>(StringComparer.Ordinal);
             NativeBodies = new Dictionary<string, SurtrNativeEntryPoint>(StringComparer.Ordinal);
@@ -246,7 +238,6 @@ namespace Surtr.Runtime
             // the whole of releasing them.
             NativeBodies?.Clear();
 
-            Globals?.Dispose();
             EntityRegistry.Dispose();
 
             InternedStrings?.Clear();

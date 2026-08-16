@@ -273,11 +273,51 @@ namespace Surtr.Tests.Compiler.Syntax
             AssertRejected("class V { operator as(v: V): Vec3 { } }", SurtrDiagnosticCode.InvalidOperatorDeclaration);
         }
 
-        /// <summary>§5.6: an overload is always public and static, so writing either is an error, not a redundancy.</summary>
+        /// <summary>§5.6: an overload is always public and static by default, so writing either is an error, not a redundancy.</summary>
         [Fact]
         public void OperatorRejectsRedundantModifiers()
         {
             AssertRejected("class V { public static operator+(a: V, b: V): V { } }", SurtrDiagnosticCode.InvalidModifier);
+            AssertRejected("class V { static operator+(a: V, b: V): V { } }", SurtrDiagnosticCode.InvalidModifier);
+        }
+
+        /// <summary>A dispatch modifier makes an operator an instance method, so the parser keeps it rather than rejecting it.</summary>
+        [Fact]
+        public void ADispatchModifierOnAnOperatorParses()
+        {
+            OperatorDeclarationSyntax declared = ParseSingle<TypeDeclarationSyntax>(
+                "class V { virtual operator+(a: V, b: V): V { } }").Members
+                .Cast<OperatorDeclarationSyntax>()
+                .Single();
+
+            Assert.Equal(DispatchModifier.Virtual, declared.Dispatch);
+            Assert.NotNull(declared.Body);
+        }
+
+        /// <summary>An abstract operator ends at the semicolon, exactly as an abstract method does.</summary>
+        [Fact]
+        public void AnAbstractOperatorIsBodyless()
+        {
+            OperatorDeclarationSyntax declared = ParseSingle<TypeDeclarationSyntax>(
+                "class V { abstract operator+(a: V, b: V): V; }").Members
+                .Cast<OperatorDeclarationSyntax>()
+                .Single();
+
+            Assert.Equal(DispatchModifier.Abstract, declared.Dispatch);
+            Assert.Null(declared.Body);
+        }
+
+        /// <summary><c>sealed</c> is a legitimate operator modifier: it closes a virtual operator's branch.</summary>
+        [Fact]
+        public void SealedOnAnOperatorParses()
+        {
+            OperatorDeclarationSyntax declared = ParseSingle<TypeDeclarationSyntax>(
+                "class V { override sealed operator+(a: V, b: V): V { } }").Members
+                .Cast<OperatorDeclarationSyntax>()
+                .Single();
+
+            Assert.True(declared.IsSealed);
+            Assert.Equal(DispatchModifier.Override, declared.Dispatch);
         }
 
         [Fact]

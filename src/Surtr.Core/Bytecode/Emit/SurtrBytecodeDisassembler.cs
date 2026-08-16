@@ -343,15 +343,8 @@ namespace Surtr.Bytecode.Emit
 
                 case OpCode.Ldl:
                 case OpCode.Stl:
-                case OpCode.Ldg:
-                case OpCode.Stg:
                     builder.Append(' ').Append(ReadU16(chunk, operand)).AppendLine();
                     return operand + 2;
-
-                case OpCode.LdgX:
-                case OpCode.StgX:
-                    builder.Append(' ').Append(ReadI32(chunk, operand)).AppendLine();
-                    return operand + 4;
 
                 // ---- type access table -------------------------------------------------------
                 case OpCode.InstanceOf:
@@ -502,16 +495,6 @@ namespace Surtr.Bytecode.Emit
                     AppendExternal(builder, chunk, ReadI32(chunk, operand), ReadI32(chunk, operand + 4));
                     AppendCounts(builder, chunk, operand + 8);
                     return operand + 10;
-
-                case OpCode.CallGlobalNative:
-                    builder.Append(" global#").Append(ReadU16(chunk, operand));
-                    AppendCounts(builder, chunk, operand + 2);
-                    return operand + 4;
-
-                case OpCode.CallGlobalNativeX:
-                    builder.Append(" global#").Append(ReadI32(chunk, operand));
-                    AppendCounts(builder, chunk, operand + 4);
-                    return operand + 6;
 
                 case OpCode.InvokeClosure:
                     AppendCounts(builder, chunk, operand);

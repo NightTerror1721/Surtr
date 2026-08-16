@@ -981,7 +981,7 @@ namespace Surtr.Compiler.Binding
             bool isInterface = syntax.Kind == TypeDeclarationKind.Interface;
 
             var members = new List<Symbol>();
-            var signatures = new SignatureSet(_factory, _diagnostics, binding.SourceName);
+            var signatures = new SignatureSet(_factory, _diagnostics);
             var names = new HashSet<string>(StringComparer.Ordinal);
             int letFields = 0;
 
@@ -1024,9 +1024,15 @@ namespace Surtr.Compiler.Binding
 
                         members.Add(bound);
                         if (bound.Getter is not null)
+                        {
                             members.Add(bound.Getter);
+                            signatures.Add(bound.Getter, binding.SourceName, property.Span);
+                        }
                         if (bound.Setter is not null)
+                        {
                             members.Add(bound.Setter);
+                            signatures.Add(bound.Setter, binding.SourceName, property.Span);
+                        }
 
                         continue;
                     }
@@ -1048,7 +1054,7 @@ namespace Surtr.Compiler.Binding
                         }
 
                         var bound = BindMethod(method, symbol, binding, isInterface);
-                        signatures.Add(bound, method.Span);
+                        signatures.Add(bound, binding.SourceName, method.Span);
                         members.Add(bound);
                         continue;
                     }
@@ -1063,7 +1069,7 @@ namespace Surtr.Compiler.Binding
                         }
 
                         var bound = BindConstructor(constructor, symbol, binding);
-                        signatures.Add(bound, constructor.Span);
+                        signatures.Add(bound, binding.SourceName, constructor.Span);
                         members.Add(bound);
                         continue;
                     }
@@ -1085,8 +1091,15 @@ namespace Surtr.Compiler.Binding
 
                     case OperatorDeclarationSyntax op:
                     {
+                        if (isInterface && op.Body is not null)
+                        {
+                            Report(SurtrDiagnosticCode.InvalidInterfaceMember, binding, op.Span,
+                                $"An interface declares no default implementations, so 'operator{(OperatorNames.TryGetSymbol(op.Operator, out string spelled) ? spelled : "?")}' cannot have a body.");
+                            continue;
+                        }
+
                         var bound = BindOperator(op, symbol, binding);
-                        signatures.Add(bound, op.Span);
+                        signatures.Add(bound, binding.SourceName, op.Span);
                         members.Add(bound);
                         continue;
                     }
@@ -1200,11 +1213,10 @@ namespace Surtr.Compiler.Binding
             var properties = new List<PropertySymbol>();
             var methods = new List<MethodSymbol>();
             var names = new HashSet<string>(StringComparer.Ordinal);
+            var signatures = new SignatureSet(_factory, _diagnostics);
 
             foreach (var unit in sourceModule.Units)
             {
-                var signatures = new SignatureSet(_factory, _diagnostics, unit.File.Path);
-
                 foreach (var declaration in Flatten(unit.Syntax.Declarations, unit.File.Path))
                 {
                     switch (declaration)
@@ -1215,7 +1227,25 @@ namespace Surtr.Compiler.Binding
                                 ReportAt(unit.File.Path, field.Span, SurtrDiagnosticCode.DuplicateDeclaration,
                                     $"'{field.Name}' is already declared in module '{module.Path}'.");
 
-                            fields.Add(BindModuleField(field, module, scope, unit.File.Path));
+                            // §10: a module-level `native let/var` is a native property, not an
+                            // import entry — the host owns the storage and Surtr reaches it through
+                            // `get_x`/`set_x` accessors published by link name, exactly as a
+                            // class-level native member does.
+                            if (field.IsNative)
+                            {
+                                var nativeProperty = BindModuleNativeVariable(field, module, scope, unit.File.Path);
+                                if (nativeProperty.Getter is not null)
+                                    signatures.Add(nativeProperty.Getter, unit.File.Path, field.Span);
+                                if (nativeProperty.Setter is not null)
+                                    signatures.Add(nativeProperty.Setter, unit.File.Path, field.Span);
+
+                                properties.Add(nativeProperty);
+                            }
+                            else
+                            {
+                                fields.Add(BindModuleField(field, module, scope, unit.File.Path));
+                            }
+
                             continue;
 
                         case PropertyDeclarationSyntax property:
@@ -1224,13 +1254,19 @@ namespace Surtr.Compiler.Binding
                                 ReportAt(unit.File.Path, property.Span, SurtrDiagnosticCode.DuplicateDeclaration,
                                     $"'{property.Name}' is already declared in module '{module.Path}'.");
 
-                            properties.Add(BindModuleProperty(property, module, scope, unit.File.Path));
+                            var boundProperty = BindModuleProperty(property, module, scope, unit.File.Path);
+                            if (boundProperty.Getter is not null)
+                                signatures.Add(boundProperty.Getter, unit.File.Path, property.Span);
+                            if (boundProperty.Setter is not null)
+                                signatures.Add(boundProperty.Setter, unit.File.Path, property.Span);
+
+                            properties.Add(boundProperty);
                             continue;
 
                         case MethodDeclarationSyntax method:
                             CheckBuildConstant(method.Name, unit.File.Path, method.Span);
                             var bound = BindModuleMethod(method, module, scope, unit.File.Path);
-                            signatures.Add(bound, method.Span);
+                            signatures.Add(bound, unit.File.Path, method.Span);
                             methods.Add(bound);
                             continue;
 
@@ -1831,26 +1867,77 @@ namespace Surtr.Compiler.Binding
                 IsReadOnly = syntax.IsConst || !syntax.IsMutable,
                 IsConst = syntax.IsConst,
                 Accessibility = Translate(syntax.Visibility, Accessibility.Internal),
-                IsNative = syntax.IsNative,
             };
 
             CheckConstType(field, syntax, sourceName);
-
-            // §10: the host owns the storage, so there is nothing here to initialize — and an
-            // initializer would be written against a value the host may already have set.
-            if (syntax.IsNative && syntax.Initializer is not null)
-            {
-                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidNativeDeclaration,
-                    $"'{syntax.Name}' is native, so the host owns its value and it cannot have an initializer.");
-
-                return field;
-            }
 
             if (syntax.Initializer is not null)
                 _initializers.Add(new InitializerBinding(field, syntax.Initializer, null, scope, owner, null, sourceName, _nextInitializerOrder++));
 
             RecordAttributes(field, syntax.Attributes, scope, sourceName);
             return field;
+        }
+
+        /// <summary>
+        /// Binds a module-level <c>native let/var</c> as a native property (§10).
+        /// </summary>
+        /// <remarks>
+        /// The host owns the storage, so a read is a call to a native <c>get_x</c> accessor and a
+        /// write (for <c>var</c>) to a native <c>set_x</c>, both published by link name through
+        /// <c>SurtrRuntime.DefineNativeBody</c> — the same path a class-level native member takes.
+        /// The syntax is a field declaration, and the binder's job is the shape change: everything
+        /// downstream reads the accessors as ordinary methods, which is exactly how a source
+        /// property is wired.
+        /// </remarks>
+        private PropertySymbol BindModuleNativeVariable(
+            FieldDeclarationSyntax syntax,
+            ModuleSymbol owner,
+            Scope scope,
+            string sourceName)
+        {
+            var type = ResolveOrInfer(syntax.Type, scope, sourceName);
+            var accessibility = Translate(syntax.Visibility, Accessibility.Internal);
+
+            var property = new PropertySymbol(syntax.Name, owner, type)
+            {
+                IsStatic = true,
+                Accessibility = accessibility,
+            };
+
+            var getter = new MethodSymbol(MemberNames.Getter(syntax.Name), owner, type)
+            {
+                IsStatic = true,
+                Accessibility = accessibility,
+                Role = MethodRole.PropertyGetter,
+                IsNative = true,
+            };
+            property.Getter = getter;
+
+            // `native let` is read-only: no setter, so a write is rejected where a property with
+            // no setter is, without the emitter needing a special case.
+            if (syntax.IsMutable)
+            {
+                var setter = new MethodSymbol(MemberNames.Setter(syntax.Name), owner, _factory.Void)
+                {
+                    IsStatic = true,
+                    Accessibility = accessibility,
+                    Role = MethodRole.PropertySetter,
+                    IsNative = true,
+                };
+                setter.Parameters = new[] { new ParameterSymbol("value", type, 0, setter) };
+                property.Setter = setter;
+            }
+
+            // §10: the host owns the value, so there is nothing here to initialize — and an
+            // initializer would be written against a value the host may already have set.
+            if (syntax.Initializer is not null)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidNativeDeclaration,
+                    $"'{syntax.Name}' is native, so the host owns its value and it cannot have an initializer.");
+            }
+
+            RecordAttributes(property, syntax.Attributes, scope, sourceName);
+            return property;
         }
 
         /// <summary>
@@ -1888,7 +1975,7 @@ namespace Surtr.Compiler.Binding
 
             WireAccessors(
                 property, syntax.Accessors, owner, syntax.Dispatch, isInterface, accessibility,
-                binding.Scope, binding.Module, owner, binding.SourceName);
+                binding.Scope, binding.Module, owner, binding.SourceName, syntax.Inline, syntax.IsNative);
 
             RecordAttributes(property, syntax.Attributes, binding.Scope, binding.SourceName);
             return property;
@@ -1908,7 +1995,7 @@ namespace Surtr.Compiler.Binding
 
             WireAccessors(
                 property, syntax.Accessors, owner, DispatchModifier.None, isInterface: false, property.Accessibility,
-                scope, owner, containingType: null, sourceName);
+                scope, owner, containingType: null, sourceName, syntax.Inline, syntax.IsNative);
 
             RecordAttributes(property, syntax.Attributes, scope, sourceName);
             return property;
@@ -1932,7 +2019,9 @@ namespace Surtr.Compiler.Binding
             Scope scope,
             ModuleSymbol module,
             NamedTypeSymbol? containingType,
-            string sourceName)
+            string sourceName,
+            InlineModifier inline,
+            bool isNative)
         {
             // A property written bare is `get` alone, and an auto-property either way: an accessor
             // with no body is one code generation synthesises against a backing field.
@@ -1956,6 +2045,9 @@ namespace Surtr.Compiler.Binding
                     Role = MethodRole.PropertyGetter,
                     Dispatch = TranslateDispatch(dispatch, isInterface),
                     IsOverride = dispatch == DispatchModifier.Override,
+                    IsInline = inline == InlineModifier.Inline,
+                    IsForceInline = inline == InlineModifier.ForceInline,
+                    IsNative = isNative,
                 };
 
                 RecordBody(bound, getter.Body, scope, module, containingType, sourceName);
@@ -1971,6 +2063,9 @@ namespace Surtr.Compiler.Binding
                     Role = MethodRole.PropertySetter,
                     Dispatch = TranslateDispatch(dispatch, isInterface),
                     IsOverride = dispatch == DispatchModifier.Override,
+                    IsInline = inline == InlineModifier.Inline,
+                    IsForceInline = inline == InlineModifier.ForceInline,
+                    IsNative = isNative,
                 };
 
                 bound.Parameters = new[] { new ParameterSymbol("value", property.Type, 0, bound) };
@@ -2063,18 +2158,68 @@ namespace Surtr.Compiler.Binding
                 ? OperatorNames.For(syntax.Operator, syntax.Parameters.Count)
                 : OperatorNames.Prefix + "?";
 
-            // §5.6: an overload is always public and always static, and can be nothing else.
+            bool isInterface = binding.Symbol.TypeKind == TypeSymbolKind.Interface;
+
+            // §5.6: an overload is always public. A plain declaration is a static method taking
+            // every operand; a dispatch modifier, or an interface declaration, makes it an instance
+            // method whose receiver is the first parameter — that is what lets an operator follow
+            // the same virtual/abstract rules as any other method, and reach the same vtable and
+            // interface slots (§2.2). An interface forces abstract, exactly as a method does.
+            // A conversion is the exception: its single parameter is the source, its target is the
+            // return, and nothing about it ever dispatches, so it stays static.
+            bool instanceOperator = !isConversion
+                && (isInterface
+                    || syntax.Dispatch != DispatchModifier.None
+                    || syntax.IsSealed);
+
+            if (isConversion && (isInterface || syntax.Dispatch != DispatchModifier.None || syntax.IsSealed))
+            {
+                Report(
+                    SurtrDiagnosticCode.InvalidOperatorSignature,
+                    binding,
+                    syntax.Span,
+                    "A conversion ('operator as') is always static: it is declared on the source type and never dispatches.");
+            }
+
             var method = new MethodSymbol(name, owner, _factory.ErrorType)
             {
-                IsStatic = true,
+                IsStatic = !instanceOperator,
                 Accessibility = Accessibility.Public,
                 Role = MethodRole.Operator,
                 IsConversion = isConversion,
+                Dispatch = instanceOperator ? TranslateDispatch(syntax.Dispatch, isInterface) : MethodDispatch.Direct,
+                IsOverride = syntax.Dispatch == DispatchModifier.Override,
+                IsSealed = syntax.IsSealed,
             };
 
             method.ReturnType = _resolver.Resolve(syntax.ReturnType, binding.Scope, binding.SourceName);
             method.Parameters = BindParameters(syntax.Parameters, method, binding.Scope, binding.SourceName);
-            RecordBody(method, syntax.Body, binding.Scope, binding.Module, owner, binding.SourceName);
+
+            // Abstract operators end at `;`, and a concrete one needs a body — the same bargain a
+            // method makes, and the same two mistakes get caught here at binding rather than
+            // leaving one of them to the emitter's "has no body to emit".
+            if (method.Dispatch == MethodDispatch.Abstract && syntax.Body is not null)
+            {
+                Report(
+                    SurtrDiagnosticCode.InvalidOperatorSignature,
+                    binding,
+                    syntax.Body.Span,
+                    $"An abstract operator cannot have a body.");
+            }
+            else if (method.Dispatch != MethodDispatch.Abstract && syntax.Body is null)
+            {
+                Report(
+                    SurtrDiagnosticCode.InvalidOperatorSignature,
+                    binding,
+                    syntax.Span,
+                    $"An operator that is not abstract needs a body.");
+            }
+
+            if (syntax.Body is not null)
+            {
+                RecordBody(method, syntax.Body, binding.Scope, binding.Module, owner, binding.SourceName);
+            }
+
             RecordAttributes(method, syntax.Attributes, binding.Scope, binding.SourceName);
             CheckOperatorSignature(syntax, method, binding);
             return method;
@@ -2156,6 +2301,113 @@ namespace Surtr.Compiler.Binding
 
                     break;
             }
+
+            // §5.6: at least one operand has to be the declaring type — a type cannot define how
+            // two types foreign to it interact. An indexer is the one exception: its receiver is
+            // the object being indexed, so it must be the declaring type even when the index or
+            // value happen to be, which is what makes `operator[]` a member rather than a two-type
+            // relation. `operator as` carries its target as the return, so its single parameter is
+            // the only operand there is. An instance operator is an indexer on a broader stage: its
+            // first parameter *is* the receiver, so it must be the declaring type — or, for an
+            // `override` implementing a base or interface, that ancestor, which is the one spelling
+            // that keeps the vtable and interface slots reachable.
+            bool validOperands;
+            if (!method.IsStatic || syntax.Operator == TokenType.LeftBracket)
+            {
+                // An instance operator (abstract/virtual/override/sealed) or an indexer: the
+                // receiver is the object the operator acts on, so its declared type has to be the
+                // declaring type - or, for an override, the ancestor whose vtable or interface
+                // slot it fills, which is exactly what the hierarchy-walking IsReceiver allows.
+                validOperands = count > 0 && IsReceiver(method.Parameters[0].Type, binding.Symbol);
+            }
+            else
+            {
+                // A static operator has no receiver and no override to preserve a slot for, so
+                // every operand - including the first - is checked against the declaring type
+                // itself with the strict IsDeclaringType, never the ancestor-walking IsReceiver.
+                // Foreign types in a subclass's own ancestry must not satisfy the rule below: a
+                // type cannot define how two types foreign to it interact just because it happens
+                // to extend one of them.
+                bool anyOperandIsDeclaring = false;
+                for (int i = 0; i < count; i++)
+                    anyOperandIsDeclaring |= IsDeclaringType(method.Parameters[i].Type, binding.Symbol);
+
+                validOperands = anyOperandIsDeclaring;
+            }
+
+            if (!validOperands)
+                ReportOperatorOperand(binding, syntax, symbol, binding.Symbol, syntax.Operator == TokenType.LeftBracket || !method.IsStatic);
+        }
+
+        /// <summary>Whether <paramref name="type"/> is the type declaring an operator, or a construction of it.</summary>
+        /// <remarks>
+        /// A generic class's own operands arrive as a construction of its definition — <c>Matrix&lt;T&gt;</c>
+        /// inside <c>class Matrix&lt;T&gt;</c> resolves to the definition built with the class's own
+        /// parameter — so the definition is what the test reads. A reference's nullability is a flag,
+        /// not a wrapper, so the nullable twin compares equal to the plain one.
+        /// </remarks>
+        private static bool IsDeclaringType(TypeSymbol type, NamedTypeSymbol owner)
+        {
+            var stripped = type.NonNullable;
+            if (ReferenceEquals(stripped, owner))
+                return true;
+
+            return stripped is NamedTypeSymbol named
+                && named.IsConstructed
+                && ReferenceEquals(named.Definition, owner);
+        }
+
+        private static bool IsReceiver(TypeSymbol type, NamedTypeSymbol owner)
+        {
+            if (IsDeclaringType(type, owner))
+                return true;
+
+            // An `override operator` implementing a base class or an interface repeats that
+            // ancestor's receiver — the one spelling that keeps its vtable or interface slot
+            // reachable. `IAddable` and the class that implements it are different types, so the
+            // receiver test has to walk the hierarchy rather than stop at the declaring type.
+            var stripped = type.NonNullable;
+            if (stripped is not NamedTypeSymbol named || named.IsConstructed)
+                return false;
+
+            var seen = new HashSet<NamedTypeSymbol>();
+            var frontier = new Stack<NamedTypeSymbol>();
+            frontier.Push(owner);
+
+            while (frontier.Count > 0)
+            {
+                var current = frontier.Pop();
+                if (!seen.Add(current))
+                    continue;
+
+                if (ReferenceEquals(current, named))
+                    return true;
+
+                if (current.BaseType is not null)
+                    frontier.Push(current.BaseType);
+
+                foreach (var @interface in current.Interfaces)
+                    frontier.Push(@interface);
+            }
+
+            return false;
+        }
+
+        private void ReportOperatorOperand(
+            TypeBinding binding, OperatorDeclarationSyntax syntax, string symbol, NamedTypeSymbol owner, bool receiverRequired)
+        {
+            string message = receiverRequired
+                ? $"'operator{symbol}' must take '{owner.Name}' as its receiver (§5.6): the operands operate "
+                    + $"on the object being used, which has to be '{owner.Name}' itself (or a base or interface "
+                    + "it extends, when overriding one)."
+                : $"'operator{symbol}' must take '{owner.Name}' among its operands (§5.6): a type cannot "
+                    + "define how two types foreign to it interact.";
+
+            Report(
+                SurtrDiagnosticCode.InvalidOperatorSignature,
+                binding,
+                syntax.Span,
+                message);
         }
 
         private void ReportOperatorArity(TypeBinding binding, OperatorDeclarationSyntax syntax, string symbol, string expected, int actual)

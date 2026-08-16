@@ -510,6 +510,159 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(1, Int(runtime, "run", SurtrValue.CreateInt(5)));
         }
 
+        /// <summary>
+        /// The cost heuristic (§3.6) splices a body no <c>inline</c> was written on: a single-return
+        /// arithmetic body is two instructions, and a frame for it is the frame the heuristic exists
+        /// to remove.
+        /// </summary>
+        [Fact]
+        public void ATrivialFunctionIsSplicedWithoutAnyModifier()
+        {
+            var runtime = Run(
+                "fun twice(x: int): int { return x + x; }\n"
+                    + "fun run(a: int): int { return twice(a) + 1; }");
+
+            Assert.Equal(7, Int(runtime, "run", SurtrValue.CreateInt(3)));
+        }
+
+        /// <summary>
+        /// An auto-property's accessors are one instruction each — a field load and a field store —
+        /// and §3.6 inlines both at the call site, so reading and writing one never pays for a frame.
+        /// </summary>
+        [Fact]
+        public void AnAutoPropertyReadAndWriteLowerToTheBackingField()
+        {
+            var runtime = Run(
+                "class A { public n: int { get; set; } }\n"
+                    + "fun run(): int { let a = A(); a.n = 9; return a.n; }");
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// <c>forceinline</c> ignores the cost heuristic entirely - a body well above both the
+        /// default (2) and the <c>inline</c> (8) threshold still has to splice and compute the
+        /// right value, not merely avoid throwing.
+        /// </summary>
+        [Fact]
+        public void AForceInlineFunctionSplicesRegardlessOfCost()
+        {
+            var runtime = Run(
+                "forceinline fun heavy(x: int): int {\n"
+                    + "  if (x < 0) { return -1; }\n"
+                    + "  if (x == 0) { return 0; }\n"
+                    + "  return x * x + x + 1;\n"
+                    + "}\n"
+                    + "fun run(a: int): int { return heavy(a); }");
+
+            Assert.Equal(7, Int(runtime, "run", SurtrValue.CreateInt(2)));
+        }
+
+        /// <summary>
+        /// A call reached through virtual dispatch can resolve to any override at run time, so
+        /// <c>forceinline</c> cannot splice it - and has to say so at compile time rather than
+        /// splice the wrong body or ignore the hint silently.
+        /// </summary>
+        [Fact]
+        public void AForceInlineVirtualMethodCallIsNotLowered()
+        {
+            var reported = Unlowerable(
+                "class A {\n"
+                    + "  public virtual forceinline fun speak(): int { return 1; }\n"
+                    + "}\n"
+                    + "fun run(a: A): int { return a.speak(); }");
+
+            Assert.Single(reported);
+        }
+
+        /// <summary>
+        /// The read-side twin of <see cref="AForceInlineVirtualMethodCallIsNotLowered"/>: a
+        /// property read reaches its getter through a synthetic call that always claims
+        /// non-virtual (so <c>TryInline</c>'s own dispatch guard cannot catch a virtual getter on
+        /// its own), which is exactly why <c>TryInlinePropertyGetter</c> has to fail loudly here
+        /// itself instead of silently falling back to an ordinary virtual read.
+        /// </summary>
+        [Fact]
+        public void AForceInlineVirtualPropertyGetterIsNotLowered()
+        {
+            var reported = Unlowerable(
+                "class A {\n"
+                    + "  public virtual forceinline n: int { get { return 1; } set { } }\n"
+                    + "}\n"
+                    + "fun run(a: A): int { return a.n; }");
+
+            Assert.Single(reported);
+        }
+
+        /// <summary>
+        /// A <c>forceinline</c> function that calls itself cannot be spliced without expanding
+        /// forever, so the recursive call has to fail to lower rather than loop the emitter.
+        /// </summary>
+        [Fact]
+        public void AForceInlineFunctionThatCallsItselfIsNotLowered()
+        {
+            var reported = Unlowerable(
+                "forceinline fun loopy(x: int): int { if (x <= 0) { return 0; } return loopy(x - 1); }\n"
+                    + "fun run(a: int): int { return loopy(a); }");
+
+            Assert.NotEmpty(reported);
+        }
+
+        /// <summary>
+        /// A computed property's setter honors <c>forceinline</c> the same way its getter and an
+        /// ordinary method do (§3.4/§3.6) - before this, only the getter side of a property ever
+        /// reached the inline machinery, and a computed setter's hint was silently ignored.
+        /// </summary>
+        [Fact]
+        public void AForceInlinePropertySetterSplicesAndAppliesItsBody()
+        {
+            var runtime = Run(
+                "class A {\n"
+                    + "  public var _n: int;\n"
+                    + "  public forceinline n: int { get { return this._n; } set { this._n = value * 2; } }\n"
+                    + "}\n"
+                    + "fun run(): int { let a = A(); a.n = 5; return a._n; }");
+
+            Assert.Equal(10, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The mirror of <see cref="AForceInlineVirtualMethodCallIsNotLowered"/> for a property
+        /// setter: a virtual accessor cannot be spliced, and a <c>forceinline</c> one has to fail
+        /// to lower rather than write through the wrong override or drop the hint silently.
+        /// </summary>
+        [Fact]
+        public void AForceInlineVirtualPropertySetterIsNotLowered()
+        {
+            var reported = Unlowerable(
+                "class A {\n"
+                    + "  public virtual forceinline n: int { get { return 0; } set { } }\n"
+                    + "}\n"
+                    + "fun run(a: A): int { a.n = 1; return 0; }");
+
+            Assert.Single(reported);
+        }
+
+        /// <summary>
+        /// A class method shadows a module-level function of the same name at an unqualified call
+        /// site inside that class, silently and without ambiguity (Binder.cs's <c>Scope</c> looks
+        /// at the containing type before the module) - proven here by giving the two distinct
+        /// return values rather than only checking that binding reports no error.
+        /// </summary>
+        [Fact]
+        public void AnUnqualifiedCallInsideAClassPrefersItsOwnMethodOverAModuleFunctionOfTheSameName()
+        {
+            var runtime = Run(
+                "public fun greet(): int { return 1; }\n"
+                    + "class Greeter {\n"
+                    + "  public fun greet(): int { return 2; }\n"
+                    + "  public fun run(): int { return greet(); }\n"
+                    + "}\n"
+                    + "fun run(): int { return Greeter().run(); }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
         [Fact]
         public void AConstFunctionCallWithConstantArgumentsIsFoldedAway()
         {
@@ -1975,6 +2128,64 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(1111, Int(runtime, "run"));
         }
 
+        /// <summary>
+        /// A <c>virtual operator</c> is an instance method (§5.6), so the call goes through the
+        /// receiver's vtable: an operand pair whose static type is the base still lands on the
+        /// derived override.
+        /// </summary>
+        [Fact]
+        public void AVirtualOperatorDispatchesThroughTheReceiver()
+        {
+            var runtime = Run(
+                "class Shape {\n"
+                    + "  virtual operator+(self: Shape, other: Shape): int { return 1; }\n"
+                    + "}\n"
+                    + "class Circle : Shape {\n"
+                    + "  override operator+(self: Shape, other: Shape): int { return 2; }\n"
+                    + "}\n"
+                    + "fun run(): int { let a: Shape = Circle(); let b: Shape = Circle(); return a + b; }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// An operator declared on an interface is reached through the interface's method slots, so
+        /// a call through an interface-typed receiver resolves to the implementing class's override.
+        /// </summary>
+        [Fact]
+        public void AnInterfaceOperatorDispatchesThroughTheInterface()
+        {
+            var runtime = Run(
+                "interface IAddable {\n"
+                    + "  operator+(self: IAddable, other: IAddable): int;\n"
+                    + "}\n"
+                    + "class Vec2 : IAddable {\n"
+                    + "  override operator+(self: IAddable, other: IAddable): int { return 7; }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "  let a: IAddable = Vec2();\n"
+                    + "  let b: IAddable = Vec2();\n"
+                    + "  return a + b;\n"
+                    + "}");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        /// <summary>An operator is an instance method, so <c>this</c> is its receiver, not a boxed argument.</summary>
+        [Fact]
+        public void AVirtualOperatorBodyReadsItsReceiverThroughThis()
+        {
+            var runtime = Run(
+                "class Counter {\n"
+                    + "  public let value: int;\n"
+                    + "  constructor(value: int) { this.value = value; }\n"
+                    + "  virtual operator+(self: Counter, other: Counter): int { return this.value + other.value; }\n"
+                    + "}\n"
+                    + "fun run(): int { let a = Counter(3); let b = Counter(4); return a + b; }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
         /// <summary>An operator declared with the wrong arity is rejected where it is declared.</summary>
         [Theory]
         [InlineData("operator+(a: Plain): Plain { return a; }")]
@@ -2970,56 +3181,70 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         [Fact]
-        public void ANativeVariableReadsTheHostsOwnStorage()
+        public unsafe void ANativeVariableReadsTheHostsOwnStorage()
         {
+            // A module-level `native let` is a native property with only a getter (§10); the host
+            // publishes that getter's body by its link name, `get_<name>` - the same convention a
+            // native class accessor uses.
             var emitter = Build("native let ScreenWidth: int;\nfun run(): int { return ScreenWidth; }");
 
             var runtime = new SurtrRuntime();
             _owned.Add(runtime);
 
-            var width = runtime.DefineGlobal("ScreenWidth", SurtrClassReference.Integer, isReadOnly: true);
-            runtime.Globals.SetValue(width, SurtrValue.CreateInt(1280));
+            runtime.DefineNativeBody("get_ScreenWidth", SurtrNativeEntryPoint.FromFunctionPointer(&GetScreenWidth));
             runtime.LoadModule(emitter.Modules[0]);
 
             Assert.Equal(1280, Int(runtime, "run"));
         }
 
+        private static SurtrValue GetScreenWidth(SurtrCallArguments arguments) => SurtrValue.CreateInt(1280);
+
         [Fact]
-        public void AWriteToANativeVariableLandsInTheHostsOwnStorage()
+        public unsafe void AWriteToANativeVariableLandsInTheHostsOwnStorage()
         {
+            // A module-level `native var` gets both accessors (§10); both need a body registered
+            // before load even though `run` only calls the setter here - `BindNativeBodies` binds
+            // every native member the module declares, not only the ones a given caller reaches.
             var emitter = Build("native var TimeScale: float;\nfun run(): int { TimeScale = 0.5; return 1; }");
 
             var runtime = new SurtrRuntime();
             _owned.Add(runtime);
 
-            runtime.DefineGlobal("TimeScale", SurtrClassReference.Float);
+            _writtenTimeScale = null;
+            runtime.DefineNativeBody("get_TimeScale", SurtrNativeEntryPoint.FromFunctionPointer(&GetTimeScale));
+            runtime.DefineNativeBody("set_TimeScale", SurtrNativeEntryPoint.FromFunctionPointer(&SetTimeScale));
             runtime.LoadModule(emitter.Modules[0]);
 
             Assert.Equal(1, Int(runtime, "run"));
-            Assert.True(runtime.Globals.TryGetValue("TimeScale", out var written));
-            Assert.Equal(0.5, written.AsFloat);
+            Assert.Equal(0.5, _writtenTimeScale);
+        }
+
+        // A plain static field, not a closure capture: SurtrNativeEntryPoint.FromFunctionPointer
+        // needs a static method with no captured state.
+        private static double? _writtenTimeScale;
+        private static SurtrValue GetTimeScale(SurtrCallArguments arguments) => SurtrValue.CreateFloat(_writtenTimeScale ?? 0.0);
+        private static SurtrValue SetTimeScale(SurtrCallArguments arguments)
+        {
+            _writtenTimeScale = arguments.GetFloat(0);
+            return SurtrValue.Null;
         }
 
         [Fact]
-        public unsafe void ANativeFunctionCallReachesTheHostsGlobal()
+        public unsafe void ANativeFunctionCallReachesTheHostsBody()
         {
             var emitter = Build("native fun hostSquare(value: int): int;\nfun run(): int { return hostSquare(3); }");
 
             var runtime = new SurtrRuntime();
             _owned.Add(runtime);
 
-            runtime.DefineGlobalFunction(
-                "hostSquare",
-                SurtrClassReference.Integer,
-                new[] { new SurtrParameterInfo("value", runtime.TypeHandle(SurtrClassReference.Integer)) },
-                SurtrNativeEntryPoint.FromFunctionPointer(&Square));
+            runtime.DefineNativeBody("hostSquare", SurtrNativeEntryPoint.FromFunctionPointer(&Square));
 
             runtime.LoadModule(emitter.Modules[0]);
 
             Assert.Equal(9, Int(runtime, "run"));
         }
 
-        // A host global takes no receiver, so its first declared parameter is argument zero.
+        // A module-level native takes no receiver, so its first declared parameter is argument zero.
         private static SurtrValue Square(SurtrCallArguments arguments)
             => SurtrValue.CreateInt(arguments.GetInt(0) * arguments.GetInt(0));
 

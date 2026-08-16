@@ -84,8 +84,15 @@ namespace Surtr.Bytecode.Image
         /// so every byte of every version 2 image means something different now. Refusing to load
         /// one is the whole point of the version, and there is no upgrade path: recompile.
         /// </para>
+        /// <para>
+        /// Version 4 retires the native global mechanism: images no longer carry lists of
+        /// host-global variable and function imports, because module-level <c>native</c> members now
+        /// travel as methods and properties published by link name. The layout change is confined to
+        /// this removal, but a version 3 reader would still misparse a version 4 image, so it is
+        /// refused like every other older format.
+        /// </para>
         /// </remarks>
-        internal const ushort FormatVersion = 3;
+        internal const ushort FormatVersion = 4;
 
         private readonly byte[] _bytes;
         private readonly string _path;

@@ -136,9 +136,6 @@ namespace Surtr.Bytecode.Image
                 writer.Write(chunk.StringConstantSlots[i]);
             }
 
-            WriteNameList(state, chunk.NativeVariableImports);
-            WriteNameList(state, chunk.NativeFunctionImports);
-
             writer.Write(chunk.TypeTable.Length);
             for (int i = 0; i < chunk.TypeTable.Length; i++)
                 writer.Write(Intern(state, chunk.TypeTable[i].Reference.Descriptor));

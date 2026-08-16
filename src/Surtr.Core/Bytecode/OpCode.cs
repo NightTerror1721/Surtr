@@ -401,39 +401,10 @@ namespace Surtr.Bytecode
         #endregion
 
 
-        #region Host Globals
-        /// <summary>Reads a host-defined global variable.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) globalIdx(2)</c> - 3 bytes.<br/>
-        /// Stack: <c>... -&gt; ..., value</c><br/>
-        /// Notes: indexes the native global table, the only truly global namespace in Surtr.
-        /// A direct indexed load off that table's value storage - the host reaches the same slot
-        /// through an accessor, but bytecode does not.
-        /// </remarks>
-        Ldg = 0x2C,
-
-        /// <summary>Reads a host-defined global variable using a 4-byte index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) globalIdx(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>... -&gt; ..., value</c>
-        /// </remarks>
-        LdgX = 0x2D,
-
-        /// <summary>Pops a value and writes it into a host-defined global variable.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) globalIdx(2)</c> - 3 bytes.<br/>
-        /// Stack: <c>..., value -&gt; ...</c><br/>
-        /// Notes: the compiler must reject this against a global the host registered as read-only.
-        /// </remarks>
-        Stg = 0x2E,
-
-        /// <summary>Pops a value into a host-defined global variable using a 4-byte index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) globalIdx(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., value -&gt; ...</c>
-        /// </remarks>
-        StgX = 0x2F,
-        #endregion
+        // 0x2C (Ldg), 0x2D (LdgX), 0x2E (Stg) and 0x2F (StgX) are retired: they read and wrote
+        // host-defined global variables. Module-level `native` members now travel as methods and
+        // properties published by link name, so no instruction names the global namespace any
+        // more. Retired values stay retired - see the note at the top of this enum.
 
 
         #region Field Operations
@@ -1426,21 +1397,10 @@ namespace Surtr.Bytecode
         /// </remarks>
         CallModuleX = 0xA9,
 
-        /// <summary>Calls a host-defined global function.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) functionIdx(2) argsCount(1) retCount(1)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a1, ..., aN -&gt; ..., result?</c><br/>
-        /// Notes: dispatches through the native entry point, a managed function pointer, so the
-        /// call costs no marshalling transition.
-        /// </remarks>
-        CallGlobalNative = 0xAA,
-
-        /// <summary>Calls a host-defined global function, with a 4-byte function index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) functionIdx(4) argsCount(1) retCount(1)</c> - 7 bytes.<br/>
-        /// Stack: <c>..., a1, ..., aN -&gt; ..., result?</c>
-        /// </remarks>
-        CallGlobalNativeX = 0xAB,
+        // 0xAA (CallGlobalNative) and 0xAB (CallGlobalNativeX) are retired: they called a host
+        // function out of the native global table. Module-level `native fun` is now an ordinary
+        // method published by link name, reached through CallModule like any other member. Retired
+        // values stay retired - see the note at the top of this enum.
 
         /// <summary>Invokes an instance method through the receiver's virtual method table.</summary>
         /// <remarks>

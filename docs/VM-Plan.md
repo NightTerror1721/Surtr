@@ -89,8 +89,13 @@ matter what, so paying it for direct calls too costs one byte load and a branch 
 perfectly at any given call site, while removing four opcodes, four switch arms, and the
 compiler's obligation to know where a body lives before it can pick an opcode.
 
-`CallGlobalNative` stays, not because its target is native but because host globals live in a
-different table (`Globals.FunctionTable`) — a different namespace, not a different body kind.
+There used to be one exception: `CallGlobalNative` stayed on for a host-defined global function,
+not because its target was native but because host globals lived in a different table
+(`Globals.FunctionTable`) — a different namespace, not a different body kind. That mechanism (the
+opcode, the global table, and the `native` declaration form that fed it) is retired — a `native`
+member, module-level or on a class, is now an ordinary member reached through the same method
+table and the same call opcodes as any other, so the exception is gone along with the table it
+existed for.
 
 ### 1.7 Re-entrancy
 
@@ -100,7 +105,7 @@ different table (`Globals.FunctionTable`) — a different namespace, not a diffe
 3. `Run(entryDepth)` runs until the call depth falls back to where it started.
 
 A nested run pushes its frames *above* the current one and returns at its own depth. Verified end
-to end: a host global that re-enters the VM and returns through two levels.
+to end: a native member that re-enters the VM and returns through two levels.
 
 ### 1.8 Exceptions
 
@@ -801,25 +806,26 @@ looking at another module's metadata* rather than by the interpreter.
 The case list also wants an **ordinal per case**, for the reason in §4.16: a dense switch over an
 enum has nothing to index on otherwise.
 
-### 4.14 There is no per-module native import table
+### 4.14 Resolved: there is no per-module native import table, because there is no native import table
 
-`Language-Syntax.md` §10 promises two things about a `native` declaration: it gets "a slot in the
-module's native import table — distinct from the module's regular call table", and a module
-declaring a `native` the host never registered "fails to load, the same way an unresolved
-`SurtrTypeHandle` does". Neither exists.
+This section used to record a defect: `Language-Syntax.md` §10 promised that a `native`
+declaration got "a slot in the module's native import table — distinct from the module's regular
+call table", and that a module naming a `native` the host never registered "fails to load, the
+same way an unresolved `SurtrTypeHandle` does" — but `Ldg`/`Stg`/`CallGlobalNative` encoded a
+**direct index into the runtime's global table**, `SurtrChunk` had no native table of its own, and
+neither promise held: nothing bound a native by name at load, and a compiled module was tied to one
+host's registration order.
 
-`Ldg`, `Stg` and `CallGlobalNative` encode a **direct index into the runtime's global table**, and
-`SurtrChunk` has a type, field, method and module table but no native one. Two consequences:
-
-* Nothing binds a native by name at load, so `LoadModule` has nothing to fail on — a module naming
-  a global the host never registered runs happily until the instruction is reached.
-* A compiled module is **tied to one host's registration order**, since the index means whatever
-  that runtime's table happened to hold. That is §3.3 arrived at from a different direction, and
-  the two want fixing together: a per-module table of names resolved against `Globals` at load,
-  with the instruction indexing the module's table instead of the runtime's.
-
-This is the one entry in §4 that is also a defect in what was built, rather than purely a new
-obligation.
+The fix taken was not to build the missing per-module import table, but to retire the whole
+mechanism it would have served. A `native` declaration — module-level or on a class — is now an
+ordinary member (`SurtrNativeMethodInfo`) carrying a **link name**, published in the same method
+table every other member uses; `SurtrRuntime.LoadModule` resolves every native member's link name
+against `_context.NativeBodies` (filled by `DefineNativeBody`) the same way it resolves a type
+handle, and fails the load with a name to point at when the host never published one. Both
+promises §10 made now hold, by generalising the mechanism a class's native member already had
+(§4.9 as it then was) to module scope too, rather than by giving host globals a table of their
+own. `Ldg`, `Stg`, `CallGlobalNative` and their `X` forms are retired opcodes; `SurtrContext.Globals`
+and `SurtrRuntime.DefineGlobal`/`DefineGlobalFunction` are gone.
 
 ### 4.15 Attributes have nowhere to live
 
@@ -913,7 +919,9 @@ covered by `src/Surtr.Tests`. What landed, in the order it landed:
 4. **§4.14 and §3.3 — binding by name at load.** A per-module native import table, resolved against
    the host's globals when the module loads, so a missing name fails there rather than at the
    instruction that would have reached it, and a compiled module stops depending on one host's
-   registration order.
+   registration order. (§4.14 has since been rewritten: that table and the runtime-wide global
+   table it resolved against are retired, folded into the general native-member link-name
+   mechanism a class's own `native` member already had — see §4.14's current text.)
 5. **§4.2, the standard library and the trap mapping.** `Exception` and the seven classes §13.3
    names, the four core interfaces, `Math` — and every trap now raising the library class it names,
    so `catch (e: Exception)` finally takes what the VM raises. A host exception with no counterpart

@@ -44,7 +44,7 @@ Facts about the language itself (not just the implementation) that drive most of
 
 - **Everything is an object.** Every value conceptually has its own `SurtrClass`, including primitives. `SurtrValue` / `SurtrRawValue` exist purely as a VM-level optimization so the interpreter can move primitives around without allocating or going through class metadata — they are a fast path, not a separate "non-object" tier in the language semantics.
 - **Modules are the only top-level container.** A module can contain fields, properties, methods, classes and enums. A class can in turn contain fields, properties, methods and nested classes/enums.
-- **There are no real globals in Surtr code.** "Global" only ever means module-level. The single exception is host-defined native variables and functions, which *are* genuinely global and can never be declared from Surtr source — only by the embedding host.
+- **There are no real globals, anywhere, not even a host-declared one.** "Global" only ever means module-level. A `native` declaration — `native fun`/`native let`/`native var` at module scope, or `native` on a class member — is still an ordinary Surtr declaration with a Surtr-visible name and type; only its *body* is host code, published under a link name (`SurtrRuntime.DefineNativeBody`) that the declaring module resolves against when it loads. The host supplies bodies, never top-level names Surtr source cannot also declare.
 - **Strongly and statically typed**, so every member signature is fully known at compile time and type references are resolved from metadata rather than discovered at runtime.
 
 ### Inheritance and dispatch

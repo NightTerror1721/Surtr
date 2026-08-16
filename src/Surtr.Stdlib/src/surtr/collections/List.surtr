@@ -39,7 +39,7 @@ public class LinkedList<T> : IList<T>
         this._length = 0;
     }
 
-    public length: int { get { return this._length; } }
+    public override length: int { get { return this._length; } }
 
     public front: T
     {
@@ -59,7 +59,7 @@ public class LinkedList<T> : IList<T>
         }
     }
 
-    public fun add(value: T): void
+    public override fun add(value: T): void
     {
         var newNode = Node(value);
         if (_tail == null)
@@ -76,7 +76,7 @@ public class LinkedList<T> : IList<T>
         _length++;
     }
 
-    public fun get(index: int): T
+    public override fun get(index: int): T
     {
         if (index < 0 || index >= this._length) throw IndexOutOfRangeException("Index out of range");
         var current = _head;
@@ -85,13 +85,40 @@ public class LinkedList<T> : IList<T>
         return current.value;
     }
 
-    public fun set(index: int, value: T): void
+    public override fun set(index: int, value: T): void
     {
         if (index < 0 || index >= this._length) throw IndexOutOfRangeException("Index out of range");
         var current = _head;
         for (var i = 0; i < index; i++)
             current = current.next!!;
         current.value = value;
+    }
+
+    public override fun removeAt(index: int): void
+    {
+        if (index < 0 || index >= this._length) throw IndexOutOfRangeException("Index out of range");
+        var current = _head;
+        for (var i = 0; i < index; i++)
+            current = current.next!!;
+
+        if (current.prev == null)
+            _head = current.next;
+        else
+            current.prev!!.next = current.next;
+
+        if (current.next == null)
+            _tail = current.prev;
+        else
+            current.next!!.prev = current.prev;
+
+        _length--;
+    }
+
+    public override fun clear(): void
+    {
+        _head = null;
+        _tail = null;
+        _length = 0;
     }
 
 
