@@ -458,5 +458,42 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         #endregion
+
+        #region Inline splicing (§3.6)
+
+        /// <summary>
+        /// A spliced body whose only statement is a single `return` needs no exit label and no
+        /// `$inlineResult` local: nothing else in the body could jump past it, so before this fix
+        /// the splice still paid for a trivial `JP` to the very next instruction and a store
+        /// immediately followed by its own reload. Value correctness for this exact shape is
+        /// <see cref="ModuleEmitterTests.AnInlineFunctionIsSplicedIntoItsCallSite"/>.
+        /// </summary>
+        [Fact]
+        public void ASingleStatementInlineBodyEmitsNoTrivialJump()
+        {
+            string code = Disassemble(
+                "inline fun double(x: int): int { return x * 2; }\n"
+                    + "fun run(a: int): int { return double(a) + 1; }");
+
+            Assert.Equal(0, Count(code, "JP"));
+            Assert.Equal(0, Count(code, "JPX"));
+        }
+
+        /// <summary>
+        /// A body with more than one `return` still needs the exit label and the result local to
+        /// join them — the fast path above only ever applies to the single-tail-return shape. Value
+        /// correctness is <see cref="ModuleEmitterTests.AMultiReturnInlineBodyStillJoinsCorrectly"/>.
+        /// </summary>
+        [Fact]
+        public void AMultiReturnInlineBodyStillUsesTheExitLabel()
+        {
+            string code = Disassemble(
+                "inline fun sign(x: int): int { if (x < 0) { return -1; } return 1; }\n"
+                    + "fun run(a: int): int { return sign(a); }");
+
+            Assert.True(Count(code, "JP") + Count(code, "JPX") >= 1);
+        }
+
+        #endregion
     }
 }

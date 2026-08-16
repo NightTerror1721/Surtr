@@ -494,6 +494,22 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(14, Int(runtime, "run"));
         }
 
+        /// <summary>
+        /// A spliced body with more than one `return` still has to join them at one exit — the
+        /// single-tail-return fast path (see <c>LoweringChoiceTests</c>) does not apply here, and
+        /// both exits still have to reach the right value.
+        /// </summary>
+        [Fact]
+        public void AMultiReturnInlineBodyStillJoinsCorrectly()
+        {
+            var runtime = Run(
+                "inline fun sign(x: int): int { if (x < 0) { return -1; } return 1; }\n"
+                    + "fun run(a: int): int { return sign(a); }");
+
+            Assert.Equal(-1, Int(runtime, "run", SurtrValue.CreateInt(-5)));
+            Assert.Equal(1, Int(runtime, "run", SurtrValue.CreateInt(5)));
+        }
+
         [Fact]
         public void AConstFunctionCallWithConstantArgumentsIsFoldedAway()
         {

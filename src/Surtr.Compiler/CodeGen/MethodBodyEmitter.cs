@@ -2713,6 +2713,30 @@ namespace Surtr.Compiler.CodeGen
             }
 
             bool hasResult = !call.Method.ReturnType.IsVoid && !discardResult;
+
+            // A body whose only statement is a single `return` never needs the exit-label/result-
+            // local machinery below at all: there is no earlier `return` for a jump to skip past, so
+            // the value can stay on the evaluation stack exactly as an ordinary expression's would,
+            // instead of paying a store immediately followed by its own reload. The frame is still
+            // pushed — with an unused exit/result, since nothing here ever reaches EmitReturn to read
+            // them — purely so a call nested inside the value expression still sees this method as
+            // "already being spliced" and refuses to splice it again (the cycle guard above).
+            if (body is BoundBlockStatement { Statements: [BoundReturnStatement tailReturn] })
+            {
+                _inlines.Add(new InlineFrame(call.Method, default, default, false, receiver, _finallies.Count));
+
+                if (tailReturn.Value is not null)
+                {
+                    if (hasResult)
+                        Expression(tailReturn.Value);
+                    else
+                        EffectOnly(tailReturn.Value);
+                }
+
+                _inlines.RemoveAt(_inlines.Count - 1);
+                return true;
+            }
+
             var result = hasResult ? _method.DeclareLocal("$inlineResult") : default;
             var exit = Code.NewLabel();
 
