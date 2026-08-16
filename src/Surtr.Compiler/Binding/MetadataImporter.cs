@@ -618,6 +618,7 @@ namespace Surtr.Compiler.Binding
                     IsVararg = declared[i].IsVarargs,
                     HasDefaultValue = declared[i].HasDefault,
                     DefaultValue = Import(declared[i].DefaultValue),
+                    DefaultValueFolded = declared[i].HasDefault,
                 };
             }
 

@@ -624,6 +624,79 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.True(overloads[0].Parameters[1].HasDefault);
             Assert.Equal(100, overloads[0].Parameters[1].DefaultValue.Value.AsInt);
         }
+
+        /// <summary>
+        /// `null` is itself a compile-time constant (the one no `const` declaration can produce,
+        /// per <c>SurtrConstant</c>'s own remarks) and has to fold like any other literal default.
+        /// </summary>
+        [Fact]
+        public void ANullDefaultOnAReferenceParameterFoldsToTheNullConstant()
+        {
+            var emitter = Build("fun f(x: string = null): string { return x; }");
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes()).Instantiate();
+
+            Assert.True(reloaded.TryGetMethods("f", out var overloads));
+            Assert.True(overloads[0].Parameters[0].HasDefault);
+            Assert.Equal(SurtrConstantKind.Null, overloads[0].Parameters[0].DefaultValue.Kind);
+        }
+
+        [Fact]
+        public void ANullDefaultOnANullablePrimitiveFoldsToTheNullConstant()
+        {
+            var emitter = Build("fun f(x: int? = null): int? { return x; }");
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes()).Instantiate();
+
+            Assert.True(reloaded.TryGetMethods("f", out var overloads));
+            Assert.True(overloads[0].Parameters[0].HasDefault);
+            Assert.Equal(SurtrConstantKind.Null, overloads[0].Parameters[0].DefaultValue.Kind);
+        }
+
+        /// <summary>
+        /// Before this folded, `ReportUnfoldedDefaults` could not tell "folded to null" apart from
+        /// "never folded" and always reported <c>NotAConstant</c> for a `= null` default.
+        /// </summary>
+        [Fact]
+        public void ANullDefaultReportsNoDiagnostic()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "fun f(x: string = null): string { return x; }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.False(
+                compilation.HasErrors,
+                "Unexpected: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+        }
+
+        /// <summary>A comparison against the null literal folds like any other constant binary (§7.3).</summary>
+        [Fact]
+        public void ANullComparisonFoldsInADeclarationLevelConstIf()
+        {
+            var runtime = Run(
+                "const if (null == null) {\n"
+                    + "  fun run(): int { return 1; }\n"
+                    + "} else {\n"
+                    + "  fun run(): int { return 0; }\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ANullInequalityFoldsInADeclarationLevelConstIf()
+        {
+            var runtime = Run(
+                "const if (null != null) {\n"
+                    + "  fun run(): int { return 1; }\n"
+                    + "} else {\n"
+                    + "  fun run(): int { return 0; }\n"
+                    + "}");
+
+            Assert.Equal(0, Int(runtime, "run"));
+        }
         #endregion
 
         #region Singletons (§2.8)

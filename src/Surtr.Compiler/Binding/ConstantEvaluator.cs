@@ -177,6 +177,7 @@ namespace Surtr.Compiler.Binding
             {
                 case TokenType.KeywordTrue: value = true; return true;
                 case TokenType.KeywordFalse: value = false; return true;
+                case TokenType.KeywordNull: value = null; return true;
                 default: value = null; return false;
             }
         }

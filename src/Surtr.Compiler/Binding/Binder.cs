@@ -1211,11 +1211,14 @@ namespace Surtr.Compiler.Binding
         {
             foreach (var binding in _defaults)
             {
-                if (binding.Parameter.DefaultValue is not null)
+                if (binding.Parameter.DefaultValueFolded)
                     continue;
 
                 if (Constants.TryEvaluate(binding.Syntax, out object? value))
+                {
                     binding.Parameter.DefaultValue = value;
+                    binding.Parameter.DefaultValueFolded = true;
+                }
             }
         }
 
@@ -1223,7 +1226,7 @@ namespace Surtr.Compiler.Binding
         {
             foreach (var binding in _defaults)
             {
-                if (binding.Parameter.DefaultValue is not null)
+                if (binding.Parameter.DefaultValueFolded)
                     continue;
 
                 ReportAt(

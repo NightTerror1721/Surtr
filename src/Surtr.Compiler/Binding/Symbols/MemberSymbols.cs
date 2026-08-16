@@ -241,6 +241,18 @@ namespace Surtr.Compiler.Binding.Symbols
         /// </remarks>
         public object? DefaultValue { get; internal set; }
 
+        /// <summary>
+        /// Whether <see cref="DefaultValue"/> is the result of a successful fold, as opposed to
+        /// having never folded.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="DefaultValue"/> alone cannot tell the two apart: a default that folds to the
+        /// Surtr literal <c>null</c> leaves the field at C#'s own default for <c>object?</c>, the
+        /// same value it starts at before anything has tried to fold it. This flag is what
+        /// <c>Binder.FoldDefaults</c>/<c>ReportUnfoldedDefaults</c> check instead.
+        /// </remarks>
+        public bool DefaultValueFolded { get; internal set; }
+
         /// <summary>Whether it collects the remaining arguments (§3.4).</summary>
         public bool IsVararg { get; internal set; }
 
