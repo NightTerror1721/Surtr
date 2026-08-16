@@ -224,9 +224,25 @@ namespace Surtr.Compiler.Binding
 
         private Conversion ClassifyImplicit(TypeSymbol source, TypeSymbol destination)
         {
-            // Anything at all flows into a slot that only knows it holds a reference. The compiler
-            // owes a box on the way in for a primitive, and a Cast on the way out.
-            if (IsErasedSlot(destination))
+            // A type parameter is a real, invariant type to the compiler even though it erases at
+            // runtime (§6) — "generics are invariant" applies inside the declaring body too, not
+            // only at a constructed call site. Classify's own identity fast path already covers `T`
+            // reaching `T`; the only other implicit path is `T` widening to its own `T?`, mirroring
+            // the ordinary nullable-widening rule below but restricted to the same parameter rather
+            // than any type. Anything else — a concrete type, or a different parameter entirely —
+            // has no business flowing into a `T`-typed slot from inside `T`'s own declaration, which
+            // is exactly the check that catches `this.value = 5;` against a field typed `T`.
+            if (destination.TypeKind == TypeSymbolKind.TypeParameter)
+            {
+                return ReferenceEquals(source.NonNullable, destination.NonNullable)
+                    && destination.IsNullable && !source.IsNullable
+                        ? Conversion.Of(ConversionKind.ImplicitNullable)
+                        : Conversion.None;
+            }
+
+            // Anything at all flows into `unknown`, which only knows it holds a reference. The
+            // compiler owes a box on the way in for a primitive, and a Cast on the way out.
+            if (destination.SpecialType == SpecialType.Unknown)
                 return Conversion.Of(ConversionKind.ImplicitErasure);
 
             if (IsErasedSlot(source))

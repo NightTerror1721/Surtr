@@ -2660,6 +2660,64 @@ namespace Surtr.Tests.Compiler.CodeGen
 
             Assert.True(Call(runtime, "run").AsBool);
         }
+
+        /// <summary>
+        /// Inside its own declaration, a field typed `T` is not a wildcard slot — assigning a
+        /// concrete literal to it is exactly as wrong as assigning it into any other type the
+        /// method does not declare, and used to compile silently because `T` was classified the
+        /// same way `unknown` is.
+        /// </summary>
+        [Fact]
+        public void AssigningAConcreteLiteralIntoATypeParameterFieldIsRejected()
+        {
+            using var compilation = Reject(
+                "class Box<T> {\n"
+                    + "  public var value: T;\n"
+                    + "  constructor(value: T) { this.value = value; }\n"
+                    + "  public fun corrupt(): void { this.value = 5; }\n"
+                    + "}");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.CannotConvert);
+        }
+
+        /// <summary>The one thing that does reach a `T`-typed slot is `T` itself.</summary>
+        [Fact]
+        public void AssigningTheDeclaredParameterIntoATypeParameterFieldStillCompiles()
+        {
+            var runtime = Run(
+                "class Box<T> {\n"
+                    + "  public var value: T;\n"
+                    + "  constructor(value: T) { this.value = value; }\n"
+                    + "  public fun set(x: T): void { this.value = x; }\n"
+                    + "  public fun get(): T { return this.value; }\n"
+                    + "}\n"
+                    + "fun run(): int { let b = Box(1); b.set(9); return b.get(); }");
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A value satisfying `T`'s own constraint still does not become assignable to a `T`-typed
+        /// slot — Java has the same asymmetry, for the same reason: knowing `T` can be used as
+        /// `IComparable&lt;T&gt;` says nothing about what may flow the other way into `T`.
+        /// </summary>
+        [Fact]
+        public void SatisfyingATypeParametersConstraintDoesNotMakeAValueAssignableToIt()
+        {
+            using var compilation = Reject(
+                "class Score : IComparable<Score> {\n"
+                    + "  public let value: int;\n"
+                    + "  constructor(value: int) { this.value = value; }\n"
+                    + "  public override fun compareTo(other: Score): int { return value - other.value; }\n"
+                    + "}\n"
+                    + "class Holder<T : IComparable<T>> {\n"
+                    + "  public var item: T;\n"
+                    + "  constructor(item: T) { this.item = item; }\n"
+                    + "  public fun corrupt(s: Score): void { this.item = s; }\n"
+                    + "}");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.CannotConvert);
+        }
         #endregion
 
         #region Module-level natives (§10)
