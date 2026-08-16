@@ -1767,6 +1767,107 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Null and instanceof checks — value correctness for LoweringChoiceTests' shape assertions
+
+        [Fact]
+        public void ANullEqualityOnAReferenceComputesCorrectly()
+        {
+            var runtime = Run(
+                "class Box { }\n"
+                    + "fun run(): int {\n"
+                    + "  let present: Box? = Box();\n"
+                    + "  let absent: Box? = null;\n"
+                    + "  var acc = 0;\n"
+                    + "  if (present == null) { acc = acc + 1; }\n"
+                    + "  if (absent == null) { acc = acc + 2; }\n"
+                    + "  return acc;\n"
+                    + "}");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ANullEqualityBranchComputesCorrectly()
+        {
+            var runtime = Run(
+                "class Box { }\n"
+                    + "fun run(a: Box?): int { if (a == null) { return 1; } return 0; }\n"
+                    + "fun call(): int { return run(null) * 10 + run(Box()); }");
+
+            Assert.Equal(10, Int(runtime, "call"));
+        }
+
+        [Fact]
+        public void AStringNullCheckComputesCorrectly()
+        {
+            var runtime = Run(
+                "fun run(s: string?): bool { return s != null; }\n"
+                    + "fun call(): int { return (run(\"hi\") ? 1 : 0) * 10 + (run(null) ? 1 : 0); }");
+
+            Assert.Equal(10, Int(runtime, "call"));
+        }
+
+        [Fact]
+        public void ANullablePrimitiveNullCheckBranchComputesCorrectly()
+        {
+            var runtime = Run(
+                "fun run(n: int?): int { if (n == null) { return 1; } return 0; }\n"
+                    + "fun call(): int {\n"
+                    + "  let absent: int? = null;\n"
+                    + "  let present: int? = 7;\n"
+                    + "  return run(absent) * 10 + run(present);\n"
+                    + "}");
+
+            Assert.Equal(10, Int(runtime, "call"));
+        }
+
+        /// <summary>
+        /// A bare `null` argument is bound with no expected type (overload resolution has not yet
+        /// picked a parameter to convert it against - <c>BodyBinder.BindArguments</c>), so it
+        /// carries <c>ErrorType</c> as a placeholder until <c>BodyBinder.Convert</c> retypes it
+        /// against the chosen parameter. That retyping used to be unreachable: `Convert`'s general
+        /// "already broken, don't cascade" bail-out on <c>expression.Type.IsError</c> caught the
+        /// placeholder first and returned the still-untyped literal, which <c>EmitLiteral</c> then
+        /// read as a plain null *reference* (<c>LoadNull</c>) instead of the absent tag §5.1
+        /// requires for a nullable primitive - so `n ?? -1` silently reinterpreted the null
+        /// reference's all-zero payload as a present `0`.
+        /// </summary>
+        [Fact]
+        public void ANullArgumentToANullablePrimitiveParameterIsTheAbsentTag()
+        {
+            var runtime = Run(
+                "fun run(n: int?): int { return n ?? -1; }\n"
+                    + "fun call(): int { return run(null) * 100 + run(9); }");
+
+            Assert.Equal(-91, Int(runtime, "call"));
+        }
+
+        [Fact]
+        public void AnInstanceOfBranchComputesCorrectly()
+        {
+            var runtime = Run(
+                "class Animal { }\nclass Dog : Animal { }\nclass Cat : Animal { }\n"
+                    + "fun run(a: Animal): int { if (a is Dog) { return 1; } return 0; }\n"
+                    + "fun call(): int { return run(Dog()) * 10 + run(Cat()); }");
+
+            Assert.Equal(10, Int(runtime, "call"));
+        }
+
+        [Fact]
+        public void ASafeCastOnAPrimitiveStillComputesBothOutcomes()
+        {
+            var runtime = Run(
+                "fun run(u: unknown): int {\n"
+                    + "  let n = u as? int;\n"
+                    + "  return n ?? -1;\n"
+                    + "}\n"
+                    + "fun call(): int { return run(5) * 100 + run(\"nope\"); }");
+
+            Assert.Equal(499, Int(runtime, "call"));
+        }
+
+        #endregion
+
         #region Varargs (§3.5)
         [Fact]
         public void AVarargsCallAbsorbsTheSurplus()
@@ -3521,6 +3622,141 @@ namespace Surtr.Tests.Compiler.CodeGen
             using var runtime = new SurtrRuntime();
             Assert.Throws<InvalidOperationException>(() => runtime.LoadModule(emitter.Modules[0]));
         }
+        #endregion
+
+        #region Built-in default constructors
+
+        /// <summary>
+        /// Before the fix, `int()`/`float()`/`bool()`/`char()`/`string()` compiled and ran anyway
+        /// (declaring no constructors and taking no arguments satisfied constructor resolution),
+        /// silently reading back the entity reference `ObjNew` allocated as raw NaN-boxed bits
+        /// instead of the type's own default value.
+        /// </summary>
+        [Fact]
+        public void ParameterlessPrimitiveAndStringConstructorsAreDefaults()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let a: int = int();\n"
+                    + "  let b: float = float();\n"
+                    + "  let c: bool = bool();\n"
+                    + "  let d: char = char();\n"
+                    + "  let e: string = string();\n"
+                    + "  var acc = a;\n"
+                    + "  if (b == 0.0) { acc = acc + 10; }\n"
+                    + "  if (!c) { acc = acc + 100; }\n"
+                    + "  if (d == char()) { acc = acc + 1000; }\n"
+                    + "  if (e == \"\") { acc = acc + 10000; }\n"
+                    + "  return acc;\n"
+                    + "}");
+
+            Assert.Equal(11110, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AParameterlessRangeIsEmpty()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  var count = 0;\n"
+                    + "  for (i in range()) { count = count + 1; }\n"
+                    + "  return count;\n"
+                    + "}");
+
+            Assert.Equal(0, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AParameterlessVoidConstructionIsRejected()
+        {
+            using var compilation = Reject("fun run(): int { void(); return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.NotSupportedOnType);
+        }
+
+        [Fact]
+        public void AParameterlessUnknownConstructionIsRejected()
+        {
+            using var compilation = Reject("fun run(): int { let u = unknown(); return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.NotSupportedOnType);
+        }
+
+        #endregion
+
+        #region Built-in member opcode substitution — value correctness for LoweringChoiceTests' shape assertions
+
+        [Fact]
+        public void ArrayOperationsComputeCorrectlyThroughTheirOpcodes()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let xs: int[] = [1, 2, 3];\n"
+                    + "  xs.push(9);\n"
+                    + "  xs.set(0, xs.get(0) + 100);\n"
+                    + "  xs.insert(1, 5);\n"
+                    + "  xs.removeAt(2);\n"
+                    + "  let found = xs.indexOf(9);\n"
+                    + "  let has = xs.contains(5);\n"
+                    + "  let last = xs.pop();\n"
+                    + "  let g0 = xs.get(0);\n"
+                    + "  let g1 = xs.get(1);\n"
+                    + "  let lengthBeforeClear = xs.length;\n"
+                    + "  xs.clear();\n"
+                    + "  return g0 + g1 + found * 10 + (has ? 1 : 0) + last + lengthBeforeClear * 1000 + xs.length * 100000;\n"
+                    + "}");
+
+            // xs starts [1,2,3] -> push(9): [1,2,3,9] -> set(0, get(0)+100): [101,2,3,9] ->
+            // insert(1,5): [101,5,2,3,9] -> removeAt(2): [101,5,3,9] -> indexOf(9)=3 ->
+            // contains(5)=true -> pop()=9, xs=[101,5,3] -> g0=101, g1=5 -> lengthBeforeClear=3 ->
+            // clear(): xs=[].
+            Assert.Equal(101 + 5 + 3 * 10 + 1 + 9 + 3 * 1000 + 0, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void StringLengthAndCharAtComputeCorrectly()
+        {
+            var runtime = Run("fun run(): bool { let s = \"hello\"; return s.length == 5 && s.charAt(0) == 'h'; }");
+
+            Assert.True(Call(runtime, "run").AsBool);
+        }
+
+        [Fact]
+        public void TupleLengthComputesCorrectly()
+        {
+            var runtime = Run("fun run(): int { let t = (1, \"a\", true); return t.length; }");
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void DictGetAndSetComputeCorrectly()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let m: {string: int} = {\"x\": 1};\n"
+                    + "  m.set(\"x\", m.get(\"x\") + 41);\n"
+                    + "  return m.get(\"x\");\n"
+                    + "}");
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void DictReserveDoesNotDisturbExistingEntries()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let m: {string: int} = {};\n"
+                    + "  m.reserve(64);\n"
+                    + "  m.set(\"a\", 21);\n"
+                    + "  m.reserve(128);\n"
+                    + "  return m.get(\"a\") * 2;\n"
+                    + "}");
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
         #endregion
     }
 }

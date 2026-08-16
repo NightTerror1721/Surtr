@@ -436,6 +436,46 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private void EmitConditionalJump(BoundExpression condition, SurtrLabel target)
         {
+            // Each of these recognises a shape that plain `Expression(condition)` would otherwise
+            // turn into a boolean on the stack, immediately tested by the `JumpIfFalse` below - and
+            // fuses the test and the branch into one dispatch instead, the same idea
+            // `TryFusedComparison` already applies to an ordinary comparison.
+            if (condition is BoundBinaryExpression binary)
+            {
+                if (TryEmitAbsenceBranch(binary, target))
+                    return;
+
+                if (TryGetNullCheckOperand(binary, out var nullOperand, out bool checksForNull))
+                {
+                    Expression(nullOperand);
+
+                    // `JumpIfNull`/`JumpIfNotNull` say "jump when true"; a false condition is what
+                    // sends control to `target` here, so `x == null` (true means null) takes the
+                    // not-null branch and `x != null` takes the null one - the mirror of the
+                    // negation every other fused comparison below applies.
+                    if (checksForNull)
+                        Code.JumpIfNotNull(target);
+                    else
+                        Code.JumpIfNull(target);
+
+                    return;
+                }
+            }
+
+            // `x is T` has no negated fused opcode to jump on directly - only `JPInstanceOf` exists,
+            // which jumps when the test is true - so the false path is an explicit fall-through
+            // past an unconditional jump instead of the single dispatch a negated form would give.
+            if (condition is BoundTypeTestExpression test)
+            {
+                Expression(test.Operand);
+
+                var isInstance = Code.NewLabel();
+                Code.JumpIfInstanceOf(Descriptors.Emit(test.TestedType.NonNullable), isInstance);
+                Code.Jump(target);
+                Code.MarkLabel(isInstance);
+                return;
+            }
+
             if (TryFusedComparison(condition, out var comparison, out var operandType, out var left, out var right))
             {
                 Expression(left);
@@ -1559,21 +1599,30 @@ namespace Surtr.Compiler.CodeGen
             }
 
             var value = _method.DeclareLocal("$candidate");
-            var failed = Code.NewLabel();
+            var isInstance = Code.NewLabel();
             var end = Code.NewLabel();
 
+            // JPInstanceOf jumps on true, so - unlike TestInstanceOf + JumpIfFalse, which always
+            // materializes the bool - the "is an instance" arm is the jump target and the "is not"
+            // arm is the fall-through, saving the intermediate boolean on the common (successful) path.
             Expression(conversion.Operand);
             Code.StoreLocal(value);
             Code.LoadLocal(value);
-            Code.TestInstanceOf(Descriptors.Emit(target));
-            Code.JumpIfFalse(failed);
+            Code.JumpIfInstanceOf(Descriptors.Emit(target), isInstance);
 
+            // This branch is only reached for a primitive `target`, so the result type is always a
+            // nullable primitive - its "no value" is the absent tag (§5.1), never a null reference.
+            // A caller testing the result with `??`/`== null` reads the *static* type to pick
+            // JPA/IsAbsent over JumpIfNull/IsNull (EmitNullCoalesce, TryEmitAbsenceTest/Branch), so
+            // pushing a null reference here would go unrecognised as absence and read back its
+            // all-zero payload as a present `0` instead.
+            Code.PushAbsent(TypeCodeOf(target));
+            Code.Jump(end);
+
+            Code.MarkLabel(isInstance);
             Code.LoadLocal(value);
             Code.Unbox();
 
-            Code.Jump(end);
-            Code.MarkLabel(failed);
-            Code.LoadNull();
             Code.MarkLabel(end);
         }
 
@@ -1600,6 +1649,24 @@ namespace Surtr.Compiler.CodeGen
             // absent-float is a NaN and FEQ answers false however it is asked.
             if (TryEmitAbsenceTest(binary))
                 return;
+
+            // `x == null`/`x != null`/`x === null`/`x !== null` against a reference (a class, an
+            // array, a string, ...) needs neither the null literal on the stack nor a two-operand
+            // comparison: a reference's nullness is its own tag (§5.1), which `IsNull`/`IsNotNull`
+            // read off the one operand directly. Left to the general path below this would push
+            // `PushNull` and run `REQ`/`RNE` - or, for a string, `StrEQ`/`StrNE`'s text comparison,
+            // which happens to be null-safe (§Opcodes) but still does more work than asking the tag.
+            if (TryGetNullCheckOperand(binary, out var nullCheckOperand, out bool checksForNull))
+            {
+                Expression(nullCheckOperand);
+
+                if (checksForNull)
+                    Code.IsNull();
+                else
+                    Code.IsNotNull();
+
+                return;
+            }
 
             var operands = TypeCodeOf(binary.Left.Type);
 
@@ -1920,6 +1987,40 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
+        /// The branch-fusing twin of <see cref="TryEmitAbsenceTest"/>: <c>x == null</c>/<c>x != null</c>
+        /// against a nullable primitive, used as a branch condition, fuses straight into
+        /// <c>JPA</c>/<c>JPNA</c> instead of pushing the absence test's boolean and testing it with a
+        /// separate <c>JumpIfFalse</c>.
+        /// </summary>
+        private bool TryEmitAbsenceBranch(BoundBinaryExpression binary, SurtrLabel target)
+        {
+            if (binary.Operator is not (BinaryOperator.Equal or BinaryOperator.NotEqual))
+                return false;
+
+            BoundExpression? value = null;
+            if (IsNullLiteral(binary.Right) && IsNullablePrimitive(binary.Left.Type))
+                value = binary.Left;
+            else if (IsNullLiteral(binary.Left) && IsNullablePrimitive(binary.Right.Type))
+                value = binary.Right;
+
+            if (value is null)
+                return false;
+
+            Expression(value);
+
+            // JPA/JPNA say "jump when true"; a false condition is what sends control to `target`
+            // here, so `== null` (true means absent) takes the present branch (JPNA) and `!= null`
+            // takes the absent one (JPA) - the mirror of TryEmitAbsenceTest's IsAbsent/IsPresent
+            // choice above.
+            if (binary.Operator == BinaryOperator.Equal)
+                Code.JPNA(target);
+            else
+                Code.JPA(target);
+
+            return true;
+        }
+
+        /// <summary>
         /// Whether an expression is the <c>null</c> literal, looking through the conversion the
         /// binder wraps it in to give it the other operand's type.
         /// </summary>
@@ -1929,6 +2030,42 @@ namespace Surtr.Compiler.CodeGen
             BoundConversionExpression conversion => IsNullLiteral(conversion.Operand),
             _ => false,
         };
+
+        /// <summary>
+        /// Recognises <c>x == null</c>/<c>x != null</c>/<c>x === null</c>/<c>x !== null</c> (either
+        /// operand order) against a reference-typed <paramref name="binary"/>, and reports which
+        /// operand to test and which sense to test it in - the shared detection
+        /// <see cref="EmitBinary"/>'s value-producing <c>IsNull</c>/<c>IsNotNull</c> lowering and
+        /// <see cref="EmitConditionalJump"/>'s <c>JPN</c>/<c>JPNN</c> branch fusion both need.
+        /// </summary>
+        /// <remarks>
+        /// A nullable primitive is deliberately excluded: its "no value" is the absent tag, not a
+        /// null reference (§5.1), so it takes <see cref="TryEmitAbsenceTest"/>/
+        /// <see cref="TryEmitAbsenceBranch"/> instead - the two are never both applicable to the
+        /// same comparison, since one requires the non-literal operand to be nullable-primitive and
+        /// the other requires it not to be.
+        /// </remarks>
+        private static bool TryGetNullCheckOperand(BoundBinaryExpression binary, out BoundExpression operand, out bool checksForNull)
+        {
+            operand = null!;
+            checksForNull = false;
+
+            bool isEquality = binary.Operator is BinaryOperator.Equal or BinaryOperator.ReferenceEqual;
+            bool isInequality = binary.Operator is BinaryOperator.NotEqual or BinaryOperator.ReferenceNotEqual;
+
+            if (!isEquality && !isInequality)
+                return false;
+
+            if (IsNullLiteral(binary.Right) && !IsNullablePrimitive(binary.Left.Type))
+                operand = binary.Left;
+            else if (IsNullLiteral(binary.Left) && !IsNullablePrimitive(binary.Right.Type))
+                operand = binary.Right;
+            else
+                return false;
+
+            checksForNull = isEquality;
+            return true;
+        }
 
         // A stack, because `a?.b?.c` nests one guarded access inside another and each has its own
         // receiver slot; the innermost is the one a placeholder reads.
@@ -2297,11 +2434,11 @@ case BoundFieldExpression field:
 
         private void EmitPropertyRead(BoundPropertyExpression property)
         {
-            // `dict.length` is a native getter, but `DictLen` reads the count in one dispatch with
-            // no frame — the same thing, matched by the getter's identity so a user `length` on
-            // another type is untouched. The array's `length` is intentionally left to its native
-            // getter: it shares the opcode's shape only here, in a property read, and the array's
-            // `ArrLen` is reserved for the `for-in` lowering that actually walks by it.
+            // Every built-in collection's `length` is a native getter, but each has a dedicated
+            // opcode that reads the count in one dispatch with no frame — the same thing, matched by
+            // the getter's identity so a user `length` on another type is untouched. `ArrLen`/
+            // `TupLen` are also what the `for-in` lowering over an array/tuple already reads the
+            // count with; this is the same opcode reaching the same answer from a property read.
             if (IsDictionaryLength(property.Property))
             {
                 if (property.Property.IsStatic)
@@ -2309,6 +2446,27 @@ case BoundFieldExpression field:
 
                 Expression(property.Receiver!);
                 Code.DictLen();
+                return;
+            }
+
+            if (IsArrayLength(property.Property))
+            {
+                Expression(property.Receiver!);
+                Code.ArrLen();
+                return;
+            }
+
+            if (IsStringLength(property.Property))
+            {
+                Expression(property.Receiver!);
+                Code.StrLen();
+                return;
+            }
+
+            if (IsTupleLength(property.Property))
+            {
+                Expression(property.Receiver!);
+                Code.TupLen();
                 return;
             }
 
@@ -2334,6 +2492,18 @@ case BoundFieldExpression field:
         /// <summary>Whether <paramref name="property"/> is, by identity, the built-in dictionary's <c>length</c>.</summary>
         private static bool IsDictionaryLength(PropertySymbol property)
             => property.Getter is { } getter && IsDictionaryMember(getter, MemberNames.Getter("length"));
+
+        /// <summary>Whether <paramref name="property"/> is, by identity, the built-in array's <c>length</c>.</summary>
+        private static bool IsArrayLength(PropertySymbol property)
+            => property.Getter is { } getter && IsArrayMember(getter, MemberNames.Getter("length"));
+
+        /// <summary>Whether <paramref name="property"/> is, by identity, the built-in string's <c>length</c>.</summary>
+        private static bool IsStringLength(PropertySymbol property)
+            => property.Getter is { } getter && IsStringMember(getter, MemberNames.Getter("length"));
+
+        /// <summary>Whether <paramref name="property"/> is, by identity, the built-in tuple's <c>length</c>.</summary>
+        private static bool IsTupleLength(PropertySymbol property)
+            => property.Getter is { } getter && IsTupleMember(getter, MemberNames.Getter("length"));
 
         /// <summary>
         /// Replaces a read of an auto-property by the field load that is its whole body (§3.4, §3.6).
@@ -2684,12 +2854,18 @@ case BoundFieldExpression field:
             if (TryFoldConstCall(call, discardResult))
                 return;
 
-            // A method on the built-in `dict` is a native body the compiler could emit a call to,
+            // A method on a built-in collection is a native body the compiler could emit a call to,
             // but each of these operations also has a dedicated opcode that does the same thing in
             // one dispatch and no frame. Where the callee is one of them, this call site takes the
             // opcode — the member is matched by identity so a user type that happens to declare its
-            // own `remove` is not confused with the dictionary's.
+            // own `remove` is not confused with the built-in's.
             if (TryEmitDictionaryOperation(call, discardResult))
+                return;
+
+            if (TryEmitArrayOperation(call, discardResult))
+                return;
+
+            if (TryEmitStringOperation(call, discardResult))
                 return;
 
             if (call.Method.IsForceInline)
@@ -2788,10 +2964,10 @@ case BoundFieldExpression field:
         /// </summary>
         /// <remarks>
         /// The members lowered here are the ones with a dedicated opcode of identical semantics:
-        /// <c>clear</c>, <c>containsKey</c>, <c>remove</c>, <c>keys</c> and <c>values</c>.
-        /// <c>get</c>/<c>set</c> are deliberately left alone — the index form <c>m[i]</c> already
-        /// reaches the same <c>DictGet</c>/<c>DictSet</c>, so lowering the method spelling would
-        /// duplicate a path that exists. <c>length</c> is handled separately, in
+        /// <c>clear</c>, <c>get</c>, <c>set</c>, <c>containsKey</c>, <c>remove</c>, <c>keys</c> and
+        /// <c>values</c>. <c>get</c>/<c>set</c> reach the same <c>DictGet</c>/<c>DictSet</c> the
+        /// index form <c>m[k]</c> already does — lowered here too, rather than left to duplicate a
+        /// native call the index form already avoids. <c>length</c> is handled separately, in
         /// <see cref="EmitPropertyRead"/>.
         /// </remarks>
         private bool TryEmitDictionaryOperation(BoundCallExpression call, bool discardResult)
@@ -2803,6 +2979,25 @@ case BoundFieldExpression field:
             {
                 Expression(call.Receiver);
                 Code.DictClear();
+                return true;
+            }
+
+            if (IsDictionaryMember(call.Method, "get"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.DictGet();
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            if (IsDictionaryMember(call.Method, "set"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Expression(call.Arguments[1]);
+                Code.DictSet();
                 return true;
             }
 
@@ -2848,6 +3043,126 @@ case BoundFieldExpression field:
         }
 
         /// <summary>
+        /// The array twin of <see cref="TryEmitDictionaryOperation"/>: replaces a call to a member
+        /// of the built-in <c>array</c> that has a dedicated opcode of identical semantics —
+        /// <c>get</c>, <c>set</c>, <c>push</c>, <c>pop</c>, <c>insert</c>, <c>removeAt</c>,
+        /// <c>clear</c>, <c>indexOf</c> and <c>contains</c>. <c>length</c> is handled separately, in
+        /// <see cref="EmitPropertyRead"/>; <c>reverse</c>, <c>reserve</c>, <c>truncate</c>,
+        /// <c>remove(value)</c> and <c>sort</c> have no opcode of their own and stay real calls.
+        /// </summary>
+        private bool TryEmitArrayOperation(BoundCallExpression call, bool discardResult)
+        {
+            if (call.Receiver is null)
+                return false;
+
+            if (IsArrayMember(call.Method, "get"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.ArrGet();
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "set"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Expression(call.Arguments[1]);
+                Code.ArrSet();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "push"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.ArrPush();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "pop"))
+            {
+                Expression(call.Receiver);
+                Code.ArrPop();
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "insert"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Expression(call.Arguments[1]);
+                Code.ArrInsert();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "removeAt"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.ArrRemoveAt();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "clear"))
+            {
+                Expression(call.Receiver);
+                Code.ArrClear();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "indexOf"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.ArrIndexOf();
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "contains"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.ArrIn();
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The string twin of <see cref="TryEmitDictionaryOperation"/>: <c>charAt</c> is exactly the
+        /// index form <c>s[i]</c> under another name, so it reaches the same <c>StrGet</c>.
+        /// <c>length</c> is handled separately, in <see cref="EmitPropertyRead"/>; every other
+        /// string method (<c>substring</c>, <c>repeat</c>, …) has no opcode of its own.
+        /// </summary>
+        private bool TryEmitStringOperation(BoundCallExpression call, bool discardResult)
+        {
+            if (call.Receiver is null)
+                return false;
+
+            if (IsStringMember(call.Method, "charAt"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.StrGet();
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Whether <paramref name="method"/> is, by identity, the built-in dictionary's member of
         /// the given <paramref name="name"/>.
         /// </summary>
@@ -2865,6 +3180,39 @@ case BoundFieldExpression field:
         /// <summary>The single overload of a named built-in dictionary method, or <see langword="null"/>.</summary>
         private static SurtrMethodInfo? DictionaryMethod(string name)
             => SurtrBuiltIns.Dictionary.TryGetMethods(name, out var overloads) && overloads.Length == 1
+                ? overloads[0]
+                : null;
+
+        /// <summary>The array twin of <see cref="IsDictionaryMember"/> — same identity reasoning.</summary>
+        private static bool IsArrayMember(MethodSymbol method, string name)
+            => method.ImportedFrom is { } imported
+               && ReferenceEquals(imported, ArrayMethod(name));
+
+        /// <summary>The single overload of a named built-in array method, or <see langword="null"/>.</summary>
+        private static SurtrMethodInfo? ArrayMethod(string name)
+            => SurtrBuiltIns.Array.TryGetMethods(name, out var overloads) && overloads.Length == 1
+                ? overloads[0]
+                : null;
+
+        /// <summary>The string twin of <see cref="IsDictionaryMember"/> — same identity reasoning.</summary>
+        private static bool IsStringMember(MethodSymbol method, string name)
+            => method.ImportedFrom is { } imported
+               && ReferenceEquals(imported, StringMethod(name));
+
+        /// <summary>The single overload of a named built-in string method, or <see langword="null"/>.</summary>
+        private static SurtrMethodInfo? StringMethod(string name)
+            => SurtrBuiltIns.String.TryGetMethods(name, out var overloads) && overloads.Length == 1
+                ? overloads[0]
+                : null;
+
+        /// <summary>The tuple twin of <see cref="IsDictionaryMember"/> — same identity reasoning.</summary>
+        private static bool IsTupleMember(MethodSymbol method, string name)
+            => method.ImportedFrom is { } imported
+               && ReferenceEquals(imported, TupleMethod(name));
+
+        /// <summary>The single overload of a named built-in tuple member, or <see langword="null"/>.</summary>
+        private static SurtrMethodInfo? TupleMethod(string name)
+            => SurtrBuiltIns.Tuple.TryGetMethods(name, out var overloads) && overloads.Length == 1
                 ? overloads[0]
                 : null;
 

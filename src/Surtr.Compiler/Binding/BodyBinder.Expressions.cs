@@ -1828,6 +1828,25 @@ namespace Surtr.Compiler.Binding
             IReadOnlyList<ArgumentSyntax> written,
             NamedTypeSymbol type)
         {
+            // A primitive, `string` or `range` has no instance layout for `ObjNew` to allocate — a
+            // primitive and a string are never a `SurtrInstance` at all, and a `range` is the two
+            // operands `RangeNew` builds. Left unhandled, `int()`/`string()`/`range()` used to bind
+            // and emit anyway (declaring no constructors and taking no arguments satisfies
+            // TryResolveConstructor below), silently reading back the entity reference `ObjNew`
+            // allocated as raw NaN-boxed bits. A parameterless construction is also exactly the
+            // type's own default value, so giving it that meaning costs nothing and is what the
+            // parens would otherwise promise and fail to deliver.
+            if (written.Count == 0 && TryBuiltInDefaultValue(syntax, type) is BoundExpression defaultValue)
+                return defaultValue;
+
+            if (type.SpecialType is SpecialType.Void or SpecialType.Unknown)
+            {
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.NotSupportedOnType,
+                    $"'{type.Name}' names no real value, so nothing can be constructed as one.");
+            }
+
             if (type.IsAbstract)
             {
                 return Error(
@@ -1845,6 +1864,40 @@ namespace Surtr.Compiler.Binding
                 return Error(syntax);
 
             return new BoundObjectCreationExpression(syntax, type, constructor, arguments);
+        }
+
+        /// <summary>
+        /// The zero-cost default a <em>parameterless</em> construction of a primitive, <c>string</c>
+        /// or <c>range</c> means — the same value a fresh, uninitialized slot of that type already
+        /// reads as, made explicit and constant-folded away entirely (no <c>ObjNew</c>, no
+        /// allocation). <see langword="null"/> for anything else, which falls through to ordinary
+        /// constructor resolution — and, for <c>void</c>/<c>unknown</c>, to the explicit rejection
+        /// just below this call.
+        /// </summary>
+        private BoundExpression? TryBuiltInDefaultValue(SyntaxNode syntax, NamedTypeSymbol type)
+        {
+            switch (type.SpecialType)
+            {
+                case SpecialType.Int: return new BoundLiteralExpression(syntax, _factory.Int, 0L);
+                case SpecialType.Float: return new BoundLiteralExpression(syntax, _factory.Float, 0.0);
+                case SpecialType.Bool: return new BoundLiteralExpression(syntax, _factory.Bool, false);
+                case SpecialType.Char: return new BoundLiteralExpression(syntax, _factory.Char, '\0');
+                case SpecialType.String: return new BoundLiteralExpression(syntax, _factory.String, "");
+
+                // `range()` has no written bounds to mean anything else, so its default is the same
+                // shape `0..0` binds to: an empty range, the "nothing" a fresh range-typed slot
+                // would be closest to.
+                case SpecialType.Range:
+                    return new BoundBinaryExpression(
+                        syntax,
+                        BinaryOperator.Range,
+                        new BoundLiteralExpression(syntax, _factory.Int, 0L),
+                        new BoundLiteralExpression(syntax, _factory.Int, 0L),
+                        _factory.Range);
+
+                default:
+                    return null;
+            }
         }
 
         /// <summary>

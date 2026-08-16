@@ -146,6 +146,145 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(0, Count(code, "Cast"));
         }
 
+        /// <summary>
+        /// A safe cast to a primitive still needs the branch (§3.6's remark on <c>EmitSafeCast</c>:
+        /// the success path unboxes, the failure path has nothing to unbox), but it fuses to
+        /// <c>JPInstanceOf</c> now instead of materializing <c>InstanceOf</c>'s bool and testing it
+        /// with a separate <c>JumpIfFalse</c>.
+        /// </summary>
+        [Fact]
+        public void ASafeCastToAPrimitiveTypeFusesToJPInstanceOf()
+        {
+            string code = Disassemble("fun run(u: unknown): int? { return u as? int; }");
+
+            Assert.Equal(1, Count(code, "JPInstanceOf"));
+            Assert.Equal(0, Count(code, "InstanceOf"));
+            Assert.Equal(0, Count(code, "JPZ"));
+        }
+
+        #endregion
+
+        #region Null and instanceof checks
+
+        /// <summary>
+        /// `x == null` against a reference needs neither the null literal on the stack nor a
+        /// two-operand comparison: <c>IsNull</c> reads the one operand's own tag (§5.1). Value
+        /// correctness is <see cref="ModuleEmitterTests.ANullEqualityOnAReferenceComputesCorrectly"/>.
+        /// </summary>
+        [Fact]
+        public void ANullEqualityOnAReferenceUsesIsNull()
+        {
+            string code = Disassemble(
+                "class Box { }\nfun run(a: Box?): bool { return a == null; }");
+
+            Assert.Equal(1, Count(code, "IsNull"));
+            Assert.Equal(0, Count(code, "PushNull"));
+            Assert.Equal(0, Count(code, "REQ"));
+        }
+
+        [Fact]
+        public void ANullInequalityOnAReferenceUsesIsNotNull()
+        {
+            string code = Disassemble(
+                "class Box { }\nfun run(a: Box?): bool { return a != null; }");
+
+            Assert.Equal(1, Count(code, "IsNotNull"));
+            Assert.Equal(0, Count(code, "PushNull"));
+            Assert.Equal(0, Count(code, "RNE"));
+        }
+
+        /// <summary><c>===</c>/<c>!==</c> against <c>null</c> mean exactly the same thing as
+        /// <c>==</c>/<c>!=</c> there - there is only one null to be identical to - so they fuse the
+        /// same way.</summary>
+        [Fact]
+        public void AReferenceIdentityToNullUsesIsNull()
+        {
+            string code = Disassemble(
+                "class Box { }\nfun run(a: Box?): bool { return a === null; }");
+
+            Assert.Equal(1, Count(code, "IsNull"));
+            Assert.Equal(0, Count(code, "JPREQ"));
+        }
+
+        /// <summary>
+        /// A string is a reference too, and `s == null` should ask the tag directly rather than run
+        /// `StrEQ`'s text comparison against an operand that is always null (null-safe, but doing
+        /// more work than asking the tag).
+        /// </summary>
+        [Fact]
+        public void AStringNullCheckUsesIsNullNotStrEQ()
+        {
+            string code = Disassemble("fun run(s: string?): bool { return s == null; }");
+
+            Assert.Equal(1, Count(code, "IsNull"));
+            Assert.Equal(0, Count(code, "StrEQ"));
+        }
+
+        /// <summary>
+        /// The branch-condition twin of <see cref="ANullEqualityOnAReferenceUsesIsNull"/>: used as
+        /// an `if`, the comparison fuses straight into `JPNN`/`JPN` (the family that keeps the
+        /// boolean off the stack entirely), not `PushNull` + a reference comparison, fused or not.
+        /// Value correctness is
+        /// <see cref="ModuleEmitterTests.ANullEqualityBranchComputesCorrectly"/>.
+        /// </summary>
+        [Fact]
+        public void ANullEqualityBranchFusesToJPNN()
+        {
+            string code = Disassemble(
+                "class Box { }\nfun run(a: Box?): int { if (a == null) { return 1; } return 0; }");
+
+            Assert.Equal(1, Count(code, "JPNN"));
+            Assert.Equal(0, Count(code, "PushNull"));
+            Assert.Equal(0, Count(code, "IsNull"));
+            Assert.Equal(0, Count(code, "JPZ"));
+        }
+
+        [Fact]
+        public void ANullInequalityBranchFusesToJPN()
+        {
+            string code = Disassemble(
+                "class Box { }\nfun run(a: Box?): int { if (a != null) { return 1; } return 0; }");
+
+            Assert.Equal(1, Count(code, "JPN"));
+            Assert.Equal(0, Count(code, "PushNull"));
+        }
+
+        /// <summary>
+        /// A nullable *primitive*'s absence is a tag, not a null reference (§5.1), so its branch
+        /// fuses to `JPA`/`JPNA` instead - the branch-condition twin of `TryEmitAbsenceTest`
+        /// (`IsAbsent`/`IsPresent`), which already covered the value-producing case. Value
+        /// correctness is
+        /// <see cref="ModuleEmitterTests.ANullablePrimitiveNullCheckBranchComputesCorrectly"/>.
+        /// </summary>
+        [Fact]
+        public void ANullablePrimitiveEqualityBranchFusesToJPNA()
+        {
+            string code = Disassemble(
+                "fun run(n: int?): int { if (n == null) { return 1; } return 0; }");
+
+            Assert.Equal(1, Count(code, "JPNA"));
+            Assert.Equal(0, Count(code, "IsAbsent"));
+            Assert.Equal(0, Count(code, "JPZ"));
+            Assert.Equal(0, Count(code, "PushAbsent"));
+        }
+
+        /// <summary>
+        /// `x is T` used as a branch condition fuses to `JPInstanceOf` instead of materializing
+        /// `InstanceOf`'s bool and testing it with `JumpIfFalse`. Value correctness is
+        /// <see cref="ModuleEmitterTests.AnInstanceOfBranchComputesCorrectly"/>.
+        /// </summary>
+        [Fact]
+        public void AnInstanceOfBranchFusesToJPInstanceOf()
+        {
+            string code = Disassemble(
+                "class Animal { }\nclass Dog : Animal { }\n"
+                    + "fun run(a: Animal): int { if (a is Dog) { return 1; } return 0; }");
+
+            Assert.Equal(1, Count(code, "JPInstanceOf"));
+            Assert.Equal(0, Count(code, "InstanceOf"));
+            Assert.Equal(0, Count(code, "JPZ"));
+        }
+
         #endregion
 
         #region Counted loops
@@ -727,6 +866,119 @@ namespace Surtr.Tests.Compiler.CodeGen
                     + "fun run(): unknown { let id = EntityId(21); let u: unknown = id; return u; }");
 
             Assert.Equal(1, Count(code, "BoxAs"));
+        }
+
+        #endregion
+
+        #region Built-in default constructors
+
+        /// <summary>
+        /// A parameterless `int()`/`float()`/`bool()`/`char()`/`string()` is exactly that type's
+        /// default value - a primitive or a string has no instance layout for `ObjNew` to allocate,
+        /// so this has to fold to the same shape a literal does, never `ObjNew`. Value correctness
+        /// is <see cref="ModuleEmitterTests.ParameterlessPrimitiveAndStringConstructorsAreDefaults"/>.
+        /// </summary>
+        [Fact]
+        public void ParameterlessPrimitiveConstructionsNeverAllocate()
+        {
+            string code = Disassemble(
+                "fun run(): int {\n"
+                    + "  let a = int(); let b = float(); let c = bool(); let d = char(); let e = string();\n"
+                    + "  return a + e.length;\n"
+                    + "}");
+
+            Assert.Equal(0, Count(code, "ObjNew"));
+            Assert.Equal(0, Count(code, "ObjNewX"));
+        }
+
+        /// <summary>
+        /// A parameterless `range()` has no instance layout either — it is the same two operands
+        /// `RangeNew` builds, here both zero. Value correctness is
+        /// <see cref="ModuleEmitterTests.AParameterlessRangeIsEmpty"/>.
+        /// </summary>
+        [Fact]
+        public void ParameterlessRangeConstructionUsesRangeNewNotObjNew()
+        {
+            string code = Disassemble("fun run(): range { return range(); }");
+
+            Assert.Equal(0, Count(code, "ObjNew"));
+            Assert.Equal(1, Count(code, "RangeNew"));
+        }
+
+        #endregion
+
+        #region Built-in member opcode substitution
+
+        [Fact]
+        public void ArrayLengthUsesArrLenNotACall()
+        {
+            string code = Disassemble("fun run(xs: int[]): int { return xs.length; }");
+
+            Assert.Equal(1, Count(code, "ArrLen"));
+            Assert.Equal(0, Count(code, "InvokeSpecial"));
+            Assert.Equal(0, Count(code, "InvokeStatic"));
+        }
+
+        [Fact]
+        public void ArrayMutatorsUseTheirOpcodesNotACall()
+        {
+            string code = Disassemble(
+                "fun run(xs: int[]): int {\n"
+                    + "  xs.push(9);\n"
+                    + "  xs.set(0, xs.get(0) + 1);\n"
+                    + "  xs.insert(1, 5);\n"
+                    + "  xs.removeAt(2);\n"
+                    + "  let found = xs.indexOf(9);\n"
+                    + "  let has = xs.contains(5);\n"
+                    + "  let last = xs.pop();\n"
+                    + "  xs.clear();\n"
+                    + "  return found + (has ? 1 : 0) + last;\n"
+                    + "}");
+
+            Assert.Equal(1, Count(code, "ArrPush"));
+            Assert.Equal(1, Count(code, "ArrSet"));
+            Assert.Equal(1, Count(code, "ArrGet"));
+            Assert.Equal(1, Count(code, "ArrInsert"));
+            Assert.Equal(1, Count(code, "ArrRemoveAt"));
+            Assert.Equal(1, Count(code, "ArrIndexOf"));
+            Assert.Equal(1, Count(code, "ArrIn"));
+            Assert.Equal(1, Count(code, "ArrPop"));
+            Assert.Equal(1, Count(code, "ArrClear"));
+            Assert.Equal(0, Count(code, "InvokeSpecial"));
+            Assert.Equal(0, Count(code, "InvokeStatic"));
+        }
+
+        [Fact]
+        public void StringLengthAndCharAtUseTheirOpcodesNotACall()
+        {
+            string code = Disassemble("fun run(s: string): bool { return s.length > 0 && s.charAt(0) == 'h'; }");
+
+            Assert.Equal(1, Count(code, "StrLen"));
+            Assert.Equal(1, Count(code, "StrGet"));
+            Assert.Equal(0, Count(code, "InvokeSpecial"));
+        }
+
+        [Fact]
+        public void TupleLengthUsesTupLenNotACall()
+        {
+            string code = Disassemble("fun run(t: (int, string)): int { return t.length; }");
+
+            Assert.Equal(1, Count(code, "TupLen"));
+            Assert.Equal(0, Count(code, "InvokeSpecial"));
+        }
+
+        [Fact]
+        public void DictGetAndSetUseDictGetAndDictSetNotACall()
+        {
+            string code = Disassemble(
+                "fun run(m: {string: int}): int {\n"
+                    + "  m.set(\"x\", m.get(\"x\") + 1);\n"
+                    + "  return m.get(\"x\");\n"
+                    + "}");
+
+            Assert.Equal(2, Count(code, "DictGet"));
+            Assert.Equal(1, Count(code, "DictSet"));
+            Assert.Equal(0, Count(code, "InvokeSpecial"));
         }
 
         #endregion

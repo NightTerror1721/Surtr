@@ -300,6 +300,13 @@ namespace Surtr.Runtime.BuiltIns
 
             builder.Method("clear", SurtrClassReference.Void, SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryClear));
 
+            // The utility "constructor" a dict cannot spell as one (§5.3 gives it no `Dictionary<K,V>`
+            // name to construct through) — an empty `{}` literal plus a capacity hint, the same
+            // symmetry `array.reserve` already gives a `[]` literal.
+            builder.Method(
+                "reserve", SurtrClassReference.Void, SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryReserve),
+                builder.Params(("capacity", SurtrClassReference.Integer)));
+
             SurtrClassReference key = SurtrClassReference.GenericParameter(0);
             SurtrClassReference value = SurtrClassReference.GenericParameter(1);
 
@@ -324,6 +331,25 @@ namespace Surtr.Runtime.BuiltIns
         private static SurtrValue DictionarySet(SurtrCallArguments arguments)
         {
             arguments.GetUnchecked<SurtrDictionary>(0).Set(arguments.GetValueUnchecked(1), arguments.GetValueUnchecked(2));
+            return SurtrValue.Null;
+        }
+
+        /// <summary>
+        /// Hints at the entry count about to be added, the same way <c>array.reserve</c> hints at
+        /// element count — whichever of the dictionary's two stores is live gets the call, since
+        /// exactly one of <see cref="SurtrDictionary.Entries"/>/<see cref="SurtrDictionary.IntEntries"/>
+        /// is ever in use for a given dictionary.
+        /// </summary>
+        private static SurtrValue DictionaryReserve(SurtrCallArguments arguments)
+        {
+            var self = arguments.GetUnchecked<SurtrDictionary>(0);
+            int capacity = arguments.GetInt(1);
+
+            if (self.IntEntries is { } ints)
+                ints.EnsureCapacity(capacity);
+            else
+                self.Entries!.EnsureCapacity(capacity);
+
             return SurtrValue.Null;
         }
 
