@@ -420,6 +420,12 @@ namespace Surtr.Compiler.CodeGen
             {
                 switch (member)
                 {
+                    // A const carries no slot at all (§7.1) — every read of it already folded to a
+                    // literal while binding (BodyBinder.ResolveField), so there is nothing here to
+                    // declare.
+                    case FieldSymbol { IsConst: true }:
+                        continue;
+
                     case FieldSymbol field:
                         DeclareField(context, @class, symbol, field);
                         continue;
@@ -743,6 +749,11 @@ namespace Surtr.Compiler.CodeGen
         {
             foreach (var field in module.Fields)
             {
+                // §7.1: a const carries no slot at all — every read of it already folded to a
+                // literal while binding (BodyBinder.ResolveField).
+                if (field.IsConst)
+                    continue;
+
                 // §10: a `native` variable declares nothing here. It has no static slot — the host
                 // owns the storage — and the import that reaches it is interned at each use site, so
                 // defining a variable of the same name would give the module a second, dead one.

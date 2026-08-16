@@ -55,6 +55,15 @@ namespace Surtr.Compiler.Binding
 
         private readonly HashSet<Symbol> _narrowed = new HashSet<Symbol>();
 
+        /// <summary>
+        /// A local declared <c>const</c> (§7.1), by the folded value it reads as everywhere it is
+        /// used. Keyed by the symbol itself rather than by name, so shadowing across nested blocks —
+        /// already handled correctly by <see cref="Scope"/> for an ordinary local — needs no second
+        /// mechanism here: two different <see cref="LocalSymbol"/> instances named the same never
+        /// collide, unlike the module-wide <see cref="ConstantEvaluator"/>'s flat name table.
+        /// </summary>
+        private readonly Dictionary<LocalSymbol, object?> _localConstants = new Dictionary<LocalSymbol, object?>();
+
         private Scope _values;
         private int _loopDepth;
         private readonly List<string> _loopLabels = new List<string>();

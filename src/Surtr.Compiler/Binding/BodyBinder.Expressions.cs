@@ -127,6 +127,11 @@ namespace Surtr.Compiler.Binding
 
             if (found.Symbol is LocalSymbol local)
             {
+                // A const local carries no slot at all (§7.1) and is not a capturable value either
+                // — folding it here is what keeps it out of both.
+                if (_localConstants.TryGetValue(local, out object? constant))
+                    return new BoundLiteralExpression(syntax, local.Type, constant);
+
                 NoteCapture(local, syntax.Span);
                 var read = new BoundLocalExpression(syntax, local);
                 return Narrow(read, local, local.Type, syntax);
@@ -173,12 +178,32 @@ namespace Surtr.Compiler.Binding
                 syntax, read, narrowed, Conversion.Of(ConversionKind.ExplicitReference), isExplicit: false);
         }
 
+        /// <summary>
+        /// Reads a field, folding a <c>const</c> one straight into the literal it evaluates to
+        /// (§7.1) rather than a read of a slot — a <c>const</c> field never reaches
+        /// <c>ModuleEmitter</c> as a real one, so every read of it has to be resolved here instead.
+        /// </summary>
+        /// <param name="syntax">The access expression's own syntax, for the bound node's span.</param>
+        /// <param name="receiver">
+        /// Already resolved by the caller exactly as it would be for an ordinary field — typically
+        /// <c>field.IsStatic ? null : ...</c> — so a static field's receiver expression is never
+        /// evaluated just to be discarded here.
+        /// </param>
+        /// <param name="field">The field being read.</param>
+        private BoundExpression ResolveField(SyntaxNode syntax, BoundExpression? receiver, FieldSymbol field)
+        {
+            if (field.IsConst && _constants.TryGetValue(field.Name, out object? value))
+                return new BoundLiteralExpression(syntax, field.Type, value);
+
+            return new BoundFieldExpression(syntax, receiver, field);
+        }
+
         private BoundExpression? BindImplicitMember(SyntaxNode syntax, NamedTypeSymbol type, string name)
         {
             if (_lookup.FindField(type, name) is FieldSymbol field)
             {
                 RequireAccessible(field, field.Accessibility, field.Name, syntax);
-                return new BoundFieldExpression(syntax, field.IsStatic ? null : ImplicitThis(syntax, type), field);
+                return ResolveField(syntax, field.IsStatic ? null : ImplicitThis(syntax, type), field);
             }
 
             if (_lookup.FindProperty(type, name) is PropertySymbol property)
@@ -253,7 +278,7 @@ namespace Surtr.Compiler.Binding
                 if (string.Equals(field.Name, name, StringComparison.Ordinal))
                 {
                     RequireAccessible(field, field.Accessibility, field.Name, syntax);
-                    return new BoundFieldExpression(syntax, null, field);
+                    return ResolveField(syntax, null, field);
                 }
             }
 
@@ -413,7 +438,7 @@ namespace Surtr.Compiler.Binding
             if (_lookup.FindField(lookupType, syntax.Name) is FieldSymbol field)
             {
                 RequireAccessible(field, field.Accessibility, field.Name, syntax);
-                return Guard(new BoundFieldExpression(syntax, field.IsStatic ? null : accessed, field), syntax);
+                return Guard(ResolveField(syntax, field.IsStatic ? null : accessed, field), syntax);
             }
 
             if (_lookup.FindProperty(lookupType, syntax.Name) is PropertySymbol property)
@@ -454,7 +479,7 @@ namespace Surtr.Compiler.Binding
             if (_lookup.FindField(type, syntax.Name) is FieldSymbol field && field.IsStatic)
             {
                 RequireAccessible(field, field.Accessibility, field.Name, syntax);
-                return new BoundFieldExpression(syntax, null, field);
+                return ResolveField(syntax, null, field);
             }
 
             if (_lookup.FindProperty(type, syntax.Name) is PropertySymbol property && property.IsStatic)

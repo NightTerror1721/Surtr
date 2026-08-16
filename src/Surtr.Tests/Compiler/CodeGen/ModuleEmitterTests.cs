@@ -548,6 +548,90 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Const bindings (§7.1)
+        /// <summary>
+        /// A module-level `const` has to fold into every use and carry no slot at all — the same
+        /// promise §7.1 makes and, before this fix, the compiler did not keep: it compiled to an
+        /// ordinary module variable indistinguishable from a `static let`.
+        /// </summary>
+        [Fact]
+        public void AModuleConstCarriesNoSlot()
+        {
+            var module = Reload("const MaxEntities: int = 512;\nfun run(): int { return MaxEntities + 1; }");
+
+            Assert.False(module.TryGetField("MaxEntities", out _));
+        }
+
+        [Fact]
+        public void AModuleConstStillFoldsIntoEveryUse()
+        {
+            var runtime = Run("const MaxEntities: int = 512;\nfun run(): int { return MaxEntities + 1; }");
+
+            Assert.Equal(513, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AClassConstCarriesNoSlot()
+        {
+            var module = Reload("class Physics {\n  const Gravity: float = -9.81;\n}\nfun run(): int { return 1; }");
+
+            Assert.False(module.FindClass("Physics")!.TryGetField("Gravity", out _));
+        }
+
+        [Fact]
+        public void AClassConstStillFoldsIntoEveryUse()
+        {
+            var runtime = Run(
+                "class Physics {\n"
+                    + "  const Gravity: float = -9.81;\n"
+                    + "  public static fun fall(t: float): float { return Gravity * t; }\n"
+                    + "}\n"
+                    + "fun run(): float { return Physics.fall(2.0); }");
+
+            Assert.Equal(-19.62, Call(runtime, "run").AsFloat, 3);
+        }
+
+        /// <summary>A local `const` carries no local slot either, and folds the same way.</summary>
+        [Fact]
+        public void ALocalConstFoldsAndCarriesNoSlot()
+        {
+            var runtime = Run("fun run(): int { const half = 21; return half + half; }");
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AConstWhoseTypeIsNotPrimitiveOrStringIsReported()
+        {
+            using var compilation = Reject(
+                "class Vec2 { public let x: float = 0.0; }\nconst Origin: Vec2 = Vec2();");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidConstType);
+        }
+
+        [Fact]
+        public void ALocalConstWhoseTypeIsNotPrimitiveOrStringIsReported()
+        {
+            using var compilation = Reject(
+                "class Vec2 { public let x: float = 0.0; }\n"
+                    + "fun run(): int { const v: Vec2 = Vec2(); return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidConstType);
+        }
+
+        /// <summary>A `const` still works as a parameter default (§3.5) with no slot of its own.</summary>
+        [Fact]
+        public void AModuleConstUsableAsADefaultCarriesNoSlotEither()
+        {
+            var runtime = Run(
+                "const Base: int = 7;\n"
+                    + "fun f(a: int = Base): int { return a; }\n"
+                    + "fun run(): int { return f(); }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+        #endregion
+
         #region Parameter defaults (§3.5)
         [Fact]
         public void AnOmittedArgumentTakesItsDefault()

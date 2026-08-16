@@ -287,6 +287,12 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         InvalidOperatorSignature = 3044,
 
+        /// <summary>
+        /// A <c>const</c>'s declared type is not a primitive or <c>string</c> (§7.1) — the only
+        /// shapes a value fixed at compile time and substituted at every use site can be.
+        /// </summary>
+        InvalidConstType = 3045,
+
         #endregion
 
         #region Code generation — 4xxx

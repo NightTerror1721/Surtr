@@ -1413,6 +1413,15 @@ namespace Surtr.Compiler.Binding
             else
                 value = binder.BindSingletonInstance(initializer.ContainingType!, initializer.Anchor);
 
+            // A const's initializer is bound above so its conversion against the declared type is
+            // checked exactly like any other's, but a const carries no slot at all (§7.1) — so
+            // nothing past this point should ever see it. Leaving it out of both lists is what keeps
+            // it out of ModuleEmitter's field declarations, its static/instance initializer
+            // sequence, and InitializerOrder's load-order check, all in one place, rather than
+            // teaching each of those to skip it individually.
+            if (initializer.Field.IsConst)
+                return;
+
             _boundInitializers.Add(new BoundFieldInitializer(
                 initializer.Field, value, initializer.ContainingType, initializer.Order));
 
@@ -1794,10 +1803,15 @@ namespace Surtr.Compiler.Binding
         {
             var field = new FieldSymbol(syntax.Name, owner, ResolveOrInfer(syntax.Type, binding.Scope, binding.SourceName))
             {
-                IsStatic = syntax.IsStatic,
-                IsReadOnly = !syntax.IsMutable,
+                // §7.1: a const is implicitly static and never written to again — there is no
+                // per-instance constant, so neither is read from what was written on the declaration.
+                IsStatic = syntax.IsConst || syntax.IsStatic,
+                IsReadOnly = syntax.IsConst || !syntax.IsMutable,
+                IsConst = syntax.IsConst,
                 Accessibility = Translate(syntax.Visibility, Accessibility.Private),
             };
+
+            CheckConstType(field, syntax, binding.SourceName);
 
             if (syntax.Initializer is not null)
             {
@@ -1814,10 +1828,13 @@ namespace Surtr.Compiler.Binding
             var field = new FieldSymbol(syntax.Name, owner, ResolveOrInfer(syntax.Type, scope, sourceName))
             {
                 IsStatic = true,
-                IsReadOnly = !syntax.IsMutable,
+                IsReadOnly = syntax.IsConst || !syntax.IsMutable,
+                IsConst = syntax.IsConst,
                 Accessibility = Translate(syntax.Visibility, Accessibility.Internal),
                 IsNative = syntax.IsNative,
             };
+
+            CheckConstType(field, syntax, sourceName);
 
             // §10: the host owns the storage, so there is nothing here to initialize — and an
             // initializer would be written against a value the host may already have set.
@@ -1834,6 +1851,24 @@ namespace Surtr.Compiler.Binding
 
             RecordAttributes(field, syntax.Attributes, scope, sourceName);
             return field;
+        }
+
+        /// <summary>
+        /// Rejects a <c>const</c> whose declared type is not a primitive or <c>string</c> (§7.1) —
+        /// a composite value cannot be substituted at a use site, since each use would need its own
+        /// object, which is not what a constant means.
+        /// </summary>
+        private void CheckConstType(FieldSymbol field, FieldDeclarationSyntax syntax, string sourceName)
+        {
+            if (!syntax.IsConst)
+                return;
+
+            var type = field.Type.NonNullable;
+            if (type.IsPrimitive || type.SpecialType == SpecialType.String)
+                return;
+
+            ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidConstType,
+                $"'{syntax.Name}' is const, so its type has to be a primitive or 'string' (§7.1), not '{field.Type.ToDisplayString()}'.");
         }
 
         private PropertySymbol BindProperty(

@@ -92,8 +92,61 @@ namespace Surtr.Compiler.Binding
                 type = _factory.ErrorType;
             }
 
+            if (syntax.IsConst)
+                return BindConstLocal(syntax, type, initializer);
+
             var local = DeclareLocal(syntax.Name, type, !syntax.IsMutable, syntax.Span);
             return new BoundLocalDeclarationStatement(syntax, local, initializer);
+        }
+
+        /// <summary>
+        /// Binds a <c>const</c> local (§7.1): folded once here and substituted at every read
+        /// thereafter, so it carries no local slot at all — the same "no slot" promise a module or
+        /// class <c>const</c> makes, kept the same way (<c>BodyBinder.ResolveField</c> is the field
+        /// counterpart of what <see cref="BodyBinder.BindIdentifier"/> does for one of these).
+        /// </summary>
+        /// <remarks>
+        /// Folded over the initializer's own <em>syntax</em> via <see cref="_constants"/>, not
+        /// registered into it: <see cref="ConstantEvaluator"/> is one flat, module-wide name table,
+        /// which is correct for a module or class <c>const</c> (there is exactly one of each name in
+        /// scope at a time) but would be wrong for a local — two different functions each declaring
+        /// their own <c>const x</c> would otherwise collide. Reading the initializer's syntax
+        /// directly still lets it reference an already-registered module or class <c>const</c>, or
+        /// call a <c>const fun</c>; what it cannot do is reference an <em>earlier local</em> const in
+        /// the same body, which is a real but narrow gap against the module/class case.
+        /// </remarks>
+        private BoundStatement BindConstLocal(LocalDeclarationStatementSyntax syntax, TypeSymbol type, BoundExpression? initializer)
+        {
+            // Checked independently of whether the initializer folds — a `const Vec2` initialized
+            // from a call is wrong on its type alone, and would otherwise only ever be reported as
+            // "did not fold" (nothing `TryEvaluate` produces is ever a composite value in the first
+            // place, so a type mismatch here would otherwise hide behind that diagnostic instead of
+            // naming the actual rule).
+            var nonNullable = type.NonNullable;
+            if (!nonNullable.IsPrimitive && nonNullable.SpecialType != SpecialType.String)
+            {
+                Report(
+                    SurtrDiagnosticCode.InvalidConstType,
+                    syntax.Span,
+                    $"'{syntax.Name}' is const, so its type has to be a primitive or 'string' (§7.1), not '{type.ToDisplayString()}'.");
+            }
+
+            if (syntax.Initializer is null || !_constants.TryEvaluate(syntax.Initializer, out object? value))
+            {
+                Report(
+                    SurtrDiagnosticCode.NotAConstant,
+                    syntax.Span,
+                    $"'{syntax.Name}' is const, so its initializer has to fold at compile time.");
+
+                // A local still declared, so a later reference reports once here rather than a
+                // second, unrelated "does not name anything in scope".
+                var broken = DeclareLocal(syntax.Name, type, isReadOnly: true, syntax.Span);
+                return new BoundLocalDeclarationStatement(syntax, broken, initializer);
+            }
+
+            var local = DeclareLocal(syntax.Name, type, isReadOnly: true, syntax.Span);
+            _localConstants.Add(local, value);
+            return new BoundNopStatement(syntax);
         }
 
         private BoundStatement BindIf(IfStatementSyntax syntax)

@@ -286,6 +286,17 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>Whether the field has no receiver.</summary>
         public bool IsStatic { get; internal set; }
 
+        /// <summary>
+        /// Whether this is a <c>const</c> (§7.1) rather than an ordinary field.
+        /// </summary>
+        /// <remarks>
+        /// A <c>const</c> carries no storage at all: it never reaches <c>ModuleEmitter</c> as a
+        /// declared field, and every read of it is folded straight to a literal
+        /// (<c>BodyBinder.ResolveField</c>) instead of becoming an ordinary field read. This flag is
+        /// what tells the two apart from an ordinary <c>static let</c>.
+        /// </remarks>
+        public bool IsConst { get; internal set; }
+
         /// <summary>Whether it was declared <c>let</c> rather than <c>var</c>.</summary>
         public bool IsReadOnly { get; internal set; }
 
