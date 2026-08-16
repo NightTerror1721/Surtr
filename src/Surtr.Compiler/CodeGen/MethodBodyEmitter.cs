@@ -338,8 +338,7 @@ namespace Surtr.Compiler.CodeGen
         {
             var otherwise = Code.NewLabel();
 
-            Expression(conditional.Condition);
-            Code.JumpIfFalse(otherwise);
+            EmitConditionalJump(conditional.Condition, otherwise);
             Statement(conditional.Then);
 
             if (conditional.Else is null)
@@ -369,10 +368,7 @@ namespace Surtr.Compiler.CodeGen
             // leaves, and emitting the test anyway would put a load and a branch on every iteration
             // to ask a question with one answer.
             if (!IsAlwaysTrue(loop.Condition))
-            {
-                Expression(loop.Condition);
-                Code.JumpIfFalse(end);
-            }
+                EmitConditionalJump(loop.Condition, end);
 
             // `continue` re-tests the condition, so it targets the top rather than the body.
             PushLoop(top, end);
@@ -397,10 +393,7 @@ namespace Surtr.Compiler.CodeGen
             Code.MarkLabel(top);
 
             if (loop.Condition is not null && !IsAlwaysTrue(loop.Condition))
-            {
-                Expression(loop.Condition);
-                Code.JumpIfFalse(end);
-            }
+                EmitConditionalJump(loop.Condition, end);
 
             // `continue` runs the step clause before re-testing, which is the whole reason the loop
             // needs a target distinct from its top.
@@ -426,6 +419,114 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private static bool IsAlwaysTrue(BoundExpression condition)
             => condition is BoundLiteralExpression { Value: bool value } && value;
+
+        /// <summary>
+        /// Emits a condition as a branch to <paramref name="target"/>, taken when the condition is
+        /// false — jumping over an <c>if</c>'s body, or out of a <c>while</c>/<c>for</c>.
+        /// </summary>
+        /// <remarks>
+        /// Fuses a plain built-in comparison straight into the matching <c>JP&lt;cmp&gt;</c> opcode
+        /// (§Opcodes — the family that "fuses a comparison and a branch, so the boolean never
+        /// reaches the stack") instead of the naive `Compare` + `JumpIfFalse` pair. Anything else —
+        /// a compound condition (`&amp;&amp;`, `||`), a user operator's call (already a
+        /// <see cref="BoundCallExpression"/> by the time it reaches here, per Fix 1/Fix 5), or a
+        /// condition that already special-cases inside <see cref="EmitBinary"/> (an absence test, or
+        /// string ordering, which lowers to <c>compareTo</c>) — falls back to evaluating it as an
+        /// ordinary boolean and testing the result, unchanged from before.
+        /// </remarks>
+        private void EmitConditionalJump(BoundExpression condition, SurtrLabel target)
+        {
+            if (TryFusedComparison(condition, out var comparison, out var operandType, out var left, out var right))
+            {
+                Expression(left);
+                Expression(right);
+
+                // The opcode says "jump when true"; a false condition is what sends control to
+                // `target` here, so the branch tests the negation of what was written.
+                Code.JumpIfCompare(Negate(comparison), operandType, target);
+                return;
+            }
+
+            Expression(condition);
+            Code.JumpIfFalse(target);
+        }
+
+        /// <summary>
+        /// Recognises a condition that <see cref="EmitBinary"/>'s ordinary comparison path would
+        /// turn into a single `Compare` opcode, and reports the operands and comparison a fused
+        /// branch would need instead. See <see cref="EmitConditionalJump"/> for what falls back.
+        /// </summary>
+        private bool TryFusedComparison(
+            BoundExpression condition,
+            out SurtrComparison comparison,
+            out SurtrValueTypeCode operandType,
+            out BoundExpression left,
+            out BoundExpression right)
+        {
+            comparison = default;
+            operandType = default;
+            left = null!;
+            right = null!;
+
+            if (condition is not BoundBinaryExpression binary)
+                return false;
+
+            bool isOrdering;
+
+            switch (binary.Operator)
+            {
+                case BinaryOperator.Equal: comparison = SurtrComparison.Equal; isOrdering = false; break;
+                case BinaryOperator.NotEqual: comparison = SurtrComparison.NotEqual; isOrdering = false; break;
+                case BinaryOperator.Less: comparison = SurtrComparison.Less; isOrdering = true; break;
+                case BinaryOperator.LessEqual: comparison = SurtrComparison.LessOrEqual; isOrdering = true; break;
+                case BinaryOperator.Greater: comparison = SurtrComparison.Greater; isOrdering = true; break;
+                case BinaryOperator.GreaterEqual: comparison = SurtrComparison.GreaterOrEqual; isOrdering = true; break;
+
+                case BinaryOperator.ReferenceEqual:
+                case BinaryOperator.ReferenceNotEqual:
+                    comparison = binary.Operator == BinaryOperator.ReferenceEqual
+                        ? SurtrComparison.Equal
+                        : SurtrComparison.NotEqual;
+                    operandType = SurtrValueTypeCode.Object;
+                    left = binary.Left;
+                    right = binary.Right;
+                    return true;
+
+                default:
+                    return false;
+            }
+
+            // TryEmitAbsenceTest intercepts exactly this shape before EmitBinary's ordinary path
+            // ever runs — a fused branch has to defer to it the same way.
+            if (binary.Operator is BinaryOperator.Equal or BinaryOperator.NotEqual
+                && ((IsNullLiteral(binary.Right) && IsNullablePrimitive(binary.Left.Type))
+                    || (IsNullLiteral(binary.Left) && IsNullablePrimitive(binary.Right.Type))))
+            {
+                return false;
+            }
+
+            operandType = TypeCodeOf(binary.Left.Type);
+
+            // String equality has a fused opcode (JPStrEQ/JPStrNE); string ordering does not — it
+            // lowers to compareTo (EmitStringOrdering), so only equality fuses here.
+            if (operandType == SurtrValueTypeCode.String && isOrdering)
+                return false;
+
+            left = binary.Left;
+            right = binary.Right;
+            return true;
+        }
+
+        private static SurtrComparison Negate(SurtrComparison comparison) => comparison switch
+        {
+            SurtrComparison.Equal => SurtrComparison.NotEqual,
+            SurtrComparison.NotEqual => SurtrComparison.Equal,
+            SurtrComparison.Less => SurtrComparison.GreaterOrEqual,
+            SurtrComparison.LessOrEqual => SurtrComparison.Greater,
+            SurtrComparison.Greater => SurtrComparison.LessOrEqual,
+            SurtrComparison.GreaterOrEqual => SurtrComparison.Less,
+            _ => throw new ArgumentOutOfRangeException(nameof(comparison)),
+        };
 
         /// <summary>
         /// Lowers a <c>for-in</c>, by index wherever that is possible.

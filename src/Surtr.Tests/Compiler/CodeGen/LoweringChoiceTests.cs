@@ -306,5 +306,157 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         #endregion
+
+        #region Fused comparison branches
+        // A branch skips the `then`/loop body when the *written* condition is false, so the fused
+        // opcode always tests the condition's negation (`a == b` skips on JPNE, `a < b` skips on
+        // JPGE, and so on) — one instruction doing what `Compare` + `JumpIfFalse` did in two.
+
+        [Fact]
+        public void AnIfOnAPlainComparisonFusesIntoOneBranch()
+        {
+            string code = Disassemble("fun run(a: int, b: int): int { if (a == b) { return 1; } return 0; }");
+
+            Assert.Equal(1, Count(code, "JPNE"));
+            Assert.Equal(0, Count(code, "EQ"));
+            Assert.Equal(0, Count(code, "NE"));
+            Assert.Equal(0, Count(code, "JPZ"));
+        }
+
+        [Fact]
+        public void AWhileOnAPlainComparisonFuses()
+        {
+            string code = Disassemble(
+                "fun run(): int { var i: int = 0; while (i < 10) { i = i + 1; } return i; }");
+
+            Assert.Equal(1, Count(code, "JPGE"));
+            Assert.Equal(0, Count(code, "LT"));
+            Assert.Equal(0, Count(code, "GE"));
+        }
+
+        [Fact]
+        public void AThreeClauseForOnAPlainComparisonFuses()
+        {
+            string code = Disassemble(
+                "fun run(): int { var n: int = 0; for (var i: int = 0; i < 5; i = i + 1) { n = n + i; } return n; }");
+
+            Assert.Equal(1, Count(code, "JPGE"));
+            Assert.Equal(0, Count(code, "LT"));
+        }
+
+        [Fact]
+        public void AFloatComparisonFusesToTheFloatFamily()
+        {
+            string code = Disassemble("fun run(a: float, b: float): int { if (a < b) { return 1; } return 0; }");
+
+            Assert.Equal(1, Count(code, "JPFGE"));
+            Assert.Equal(0, Count(code, "FLT"));
+        }
+
+        [Fact]
+        public void AStringEqualityFuses()
+        {
+            string code = Disassemble("fun run(a: string, b: string): int { if (a == b) { return 1; } return 0; }");
+
+            Assert.Equal(1, Count(code, "JPStrNE"));
+        }
+
+        /// <summary>String *ordering* lowers to `compareTo`, which has no fused branch of its own.</summary>
+        [Fact]
+        public void AStringOrderingDoesNotFuse()
+        {
+            string code = Disassemble("fun run(a: string, b: string): int { if (a < b) { return 1; } return 0; }");
+
+            Assert.Equal(0, Count(code, "JPStrLT"));
+            Assert.Equal(0, Count(code, "JPStrGE"));
+            Assert.Equal(1, Count(code, "JPZ"));
+        }
+
+        [Fact]
+        public void AReferenceEqualityFusesToTheReferenceFamily()
+        {
+            string code = Disassemble(
+                "class Box { }\nfun run(a: Box, b: Box): int { if (a === b) { return 1; } return 0; }");
+
+            Assert.Equal(1, Count(code, "JPRNE"));
+        }
+
+        /// <summary>A class with no `operator==` still compares by identity (Fix 1), and that fuses too.</summary>
+        [Fact]
+        public void PlainEqualityOnAReferenceTypeFuses()
+        {
+            string code = Disassemble(
+                "class Box { }\nfun run(a: Box, b: Box): int { if (a == b) { return 1; } return 0; }");
+
+            Assert.Equal(1, Count(code, "JPRNE"));
+        }
+
+        /// <summary>A compound condition never was one comparison to begin with, so it stays unfused.</summary>
+        [Fact]
+        public void ACompoundConditionDoesNotFuse()
+        {
+            string code = Disassemble(
+                "fun run(a: int, b: int, c: bool): int { if (a == b && c) { return 1; } return 0; }");
+
+            Assert.Equal(0, Count(code, "JPEQ"));
+            Assert.Equal(0, Count(code, "JPNE"));
+            Assert.Equal(1, Count(code, "EQ"));
+        }
+
+        /// <summary>
+        /// A declared `operator==` is a call by the time this reaches codegen (Fix 1), not a
+        /// comparison — nothing here has to know that to avoid fusing it; it simply is not the
+        /// shape this fusion recognises.
+        /// </summary>
+        [Fact]
+        public void AUserEqualityOperatorDoesNotFuse()
+        {
+            string code = Disassemble(
+                "class Vec2 {\n"
+                    + "  public let x: int;\n"
+                    + "  constructor(x: int) { this.x = x; }\n"
+                    + "  operator==(a: Vec2, b: Vec2): bool { return a.x == b.x; }\n"
+                    + "}\n"
+                    + "fun run(a: Vec2, b: Vec2): int { if (a == b) { return 1; } return 0; }");
+
+            Assert.Equal(0, Count(code, "JPREQ"));
+            Assert.Equal(0, Count(code, "JPRNE"));
+            Assert.Equal(1, Count(code, "JPZ"));
+        }
+
+        /// <summary>
+        /// A user `operator&lt;=&gt;` stays a call — nothing here has to know it exists to leave it
+        /// alone. What *does* fuse is the zero-comparison Fix 5 wraps its `int` result in (`&lt;` is
+        /// `compareTo(...) &lt; 0`), which is an ordinary integer comparison like any other by the
+        /// time it reaches here — a small bonus from the two fixes composing rather than something
+        /// this one had to special-case.
+        /// </summary>
+        [Fact]
+        public void AUserSpaceshipCallDoesNotFuseButItsZeroComparisonDoes()
+        {
+            string code = Disassemble(
+                "class Score {\n"
+                    + "  public let value: int;\n"
+                    + "  constructor(value: int) { this.value = value; }\n"
+                    + "  operator<=>(a: Score, b: Score): int { return a.value - b.value; }\n"
+                    + "}\n"
+                    + "fun run(a: Score, b: Score): int { if (a < b) { return 1; } return 0; }");
+
+            // `<` negates to `>=` against zero, fused into one branch off the call's own result.
+            Assert.Equal(1, Count(code, "JPGE"));
+            Assert.Equal(0, Count(code, "JPZ"));
+        }
+
+        /// <summary>`!=` fuses to `JPEQ` — the negation of what was written, same as every other case.</summary>
+        [Fact]
+        public void NotEqualFusesToEqualsOpcode()
+        {
+            string code = Disassemble("fun run(a: int, b: int): int { if (a != b) { return 1; } return 0; }");
+
+            Assert.Equal(1, Count(code, "JPEQ"));
+            Assert.Equal(0, Count(code, "JPNE"));
+        }
+
+        #endregion
     }
 }
