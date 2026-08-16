@@ -1517,6 +1517,26 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
+        /// Boxes a call's receiver only where the callee might be reached through a vtable slot.
+        /// </summary>
+        /// <remarks>
+        /// §6.3: a direct dispatch calls the exact method body regardless of the receiver's runtime
+        /// type, so there is nothing for a box to be looked up on — the erased field reaches the
+        /// callee unboxed. A method whose own <see cref="MethodSymbol.Dispatch"/> is not
+        /// <see cref="MethodDispatch.Direct"/> may still be reached that way (a devirtualised call
+        /// on a sealed value class already goes through <c>CallSpecial</c>, which does not consult
+        /// the receiver's class either), so this boxes a little more than the strict minimum there —
+        /// safe, per §6.3, where boxing less would not be. What matters is that this is the exact
+        /// same test <see cref="LoadReceiver"/> makes to decide whether to unbox, so the two can
+        /// never disagree about which convention a given method's body was compiled against.
+        /// </remarks>
+        private void BoxReceiverForCall(MethodSymbol method, TypeSymbol receiverType)
+        {
+            if (method.Dispatch != MethodDispatch.Direct)
+                BoxIfValueClass(receiverType);
+        }
+
+        /// <summary>
         /// Emits <c>as?</c>: one <c>CastOrNull</c> to a reference type, and a tested unbox to a
         /// primitive.
         /// </summary>
@@ -2204,7 +2224,11 @@ namespace Surtr.Compiler.CodeGen
                         ?? throw Unsupported($"a write to '{property.Property.Name}', which has no setter");
 
                     if (!property.Property.IsStatic)
-                        Expression(property.Receiver ?? throw Unsupported($"a write to '{property.Property.Name}' with no receiver"));
+                    {
+                        var receiver = property.Receiver ?? throw Unsupported($"a write to '{property.Property.Name}' with no receiver");
+                        Expression(receiver);
+                        BoxReceiverForCall(setter, receiver.Type);
+                    }
 
                     value();
                     EmitResolvedCall(setter, virtualCall: setter.Dispatch != MethodDispatch.Direct, discardResult: true);
@@ -2302,7 +2326,11 @@ namespace Surtr.Compiler.CodeGen
                 ?? throw Unsupported($"a read of '{property.Property.Name}', which has no getter");
 
             if (!property.Property.IsStatic)
-                Expression(property.Receiver ?? throw Unsupported($"a read of '{property.Property.Name}' with no receiver"));
+            {
+                var receiver = property.Receiver ?? throw Unsupported($"a read of '{property.Property.Name}' with no receiver");
+                Expression(receiver);
+                BoxReceiverForCall(getter, receiver.Type);
+            }
 
             EmitResolvedCall(getter, virtualCall: getter.Dispatch != MethodDispatch.Direct, discardResult: false);
         }
@@ -2458,8 +2486,9 @@ namespace Surtr.Compiler.CodeGen
                 Expression(call.Receiver);
 
                 // §6.3: a value class is the field it wraps, and a field is not something to
-                // dispatch on — so a call on one boxes first, and `this` inside the callee unwraps.
-                BoxIfValueClass(call.Receiver.Type);
+                // dispatch on — so a call that might resolve through the receiver's class boxes
+                // first, and `this` inside the callee unwraps. A direct dispatch needs neither.
+                BoxReceiverForCall(call.Method, call.Receiver.Type);
             }
 
             foreach (var argument in call.Arguments)
@@ -3096,10 +3125,13 @@ namespace Surtr.Compiler.CodeGen
 
             Code.LoadLocal(_method.Receiver);
 
-            // Inside a value class's own method the receiver arrived boxed, because that is the
-            // only shape a call could dispatch on. Unwrapping it here is what makes `this` mean the
-            // wrapped value everywhere in the language, so no other rule has to know about the box.
-            if (_symbol.ContainingType is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass })
+            // Inside a value class's own method the receiver arrived boxed exactly when this
+            // method's own dispatch might have been resolved through its class — the same test
+            // BoxReceiverForCall makes at every call site, so the two can never disagree about
+            // which convention this body was compiled against. A direct dispatch never boxes on
+            // the way in, so there is nothing here to unwrap.
+            if (_symbol.ContainingType is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass }
+                && _symbol.Dispatch != MethodDispatch.Direct)
                 Code.Unbox();
         }
 

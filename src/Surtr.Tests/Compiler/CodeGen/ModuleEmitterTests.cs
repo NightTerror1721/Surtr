@@ -901,7 +901,7 @@ namespace Surtr.Tests.Compiler.CodeGen
 
         #region Value classes (§2.9)
         [Fact]
-        public void AValueClassMethodIsCalledOnTheBoxedForm()
+        public void AValueClassMethodIsCallableOnItsOwnType()
         {
             var runtime = Run(
                 "value class EntityId {\n"
@@ -912,6 +912,25 @@ namespace Surtr.Tests.Compiler.CodeGen
                     + "fun run(): int { let id = EntityId(21); return id.doubled(); }");
 
             Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A computed property's getter is a call on the receiver too (§6.3's boxing rule applies
+        /// to it exactly as it does to an ordinary method call) — the wrapped field stays `let`
+        /// (§2.9), so the property only reads it back transformed.
+        /// </summary>
+        [Fact]
+        public void AValueClassComputedPropertyReadsThroughItsGetter()
+        {
+            var runtime = Run(
+                "value class Meters {\n"
+                    + "  public let raw: int;\n"
+                    + "  public constructor(raw: int) { this.raw = raw; }\n"
+                    + "  public doubled: int { get { return this.raw * 2; } }\n"
+                    + "}\n"
+                    + "fun run(): int { let m = Meters(10); return m.doubled; }");
+
+            Assert.Equal(20, Int(runtime, "run"));
         }
 
         [Fact]

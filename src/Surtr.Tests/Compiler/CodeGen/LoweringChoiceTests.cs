@@ -536,5 +536,63 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         #endregion
+
+        #region Value class boxing (§6.3)
+
+        /// <summary>
+        /// A direct call to a value class's own method — no interface involved — never needed the
+        /// receiver's class at all: the target is resolved at compile time either way. Boxing it
+        /// first and unboxing it again on entry used to be unconditional regardless.
+        /// </summary>
+        [Fact]
+        public void ADirectCallOnAValueClassDoesNotBoxTheReceiver()
+        {
+            string code = Disassemble(
+                "value class EntityId {\n"
+                    + "  public let raw: int;\n"
+                    + "  public constructor(raw: int) { this.raw = raw; }\n"
+                    + "  public fun doubled(): int { return this.raw * 2; }\n"
+                    + "}\n"
+                    + "fun run(): int { let id = EntityId(21); return id.doubled(); }");
+
+            Assert.Equal(0, Count(code, "BoxAs"));
+            Assert.Equal(0, Count(code, "Unbox"));
+        }
+
+        /// <summary>
+        /// A computed property's accessors are calls too, and used to skip the (then-unconditional)
+        /// box entirely at the call site while the getter still unboxed on entry — a latent mismatch
+        /// this scope closes the same way as an ordinary method call.
+        /// </summary>
+        [Fact]
+        public void AValueClassComputedPropertyDoesNotBoxTheReceiver()
+        {
+            string code = Disassemble(
+                "value class EntityId {\n"
+                    + "  public let raw: int;\n"
+                    + "  public constructor(raw: int) { this.raw = raw; }\n"
+                    + "  public doubled: int { get { return this.raw * 2; } }\n"
+                    + "}\n"
+                    + "fun run(): int { let id = EntityId(21); return id.doubled; }");
+
+            Assert.Equal(0, Count(code, "BoxAs"));
+            Assert.Equal(0, Count(code, "Unbox"));
+        }
+
+        /// <summary>Flowing the same value class into an erased slot still has to box — §6.3 unchanged.</summary>
+        [Fact]
+        public void AValueClassIntoAnErasedSlotStillBoxes()
+        {
+            string code = Disassemble(
+                "value class EntityId {\n"
+                    + "  public let raw: int;\n"
+                    + "  public constructor(raw: int) { this.raw = raw; }\n"
+                    + "}\n"
+                    + "fun run(): unknown { let id = EntityId(21); let u: unknown = id; return u; }");
+
+            Assert.Equal(1, Count(code, "BoxAs"));
+        }
+
+        #endregion
     }
 }

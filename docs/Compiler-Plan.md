@@ -472,11 +472,17 @@ Three of those took a decision worth recording:
   and `SignatureSet` never sees it as a duplicate. `SurtrClassReference.Erase` is new and shared with
   `SurtrMethodInfo.SignatureKey`, because the compiler has to produce exactly the descriptor the
   linker compares and two copies of that rule would agree until one was edited.
-* **A call on a `value class`.** The receiver boxes with `BoxAs`, and `this` inside the callee
-  unwraps. One rule — *inside a value class's own method the receiver is boxed, everywhere else a
-  value class is its field* — which is what keeps `this.raw` free at every other site. §6.3's "a
-  direct call does not box" is now a missed optimisation rather than a correctness gap, and boxing
-  more than needed is safe where boxing less is a type confusion.
+* **A call on a `value class`.** The receiver boxes with `BoxAs` only where the callee might be
+  reached through its class — a method whose own dispatch is not `Direct` — and `this` inside such
+  a callee unwraps to match; a `Direct` method (the common case: nothing but interface satisfaction
+  ever makes a value class method non-`Direct`, since it cannot be extended) needs neither, on
+  either side of the call. `BoxReceiverForCall` and `LoadReceiver` share the one test that decides
+  this, so a method's body and every caller of it can never disagree about which convention it was
+  compiled against. What remains a missed optimisation rather than a correctness gap is a call to a
+  method that satisfies an interface but is reached without going through it — closing that would
+  need two entry points per such method (a boxing bridge occupying the vtable slot, forwarding to
+  an unboxed body), which is more surface than the untested combination has earned so far; boxing
+  more than needed is safe there where boxing less is a type confusion.
 * **Nested lambda captures.** `NoteCapture` walks a *stack* of lambda frames outwards and stops at
   the first one the symbol is inside. An inner lambda's upvalue has to come from the outer body, so
   the outer lambda has to have captured it too; stopping at the innermost boundary is exactly what
@@ -555,8 +561,19 @@ knowing every site. A missed one is a type confusion, not a slow path.
 * a local, parameter, field or return declared as the value class itself;
 * an element of `EntityId[]`, which is an `int[]` — the element type is statically known, so the
   array's descriptor is `AI` and there is no per-element decision to make;
-* a **direct** call to one of its own methods, or a call to a method it declares that satisfies an
-  interface but is reached without going through that interface.
+* a call to one of its own methods whose dispatch is `Direct` — including a computed property's
+  `get`/`set`, which are calls too. `BoxReceiverForCall` (`MethodBodyEmitter.cs`) is the single test
+  this and every other boxing site below it agree with.
+
+**Still boxes, as a known missed optimisation** — a call to a method it declares that satisfies an
+interface but is reached without going through that interface. That method's own dispatch is not
+`Direct` (interface satisfaction is written `override` in source, same as a base-class override, so
+it is never `Direct`), so a devirtualised call on it — a value class is sealed by §2.9, so this is
+every direct-typed call to such a method — still boxes today, the same as a call reached through the
+interface does. Closing it needs two entry points per such method: a thin boxing bridge occupying
+the vtable slot, unboxing and forwarding via a direct call to the real, unboxed-receiver body. Left
+alone because nothing exercises a value class implementing an interface yet, so there is no
+regression risk to weigh against the extra surface.
 
 Reading one back out of an erased slot is the mirror obligation: a `Cast` to the value class, then
 unwrap. That is the same pair §7 already lists for primitives, applied to one more type.
