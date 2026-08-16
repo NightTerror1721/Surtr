@@ -487,6 +487,18 @@ namespace Surtr.Compiler.Binding
             if (left.Type.IsError || right.Type.IsError)
                 return Error(syntax);
 
+            // A declared `operator==` has to be tried before the built-in fallback: two operands of
+            // the same class type are always "assignable to each other" (identity), which would
+            // otherwise make ResolveBinary succeed first and the overload unreachable. `!=` reuses
+            // the same lookup (both map to `op_==`, per TokenFor) and negates the result.
+            if (syntax.Operator is BinaryOperator.Equal or BinaryOperator.NotEqual
+                && TryBindUserOperator(syntax, syntax.Operator, left, right) is BoundExpression userEquality)
+            {
+                return syntax.Operator == BinaryOperator.NotEqual
+                    ? new BoundUnaryExpression(syntax, UnaryOperator.Not, userEquality, _factory.Bool)
+                    : userEquality;
+            }
+
             var result = ResolveBinary(syntax, syntax.Operator, ref left, ref right);
             if (result is null)
             {

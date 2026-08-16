@@ -1595,6 +1595,58 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Operator overloads (§5.6)
+        /// <summary>
+        /// A declared `operator==` has to win over the built-in fallback, which would otherwise
+        /// treat two operands of the same class as "assignable to each other" (identity) and
+        /// resolve before the overload is ever looked up.
+        /// </summary>
+        [Fact]
+        public void AnEqualityOperatorIsInvokedOverIdentity()
+        {
+            var runtime = Run(
+                "class Vec2 {\n"
+                    + "  public let x: float;\n"
+                    + "  public let y: float;\n"
+                    + "  constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                    + "  operator==(a: Vec2, b: Vec2): bool { return a.x == b.x && a.y == b.y; }\n"
+                    + "}\n"
+                    + "fun run(): bool { let a = Vec2(1.0, 2.0); let b = Vec2(1.0, 2.0); return a == b; }");
+
+            Assert.True(Call(runtime, "run").AsBool);
+        }
+
+        /// <summary>`!=` reuses the same `operator==` lookup and negates its result.</summary>
+        [Fact]
+        public void InequalityNegatesTheDeclaredEqualityOperator()
+        {
+            var runtime = Run(
+                "class Vec2 {\n"
+                    + "  public let x: float;\n"
+                    + "  public let y: float;\n"
+                    + "  constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                    + "  operator==(a: Vec2, b: Vec2): bool { return a.x == b.x && a.y == b.y; }\n"
+                    + "}\n"
+                    + "fun run(): bool { let a = Vec2(1.0, 2.0); let b = Vec2(1.0, 2.0); return a != b; }");
+
+            Assert.False(Call(runtime, "run").AsBool);
+        }
+
+        /// <summary>A class declaring no `operator==` still compares by reference identity.</summary>
+        [Fact]
+        public void EqualityWithoutAnOperatorStaysReferenceIdentity()
+        {
+            var runtime = Run(
+                "class Plain {\n"
+                    + "  public var value: int;\n"
+                    + "  constructor(value: int) { this.value = value; }\n"
+                    + "}\n"
+                    + "fun run(): bool { let a = Plain(5); let b = Plain(5); return a == b; }");
+
+            Assert.False(Call(runtime, "run").AsBool);
+        }
+        #endregion
+
         #region Indexers (§5.6)
         /// <summary>
         /// An overload is always static, so the read form takes the receiver and the index — the
