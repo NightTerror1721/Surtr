@@ -611,6 +611,7 @@ namespace Surtr.Compiler.Binding
             {
                 CheckSealedOverrides(binding);
                 CheckBaseConstructorIsReachable(binding);
+                CheckMembersImplemented(binding);
             }
 
             // Last, because a bound like `<T : IComparable<T>>` names a type whose own hierarchy is
@@ -650,6 +651,143 @@ namespace Surtr.Compiler.Binding
                     break;
                 }
             }
+        }
+
+        /// <summary>
+        /// Rejects a concrete class that leaves an interface member or an inherited <c>abstract</c>
+        /// member without a real body (§2.2, §2.3).
+        /// </summary>
+        /// <remarks>
+        /// <c>SurtrTypeLinker</c> (<c>Runtime/Classes/SurtrTypeLinker.cs</c>) already refuses this at
+        /// load time — but only at load time, and <c>surtrc build</c> never loads what it compiles,
+        /// so a class this incomplete used to write a <c>.surtrc</c> image to disk with no error at
+        /// all. This runs the same check here, early enough to name the source class rather than
+        /// leave the failure to surface as an unlabelled runtime exception wherever the image is
+        /// eventually loaded.
+        /// </remarks>
+        private void CheckMembersImplemented(TypeBinding binding)
+        {
+            var symbol = binding.Symbol;
+
+            // An interface owes nothing to itself; a construction reports through its declaration.
+            // Unlike an ordinary abstract member, an abstract class is *not* otherwise exempt here:
+            // SurtrTypeLinker.BuildInterfaceDispatch indexes only Virtual/Abstract dispatch, never
+            // Direct, so an abstract class that implements an interface but never even redeclares a
+            // member `abstract` leaves no vtable slot for the runtime to route the interface call
+            // through at all - a load-time crash a fully abstract-exempt check here would miss.
+            if (symbol.TypeKind == TypeSymbolKind.Interface || !symbol.IsDefinition)
+                return;
+
+            var visited = new HashSet<NamedTypeSymbol>();
+            var contracts = new List<NamedTypeSymbol>();
+            CollectInterfaces(symbol, visited, contracts);
+
+            foreach (var contract in contracts)
+            {
+                foreach (var member in contract.Members)
+                {
+                    if (member is MethodSymbol { Dispatch: MethodDispatch.Abstract } required)
+                        CheckObligation(binding, symbol, required, contract.Name);
+                }
+            }
+
+            for (var ancestor = symbol.BaseType; ancestor is not null; ancestor = ancestor.BaseType)
+            {
+                foreach (var member in ancestor.Members)
+                {
+                    if (member is MethodSymbol { Dispatch: MethodDispatch.Abstract } required)
+                        CheckObligation(binding, symbol, required, ancestor.Name);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Confirms <paramref name="symbol"/>'s own hierarchy answers one abstract obligation named
+        /// by <paramref name="owner"/> (an interface, or a base class), mirroring the two checks
+        /// <c>SurtrTypeLinker</c> makes at load time.
+        /// </summary>
+        /// <remarks>
+        /// <c>BuildInterfaceDispatch</c> needs a vtable slot to exist for it at all — which only a
+        /// <c>virtual</c>/<c>override</c> or another <c>abstract</c> declaration creates, since a
+        /// plain, non-overriding method never enters the vtable and so can never satisfy one, even
+        /// where its name and parameters happen to match. <c>VerifyConcrete</c> then refuses to let
+        /// a concrete class leave the slot it found still abstract.
+        /// </remarks>
+        private void CheckObligation(TypeBinding binding, NamedTypeSymbol symbol, MethodSymbol required, string owner)
+        {
+            var found = FindMember(symbol, required.Name, required.Parameters.Count);
+            if (found is null)
+            {
+                Report(
+                    SurtrDiagnosticCode.MissingImplementation,
+                    binding,
+                    binding.Syntax.Span,
+                    $"'{symbol.Name}' does not implement '{owner}.{required.Name}'; implement it with 'override', "
+                        + $"or declare it 'abstract' on '{symbol.Name}' to leave it for a subclass.");
+                return;
+            }
+
+            if (!symbol.IsAbstract && found.Dispatch == MethodDispatch.Abstract)
+            {
+                Report(
+                    SurtrDiagnosticCode.MissingImplementation,
+                    binding,
+                    binding.Syntax.Span,
+                    $"'{symbol.Name}' does not implement '{owner}.{required.Name}'; "
+                        + $"implement it, or declare '{symbol.Name}' abstract.");
+            }
+        }
+
+        /// <summary>
+        /// Every interface a type owes an implementation to: its own declared interfaces, its base
+        /// chain's, and each interface's own <c>interface : interface</c> extensions.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately not substitution-aware, unlike <c>Conversions.WalkForBase</c> — matching is
+        /// by name and arity (the same looseness <see cref="Overridden"/> already uses), which a
+        /// type argument cannot change, so walking the unsubstituted declarations still finds every
+        /// obligation. What it costs is precision in the diagnostic's own wording for a base reached
+        /// through a constructed generic, which would name the interface in terms of the base's own
+        /// type parameter rather than the argument supplied to it.
+        /// </remarks>
+        private static void CollectInterfaces(NamedTypeSymbol from, HashSet<NamedTypeSymbol> visited, List<NamedTypeSymbol> interfaces)
+        {
+            if (!visited.Add(from))
+                return;
+
+            if (from.TypeKind == TypeSymbolKind.Interface)
+                interfaces.Add(from);
+
+            foreach (var contract in from.Interfaces)
+                CollectInterfaces(contract, visited, interfaces);
+
+            if (from.BaseType is NamedTypeSymbol baseType)
+                CollectInterfaces(baseType, visited, interfaces);
+        }
+
+        /// <summary>
+        /// The nearest member of <paramref name="type"/> or of a class it extends occupying a
+        /// vtable slot (<c>Virtual</c> or <c>Abstract</c> dispatch — never <c>Direct</c>, which never
+        /// enters the vtable and so cannot answer for one) matching by name and parameter count.
+        /// Closest to <paramref name="type"/> wins, the same as the runtime's own vtable: an override
+        /// replaces the slot in place, so a derived class's answer is this walk's first match.
+        /// </summary>
+        private static MethodSymbol? FindMember(NamedTypeSymbol type, string name, int arity)
+        {
+            for (var walk = type; walk is not null; walk = walk.BaseType)
+            {
+                foreach (var member in walk.Members)
+                {
+                    if (member is MethodSymbol { Dispatch: not MethodDispatch.Direct } candidate
+                        && string.Equals(candidate.Name, name, StringComparison.Ordinal)
+                        && candidate.Parameters.Count == arity)
+                    {
+                        return candidate;
+                    }
+                }
+            }
+
+            return null;
         }
 
         /// <summary>

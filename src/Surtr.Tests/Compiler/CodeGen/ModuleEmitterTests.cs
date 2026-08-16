@@ -1614,6 +1614,87 @@ namespace Surtr.Tests.Compiler.CodeGen
 
             Assert.Equal(9, Int(runtime, "run"));
         }
+
+        /// <summary>
+        /// <c>SurtrTypeLinker</c> already refuses this at load time; this is the same rule run at
+        /// compile time, before <c>surtrc build</c> could write an incomplete class to disk.
+        /// </summary>
+        [Fact]
+        public void AClassMissingAnInterfaceMethodIsReported()
+        {
+            using var compilation = Reject(
+                "interface IShape {\n"
+                    + "  fun area(): float;\n"
+                    + "}\n"
+                    + "class Circle : IShape {\n"
+                    + "}");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.MissingImplementation);
+        }
+
+        [Fact]
+        public void AClassMissingAnInheritedAbstractMethodIsReported()
+        {
+            using var compilation = Reject(
+                "abstract class Shape {\n"
+                    + "  public abstract fun area(): float;\n"
+                    + "}\n"
+                    + "class Circle : Shape {\n"
+                    + "}");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.MissingImplementation);
+        }
+
+        /// <summary>A constructed generic interface's obligations are checked the same as any other.</summary>
+        [Fact]
+        public void AConstructedGenericInterfaceLeftUnimplementedIsReported()
+        {
+            using var compilation = Reject("class BadScore : IComparable<BadScore> {\n}");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.MissingImplementation);
+        }
+
+        /// <summary>
+        /// Declaring the class itself <c>abstract</c> is the escape hatch — but the member still has
+        /// to be redeclared <c>abstract</c> there, since only a <c>virtual</c>/<c>abstract</c>
+        /// declaration creates a vtable slot at all; leaving it out entirely gives the interface
+        /// dispatch table nothing to route through, abstract class or not.
+        /// </summary>
+        [Fact]
+        public void AnAbstractClassMayRedeclareAnInterfaceMethodAbstractForItsSubclassToImplement()
+        {
+            var runtime = Run(
+                "interface IShape {\n"
+                    + "  fun area(): float;\n"
+                    + "}\n"
+                    + "abstract class Shape : IShape {\n"
+                    + "  public abstract fun area(): float;\n"
+                    + "}\n"
+                    + "class Circle : Shape {\n"
+                    + "  public override fun area(): float { return 3.0; }\n"
+                    + "}\n"
+                    + "fun run(): float { let s: IShape = Circle(); return s.area(); }");
+
+            Assert.Equal(3.0, Call(runtime, "run").AsFloat);
+        }
+
+        /// <summary>
+        /// An abstract class implementing an interface but never even redeclaring the member
+        /// abstract leaves no vtable slot at all — a load-time crash with no diagnostic before this
+        /// fix, since the compiler treated "abstract" as a blanket exemption.
+        /// </summary>
+        [Fact]
+        public void AnAbstractClassStillHasToNameAnInterfaceMethodItLeavesUnimplemented()
+        {
+            using var compilation = Reject(
+                "interface IShape {\n"
+                    + "  fun area(): float;\n"
+                    + "}\n"
+                    + "abstract class Shape : IShape {\n"
+                    + "}");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.MissingImplementation);
+        }
         #endregion
 
         #region Exhaustive switch expressions (§4.3)

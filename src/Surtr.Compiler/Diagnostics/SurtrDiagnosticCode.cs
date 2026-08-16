@@ -268,6 +268,18 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         InitializerOutOfOrder = 3042,
 
+        /// <summary>
+        /// A concrete class leaves a member unimplemented — one required by an interface it
+        /// implements (§2.3), or one it inherits <c>abstract</c> from a base class (§2.2) — instead
+        /// of supplying a body or declaring itself <c>abstract</c> in turn.
+        /// </summary>
+        /// <remarks>
+        /// <c>SurtrTypeLinker</c> also rejects this, but only when a module is <em>loaded</em>; this
+        /// is the same check run early enough to name the source class rather than surface as a
+        /// runtime <see cref="System.InvalidOperationException"/> with no span.
+        /// </remarks>
+        MissingImplementation = 3043,
+
         #endregion
 
         #region Code generation — 4xxx
