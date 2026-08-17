@@ -21,7 +21,7 @@ mismo formato que `docs/Plan-Globales-Nativos-Inline-Operadores.md`.
 | 9 | Declarar clases/enums/interfaces/singletons/value classes dentro de un método | Investigado a fondo (Fase 10) y **diferido deliberadamente** — requiere descubrir tipos locales antes de la fase 3 del binder para evitar reentrada sobre `_declared`/`_bodies`/etc.; camino de implementación documentado en la Fase 10 | Medio-grande |
 | 10 | Import de directorio completo (wildcard recursivo), import selectivo de miembros, alias de módulo | Alias (`import X as Y`) **hecho** — Fase 7. Selectivo (`import X.{Y, Z}`) **hecho** — Fase 8. Wildcard de directorio (recursivo sobre submódulos) **hecho** — Fase 9 | — |
 | 11 | Built-ins siempre disponibles sin import, nunca rotos por imports | **Ya correcto**, con tests dedicados (`BinderTests.cs`) | — |
-| 12 | LSP correcto para todo lo anterior, especialmente imports y built-ins | Implementación real sobre el compilador real (no un analizador simplificado), pero sin ningún test propio y con una lista de keywords desincronizada de §1.2 | Transversal a cada fase |
+| 12 | LSP correcto para todo lo anterior, especialmente imports y built-ins | **Hecho** — Fase 0 (red de seguridad + 2 bugs) y Fase 12 (barrido final, encontró que hover/definición no seguían a autocompletado en alias/selectivo/wildcard de directorio) | — |
 
 Tres puntos no requieren ninguna fase de implementación:
 
@@ -745,24 +745,41 @@ silenciado o forzado.
 
 ---
 
-## Fase 12 — Barrido final de LSP y documentación
+## Fase 12 — Barrido final de LSP y documentación — **Hecha**
 
-**Última fase**, tras todo lo anterior. El agente de investigación del LSP advirtió que
+**Última fase**, tras todo lo anterior (Fase 10 quedó diferida — ver arriba — así que no hay
+tipos locales que barrer). El agente de investigación del LSP advirtió que
 `CompletionProvider`/`SymbolResolver` están en sincronía con el binder **solo por
-convención**, no por una abstracción compartida — cada fase de imports/atributos/accessors/
-tipos locales de este plan necesita, además de su propia actualización puntual (ya listada en
-cada fase), una pasada de cierre:
+convención**, no por una abstracción compartida — esta pasada confirmó exactamente eso.
 
-- Ejecutar toda la suite nueva de `src/Surtr.Tests/LanguageServer/` (Fase 0) contra el estado
-  final y añadir los casos que falten para cada feature nueva (hover/completado de un tipo
-  local, de un miembro importado por alias, de un atributo con target).
-- Revisar que ningún literal de `CompletionProvider`/`SymbolResolver` haya quedado
-  desincronizado con los cambios de `Binder.cs` (scopes de import, accessors, tipos locales).
-- Pasada final de coherencia doc↔código: `Language-Syntax.md`, `Compiler-Plan.md`,
-  `VM-Plan.md` y `CLAUDE.md` — cada uno ya se actualiza fase a fase arriba, esta fase es solo
-  la relectura cruzada final antes de cerrar el plan.
+**Hallazgo real, no solo repaso**: `CompletionProvider.cs` ya se había actualizado fase a fase
+(alias en la Fase 7, lista selectiva en la Fase 8, wildcard de directorio en la Fase 9) — pero
+`SymbolResolver.cs` (hover/ir-a-definición) **nunca se tocó** en ninguna de esas tres fases.
+`SymbolResolver.TypeCard` solo sabía leer el último segmento de una referencia de tipo y
+buscarlo en las declaraciones propias del módulo o en un wildcard *exacto* — así que hover/
+definición sobre `Core.Entity` (alias), sobre un tipo traído por `import X.{Entity}`
+(selectivo), o sobre un tipo alcanzado solo a través de un submódulo de un wildcard de
+directorio, no resolvían en absoluto, mientras que el mismo caso YA funcionaba en autocompletado.
+Corregido:
+- `FindTypesInWildcardImports` renombrado a `FindTypesInImports` y extendido para cubrir las
+  tres formas (wildcard con submódulos, lista selectiva, import con nombre), replicando
+  exactamente la lógica que `CompletionProvider.FindType`/`ImportedModules` ya tenían.
+- `TryResolveThroughAlias` nuevo: `Alias.Tipo` se resuelve contra el módulo que el `import ...
+  as Alias;` de ese fichero nombra, antes de intentar cualquier otra cosa — un alias necesita
+  el segmento receptor completo, que el resto de `TypeCard` descarta de entrada.
+- 3 tests nuevos en `LanguageServerWorkspaceTests.cs` (uno por forma), los tres fallaban antes
+  de la corrección y pasan después — confirmando que era una regresión real, no una duda
+  teórica.
+- Revisado el resto de literales de `CompletionProvider`/`SymbolResolver` (lista de keywords,
+  formato de hover) contra los cambios de las Fases 3-11: sin más desincronía encontrada.
+- Pasada final de coherencia doc↔código: `Language-Syntax.md` (§2.1, §11) y
+  `docs/Runtime-Model.md` (§16) ya se habían actualizado fase a fase; `CLAUDE.md` revisado y
+  sigue siendo exacto — describe el mecanismo general de imports/scope que alias/selectivo/
+  wildcard de directorio extienden, no algo que esas fases contradigan.
 
-**Commit**: `Docs+LSP: barrido final de coherencia tras las fases 1-11`
+**Tests**: 3 nuevos en `LanguageServerWorkspaceTests.cs`. 2126/2126 tests en verde, 0 warnings.
+
+**Commit**: `Fix: hover y definicion del LSP no resolvian alias/import selectivo/wildcard de directorio`
 
 ---
 
@@ -782,7 +799,7 @@ cada fase), una pasada de cierre:
 | 9 | Import wildcard de directorio | **Hecha** |
 | 10 | Tipos locales dentro de métodos | **Investigada, diferida deliberadamente** (ver arriba — riesgo de reentrada sobre la orquestación central del binder) |
 | 11 | Cargador de STDLIB seleccionable y portable | **Hecha en parte** — selección por categoría + test de desincronización hechos; embeber en `Surtr.Core` resultó ser un ciclo de build, documentado en vez de forzado |
-| 12 | Barrido final LSP + docs | Pendiente |
+| 12 | Barrido final LSP + docs | **Hecha** — encontró y corrigió una regresión real: hover/definición no resolvían alias/import selectivo/wildcard de directorio aunque el autocompletado sí |
 | — | Operadores de instancia / `operator[]` | **Ya hecho** (`Plan-Globales-Nativos-Inline-Operadores.md`) |
 | — | Varianza de genéricos | **Diferido a propósito** (§14.4), no planificado |
 | — | Built-ins siempre disponibles | **Ya correcto**, sin cambios |

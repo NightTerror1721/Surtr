@@ -287,6 +287,96 @@ namespace Surtr.Tests.LanguageServer
             Assert.Contains(completion.Items, item => item.Label == "Entity");
         }
 
+        /// <summary>Fase 12's sweep: hover/definition on a type reached only through a module alias (Fase 7).</summary>
+        [Fact]
+        public void HoverAndDefinitionOnAModuleAliasedTypeReachTheDeclaringFile()
+        {
+            const string coreSource = "public class Entity {\n    public fun greet(): string { return \"hi\"; }\n}\n";
+            const string appSource =
+                "import proj.core as Core;\n\n" +
+                "public class Holder {\n" +
+                "    public var e: Core.Entity;\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Entity.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            string corePath = Path.Combine(_root, "proj", "core", "Entity.surtr");
+
+            int nameOffset = appSource.IndexOf("Core.Entity;", StringComparison.Ordinal) + "Core.".Length;
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, appPath, appSource, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.True(hit!.HasDefinition, "Expected the aliased type name to resolve to a declaration.");
+            Assert.Equal(Path.GetFullPath(corePath), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
+        }
+
+        /// <summary>Fase 12's sweep: hover/definition on a type reached only through a selective import (Fase 8).</summary>
+        [Fact]
+        public void HoverAndDefinitionOnASelectivelyImportedTypeReachTheDeclaringFile()
+        {
+            const string coreSource = "public class Entity {\n    public fun greet(): string { return \"hi\"; }\n}\npublic class Widget { }\n";
+            const string appSource =
+                "import proj.core.{Entity};\n\n" +
+                "public class Holder {\n" +
+                "    public var e: Entity;\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Shapes.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            string corePath = Path.Combine(_root, "proj", "core", "Shapes.surtr");
+
+            int nameOffset = appSource.IndexOf("Entity;", StringComparison.Ordinal);
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, appPath, appSource, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.True(hit!.HasDefinition, "Expected the selectively imported type name to resolve to a declaration.");
+            Assert.Equal(Path.GetFullPath(corePath), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
+        }
+
+        /// <summary>Fase 12's sweep: hover/definition on a type reached only through a directory wildcard's submodule (Fase 9).</summary>
+        [Fact]
+        public void HoverAndDefinitionOnADirectoryWildcardSubmoduleTypeReachTheDeclaringFile()
+        {
+            const string nestedSource = "public class Entity {\n    public fun greet(): string { return \"hi\"; }\n}\n";
+            const string appSource =
+                "import proj.core.*;\n\n" +
+                "public class Holder {\n" +
+                "    public var e: Entity;\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/geo/Entity.surtr", nestedSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            string nestedPath = Path.Combine(_root, "proj", "core", "geo", "Entity.surtr");
+
+            int nameOffset = appSource.IndexOf("Entity;", StringComparison.Ordinal);
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, appPath, appSource, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.True(hit!.HasDefinition, "Expected the directory-wildcard-imported submodule type to resolve to a declaration.");
+            Assert.Equal(Path.GetFullPath(nestedPath), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
+        }
+
         private static string Describe(System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<Surtr.Compiler.Diagnostics.SurtrDiagnostic>> diagnostics)
             => string.Join(" | ", diagnostics.SelectMany(pair => pair.Value).Select(d => d.ToString()));
     }

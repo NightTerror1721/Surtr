@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Surtr.Compiler.Binding;
 using Surtr.Compiler.Binding.BoundTree;
 using Surtr.Compiler.Binding.Symbols;
@@ -984,18 +985,35 @@ namespace Surtr.LanguageServer.Workspace
                 };
             }
 
-            // A named type the module declares — or reaches through a wildcard import (§2.1) —
-            // gets its real card. A type-annotation position (field, property, parameter, return,
-            // base type, constraint) has no bound-expression node for pass one to find, so this is
-            // the only pass that ever sees a type named solely through an import.
+            // A named type the module declares — or reaches through an import (§2.1: wildcard,
+            // selective, a directory wildcard's submodule, or a plain named one) — gets its real
+            // card. A type-annotation position (field, property, parameter, return, base type,
+            // constraint) has no bound-expression node for pass one to find, so this is the only
+            // pass that ever sees a type named solely through an import.
             var unit = snapshot.UnitFor(filePath);
             if (unit is not null && snapshot.Binder is not null)
             {
+                // `Alias.Type` (§2.1, Fase 7): resolved against the alias's target module before
+                // anything else, since the last-segment name alone says nothing about the alias.
+                if (named.Path.Count >= 2 && TryResolveThroughAlias(snapshot, unit, named.Path, out var aliased))
+                {
+                    var (aliasedFile, aliasedStart, aliasedLength) = FindTypeDeclaration(aliased, snapshot);
+                    return new Hit
+                    {
+                        Markdown = HoverFormatter.FormatType(aliased),
+                        AnchorStart = anchor.Span.Start.Position,
+                        AnchorLength = anchor.Span.Length,
+                        DefinitionFile = aliasedFile,
+                        DefinitionStart = aliasedStart,
+                        DefinitionLength = aliasedLength,
+                    };
+                }
+
                 if (snapshot.Binder.Modules.TryGetValue(unit.ModulePath, out var module))
                 {
                     var candidates = module.FindTypes(name);
                     if (candidates.Count == 0)
-                        candidates = FindTypesInWildcardImports(snapshot, unit, module, name);
+                        candidates = FindTypesInImports(snapshot, unit, module, name);
 
                     foreach (var type in candidates)
                     {
@@ -1039,28 +1057,106 @@ namespace Surtr.LanguageServer.Workspace
             };
         }
 
-        /// <summary>A named type reached through one of this file's wildcard imports, if any names it.</summary>
-        private static IReadOnlyList<NamedTypeSymbol> FindTypesInWildcardImports(
+        /// <summary>
+        /// A named type reached through one of this file's imports, if any names it — a wildcard
+        /// (exact module or a submodule nested under it, §2.1's Fase 9), a selective list
+        /// (Fase 8), or a plain named import. A module alias (Fase 7) is handled separately by
+        /// <see cref="TryResolveThroughAlias"/>, since it needs the receiver segment this method
+        /// never sees.
+        /// </summary>
+        private static IReadOnlyList<NamedTypeSymbol> FindTypesInImports(
             CompilationSnapshot snapshot, Surtr.Compiler.Compilation.SurtrSourceUnit unit, ModuleSymbol current, string name)
         {
+            var binder = snapshot.Binder!;
+
             foreach (var import in unit.Syntax.Imports)
             {
-                if (!import.IsWildcard)
+                if (import.Alias is not null)
                     continue;
 
-                string importedPath = string.Join(".", import.Path);
-                if (importedPath == current.Path)
-                    continue;
+                if (import.IsWildcard)
+                {
+                    string importedPath = string.Join(".", import.Path);
 
-                if (!snapshot.Binder!.Modules.TryGetValue(importedPath, out var imported))
-                    continue;
+                    if (importedPath != current.Path && binder.Modules.TryGetValue(importedPath, out var imported))
+                    {
+                        var direct = imported.FindTypes(name);
+                        if (direct.Count > 0)
+                            return direct;
+                    }
 
-                var candidates = imported.FindTypes(name);
-                if (candidates.Count > 0)
-                    return candidates;
+                    string dotted = importedPath + ".";
+                    foreach (var pair in binder.Modules)
+                    {
+                        if (pair.Key == current.Path || !pair.Key.StartsWith(dotted, StringComparison.Ordinal))
+                            continue;
+
+                        var nested = pair.Value.FindTypes(name);
+                        if (nested.Count > 0)
+                            return nested;
+                    }
+
+                    continue;
+                }
+
+                if (import.Members is not null)
+                {
+                    if (!import.Members.Contains(name))
+                        continue;
+
+                    string listedPath = string.Join(".", import.Path);
+                    if (binder.Modules.TryGetValue(listedPath, out var listed))
+                    {
+                        var candidates = listed.FindTypes(name);
+                        if (candidates.Count > 0)
+                            return candidates;
+                    }
+
+                    continue;
+                }
+
+                if (import.Path.Count > 0 && import.Path[import.Path.Count - 1] == name)
+                {
+                    string namedModulePath = string.Join(".", import.Path.Take(import.Path.Count - 1));
+                    if (binder.Modules.TryGetValue(namedModulePath, out var namedModule))
+                    {
+                        var candidates = namedModule.FindTypes(name);
+                        if (candidates.Count > 0)
+                            return candidates;
+                    }
+                }
             }
 
             return Array.Empty<NamedTypeSymbol>();
+        }
+
+        /// <summary>
+        /// <c>Alias.Type</c> (§2.1, Fase 7), resolved against the module <c>import X as Alias;</c>
+        /// named. Only one segment past the alias is chased — a nested type reached through an
+        /// alias (<c>Alias.Outer.Inner</c>) is a rarer shape this pass does not follow.
+        /// </summary>
+        private static bool TryResolveThroughAlias(
+            CompilationSnapshot snapshot, Surtr.Compiler.Compilation.SurtrSourceUnit unit, IReadOnlyList<string> path, out NamedTypeSymbol type)
+        {
+            foreach (var import in unit.Syntax.Imports)
+            {
+                if (import.Alias != path[0])
+                    continue;
+
+                string aliasedPath = string.Join(".", import.Path);
+                if (!snapshot.Binder!.Modules.TryGetValue(aliasedPath, out var aliased))
+                    continue;
+
+                var candidates = aliased.FindTypes(path[1]);
+                if (candidates.Count > 0)
+                {
+                    type = candidates[0];
+                    return true;
+                }
+            }
+
+            type = null!;
+            return false;
         }
 
         // ------------------------------------------------------------------------------------
