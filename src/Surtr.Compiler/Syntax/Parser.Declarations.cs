@@ -80,6 +80,15 @@ namespace Surtr.Compiler.Syntax
                     return ParseField(start, docComment, attributes, modifiers);
 
                 default:
+                    // `attribute class Foo` / `attribute(Targets) class Foo` (§11) is contextual the
+                    // same way `value class` is: `attribute` is an ordinary identifier everywhere
+                    // except right before a class declaration (with or without a target list).
+                    if (CheckContextual("attribute")
+                        && (reader.CheckAt(1, TokenType.KeywordClass) || reader.CheckAt(1, TokenType.LeftParen)))
+                    {
+                        return ParseAttributeClassDeclaration(start, docComment, attributes, modifiers);
+                    }
+
                     // `value class` is contextual: `value` is an ordinary identifier and the
                     // `class` after it is what makes the declaration (§2.9).
                     if (CheckContextual("value") && reader.CheckAt(1, TokenType.KeywordClass))
@@ -283,7 +292,8 @@ namespace Surtr.Compiler.Syntax
 
         /// <summary>Parses a class, value class, interface, enum or singleton (§2.2–§2.4, §2.8, §2.9).</summary>
         private DeclarationSyntax ParseTypeDeclaration(SourceLocation start, IReadOnlyList<string> docComment,
-            IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers, TypeDeclarationKind kind)
+            IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers, TypeDeclarationKind kind,
+            bool isAttribute = false, SurtrAttributeTargets attributeTargets = SurtrAttributeTargets.None, bool isCompileTimeOnlyAttribute = false)
         {
             reader.Advance();
 
@@ -317,8 +327,79 @@ namespace Surtr.Compiler.Syntax
             reader.Expect(TokenType.RightBrace, "'}' to close the type body");
 
             return new TypeDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, kind, name,
-                typeParameters, baseTypes, cases, members, modifiers.IsAbstract, modifiers.IsSealed, modifiers.IsStatic);
+                typeParameters, baseTypes, cases, members, modifiers.IsAbstract, modifiers.IsSealed, modifiers.IsStatic,
+                isAttribute, attributeTargets, isCompileTimeOnlyAttribute);
         }
+
+        /// <summary>
+        /// Parses <c>attribute</c>'s optional <c>(Targets, ...)</c> list, then the class declaration
+        /// itself (§11) — an <c>attribute</c> class is a class in every other respect.
+        /// </summary>
+        private DeclarationSyntax ParseAttributeClassDeclaration(SourceLocation start, IReadOnlyList<string> docComment,
+            IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers)
+        {
+            reader.Advance(); // 'attribute'
+
+            SurtrAttributeTargets targets = SurtrAttributeTargets.None;
+            bool isCompileTimeOnly = false;
+
+            if (reader.Check(TokenType.LeftParen))
+            {
+                reader.Advance();
+
+                if (reader.Check(TokenType.RightParen))
+                {
+                    throw reader.Error(SurtrDiagnosticCode.UnexpectedToken,
+                        "An attribute's target list cannot be empty; omit the parentheses entirely for no restriction.");
+                }
+
+                do
+                {
+                    string name = reader.ExpectIdentifier("a target ('Class', 'Interface', 'Enum', 'Field', 'Property', 'Method') or 'CompileTimeOnly'");
+
+                    if (name == "CompileTimeOnly")
+                    {
+                        if (isCompileTimeOnly)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "An attribute's retention can only be written once.");
+                        }
+
+                        isCompileTimeOnly = true;
+                        continue;
+                    }
+
+                    SurtrAttributeTargets target = ToAttributeTarget(name);
+                    if (target == SurtrAttributeTargets.None)
+                    {
+                        throw reader.Error(SurtrDiagnosticCode.UnexpectedToken, $"'{name}' is not a target an attribute can carry.");
+                    }
+
+                    if ((targets & target) != 0)
+                    {
+                        throw reader.Error(SurtrDiagnosticCode.InvalidModifier, $"'{name}' is already in this attribute's target list.");
+                    }
+
+                    targets |= target;
+                }
+                while (reader.Match(TokenType.Comma));
+
+                reader.Expect(TokenType.RightParen, "')' to close the attribute's target list");
+            }
+
+            return ParseTypeDeclaration(start, docComment, attributes, modifiers, TypeDeclarationKind.Class,
+                isAttribute: true, attributeTargets: targets, isCompileTimeOnlyAttribute: isCompileTimeOnly);
+        }
+
+        private static SurtrAttributeTargets ToAttributeTarget(string name) => name switch
+        {
+            "Class" => SurtrAttributeTargets.Class,
+            "Interface" => SurtrAttributeTargets.Interface,
+            "Enum" => SurtrAttributeTargets.Enum,
+            "Field" => SurtrAttributeTargets.Field,
+            "Property" => SurtrAttributeTargets.Property,
+            "Method" => SurtrAttributeTargets.Method,
+            _ => SurtrAttributeTargets.None,
+        };
 
         /// <summary>
         /// Parses an enum's case list. Per §2.4 the trailing <c>;</c> is only needed when members

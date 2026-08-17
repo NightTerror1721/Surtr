@@ -2659,6 +2659,108 @@ namespace Surtr.Tests.Compiler.CodeGen
 
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.NotAConstant);
         }
+
+        /// <summary>
+        /// <c>attribute class</c> implies extending <c>Attribute</c> - no <c>: Attribute</c> needed -
+        /// and still survives the image like any other attribute.
+        /// </summary>
+        [Fact]
+        public void AnAttributeKeywordClassNeedsNoExplicitBaseAndSurvivesTheImage()
+        {
+            var module = Reload(
+                "attribute class Marker { }\n"
+                    + "class Target {\n"
+                    + "  @Marker\n"
+                    + "  public fun thing(): int { return 1; }\n"
+                    + "}");
+
+            Assert.True(module.FindClass("Target")!.TryGetMethods("thing", out var overloads));
+            Assert.Equal("Marker()", Describe(overloads[0]));
+        }
+
+        [Fact]
+        public void AnAttributeRestrictedToMethodsMayBeWrittenOnAMethod()
+        {
+            var module = Reload(
+                "attribute(Method) class OnlyMethods { }\n"
+                    + "class Target {\n"
+                    + "  @OnlyMethods\n"
+                    + "  public fun thing(): int { return 1; }\n"
+                    + "}");
+
+            Assert.True(module.FindClass("Target")!.TryGetMethods("thing", out var overloads));
+            Assert.Equal("OnlyMethods()", Describe(overloads[0]));
+        }
+
+        [Fact]
+        public void AnAttributeRestrictedToMethodsIsRejectedOnAField()
+        {
+            using var compilation = Reject(
+                "attribute(Method) class OnlyMethods { }\n"
+                    + "class Target {\n"
+                    + "  @OnlyMethods\n"
+                    + "  public var speed: float = 1.0;\n"
+                    + "}");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.AttributeTargetMismatch);
+        }
+
+        [Fact]
+        public void AnAttributeWithNoTargetListIsUnrestricted()
+        {
+            var module = Reload(
+                "attribute class Anywhere { }\n"
+                    + "@Anywhere\n"
+                    + "class Target {\n"
+                    + "  @Anywhere\n"
+                    + "  public var speed: float = 1.0;\n"
+                    + "}");
+
+            Assert.Equal("Anywhere()", Describe(module.FindClass("Target")!));
+            Assert.True(module.FindClass("Target")!.TryGetField("speed", out var field));
+            Assert.Equal("Anywhere()", Describe(field));
+        }
+
+        [Fact]
+        public void AnAttributeKeywordClassExtendingSomethingThatIsNotAttributeIsRejected()
+        {
+            using var compilation = Reject("class Plain { }\nattribute class Marker : Plain { }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidAttribute);
+        }
+
+        /// <summary>
+        /// <c>CompileTimeOnly</c> retention (§11): checked and folded like any other attribute use,
+        /// but never reaches the compiled image - the opposite of the default <c>Runtime</c> case,
+        /// which does.
+        /// </summary>
+        [Fact]
+        public void ACompileTimeOnlyAttributeIsCheckedButNeverEmitted()
+        {
+            var module = Reload(
+                "attribute(CompileTimeOnly) class Todo { }\n"
+                    + "class Target {\n"
+                    + "  @Todo\n"
+                    + "  public fun thing(): int { return 1; }\n"
+                    + "}");
+
+            Assert.True(module.FindClass("Target")!.TryGetMethods("thing", out var overloads));
+            Assert.Equal(string.Empty, Describe(overloads[0]));
+        }
+
+        [Fact]
+        public void ACompileTimeOnlyAttributeStillReportsANonConstantArgument()
+        {
+            using var compilation = Reject(
+                "attribute(CompileTimeOnly) class Todo { public let n: int = 0; }\n"
+                    + "fun compute(): int { return 1; }\n"
+                    + "class Target {\n"
+                    + "  @Todo(compute())\n"
+                    + "  public fun thing(): int { return 1; }\n"
+                    + "}");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.NotAConstant);
+        }
         #endregion
 
         #region Accessibility (§3.1)

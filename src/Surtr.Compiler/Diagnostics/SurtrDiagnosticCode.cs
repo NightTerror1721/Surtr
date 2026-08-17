@@ -350,6 +350,13 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         AccessorVisibilityNotNarrower = 3051,
 
+        /// <summary>
+        /// An <c>@Name(...)</c> use (§11) whose attribute class was declared <c>attribute(...)</c>
+        /// with a target list that does not include the kind of declaration it was written on —
+        /// e.g. a method-only attribute written above a field.
+        /// </summary>
+        AttributeTargetMismatch = 3052,
+
         #endregion
 
         #region Code generation — 4xxx

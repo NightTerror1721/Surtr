@@ -14,7 +14,7 @@ mismo formato que `docs/Plan-Globales-Nativos-Inline-Operadores.md`.
 | 2 | Asignar una función a una variable/campo/parámetro de tipo closure solo por su nombre, sin lambda explícita | Ausente. `SurtrClosure` ya soporta un closure de cero capturas sobre cualquier `SurtrMethodInfo`; falta la conversión en el binder | Medio |
 | 3 | Métodos y propiedades de solo lectura con `=>` | Ausente. `FatArrow` ya existe como token (solo lo usan las lambdas); es azúcar sintáctica pura | Pequeño |
 | 4 | Modificadores (`inline`, `forceinline`, `override`, etc.) independientes por `get`/`set` | **Hecho** — alcance completo (visibilidad, inline/forceinline, virtual/override/abstract/sealed), más el descubrimiento y arreglo de un bug real (`sealed` en una propiedad nunca sellaba nada) | — |
-| 5 | Atributos declarables con `attribute`, con retención y target | Los atributos ya funcionan de punta a punta (declarar, aplicar, leer desde C#), pero sin keyword `attribute`, sin retención, sin restricción de target y sin API de reflexión desde Surtr | Medio |
+| 5 | Atributos declarables con `attribute`, con retención y target | **Hecho** — keyword `attribute`, target y retención `CompileTimeOnly`/`Runtime` completos (comprobados en la misma compilación; import cruzado de target queda documentado como límite). Falta la API de reflexión desde Surtr (Fase 6) | — |
 | 6 | `operator[]` y operadores como miembros de instancia, no solo estáticos | **Ya implementado** — ver `docs/Plan-Globales-Nativos-Inline-Operadores.md`, Fase C (Ruta A: operadores de instancia con `abstract`/`virtual`/interfaz). Sin trabajo pendiente | — |
 | 7 | Varianza de genéricos (`in`/`out`) | Genéricos correctos y completos hoy (§10.1b cerrado, sin TODOs). Varianza está **deliberadamente diferida** en `Language-Syntax.md` §14.4 — no es prioritaria mientras quede pendiente §10.2 (STDLIB en Surtr) | Diferido, no se planifica |
 | 8 | Cargador de STDLIB con selección de módulos (sandbox) + enlace nativo portable | El mecanismo de carga (`SurtrStdlib.LoadInto`) ya existe pero es todo-o-nada; el enlace nativo ya es independiente del código fuente `.surtr` en tiempo de ejecución, pero las imágenes no están embebidas como recursos y no hay detección temprana de desincronización | Pequeño-medio |
@@ -302,19 +302,53 @@ restricción de target (nada impide poner cualquier atributo en cualquier tipo d
 declaración), y §11 lo deja explícito: "cómo el host los lee es una cuestión de diseño
 posterior".
 
+**Confirmado con el usuario**: `attribute class Foo { ... }` implica extender `Attribute`
+automáticamente (sin `: Attribute` explícito); el target se anota directamente en la
+declaración — `attribute(Method, Property) class X`; la retención se escribe en esa misma
+lista con la palabra `CompileTimeOnly`, con `Runtime` por defecto.
+
 **Cambios**:
-- Palabra clave contextual `attribute` sobre `class Foo : Attribute` (alias de parser que
-  además valida las restricciones de forma — sin campos adicionales más allá de los que exige
-  el contrato de atributo, sin más de una interfaz salvo `Attribute` misma).
-- Enum `SurtrAttributeTargets` ([Flags]: Class, Interface, Enum, Field, Property, Method,
-  Parameter, ...) y `SurtrAttributeRetention` (CompileTimeOnly / Runtime), declarados sobre
-  la propia clase de atributo (al estilo `[AttributeUsage]` de C#, pero auto-hospedado con la
-  sintaxis `attribute` en vez de un segundo atributo bootstrap).
-- `BindAttributes`: valida el target contra la clase de declaración donde se usa; si la
-  retención es `CompileTimeOnly`, no emitir el `SurtrAttributeUsage` tras las comprobaciones
-  de binding (se pliega y se descarta, como `@Obsolete`).
-- `ModuleEmitter.cs` / image reader-writer: nuevos campos de metadata para target/retención.
-- Actualizar `Language-Syntax.md` §11 con la sintaxis y semántica final.
+- `attribute` como palabra clave contextual (cuarta, junto a `this`/`super`/`value`),
+  reconocida solo justo antes de `class` (con o sin lista de parámetros) — igual que `value
+  class`. Nueva `ParseAttributeClassDeclaration` en `Parser.Declarations.cs`, que parsea la
+  lista opcional `(Target, ..., CompileTimeOnly?)` y delega en `ParseTypeDeclaration` (ganó
+  tres parámetros opcionales) para el resto — una clase `attribute` es una clase normal en
+  todo lo demás.
+- Enum `SurtrAttributeTargets` ([Flags]: Class, Interface, Enum, Field, Property, Method) en
+  `Syntax/Ast/DeclarationSyntax.cs` — sin `Parameter` (los atributos en parámetros no están
+  confirmados como funcionales hoy, así que no se añade un target para algo no verificable) ni
+  `Module` (un `fun`/`let` de módulo ya cae en Method/Field, no hace falta distinguirlo).
+  Renombrado a `SurtrAttributeTargets` (no `AttributeTargets` a secas) porque colisionaba con
+  `System.AttributeTargets` del BCL.
+- `NamedTypeSymbol` gana `IsAttribute`, `AllowedAttributeTargets`, `IsCompileTimeOnlyAttribute`
+  (mismo patrón que `IsSealed`/`IsAbstract`, indexado a través de `Definition`).
+- `Binder.BindHierarchy`: si `syntax.IsAttribute` y no hay base explícita, resuelve `Attribute`
+  automáticamente (mismo mecanismo que resuelve el nombre de un `@Foo`); si hay base explícita,
+  exige que ya extienda `Attribute` (nuevo uso de `InvalidAttribute` en la declaración, no solo
+  en el uso).
+- `Binder.BindAttributes`: nueva comprobación de target contra `DeclarationTargetOf(binding.Target)`
+  (mapea `NamedTypeSymbol`/`FieldSymbol`/`PropertySymbol`/`MethodSymbol` a su target; cualquier
+  otra cosa —módulo, alias, parámetro, local— no matchea nunca contra una lista restringida,
+  que es la respuesta correcta) — nuevo código `AttributeTargetMismatch` = 3052.
+- `ModuleEmitter.cs`: los 5 puntos donde se emite un `SurtrAttributeUsage` ahora saltan los
+  usos cuyo `use.Type.IsCompileTimeOnlyAttribute` es cierto — el uso se sigue comprobando y
+  plegando en el binder (así un argumento no constante en un atributo `CompileTimeOnly` sigue
+  reportando error), solo no llega a la imagen compilada.
+- **Sin cambios en el formato de imagen** (`SurtrModuleImageWriter`/`Reader`): el target/
+  retención son puramente de comprobación en tiempo de compilación, nunca los necesita un
+  runtime que ya cargó el módulo.
+- **Límite documentado, no implementado**: la lista de targets solo se comprueba contra usos
+  en la **misma compilación** que la declaración del atributo — un atributo importado desde
+  una imagen `.surtrc` ya compilada no lleva su target/retención de vuelta a través de
+  `MetadataImporter` hoy (necesitaría extender el formato de imagen, fuera de alcance de esta
+  fase). El caso común — atributo y usos en el mismo proyecto — no se ve afectado.
+- 7 tests nuevos en `ModuleEmitterTests.cs` (región "Attributes (§11)"): keyword sin base
+  explícita, target aceptado/rechazado, sin lista = sin restricción, base inválida rechazada,
+  `CompileTimeOnly` comprobado pero no emitido, `CompileTimeOnly` sigue reportando argumento no
+  constante. Todos pasaron a la primera.
+- Actualizado `docs/Language-Syntax.md` §1.2 (cuarta palabra contextual) y §11 (sintaxis y
+  semántica completas de `attribute`, target, retención, y el límite de import cruzado).
+- Suite completa verificada: 2087/2087 tests en verde.
 
 **Commit**: `Feature: keyword attribute con target y retencion`
 
@@ -524,7 +558,7 @@ cada fase), una pasada de cierre:
 | 2 | Sintaxis `=>` en métodos/propiedades | **Hecha** |
 | 3 | Modificadores independientes por accessor | **Hecha** (alcance completo, incluye fix de bug de `sealed`) |
 | 4 | Método → valor closure sin lambda | Pendiente |
-| 5 | Keyword `attribute`, target y retención | Pendiente |
+| 5 | Keyword `attribute`, target y retención | **Hecha** |
 | 6 | API de reflexión de atributos en Surtr | Pendiente (depende de 5) |
 | 7 | Alias de import | Pendiente |
 | 8 | Import selectivo de miembros | Pendiente |

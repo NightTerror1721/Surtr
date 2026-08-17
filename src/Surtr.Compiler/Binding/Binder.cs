@@ -1000,6 +1000,33 @@ namespace Surtr.Compiler.Binding
                 baseClass = named;
             }
 
+            // §11: `attribute class Foo` implies extending `Attribute`, the same way any other
+            // class extending it already qualified (`ExtendsAttribute`). No explicit base written
+            // resolves it the same way a `@Foo` use resolves the attribute's own name; an explicit
+            // one just has to actually reach `Attribute`, which lets `attribute class Foo : Bar`
+            // still work when `Bar` itself already extends it.
+            if (syntax.IsAttribute)
+            {
+                if (baseClass is null)
+                {
+                    var attributeBase = _resolver.Resolve(
+                        new NamedTypeSyntax(syntax.Span, new[] { "Attribute" }, System.Array.Empty<TypeSyntax>()),
+                        binding.Scope, binding.SourceName);
+
+                    if (attributeBase.NonNullable is NamedTypeSymbol resolvedAttribute)
+                        baseClass = resolvedAttribute;
+                }
+                else if (!ExtendsAttribute(baseClass))
+                {
+                    Report(SurtrDiagnosticCode.InvalidAttribute, binding, binding.Syntax.Span,
+                        $"'{symbol.Name}' is declared 'attribute', so its base has to be 'Attribute' or extend it, not '{baseClass.Name}'.");
+                }
+
+                symbol.IsAttribute = true;
+                symbol.AllowedAttributeTargets = syntax.SurtrAttributeTargets;
+                symbol.IsCompileTimeOnlyAttribute = syntax.IsCompileTimeOnlyAttribute;
+            }
+
             symbol.Interfaces = interfaces;
 
             if (baseClass is not null && !CreatesCycle(symbol, baseClass, binding))
@@ -1620,6 +1647,21 @@ namespace Surtr.Compiler.Binding
                     continue;
                 }
 
+                if (type.IsAttribute && type.AllowedAttributeTargets != SurtrAttributeTargets.None)
+                {
+                    SurtrAttributeTargets actual = DeclarationTargetOf(binding.Target);
+                    if ((type.AllowedAttributeTargets & actual) == 0)
+                    {
+                        ReportAt(
+                            binding.SourceName,
+                            written.Span,
+                            SurtrDiagnosticCode.AttributeTargetMismatch,
+                            $"'{written.Name}' cannot be written here; its target list does not include {DescribeAttributeTarget(actual)}.");
+
+                        continue;
+                    }
+                }
+
                 var arguments = new object?[written.Arguments.Count];
                 bool folded = true;
 
@@ -1658,6 +1700,34 @@ namespace Surtr.Compiler.Binding
 
             return false;
         }
+
+        /// <summary>
+        /// Which of §11's declaration kinds a symbol is, for matching against an
+        /// <c>attribute(...)</c>'s target list. <see cref="SurtrAttributeTargets.None"/> for anything a
+        /// target list cannot name (a module, an alias, a parameter, a local) — which is exactly
+        /// right, since a restricted attribute could then never match it.
+        /// </summary>
+        private static SurtrAttributeTargets DeclarationTargetOf(Symbol symbol) => symbol switch
+        {
+            NamedTypeSymbol { TypeKind: TypeSymbolKind.Interface } => SurtrAttributeTargets.Interface,
+            NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum } => SurtrAttributeTargets.Enum,
+            NamedTypeSymbol => SurtrAttributeTargets.Class,
+            FieldSymbol => SurtrAttributeTargets.Field,
+            PropertySymbol => SurtrAttributeTargets.Property,
+            MethodSymbol => SurtrAttributeTargets.Method,
+            _ => SurtrAttributeTargets.None,
+        };
+
+        private static string DescribeAttributeTarget(SurtrAttributeTargets target) => target switch
+        {
+            SurtrAttributeTargets.Class => "a class",
+            SurtrAttributeTargets.Interface => "an interface",
+            SurtrAttributeTargets.Enum => "an enum",
+            SurtrAttributeTargets.Field => "a field",
+            SurtrAttributeTargets.Property => "a property",
+            SurtrAttributeTargets.Method => "a method",
+            _ => "this kind of declaration",
+        };
 
         /// <summary>
         /// Binds one <c>static { ... }</c> block, in the scope its declaration sits in (§2.5, §3.2).

@@ -86,11 +86,12 @@ private    protected public    return    sealed    singleton   static    switch
 throw      true      try       var       virtual   while
 ```
 
-Three words are **contextual**, not reserved (§3.2): `this`, `super` and `value` mean something
-specific only where they are legal, and remain usable as ordinary identifiers everywhere else.
-`value` carries two such roles — the incoming value in a property's `set` accessor, and the
-`value class` declaration of §2.9 — and neither costs it its identifier status, because the second
-is recognised by the `class` that has to follow it.
+Four words are **contextual**, not reserved (§3.2): `this`, `super`, `value` and `attribute` mean
+something specific only where they are legal, and remain usable as ordinary identifiers everywhere
+else. `this` and `super` are recognized by position, inside a member body; `value` and `attribute`
+are recognized by what follows them — `value` by the `class` that makes it a `value class`
+declaration (§2.9) rather than the incoming value in a property's `set` accessor, and `attribute`
+by the `class` that makes it an `attribute class` declaration (§11) rather than a plain identifier.
 
 The list is deliberately short — it holds only what the grammar actually branches on. Notable
 absences, each for a reason already decided above: no `new` (§5.5), no `object` (there is no root
@@ -2187,9 +2188,54 @@ meaning exactly one thing (array indexing/type, §5.3/§5.4). An attribute can d
 declaration — class, interface, enum, field, property, method, parameter — the same set `///` doc
 comments attach to. Concretely, this is aimed at two audiences: compiler/tooling directives
 (`@Obsolete`, `@Deprecated`-style warnings) and future Unity interop, where a host embedding Surtr
-will want to reflect on attributes to do things like expose a field to the inspector. Exactly which
-attributes exist and how the host reads them back is a separate, later design question — this
-section only fixes the source-level syntax for attaching one.
+will want to reflect on attributes to do things like expose a field to the inspector.
+
+**`@Name(args)` names a class extending `Attribute`** — its constructor arguments fill its fields
+positionally, folded to constants at compile time (the instance is built when the declaring module
+loads, alongside every other static, so an argument that isn't a constant has nothing to be built
+from). Any class that extends `Attribute`, however it is declared, qualifies to be written after
+`@`. The `attribute` keyword below is the *recommended* way to declare one — it gets the extension
+for free and lets a target list and a retention be declared alongside it — but writing
+`class Foo : Attribute { ... }` by hand still works exactly as it always did, with no restriction
+on where `@Foo` may be written and `Runtime` retention.
+
+```
+attribute class Obsolete {
+    public let reason: string = "";
+}
+
+attribute(Method, Property) class Range {
+    public let lo: int = 0;
+    public let hi: int = 0;
+}
+
+attribute(CompileTimeOnly, Method) class Todo { }
+```
+
+**`attribute class Name { ... }` implicitly extends `Attribute`** — no `: Attribute` needed, though
+writing it (or extending something that already does) is still accepted. `attribute` is contextual,
+recognized only immediately before a class declaration, the same way `value` is recognized only
+before one (§2.9); everywhere else it is an ordinary identifier.
+
+**A parenthesized list right after `attribute` restricts where the attribute may be written and
+how long it lives**, mixing two kinds of item in any order:
+
+- **A target** — `Class` (also matches `value class` and `singleton`), `Interface`, `Enum`,
+  `Field`, `Property` or `Method` (also matches a constructor and a module-level function). Any
+  number may be listed; `@Range` above is legal on a property or a method, nowhere else. No target
+  in the list — including no parenthesized list at all — means no restriction, matching how any
+  attribute behaved before `attribute` existed.
+- **`CompileTimeOnly`**, at most once — the attribute is checked and folded exactly like any other,
+  but the compiled image never carries it: no `SurtrAttributeUsage`, nothing for host reflection to
+  read back. `@Todo` above exists purely to be caught by a lint pass over the source or a compiler
+  warning, never a promise about what ships. Leaving it out (the default) means `Runtime`: the usage
+  survives into the image and is readable through `SurtrMemberInfo.TryGetAttribute` like any
+  attribute always was.
+
+A target list is checked only against attribute uses in the **same compilation** as the attribute's
+own declaration — an attribute imported from an already-compiled module image is not (yet) checked
+against its target list at the use site, only at its own declaration. Declaring an attribute in the
+same project as everything that uses it, which is by far the common case, is unaffected.
 
 ---
 

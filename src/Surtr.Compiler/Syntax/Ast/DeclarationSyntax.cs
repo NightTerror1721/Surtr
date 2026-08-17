@@ -281,6 +281,27 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>True when declared <c>static</c> — legal only on a nested type.</summary>
         public bool IsStatic { get; }
 
+        /// <summary>
+        /// True when declared with the <c>attribute</c> keyword (§11) instead of a bare <c>class</c>
+        /// — implicitly extends <c>Attribute</c>, so an explicit <c>: Attribute</c> is not needed
+        /// (though extending it, or something that does, explicitly is still accepted).
+        /// </summary>
+        public bool IsAttribute { get; }
+
+        /// <summary>
+        /// The declaration kinds an <c>attribute</c> class may be written on, or
+        /// <see cref="Ast.SurtrAttributeTargets.None"/> for no restriction — either because nothing was
+        /// written in parentheses, or because the parenthesized list named a retention only.
+        /// </summary>
+        public SurtrAttributeTargets SurtrAttributeTargets { get; }
+
+        /// <summary>
+        /// True when the parenthesized list after <c>attribute</c> named <c>CompileTimeOnly</c> —
+        /// the attribute is checked and then discarded, never reaching the compiled image. False
+        /// (the default) means <c>Runtime</c>: it is emitted and readable through host reflection.
+        /// </summary>
+        public bool IsCompileTimeOnlyAttribute { get; }
+
         /// <summary>Initializes a type declaration.</summary>
         /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">Attributes attached to it.</param>
@@ -295,9 +316,13 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="isAbstract">True when declared <c>abstract</c>.</param>
         /// <param name="isSealed">True when declared <c>sealed</c>.</param>
         /// <param name="isStatic">True when declared <c>static</c>.</param>
+        /// <param name="isAttribute">True when declared with the <c>attribute</c> keyword.</param>
+        /// <param name="attributeTargets">The declaration kinds it may be written on, or none for unrestricted.</param>
+        /// <param name="isCompileTimeOnlyAttribute">True when its retention is <c>CompileTimeOnly</c>.</param>
         public TypeDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
             TypeDeclarationKind kind, string name, IReadOnlyList<TypeParameterSyntax> typeParameters, IReadOnlyList<TypeSyntax> baseTypes,
-            IReadOnlyList<EnumCaseSyntax> enumCases, IReadOnlyList<DeclarationSyntax> members, bool isAbstract, bool isSealed, bool isStatic)
+            IReadOnlyList<EnumCaseSyntax> enumCases, IReadOnlyList<DeclarationSyntax> members, bool isAbstract, bool isSealed, bool isStatic,
+            bool isAttribute = false, SurtrAttributeTargets attributeTargets = SurtrAttributeTargets.None, bool isCompileTimeOnlyAttribute = false)
             : base(span, attributes, docComment, visibility)
         {
             Kind = kind;
@@ -309,7 +334,40 @@ namespace Surtr.Compiler.Syntax.Ast
             IsAbstract = isAbstract;
             IsSealed = isSealed;
             IsStatic = isStatic;
+            IsAttribute = isAttribute;
+            SurtrAttributeTargets = attributeTargets;
+            IsCompileTimeOnlyAttribute = isCompileTimeOnlyAttribute;
         }
+    }
+
+    /// <summary>
+    /// The declaration kinds an <c>attribute</c> class (§11) may be written on. <see cref="None"/>
+    /// means no restriction was declared, not "nothing is allowed" — an attribute with no target
+    /// list may be written anywhere any attribute could be written before this existed.
+    /// </summary>
+    [System.Flags]
+    public enum SurtrAttributeTargets
+    {
+        /// <summary>No restriction declared.</summary>
+        None = 0,
+
+        /// <summary><c>class</c>, <c>value class</c> or <c>singleton</c>.</summary>
+        Class = 1 << 0,
+
+        /// <summary><c>interface</c>.</summary>
+        Interface = 1 << 1,
+
+        /// <summary><c>enum</c>.</summary>
+        Enum = 1 << 2,
+
+        /// <summary>A field (<c>let</c>/<c>var</c>), instance or module-level.</summary>
+        Field = 1 << 3,
+
+        /// <summary>A property, instance or module-level.</summary>
+        Property = 1 << 4,
+
+        /// <summary>A method, constructor, or module-level function.</summary>
+        Method = 1 << 5,
     }
 
     /// <summary>One case of an enum: a name plus the arguments to the enum's constructor (§2.4).</summary>

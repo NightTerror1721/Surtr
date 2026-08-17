@@ -588,7 +588,12 @@ namespace Surtr.Compiler.CodeGen
         private void Attach(EmitContext context, Symbol symbol, SurtrMemberInfo member)
         {
             foreach (var use in symbol.Attributes)
+            {
+                if (use.Type.IsCompileTimeOnlyAttribute)
+                    continue;
+
                 member.AddAttribute(Usage(context, use));
+            }
         }
 
         private SurtrAttributeUsage Usage(EmitContext context, AttributeUse use)
@@ -620,7 +625,12 @@ namespace Surtr.Compiler.CodeGen
                 property.Name, _descriptors.Emit(property.Type), property.IsStatic, Visibility(property.Accessibility));
 
             foreach (var use in property.Attributes)
+            {
+                if (use.Type.IsCompileTimeOnlyAttribute)
+                    continue;
+
                 declared.AddAttribute(Usage(context, use));
+            }
 
             bool getterIsNative = property.Getter is { IsNative: true };
             bool setterIsNative = property.Setter is { IsNative: true };
@@ -701,7 +711,12 @@ namespace Surtr.Compiler.CodeGen
                 var constructor = @class.DefineConstructor(parameters, Visibility(method.Accessibility));
 
                 foreach (var use in method.Attributes)
+                {
+                    if (use.Type.IsCompileTimeOnlyAttribute)
+                        continue;
+
                     constructor.AddAttribute(Usage(context, use));
+                }
 
                 context.Declare(method, constructor);
                 emission.Methods.Add((method, constructor));
@@ -748,7 +763,12 @@ namespace Surtr.Compiler.CodeGen
                 method.IsSealed);
 
             foreach (var use in method.Attributes)
+            {
+                if (use.Type.IsCompileTimeOnlyAttribute)
+                    continue;
+
                 builder.AddAttribute(Usage(context, use));
+            }
 
             context.Declare(method, builder);
             emission.Methods.Add((method, builder));
@@ -863,7 +883,12 @@ namespace Surtr.Compiler.CodeGen
                     Visibility(method.Accessibility));
 
                 foreach (var use in method.Attributes)
+                {
+                    if (use.Type.IsCompileTimeOnlyAttribute)
+                        continue;
+
                     function.AddAttribute(Usage(context, use));
+                }
 
                 context.Declare(method, function);
             }
