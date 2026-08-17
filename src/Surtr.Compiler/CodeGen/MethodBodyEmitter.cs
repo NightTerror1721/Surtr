@@ -1378,6 +1378,10 @@ namespace Surtr.Compiler.CodeGen
                     Code.TestInstanceOf(Descriptors.Emit(test.TestedType.NonNullable));
                     return;
 
+                case BoundTypeOfExpression typeOf:
+                    EmitTypeOf(typeOf);
+                    return;
+
                 case BoundSwitchExpression @switch:
                     EmitSwitchExpression(@switch);
                     return;
@@ -1437,6 +1441,37 @@ namespace Surtr.Compiler.CodeGen
                 default:
                     throw Unsupported($"a literal of CLR type '{literal.Value.GetType().Name}'");
             }
+        }
+
+        /// <summary>
+        /// <c>typeof(X)</c>. The static form needs no operand at all - <see cref="Code"/>.<c>LoadTypeOf</c>
+        /// resolves entirely from the pool. The instance form's operand is either already a
+        /// non-nullable primitive (the binder leaves it unconverted exactly when it is) or already
+        /// converted to <c>unknown</c>, boxing where boxing is actually needed - a primitive here
+        /// can only mean its class is statically known and can never differ at run time, so the
+        /// value is evaluated for its side effects and discarded rather than read by
+        /// <c>GetTypeOfValue</c>, which is what lets <c>typeof(5)</c> skip the box
+        /// <c>Type.of(5)</c> always pays for through its <c>unknown</c> parameter.
+        /// </summary>
+        private void EmitTypeOf(BoundTypeOfExpression typeOf)
+        {
+            if (typeOf.TargetType is TypeSymbol staticTarget)
+            {
+                Code.LoadTypeOf(Descriptors.Emit(staticTarget.NonNullable));
+                return;
+            }
+
+            var operand = typeOf.Operand!;
+            Expression(operand);
+
+            if (operand.Type.IsPrimitive)
+            {
+                Code.Pop();
+                Code.LoadTypeOf(Descriptors.Emit(operand.Type.NonNullable));
+                return;
+            }
+
+            Code.GetTypeOfValue();
         }
 
         private void EmitConversion(BoundConversionExpression conversion)

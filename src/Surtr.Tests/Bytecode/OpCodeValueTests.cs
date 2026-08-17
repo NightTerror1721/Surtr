@@ -79,7 +79,8 @@ namespace Surtr.Tests.Bytecode
             (OpCode.DictNew, 0xD0), (OpCode.DictPack, 0xD1), (OpCode.DictLen, 0xD2), (OpCode.DictGet, 0xD3),
             (OpCode.DictSet, 0xD4), (OpCode.DictDel, 0xD5), (OpCode.DictClear, 0xD6), (OpCode.DictKeys, 0xD7),
             (OpCode.DictValues, 0xD8), (OpCode.DictIn, 0xD9), (OpCode.DictNIn, 0xDA), (OpCode.RangeNew, 0xDB),
-            (OpCode.RangeNewInclusive, 0xDC)
+            (OpCode.RangeNewInclusive, 0xDC), (OpCode.LoadType, 0xDD), (OpCode.LoadTypeX, 0xDE),
+            (OpCode.GetTypeOfValue, 0xDF)
         };
 
         [Fact]

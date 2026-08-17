@@ -43,6 +43,7 @@ namespace Surtr.Runtime.BuiltIns
 
             builder.Property("name", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&TypeName));
             builder.Property("baseType", selfType, SurtrNativeEntryPoint.FromFunctionPointer(&TypeBaseType));
+            builder.Property("isInterface", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&TypeIsInterface));
             builder.Method("members", memberArray, SurtrNativeEntryPoint.FromFunctionPointer(&TypeMembers));
             builder.Method("attributes", attributeArray, SurtrNativeEntryPoint.FromFunctionPointer(&TypeAttributes));
         }
@@ -72,30 +73,62 @@ namespace Surtr.Runtime.BuiltIns
 
         private static SurtrValue TypeBaseType(SurtrCallArguments arguments)
         {
-            var baseClass = SelfType(arguments).BaseType?.ResolvedClass;
-            return baseClass is null ? SurtrValue.Null : WrapType(arguments.Runtime, baseClass);
+            // An interface has no single base - only however many interfaces it extends - so it
+            // answers null here exactly as the root of a class hierarchy already does.
+            var baseType = (SelfType(arguments) as SurtrClass)?.BaseType?.ResolvedType;
+            return baseType is null ? SurtrValue.Null : WrapType(arguments.Runtime, baseType);
         }
+
+        private static SurtrValue TypeIsInterface(SurtrCallArguments arguments)
+            => SurtrValue.CreateBool(SelfType(arguments).IsInterface);
 
         private static SurtrValue TypeMembers(SurtrCallArguments arguments)
         {
             var self = SelfType(arguments);
             var runtime = arguments.Runtime;
-            var accessors = PropertyAccessors(self);
             var array = runtime.NewArray(SurtrClassReference.Array(SurtrBuiltIns.Member.SelfReference));
 
-            foreach (var field in self.Fields)
+            // An interface is a pure contract: no fields, no nested types, no static members
+            // (§"Runtime objects" / SurtrInterface's own remarks), so only its methods and
+            // properties are worth walking - there is nothing else to skip.
+            if (self is SurtrInterface iface)
+            {
+                var ifaceAccessors = PropertyAccessors(iface.Properties);
+
+                foreach (var property in iface.Properties)
+                {
+                    if (!IsSynthetic(property.Name))
+                        array.Add(WrapMember(runtime, property));
+                }
+
+                foreach (var overloads in iface.Methods)
+                {
+                    for (int i = 0; i < overloads.Length; i++)
+                    {
+                        if (!ifaceAccessors.Contains(overloads[i]) && !IsSynthetic(overloads[i].Name))
+                            array.Add(WrapMember(runtime, overloads[i]));
+                    }
+                }
+
+                return SurtrValue.CreateReference(array.GetSurtrReference());
+            }
+
+            var cls = (SurtrClass)self;
+            var accessors = PropertyAccessors(cls.Properties);
+
+            foreach (var field in cls.Fields)
             {
                 if (!IsSynthetic(field.Name))
                     array.Add(WrapMember(runtime, field));
             }
 
-            foreach (var property in self.Properties)
+            foreach (var property in cls.Properties)
             {
                 if (!IsSynthetic(property.Name))
                     array.Add(WrapMember(runtime, property));
             }
 
-            foreach (var overloads in self.Methods)
+            foreach (var overloads in cls.Methods)
             {
                 for (int i = 0; i < overloads.Length; i++)
                 {
@@ -110,10 +143,10 @@ namespace Surtr.Runtime.BuiltIns
                 }
             }
 
-            foreach (var nested in self.NestedClasses)
+            foreach (var nested in cls.NestedClasses)
                 array.Add(WrapMember(runtime, nested));
 
-            foreach (var nested in self.NestedInterfaces)
+            foreach (var nested in cls.NestedInterfaces)
                 array.Add(WrapMember(runtime, nested));
 
             return SurtrValue.CreateReference(array.GetSurtrReference());
@@ -122,10 +155,10 @@ namespace Surtr.Runtime.BuiltIns
         private static SurtrValue TypeAttributes(SurtrCallArguments arguments)
             => WrapAttributes(arguments.Runtime, SelfType(arguments).Attributes);
 
-        private static HashSet<SurtrMethodInfo> PropertyAccessors(SurtrClass self)
+        private static HashSet<SurtrMethodInfo> PropertyAccessors(IEnumerable<SurtrPropertyInfo> properties)
         {
             var accessors = new HashSet<SurtrMethodInfo>();
-            foreach (var property in self.Properties)
+            foreach (var property in properties)
             {
                 if (property.Getter is not null)
                     accessors.Add(property.Getter);
@@ -148,10 +181,10 @@ namespace Surtr.Runtime.BuiltIns
         private static bool IsSynthetic(string name) => name.Length > 0 && name[0] == '$';
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-        private static SurtrClass SelfType(SurtrCallArguments arguments) => arguments.GetUnchecked<SurtrTypeValue>(0).Wrapped;
+        private static SurtrTypeInfo SelfType(SurtrCallArguments arguments) => arguments.GetUnchecked<SurtrTypeValue>(0).Wrapped;
 
-        private static SurtrValue WrapType(SurtrRuntime runtime, SurtrClass wrapped)
-            => SurtrValue.CreateReference(runtime.NewTypeValue(wrapped).GetSurtrReference());
+        private static SurtrValue WrapType(SurtrRuntime runtime, SurtrTypeInfo wrapped)
+            => SurtrValue.CreateReference(runtime.GetOrCreateTypeValue(wrapped).GetSurtrReference());
         #endregion
 
         #region Member
@@ -166,8 +199,8 @@ namespace Surtr.Runtime.BuiltIns
 
         private static SurtrValue MemberDeclaringType(SurtrCallArguments arguments)
         {
-            var declaringClass = SelfMember(arguments).DeclaringType?.ResolvedClass;
-            return declaringClass is null ? SurtrValue.Null : WrapType(arguments.Runtime, declaringClass);
+            var declaringType = SelfMember(arguments).DeclaringType?.ResolvedType;
+            return declaringType is null ? SurtrValue.Null : WrapType(arguments.Runtime, declaringType);
         }
 
         private static SurtrValue MemberAttributes(SurtrCallArguments arguments)

@@ -167,6 +167,9 @@ namespace Surtr.Compiler.Syntax
         /// <summary><c>let</c> - an immutable binding (§1).</summary>
         KeywordLet,
 
+        /// <summary><c>typeof</c> - the compile-time-known type of a name, or the runtime type of a value (§11).</summary>
+        KeywordTypeOf,
+
         /// <summary><c>native</c> - declares a host-provided function or variable, with no body (§9).</summary>
         KeywordNative,
 

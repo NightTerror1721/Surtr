@@ -743,6 +743,7 @@ namespace Surtr.Compiler.Syntax
                     if (Is(text, "sealed")) return TokenType.KeywordSealed;
                     if (Is(text, "static")) return TokenType.KeywordStatic;
                     if (Is(text, "switch")) return TokenType.KeywordSwitch;
+                    if (Is(text, "typeof")) return TokenType.KeywordTypeOf;
                     break;
 
                 case 7:

@@ -65,6 +65,19 @@ namespace Surtr.Runtime
         internal Dictionary<string, SurtrString> InternedStrings;
 
         /// <summary>
+        /// Text-to-object table backing <see cref="SurtrRuntime.GetOrCreateTypeValue"/>, so
+        /// <c>typeof</c> and <c>Type.of</c> alike return the one shared <c>Type</c> value for a
+        /// given class or interface within this runtime.
+        /// </summary>
+        /// <remarks>
+        /// Keyed by reference identity - every <see cref="SurtrTypeInfo"/> is interned once by its
+        /// owner, so no custom comparer is needed. Lives here rather than on the metadata itself
+        /// because the metadata is process-wide and shared across runtimes, while the entity
+        /// registry a <see cref="SurtrTypeValue"/> is registered in is not.
+        /// </remarks>
+        internal Dictionary<SurtrTypeInfo, SurtrTypeValue> TypeValueCache;
+
+        /// <summary>
         /// Entities kept alive regardless of reachability, as raw reference values ready to hand
         /// to the collector.
         /// </summary>
@@ -123,6 +136,7 @@ namespace Surtr.Runtime
             NativeBodies = new Dictionary<string, SurtrNativeEntryPoint>(StringComparer.Ordinal);
             HostTypeHandles = new SurtrTypeHandleTable();
             InternedStrings = new Dictionary<string, SurtrString>(StringComparer.Ordinal);
+            TypeValueCache = new Dictionary<SurtrTypeInfo, SurtrTypeValue>();
 
             Roots = new SurtrRawValue[InitialRootCapacity];
             RootCount = 0;
@@ -241,6 +255,7 @@ namespace Surtr.Runtime
             EntityRegistry.Dispose();
 
             InternedStrings?.Clear();
+            TypeValueCache?.Clear();
             Roots = Array.Empty<SurtrRawValue>();
             RootCount = 0;
 

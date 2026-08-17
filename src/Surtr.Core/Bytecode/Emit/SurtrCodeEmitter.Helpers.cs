@@ -210,6 +210,13 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Tests whether the top value is an instance of the named type.</summary>
         public SurtrCodeEmitter TestInstanceOf(SurtrClassReference type) => TestInstanceOf(_module.Type(type));
 
+        /// <summary>Pushes the <c>Type</c> value for a compile-time-known type, in the narrowest encoding that reaches it.</summary>
+        public SurtrCodeEmitter LoadTypeOf(SurtrTypeToken type)
+            => TypeIndex(type) <= ushort.MaxValue ? LoadType(type) : LoadTypeX(type);
+
+        /// <summary>Pushes the <c>Type</c> value for the named type.</summary>
+        public SurtrCodeEmitter LoadTypeOf(SurtrClassReference type) => LoadTypeOf(_module.Type(type));
+
         /// <summary>Allocates an array whose length comes from the stack.</summary>
         /// <param name="arrayType">The whole parameterised array type, for example <c>AI</c>.</param>
         public SurtrCodeEmitter NewArray(SurtrClassReference arrayType) => ArrNew(_module.Type(arrayType));

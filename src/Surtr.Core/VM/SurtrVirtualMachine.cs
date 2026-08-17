@@ -1137,6 +1137,48 @@ namespace Surtr.VM
                     *(sp - 1) = SurtrValue.TagMaskBool | (matches ? 1UL : 0UL);
                     goto Dispatch;
                 }
+
+                case OpCode.LoadType:
+                {
+                    var target = typeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
+                    ip += 2;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var typeValue = runtime.GetOrCreateTypeValue(target);
+                    entities = context.EntityRegistry.Entities;
+                    *sp++ = SurtrValue.TagMaskReference | (uint)typeValue.GetSurtrReference();
+                    goto Dispatch;
+                }
+
+                case OpCode.LoadTypeX:
+                {
+                    var target = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
+                    ip += 4;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var typeValue = runtime.GetOrCreateTypeValue(target);
+                    entities = context.EntityRegistry.Entities;
+                    *sp++ = SurtrValue.TagMaskReference | (uint)typeValue.GetSurtrReference();
+                    goto Dispatch;
+                }
+
+                // No null check, on purpose: matches FieldGet and the native Type.of this
+                // replaces. A primitive operand never reaches here at all - the compiler lowers
+                // typeof of a primitive-typed expression straight to LoadType instead, since its
+                // class can never differ from its static one.
+                case OpCode.GetTypeOfValue:
+                {
+                    var valueClass = ((SurtrObject)entities[(SurtrRef)(*(sp - 1))]!).Class;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var typeValue = runtime.GetOrCreateTypeValue(valueClass);
+                    entities = context.EntityRegistry.Entities;
+                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)typeValue.GetSurtrReference();
+                    goto Dispatch;
+                }
                 #endregion
 
                 #region Bitwise Operations

@@ -41,6 +41,7 @@ namespace Surtr.Compiler.Binding
                 case MemberAccessExpressionSyntax member: return BindMemberAccess(member, expected);
                 case CastExpressionSyntax cast: return BindCast(cast);
                 case TypeTestExpressionSyntax test: return BindTypeTest(test);
+                case TypeOfExpressionSyntax typeOf: return BindTypeOf(typeOf);
                 case LambdaExpressionSyntax lambda: return BindLambda(lambda, expected);
                 case ArrayLiteralExpressionSyntax array: return BindArrayLiteral(array, expected);
                 case DictLiteralExpressionSyntax dictionary: return BindDictLiteral(dictionary, expected);
@@ -3228,6 +3229,52 @@ namespace Surtr.Compiler.Binding
 
             return new BoundTypeTestExpression(syntax, operand, tested, _factory.Bool);
         }
+
+        /// <summary>
+        /// <c>typeof(X)</c>. The parser already settled the one shape that could never also be an
+        /// expression (a generic argument list, see <c>Parser.ParseTypeOf</c>) - what is left here
+        /// is <see cref="TypeOfExpressionSyntax.Operand"/>, an ordinary expression that might
+        /// nonetheless be a bare or dotted type name, since §1.1 keeps type names and value names in
+        /// separate namespaces. Resolved type-first through <see cref="TryBindAsType"/>, the same
+        /// order and for the same reason it already settles the identical ambiguity everywhere else
+        /// in this binder (singletons, construction, static member access): a name that resolves to
+        /// a type is never also the value this call site would otherwise have bound, so this is a
+        /// decidable question, not a coin flip. Anything that is not a plain name/member-access
+        /// chain - a call, a literal, an arithmetic expression - can never resolve this way at all,
+        /// since <see cref="TryBindAsType"/> only ever looks at one.
+        /// </summary>
+        private BoundExpression BindTypeOf(TypeOfExpressionSyntax syntax)
+        {
+            var resultType = ResolveBuiltInType("Type", syntax.Span);
+
+            if (syntax.TypeOperand is TypeSyntax typeOperand)
+            {
+                var target = _resolver.Resolve(typeOperand, _typeScope, _sourceName);
+                return new BoundTypeOfExpression(syntax, target, null, resultType);
+            }
+
+            var operandSyntax = syntax.Operand!;
+
+            if (TryBindAsType(operandSyntax, out var asType))
+                return new BoundTypeOfExpression(syntax, asType, null, resultType);
+
+            var operand = BindExpression(operandSyntax);
+
+            // A primitive's runtime class can never differ from its static one, so there is
+            // nothing to read at run time - leaving it unconverted is what lets the emitter
+            // recognise the case and skip both the box and the runtime class read that Type.of's
+            // own `unknown` parameter always pays for. Everything else erases to `unknown`, the
+            // same conversion an ordinary argument of that type goes through - a reference already
+            // needs none of it, and only a nullable primitive or a value class actually costs a box.
+            if (!operand.Type.IsPrimitive || operand.Type.IsNullable)
+                operand = Convert(operand, _factory.Unknown, operandSyntax.Span);
+
+            return new BoundTypeOfExpression(syntax, null, operand, resultType);
+        }
+
+        /// <summary>Resolves a built-in type by name, the same way <c>attribute class</c> resolves <c>Attribute</c> with no explicit base.</summary>
+        private TypeSymbol ResolveBuiltInType(string name, SourceSpan span)
+            => _resolver.Resolve(new NamedTypeSyntax(span, new[] { name }, System.Array.Empty<TypeSyntax>()), _typeScope, _sourceName);
         #endregion
 
         #region Conditionals and literals

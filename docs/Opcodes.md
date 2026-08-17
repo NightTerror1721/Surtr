@@ -8,13 +8,13 @@ documentation on each member; this file is that content laid out for reading, pl
 only make sense across the whole set. `docs/VM-Plan.md` has the *why* behind the interpreter's
 shape, and `docs/Module-Format.md` describes the file these bytes live in.
 
-**215 opcodes are defined, spanning `0x00` through `0xDC`.** Six values inside that span —
+**218 opcodes are defined, spanning `0x00` through `0xDF`.** Six values inside that span —
 `0x2C`–`0x2F` (the old `Ldg`/`LdgX`/`Stg`/`StgX`) and `0xAA`–`0xAB` (the old
 `CallGlobalNative`/`CallGlobalNativeX`) — are **retired**: they used to cover the host-globals
 mechanism, which is gone now that a `native` member (module-level or on a class) is an ordinary
 member reached through the same tables and call opcodes as any other. A retired value is never
 reused — reusing one would make an old module silently execute a different instruction — so those
-six numbers simply have no opcode and never will. The 41 values `0xDD`–`0xFF`, plus the six retired
+six numbers simply have no opcode and never will. The 32 values `0xE0`–`0xFF`, plus the six retired
 ones, are what is free.
 
 ---
@@ -378,6 +378,9 @@ One question asked three ways, because what the call site wants done on a mismat
 | `0x71` | `CastX` | `opcode(1) typeIdx(4)` · 5 bytes | `..., a -> ..., a` | Casts using a 4-byte type index. |
 | `0x72` | `CastOrNull` | `opcode(1) typeIdx(2)` · 3 bytes | `..., a -> ..., a \| null` | Keeps the top value if it is an instance of the type at `typeIdx`, and replaces it with null otherwise. What `as?` lowers to. `Cast` traps on a mismatch and `InstanceOf` discards the value to answer about it, so a non-throwing cast written from those two costs a spill to a local, two type tests and a branch. This costs one type test. A null subject stays null, which is the same answer either way, and matching resolves through the ancestor chain for a class and the interface table for a contract, exactly as `Cast` does. |
 | `0x73` | `CastOrNullX` | `opcode(1) typeIdx(4)` · 5 bytes | `..., a -> ..., a \| null` | Casts or yields null, with a 4-byte type index. |
+| `0xDD` | `LoadType` | `opcode(1) typeIdx(2)` · 3 bytes | `... -> ..., type` | Pushes the `Type` value for the compile-time-known type at `typeIdx`. What the static form of `typeof` lowers to - `typeof(SomeClass)` or `typeof(ISomeInterface)`, neither of which reads any value off the stack. The type is an immediate, resolved once at module load through `typeTable[typeIdx]` exactly as `InstanceOf` resolves its own. Allocates only the first time a given type is asked for on this runtime - the runtime caches one `Type` object per class or interface, so a repeated `typeof` on the same type is a cache hit, not a fresh entity every call. |
+| `0xDE` | `LoadTypeX` | `opcode(1) typeIdx(4)` · 5 bytes | `... -> ..., type` | Loads the compile-time-known type's `Type` value, with a 4-byte type index. |
+| `0xDF` | `GetTypeOfValue` | `opcode(1)` · 1 byte | `..., ref -> ..., type` | Reads the class of the value on top of the stack and pushes its `Type`. What the instance form of `typeof` lowers to when the operand's static type cannot say the answer by itself - reads `.Class` off the reference exactly as `InstanceOf`'s reference half does. The subject is never checked for null, matching `FieldGet` and the native `Type.of` this replaces. A primitive operand never reaches this at all - the compiler lowers `typeof` straight to `LoadType` against that type instead, skipping both the box and this read. |
 
 ## Control Flow Operations
 

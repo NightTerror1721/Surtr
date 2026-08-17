@@ -83,7 +83,7 @@ constructor          continue  default   else      enum        false     finally
 for        forceinline         fun       if        import      in        inline
 interface  internal  is        let       native    null        operator  override
 private    protected public    return    sealed    singleton   static    switch
-throw      true      try       var       virtual   while
+throw      true      try       typeof    var       virtual     while
 ```
 
 Four words are **contextual**, not reserved (§3.2): `this`, `super`, `value` and `attribute` mean
@@ -2340,6 +2340,40 @@ and `Member` only ever see what was already there.
 This is deliberately read-only: `Type`/`Member` enumerate declarations and their attributes, and
 stop there. Reading or calling the member itself — `field.get(instance)`, `method.invoke(instance,
 args)` — is a different and considerably larger feature and is not part of this surface.
+
+**`typeof(X)` is the keyword form of the same `Type`**, and covers both directions `Type.of`
+cannot reach on its own:
+
+```
+typeof(SomeClass)      // the Type for a class name, no instance needed
+typeof(ISomeInterface)  // a Type can name an interface too - baseType is always null on one
+typeof(someValue)      // the same answer Type.of(someValue) gives, for an ordinary expression
+```
+
+Unlike `is`/`as`, `X` cannot always be parsed as a type — `typeof` has to reach an arbitrary value
+too, and a call or an arithmetic expression is not type syntax. Only a name followed by a generic
+argument list can never also be an expression (a bare call has no `<...>` of its own outside
+`pick<int>(...)`, which needs a `(` after the close rather than the `)` that ends `typeof`), so
+that is the one shape parsed as a type outright; everything else — a bare or qualified name
+included — parses as an ordinary expression. A bare or qualified name is then the one shape that
+could still be either, since §1.1 keeps type names and value names in separate namespaces; it
+resolves as a type first, and only falls back to reading it as a value when no type of that name
+is in scope — the same order every other place this exact ambiguity comes up (a singleton's own
+name, a construction, a static member access) already resolves it in. In practice this only
+matters when a local variable or field shadows a visible class name, which is unusual enough that
+either reading would surprise someone; `typeof` picks the type. An array, nullable, dictionary,
+tuple or closure *type* directly as a static operand (`typeof(int[])`) is not reachable this way —
+neither is valid expression syntax either, so there is nothing to fall back to — but a value of
+any such type still reflects fine through the instance form.
+
+Nothing about what `typeof` returns differs from `Type.of` — same `Type` object, same identity
+for the same class or interface within one running program — but a primitive operand skips the
+box `Type.of`'s `unknown` parameter always pays for, since a primitive's class can never differ
+from its own static type: `typeof(5)` never allocates a boxed `int` the way `Type.of(5)` does.
+
+`typeof` is a reserved word, unlike `value`/`attribute`/`this`/`super`: it never needs to double
+as an ordinary identifier the way those four do, so reserving it outright avoids the ambiguity
+instead of relocating it into the parser.
 
 ---
 

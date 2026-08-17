@@ -276,8 +276,8 @@ namespace Surtr.LanguageServer.Workspace
             "continue", "default", "else", "enum", "false", "finally", "for", "forceinline", "fun",
             "if", "import", "in", "inline", "interface", "internal", "is", "let", "native", "null",
             "operator", "override", "private", "protected", "public", "range", "return", "sealed",
-            "singleton", "static", "super", "switch", "this", "throw", "true", "try", "unknown",
-            "value", "var", "virtual", "while",
+            "singleton", "static", "super", "switch", "this", "throw", "true", "try", "typeof",
+            "unknown", "value", "var", "virtual", "while",
         };
 
         // ------------------------------------------------------------------------------------

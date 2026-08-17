@@ -783,6 +783,141 @@ Corregido:
 
 ---
 
+## Fase 13 — Operador `typeof` y opcodes de reflexión dedicados
+
+**Punto de partida**: la Fase 6 añadió `Type`/`Member`, pero la única forma de obtener un `Type`
+es la llamada nativa `Type.of(value: unknown)` — funciona sobre cualquier expresión (los
+primitivos se boxean implícitamente vía el parámetro `unknown`), pero nunca sobre un nombre de
+tipo sin una instancia en la mano, y paga siempre una llamada nativa además de, para un
+primitivo, un boxing que un keyword dedicado no necesita pagar. No existe ningún `typeof` en
+ninguna capa (lexer, parser, AST, binder, opcodes) — investigado a fondo antes de implementar,
+sin ningún stub ni TODO previo que reutilizar.
+
+**Decisiones acordadas con el usuario antes de implementar**:
+- Sintaxis unificada: `typeof(X)` cubre tanto el caso estático (`X` es un nombre de tipo) como el
+  de instancia (`X` es una expresión), sin dos formas sintácticas distintas.
+- Opcode dedicado para los dos casos, no una llamada nativa — sigue la regla de `CLAUDE.md` de
+  "no hidden calls on hot paths" tan literalmente como `InstanceOf`/`Cast` ya lo hacen.
+- Caché de `Type` por runtime, para que un `typeof`/`Type.of` repetido sobre el mismo tipo cueste
+  un lookup de diccionario en vez de una asignación de entidad nueva cada vez.
+- `typeof` estático también alcanza interfaces (`typeof(ISomeInterface)`), no solo clases — el
+  único punto abierto identificado en el diseño original, cerrado en esta misma fase.
+
+### Diseño final
+
+**Sintaxis y desambiguación**: a diferencia de `is`/`as` (cuyo lado derecho *siempre* es sintaxis
+de tipo), `typeof` tiene que alcanzar también un valor arbitrario — `typeof(Box())`, `typeof(5)` —
+y una llamada, un literal o una expresión aritmética no son sintaxis de tipo en absoluto, así que
+"parsear siempre con `ParseType()`" (el primer boceto) no sirve: `ParseType()` no sabe consumir
+`Box()`. El diseño real, encontrado al implementar:
+- Solo hay **una** forma que nunca puede ser también una expresión: un nombre seguido de una
+  lista de argumentos de tipo, porque una llamada Surtr no tiene un `<...>` propio fuera de
+  `pick<int>(...)` (que exige un `(` tras el cierre, no el `)` que cierra `typeof`). El parser
+  detecta exactamente esa forma por lookahead (`Parser.LooksLikeGenericTypeOnlyAhead`, mismo
+  escaneo que `LooksLikeTypeArgumentList` ya usa para `pick<int>(...)`, exigiendo `)` en vez de
+  `(` tras el cierre) y solo ahí llama a `ParseType()`.
+- **Todo lo demás — incluido un nombre suelto o puntuado — se parsea como expresión normal**
+  (`ParseExpression()`), lo que ya cubre construcción, aritmética, literales, e igual de bien un
+  nombre suelto (`IdentifierExpressionSyntax`) o puntuado (`MemberAccessExpressionSyntax`
+  anidado). La ambigüedad real — ¿ese nombre es un tipo o un valor? — se resuelve en el binder,
+  donde sí hay información de scope.
+- **Precedencia tipo-antes-que-valor, no al revés**: `BodyBinder.TryBindAsType` (usado por
+  singletons, construcción `Foo(...)` y acceso estático `Type.member`) ya resuelve exactamente
+  esta ambigüedad sobre una `ExpressionSyntax` — y de hecho está construido para tomar una
+  cualquiera, fallando limpiamente (sin reportar nada) en cuanto no es una cadena de
+  identificador/acceso a miembro pura — con un comentario explícito que justifica el orden:
+  *"Tried before value binding rather than after, because a name that resolves to a type is never
+  also a value — §1.1's two namespaces make the question decidable rather than ambiguous."*
+  `BindTypeOf` reutiliza `TryBindAsType` tal cual sobre el operando ya parseado: si resuelve como
+  tipo, gana; si no, se liga como expresión normal. `typeof` sigue así el mismo precedente en vez
+  de "valor primero" (el boceto inicial compartido con el usuario) para quedar consistente con
+  cada otro sitio de este binder que ya resuelve la misma ambigüedad — una reversión de bajo
+  riesgo, dado lo inusual que es que una variable local haga *shadow* del nombre de una clase
+  visible.
+- **Límite documentado, no implementado**: un array/nullable/diccionario/tupla/closure como
+  operando *estático* de `typeof` (`typeof(int[])`, `typeof(int?)`) no está cubierto — ninguno de
+  esos es tampoco una expresión válida, y extender el lookahead a esas formas se descartó por
+  alcance (uso real esperado: casi nulo, dado que la forma de instancia ya cubre reflejar el tipo
+  de cualquier valor de esos tipos). `typeof` sobre un nombre simple o genérico, y sobre cualquier
+  expresión, cubre el caso práctico completo.
+
+**`BoundTypeOfExpression`** (nuevo, en `BoundTree`) carga exactamente uno de dos campos —
+`TargetType: TypeSymbol?` (forma estática, ya resuelto) u `Operand: BoundExpression?` (forma de
+instancia) — y su propio `Type` es siempre el símbolo built-in `Type`, resuelto igual que
+`attribute class` resuelve `Attribute` (una `NamedTypeSyntax` sintética contra el scope global,
+donde ya vive sembrado por `MetadataImporter`).
+
+**Dos opcodes nuevos**, en la región "Type Tests and Casts" (valores libres desde `0xDD`):
+- `LoadType` (`0xDD`, `typeIdx` de 2 bytes) / `LoadTypeX` (`0xDE`, 4 bytes) — forma estática. Lee
+  `typeTable[idx].ResolvedType` (ya sea `SurtrClass` o `SurtrInterface`) y empuja el `Type` que le
+  corresponde, mismo patrón de codificación que `InstanceOf`/`InstanceOfX`.
+- `GetTypeOfValue` (`0xDF`, sin inmediato) — forma de instancia. Lee `.Class` de la referencia en
+  el tope de pila, exactamente como ya hace la mitad de referencia de `InstanceOf`/`Cast` — **sin
+  comprobación de null**, a propósito: ni `FieldGet` ni el `Type.of` nativo existente comprueban
+  su receptor tampoco (la política de validación de `docs/VM-Plan.md` §1.9 deja ese caso confiado
+  al análisis de nulabilidad del compilador en vez de trapear en el intérprete), así que un opcode
+  nuevo que sí comprobara sería una inconsistencia nueva, no una corrección de algo pedido.
+
+**Optimización de primitivos — más simple y más segura que el diseño original**: el boceto
+compartido con el usuario proponía que `GetTypeOfValue` distinguiera un primitivo sin caja
+mirando su tag NaN-boxed directamente. Investigando la codificación real (`SurtrValue.cs`) se
+descubrió que **solo `int`/`bool`/`char`/referencia/ausente tienen un tag reservado fijo — un
+`float` se guarda como su patrón IEEE-754 crudo**, sin ningún prefijo (`I2F` escribe el double
+directamente, sin tag). Distinguir "es un float genuino" de "es una de las cargas NaN
+reservadas" a nivel de bits habría sido exactamente la clase de trampa de *NaN aliasing* que
+`docs/Runtime-Model.md` ya identifica como algo a evitar, así que se descartó. La optimización se
+mueve en su lugar al **codegen**, sin tocar el intérprete en absoluto:
+- El binder dobla el operando de la forma de instancia a `unknown` con la conversión normal
+  **excepto** cuando su tipo ya es un primitivo no-nullable — un `int` nunca puede tener una
+  clase en tiempo de ejecución distinta de la que ya tiene en tiempo de compilación, así que no
+  hay nada que leer.
+- El emisor, viendo un operando que sigue siendo primitivo tras el binder, evalúa la expresión
+  por sus efectos, descarta el valor (`Pop`) y emite `LoadTypeOf` directamente contra el tipo
+  estático — sin `Box*`, sin `GetTypeOfValue`, sin lectura en tiempo de ejecución de ningún tipo.
+  `typeof(5)` pasa a costar un lookup de pool más un lookup de caché; `Type.of(5)` sigue pagando
+  el boxing porque su firma nativa (`unknown`) no puede distinguir este caso sin cambiar el ABI
+  existente.
+
+**Caché de `Type` por runtime**: `SurtrClass`/`SurtrInterface` son metadata compartida entre
+runtimes (nunca registrada en ningún entity registry propio, ver remarks de `SurtrObject`), pero
+el entity registry sí es por runtime — así que la caché vive en `SurtrContext`
+(`Dictionary<SurtrTypeInfo, SurtrTypeValue>`, igualdad por referencia, correcta porque cada
+`SurtrTypeInfo` está interned una vez), no en la metadata. `SurtrRuntime.GetOrCreateTypeValue`
+sustituye a `NewTypeValue` (mismo método, ahora cacheado) y lo usan por igual los dos opcodes
+nuevos y `Type.of` — así que `typeof(x)` y `Type.of(x)` devuelven siempre el mismo objeto para el
+mismo tipo, en el mismo runtime. **Rooteado permanentemente**, igual que un string interned
+(`SurtrContext.AddRoot`): sin esto, el colector podría barrer un `SurtrTypeValue` cuya única
+referencia viva fuera la propia entrada de caché (que no se traza), dejando un id obsoleto detrás
+— la caché es acotada por el número de clases del programa, no por el número de llamadas a
+`typeof`, así que rootear para siempre es barato y correcto, no una fuga.
+
+**Punto abierto menor, cerrado en esta fase — soporte de interfaces**: `SurtrTypeValue.Wrapped`
+pasa de `SurtrClass` a `SurtrTypeInfo` (la base común con `SurtrInterface`). `SurtrReflectionBuiltIns`
+gana `Type.isInterface: bool` (lee `SurtrTypeInfo.IsInterface`, ya existente) y `TypeBaseType`/
+`TypeMembers` ramifican: una interfaz no tiene una única base (tiene `ExtendedInterfaces`, plural),
+así que `baseType` es siempre `null` para una interfaz — igual que ya lo es en la raíz de una
+jerarquía de clases — y `members()` solo recorre `Methods`/`Properties` (una interfaz no puede
+declarar campos ni tipos anidados, por diseño del lenguaje). `MemberDeclaringType` pasa de
+`.ResolvedClass` a `.ResolvedType` para que un miembro leído desde una interfaz también resuelva
+su `Type` correctamente.
+
+**Palabra reservada**: `typeof` se añade como reservada de verdad (no contextual como `value`/
+`attribute`) — a diferencia de esas dos, no necesita doblar como identificador en ningún otro
+contexto, así que reservarla evita cualquier ambigüedad de raíz en vez de trasladarla al parser.
+
+**Tests**: pinning de los 3 opcodes nuevos en `OpCodeValueTests.cs`; 12 tests de punta a punta en
+`ModuleEmitterTests.cs` (región "typeof (Fase 13)") — forma de instancia sobre un objeto y sobre
+un primitivo, forma estática sobre una clase, una interfaz (con `isInterface`/`baseType == null`)
+y un tipo genérico (`typeof(Box<int>)`, ejercitando el lookahead nuevo), identidad compartida
+entre dos `typeof` sobre el mismo tipo y entre `typeof`/`Type.of`, lectura de la clase real de un
+valor polimórfico (`let a: Animal = Dog(); typeof(a).name == "Dog"` — la razón de ser de la forma
+de instancia, ya que la estática nunca podría contestar esto), y la precedencia tipo-antes-que-
+valor con una variable local que hace *shadow* del nombre de una clase.
+
+**Commit**: `Feature: operador typeof y opcodes de reflexion dedicados (LoadType, GetTypeOfValue)`
+
+---
+
 ## Orden de ejecución y estado
 
 | Fase | Descripción | Estado |
@@ -800,6 +935,7 @@ Corregido:
 | 10 | Tipos locales dentro de métodos | **Investigada, diferida deliberadamente** (ver arriba — riesgo de reentrada sobre la orquestación central del binder) |
 | 11 | Cargador de STDLIB seleccionable y portable | **Hecha en parte** — selección por categoría + test de desincronización hechos; embeber en `Surtr.Core` resultó ser un ciclo de build, documentado en vez de forzado |
 | 12 | Barrido final LSP + docs | **Hecha** — encontró y corrigió una regresión real: hover/definición no resolvían alias/import selectivo/wildcard de directorio aunque el autocompletado sí |
+| 13 | Operador `typeof` y opcodes de reflexión dedicados | **Hecha** |
 | — | Operadores de instancia / `operator[]` | **Ya hecho** (`Plan-Globales-Nativos-Inline-Operadores.md`) |
 | — | Varianza de genéricos | **Diferido a propósito** (§14.4), no planificado |
 | — | Built-ins siempre disponibles | **Ya correcto**, sin cambios |

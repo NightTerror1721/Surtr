@@ -873,6 +873,42 @@ on a `switch`, and two ordinary cases have nothing to lower onto:
 Neither is a new instruction. Both are lowerings that need one thing from the other side, and the
 enum one is why §4.13's case list is not optional.
 
+### 4.17 `typeof` and a per-runtime `Type` cache
+
+`typeof` (`Language-Syntax.md`, the section beside §11) needed two opcodes — `LoadType`/`LoadTypeX`
+for a compile-time-known type, `GetTypeOfValue` for a value's own — and, with them, the first case
+of a `SurtrTypeValue` created somewhere other than one `Type.of` call answering for itself. A
+repeated `typeof`/`Type.of` on the same class or interface would otherwise register a fresh entity
+every time, which is exactly the per-call allocation the rest of this document spends its effort
+avoiding.
+
+**Cached per runtime, not on the metadata.** `SurtrClass`/`SurtrInterface` are process-wide and
+shared across every runtime that loads them (§"The built-in classes" in `CLAUDE.md`), but the
+entity registry a `SurtrTypeValue` is registered in is not — so the cache
+(`SurtrTypeInfo -> SurtrTypeValue`) lives on `SurtrContext`, keyed by reference identity, and both
+new opcodes and the native `Type.of` all go through the same `SurtrRuntime.GetOrCreateTypeValue`.
+That is also what keeps `typeof(x)` and `Type.of(x)` answering with the same object for the same
+type in the same runtime, rather than two objects a reference comparison would tell apart.
+
+**Rooted permanently**, the same reasoning §4.15 already gives for an attribute instance: nothing
+traces the cache dictionary itself, so an entry the collector could otherwise reclaim would leave a
+stale id behind with no way to notice. The cache is bounded by how many distinct classes and
+interfaces a program ever asks about, not by how many times it asks, so rooting every entry for the
+runtime's lifetime costs nothing a real program would feel.
+
+**No VM-level primitive fast path, on purpose.** The obvious-looking optimization — have
+`GetTypeOfValue` recognize an unboxed primitive by its NaN-boxed tag and skip the box — does not
+hold up: only `int`/`bool`/`char`/reference/absent occupy a *reserved* tag pattern (§4.3's payload
+carve-out); a `float` is stored as its raw IEEE-754 bit pattern with no tag prefix at all (`I2F`
+writes the double directly). Testing an arbitrary raw value against the reserved patterns to infer
+"anything else is a float" is exactly the NaN-aliasing hazard `Runtime-Model.md` already flags as
+something to avoid, not a safe generalization. The actual saving happens one layer up instead: the
+compiler leaves a non-nullable-primitive operand of `typeof` unconverted (everywhere else, an
+`unknown`-typed instance form goes through the ordinary boxing conversion), and the emitter
+recognizes that case, evaluates the operand for its side effects, discards the value, and emits
+`LoadType` against the static type directly — no box, no `GetTypeOfValue`, no run-time class read
+at all, because a primitive's class can never differ from what the compiler already knows it to be.
+
 ---
 
 ## 5. Remaining work, in order
@@ -928,6 +964,7 @@ covered by `src/Surtr.Tests`. What landed, in the order it landed:
    stays a native proxy rather than being forced into a class it is not.
 6. **§4.15, attributes as real classes**, instantiated at load and rooted permanently.
 7. **§4.7's instruction budget**, charged on control transfers so the dispatch path is unchanged.
+8. **§4.17, `typeof` and its two opcodes**, with a per-runtime `Type` cache shared with `Type.of`.
 
 Two things surfaced only once this was running, and both are fixed: the budget abort was catchable
 by a Surtr catch-all, which handed a spinning program an unlimited run; and the built-in module was

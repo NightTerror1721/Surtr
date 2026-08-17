@@ -502,6 +502,17 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter CastOrNullX(SurtrTypeToken type)
             => WithI32(OpCode.CastOrNullX, TypeIndex(type), 1, 1);
 
+        /// <summary>Emits <see cref="OpCode.LoadType"/>.</summary>
+        public SurtrCodeEmitter LoadType(SurtrTypeToken type)
+            => WithU16(OpCode.LoadType, TypeIndex(type), 0, 1, "typeIdx");
+
+        /// <summary>Emits <see cref="OpCode.LoadTypeX"/>.</summary>
+        public SurtrCodeEmitter LoadTypeX(SurtrTypeToken type)
+            => WithI32(OpCode.LoadTypeX, TypeIndex(type), 0, 1);
+
+        /// <summary>Emits <see cref="OpCode.GetTypeOfValue"/>.</summary>
+        public SurtrCodeEmitter GetTypeOfValue() => Simple(OpCode.GetTypeOfValue, 1, 1);
+
         #endregion
 
         #region String Operations

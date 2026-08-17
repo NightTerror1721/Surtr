@@ -981,6 +981,43 @@ namespace Surtr.Bytecode
         /// Stack: <c>..., a -&gt; ..., a | null</c>
         /// </remarks>
         CastOrNullX = 0x73,
+
+        /// <summary>Pushes the <c>Type</c> value for the compile-time-known type at <c>typeIdx</c>.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) typeIdx(2)</c> - 3 bytes.<br/>
+        /// Stack: <c>... -&gt; ..., type</c><br/>
+        /// Notes: what the static form of <c>typeof</c> lowers to - <c>typeof(SomeClass)</c> or
+        /// <c>typeof(ISomeInterface)</c>, neither of which reads any value off the stack. The type
+        /// is an immediate, resolved once at module load through <c>typeTable[typeIdx]</c> exactly
+        /// as <see cref="InstanceOf"/> resolves its own. Allocates only the first time a given type
+        /// is asked for on this runtime - the runtime caches one <c>Type</c> object per class or
+        /// interface, so a repeated <c>typeof</c> on the same type is a cache hit, not a fresh
+        /// entity every call.
+        /// </remarks>
+        LoadType = 0xDD,
+
+        /// <summary>Loads the compile-time-known type's <c>Type</c> value, with a 4-byte type index.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) typeIdx(4)</c> - 5 bytes.<br/>
+        /// Stack: <c>... -&gt; ..., type</c>
+        /// </remarks>
+        LoadTypeX = 0xDE,
+
+        /// <summary>Reads the class of the value on top of the stack and pushes its <c>Type</c>.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., ref -&gt; ..., type</c><br/>
+        /// Notes: what the instance form of <c>typeof</c> lowers to when the operand's static type
+        /// cannot say the answer by itself - reads <c>.Class</c> off the reference exactly as
+        /// <see cref="InstanceOf"/>'s reference half does, no different for a boxed primitive than
+        /// for an ordinary object. The subject is never checked for null, matching <c>FieldGet</c>
+        /// and the native <c>Type.of</c> this replaces: a null reaching here is the compiler's
+        /// nullability analysis failing to guard it, not a condition this opcode traps. A primitive
+        /// operand never reaches this at all - its class can never differ from its static one, so
+        /// the compiler lowers <c>typeof</c> straight to <see cref="LoadType"/> against that type
+        /// instead, skipping both the box and this read.
+        /// </remarks>
+        GetTypeOfValue = 0xDF,
         #endregion
 
 

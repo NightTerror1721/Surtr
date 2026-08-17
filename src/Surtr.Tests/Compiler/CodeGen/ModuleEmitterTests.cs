@@ -3135,6 +3135,139 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region typeof (Fase 13)
+        [Fact]
+        public void TypeOfOnAnInstanceMatchesItsClassName()
+        {
+            var runtime = Run(
+                "class Box { public let value: int = 0; }\n"
+                    + "fun boxTypeName(): string { return typeof(Box()).name; }");
+
+            Assert.Equal("Box", Text(runtime, "boxTypeName"));
+        }
+
+        [Fact]
+        public void TypeOfOnAPrimitiveNamesItsSharedClass()
+        {
+            var runtime = Run("fun intTypeName(): string { return typeof(5).name; }");
+            Assert.Equal("int", Text(runtime, "intTypeName"));
+        }
+
+        [Fact]
+        public void TypeOfOnATypeNameNamesItDirectlyWithNoInstance()
+        {
+            var runtime = Run(
+                "class Box { public let value: int = 0; }\n"
+                    + "fun boxTypeName(): string { return typeof(Box).name; }");
+
+            Assert.Equal("Box", Text(runtime, "boxTypeName"));
+        }
+
+        [Fact]
+        public void TypeOfOnAnInterfaceNameResolvesToItWithNoBaseType()
+        {
+            var runtime = Run(
+                "interface INamed { name: string { get; } }\n"
+                    + "fun namedTypeName(): string { return typeof(INamed).name; }\n"
+                    + "fun namedIsInterface(): int { return typeof(INamed).isInterface ? 1 : 0; }\n"
+                    + "fun namedHasNoBase(): int {\n"
+                    + "  if (typeof(INamed).baseType == null) { return 1; }\n"
+                    + "  return 0;\n"
+                    + "}");
+
+            Assert.Equal("INamed", Text(runtime, "namedTypeName"));
+            Assert.Equal(1, Int(runtime, "namedIsInterface"));
+            Assert.Equal(1, Int(runtime, "namedHasNoBase"));
+        }
+
+        [Fact]
+        public void TypeOfOnAClassNameIsNotAnInterface()
+        {
+            var runtime = Run(
+                "class Box { public let value: int = 0; }\n"
+                    + "fun boxIsInterface(): int { return typeof(Box).isInterface ? 1 : 0; }");
+
+            Assert.Equal(0, Int(runtime, "boxIsInterface"));
+        }
+
+        [Fact]
+        public void TypeOfSharesIdentityAcrossRepeatedCallsOnTheSameType()
+        {
+            var runtime = Run(
+                "class Box { public let value: int = 0; }\n"
+                    + "fun sameType(): int { return typeof(Box()) === typeof(Box()) ? 1 : 0; }\n"
+                    + "fun sameStaticType(): int { return typeof(Box) === typeof(Box) ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "sameType"));
+            Assert.Equal(1, Int(runtime, "sameStaticType"));
+        }
+
+        [Fact]
+        public void TypeOfAndTypeDotOfShareTheSameCachedIdentity()
+        {
+            var runtime = Run(
+                "class Box { public let value: int = 0; }\n"
+                    + "fun sameType(): int { return typeof(Box()) === Type.of(Box()) ? 1 : 0; }\n"
+                    + "fun sameAsStatic(): int { return typeof(Box) === Type.of(Box()) ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "sameType"));
+            Assert.Equal(1, Int(runtime, "sameAsStatic"));
+        }
+
+        /// <summary>
+        /// The instance form reads the value's actual runtime class, not its static one - the whole
+        /// reason it needs a runtime read at all rather than always resolving statically.
+        /// </summary>
+        [Fact]
+        public void TypeOfOnAPolymorphicValueReadsItsRuntimeClassNotItsStaticType()
+        {
+            var runtime = Run(
+                "class Animal { public let legs: int = 4; }\n"
+                    + "class Dog : Animal { public let name: string = \"Rex\"; }\n"
+                    + "fun dogTypeName(): string {\n"
+                    + "  let a: Animal = Dog();\n"
+                    + "  return typeof(a).name;\n"
+                    + "}");
+
+            Assert.Equal("Dog", Text(runtime, "dogTypeName"));
+        }
+
+        /// <summary>
+        /// §1.1's separate type/value namespaces let `Box` name a class and a local at once; the
+        /// binder resolves the ambiguity type-first, the same order every other place this binder
+        /// meets the identical ambiguity already uses (see <c>TryBindAsType</c>'s own remarks).
+        /// </summary>
+        [Fact]
+        public void TypeOfPrefersATypeNameOverASameNamedLocal()
+        {
+            var runtime = Run(
+                "class Box { public let value: int = 0; }\n"
+                    + "fun shadowed(): string {\n"
+                    + "  let Box = 5;\n"
+                    + "  return typeof(Box).name;\n"
+                    + "}");
+
+            Assert.Equal("Box", Text(runtime, "shadowed"));
+        }
+
+        /// <summary>
+        /// A name followed by a generic argument list is the one shape the parser resolves as a
+        /// type on its own (<c>Parser.LooksLikeGenericTypeOnlyAhead</c>), since a bare Surtr
+        /// expression has no <c>&lt;...&gt;</c> of its own to collide with it.
+        /// </summary>
+        [Fact]
+        public void TypeOfOnAGenericTypeNameParsesAsTheStaticForm()
+        {
+            var runtime = Run(
+                "class Box<T> { public fun n(): int { return 1; } }\n"
+                    + "fun boxIntTypeName(): string { return typeof(Box<int>).name; }");
+
+            // §6: arity mangles into the name segment, so a generic class's own metadata name
+            // carries the backtick - the same `Box`1` any other reflection over it would report.
+            Assert.Equal("Box`1", Text(runtime, "boxIntTypeName"));
+        }
+        #endregion
+
         #region Accessibility (§3.1)
         private static SurtrCompilation Reject(string source, params (string Path, string Text)[] extra)
         {

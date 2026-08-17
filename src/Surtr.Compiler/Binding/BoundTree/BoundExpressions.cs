@@ -478,6 +478,28 @@ namespace Surtr.Compiler.Binding.BoundTree
         public TypeSymbol TestedType { get; }
     }
 
+    /// <summary>
+    /// <c>typeof(X)</c>. Exactly one of <see cref="TargetType"/> and <see cref="Operand"/> is set -
+    /// the static form names a type directly and reads nothing at run time, the instance form
+    /// evaluates an expression and reads its class. <see cref="BoundExpression.Type"/> is always
+    /// the built-in <c>Type</c> class, whichever form this is.
+    /// </summary>
+    public sealed class BoundTypeOfExpression : BoundExpression
+    {
+        internal BoundTypeOfExpression(SyntaxNode syntax, TypeSymbol? targetType, BoundExpression? operand, TypeSymbol type)
+            : base(syntax, type)
+        {
+            TargetType = targetType;
+            Operand = operand;
+        }
+
+        /// <summary>The type named directly, for the static form. <see langword="null"/> for the instance form.</summary>
+        public TypeSymbol? TargetType { get; }
+
+        /// <summary>The value whose runtime type is read, for the instance form. <see langword="null"/> for the static form.</summary>
+        public BoundExpression? Operand { get; }
+    }
+
     /// <summary>A lambda, whose body is lifted to a static synthetic method at emit.</summary>
     public sealed class BoundLambdaExpression : BoundExpression
     {

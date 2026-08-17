@@ -938,6 +938,7 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.BoxBool:
                 case OpCode.BoxChar:
                 case OpCode.Unbox:
+                case OpCode.GetTypeOfValue:
                 case OpCode.StrLen:
                 case OpCode.StrHash:
                 case OpCode.StrGet:
@@ -1027,6 +1028,7 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.DictValues:
                 case OpCode.ObjNew:
                 case OpCode.BoxAs:
+                case OpCode.LoadType:
                     return AppendType(builder, chunk, operand, ReadU16(chunk, operand), 2);
 
                 case OpCode.InstanceOfX:
@@ -1034,6 +1036,7 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.CastOrNullX:
                 case OpCode.ObjNewX:
                 case OpCode.BoxAsX:
+                case OpCode.LoadTypeX:
                     return AppendType(builder, chunk, operand, ReadI32(chunk, operand), 4);
 
                 case OpCode.ArrNewX:

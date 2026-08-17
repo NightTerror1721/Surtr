@@ -319,11 +319,28 @@ namespace Surtr.Runtime
             return value;
         }
 
-        /// <summary>Wraps a class as a first-class <c>Type</c> value, as <c>Type.of</c> and <c>Type.members</c>/<c>Type.baseType</c> do.</summary>
-        public SurtrTypeValue NewTypeValue(SurtrClass wrapped)
+        /// <summary>
+        /// Returns the one shared <c>Type</c> value for a class or interface within this runtime,
+        /// as <c>typeof</c> and <c>Type.of</c>/<c>Type.members</c>/<c>Type.baseType</c> all do.
+        /// </summary>
+        /// <remarks>
+        /// Creates and permanently roots it the first time this runtime is asked about
+        /// <paramref name="wrapped"/>, and returns the cached object on every call after that -
+        /// see <see cref="SurtrContext.TypeValueCache"/>. Rooted the same way an interned string
+        /// is: the cache dictionary itself is never traced, so an entry the collector could
+        /// otherwise reclaim would leave a stale id behind. The cache is bounded by how many
+        /// distinct classes and interfaces a program actually asks about, not by how many times it
+        /// asks, so rooting every entry for the runtime's lifetime is cheap rather than a leak.
+        /// </remarks>
+        public SurtrTypeValue GetOrCreateTypeValue(SurtrTypeInfo wrapped)
         {
+            if (_context.TypeValueCache.TryGetValue(wrapped, out var existing))
+                return existing;
+
             var value = new SurtrTypeValue(wrapped);
-            _context.EntityRegistry.Register(value);
+            SurtrRef reference = _context.EntityRegistry.Register(value);
+            _context.TypeValueCache.Add(wrapped, value);
+            _context.AddRoot(SurtrValue.CreateReference(reference).Raw);
             return value;
         }
 
