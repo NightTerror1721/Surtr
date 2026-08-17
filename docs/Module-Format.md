@@ -348,6 +348,10 @@ runtime.DefineNativeBody("host:Facade.answer()", SurtrNativeEntryPoint.FromFunct
   declaration does not give one, so a host that never ships an image pays nothing for it. A host
   that does ship one should give the name explicitly, because a derived name changes if the class
   is renamed.
+* A module-level native derives `<modulePath>.<name>` (`surtr.math.Math.sin`) rather than the bare
+  name, so two modules declaring a same-named `native fun` bind against distinct link names instead
+  of silently sharing one body. The module path is the module-level member's owning scope, the same
+  way the full type name is a class member's.
 * A name nothing was published under **fails the load**, beside an unresolved type.
 * **Native properties need no separate mechanism.** A property is already a pair of `get_x`/`set_x`
   methods, so making them native is making two methods native.

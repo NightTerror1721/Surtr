@@ -67,7 +67,7 @@ module surtr.math.Math
     0035  ReturnValue
 
 [public] static native acos(x: float): float
-  ; native link="acos" unbound declared
+  ; native link="surtr.math.Math.acos" unbound declared
 
 [public] static approximately(a: float, b: float): bool
   ; entry 15, locals 3, stack 2, code 00C1..00D4
@@ -90,16 +90,16 @@ module surtr.math.Math
     00D3  ReturnValue
 
 [public] static native asin(x: float): float
-  ; native link="asin" unbound declared
+  ; native link="surtr.math.Math.asin" unbound declared
 
 [public] static native atan(x: float): float
-  ; native link="atan" unbound declared
+  ; native link="surtr.math.Math.atan" unbound declared
 
 [public] static native atan2(y: float, x: float): float
-  ; native link="atan2" unbound declared
+  ; native link="surtr.math.Math.atan2" unbound declared
 
 [public] static native ceil(x: float): float
-  ; native link="ceil" unbound declared
+  ; native link="surtr.math.Math.ceil" unbound declared
 
 [public] static clamp(value: int, low: int, high: int): int
   ; entry 10, locals 3, stack 2, code 0066..0076
@@ -153,7 +153,7 @@ module surtr.math.Math
     0095  ReturnValue
 
 [public] static native cos(x: float): float
-  ; native link="cos" unbound declared
+  ; native link="surtr.math.Math.cos" unbound declared
 
 [public] static degreesToRadians(degrees: float): float
   ; entry 2, locals 1, stack 2, code 0013..0017
@@ -163,13 +163,13 @@ module surtr.math.Math
     0016  ReturnValue
 
 [public] static native exp(x: float): float
-  ; native link="exp" unbound declared
+  ; native link="surtr.math.Math.exp" unbound declared
 
 [public] static native floor(x: float): float
-  ; native link="floor" unbound declared
+  ; native link="surtr.math.Math.floor" unbound declared
 
 [public] static native hypot(x: float, y: float): float
-  ; native link="hypot" unbound declared
+  ; native link="surtr.math.Math.hypot" unbound declared
 
 [public] static isInfinity(value: float): bool
   ; entry 1, locals 1, stack 2, code 0004..0013
@@ -236,10 +236,10 @@ module surtr.math.Math
     00C0  ReturnValue
 
 [public] static native log(x: float): float
-  ; native link="log" unbound declared
+  ; native link="surtr.math.Math.log" unbound declared
 
 [public] static native log10(x: float): float
-  ; native link="log10" unbound declared
+  ; native link="surtr.math.Math.log10" unbound declared
 
 [public] static max(a: int, b: int): int
   ; entry 7, locals 2, stack 2, code 0042..004E
@@ -294,7 +294,7 @@ module surtr.math.Math
     0059  ReturnValue
 
 [public] static native pow(x: float, y: float): float
-  ; native link="pow" unbound declared
+  ; native link="surtr.math.Math.pow" unbound declared
 
 [public] static radiansToDegrees(radians: float): float
   ; entry 3, locals 1, stack 2, code 0017..001B
@@ -340,7 +340,7 @@ module surtr.math.Math
     0129  ReturnValue
 
 [public] static native round(x: float): float
-  ; native link="round" unbound declared
+  ; native link="surtr.math.Math.round" unbound declared
 
 [public] static sign(n: float): int
   ; entry 16, locals 1, stack 2, code 00D4..00E8
@@ -379,10 +379,10 @@ module surtr.math.Math
     00FD  ReturnValue
 
 [public] static native sin(x: float): float
-  ; native link="sin" unbound declared
+  ; native link="surtr.math.Math.sin" unbound declared
 
 [public] static native sqrt(x: float): float
-  ; native link="sqrt" unbound declared
+  ; native link="surtr.math.Math.sqrt" unbound declared
 
 [public] static native tan(x: float): float
-  ; native link="tan" unbound declared
+  ; native link="surtr.math.Math.tan" unbound declared

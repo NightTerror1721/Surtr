@@ -90,9 +90,10 @@ depend on the compiler), so the produced bytes must reach the core some other wa
    committed images whenever the `.surtr` sources change.
 4. At runtime, `SurtrStdlib.LoadInto(runtime, images)` (`Surtr.Core/Runtime/SurtrStdlib.cs`) is the
    loader: it publishes every `native` body the images declare (under the link names their
-   declarations travel as — `sin`, `cos`, …) and then `Instantiate()`-s and `LoadModule()`-s each
-   stdlib module in order. A module-level `native fun` in a stdlib image binds to the same C# body
-   the built-in `surtr:Math` class was built with, by link name.
+   declarations travel as — `surtr.math.Math.sin`, `surtr.math.Math.cos`, …) and then
+   `Instantiate()`-s and `LoadModule()`-s each stdlib module in order. A module-level `native fun`
+   in a stdlib image binds to the same C# body the built-in `surtr:Math` class was built with, by
+   link name.
 
 Because each module is a normal module, no merge into the built-in `surtr` module is needed —
 the linker and `TryResolveHandle` handle the cross-module references for free.

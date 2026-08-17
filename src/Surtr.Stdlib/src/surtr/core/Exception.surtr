@@ -1,0 +1,4 @@
+public class NoSupportedException : Exception
+{
+    public constructor(message: string) : super(message) {}
+}

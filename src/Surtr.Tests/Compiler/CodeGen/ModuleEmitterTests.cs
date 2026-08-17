@@ -3332,14 +3332,14 @@ namespace Surtr.Tests.Compiler.CodeGen
         public unsafe void ANativeVariableReadsTheHostsOwnStorage()
         {
             // A module-level `native let` is a native property with only a getter (§10); the host
-            // publishes that getter's body by its link name, `get_<name>` - the same convention a
-            // native class accessor uses.
+            // publishes that getter's body by its link name, `get_<name>` prefixed with the module
+            // path - the same convention a native class accessor uses, minus the type.
             var emitter = Build("native let ScreenWidth: int;\nfun run(): int { return ScreenWidth; }");
 
             var runtime = new SurtrRuntime();
             _owned.Add(runtime);
 
-            runtime.DefineNativeBody("get_ScreenWidth", SurtrNativeEntryPoint.FromFunctionPointer(&GetScreenWidth));
+            runtime.DefineNativeBody("game.core.get_ScreenWidth", SurtrNativeEntryPoint.FromFunctionPointer(&GetScreenWidth));
             runtime.LoadModule(emitter.Modules[0]);
 
             Assert.Equal(1280, Int(runtime, "run"));
@@ -3359,8 +3359,8 @@ namespace Surtr.Tests.Compiler.CodeGen
             _owned.Add(runtime);
 
             _writtenTimeScale = null;
-            runtime.DefineNativeBody("get_TimeScale", SurtrNativeEntryPoint.FromFunctionPointer(&GetTimeScale));
-            runtime.DefineNativeBody("set_TimeScale", SurtrNativeEntryPoint.FromFunctionPointer(&SetTimeScale));
+            runtime.DefineNativeBody("game.core.get_TimeScale", SurtrNativeEntryPoint.FromFunctionPointer(&GetTimeScale));
+            runtime.DefineNativeBody("game.core.set_TimeScale", SurtrNativeEntryPoint.FromFunctionPointer(&SetTimeScale));
             runtime.LoadModule(emitter.Modules[0]);
 
             Assert.Equal(1, Int(runtime, "run"));
@@ -3385,7 +3385,7 @@ namespace Surtr.Tests.Compiler.CodeGen
             var runtime = new SurtrRuntime();
             _owned.Add(runtime);
 
-            runtime.DefineNativeBody("hostSquare", SurtrNativeEntryPoint.FromFunctionPointer(&Square));
+            runtime.DefineNativeBody("game.core.hostSquare", SurtrNativeEntryPoint.FromFunctionPointer(&Square));
 
             runtime.LoadModule(emitter.Modules[0]);
 
@@ -3407,6 +3407,38 @@ namespace Surtr.Tests.Compiler.CodeGen
 
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidNativeDeclaration);
         }
+
+        /// <summary>
+        /// A module-level native travels as <c>&lt;modulePath&gt;.&lt;name&gt;</c> (§10), so two
+        /// modules declaring a same-named <c>native fun</c> bind against distinct link names
+        /// instead of silently sharing whatever single body was registered under the bare name.
+        /// </summary>
+        [Fact]
+        public unsafe void TwoModulesSameNamedNativesBindDistinctBodies()
+        {
+            var emitter = Build(
+                "native fun load(): int;\nfun run(): int { return load(); }",
+                ("/other/util/Test.surtr", "native fun load(): int;\nfun run(): int { return load(); }"));
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+
+            runtime.DefineNativeBody("game.core.load", SurtrNativeEntryPoint.FromFunctionPointer(&FirstLoad));
+            runtime.DefineNativeBody("other.util.load", SurtrNativeEntryPoint.FromFunctionPointer(&SecondLoad));
+
+            foreach (var module in emitter.Modules)
+                runtime.LoadModule(module);
+
+            Assert.Equal(1, Int(runtime, "run"));
+
+            Assert.True(runtime.TryGetModule("other.util", out var other));
+            Assert.True(other.TryGetMethods("run", out var runOverloads));
+            Assert.Equal(2, runtime.Invoke(runOverloads[0]).AsInt);
+        }
+
+        private static SurtrValue FirstLoad(SurtrCallArguments arguments) => SurtrValue.CreateInt(1);
+
+        private static SurtrValue SecondLoad(SurtrCallArguments arguments) => SurtrValue.CreateInt(2);
         #endregion
 
         #region Class-level natives (§10)

@@ -1592,11 +1592,22 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// Derived rather than declared, so a member the source did not name still has a stable one:
         /// the owner's full name plus the member's, which cannot collide inside one type because a
-        /// signature already cannot.
+        /// signature already cannot. A module-level native is prefixed with its <em>module path</em>
+        /// rather than left bare, so two modules declaring a same-named <c>native fun</c> bind
+        /// against distinct link names instead of silently sharing one body.
         /// </remarks>
         private string LinkName(MethodSymbol method)
-            => (method.ContainingType is NamedTypeSymbol owner ? owner.FullMetadataName + "." : string.Empty)
-                + _descriptors.EmitMethodName(method);
+        {
+            switch (method.ContainingSymbol)
+            {
+                case NamedTypeSymbol owner:
+                    return owner.FullMetadataName + "." + _descriptors.EmitMethodName(method);
+                case ModuleSymbol module:
+                    return module.Path + "." + _descriptors.EmitMethodName(method);
+                default:
+                    return _descriptors.EmitMethodName(method);
+            }
+        }
         #endregion
     }
 }

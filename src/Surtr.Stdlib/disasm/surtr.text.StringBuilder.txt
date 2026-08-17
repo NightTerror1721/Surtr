@@ -1,4 +1,4 @@
-module surtr.utils.StringBuilder
+module surtr.text.StringBuilder
   constants: 2   types: 3   fields: 1   methods: 13   modules: 0
   string #0 = "Initial capacity must be greater than 0"
   string #1 = "Index out of range"
@@ -9,19 +9,19 @@ module surtr.utils.StringBuilder
     #2  surtr:IndexOutOfRangeException
 
   field table:
-    #0  surtr.utils.StringBuilder:StringBuilder._buffer: char[]
+    #0  surtr.text.StringBuilder:StringBuilder._buffer: char[]
 
   method table:
-    #0  surtr.utils.StringBuilder:StringBuilder.ctor(int) -> void
-    #1  surtr.utils.StringBuilder:StringBuilder.get_length() -> int
-    #2  surtr.utils.StringBuilder:StringBuilder.get_isEmpty() -> bool
-    #3  surtr.utils.StringBuilder:StringBuilder.get(int) -> char
-    #4  surtr.utils.StringBuilder:StringBuilder.append(string) -> surtr.utils.StringBuilder:StringBuilder
-    #5  surtr.utils.StringBuilder:StringBuilder.appendChar(char) -> surtr.utils.StringBuilder:StringBuilder
-    #6  surtr.utils.StringBuilder:StringBuilder.appendLine(string) -> surtr.utils.StringBuilder:StringBuilder
-    #7  surtr.utils.StringBuilder:StringBuilder.clear() -> surtr.utils.StringBuilder:StringBuilder
-    #8  surtr.utils.StringBuilder:StringBuilder.toString() -> string
-    #9  surtr.utils.StringBuilder:StringBuilder.op_[](surtr.utils.StringBuilder:StringBuilder, int) -> char
+    #0  surtr.text.StringBuilder:StringBuilder.ctor(int) -> void
+    #1  surtr.text.StringBuilder:StringBuilder.get_length() -> int
+    #2  surtr.text.StringBuilder:StringBuilder.get_isEmpty() -> bool
+    #3  surtr.text.StringBuilder:StringBuilder.get(int) -> char
+    #4  surtr.text.StringBuilder:StringBuilder.append(string) -> surtr.text.StringBuilder:StringBuilder
+    #5  surtr.text.StringBuilder:StringBuilder.appendChar(char) -> surtr.text.StringBuilder:StringBuilder
+    #6  surtr.text.StringBuilder:StringBuilder.appendLine(string) -> surtr.text.StringBuilder:StringBuilder
+    #7  surtr.text.StringBuilder:StringBuilder.clear() -> surtr.text.StringBuilder:StringBuilder
+    #8  surtr.text.StringBuilder:StringBuilder.toString() -> string
+    #9  surtr.text.StringBuilder:StringBuilder.op_[](surtr.text.StringBuilder:StringBuilder, int) -> char
     #10  surtr:ArgumentException.ctor(string) -> void
     #11  surtr:IndexOutOfRangeException.ctor(string) -> void
     #12  string.fromCharArray(char[]) -> string
@@ -47,7 +47,7 @@ class StringBuilder  [public]
         001E  ArrLen
         001F  ReturnValue
 
-  [public] append(value: string): surtr.utils.StringBuilder:StringBuilder
+  [public] append(value: string): surtr.text.StringBuilder:StringBuilder
     ; entry 4, locals 3, stack 3, code 0051..006A
       0051  PushI8 0
       0053  Stl2
@@ -68,7 +68,7 @@ class StringBuilder  [public]
       0068  Ldl0
       0069  ReturnValue
 
-  [public] appendChar(value: char): surtr.utils.StringBuilder:StringBuilder
+  [public] appendChar(value: char): surtr.text.StringBuilder:StringBuilder
     ; entry 5, locals 2, stack 2, code 006A..0072
       006A  Ldl0
       006B  FieldGet 0 (_buffer)
@@ -77,7 +77,7 @@ class StringBuilder  [public]
       0070  Ldl0
       0071  ReturnValue
 
-  [public] appendLine(value: string): surtr.utils.StringBuilder:StringBuilder
+  [public] appendLine(value: string): surtr.text.StringBuilder:StringBuilder
     ; entry 6, locals 2, stack 2, code 0072..0083
       0072  Ldl0
       0073  Ldl1
@@ -89,7 +89,7 @@ class StringBuilder  [public]
       0081  Ldl0
       0082  ReturnValue
 
-  [public] clear(): surtr.utils.StringBuilder:StringBuilder
+  [public] clear(): surtr.text.StringBuilder:StringBuilder
     ; entry 7, locals 1, stack 1, code 0083..008A
       0083  Ldl0
       0084  FieldGet 0 (_buffer)
@@ -142,7 +142,7 @@ class StringBuilder  [public]
       004F  ArrGet
       0050  ReturnValue
 
-  [public] static op_[](self: surtr.utils.StringBuilder:StringBuilder, index: int): char
+  [public] static op_[](self: surtr.text.StringBuilder:StringBuilder, index: int): char
     ; entry 9, locals 2, stack 2, code 0094..009C
       0094  Ldl0
       0095  Ldl1

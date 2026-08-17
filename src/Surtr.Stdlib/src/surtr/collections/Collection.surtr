@@ -1,0 +1,54 @@
+public interface IReadOnlyCollection<T> : IIterable<T>
+{
+    length: int { get; }
+
+    fun get(index: int): T;
+    fun contains(item: T): bool;
+    fun copyTo(array: T[], arrayIndex: int): void;
+}
+
+public interface ICollection<T> : IReadOnlyCollection<T>
+{
+    isReadOnly: bool { get; }
+
+    fun add(item: T): void;
+    fun remove(item: T): void;
+    fun clear(): void;
+}
+
+private value class ReadOnlyCollection<T> : IReadOnlyCollection<T>
+{
+    private let _col: IReadOnlyCollection<T>;
+
+    public inline constructor(collection: IReadOnlyCollection<T>)
+    {
+        this._col = collection;
+    }
+
+    public inline constructor(collection: ICollection<T>)
+    {
+        this._col = collection;
+    }
+
+    public override length: int { get { return this._col.length; } }
+
+    public override fun get(index: int): T
+    {
+        return _col.get(index);
+    }
+
+    public override fun contains(item: T): bool
+    {
+        return _col.contains(item);
+    }
+
+    public override fun copyTo(array: T[], arrayIndex: int): void
+    {
+        _col.copyTo(array, arrayIndex);
+    }
+
+    public override fun iterate(): IIterator<T>
+    {
+        return _col.iterate();
+    }
+}

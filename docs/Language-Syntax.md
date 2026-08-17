@@ -2069,7 +2069,10 @@ distinguishes bytecode from host code at the runtime level (`CLAUDE.md`): a `nat
 signature with no Surtr body, the same "just the shape" spirit as an interface member (§2.3), and
 the body lives on the host side instead, published under the member's **link name** — derived from
 the owning type and the signature (`game:Sprite.setPosition(FF)`) unless declared explicitly, or
-just the bare name for a module-level member, since there is no owning type to prefix it with. A
+from the module path and the member name for a module-level one (`surtr.math.Math.sin`), since the
+module is its owning scope. That prefix is what keeps two modules' same-named `native` members from
+binding against the same body: `surtr.math.Math.log` and `host.util.log` are distinct link names
+even though both are declared `log`. A
 module naming a `native` member the host never publishes a body for under that exact link name
 fails to load, the same way an unresolved `SurtrTypeHandle` does — `SurtrRuntime.DefineNativeBody`
 is what a host calls to satisfy one, before `LoadModule`.

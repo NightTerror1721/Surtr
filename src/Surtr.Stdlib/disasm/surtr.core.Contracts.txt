@@ -1,0 +1,9 @@
+module surtr.core.Contracts
+  constants: 0   types: 0   fields: 0   methods: 1   modules: 0
+
+  method table:
+    #0  surtr.core.Contracts:IDisposable<.dispose() -> void
+
+interface IDisposable`1<T>  [public]
+
+  [public] abstract dispose(): void

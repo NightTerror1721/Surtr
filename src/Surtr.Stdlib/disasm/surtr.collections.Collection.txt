@@ -1,0 +1,36 @@
+module surtr.collections.Collection
+  constants: 0   types: 0   fields: 0   methods: 8   modules: 0
+
+  method table:
+    #0  surtr.collections.Collection:IReadOnlyCollection<.get_length() -> int
+    #1  surtr.collections.Collection:IReadOnlyCollection<.get(int) -> T0
+    #2  surtr.collections.Collection:IReadOnlyCollection<.contains(T0) -> bool
+    #3  surtr.collections.Collection:IReadOnlyCollection<.copyTo(T0[], int) -> void
+    #4  surtr.collections.Collection:ICollection<.get_isReadOnly() -> bool
+    #5  surtr.collections.Collection:ICollection<.add(T0) -> void
+    #6  surtr.collections.Collection:ICollection<.remove(T0) -> void
+    #7  surtr.collections.Collection:ICollection<.clear() -> void
+
+interface ICollection`1<T> : surtr.collections.Collection:IReadOnlyCollection<T0>  [public]
+
+  [public] property isReadOnly: bool { get; }
+    get:
+      ; abstract
+
+  [public] abstract add(item: T0): void
+
+  [public] abstract clear(): void
+
+  [public] abstract remove(item: T0): void
+
+interface IReadOnlyCollection`1<T> : surtr:IIterable<T0>  [public]
+
+  [public] property length: int { get; }
+    get:
+      ; abstract
+
+  [public] abstract contains(item: T0): bool
+
+  [public] abstract copyTo(array: T0[], arrayIndex: int): void
+
+  [public] abstract get(index: int): T0

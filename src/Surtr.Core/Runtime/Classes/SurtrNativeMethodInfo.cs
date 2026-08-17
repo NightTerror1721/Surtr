@@ -173,8 +173,13 @@ namespace Surtr.Runtime.Classes
         {
             var declaringType = DeclaringType;
 
-            // A native method always belongs to a type: a module-level native is a host global,
-            // which lives in a different table and binds through a different path entirely.
+            // A member's owner and signature name it uniquely, which is why this fallback exists at
+            // all. A module-level native has no declaring type for this metadata to name, and no
+            // reference back to its module from which to derive the module-prefixed link name a
+            // compiled image carries — so this is the one shape left bare. The compiler never
+            // reaches here: ModuleEmitter.LinkName always supplies an explicit, module-prefixed
+            // link name, which is what lets two modules' same-named module-level natives bind
+            // against distinct bodies.
             if (declaringType is null || !declaringType.Reference.TryGetFullName(out string owner))
                 return Name + "." + SignatureKey();
 

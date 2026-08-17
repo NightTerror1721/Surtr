@@ -105,8 +105,9 @@ namespace Surtr.Runtime
         /// </summary>
         /// <remarks>
         /// One entry per module-level <c>native fun</c> currently declared in the Surtr-written
-        /// stdlib. A module-level native has no owning type, so its link name is the bare member
-        /// name (§10) — <c>sin</c>, not <c>surtr.math.Math.sin</c>. A link name that grows a body
+        /// stdlib. A module-level native's link name is its <em>module path plus member name</em>
+        /// (§10) — <c>surtr.math.Math.sin</c>, not <c>sin</c> — so two modules declaring a
+        /// same-named native never bind against the same body. A link name that grows a body
         /// elsewhere and stops needing one here is harmless to keep; one that stops being published
         /// here while its declaration still exists fails the load, which is the point.
         /// </remarks>
@@ -114,25 +115,25 @@ namespace Surtr.Runtime
         {
             // The bodies are the same ones the built-in `surtr:Math` class was built with; a
             // module-level native in `surtr.math.Math` binds by name to the very same static method.
-            // Only the plumbing differs: here the link name is the bare function name, and the
+            // Only the plumbing differs: here the link name carries the module path, and the
             // registration happens per runtime at load instead of once in the built-in's static
             // constructor.
-            runtime.DefineNativeBody("sin", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathSin));
-            runtime.DefineNativeBody("cos", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathCos));
-            runtime.DefineNativeBody("tan", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathTan));
-            runtime.DefineNativeBody("asin", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathAsin));
-            runtime.DefineNativeBody("acos", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathAcos));
-            runtime.DefineNativeBody("atan", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathAtan));
-            runtime.DefineNativeBody("atan2", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathAtan2));
-            runtime.DefineNativeBody("sqrt", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathSqrt));
-            runtime.DefineNativeBody("pow", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathPow));
-            runtime.DefineNativeBody("exp", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathExp));
-            runtime.DefineNativeBody("log", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathLog));
-            runtime.DefineNativeBody("log10", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathLog10));
-            runtime.DefineNativeBody("floor", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathFloor));
-            runtime.DefineNativeBody("ceil", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathCeil));
-            runtime.DefineNativeBody("round", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathRound));
-            runtime.DefineNativeBody("hypot", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathHypot));
+            runtime.DefineNativeBody("surtr.math.Math.sin", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathSin));
+            runtime.DefineNativeBody("surtr.math.Math.cos", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathCos));
+            runtime.DefineNativeBody("surtr.math.Math.tan", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathTan));
+            runtime.DefineNativeBody("surtr.math.Math.asin", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathAsin));
+            runtime.DefineNativeBody("surtr.math.Math.acos", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathAcos));
+            runtime.DefineNativeBody("surtr.math.Math.atan", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathAtan));
+            runtime.DefineNativeBody("surtr.math.Math.atan2", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathAtan2));
+            runtime.DefineNativeBody("surtr.math.Math.sqrt", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathSqrt));
+            runtime.DefineNativeBody("surtr.math.Math.pow", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathPow));
+            runtime.DefineNativeBody("surtr.math.Math.exp", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathExp));
+            runtime.DefineNativeBody("surtr.math.Math.log", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathLog));
+            runtime.DefineNativeBody("surtr.math.Math.log10", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathLog10));
+            runtime.DefineNativeBody("surtr.math.Math.floor", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathFloor));
+            runtime.DefineNativeBody("surtr.math.Math.ceil", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathCeil));
+            runtime.DefineNativeBody("surtr.math.Math.round", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathRound));
+            runtime.DefineNativeBody("surtr.math.Math.hypot", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrStandardLibrary.MathHypot));
         }
     }
 }
