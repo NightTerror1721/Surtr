@@ -554,6 +554,23 @@ namespace Surtr.Compiler.Binding
                         continue;
                     }
 
+                    // `import X.{A, B}` names a module by its whole path too, then brings each
+                    // listed name in on its own - the same type-namespace candidate a repeated
+                    // `import X.A; import X.B;` would add, just written once.
+                    if (import.Members is not null)
+                    {
+                        if (TryGetModuleSymbol(Join(import.Path, import.Path.Count), out var listed))
+                        {
+                            foreach (var memberName in import.Members)
+                            {
+                                foreach (var type in listed.FindTypes(memberName))
+                                    scope.AddCandidate(type.Name, type);
+                            }
+                        }
+
+                        continue;
+                    }
+
                     // A named import brings exactly one name in, and the longest module prefix says
                     // where the module ends.
                     for (int split = import.Path.Count - 1; split > 0; split--)

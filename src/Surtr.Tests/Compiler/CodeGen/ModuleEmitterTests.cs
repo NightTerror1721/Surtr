@@ -192,6 +192,45 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Import: lista selectiva de miembros (§2.1, Fase 8)
+        [Fact]
+        public void ASelectiveImportBringsEveryListedNameIntoUnqualifiedScope()
+        {
+            var runtime = Run(
+                "import game.math.{Box, Pair};\n"
+                    + "fun run(): int { return Box(3).value + Pair(4).value; }",
+                ("/game/math/Shapes.surtr",
+                    "public class Box { public let value: int = 0; public constructor(value: int) { this.value = value; } }\n"
+                        + "public class Pair { public let value: int = 0; public constructor(value: int) { this.value = value; } }"));
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        /// <summary>A name left off the list is not brought in, even though its sibling was.</summary>
+        [Fact]
+        public void ASelectiveImportLeavesOutAnUnlistedSibling()
+        {
+            using var compilation = Reject(
+                "import game.math.{Box};\nfun run(): int { return Pair(1).value; }",
+                ("/game/math/Shapes.surtr",
+                    "public class Box { public let value: int = 0; public constructor(value: int) { this.value = value; } }\n"
+                        + "public class Pair { public let value: int = 0; public constructor(value: int) { this.value = value; } }"));
+
+            Assert.True(compilation.HasErrors, "'Pair' should not be reachable - only 'Box' was listed.");
+        }
+
+        [Fact]
+        public void ASelectiveImportWorksInATypeAnnotation()
+        {
+            var runtime = Run(
+                "import game.math.{Box};\n"
+                    + "fun run(): int { let b: Box = Box(9); return b.value; }",
+                ("/game/math/Shapes.surtr", "public class Box { public let value: int = 0; public constructor(value: int) { this.value = value; } }"));
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+        #endregion
+
         #region Classes
         [Fact]
         public void AClassIsConstructedAndItsFieldsRead()

@@ -231,6 +231,34 @@ namespace Surtr.Tests.LanguageServer
             Assert.Contains(completion.Items, item => item.Label == "Core");
         }
 
+        [Fact]
+        public void ASelectiveImportBringsOnlyTheListedTypeIntoBareCompletion()
+        {
+            const string coreSource = "public class Entity { }\npublic class Widget { }\n";
+            const string appSource =
+                "import proj.core.{Entity};\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        \n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Shapes.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            int insideBody = appSource.IndexOf("        \n", StringComparison.Ordinal) + "        ".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, appPath, appSource, insideBody);
+            Assert.Contains(completion.Items, item => item.Label == "Entity");
+            Assert.DoesNotContain(completion.Items, item => item.Label == "Widget");
+        }
+
         private static string Describe(System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<Surtr.Compiler.Diagnostics.SurtrDiagnostic>> diagnostics)
             => string.Join(" | ", diagnostics.SelectMany(pair => pair.Value).Select(d => d.ToString()));
     }

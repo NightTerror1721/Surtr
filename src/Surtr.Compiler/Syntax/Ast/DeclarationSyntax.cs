@@ -210,16 +210,29 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>The name after <c>as</c>, or <see langword="null"/> when the import is unaliased.</summary>
         public string? Alias { get; }
 
+        /// <summary>
+        /// The names inside a trailing <c>.{A, B}</c>, or <see langword="null"/> for every other
+        /// form (single name, wildcard, or aliased module).
+        /// </summary>
+        public IReadOnlyList<string>? Members { get; }
+
         /// <summary>Initializes an import.</summary>
         /// <param name="span">The source the import covers.</param>
         /// <param name="path">The dotted path's segments.</param>
         /// <param name="isWildcard">True when written with a trailing <c>.*</c>.</param>
         /// <param name="alias">The name after <c>as</c>, if any.</param>
-        public ImportSyntax(SourceSpan span, IReadOnlyList<string> path, bool isWildcard, string? alias = null) : base(span)
+        /// <param name="members">The names inside a trailing <c>.{A, B}</c>, if any.</param>
+        public ImportSyntax(
+            SourceSpan span,
+            IReadOnlyList<string> path,
+            bool isWildcard,
+            string? alias = null,
+            IReadOnlyList<string>? members = null) : base(span)
         {
             Path = path;
             IsWildcard = isWildcard;
             Alias = alias;
+            Members = members;
         }
     }
 

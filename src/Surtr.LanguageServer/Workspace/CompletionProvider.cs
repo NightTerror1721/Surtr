@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using Surtr.Compiler.Binding;
 using Surtr.Compiler.Binding.BoundTree;
@@ -228,14 +229,34 @@ namespace Surtr.LanguageServer.Workspace
 
             // A module alias (§2.1, Fase 7) is not reachable by its own name as a value or a type -
             // only qualified, `Alias.Something` - but the name itself belongs in the list so typing
-            // it is discoverable at all.
-            var unitForAliases = snapshot.UnitFor(filePath);
-            if (unitForAliases is not null)
+            // it is discoverable at all. A selective import (`import X.{A, B}`, Fase 8) is the
+            // opposite: exactly the listed names, unqualified, the same as a repeated named import.
+            var unitForImportSyntax = snapshot.UnitFor(filePath);
+            if (unitForImportSyntax is not null)
             {
-                foreach (var import in unitForAliases.Syntax.Imports)
+                foreach (var import in unitForImportSyntax.Syntax.Imports)
                 {
                     if (import.Alias is string alias)
+                    {
                         Add(new CompletionItem { Label = alias, Kind = CompletionItemKinds.Module, SortText = "3" + alias });
+                        continue;
+                    }
+
+                    if (import.Members is null)
+                        continue;
+
+                    string listedModulePath = string.Join(".", import.Path);
+                    if (!binder.Modules.TryGetValue(listedModulePath, out ModuleSymbol? listedModule))
+                        continue;
+
+                    foreach (string memberName in import.Members)
+                    {
+                        foreach (var type in listedModule.FindTypes(memberName))
+                        {
+                            if (MemberItem(type, includeStatics: true) is CompletionItem item)
+                                Add(item);
+                        }
+                    }
                 }
             }
 
@@ -1312,6 +1333,43 @@ namespace Surtr.LanguageServer.Workspace
                 types = foreign.FindTypes(name);
                 if (types.Count > 0)
                     return types[0];
+            }
+
+            // A single-name import (`import X.Y;`) or a selective list (`import X.{Y, Z}`, Fase 8)
+            // brings its own name(s) into unqualified scope too, the same way a wildcard's types
+            // do above - neither is stored as a `Symbol` anywhere this pass could ask a module for
+            // it back, so the file's own import syntax is read directly, same as an alias is.
+            var unit = snapshot.UnitFor(filePath);
+            if (unit is not null)
+            {
+                foreach (var import in unit.Syntax.Imports)
+                {
+                    if (import.IsWildcard || import.Alias is not null)
+                        continue;
+
+                    if (import.Members is not null)
+                    {
+                        if (!import.Members.Contains(name) || !binder.Modules.TryGetValue(string.Join(".", import.Path), out ModuleSymbol? listedModule))
+                            continue;
+
+                        types = listedModule.FindTypes(name);
+                        if (types.Count > 0)
+                            return types[0];
+
+                        continue;
+                    }
+
+                    if (import.Path.Count == 0 || import.Path[import.Path.Count - 1] != name)
+                        continue;
+
+                    string namedModulePath = string.Join(".", import.Path.Take(import.Path.Count - 1));
+                    if (!binder.Modules.TryGetValue(namedModulePath, out ModuleSymbol? namedModule))
+                        continue;
+
+                    types = namedModule.FindTypes(name);
+                    if (types.Count > 0)
+                        return types[0];
+                }
             }
 
             return null;

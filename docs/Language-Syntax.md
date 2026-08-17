@@ -164,6 +164,7 @@ file, above any declarations:
 import Ogame.core.Entity;
 import Ogame.core.*;
 import Ogame.core as Core;
+import Ogame.core.{Entity, Vec2};
 ```
 
 A named import brings exactly that one type into unqualified scope; a wildcard import
@@ -183,6 +184,14 @@ module-level function or variable the way `Core.Entity` reaches a type. `as` nee
 it is already reserved by `operator as` (§5.6). Two `import` lines claiming the same alias in one
 module is a compile error at the `import` line itself, unlike a colliding named/wildcard import —
 an alias has no import of its own to shadow, so there is nothing for the second one to lose to.
+
+**`import ModulePath.{A, B};` is a named import repeated**, written once instead of once per name —
+`import Ogame.core.{Entity, Vec2};` brings exactly `Entity` and `Vec2` into unqualified scope, the
+same two declarations `import Ogame.core.Entity; import Ogame.core.Vec2;` would. It reaches the
+same surface a single named import already does (a module's top-level types) and no more: a name
+left off the list is not reachable unqualified, and — like a plain named import — it does not
+reach a module-level function or variable, only a type. The braced form exists purely to avoid
+repeating `import ModulePath.` once per name; nothing about what a name resolves to changes.
 
 ### 2.2 Classes
 

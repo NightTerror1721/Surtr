@@ -19,7 +19,7 @@ mismo formato que `docs/Plan-Globales-Nativos-Inline-Operadores.md`.
 | 7 | Varianza de genéricos (`in`/`out`) | Genéricos correctos y completos hoy (§10.1b cerrado, sin TODOs). Varianza está **deliberadamente diferida** en `Language-Syntax.md` §14.4 — no es prioritaria mientras quede pendiente §10.2 (STDLIB en Surtr) | Diferido, no se planifica |
 | 8 | Cargador de STDLIB con selección de módulos (sandbox) + enlace nativo portable | El mecanismo de carga (`SurtrStdlib.LoadInto`) ya existe pero es todo-o-nada; el enlace nativo ya es independiente del código fuente `.surtr` en tiempo de ejecución, pero las imágenes no están embebidas como recursos y no hay detección temprana de desincronización | Pequeño-medio |
 | 9 | Declarar clases/enums/interfaces/singletons/value classes dentro de un método | Totalmente ausente en parser, AST, binder y emisor | Medio-grande |
-| 10 | Import de directorio completo (wildcard recursivo), import selectivo de miembros, alias de módulo | Import de módulo completo y wildcard de un módulo ya existen. Alias (`import X as Y`) **hecho** — Fase 7. Selectivo y wildcard de directorio, ausentes | Pequeño-medio (selectivo), medio (wildcard de directorio) |
+| 10 | Import de directorio completo (wildcard recursivo), import selectivo de miembros, alias de módulo | Import de módulo completo y wildcard de un módulo ya existen. Alias (`import X as Y`) **hecho** — Fase 7. Selectivo (`import X.{Y, Z}`) **hecho** — Fase 8. Wildcard de directorio, ausente | Medio (wildcard de directorio) |
 | 11 | Built-ins siempre disponibles sin import, nunca rotos por imports | **Ya correcto**, con tests dedicados (`BinderTests.cs`) | — |
 | 12 | LSP correcto para todo lo anterior, especialmente imports y built-ins | Implementación real sobre el compilador real (no un analizador simplificado), pero sin ningún test propio y con una lista de keywords desincronizada de §1.2 | Transversal a cada fase |
 
@@ -483,20 +483,38 @@ alias en el completado suelto). 2108/2108 tests en verde, 0 warnings.
 
 ---
 
-## Fase 8 — Import: lista selectiva de miembros
+## Fase 8 — Import: lista selectiva de miembros — **Hecha**
 
 **Estado actual**: `import Path.To.Name;` ya importa exactamente un nombre — la semántica
 existe por nombre suelto, pero no hay forma de listar varios en una línea; hace falta repetir
 `import` una vez por nombre.
 
 **Cambios**:
-- Sintaxis recomendada: reutilizar el estilo de ruta punteada existente en vez de introducir
-  `from` — `import Ogame.core.{Entity, Vec2};`.
-- `ImportSyntax.Members: IReadOnlyList<string>?` (`null` = las formas actuales de
-  nombre-único/wildcard).
-- `ParseImport`: rama nueva tras el path si el siguiente token es `{`.
-- `Binder.BindImports`: la rama de "import con nombre" pasa a iterar la lista.
-- Actualizar `Language-Syntax.md` §2.1 y el LSP (mismo camino que la Fase 7).
+- Sintaxis: `import Ogame.core.{Entity, Vec2};` — reutiliza el estilo de ruta punteada
+  existente en vez de introducir `from`.
+- `ImportSyntax.Members: IReadOnlyList<string>?` (`null` = las demás formas: nombre único,
+  wildcard, alias). `ParseImport` gana una rama tras un `.`: si el siguiente token es `{`,
+  delega en `ParseImportMemberList` (identificador, `,` repetido, `}`) en vez de esperar un
+  identificador — igual que `*` desvía a wildcard. `as` queda excluido si ya hay una lista.
+- `SurtrCompilation.TryResolveImport` (la validación previa al binder) trata un import con
+  `Members` igual que uno con `Alias`: el path **completo** es el módulo, sin segmento final
+  que sea un tipo — mismo ajuste que ya hizo falta en la Fase 7, mismo motivo.
+- `Binder.BindImports`: rama nueva, antes de la de nombre único — resuelve el módulo por el
+  path completo y añade cada nombre listado como candidato de tipo, igual que ya hace la rama
+  wildcard con `module.Types` pero limitado a los nombres pedidos. Solo alcanza tipos, igual
+  que el import de nombre único ya existente — nunca una función o variable de módulo, que
+  siguen fuera del alcance de un import con nombre (solo un wildcard las trae).
+- LSP (`CompletionProvider.cs`): el bloque que ya leía `ImportSyntax.Alias` para el completado
+  suelto ahora también lee `ImportSyntax.Members` y añade cada tipo listado. Más importante:
+  `FindType` (usado tanto por el completado tras un punto como por los hints de parámetro)
+  **no alcanzaba ni siquiera el import de nombre único ya existente** — un vacío preexistente,
+  no introducido por esta fase — así que se corrigió ahí mismo para las dos formas (nombre
+  único y lista selectiva) a la vez, ya que son la misma operación semántica repetida.
+
+**Tests**: 3 en `ModuleEmitterTests.cs` (trae cada nombre listado, dejar fuera un nombre no
+listado del mismo módulo, funciona en anotación de tipo) + 1 en
+`LanguageServerWorkspaceTests.cs` (completado suelto solo con el tipo listado, no con su
+hermano no listado). 2112/2112 tests en verde, 0 warnings.
 
 **Commit**: `Feature: import selectivo de miembros (import X.{Y, Z})`
 

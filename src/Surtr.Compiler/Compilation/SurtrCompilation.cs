@@ -246,10 +246,10 @@ namespace Surtr.Compiler.Compilation
         {
             var segments = import.Path;
 
-            if (import.IsWildcard || import.Alias is not null)
+            if (import.IsWildcard || import.Alias is not null || import.Members is not null)
             {
-                // A wildcard and an aliased import both name a module outright - unlike a plain
-                // named import, there is no trailing type name to peel off the end.
+                // A wildcard, an aliased import, and a selective list all name a module outright -
+                // unlike a plain named import, there is no trailing type name to peel off the end.
                 modulePath = Prefix(segments, segments.Count);
                 return KnowsModule(modulePath);
             }
