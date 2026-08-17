@@ -18,7 +18,7 @@ mismo formato que `docs/Plan-Globales-Nativos-Inline-Operadores.md`.
 | 6 | `operator[]` y operadores como miembros de instancia, no solo estáticos | **Ya implementado** — ver `docs/Plan-Globales-Nativos-Inline-Operadores.md`, Fase C (Ruta A: operadores de instancia con `abstract`/`virtual`/interfaz). Sin trabajo pendiente | — |
 | 7 | Varianza de genéricos (`in`/`out`) | Genéricos correctos y completos hoy (§10.1b cerrado, sin TODOs). Varianza está **deliberadamente diferida** en `Language-Syntax.md` §14.4 — no es prioritaria mientras quede pendiente §10.2 (STDLIB en Surtr) | Diferido, no se planifica |
 | 8 | Cargador de STDLIB con selección de módulos (sandbox) + enlace nativo portable | El mecanismo de carga (`SurtrStdlib.LoadInto`) ya existe pero es todo-o-nada; el enlace nativo ya es independiente del código fuente `.surtr` en tiempo de ejecución, pero las imágenes no están embebidas como recursos y no hay detección temprana de desincronización | Pequeño-medio |
-| 9 | Declarar clases/enums/interfaces/singletons/value classes dentro de un método | Totalmente ausente en parser, AST, binder y emisor | Medio-grande |
+| 9 | Declarar clases/enums/interfaces/singletons/value classes dentro de un método | Investigado a fondo (Fase 10) y **diferido deliberadamente** — requiere descubrir tipos locales antes de la fase 3 del binder para evitar reentrada sobre `_declared`/`_bodies`/etc.; camino de implementación documentado en la Fase 10 | Medio-grande |
 | 10 | Import de directorio completo (wildcard recursivo), import selectivo de miembros, alias de módulo | Alias (`import X as Y`) **hecho** — Fase 7. Selectivo (`import X.{Y, Z}`) **hecho** — Fase 8. Wildcard de directorio (recursivo sobre submódulos) **hecho** — Fase 9 | — |
 | 11 | Built-ins siempre disponibles sin import, nunca rotos por imports | **Ya correcto**, con tests dedicados (`BinderTests.cs`) | — |
 | 12 | LSP correcto para todo lo anterior, especialmente imports y built-ins | Implementación real sobre el compilador real (no un analizador simplificado), pero sin ningún test propio y con una lista de keywords desincronizada de §1.2 | Transversal a cada fase |
@@ -565,7 +565,7 @@ funciones de un submódulo también llegan sin calificar) + 1 en
 
 ---
 
-## Fase 10 — Clases (y enums, value classes, singletons, interfaces) declaradas dentro de un método
+## Fase 10 — Clases (y enums, value classes, singletons, interfaces) declaradas dentro de un método — **Investigada, diferida deliberadamente**
 
 **Estado actual**: totalmente ausente. `ParseStatement` (`Parser.Statements.cs:45-114`) no
 tiene ninguna rama para `class`/`interface`/`enum`/`singleton`/`value class`;
@@ -574,19 +574,64 @@ ningún nodo `LocalClassDeclarationStatementSyntax` en el AST. Ni `Language-Synt
 §14.4 mencionan esta posibilidad — no es una feature diferida a propósito, es simplemente algo
 que nunca se planteó.
 
-**Es la fase más grande del plan.** El binder es la parte difícil: `BodyBinder`, la cadena de
-`Scope` y la comprobación de captura "effectively final" asumen hoy que la única construcción
-capturadora dentro de un cuerpo es una lambda (§8); enseñarles una segunda construcción con
-forma de clase, con su propia síntesis de constructor, es el mayor sub-problema.
+**Se prototipó la parte de parser** (`LocalTypeDeclarationStatementSyntax` + una rama nueva en
+`ParseStatement` para `class`/`enum` bare) y funcionaba — pero se revirtió antes de commitear
+al confirmar que el binder no tiene ningún sitio downstream que lea ese nodo todavía:
+`BodyBinder.BindStatement`'s `default` cae a `BoundNopStatement`, así que la declaración
+parsearía correctamente y luego **no haría absolutamente nada**, en silencio — exactamente el
+antipatrón que este mismo repositorio documenta como el error más común de §10.1
+(`CLAUDE.md`: "la mayoría fueron un mismo error — un nodo que el parser produjo que nada
+downstream leyó... un constructo nuevo no está terminado cuando parsea; lo está cuando algo lo
+pide"). Publicar sintaxis que compila pero se ignora es peor que no publicarla, así que se
+revirtió sin commit.
 
-**Decisiones de diseño recomendadas** (evitan abrir preguntas nuevas, reutilizan mecanismo
-existente):
-- **Metadata**: tipo anidado sintético de la clase/módulo contenedor, con el esquema de
-  nombres ya existente `$categoria$contexto[$indice]` (`SyntheticNames.cs:21-24`) — p. ej.
-  `$local$foo$0$Local` — en vez de inventar una tabla de tipos por método.
+**Por qué es genuinamente la fase más grande del plan — hallazgo concreto, no solo estimación**:
+un tipo local tiene que atravesar el mismo pipeline de tres fases que cualquier otro tipo
+(declaración → jerarquía/miembros → cuerpos) para que sus propios métodos sean vinculables,
+pero solo es *descubrible* leyendo la sintaxis del cuerpo de un método — y esa sintaxis no se
+recorre hasta la fase 3 (`Binder.BindBodies`), que ya asume que la fase 2
+(`Binder.MemberPhase`) terminó y cerró la lista completa de tipos (`_declared`) antes de que
+ninguna fase 3 empiece. Descubrir un tipo local *durante* la fase 3 y querer ejecutar
+declaración+jerarquía+miembros+cuerpos para él ahí mismo es reentrada sobre el propio
+orquestador del binder (`_declared`, `_bodies`, `_initializers`, `_staticBlocks`, `_chains`,
+`_attributes`, `_bound`), no una extensión aislada de `BodyBinder`.
+
+**La vía que sí evita la reentrada, para cuando se retome**: descubrir los tipos locales antes,
+no durante, la fase 3 — recorriendo el cuerpo sintáctico de cada método/constructor (ya
+disponible en memoria desde el parseo completo, antes de que arranque ningún bind) en el mismo
+punto donde `Binder.BindMembers` construye el `MethodSymbol` de ese método a partir de su
+`MethodDeclarationSyntax`. Cada tipo local encontrado ahí se declara con el mismo
+`Binder.DeclareType` que ya usa un tipo anidado ordinario, añadido a `_declared` y resuelto
+in-line con `BindHierarchy`/`BindMembers` en el momento del descubrimiento — sin tocar el
+bucle exterior, que sigue siendo un `foreach` normal. Con esto, la fase 3 ordinaria ya vincula
+sus cuerpos sin ningún caso especial. El único hueco real que queda por resolver con ese
+diseño: `Binder.DeclareType` añade el símbolo al scope de la clase/módulo contenedor
+(`scope.AddCandidate`), lo que lo haría visible desde *cualquier* miembro de ese contenedor, no
+solo desde el método que lo declaró — hay que pasar un scope aparte, nunca consultado por
+nadie más, para esa única llamada, y en su lugar añadir el tipo a la cadena `_typeScope` de
+`BodyBinder` (que hoy es un campo fijo, no encadenado por bloque como `_values`) justo cuando
+la fase 3 alcanza la sentencia de declaración local — para lo cual `_typeScope` tiene que dejar
+de ser `readonly` y `PushScope`/`PopScope` tienen que empujar/sacar un hijo suyo en paralelo a
+`_values`, dando alcance de bloque a un nombre de tipo por primera vez en este binder.
+
+**Decisiones de diseño que siguen en pie para cuando se implemente** (evitan abrir preguntas
+nuevas, reutilizan mecanismo existente):
+- **Metadata**: tipo anidado sintético de la clase/módulo contenedor. El nombre visible en el
+  scope del método debe seguir siendo el nombre de fuente tal cual (`Foo`, no
+  `$local$foo$0$Foo`) — es la clave con la que el propio código del método lo busca — así que
+  el esquema `$categoria$contexto[$indice]` de `SyntheticNames.cs` solo puede aplicarse al
+  nombre *emitido*/de metadata si `NamedTypeSymbol` llega a distinguir nombre-de-fuente de
+  nombre-emitido; mientras no lo distinga, la alternativa más simple es aceptar el nombre de
+  fuente tal cual como nombre real del tipo anidado, con la limitación documentada de que dos
+  clases locales del mismo nombre en el mismo método (incluso en bloques hermanos que no se
+  solapan) colisionan como declaración duplicada.
 - **Captura**: igual que una lambda — solo locales "effectively final", copiados por valor al
   construir la instancia (mismos parámetros de constructor sintéticos que ya usa una lambda),
-  nunca una celda compartida — el lenguaje no tiene celdas de variable.
+  nunca una celda compartida — el lenguaje no tiene celdas de variable. Con la resolución de
+  tipos local ordinaria (sin heredar el scope de valores del método contenedor), un tipo local
+  que referencia un local externo simplemente no resuelve el nombre hoy — un error claro de
+  "nombre no encontrado", no una lectura silenciosamente incorrecta - así que capturar puede
+  añadirse después sin que la ausencia actual sea insegura, solo incompleta.
 - **Estáticos**: una clase local **no admite** miembros estáticos ni bloques `static { }` — no
   hay una posición de orden de carga sensata para un tipo que solo existe cuando su método se
   ejecuta (`InitializerOrder` razona sobre orden de declaración a nivel de carga del módulo).
@@ -600,6 +645,14 @@ existente):
 *(Si el alcance real resulta mayor de lo estimado al implementar, dividir en sub-commits por
 tipo de declaración — p. ej. clases y enums primero, interfaces/singletons/value classes
 después — en vez de forzar un único commit gigante.)*
+
+**Decisión**: dado el hallazgo de reentrada anterior — que toca la orquestación central del
+binder, compartida por las 2118 pruebas existentes — implementarlo con solidez en el tiempo
+restante de esta sesión (que todavía debe cubrir las Fases 11 y 12) suponía un riesgo real de
+dejar el binder en un estado inestable. Se deja diferida, con el camino de implementación ya
+investigado y documentado arriba, en vez de forzar un commit de algo a medio terminar o
+arriesgado. Sin cambios de código de esta fase — el prototipo de parser se revirtió (ver
+arriba) precisamente para no dejar sintaxis que parsea y no hace nada.
 
 ---
 
@@ -694,11 +747,11 @@ cada fase), una pasada de cierre:
 | 3 | Modificadores independientes por accessor | **Hecha** (alcance completo, incluye fix de bug de `sealed`) |
 | 4 | Método → valor closure sin lambda | **Hecha** |
 | 5 | Keyword `attribute`, target y retención | **Hecha** |
-| 6 | API de reflexión de atributos en Surtr | Pendiente (depende de 5) |
-| 7 | Alias de import | Pendiente |
-| 8 | Import selectivo de miembros | Pendiente |
-| 9 | Import wildcard de directorio | Pendiente |
-| 10 | Tipos locales dentro de métodos | Pendiente |
+| 6 | API de reflexión de atributos en Surtr | **Hecha** |
+| 7 | Alias de import | **Hecha** |
+| 8 | Import selectivo de miembros | **Hecha** |
+| 9 | Import wildcard de directorio | **Hecha** |
+| 10 | Tipos locales dentro de métodos | **Investigada, diferida deliberadamente** (ver arriba — riesgo de reentrada sobre la orquestación central del binder) |
 | 11 | Cargador de STDLIB seleccionable y portable | Pendiente |
 | 12 | Barrido final LSP + docs | Pendiente |
 | — | Operadores de instancia / `operator[]` | **Ya hecho** (`Plan-Globales-Nativos-Inline-Operadores.md`) |
