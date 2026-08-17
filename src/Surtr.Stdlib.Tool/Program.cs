@@ -5,6 +5,7 @@ using Surtr.Bytecode.Image;
 using Surtr.Compiler.Binding;
 using Surtr.Compiler.CodeGen;
 using Surtr.Compiler.Compilation;
+using Surtr.Runtime.Classes;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -41,6 +42,15 @@ namespace Surtr.Stdlib.Tool
 
         private const string SourceFileExtension = ".surtr";
 
+        /// <summary>
+        /// The flat, sorted, one-per-line list of every native link name this build compiled.
+        /// Deliberately plain text rather than a structured format: this tool and
+        /// <c>Surtr.Core</c> (which embeds it) are both <c>netstandard2.1</c>, and a JSON
+        /// serializer is a dependency the host would also have to ship (the same reasoning
+        /// <c>SurtrProjectFile.cs</c>'s own line-directive format follows).
+        /// </summary>
+        internal const string NativeLinkNamesFileName = "native-link-names.txt";
+
         private static int Main(string[] args)
         {
             if (args.Length < 2 || string.IsNullOrEmpty(args[0]) || string.IsNullOrEmpty(args[1]))
@@ -68,9 +78,11 @@ namespace Surtr.Stdlib.Tool
             Directory.CreateDirectory(outputDirectory);
             Directory.CreateDirectory(disassemblyDirectory);
 
+            var nativeLinkNames = new List<string>();
+
             foreach (string relative in sources)
             {
-                if (!BuildOne(sourceRoot, relative, outputDirectory, disassemblyDirectory, out string diagnostics))
+                if (!BuildOne(sourceRoot, relative, outputDirectory, disassemblyDirectory, nativeLinkNames, out string diagnostics))
                 {
                     Console.Error.WriteLine("Stdlib build failed for " + ModuleOf(relative) + ":");
                     Console.Error.WriteLine(diagnostics);
@@ -78,8 +90,17 @@ namespace Surtr.Stdlib.Tool
                 }
             }
 
+            // Written next to the images themselves: what Surtr.Core embeds alongside them, and
+            // what a test compares against SurtrStdlib.RegisterNativeBodies to catch a `native fun`
+            // added to the stdlib source without its C# body being registered - before anyone loads
+            // a runtime and finds out the hard way.
+            nativeLinkNames.Sort(StringComparer.Ordinal);
+            string manifestPath = Path.Combine(outputDirectory, NativeLinkNamesFileName);
+            File.WriteAllLines(manifestPath, nativeLinkNames);
+
             Console.WriteLine("Wrote " + sources.Count + " stdlib image(s) to " + outputDirectory);
             Console.WriteLine("Wrote " + sources.Count + " disassembly(ies) to " + disassemblyDirectory);
+            Console.WriteLine("Wrote " + nativeLinkNames.Count + " native link name(s) to " + manifestPath);
             return 0;
         }
 
@@ -113,7 +134,13 @@ namespace Surtr.Stdlib.Tool
         /// Compiles one source file into a <c>.surtrc</c> image written to <paramref name="outputDirectory"/>,
         /// plus a disassembled text rendering written to <paramref name="disassemblyDirectory"/>.
         /// </summary>
-        private static bool BuildOne(string sourceRoot, string relative, string outputDirectory, string disassemblyDirectory, out string diagnostics)
+        private static bool BuildOne(
+            string sourceRoot,
+            string relative,
+            string outputDirectory,
+            string disassemblyDirectory,
+            List<string> nativeLinkNames,
+            out string diagnostics)
         {
             string modulePath = ModuleOf(relative);
 
@@ -167,8 +194,41 @@ namespace Surtr.Stdlib.Tool
             string disasmPath = Path.Combine(disassemblyDirectory, modulePath + ".txt");
             File.WriteAllText(disasmPath, disasm);
 
+            CollectNativeLinkNames(emitter.Modules[0], nativeLinkNames);
+
             diagnostics = bag.ToString();
             return true;
+        }
+
+        /// <summary>
+        /// Every <c>native fun</c>/<c>native let</c>/<c>native var</c> link name this module (or
+        /// any class nested inside it, at any depth) declares.
+        /// </summary>
+        private static void CollectNativeLinkNames(SurtrModule module, List<string> nativeLinkNames)
+        {
+            foreach (var overloads in module.Methods)
+                CollectNativeLinkNames(overloads, nativeLinkNames);
+
+            foreach (var declared in module.Classes)
+                CollectNativeLinkNames(declared, nativeLinkNames);
+        }
+
+        private static void CollectNativeLinkNames(SurtrClass declared, List<string> nativeLinkNames)
+        {
+            foreach (var overloads in declared.Methods)
+                CollectNativeLinkNames(overloads, nativeLinkNames);
+
+            foreach (var nested in declared.NestedClasses)
+                CollectNativeLinkNames(nested, nativeLinkNames);
+        }
+
+        private static void CollectNativeLinkNames(SurtrMethodInfo[] overloads, List<string> nativeLinkNames)
+        {
+            for (int i = 0; i < overloads.Length; i++)
+            {
+                if (overloads[i] is SurtrNativeMethodInfo native)
+                    nativeLinkNames.Add(native.LinkName);
+            }
         }
     }
 }

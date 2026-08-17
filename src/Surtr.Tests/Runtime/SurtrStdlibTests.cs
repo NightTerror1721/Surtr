@@ -5,7 +5,9 @@ using Surtr.Runtime;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace Surtr.Tests.Runtime
 {
@@ -22,6 +24,26 @@ namespace Surtr.Tests.Runtime
         /// <summary>Loads the real <c>surtr.math.Math</c> image through the stdlib loader.</summary>
         private static SurtrModuleImage MathImage()
             => SurtrModuleImage.FromBytes(File.ReadAllBytes(RepoRoot() + "/src/Surtr.Stdlib/build/surtr.math.Math.surtrc"));
+
+        /// <summary>Every image <c>Surtr.Stdlib.Tool</c> actually compiled, from the committed build output.</summary>
+        private static List<SurtrModuleImage> AllImages()
+        {
+            string buildDirectory = RepoRoot() + "/src/Surtr.Stdlib/build";
+            var images = new List<SurtrModuleImage>();
+
+            foreach (string path in Directory.GetFiles(buildDirectory, "*" + SurtrModuleImage.FileExtension))
+                images.Add(SurtrModuleImage.FromBytes(File.ReadAllBytes(path)));
+
+            return images;
+        }
+
+        /// <summary>
+        /// The flat, sorted list of native link names <c>Surtr.Stdlib.Tool</c> wrote alongside the
+        /// images - what a build-time drift check would compare against
+        /// <see cref="SurtrStdlib.RegisterNativeBodies"/>.
+        /// </summary>
+        private static string[] NativeLinkNameManifest()
+            => File.ReadAllLines(RepoRoot() + "/src/Surtr.Stdlib/build/native-link-names.txt");
 
         private static string RepoRoot()
         {
@@ -131,6 +153,82 @@ namespace Surtr.Tests.Runtime
             Assert.Equal(
                 4.0,
                 second.Invoke(Function(second, "surtr.math.Math", "hypot"), SurtrValue.CreateFloat(0.0), SurtrValue.CreateFloat(4.0)).AsFloat);
+        }
+
+        /// <summary>
+        /// A sandboxed host asking for only <c>Math</c> gets exactly the modules under
+        /// <c>surtr/math/</c> - nothing from <c>core</c>, <c>collections</c> or <c>text</c>.
+        /// </summary>
+        [Fact]
+        public void SelectiveLoadOnlyLoadsTheChosenCategory()
+        {
+            using var runtime = new SurtrRuntime();
+            SurtrStdlib.LoadInto(runtime, AllImages(), StdlibModules.Math);
+
+            Assert.True(runtime.TryGetModule("surtr.math.Math", out _));
+            Assert.True(runtime.TryGetModule("surtr.math.Angle", out _));
+            Assert.False(runtime.TryGetModule("surtr.core.Exception", out _));
+            Assert.False(runtime.TryGetModule("surtr.core.Contracts", out _));
+            Assert.False(runtime.TryGetModule("surtr.collections.List", out _));
+            Assert.False(runtime.TryGetModule("surtr.collections.Collection", out _));
+            Assert.False(runtime.TryGetModule("surtr.text.StringBuilder", out _));
+        }
+
+        /// <summary>Two categories together bring in exactly their union, nothing from a third.</summary>
+        [Fact]
+        public void SelectiveLoadUnionsTheChosenCategories()
+        {
+            using var runtime = new SurtrRuntime();
+            SurtrStdlib.LoadInto(runtime, AllImages(), StdlibModules.Math | StdlibModules.Text);
+
+            Assert.True(runtime.TryGetModule("surtr.math.Math", out _));
+            Assert.True(runtime.TryGetModule("surtr.text.StringBuilder", out _));
+            Assert.False(runtime.TryGetModule("surtr.core.Exception", out _));
+            Assert.False(runtime.TryGetModule("surtr.collections.List", out _));
+        }
+
+        /// <summary><see cref="StdlibModules.All"/> loads everything, matching the unfiltered overload.</summary>
+        [Fact]
+        public void SelectiveLoadAllMatchesTheUnfilteredOverload()
+        {
+            using var runtime = new SurtrRuntime();
+            var images = AllImages();
+            SurtrStdlib.LoadInto(runtime, images, StdlibModules.All);
+
+            foreach (var image in images)
+                Assert.True(runtime.TryGetModule(image.Path, out _), $"'{image.Path}' should have loaded under StdlibModules.All.");
+        }
+
+        /// <summary>The selective overload also takes raw bytes, the shape embedded resources arrive in.</summary>
+        [Fact]
+        public void SelectiveLoadAcceptsRawImageBytes()
+        {
+            using var runtime = new SurtrRuntime();
+            SurtrStdlib.LoadInto(runtime, AllImages().Select(image => image.ToBytes()), StdlibModules.Collections);
+
+            Assert.True(runtime.TryGetModule("surtr.collections.List", out _));
+            Assert.False(runtime.TryGetModule("surtr.math.Math", out _));
+        }
+
+        /// <summary>
+        /// The drift detector Fase 11 asks for: every native link name
+        /// <c>Surtr.Stdlib.Tool</c> actually compiled into the committed build output is one
+        /// <see cref="SurtrStdlib.RegisterNativeBodies"/> publishes. A <c>native fun</c> added to
+        /// the stdlib source without a matching entry added there would fail this test instead of
+        /// only failing once someone loads a runtime and hits the missing body.
+        /// </summary>
+        [Fact]
+        public void EveryNativeLinkNameTheStdlibBuildCompiledIsRegistered()
+        {
+            using var runtime = new SurtrRuntime();
+            SurtrStdlib.RegisterNativeBodies(runtime);
+
+            foreach (string linkName in NativeLinkNameManifest())
+            {
+                Assert.True(
+                    runtime.TryGetNativeBody(linkName, out _),
+                    $"'{linkName}' is compiled into the stdlib build but SurtrStdlib.RegisterNativeBodies does not publish it.");
+            }
         }
     }
 }

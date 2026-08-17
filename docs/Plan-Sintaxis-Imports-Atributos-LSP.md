@@ -17,7 +17,7 @@ mismo formato que `docs/Plan-Globales-Nativos-Inline-Operadores.md`.
 | 5 | Atributos declarables con `attribute`, con retención y target | **Hecho** — keyword `attribute`, target y retención `CompileTimeOnly`/`Runtime` completos (comprobados en la misma compilación; import cruzado de target queda documentado como límite). API de reflexión desde Surtr (`Type`/`Member`, ver Fase 6 más abajo) también hecha | — |
 | 6 | `operator[]` y operadores como miembros de instancia, no solo estáticos | **Ya implementado** — ver `docs/Plan-Globales-Nativos-Inline-Operadores.md`, Fase C (Ruta A: operadores de instancia con `abstract`/`virtual`/interfaz). Sin trabajo pendiente | — |
 | 7 | Varianza de genéricos (`in`/`out`) | Genéricos correctos y completos hoy (§10.1b cerrado, sin TODOs). Varianza está **deliberadamente diferida** en `Language-Syntax.md` §14.4 — no es prioritaria mientras quede pendiente §10.2 (STDLIB en Surtr) | Diferido, no se planifica |
-| 8 | Cargador de STDLIB con selección de módulos (sandbox) + enlace nativo portable | El mecanismo de carga (`SurtrStdlib.LoadInto`) ya existe pero es todo-o-nada; el enlace nativo ya es independiente del código fuente `.surtr` en tiempo de ejecución, pero las imágenes no están embebidas como recursos y no hay detección temprana de desincronización | Pequeño-medio |
+| 8 | Cargador de STDLIB con selección de módulos (sandbox) + enlace nativo portable | **Hecho en parte (Fase 11)** — selección por categoría (`StdlibModules`) y test de desincronización temprana, ambos hechos. Embeber los `.surtrc` dentro de `Surtr.Core.csproj` resultó ser un ciclo de build real (necesita compilar la stdlib, lo que necesita `Surtr.Compiler`, lo que necesita `Surtr.Core` — el mismo ensamblado a medio construir); documentado, no forzado | Pequeño-medio |
 | 9 | Declarar clases/enums/interfaces/singletons/value classes dentro de un método | Investigado a fondo (Fase 10) y **diferido deliberadamente** — requiere descubrir tipos locales antes de la fase 3 del binder para evitar reentrada sobre `_declared`/`_bodies`/etc.; camino de implementación documentado en la Fase 10 | Medio-grande |
 | 10 | Import de directorio completo (wildcard recursivo), import selectivo de miembros, alias de módulo | Alias (`import X as Y`) **hecho** — Fase 7. Selectivo (`import X.{Y, Z}`) **hecho** — Fase 8. Wildcard de directorio (recursivo sobre submódulos) **hecho** — Fase 9 | — |
 | 11 | Built-ins siempre disponibles sin import, nunca rotos por imports | **Ya correcto**, con tests dedicados (`BinderTests.cs`) | — |
@@ -690,29 +690,58 @@ silenciosa a cero. **El enlace en sí no es el problema.**
    todavía).
 
 **Cambios**:
-- `Surtr.Stdlib.Tool` genera, junto a cada `.surtrc`, un manifiesto pequeño
-  (`StdlibModuleDescriptor`: nombre de módulo, ruta del recurso, dependencias por ruta de
-  módulo) **y** una lista plana de los link names nativos que compiló
-  (`build/native-link-names.txt` o equivalente en el manifiesto).
-- Embeber los `.surtrc` como `<EmbeddedResource>` en `Surtr.Core.csproj` (no requiere ninguna
-  referencia de proyecto nueva — son solo bytes), expuestos vía
-  `Assembly.GetManifestResourceStream` y el `LoadInto(runtime, IEnumerable<byte[]>)` que ya
-  existe. Esto hace que "solo tengo la DLL" funcione de fábrica.
-- `SurtrStdlib` gana una sobrecarga selectiva, p. ej.
-  `SurtrStdlib.LoadInto(runtime, StdlibModules seleccion)`, que resuelve el cierre de
-  dependencias del manifiesto antes de reusar el `LoadInto` existente — sin tocar el mecanismo
-  de carga de punto fijo, que ya es correcto.
-- **Test de desincronización temprana**: un test en `Surtr.Tests` (que sí puede referenciar
-  tanto artefactos compilados por `Surtr.Compiler` como `Surtr.Core`) que compara la lista de
-  link names publicada por `Surtr.Stdlib.Tool` contra las claves que
-  `SurtrStdlib.RegisterNativeBodies` registra en un runtime de prueba — sin CI en el repo
-  todavía, la suite de tests (`dotnet test`) es el punto de aplicación más cercano disponible.
-- `RegisterNativeBodies` se queda como está por ahora (tabla pequeña, registrar un link name
+- `Surtr.Stdlib.Tool` ahora escribe, junto a las imágenes, `build/native-link-names.txt` — la
+  lista plana y ordenada de todo link name nativo que encontró en cualquier módulo o clase
+  anidada de cualquier profundidad (`Program.CollectNativeLinkNames`), recorriendo el
+  `SurtrModule` que el propio emisor ya construyó por cada fichero.
+- **Se intentó embeber los `.surtrc` como `<EmbeddedResource>` en `Surtr.Core.csproj` (tal y
+  como decía el boceto original de esta fase) y se encontró un ciclo de build real, no solo
+  teórico**: un `ProjectReference` de `Surtr.Core` a `Surtr.Stdlib` (incluso con
+  `ReferenceOutputAssembly="false"`, solo para forzar orden) hace que el build de
+  `Surtr.Core` dispare el `AfterTargets="Build"` de `Surtr.Stdlib`, que a su vez ejecuta
+  `dotnet run --project Surtr.Stdlib.Tool` — y `Surtr.Stdlib.Tool` referencia `Surtr.Compiler`,
+  que referencia `Surtr.Core`, **el mismísimo proyecto que ya está a mitad de compilarse en el
+  build exterior**. El resultado observado fue exactamente el "hang" que el propio comentario
+  de `Surtr.Stdlib.csproj` ya advertía haber sufrido antes por una ruta distinta
+  (`Surtr.Stdlib` → `Surtr.Stdlib.Tool` directo): "MSBUILD : error MSB4166: El nodo secundario
+  '2' se cerró antes de tiempo" tras ~2:28 min. Se revirtió el cambio de inmediato.
+  Arquitectónicamente es un problema de bootstrap, no un detalle de MSBuild: para compilar
+  cualquier `.surtr` (incluida la propia stdlib) hace falta un `Surtr.Compiler` que ya
+  referencia un `Surtr.Core` construido — así que un único `dotnet build` de `Surtr.Core` no
+  puede a la vez compilar la stdlib y embeber el resultado en el propio ensamblado del que esa
+  compilación depende. Las imágenes ya estaban commiteadas en el repo bajo
+  `Surtr.Stdlib/build/` (confirmado con `git ls-files`) precisamente por esto — el propio
+  README de `Surtr.Stdlib` ya decía "committed, not built on demand" antes de esta fase, más
+  certero que el boceto de este plan.
+- `SurtrStdlib` gana `StdlibModules` (`[Flags]`: `Core`/`Math`/`Collections`/`Text`/`All`) y dos
+  sobrecargas de `LoadInto` que filtran por categoría — el segundo segmento del path del módulo
+  (`surtr.math.Math` → `math`) — antes de delegar en el `LoadInto` sin filtrar. Sin cierre de
+  dependencias real: confirmado por grep que hoy ningún módulo de la stdlib importa otro
+  (`Surtr.Stdlib/src/surtr/**/*.surtr` no tiene ninguna línea `import`), así que una categoría
+  ya es la unidad exacta que una selección necesita — si eso deja de ser cierto, la reintentona
+  de punto fijo que `LoadInto` ya tiene sigue haciendo que una selección incompleta falle
+  limpio (un módulo que nombra uno dejado fuera simplemente no resuelve) en vez de cargar con
+  un agujero silencioso.
+- **Test de desincronización temprana**: `SurtrStdlibTests.EveryNativeLinkNameTheStdlibBuildCompiledIsRegistered`
+  lee `build/native-link-names.txt` y comprueba, contra un runtime de prueba, que
+  `SurtrStdlib.RegisterNativeBodies` (cambiado de `private` a `internal` para que el test
+  pueda invocarlo directamente) publica cada uno.
+- `RegisterNativeBodies` se queda como está por lo demás (tabla pequeña, registrar un link name
   no usado es inofensivo); revisarlo solo si la tabla crece mucho.
-- Actualizar el README de `Surtr.Stdlib` (cierra el ítem 1 pendiente) y documentar el nuevo
-  API en `docs/Runtime-Model.md`.
+- Actualizado el README de `Surtr.Stdlib` (reescribe el punto 1 de "qué falta" con el hallazgo
+  del ciclo, en vez de dejar la descripción original que resultó no ser viable) y añadida una
+  sección nueva (§16) a `docs/Runtime-Model.md`.
 
-**Commit**: `Feature: cargador de STDLIB seleccionable y portable (recursos embebidos + verificacion de enlace nativo)`
+**Alcance real vs. boceto original**: el boceto pedía explícitamente recursos embebidos en
+`Surtr.Core.csproj` como parte del "enlace nativo portable". Esa pieza concreta no es viable sin
+una reestructuración de build en dos pasadas genuina (compilar con un toolchain que ya funcione,
+generar las imágenes, y solo *después* embeberlas en una pasada separada) — fuera de alcance
+razonable sin CI en el repo. Lo que sí se entrega y se prueba: selección por categoría y
+detección de desincronización — dos de los tres pedidos originales, con el tercero (embeber
+dentro de `Surtr.Core`) documentado como un hallazgo arquitectónico concreto en vez de
+silenciado o forzado.
+
+**Commit**: `Feature: cargador de STDLIB seleccionable y verificacion de enlace nativo (embeber en Surtr.Core resulto ser un ciclo de build)`
 
 ---
 
@@ -752,7 +781,7 @@ cada fase), una pasada de cierre:
 | 8 | Import selectivo de miembros | **Hecha** |
 | 9 | Import wildcard de directorio | **Hecha** |
 | 10 | Tipos locales dentro de métodos | **Investigada, diferida deliberadamente** (ver arriba — riesgo de reentrada sobre la orquestación central del binder) |
-| 11 | Cargador de STDLIB seleccionable y portable | Pendiente |
+| 11 | Cargador de STDLIB seleccionable y portable | **Hecha en parte** — selección por categoría + test de desincronización hechos; embeber en `Surtr.Core` resultó ser un ciclo de build, documentado en vez de forzado |
 | 12 | Barrido final LSP + docs | Pendiente |
 | — | Operadores de instancia / `operator[]` | **Ya hecho** (`Plan-Globales-Nativos-Inline-Operadores.md`) |
 | — | Varianza de genéricos | **Diferido a propósito** (§14.4), no planificado |

@@ -10,6 +10,43 @@ using System.Linq;
 namespace Surtr.Runtime
 {
     /// <summary>
+    /// Which category of the Surtr-written stdlib to load — one flag per top-level directory
+    /// under <c>Surtr.Stdlib/src/surtr/</c> (<c>collections/</c>, <c>core/</c>, <c>math/</c>,
+    /// <c>text/</c>), so a sandboxed host can load only what it means to expose rather than
+    /// everything <c>Surtr.Stdlib.Tool</c> compiled.
+    /// </summary>
+    /// <remarks>
+    /// Coarse-grained on purpose: today no stdlib module imports another (confirmed by grep
+    /// across <c>Surtr.Stdlib/src</c> — every module only names the built-in <c>surtr</c>
+    /// module), so a category is exactly the unit a selection needs. If that stops being true,
+    /// <see cref="SurtrStdlib.LoadInto(SurtrRuntime, IReadOnlyList{SurtrModuleImage})"/>'s
+    /// fixed-point retry loop still makes an incomplete selection fail cleanly — a module
+    /// naming one this selection left out simply never resolves — rather than loading with a
+    /// silent hole.
+    /// </remarks>
+    [Flags]
+    public enum StdlibModules
+    {
+        /// <summary>Nothing selected.</summary>
+        None = 0,
+
+        /// <summary><c>surtr/core/</c> — <c>Contracts</c>, <c>Exception</c>.</summary>
+        Core = 1 << 0,
+
+        /// <summary><c>surtr/math/</c> — <c>Math</c>, <c>Angle</c>.</summary>
+        Math = 1 << 1,
+
+        /// <summary><c>surtr/collections/</c> — <c>Collection</c>, <c>List</c>.</summary>
+        Collections = 1 << 2,
+
+        /// <summary><c>surtr/text/</c> — <c>StringBuilder</c>.</summary>
+        Text = 1 << 3,
+
+        /// <summary>Every category — equivalent to the unfiltered <c>LoadInto</c> overloads.</summary>
+        All = Core | Math | Collections | Text,
+    }
+
+    /// <summary>
     /// Loads the Surtr-written half of the standard library into a runtime: publishes every
     /// <c>native</c> body its images declare, then loads the images.
     /// </summary>
@@ -100,18 +137,103 @@ namespace Surtr.Runtime
         }
 
         /// <summary>
+        /// <see cref="LoadInto(SurtrRuntime, IReadOnlyList{SurtrModuleImage})"/>, restricted to the
+        /// images whose module falls under one of <paramref name="selection"/>'s categories.
+        /// </summary>
+        /// <remarks>
+        /// Filters by each image's own <see cref="SurtrModuleImage.Path"/> rather than asking the
+        /// caller to pre-sort them — a host handing this every stdlib image it has (embedded,
+        /// loaded from disk, however it got them) can select a sandboxed subset with nothing more
+        /// than the flag it wants.
+        /// </remarks>
+        /// <param name="runtime">The runtime to load into.</param>
+        /// <param name="images">Every stdlib image available; only the ones <paramref name="selection"/> names are loaded.</param>
+        /// <param name="selection">Which categories to load.</param>
+        public static void LoadInto(SurtrRuntime runtime, IReadOnlyList<SurtrModuleImage> images, StdlibModules selection)
+        {
+            if (images is null)
+                throw new ArgumentNullException(nameof(images));
+
+            if (selection == StdlibModules.All)
+            {
+                LoadInto(runtime, images);
+                return;
+            }
+
+            var selected = new List<SurtrModuleImage>();
+            foreach (var image in images)
+            {
+                if (IsSelected(image.Path, selection))
+                    selected.Add(image);
+            }
+
+            LoadInto(runtime, selected);
+        }
+
+        /// <summary>
+        /// <see cref="LoadInto(SurtrRuntime, IReadOnlyList{SurtrModuleImage}, StdlibModules)"/> over
+        /// raw image bytes — the shape embedded resources arrive in.
+        /// </summary>
+        public static void LoadInto(SurtrRuntime runtime, IEnumerable<byte[]> images, StdlibModules selection)
+        {
+            if (images is null)
+                throw new ArgumentNullException(nameof(images));
+
+            LoadInto(runtime, images.Select(bytes => SurtrModuleImage.FromBytes(bytes)).ToList(), selection);
+        }
+
+        /// <summary>
+        /// Whether a stdlib module's path falls under one of <paramref name="selection"/>'s
+        /// categories - <c>surtr.math.Math</c>'s second segment, <c>math</c>, against
+        /// <see cref="StdlibModules.Math"/>.
+        /// </summary>
+        private static bool IsSelected(string modulePath, StdlibModules selection)
+        {
+            int firstDot = modulePath.IndexOf('.');
+            if (firstDot < 0)
+                return false;
+
+            int secondDot = modulePath.IndexOf('.', firstDot + 1);
+            string category = secondDot < 0
+                ? modulePath.Substring(firstDot + 1)
+                : modulePath.Substring(firstDot + 1, secondDot - firstDot - 1);
+
+            var flag = category switch
+            {
+                "core" => StdlibModules.Core,
+                "math" => StdlibModules.Math,
+                "collections" => StdlibModules.Collections,
+                "text" => StdlibModules.Text,
+                _ => StdlibModules.None,
+            };
+
+            return flag != StdlibModules.None && (selection & flag) != 0;
+        }
+
+        /// <summary>
         /// Publishes the body every stdlib image can ask for, under the link name its declaration
         /// travels as.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// One entry per module-level <c>native fun</c> currently declared in the Surtr-written
         /// stdlib. A module-level native's link name is its <em>module path plus member name</em>
         /// (§10) — <c>surtr.math.Math.sin</c>, not <c>sin</c> — so two modules declaring a
         /// same-named native never bind against the same body. A link name that grows a body
         /// elsewhere and stops needing one here is harmless to keep; one that stops being published
         /// here while its declaration still exists fails the load, which is the point.
+        /// </para>
+        /// <para>
+        /// Internal rather than private so a test can call it directly against a throwaway runtime
+        /// and compare what it registers against <c>Surtr.Stdlib/build/native-link-names.txt</c> —
+        /// the flat list <c>Surtr.Stdlib.Tool</c> writes alongside the images themselves, of every
+        /// native link name it actually compiled. That comparison is the drift detector: a
+        /// <c>native fun</c> added to the stdlib source without a matching entry added here shows
+        /// up as a name the manifest has and this method does not, before anyone loads a runtime
+        /// and discovers it the hard way.
+        /// </para>
         /// </remarks>
-        private static unsafe void RegisterNativeBodies(SurtrRuntime runtime)
+        internal static unsafe void RegisterNativeBodies(SurtrRuntime runtime)
         {
             // The bodies are the same ones the built-in `surtr:Math` class was built with; a
             // module-level native in `surtr.math.Math` binds by name to the very same static method.
