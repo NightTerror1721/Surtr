@@ -4,12 +4,13 @@ using Surtr.Bytecode.Image;
 using Surtr.Runtime;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
+using Surtr.Stdlib;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
-namespace Surtr.Tests.Runtime
+namespace Surtr.Tests.Stdlib
 {
     /// <summary>
     /// The end of the stdlib story: the <c>.surtrc</c> images <c>Surtr.Stdlib.Tool</c> writes are
@@ -70,7 +71,7 @@ namespace Surtr.Tests.Runtime
         /// <summary>
         /// The module-level <c>native fun</c> declarations in <c>Math.surtr</c> reach their C#
         /// bodies: <see cref="SurtrStdlib.LoadInto"/> published them under their link names before
-        /// the load, so a call is a real call into <c>SurtrStandardLibrary.MathSin</c> and friends.
+        /// the load, so a call is a real call into <c>Surtr.Stdlib.Native.SurtrMathNative</c> and friends.
         /// </summary>
         [Fact]
         public void AModuleLevelNativeReachesTheBodyTheLoaderPublished()
@@ -229,6 +230,58 @@ namespace Surtr.Tests.Runtime
                     runtime.TryGetNativeBody(linkName, out _),
                     $"'{linkName}' is compiled into the stdlib build but SurtrStdlib.RegisterNativeBodies does not publish it.");
             }
+        }
+
+        /// <summary>
+        /// <c>Surtr.Stdlib.csproj</c>'s <c>BuildStdlibImages</c> target embeds every <c>.surtrc</c>
+        /// it writes as a resource of this very assembly, under
+        /// <c>Surtr.Stdlib.Images.&lt;modulePath&gt;.surtrc</c>. This is the other half of that
+        /// contract: one embedded resource per image the committed build output carries, with
+        /// nothing missing and nothing extra.
+        /// </summary>
+        [Fact]
+        public void TheAssemblyEmbedsOneResourcePerStdlibImage()
+        {
+            var assembly = typeof(SurtrStdlib).Assembly;
+            var embedded = assembly.GetManifestResourceNames()
+                .Where(name => name.StartsWith("Surtr.Stdlib.Images.", StringComparison.Ordinal))
+                .ToList();
+
+            var expected = AllImages().Select(image => "Surtr.Stdlib.Images." + image.Path + SurtrModuleImage.FileExtension);
+
+            Assert.Equal(expected.OrderBy(name => name, StringComparer.Ordinal), embedded.OrderBy(name => name, StringComparer.Ordinal));
+        }
+
+        /// <summary>
+        /// The batteries-included entry point: no images to source or transport by hand, just a
+        /// runtime. This is what a Unity host dropping <c>Surtr.Core.dll</c>/<c>Surtr.Stdlib.dll</c>
+        /// into <c>Assets/Plugins</c> and calling <see cref="SurtrStdlib.LoadAll(SurtrRuntime)"/> gets.
+        /// </summary>
+        [Fact]
+        public void LoadAllLoadsEveryEmbeddedImage()
+        {
+            using var runtime = new SurtrRuntime();
+            SurtrStdlib.LoadAll(runtime);
+
+            foreach (var image in AllImages())
+                Assert.True(runtime.TryGetModule(image.Path, out _), $"'{image.Path}' should have loaded under LoadAll.");
+
+            Assert.Equal(
+                5.0,
+                runtime.Invoke(Function(runtime, "surtr.math.Math", "hypot"), SurtrValue.CreateFloat(3.0), SurtrValue.CreateFloat(4.0)).AsFloat);
+        }
+
+        /// <summary>The <see cref="StdlibModules"/> overload of <see cref="SurtrStdlib.LoadAll(SurtrRuntime, StdlibModules)"/> filters the embedded set the same way the explicit-images overload filters a caller-supplied one.</summary>
+        [Fact]
+        public void LoadAllWithSelectionOnlyLoadsTheChosenCategory()
+        {
+            using var runtime = new SurtrRuntime();
+            SurtrStdlib.LoadAll(runtime, StdlibModules.Math);
+
+            Assert.True(runtime.TryGetModule("surtr.math.Math", out _));
+            Assert.True(runtime.TryGetModule("surtr.math.Angle", out _));
+            Assert.False(runtime.TryGetModule("surtr.core.Exception", out _));
+            Assert.False(runtime.TryGetModule("surtr.collections.List", out _));
         }
     }
 }

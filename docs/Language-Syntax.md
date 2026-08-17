@@ -2306,7 +2306,7 @@ against its target list at the use site, only at its own declaration. Declaring 
 same project as everything that uses it, which is by far the common case, is unaffected.
 
 **Reading an attribute back from Surtr itself, not just from a host, goes through `Type` and
-`Member`** — two more built-ins, always in scope like `Attribute` and `Math`:
+`Member`** — two more built-ins, always in scope like `Attribute`:
 
 ```
 let t = Type.of(someValue);   // the runtime class behind any value, primitives included
@@ -2382,14 +2382,29 @@ Everything here is imported implicitly. `surtr` is in scope in every file withou
 line, which is what lets §5.1's `string` and §9's `Exception` be written unqualified everywhere in
 this document.
 
+Not every library type lives at that one path, though. `Exception`, the four core interfaces and
+the primitive/collection members sit in the built-in `surtr` module proper (`Surtr.Core`, always
+present, no loading step). `Math` and the rest of the *expressible* library sit one level down, at
+their own module path (`surtr.math.Math`, `surtr.collections.List`, …) inside `Surtr.Stdlib` — an
+optional, separately-referenced project a host loads into a `SurtrRuntime` after constructing it
+(`SurtrStdlib.LoadAll`, reading every module straight out of `Surtr.Stdlib.dll`'s own embedded
+resources — no file path or asset system required, which is what makes it a two-DLL Unity drop-in).
+A program that wants `Math.clamp(x, 0, 1)` unqualified needs both the
+module loaded into the runtime *and* an `import surtr.math.Math` naming it; `Surtr.Core` itself
+carries no knowledge that `Math` exists at all.
+
 ### 13.1 What goes in C# and what goes in Surtr
 
 The library is written in both, and the dividing line is not taste:
 
 - **C# (native, via `SurtrNativeFunction`)** for anything that touches VM internals, allocates, or
-  sits on a hot path — the primitive and collection members, `Math`, string manipulation. These are
-  the members `SurtrBuiltInTypeBuilder` already links by function pointer, and `CLAUDE.md`'s rule
-  that built-in members are always `Direct` dispatch applies to all of them.
+  sits on a hot path — the primitive and collection members, string manipulation, and `Math`'s
+  trig/float operations. The primitive and collection members are linked by function pointer
+  through `SurtrBuiltInTypeBuilder`, inside the built-in module; `Math`'s are `native fun`
+  declarations in `surtr.math.Math` bound by link name instead (§10), because `Math` is a real,
+  separately-loaded module rather than a member of the built-in one. `CLAUDE.md`'s rule that
+  built-in members are always `Direct` dispatch applies to the former; the latter are ordinary
+  module-level functions with no dispatch to speak of.
 - **Surtr source** for everything expressible in the language itself — the exception hierarchy
   below the root, helper types, anything whose body is ordinary logic over other library calls.
   Writing these in Surtr is also the first real test of the compiler, which is a second reason to

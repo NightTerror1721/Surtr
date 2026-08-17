@@ -156,9 +156,6 @@ namespace Surtr.Runtime.BuiltIns
         /// <summary>Raised by an operation the runtime cannot perform in its current state.</summary>
         public static readonly SurtrClass InvalidOperationException;
 
-        /// <summary><c>Math</c>: static numeric helpers, all of them free functions in disguise.</summary>
-        public static readonly SurtrClass Math;
-
         /// <summary>
         /// The root every attribute class extends.
         /// </summary>
@@ -267,7 +264,6 @@ namespace Surtr.Runtime.BuiltIns
             InvalidCastException = DeclareObject("InvalidCastException", Exception);
             StackOverflowException = DeclareObject("StackOverflowException", Exception);
             InvalidOperationException = DeclareObject("InvalidOperationException", Exception);
-            Math = DeclareObject("Math", isAbstract: true);
             Attribute = DeclareObject("Attribute", isAbstract: true);
             Type = DeclareObject("Type");
             Member = DeclareObject("Member");
@@ -321,7 +317,6 @@ namespace Surtr.Runtime.BuiltIns
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(InvalidCastException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(StackOverflowException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(InvalidOperationException, handles));
-            SurtrStandardLibrary.DeclareMath(BuilderFor(Math, handles));
             SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
 
             // After Attribute, since Type.attributes()/Member.attributes() both name it, and
