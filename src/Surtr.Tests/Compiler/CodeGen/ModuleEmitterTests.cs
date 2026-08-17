@@ -253,6 +253,60 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Arrow-bodied members (§3.3, §3.4)
+        [Fact]
+        public void AnArrowBodiedMethodReturnsItsExpression()
+        {
+            var runtime = Run(
+                "fun add(a: int, b: int): int => a + b;\n"
+                    + "fun run(): int { return add(3, 4); }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AVoidArrowBodiedMethodEvaluatesItsExpressionForEffect()
+        {
+            var runtime = Run(
+                "class Counter {\n"
+                    + "  private var _value: int;\n"
+                    + "  public fun bump(): void => _value = _value + 1;\n"
+                    + "  public fun value(): int { return _value; }\n"
+                    + "}\n"
+                    + "fun run(): int { let c = Counter(); c.bump(); c.bump(); return c.value(); }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AShortFormReadOnlyPropertyReadsThroughItsArrowExpression()
+        {
+            var runtime = Run(
+                "class Vec2 {\n"
+                    + "  private let _x: int;\n"
+                    + "  public x: int => _x;\n"
+                    + "  constructor(x: int) { _x = x; }\n"
+                    + "}\n"
+                    + "fun run(): int { return Vec2(5).x; }");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AGetterAndSetterMayBothUseTheArrowForm()
+        {
+            var runtime = Run(
+                "class Box {\n"
+                    + "  private var _value: int;\n"
+                    + "  public value: int { get => _value; set => _value = value; }\n"
+                    + "  constructor(v: int) { _value = v; }\n"
+                    + "}\n"
+                    + "fun run(): int { let b = Box(1); b.value = 9; return b.value; }");
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+        #endregion
+
         #region Enums
         [Fact]
         public void AnEnumCaseIsAStaticInstanceTheInitializerBuilt()

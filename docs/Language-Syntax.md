@@ -611,6 +611,14 @@ subclass can skip the vtable and, per §3.6, becomes a candidate for inlining. `
 legal together with `override`; on a `virtual` or `abstract` member it would contradict itself, and
 on a non-virtual one it would say nothing.
 
+**A method body may be written `=> expr;` instead of `{ return expr; }`.** This is pure sugar,
+resolved by the parser alone — `fun add(a: int, b: int): int => a + b;` parses to exactly the
+same block a written `{ return a + b; }` would, so nothing downstream of parsing (binder,
+emitter, inlining) treats the two forms differently. A `void`-returning method's arrow body
+evaluates its expression for effect instead of wrapping it in a `return`, because `void` rejects
+a `return` carrying a value: `fun log(): void => print("go");` is sugar for
+`{ print("go"); }`, not `{ return print("go"); }`.
+
 ### 3.4 Properties
 
 `name: string { get; set; }` is an auto-property: the compiler synthesizes a private backing field
@@ -622,6 +630,21 @@ error. This is exactly the `get_x`/`set_x` accessor-method shape `SurtrPropertyB
 wires for built-ins, applied to user-declared classes too.
 
 An `inline`/`forceinline` on the property applies to its accessors (§3.6).
+
+**Each accessor may use the same `=>` sugar §3.3 gives a method**, independently of the other:
+`get => _x;` is sugar for `get { return _x; }`, and `set => _x = value;` is sugar for
+`set { _x = value; }` — a setter's expression is always evaluated for effect, the same rule a
+`void` method's arrow body follows, since a setter has nothing to return. The two forms may be
+mixed with a braced accessor or with the auto-generated bare form:
+
+```
+public value: int { get => _x; set { _x = value; } }
+```
+
+**A read-only property with a single expression may skip the accessor block entirely**:
+`x: int => _x;` is sugar for `x: int { get => _x; }` — a `get`-only property with an arrow
+getter, written with no braces at all. It is exactly as read-only as the equivalent
+`{ get { return _x; } }` form: assigning to it outside a constructor is still a compile error.
 
 ### 3.5 Signatures: overloading and parameter lists
 

@@ -319,6 +319,31 @@ namespace Surtr.Compiler.Syntax
                 initializer, isMutable, modifiers.IsConst, modifiers.IsStatic, modifiers.IsNative);
         }
 
+        /// <summary>
+        /// Lowers an arrow-bodied member (§3.3, §3.4) to a one-statement block, so nothing
+        /// downstream of the parser needs to know the sugar was used. A <c>void</c>-returning
+        /// method and a property setter wrap the expression as a statement rather than a
+        /// <c>return</c> — a literal <c>return &lt;value&gt;</c> there is rejected by
+        /// <c>BodyBinder.BindReturn</c>, the same reason C# treats an expression-bodied member as
+        /// a statement rather than sugar for a written <c>return</c>.
+        /// </summary>
+        private BlockStatementSyntax ParseArrowBody(bool returnsVoid)
+        {
+            SourceLocation arrowStart = reader.CurrentLocation;
+            reader.Advance(); // '=>'
+
+            SourceLocation expressionStart = reader.CurrentLocation;
+            ExpressionSyntax expression = ParseExpression();
+            reader.Expect(TokenType.Semicolon, "';' after the expression body");
+
+            SourceSpan statementSpan = SpanFrom(expressionStart);
+            StatementSyntax statement = returnsVoid
+                ? new ExpressionStatementSyntax(statementSpan, expression)
+                : new ReturnStatementSyntax(statementSpan, expression);
+
+            return new BlockStatementSyntax(SpanFrom(arrowStart), new StatementSyntax[] { statement });
+        }
+
         /// <summary>Parses a property, auto or with explicit accessors (§3.4).</summary>
         private DeclarationSyntax ParseProperty(SourceLocation start, IReadOnlyList<string> docComment,
             IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers)
@@ -326,6 +351,17 @@ namespace Surtr.Compiler.Syntax
             string name = reader.Advance().ToString();
             reader.Expect(TokenType.Colon, "':' before the property type");
             TypeSyntax type = ParseType();
+
+            // The short form of a read-only property (§3.4): `x: int => field;` is sugar for a
+            // single `get => field;` accessor, skipping the braces entirely.
+            if (reader.Check(TokenType.FatArrow))
+            {
+                BlockStatementSyntax getterBody = ParseArrowBody(returnsVoid: false);
+                var getter = new AccessorSyntax(getterBody.Span, isGetter: true, getterBody);
+
+                return new PropertyDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, name, type,
+                    new[] { getter }, modifiers.IsStatic, modifiers.Dispatch, modifiers.IsSealed, modifiers.Inline, modifiers.IsNative);
+            }
 
             // An interface's property is signature-only (§2.3), so the accessor block may be
             // followed by nothing at all.
@@ -349,9 +385,15 @@ namespace Surtr.Compiler.Syntax
 
                 reader.Advance();
 
-                // A bare accessor is the auto-generated form; a braced one has a real body (§3.4).
+                // A bare accessor is the auto-generated form; a braced one has a real body; an
+                // arrow one (§3.4) is sugar for the braced form — a getter returns its expression,
+                // a setter evaluates it for effect, the same rule ParseArrowBody applies to a method.
                 BlockStatementSyntax? body = null;
-                if (reader.Check(TokenType.LeftBrace))
+                if (reader.Check(TokenType.FatArrow))
+                {
+                    body = ParseArrowBody(returnsVoid: !isGetter);
+                }
+                else if (reader.Check(TokenType.LeftBrace))
                 {
                     body = ParseBlock();
                 }
@@ -383,8 +425,17 @@ namespace Surtr.Compiler.Syntax
             TypeSyntax returnType = ParseType();
 
             // No body means abstract, native, or an interface member — all signature-only (§2.3).
+            // An arrow body (§3.3) is sugar for a block holding one statement — a `return` for a
+            // value-returning method, an expression statement for a `void` one.
             BlockStatementSyntax? body = null;
-            if (!reader.Match(TokenType.Semicolon))
+            if (reader.Check(TokenType.FatArrow))
+            {
+                bool returnsVoid = returnType is NamedTypeSyntax namedReturnType
+                    && namedReturnType.Path.Count == 1
+                    && namedReturnType.Path[0] == "void";
+                body = ParseArrowBody(returnsVoid);
+            }
+            else if (!reader.Match(TokenType.Semicolon))
             {
                 body = ParseBlock();
             }

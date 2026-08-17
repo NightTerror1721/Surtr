@@ -158,18 +158,32 @@ que sí ejercitan la sustitución que arreglaron los dos commits):
 accessor. No hay binder/emisor que tocar — es azúcar sintáctica pura sobre
 `BlockStatementSyntax`.
 
+**Confirmado con el usuario**: se admite también la forma corta de propiedad sin `get`/`set`
+(`x: int => _x;`).
+
 **Cambios**:
-- `ParseMethod`: si en vez de `{` se ve `FatArrow`, parsear una expresión, envolverla en un
-  `ReturnStatementSyntax` sintético dentro de un `BlockStatementSyntax` de un solo elemento
-  (si el método retorna `void`, envolver en una sentencia-expresión en vez de un `return`,
-  igual que hace C#), y exigir `;` de cierre.
-- `ParseProperty`: mismo patrón por accessor — `get => expr;` se traduce a
-  `{ return expr; }`, `set => expr;` a `{ expr; }` (con `value` disponible en el cuerpo, como
-  cualquier setter).
-- Decidir si se admite también la forma corta sin `get`/`set` (`x: int => field;`) — es una
-  decisión de gramática, no de implementación; recomendado admitirla como azúcar de
-  `{ get => field; }`.
-- Actualizar `docs/Language-Syntax.md` §3.3 y §3.4 con la nueva forma.
+- Nuevo helper `ParseArrowBody(bool returnsVoid)` en `Parser.Declarations.cs`: consume `=>`,
+  parsea una expresión y la envuelve en un `BlockStatementSyntax` de un solo elemento — un
+  `ReturnStatementSyntax` normalmente, o un `ExpressionStatementSyntax` cuando `returnsVoid` es
+  `true` (un `return <valor>` dentro de un método `void` lo rechaza `BodyBinder.BindReturn`, la
+  misma razón por la que C# trata un miembro expression-bodied como sentencia y no como azúcar
+  de un `return` literal).
+- `ParseMethod`: si en vez de `{`/`;` se ve `FatArrow`, usa `ParseArrowBody`, decidiendo
+  `returnsVoid` mirando si el tipo de retorno escrito es literalmente `void` (comprobación
+  sintáctica, sin depender del binder).
+- `ParseProperty`: el bucle de accessors gana una rama `FatArrow` antes de la de `{`/`;` —
+  `get => expr;` siempre es un `return`, `set => expr;` siempre una sentencia-expresión (un
+  setter no retorna nada). Además, antes de exigir `{` para abrir el bloque de accessors, si lo
+  que sigue al tipo es `=>`, se produce directamente una propiedad de solo lectura con un único
+  accessor `get` sintético — `x: int => _x;` es azúcar de `x: int { get => _x; }`.
+- Una propiedad/accessor con cuerpo `=>` dentro de una interfaz queda rechazada por el mismo
+  camino que ya rechaza un cuerpo `{ }` ahí (`SurtrInterface.AddMethod`/`AddProperty` no
+  aceptan implementación) — no hizo falta ninguna validación nueva.
+- Cobertura de punta a punta en `ModuleEmitterTests.cs` (región "Arrow-bodied members"):
+  método con valor de retorno, método `void` con efecto, propiedad de forma corta, y
+  get/set ambos con `=>` en la misma propiedad — las 4 pasan a la primera.
+- Actualizado `docs/Language-Syntax.md` §3.3 y §3.4 con la nueva forma.
+- Suite completa verificada: 2069/2069 tests en verde.
 
 **Commit**: `Feature: soporte de miembros con cuerpo => (métodos y propiedades de solo lectura)`
 
@@ -461,7 +475,7 @@ cada fase), una pasada de cierre:
 |---|---|---|
 | 0 | Red de seguridad LSP + fix de keywords (+ 2 bugs reales de hover/imports encontrados y corregidos) | **Hecha** |
 | 1 | Verificación del bug de interfaces built-in genéricas | **Hecha** (no reproducido; tests de regresión añadidos) |
-| 2 | Sintaxis `=>` en métodos/propiedades | Pendiente |
+| 2 | Sintaxis `=>` en métodos/propiedades | **Hecha** |
 | 3 | Modificadores independientes por accessor | Pendiente |
 | 4 | Método → valor closure sin lambda | Pendiente |
 | 5 | Keyword `attribute`, target y retención | Pendiente |
