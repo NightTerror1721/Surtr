@@ -2849,6 +2849,145 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Reflexion de atributos: Type/Member (Fase 6)
+        [Fact]
+        public void TypeOfReportsTheDeclaredClassName()
+        {
+            var runtime = Run(
+                "class Box { public let value: int = 0; }\n"
+                    + "fun boxTypeName(): string { return Type.of(Box()).name; }");
+
+            Assert.Equal("Box", Text(runtime, "boxTypeName"));
+        }
+
+        [Fact]
+        public void TypeOfBoxesAPrimitiveOntoItsSharedClass()
+        {
+            var runtime = Run("fun intTypeName(): string { return Type.of(5).name; }");
+            Assert.Equal("int", Text(runtime, "intTypeName"));
+        }
+
+        [Fact]
+        public void TypeMembersCountsDeclaredMembersOnceEachEvenAnAutoProperty()
+        {
+            var runtime = Run(
+                "class Box {\n"
+                    + "  public let value: int = 0;\n"
+                    + "  public size: int { get; set; }\n"
+                    + "  public fun describe(): int { return 1; }\n"
+                    + "}\n"
+                    + "fun boxMemberCount(): int { return Type.of(Box()).members().length; }");
+
+            // ctor (synthesized, since `value` has an initializer) + value (field) + size
+            // (property, its backing field and get_size/set_size folded into the one property) +
+            // describe (method) = 4, not the 6 raw declarations the linker actually tracks.
+            Assert.Equal(4, Int(runtime, "boxMemberCount"));
+        }
+
+        [Fact]
+        public void TypeMembersReportsEachDeclarationsOwnKind()
+        {
+            var runtime = Run(
+                "class Box {\n"
+                    + "  public let value: int = 0;\n"
+                    + "  public size: int { get; set; }\n"
+                    + "  public fun describe(): int { return 1; }\n"
+                    + "}\n"
+                    + "fun kinds(): string {\n"
+                    + "  let members = Type.of(Box()).members();\n"
+                    + "  var result = \"\";\n"
+                    + "  for (m in members) { result = result + m.name + \":\" + m.kind + \";\"; }\n"
+                    + "  return result;\n"
+                    + "}");
+
+            string kinds = Text(runtime, "kinds");
+            Assert.Contains("value:field;", kinds);
+            Assert.Contains("size:property;", kinds);
+            Assert.Contains("describe:method;", kinds);
+        }
+
+        [Fact]
+        public void MemberDeclaringTypePointsBackToItsOwner()
+        {
+            var runtime = Run(
+                "class Box { public let value: int = 0; }\n"
+                    + "fun declaringTypeName(): string {\n"
+                    + "  for (m in Type.of(Box()).members()) {\n"
+                    + "    if (m.name == \"value\") { return m.declaringType.name; }\n"
+                    + "  }\n"
+                    + "  return \"missing\";\n"
+                    + "}");
+
+            Assert.Equal("Box", Text(runtime, "declaringTypeName"));
+        }
+
+        [Fact]
+        public void ADeclarationWithNoAttributesReportsAnEmptyList()
+        {
+            var runtime = Run(
+                "class Box { public let value: int = 0; }\n"
+                    + "fun attributeCount(): int {\n"
+                    + "  for (m in Type.of(Box()).members()) {\n"
+                    + "    if (m.name == \"value\") { return m.attributes().length; }\n"
+                    + "  }\n"
+                    + "  return -1;\n"
+                    + "}");
+
+            Assert.Equal(0, Int(runtime, "attributeCount"));
+        }
+
+        /// <summary>Reads a member's attribute back as a real, already-constructed instance.</summary>
+        [Fact]
+        public void MemberAttributesExposesTheMaterializedAttributeInstance()
+        {
+            var runtime = Run(
+                "class Marker : Attribute { public let n: int = 0; }\n"
+                    + "class Target {\n"
+                    + "  @Marker(3)\n"
+                    + "  public fun thing(): int { return 1; }\n"
+                    + "}\n"
+                    + "fun markerValue(): int {\n"
+                    + "  for (m in Type.of(Target()).members()) {\n"
+                    + "    if (m.name == \"thing\") {\n"
+                    + "      let marker = m.attributes()[0] as Marker;\n"
+                    + "      return marker.n;\n"
+                    + "    }\n"
+                    + "  }\n"
+                    + "  return -1;\n"
+                    + "}");
+
+            Assert.Equal(3, Int(runtime, "markerValue"));
+        }
+
+        [Fact]
+        public void TypeAttributesReadsAnAttributeWrittenOnTheClassItself()
+        {
+            var runtime = Run(
+                "class Marker : Attribute { public let n: int = 0; }\n"
+                    + "@Marker(9)\n"
+                    + "class Tagged { public let value: int = 0; }\n"
+                    + "fun taggedMarkerValue(): int { return (Type.of(Tagged()).attributes()[0] as Marker).n; }");
+
+            Assert.Equal(9, Int(runtime, "taggedMarkerValue"));
+        }
+
+        [Fact]
+        public void TypeBaseTypeWalksToTheDeclaredParentAndIsNullAtTheRoot()
+        {
+            var runtime = Run(
+                "class Animal { public let legs: int = 4; }\n"
+                    + "class Dog : Animal { public let name: string = \"Rex\"; }\n"
+                    + "fun dogBaseName(): string { return Type.of(Dog()).baseType.name; }\n"
+                    + "fun animalHasNoBase(): int {\n"
+                    + "  if (Type.of(Animal()).baseType == null) { return 1; }\n"
+                    + "  return 0;\n"
+                    + "}");
+
+            Assert.Equal("Animal", Text(runtime, "dogBaseName"));
+            Assert.Equal(1, Int(runtime, "animalHasNoBase"));
+        }
+        #endregion
+
         #region Accessibility (§3.1)
         private static SurtrCompilation Reject(string source, params (string Path, string Text)[] extra)
         {

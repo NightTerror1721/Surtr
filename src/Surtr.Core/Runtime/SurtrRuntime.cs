@@ -319,6 +319,22 @@ namespace Surtr.Runtime
             return value;
         }
 
+        /// <summary>Wraps a class as a first-class <c>Type</c> value, as <c>Type.of</c> and <c>Type.members</c>/<c>Type.baseType</c> do.</summary>
+        public SurtrTypeValue NewTypeValue(SurtrClass wrapped)
+        {
+            var value = new SurtrTypeValue(wrapped);
+            _context.EntityRegistry.Register(value);
+            return value;
+        }
+
+        /// <summary>Wraps a declaration as a first-class <c>Member</c> value, as <c>Type.members</c> does.</summary>
+        public SurtrMemberValue NewMemberValue(SurtrMemberInfo wrapped)
+        {
+            var value = new SurtrMemberValue(wrapped);
+            _context.EntityRegistry.Register(value);
+            return value;
+        }
+
         /// <summary>Builds a closure over <paramref name="method"/>, capturing <paramref name="upValues"/> by value.</summary>
         /// <exception cref="ArgumentException"><paramref name="method"/> has no body.</exception>
         public SurtrClosure NewClosure(SurtrMethodInfo method, SurtrValue[]? upValues = null, SurtrClassReference typeReference = default)

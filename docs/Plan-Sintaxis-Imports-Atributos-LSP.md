@@ -14,7 +14,7 @@ mismo formato que `docs/Plan-Globales-Nativos-Inline-Operadores.md`.
 | 2 | Asignar una función a una variable/campo/parámetro de tipo closure solo por su nombre, sin lambda explícita | **Hecho** — implementado como azúcar de lambda (`obj.method` ↔ `(p) => obj.method(p)`), no como un opcode nuevo, tras descubrir que `InvokeClosure` no antepone upvalues a los argumentos | — |
 | 3 | Métodos y propiedades de solo lectura con `=>` | Ausente. `FatArrow` ya existe como token (solo lo usan las lambdas); es azúcar sintáctica pura | Pequeño |
 | 4 | Modificadores (`inline`, `forceinline`, `override`, etc.) independientes por `get`/`set` | **Hecho** — alcance completo (visibilidad, inline/forceinline, virtual/override/abstract/sealed), más el descubrimiento y arreglo de un bug real (`sealed` en una propiedad nunca sellaba nada) | — |
-| 5 | Atributos declarables con `attribute`, con retención y target | **Hecho** — keyword `attribute`, target y retención `CompileTimeOnly`/`Runtime` completos (comprobados en la misma compilación; import cruzado de target queda documentado como límite). Falta la API de reflexión desde Surtr (Fase 6) | — |
+| 5 | Atributos declarables con `attribute`, con retención y target | **Hecho** — keyword `attribute`, target y retención `CompileTimeOnly`/`Runtime` completos (comprobados en la misma compilación; import cruzado de target queda documentado como límite). API de reflexión desde Surtr (`Type`/`Member`, ver Fase 6 más abajo) también hecha | — |
 | 6 | `operator[]` y operadores como miembros de instancia, no solo estáticos | **Ya implementado** — ver `docs/Plan-Globales-Nativos-Inline-Operadores.md`, Fase C (Ruta A: operadores de instancia con `abstract`/`virtual`/interfaz). Sin trabajo pendiente | — |
 | 7 | Varianza de genéricos (`in`/`out`) | Genéricos correctos y completos hoy (§10.1b cerrado, sin TODOs). Varianza está **deliberadamente diferida** en `Language-Syntax.md` §14.4 — no es prioritaria mientras quede pendiente §10.2 (STDLIB en Surtr) | Diferido, no se planifica |
 | 8 | Cargador de STDLIB con selección de módulos (sandbox) + enlace nativo portable | El mecanismo de carga (`SurtrStdlib.LoadInto`) ya existe pero es todo-o-nada; el enlace nativo ya es independiente del código fuente `.surtr` en tiempo de ejecución, pero las imágenes no están embebidas como recursos y no hay detección temprana de desincronización | Pequeño-medio |
@@ -378,7 +378,7 @@ lista con la palabra `CompileTimeOnly`, con `Runtime` por defecto.
 
 ---
 
-## Fase 6 — API de reflexión de atributos desde Surtr
+## Fase 6 — API de reflexión de atributos desde Surtr — **Hecha**
 
 **Depende de la Fase 5.** Hoy no existe ningún built-in de tipo `Type`/`Member` en Surtr —
 leer atributos solo es posible desde C# vía `SurtrMemberInfo`. Añadir una familia de built-ins
@@ -386,6 +386,47 @@ mínima (p. ej. `Type`, con métodos nativos para enumerar miembros y sus atribu
 retención `Runtime`) siguiendo el mismo patrón que el resto de `SurtrBuiltIns`
 (`Direct` dispatch, sin virtual salvo para contratos existentes). Es la pieza más grande de
 este bloque porque es una familia de tipos nueva, no un parche.
+
+**Diseño final**: dos clases built-in nuevas, `Type` y `Member`, declaradas en `SurtrBuiltIns`
+exactamente como `Attribute`/`Math`/`Iterator` — comparten módulo `surtr`, así que
+`MetadataImporter` las ve automáticamente sin ningún cambio en el compilador. La parte no
+trivial era cómo guardar una referencia a metadata (`SurtrClass`/`SurtrMemberInfo`) dentro de
+un valor Surtr, dado que un slot de `SurtrInstance` solo admite `SurtrValue`s. Se descartó
+"guardar el descriptor como string y re-resolver" (funciona pero pierde identidad exacta de
+overload en un método) a favor de replicar el patrón que ya usa `SurtrIterator`: dos
+`SurtrObject` dedicados nuevos, `SurtrTypeValue`/`SurtrMemberValue`
+(`Runtime/Objects/SurtrTypeValue.cs`, `SurtrMemberValue.cs`), cada uno con un campo CLR normal
+(`Wrapped`) apuntando directamente a la metadata real — sin pasar nunca por slots, sin
+re-resolución, y la identidad de un overload concreto queda fijada en el propio wrapper.
+`SurtrRuntime.NewTypeValue`/`NewMemberValue` los registran en el entity registry igual que
+`NewIterator`. Los miembros nativos viven en `Runtime/BuiltIns/SurtrReflectionBuiltIns.cs`.
+
+**API resultante** (documentada en `Language-Syntax.md` §11):
+- `Type.of(value: unknown): Type` — única forma de obtener uno; ni `Type()` ni `Member()` son
+  invocables desde Surtr porque ninguna de las dos clases declara constructor (mismo mecanismo
+  que ya impedía `iterator()`).
+- `Type.name`, `Type.baseType` (null en la raíz), `Type.members(): Member[]`,
+  `Type.attributes(): Attribute[]`.
+- `Member.name`, `Member.kind` (string: field/property/method/class/enum/interface),
+  `Member.isStatic`, `Member.declaringType: Type`, `Member.attributes(): Attribute[]`.
+- `members()` deduplica de dos formas: el getter/setter sintético de una auto-property no
+  aparece por separado del `property` que los generó (se excluyen contra el conjunto de
+  accessors de cada `SurtrPropertyInfo`), y cualquier nombre que empiece por `$` (backing
+  field, lambda, bridge — la convención ABI de nombres sintéticos ya documentada en este mismo
+  archivo) se omite directamente. Un constructor sintetizado sí aparece, como `ctor`.
+- Cada `SurtrAttributeUsage.Instance` ya es la instancia real materializada en la carga del
+  módulo (§11), así que `attributes()` no construye nada — solo empaqueta las referencias ya
+  vivas en un array. Como `ModuleEmitter` nunca emite un atributo `CompileTimeOnly` sobre un
+  miembro, `SurtrMemberInfo.Attributes` ya contiene únicamente retención `Runtime`; no hace
+  falta ningún filtro en tiempo de ejecución.
+- Deliberadamente sin lectura/invocación de miembro (`field.get(instance)`,
+  `method.invoke(...)`) — es una API de solo enumeración, tal como pedía el alcance.
+
+**Tests**: 9 nuevos en `ModuleEmitterTests.cs` (región "Reflexion de atributos: Type/Member"),
+ejecutando Surtr real de punta a punta — nombre de clase y de primitivo, conteo/deduplicación
+de miembros, `kind` por miembro, `declaringType`, lista vacía de atributos, lectura de un
+atributo con argumento vía `as`, atributo a nivel de clase, y `baseType` subiendo la jerarquía
+y siendo `null` en la raíz. 2102/2102 tests en verde, 0 warnings.
 
 **Commit**: `Feature: API de reflexion de atributos accesible desde Surtr`
 

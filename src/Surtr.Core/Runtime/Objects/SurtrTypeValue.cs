@@ -1,0 +1,29 @@
+#nullable enable
+
+using Surtr.Runtime.BuiltIns;
+using Surtr.Runtime.Classes;
+
+namespace Surtr.Runtime.Objects
+{
+    /// <summary>
+    /// A first-class handle to a <see cref="SurtrClass"/>, behind Surtr's <c>Type</c>.
+    /// </summary>
+    /// <remarks>
+    /// Class metadata is owned outright and lives for its owner's whole lifetime, never traced
+    /// and never registered with any entity registry of its own - see <c>SurtrBuiltIns</c>'s
+    /// remarks on why. This is the one place a Surtr value carries a raw reference to it anyway,
+    /// the same way <see cref="SurtrNativeObject"/> carries a raw reference to a host object:
+    /// <see cref="Wrapped"/> is plain CLR state the collector does not have to trace, because
+    /// what it points at outlives this object regardless.
+    /// </remarks>
+    public sealed class SurtrTypeValue : SurtrObject
+    {
+        internal SurtrTypeValue(SurtrClass wrapped) : base(SurtrBuiltIns.Type)
+        {
+            Wrapped = wrapped;
+        }
+
+        /// <summary>The class this value reflects.</summary>
+        public SurtrClass Wrapped { get; }
+    }
+}

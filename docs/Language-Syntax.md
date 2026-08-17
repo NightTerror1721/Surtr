@@ -2272,6 +2272,42 @@ own declaration — an attribute imported from an already-compiled module image 
 against its target list at the use site, only at its own declaration. Declaring an attribute in the
 same project as everything that uses it, which is by far the common case, is unaffected.
 
+**Reading an attribute back from Surtr itself, not just from a host, goes through `Type` and
+`Member`** — two more built-ins, always in scope like `Attribute` and `Math`:
+
+```
+let t = Type.of(someValue);   // the runtime class behind any value, primitives included
+t.name;                       // "Player"
+t.baseType;                   // the Type one level up, or null at the root
+t.members();                  // Member[] - this type's own declared fields, properties,
+                               // methods and nested types, one entry each
+t.attributes();                // Attribute[] written directly on the type
+
+for (m in t.members()) {
+    m.name;                   // "health"
+    m.kind;                   // "field" | "property" | "method" | "class" | "enum" | "interface"
+    m.isStatic;
+    m.declaringType;          // the Type that declared it
+    m.attributes();           // Attribute[] written on this member, `Runtime`-retention only
+}
+```
+
+`Type.of` is the only way to get one — declaring a bare `Type()`/`Member()` is rejected, the same
+way `iterator()` is: neither declares a constructor. `members()` reports each declaration once,
+under the shape a reader of the source would recognize: an auto-property's synthesized backing
+field and its `get_x`/`set_x` accessors fold into the one `property` entry, and a name the compiler
+made up (leading `$` — bridges, lambdas, backing fields the source never wrote) is left out
+entirely. A constructor appears once, named `ctor`. An attribute an attribute usage names is
+already the real, constructed instance §11 describes above — `m.attributes()[0] as Range` reads its
+fields directly, no separate value-reading API needed. Only `Runtime`-retention attributes are ever
+reachable this way, and there is nothing to filter for it at read time: `CompileTimeOnly` never
+reaches a member's attribute list in the first place (`ModuleEmitter` never emits it), so `Type`
+and `Member` only ever see what was already there.
+
+This is deliberately read-only: `Type`/`Member` enumerate declarations and their attributes, and
+stop there. Reading or calling the member itself — `field.get(instance)`, `method.invoke(instance,
+args)` — is a different and considerably larger feature and is not part of this surface.
+
 ---
 
 ## 12. Comments and documentation

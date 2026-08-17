@@ -171,6 +171,23 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass Attribute;
 
         /// <summary>
+        /// A first-class handle to another class's metadata, behind every <see cref="SurtrTypeValue"/>.
+        /// </summary>
+        /// <remarks>
+        /// Declares no constructor and no field of its own - the same reason <see cref="Iterator"/>
+        /// declares none - so Surtr source can never write <c>Type()</c> itself; the only way to
+        /// get one is <c>Type.of(...)</c> or another <c>Type</c>/<c>Member</c> member handing one
+        /// back.
+        /// </remarks>
+        public static readonly SurtrClass Type;
+
+        /// <summary>
+        /// A first-class handle to one field, property, method or nested type declaration, behind
+        /// every <see cref="SurtrMemberValue"/>.
+        /// </summary>
+        public static readonly SurtrClass Member;
+
+        /// <summary>
         /// The root native class, behind a <see cref="SurtrNativeProxy"/> the host did not declare
         /// a type for. Host-declared native classes are separate and live on the runtime.
         /// </summary>
@@ -252,6 +269,8 @@ namespace Surtr.Runtime.BuiltIns
             InvalidOperationException = DeclareObject("InvalidOperationException", Exception);
             Math = DeclareObject("Math", isAbstract: true);
             Attribute = DeclareObject("Attribute", isAbstract: true);
+            Type = DeclareObject("Type");
+            Member = DeclareObject("Member");
             Iterator = DeclareObject("iterator");
 
             Erased = Declare("erased", SurtrValueTypeCode.Erased, SurtrClassReference.Erased, isAbstract: true);
@@ -304,6 +323,13 @@ namespace Surtr.Runtime.BuiltIns
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(InvalidOperationException, handles));
             SurtrStandardLibrary.DeclareMath(BuilderFor(Math, handles));
             SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
+
+            // After Attribute, since Type.attributes()/Member.attributes() both name it, and
+            // after each other, since Type.members() names Member and Member.declaringType names
+            // Type - all three classes already exist by this point, only their members are added
+            // here.
+            SurtrReflectionBuiltIns.DeclareType(BuilderFor(Type, handles));
+            SurtrReflectionBuiltIns.DeclareMember(BuilderFor(Member, handles));
 
             // Kept as fields because a compiler has to name them to lower `for-in` and `<=>`: those
             // lowerings are calls through a contract's own slots, and looking one up by a mangled
