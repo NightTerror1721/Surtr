@@ -243,6 +243,80 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertReports(compilation, SurtrDiagnosticCode.WrongTypeArgumentCount);
         }
+
+        /// <summary>
+        /// §5.3.1: <c>array&lt;T&gt;</c>/<c>dict&lt;K,V&gt;</c>/<c>tuple&lt;...&gt;</c> are a pure
+        /// alias for the symbolic forms — the literal same interned <see cref="TypeSymbol"/>, not
+        /// merely a convertible one, so a field declared through either spelling is the same field.
+        /// </summary>
+        [Fact]
+        public void TheNameableFormOfACompositeIsTheSameTypeAsItsSymbolicForm()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Holder {\n"
+                    + "  public var a1: array<int>;\n"
+                    + "  public var a2: int[];\n"
+                    + "  public var d1: dict<int, string>;\n"
+                    + "  public var d2: {int: string};\n"
+                    + "  public var t1: tuple<int, string>;\n"
+                    + "  public var t2: (int, string);\n"
+                    + "}"));
+
+            AssertNoErrors(compilation);
+
+            var fields = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().ToList();
+
+            Assert.Same(fields[0].Type, fields[1].Type);
+            Assert.Same(fields[2].Type, fields[3].Type);
+            Assert.Same(fields[4].Type, fields[5].Type);
+        }
+
+        /// <summary>An explicit <c>tuple&lt;&gt;</c> names the same 0-arity/unit tuple a bare <c>()</c> element list would.</summary>
+        [Fact]
+        public void AnExplicitEmptyDiamondNamesTheUnitTuple()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Holder { public var u: tuple<>; }"));
+
+            AssertNoErrors(compilation);
+
+            var factory = compilation.TypeFactory;
+            var field = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single();
+
+            Assert.Same(factory.Tuple(System.Array.Empty<TypeSymbol>()), field.Type);
+        }
+
+        /// <summary>
+        /// The redirect is keyed on the built-in's own identity, not the name "array" in the
+        /// abstract — a module that shadows it with its own declaration keeps meaning that
+        /// declaration, exactly as §1.1 already promises for any other built-in name.
+        /// </summary>
+        [Fact]
+        public void AUserDeclarationShadowingArrayIsNotRedirectedToTheBuiltIn()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class array<T> { public let tag: T; }\nclass Holder { public var a: array<int>; }"));
+
+            AssertNoErrors(compilation);
+
+            var userArray = Type(binder, "game.core", "array");
+            var field = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single();
+
+            Assert.Same(userArray, ((NamedTypeSymbol)field.Type).Definition);
+            Assert.NotSame(compilation.TypeFactory.Array(compilation.TypeFactory.Int), field.Type);
+        }
+
+        /// <summary>Matches <c>TupPack</c>'s 255-element arity cap (§5.3.1), diagnosed here rather than left to fail only at emission.</summary>
+        [Fact]
+        public void ATupleWithMoreThan255ElementsIsReported()
+        {
+            var elements = string.Join(", ", System.Linq.Enumerable.Repeat("int", 256));
+
+            Bind(out var compilation, ("game/core/Test.surtr",
+                $"class Holder {{ public var t: tuple<{elements}>; }}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.WrongTypeArgumentCount);
+        }
         #endregion
 
         #region Imports

@@ -346,7 +346,7 @@ The primitive conversions, all between `int` and one other family — anything e
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
 | `0x61` | `I2F` | `opcode(1)` · 1 byte | `..., a -> ..., float` | Widens an integer to a float. |
-| `0x62` | `F2I` | `opcode(1)` · 1 byte | `..., a -> ..., int` | Narrows a float to an integer. Lossy. The rounding mode, and what happens for NaN or out-of-range values, still need to be pinned down. |
+| `0x62` | `F2I` | `opcode(1)` · 1 byte | `..., a -> ..., int` | Narrows a float to an integer. Lossy, and pinned down rather than an unchecked C# cast, whose behaviour for an out-of-range double is platform-defined and would differ between x64 and ARM (§1.9). Truncates toward zero in range; saturates to `int.MinValue`/`int.MaxValue` outside it; `NaN` converts to `0`. |
 | `0x63` | `I2C` | `opcode(1)` · 1 byte | `..., a -> ..., char` | Retags an integer as a character. Int, bool and char share one representation, so this changes only the value's tag and truncates the payload to 16 bits. The tag still matters: it is what decides which class the value reports and which box `BoxChar` versus `BoxInt` produces. |
 | `0x64` | `C2I` | `opcode(1)` · 1 byte | `..., a -> ..., int` | Retags a character as an integer. Always exact - every character fits an integer. |
 | `0x65` | `I2B` | `opcode(1)` · 1 byte | `..., a -> ..., bool` | Converts an integer to a boolean. Normalises as well as retags - any non-zero integer becomes `true`, so the payload is always 0 or 1 afterwards. That normalisation is what lets every boolean opcode treat the payload as a bit. |

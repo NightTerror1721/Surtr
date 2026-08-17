@@ -42,6 +42,8 @@ public native fun ceil(x: float): float;
 
 public native fun round(x: float): float;
 
+public native fun hypot(x: float, y: float): float;
+
 
 public forceinline const fun isNaN(value: float): bool { return value != value; }
 

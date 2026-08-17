@@ -62,7 +62,7 @@ services, so it must be C#:
 |---|---|---|
 | `surtr.exceptions.Exceptions` | `src/surtr/exceptions/Exceptions.surtr` | The exception subclasses below the root (`ArgumentException`, `IndexOutOfRangeException`, `KeyNotFoundException`, `NullReferenceException`, `DivideByZeroException`, `InvalidCastException`, `StackOverflowException`, `InvalidOperationException`). Each is a constructor and nothing else — the class a `catch` names is what distinguishes them. These are the classes a VM trap surfaces as (`Language-Syntax.md` §13.3). |
 | `surtr.math.Angle` | `src/surtr/math/Angle.surtr` | The `Angle` value class. |
-| `surtr.math.Math` | `src/surtr/math/Math.surtr` | Ordinary logic over other library calls (`abs`, `min`, `max`, `clamp`). |
+| `surtr.math.Math` | `src/surtr/math/Math.surtr` | The float constants, the trig/float `native fun` declarations (`sin`, `cos`, `atan2`, `sqrt`, `pow`, `log`, `floor`, `ceil`, `round`, `hypot`, …) whose bodies `SurtrStdlib.LoadInto` publishes by link name, and ordinary logic over them (`abs`, `min`, `max`, `clamp`, `lerp`, …). |
 
 More modules can be added by dropping a `.surtr` file anywhere under `src/surtr/`; the build picks
 it up automatically.
@@ -88,8 +88,11 @@ depend on the compiler), so the produced bytes must reach the core some other wa
 3. Those images are transported to `Surtr.Core` — as embedded resources committed into the core
    assembly, or as files supplied by the host. This is a **build-time** step: regenerate the
    committed images whenever the `.surtr` sources change.
-4. At runtime, `SurtrRuntime` (or a small loader in `Surtr.Core`) `Instantiate()`-s and
-   `LoadModule()`-s each stdlib module on startup, in build order.
+4. At runtime, `SurtrStdlib.LoadInto(runtime, images)` (`Surtr.Core/Runtime/SurtrStdlib.cs`) is the
+   loader: it publishes every `native` body the images declare (under the link names their
+   declarations travel as — `sin`, `cos`, …) and then `Instantiate()`-s and `LoadModule()`-s each
+   stdlib module in order. A module-level `native fun` in a stdlib image binds to the same C# body
+   the built-in `surtr:Math` class was built with, by link name.
 
 Because each module is a normal module, no merge into the built-in `surtr` module is needed —
 the linker and `TryResolveHandle` handle the cross-module references for free.
@@ -126,14 +129,12 @@ images too.
 
 ## What remains to implement (in `Surtr.Core`)
 
-1. **Transport and load the stdlib images.** A small loader that, given the stdlib images, loads
-   each into a runtime at startup. A natural shape: a `SurtrRuntime` constructor parameter or a
-   `SurtrStdlib.LoadInto(runtime)` helper that iterates the images in order.
-2. **Commit the built images as resources in `Surtr.Core`** so every runtime has the stdlib with no
+1. **Commit the built images as resources in `Surtr.Core`** so every runtime has the stdlib with no
    file discovery. This requires a build step that runs the tool (or `surtrc`) and embeds the
    output — the core assembly currently has no dependency on the compiler, so the generated
-   `.surtrc` bytes are committed, not built on demand.
-3. **The trap-to-class mapping** (`docs/VM-Plan.md` §1.9 × §13.3) is what actually makes
+   `.surtrc` bytes are committed, not built on demand. `SurtrStdlib.LoadInto`'s `IEnumerable<byte[]>`
+   overload is the shape those embedded resources arrive in.
+2. **The trap-to-class mapping** (`docs/VM-Plan.md` §1.9 × §13.3) is what actually makes
    `catch (e: IndexOutOfRangeException)` work; until the wrap sites in `Execute` name these real
    classes, only a catch-all matches. That coupling is tracked in `docs/VM-Plan.md` §4.2 and is
    part of this work.

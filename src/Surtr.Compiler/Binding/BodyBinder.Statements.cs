@@ -256,38 +256,11 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         private TypeSymbol ElementTypeOf(BoundExpression sequence, ForInStatementSyntax syntax)
         {
-            var type = sequence.Type.NonNullable;
+            if (TryFindIterableElementType(sequence.Type.NonNullable, out var element))
+                return element;
 
-            switch (type)
-            {
-                case ArrayTypeSymbol array:
-                    return array.ElementType;
-
-                case DictionaryTypeSymbol dictionary:
-                    // A dict yields (K, V) pairs, matching what the runtime's iterator hands back.
-                    return _factory.Tuple(new[] { dictionary.KeyType, dictionary.ValueType });
-
-                case NamedTypeSymbol named when named.SpecialType == SpecialType.String:
-                    return _factory.Char;
-
-                case NamedTypeSymbol named when named.SpecialType == SpecialType.Range:
-                    return _factory.Int;
-            }
-
-            if (type.IsError)
+            if (sequence.Type.NonNullable.IsError)
                 return _factory.ErrorType;
-
-            foreach (var member in _lookup.Reachable(type))
-            {
-                if (member is MethodSymbol { Name: "iterate", Parameters.Count: 0 } iterate)
-                {
-                    foreach (var inner in _lookup.Reachable(iterate.ReturnType))
-                    {
-                        if (inner is PropertySymbol { Name: "current" } current)
-                            return current.Type;
-                    }
-                }
-            }
 
             Report(
                 SurtrDiagnosticCode.NotSupportedOnType,
@@ -295,6 +268,62 @@ namespace Surtr.Compiler.Binding
                 $"'{sequence.Type.ToDisplayString()}' cannot be iterated; it is not a built-in collection and does not satisfy IIterable.");
 
             return _factory.ErrorType;
+        }
+
+        /// <summary>
+        /// What one step of iterating <paramref name="type"/> would yield, without reporting when it
+        /// cannot be iterated at all — <see cref="ElementTypeOf"/> is this plus the diagnostic
+        /// <c>for-in</c> wants on failure; <c>array&lt;T&gt;(iterable)</c>'s constructor dispatch
+        /// (§5.3.3) uses this directly and falls through to its own diagnostic instead, so "what
+        /// counts as iterable" has exactly one definition rather than two that could drift apart.
+        /// </summary>
+        private bool TryFindIterableElementType(TypeSymbol type, out TypeSymbol elementType)
+        {
+            var nonNullable = type.NonNullable;
+
+            switch (nonNullable)
+            {
+                case ArrayTypeSymbol array:
+                    elementType = array.ElementType;
+                    return true;
+
+                case DictionaryTypeSymbol dictionary:
+                    // A dict yields (K, V) pairs, matching what the runtime's iterator hands back.
+                    elementType = _factory.Tuple(new[] { dictionary.KeyType, dictionary.ValueType });
+                    return true;
+
+                case NamedTypeSymbol named when named.SpecialType == SpecialType.String:
+                    elementType = _factory.Char;
+                    return true;
+
+                case NamedTypeSymbol named when named.SpecialType == SpecialType.Range:
+                    elementType = _factory.Int;
+                    return true;
+            }
+
+            if (nonNullable.IsError)
+            {
+                elementType = _factory.ErrorType;
+                return false;
+            }
+
+            foreach (var member in _lookup.Reachable(nonNullable))
+            {
+                if (member is MethodSymbol { Name: "iterate", Parameters.Count: 0 } iterate)
+                {
+                    foreach (var inner in _lookup.Reachable(iterate.ReturnType))
+                    {
+                        if (inner is PropertySymbol { Name: "current" } current)
+                        {
+                            elementType = current.Type;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            elementType = _factory.ErrorType;
+            return false;
         }
 
         private BoundStatement BindSwitch(SwitchStatementSyntax syntax)

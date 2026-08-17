@@ -599,6 +599,45 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
+        public void APrimitiveConstructorIsSugarForTheEquivalentCast()
+        {
+            // §5.3.2: int(aFloat) is meant to be the literal same conversion `aFloat as int`
+            // classifies to — same Kind, same result type — reached from a second syntax rather
+            // than a rule of its own.
+            var binder = BindIn(out var compilation, "let a = int(3.9);\nlet b = 3.9 as int;");
+
+            AssertNoErrors(compilation);
+
+            var conversions = Walk(Body(binder)).OfType<BoundConversionExpression>().ToList();
+            Assert.Equal(2, conversions.Count);
+            Assert.Equal(conversions[1].Conversion.Kind, conversions[0].Conversion.Kind);
+            Assert.Same(conversions[1].Type, conversions[0].Type);
+        }
+
+        [Fact]
+        public void TheTupleCopyConstructorIsAnIdentityFold()
+        {
+            // (T1,T2)(pair: (T1,T2)) has to bind to the argument itself, unwrapped — not a new node
+            // that merely evaluates to the same value.
+            var binder = BindIn(out var compilation, "let t1 = (1, 2);\nlet t2 = tuple<int, int>(t1);");
+
+            AssertNoErrors(compilation);
+
+            var locals = Walk(Body(binder)).OfType<BoundLocalDeclarationStatement>().ToList();
+            var t1Local = locals[0].Local;
+            var t2AsLocal = Assert.IsType<BoundLocalExpression>(locals[1].Initializer);
+
+            Assert.Same(t1Local, t2AsLocal.Local);
+        }
+
+        [Fact]
+        public void APrimitiveConstructorWithNoMatchingShapeIsReported()
+        {
+            BindIn(out var compilation, "let a = int(true, false);");
+            AssertReports(compilation, SurtrDiagnosticCode.NoBuiltInConstructorMatch);
+        }
+
+        [Fact]
         public void ATypeTestIsBool()
         {
             var binder = Bind(out var compilation,

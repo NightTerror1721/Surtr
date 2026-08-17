@@ -570,6 +570,140 @@ namespace Surtr.Compiler.Binding.BoundTree
         public IReadOnlyList<BoundDictEntry> Entries { get; }
     }
 
+    /// <summary>
+    /// Which shape a <see cref="BoundCollectionCreationExpression"/> takes. Kept as a flag rather
+    /// than inferred from which optional fields are populated, since two kinds (<c>ArrayEmpty</c>
+    /// and the unit <c>TupleEmpty</c>) populate none of them at all.
+    /// </summary>
+    public enum CollectionCreationKind
+    {
+        /// <summary>An empty array — <c>array&lt;T&gt;()</c>. Emits the same as a <c>[]</c> literal.</summary>
+        ArrayEmpty,
+
+        /// <summary>A zero-filled array of a given length — <c>array&lt;T&gt;(n)</c>.</summary>
+        ArrayCapacity,
+
+        /// <summary>An array built by reading every element of a tuple — <c>array&lt;T&gt;(aTuple)</c>.</summary>
+        ArrayFromTuple,
+
+        /// <summary>An empty dictionary — <c>dict&lt;K,V&gt;()</c>.</summary>
+        DictEmpty,
+
+        /// <summary>An empty dictionary with a reserved capacity — <c>dict&lt;K,V&gt;(n)</c>.</summary>
+        DictCapacity,
+
+        /// <summary>The 0-arity/unit tuple — <c>tuple&lt;&gt;()</c>.</summary>
+        TupleEmpty,
+
+        /// <summary>A tuple built by reading every element of an array — <c>tuple&lt;...&gt;(anArray)</c>.</summary>
+        TupleFromArray,
+
+        /// <summary>
+        /// A length-<c>size</c> array where every slot holds <c>defaultValue</c> —
+        /// <c>array&lt;T&gt;(size, defaultValue)</c>, only for the shapes that can't fold onto the
+        /// zero-filling <see cref="ArrayCapacity"/> (a non-zero, or non-constant, default).
+        /// </summary>
+        ArraySizeDefault,
+
+        /// <summary>An array copied element-by-element from another array — <c>array&lt;T&gt;(anotherArray)</c>.</summary>
+        ArrayCopy,
+
+        /// <summary>An array built by walking a generic <c>IIterable&lt;T&gt;</c> — <c>array&lt;T&gt;(anIterable)</c>.</summary>
+        ArrayFromIterable,
+
+        /// <summary>A dict built from an array of <c>(K,V)</c> pairs — <c>{K:V}(pairs)</c>.</summary>
+        DictFromPairs,
+
+        /// <summary>A dict built from two parallel arrays — <c>{K:V}(keys, values)</c>.</summary>
+        DictFromParallelArrays,
+    }
+
+    /// <summary>
+    /// A construction of <c>array</c>, <c>dict</c> or <c>tuple</c> through their nameable generic
+    /// form — never through <see cref="BoundObjectCreationExpression"/>, whose emission is
+    /// unconditionally <c>ObjNew</c>, which none of these three ever go through (CLAUDE.md's
+    /// runtime-objects table: they are <c>SurtrArray</c>/<c>SurtrDictionary</c>/<c>SurtrTuple</c>,
+    /// not a <c>SurtrInstance</c>). Every shape folds to the same allocation opcodes the equivalent
+    /// literal already uses, plus at most one native call (<see cref="ReserveMethod"/>).
+    /// </summary>
+    public sealed class BoundCollectionCreationExpression : BoundExpression
+    {
+        internal BoundCollectionCreationExpression(
+            SyntaxNode syntax,
+            TypeSymbol type,
+            CollectionCreationKind kind,
+            BoundExpression? capacity = null,
+            BoundExpression? source = null,
+            BoundExpression? source2 = null,
+            BoundExpression? defaultValue = null,
+            IReadOnlyList<Conversion>? elementConversions = null,
+            MethodSymbol? reserveMethod = null,
+            BoundExpression? thrown = null,
+            TypeSymbol? sourceElementType = null)
+            : base(syntax, type)
+        {
+            Kind = kind;
+            Capacity = capacity;
+            Source = source;
+            Source2 = source2;
+            DefaultValue = defaultValue;
+            ElementConversions = elementConversions;
+            ReserveMethod = reserveMethod;
+            Thrown = thrown;
+            SourceElementType = sourceElementType;
+        }
+
+        /// <summary>Which shape this construction takes.</summary>
+        public CollectionCreationKind Kind { get; }
+
+        /// <summary>The requested length (array) or capacity hint (dict). Only set for the two Capacity kinds and <see cref="CollectionCreationKind.ArraySizeDefault"/>.</summary>
+        public BoundExpression? Capacity { get; }
+
+        /// <summary>
+        /// The tuple, array or iterable being read from — for <see cref="CollectionCreationKind.ArrayFromTuple"/>,
+        /// <see cref="CollectionCreationKind.TupleFromArray"/>, <see cref="CollectionCreationKind.ArrayCopy"/>,
+        /// <see cref="CollectionCreationKind.ArrayFromIterable"/> and <see cref="CollectionCreationKind.DictFromPairs"/>
+        /// (the pairs array); bound once, since the emitter reads it more than once (once per
+        /// element, plus <c>ArrLen</c> on the runtime-length directions).
+        /// </summary>
+        public BoundExpression? Source { get; }
+
+        /// <summary>The values array, for <see cref="CollectionCreationKind.DictFromParallelArrays"/> — <see cref="Source"/> is the keys array.</summary>
+        public BoundExpression? Source2 { get; }
+
+        /// <summary>The fill value, for <see cref="CollectionCreationKind.ArraySizeDefault"/>. Evaluated once, before the loop.</summary>
+        public BoundExpression? DefaultValue { get; }
+
+        /// <summary>
+        /// One conversion per element/slot, in order, for the shapes that read an existing element
+        /// into a new one — always <see cref="Conversion.IsImplicit"/>, since none of these ever
+        /// consider a user-defined <c>operator as</c> (§5.6 makes those explicit-only). For
+        /// <see cref="CollectionCreationKind.DictFromPairs"/> this is exactly two entries, key then
+        /// value, regardless of the source array's runtime length.
+        /// </summary>
+        public IReadOnlyList<Conversion>? ElementConversions { get; }
+
+        /// <summary>The built-in <c>dict</c>'s own <c>reserve</c> method, for <see cref="CollectionCreationKind.DictCapacity"/>.</summary>
+        public MethodSymbol? ReserveMethod { get; }
+
+        /// <summary>
+        /// The exception construction to raise on a runtime shape mismatch —
+        /// <c>InvalidCastException</c> for <see cref="CollectionCreationKind.TupleFromArray"/>'s arity
+        /// check, <c>ArgumentException</c> for <see cref="CollectionCreationKind.DictFromParallelArrays"/>'s
+        /// length check.
+        /// </summary>
+        public BoundExpression? Thrown { get; }
+
+        /// <summary>
+        /// What one step of <see cref="Source"/> yields, for <see cref="CollectionCreationKind.ArrayFromIterable"/>
+        /// only. Every other kind can read its source element type straight off <see cref="Source"/>'s
+        /// own static type (an array's element type, a pair tuple's slots) — a generic iterable
+        /// cannot, since "what walking this yields" is a derived fact (<c>TryFindIterableElementType</c>),
+        /// not something its own <see cref="BoundExpression.Type"/> encodes directly.
+        /// </summary>
+        public TypeSymbol? SourceElementType { get; }
+    }
+
     /// <summary>One arm of a switch expression.</summary>
     public sealed class BoundSwitchArm
     {

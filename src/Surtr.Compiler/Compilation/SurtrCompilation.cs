@@ -101,7 +101,29 @@ namespace Surtr.Compiler.Compilation
         /// The source modules in load order — each after everything it depends on. Empty when the
         /// dependency graph has a cycle, which is reported rather than resolved.
         /// </summary>
+        /// <remarks>
+        /// Computed from <see cref="Dependencies"/> as it stands at the time it is read.
+        /// <see cref="Create"/> computes it once from the import-derived edges alone, which is
+        /// already right for anything that only reaches another module through an <c>import</c>. A
+        /// fully qualified reference with no <c>import</c> (§2.6 allows one) adds its edge lazily,
+        /// once the binder actually resolves it — see <see cref="TypeResolver"/>'s constructor — so
+        /// <see cref="RefreshLoadOrder"/> exists for whoever needs the order to reflect binding that
+        /// has run since.
+        /// </remarks>
         public IReadOnlyList<SurtrSourceModule> LoadOrder => _ordered;
+
+        /// <summary>
+        /// Recomputes <see cref="LoadOrder"/> from <see cref="Dependencies"/> as it stands right now.
+        /// </summary>
+        /// <remarks>
+        /// <c>CodeGen.ModuleEmitter</c> is the one caller that needs this: it emits in
+        /// <see cref="LoadOrder"/>, and a call reaching another module by a fully qualified name with
+        /// no <c>import</c> only adds that module's dependency edge once binding actually resolves
+        /// the name (<see cref="TypeResolver"/>) — which, by the time it runs, it always has. Calling
+        /// this before binding has run would just reproduce <see cref="Create"/>'s import-only order,
+        /// since nothing else would have added to the graph yet.
+        /// </remarks>
+        internal void RefreshLoadOrder() => Order();
 
         /// <summary>Whether anything reported an error.</summary>
         public bool HasErrors => Diagnostics.HasErrors;
@@ -263,6 +285,11 @@ namespace Surtr.Compiler.Compilation
 
         private void Order()
         {
+            // Re-runnable: RefreshLoadOrder calls this again once binding may have added edges
+            // Create()'s own call never saw, and an append-only rebuild would just duplicate every
+            // module already placed the first time.
+            _ordered.Clear();
+
             if (!Dependencies.TryGetLoadOrder(out var order, out var cycle))
             {
                 Diagnostics.ReportError(

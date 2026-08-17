@@ -1,0 +1,55 @@
+public class StringBuilder
+{
+    public const DefaultCapacity: int = 16;
+
+    private var _buffer: char[];
+
+    public constructor(initialCapacity: int = DefaultCapacity)
+    {
+        if (initialCapacity < 1) throw ArgumentException("Initial capacity must be greater than 0");
+        this._buffer = array<char>(initialCapacity);
+    }
+
+    public inline length: int { get { return _buffer.length; } }
+
+    public inline isEmpty: bool { get { return _buffer.length == 0; } }
+
+    public fun get(index: int): char
+    {
+        if (index < 0 || index >= _buffer.length) throw IndexOutOfRangeException("Index out of range");
+        return _buffer[index];
+    }
+
+    public fun append(value: string): StringBuilder
+    {
+        for (var i = 0; i < value.length; i++)
+            _buffer.push(value[i]);
+        return this;
+    }
+
+    public fun appendChar(value: char): StringBuilder
+    {
+        _buffer.push(value);
+        return this;
+    }
+
+    public fun appendLine(value: string): StringBuilder
+    {
+        append(value);
+        _buffer.push('\n');
+        return this;
+    }
+
+    public fun clear(): StringBuilder
+    {
+        _buffer.clear();
+        return this;
+    }
+
+    public inline fun toString(): string
+    {
+        return string(_buffer);
+    }
+
+    inline operator [](self: StringBuilder, index: int): char { return self.get(index); }
+}

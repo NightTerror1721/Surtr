@@ -4,6 +4,7 @@ using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace Surtr.Runtime.BuiltIns
 {
@@ -409,6 +410,7 @@ namespace Surtr.Runtime.BuiltIns
             builder.Property("isInclusive", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&RangeIsInclusive));
 
             builder.Method("contains", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&RangeContains), builder.Params(("value", integer)));
+            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&RangeToString));
         }
 
         private static SurtrValue RangeStart(SurtrCallArguments arguments)
@@ -428,6 +430,16 @@ namespace Surtr.Runtime.BuiltIns
 
         private static SurtrValue RangeContains(SurtrCallArguments arguments)
             => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrRange>(0).Contains(arguments.GetInt(1)));
+
+        /// <summary>Backs <c>string(aRange)</c> — the same <c>a..b</c>/<c>a..=b</c> spelling range literals use.</summary>
+        private static SurtrValue RangeToString(SurtrCallArguments arguments)
+        {
+            var range = arguments.GetUnchecked<SurtrRange>(0);
+            string start = range.Start.ToString(CultureInfo.InvariantCulture);
+            string end = range.End.ToString(CultureInfo.InvariantCulture);
+
+            return arguments.Runtime.NewStringValue(range.IsInclusive ? $"{start}..={end}" : $"{start}..{end}");
+        }
         #endregion
 
         #region Closure

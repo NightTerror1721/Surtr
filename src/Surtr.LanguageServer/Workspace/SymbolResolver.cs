@@ -344,6 +344,27 @@ namespace Surtr.LanguageServer.Workspace
                         WalkExpression(argument, position, anchor, tokens, ref best, snapshot);
                     break;
 
+                case BoundCollectionCreationExpression collection:
+                    // `array<T>`/`dict<K,V>`/`tuple<...>` resolve straight onto the composite
+                    // TypeSymbol the equivalent symbolic form (`T[]`, `{K:V}`, `(T1,...)`) would, so
+                    // there is no separate callee node naming it - the identifier ("array", "dict" or
+                    // "tuple") is always the call's first name token, which is what NameTokenMatchesLast
+                    // would miss here: the last identifier-like token in the span is a type argument
+                    // (e.g. the "int" in "array<int>(5)"), not the callee.
+                    if (NameTokenMatchesFirst(collection.Syntax.Span, anchor, tokens))
+                        best.Consider(FromType(collection.Type, collection.Syntax.Span), collection.Syntax.Span.Length, PriorityType);
+                    if (collection.Capacity is not null)
+                        WalkExpression(collection.Capacity, position, anchor, tokens, ref best, snapshot);
+                    if (collection.Source is not null)
+                        WalkExpression(collection.Source, position, anchor, tokens, ref best, snapshot);
+                    if (collection.Source2 is not null)
+                        WalkExpression(collection.Source2, position, anchor, tokens, ref best, snapshot);
+                    if (collection.DefaultValue is not null)
+                        WalkExpression(collection.DefaultValue, position, anchor, tokens, ref best, snapshot);
+                    if (collection.Thrown is not null)
+                        WalkExpression(collection.Thrown, position, anchor, tokens, ref best, snapshot);
+                    break;
+
                 case BoundBinaryExpression binary:
                     WalkExpression(binary.Left, position, anchor, tokens, ref best, snapshot);
                     WalkExpression(binary.Right, position, anchor, tokens, ref best, snapshot);

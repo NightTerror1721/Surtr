@@ -982,5 +982,229 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         #endregion
+
+        #region Nameable collection constructors (§5.3.1) — never ObjNew, folded wherever an opcode exists
+
+        /// <summary>Value correctness is <see cref="ModuleEmitterTests.ArrayEmptyConstructorIsEmpty"/>.</summary>
+        [Fact]
+        public void ArrayEmptyConstructorUsesArrPackNotObjNew()
+        {
+            string code = Disassemble("fun run(): int { let xs = array<int>(); return xs.length; }");
+
+            Assert.Equal(1, Count(code, "ArrPack"));
+            Assert.Equal(0, Count(code, "ObjNew"));
+            Assert.Equal(0, Count(code, "InvokeSpecial"));
+        }
+
+        /// <summary>
+        /// A written constant folds to the single-instruction ArrNewX form — the addressing mode
+        /// documented for exactly this, "for arrays of statically known size" — never a call and
+        /// never ObjNew. Value correctness is
+        /// <see cref="ModuleEmitterTests.ArrayCapacityConstructorZeroFillsToTheGivenLength"/>.
+        /// </summary>
+        [Fact]
+        public void ArrayCapacityConstructorWithAConstantUsesArrNewX()
+        {
+            string code = Disassemble("fun run(): int { let xs = array<int>(5); return xs.length; }");
+
+            Assert.Equal(1, Count(code, "ArrNewX"));
+            Assert.Equal(0, Count(code, "ArrNew"));
+            Assert.Equal(0, Count(code, "ObjNew"));
+            Assert.Equal(0, Count(code, "InvokeSpecial"));
+        }
+
+        /// <summary>
+        /// A runtime size cannot be a compile-time immediate, so this falls back to the
+        /// stack-popping ArrNew form rather than ArrNewX — still one opcode, still never ObjNew.
+        /// Value correctness is
+        /// <see cref="ModuleEmitterTests.ArrayCapacityConstructorWorksWithARuntimeSizeToo"/>.
+        /// </summary>
+        [Fact]
+        public void ArrayCapacityConstructorWithARuntimeValueUsesArrNew()
+        {
+            string code = Disassemble("fun run(n: int): int { let xs = array<int>(n); return xs.length; }");
+
+            Assert.Equal(1, Count(code, "ArrNew"));
+            Assert.Equal(0, Count(code, "ArrNewX"));
+            Assert.Equal(0, Count(code, "ObjNew"));
+        }
+
+        /// <summary>Value correctness is <see cref="ModuleEmitterTests.DictEmptyConstructorIsEmptyAndStillUsable"/>.</summary>
+        [Fact]
+        public void DictEmptyConstructorUsesDictNewNotObjNew()
+        {
+            string code = Disassemble("fun run(): int { let m = dict<int, string>(); return m.length; }");
+
+            Assert.Equal(1, Count(code, "DictNew"));
+            Assert.Equal(0, Count(code, "ObjNew"));
+            Assert.Equal(0, Count(code, "InvokeSpecial"));
+        }
+
+        /// <summary>
+        /// The one shape with no single-opcode fold: DictNew has no capacity operand, so this is
+        /// DictNew plus exactly one call to dict's own already-declared <c>reserve</c> — still never
+        /// ObjNew. Value correctness is
+        /// <see cref="ModuleEmitterTests.DictCapacityConstructorStaysEmptyUntilSomethingIsSet"/>.
+        /// </summary>
+        [Fact]
+        public void DictCapacityConstructorUsesDictNewPlusExactlyOneReserveCall()
+        {
+            string code = Disassemble("fun run(): int { let m = dict<int, string>(32); return m.length; }");
+
+            Assert.Equal(1, Count(code, "DictNew"));
+            Assert.Equal(1, Count(code, "InvokeSpecial"));
+            Assert.Equal(0, Count(code, "ObjNew"));
+        }
+
+        /// <summary>
+        /// A tuple's arity is always known at compile time, so array-from-tuple never needs a
+        /// runtime length check — no comparison, no branch, just the reads and the pack. Value
+        /// correctness is <see cref="ModuleEmitterTests.ArrayFromTupleCastReadsEveryElementInOrder"/>.
+        /// </summary>
+        [Fact]
+        public void ArrayFromTupleCastUsesTupGetCAndArrPackWithNoRuntimeCheck()
+        {
+            // .get(0), not .length: .length would itself emit an ArrLen unrelated to the
+            // construction, muddying the very count this test exists to pin.
+            string code = Disassemble("fun run(): int { let a = array<int>((10, 20, 30)); return a.get(0); }");
+
+            Assert.Equal(3, Count(code, "TupGetC"));
+            Assert.Equal(1, Count(code, "ArrPack"));
+            Assert.Equal(0, Count(code, "ArrLen"));
+            Assert.Equal(0, Count(code, "ObjNew"));
+            Assert.Equal(0, Count(code, "InvokeSpecial"));
+            Assert.Equal(0, Count(code, "InvokeStatic"));
+        }
+
+        /// <summary>
+        /// Tuple-from-array is the one cast direction with a runtime fact to check — the array's
+        /// actual length — so exactly one ArrLen precedes the unrolled reads, still with no call.
+        /// Value correctness is
+        /// <see cref="ModuleEmitterTests.TupleFromArrayCastReadsEveryElementIntoItsSlot"/> and
+        /// <see cref="ModuleEmitterTests.TupleFromArrayArityMismatchThrowsInvalidCastException"/>.
+        /// </summary>
+        [Fact]
+        public void TupleFromArrayCastUsesOneArrLenCheckThenArrGetAndTupPack()
+        {
+            string code = Disassemble(
+                "fun run(xs: int[]): int { let t = tuple<int, int, int>(xs); return t[0]; }");
+
+            Assert.Equal(1, Count(code, "ArrLen"));
+            Assert.Equal(3, Count(code, "ArrGet"));
+            Assert.Equal(1, Count(code, "TupPack"));
+            // Neither ObjNew nor InvokeSpecial is asserted away here: the InvalidCastException the
+            // length-mismatch trap raises is a real class instance, so allocating it and calling its
+            // constructor legitimately uses both. What matters is that the tuple itself never does —
+            // TupPack is its only allocation, above.
+        }
+
+        #endregion
+
+        #region Nameable primitive/string/range constructors (§5.3.2) — sugar for existing opcodes/calls
+
+        /// <summary>Value correctness is <see cref="ModuleEmitterTests.APrimitiveConstructorConvertsBetweenPrimitives"/>.</summary>
+        [Fact]
+        public void APrimitiveConstructorBetweenNumericTypesUsesOnlyTheConversionOpcode()
+        {
+            string code = Disassemble("fun run(x: float): int { return int(x); }");
+
+            Assert.Equal(1, Count(code, "F2I"));
+            Assert.Equal(0, Count(code, "ObjNew"));
+            Assert.Equal(0, Count(code, "InvokeSpecial"));
+            Assert.Equal(0, Count(code, "InvokeStatic"));
+        }
+
+        /// <summary>
+        /// char(code: int) is decision #4: no validation, so it has to be indistinguishable from
+        /// `code as char` at the opcode level — one I2C, nothing guarding it.
+        /// </summary>
+        [Fact]
+        public void ACharConstructorFromIntUsesOnlyI2CWithNoGuard()
+        {
+            string code = Disassemble("fun run(x: int): char { return char(x); }");
+
+            Assert.Equal(1, Count(code, "I2C"));
+            Assert.Equal(0, Count(code, "ObjNew"));
+            Assert.Equal(0, Count(code, "JPZ"));
+            Assert.Equal(0, Count(code, "JPZX"));
+        }
+
+        /// <summary>
+        /// The tuple copy constructor is a pure identity fold — not even a Dup. A local-to-local copy
+        /// still has to store the value somewhere, but nothing about the *construction itself* emits
+        /// an allocation or a call.
+        /// </summary>
+        [Fact]
+        public void TheTupleCopyConstructorEmitsNoAllocationAtAll()
+        {
+            string code = Disassemble("fun run(t: (int, int)): int { let t2 = tuple<int, int>(t); return t2[0]; }");
+
+            Assert.Equal(0, Count(code, "TupPack"));
+            Assert.Equal(0, Count(code, "ObjNew"));
+            Assert.Equal(0, Count(code, "InvokeSpecial"));
+        }
+
+        /// <summary>
+        /// A written zero default is exactly ArrayCapacity, reused unchanged — no loop, no ArrSet.
+        /// Value correctness is <see cref="ModuleEmitterTests.ArraySizeDefaultConstructorFillsEveryElement"/>.
+        /// </summary>
+        [Fact]
+        public void ArraySizeConstructorWithAWrittenZeroDefaultUsesArrNewXWithNoLoop()
+        {
+            string code = Disassemble("fun run(): int { let a = array<int>(5, 0); return a.length; }");
+
+            Assert.Equal(1, Count(code, "ArrNewX"));
+            Assert.Equal(0, Count(code, "ArrSet"));
+            Assert.Equal(0, Count(code, "ObjNew"));
+        }
+
+        /// <summary>A non-zero default cannot fold onto ArrayCapacity, so this is the genuine loop: one ArrSet, executed a runtime-determined number of times.</summary>
+        [Fact]
+        public void ArraySizeConstructorWithANonZeroDefaultUsesExactlyOneArrSetInALoop()
+        {
+            string code = Disassemble("fun run(): int { let a = array<int>(5, -1); return a.length; }");
+
+            Assert.Equal(1, Count(code, "ArrSet"));
+            Assert.Equal(0, Count(code, "ObjNew"));
+        }
+
+        /// <summary>
+        /// The copy constructor takes the fast indexed path — ArrLen, a runtime ArrNew, ArrGet/ArrSet
+        /// — never the tuple-cast opcodes (ArrPack, TupGetC), which would mean it had been confused
+        /// with array&lt;T&gt;(aTuple).
+        /// </summary>
+        [Fact]
+        public void ArrayCopyConstructorUsesIndexedCopyNeverTupleCastOpcodes()
+        {
+            string code = Disassemble("fun run(xs: int[]): int { let copy = array<int>(xs); return copy.length; }");
+
+            // 3 ArrLen: once to size the destination allocation, once per pass through the loop
+            // condition (one instruction, evaluated every iteration at runtime), and once for the
+            // explicit `copy.length` in the return.
+            Assert.Equal(3, Count(code, "ArrLen"));
+            Assert.Equal(1, Count(code, "ArrNew"));
+            Assert.Equal(1, Count(code, "ArrGet"));
+            Assert.Equal(1, Count(code, "ArrSet"));
+            Assert.Equal(0, Count(code, "ArrPack"));
+            Assert.Equal(0, Count(code, "TupGetC"));
+        }
+
+        /// <summary>
+        /// The general iterable path walks the source through interface dispatch and ArrPush — never
+        /// ArrGet/ArrLen on the source, since a generic IIterable&lt;T&gt; has no indexed access at
+        /// all and no length known ahead of time.
+        /// </summary>
+        [Fact]
+        public void ArrayFromIterableConstructorUsesInterfaceDispatchAndArrPushOnly()
+        {
+            string code = Disassemble("fun run(): int { let a = array<int>(0..5); return a.length; }");
+
+            Assert.Equal(3, Count(code, "InvokeInterface"));
+            Assert.Equal(1, Count(code, "ArrPush"));
+            Assert.Equal(0, Count(code, "ArrGet"));
+            Assert.Equal(0, Count(code, "ObjNew"));
+        }
+
+        #endregion
     }
 }

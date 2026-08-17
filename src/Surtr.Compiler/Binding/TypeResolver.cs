@@ -1,6 +1,7 @@
 #nullable enable
 
 using Surtr.Compiler.Binding.Symbols;
+using Surtr.Compiler.Compilation;
 using Surtr.Compiler.Diagnostics;
 using Surtr.Compiler.Syntax;
 using Surtr.Compiler.Syntax.Ast;
@@ -30,6 +31,7 @@ namespace Surtr.Compiler.Binding
         private readonly TypeSymbolFactory _factory;
         private readonly MetadataImporter _importer;
         private readonly SurtrDiagnosticBag _diagnostics;
+        private readonly ModuleDependencyGraph _dependencies;
 
         private readonly Dictionary<string, ModuleSymbol> _modules =
             new Dictionary<string, ModuleSymbol>(StringComparer.Ordinal);
@@ -98,16 +100,28 @@ namespace Surtr.Compiler.Binding
             internal string SourceName { get; }
         }
 
-        /// <summary>Creates a resolver over one compilation's factory, imports and diagnostics.</summary>
-        public TypeResolver(TypeSymbolFactory factory, MetadataImporter importer, SurtrDiagnosticBag diagnostics)
+        /// <summary>Creates a resolver over one compilation's factory, imports, dependency graph and diagnostics.</summary>
+        public TypeResolver(
+            TypeSymbolFactory factory,
+            MetadataImporter importer,
+            SurtrDiagnosticBag diagnostics,
+            ModuleDependencyGraph dependencies)
         {
             _factory = factory;
             _importer = importer;
             _diagnostics = diagnostics;
+            _dependencies = dependencies;
         }
 
         /// <summary>Makes a module's types reachable by fully qualified name.</summary>
         public void AddModule(ModuleSymbol module) => _modules[module.Path] = module;
+
+        /// <summary>
+        /// The metadata importer this resolver reads the built-in module through — exposed so a
+        /// caller can recognize <c>array</c>/<c>dict</c>/<c>tuple</c> by the same reference identity
+        /// <see cref="Apply"/> uses internally, without importing the built-in module a second time.
+        /// </summary>
+        internal MetadataImporter Importer => _importer;
 
         /// <summary>
         /// Records where an alias's target is written, so it can be resolved the first time the
@@ -322,6 +336,18 @@ namespace Surtr.Compiler.Binding
                     continue;
 
                 resolved = Apply(syntax, container, arguments, sourceName);
+
+                // The one edge `SurtrCompilation.BuildDependencyGraph` cannot see at parse time: a
+                // name reached with no `import` (§2.6 allows one) is only known to cross a module
+                // boundary once this resolves it. Recorded regardless of `_suppressed` — a call site
+                // asking "is this a type" through `TryResolveTypeName` still means it, if the answer
+                // is yes; suppression only silences the diagnostic on a *no*, and a *no* never
+                // reaches this line at all. `AddDependency` no-ops a module referencing itself, and
+                // `ModuleDependencyGraph.AddModule` already tolerates a path with no source behind
+                // it, so this needs no guard beyond knowing which module the reference is *from*.
+                if (CurrentModule is ModuleSymbol current)
+                    _dependencies.AddDependency(current.Path, modulePath);
+
                 return true;
             }
 
@@ -403,12 +429,48 @@ namespace Surtr.Compiler.Binding
                 syntax.Span);
         }
 
+        /// <summary>
+        /// The arity cap a tuple's own allocation opcode (<c>TupPack</c>) imposes, which the
+        /// nameable <c>tuple&lt;...&gt;</c> form (below) has to diagnose at the type reference
+        /// rather than let surface only once emission fails.
+        /// </summary>
+        private const int MaxTupleArity = byte.MaxValue;
+
         private TypeSymbol Apply(NamedTypeSyntax syntax, Symbol symbol, TypeSymbol[] arguments, string sourceName)
         {
             switch (symbol)
             {
                 case NamedTypeSymbol named:
                 {
+                    // array<T>, dict<K,V> and tuple<T1,...,Tn> are nameable, callable identifiers
+                    // for exactly the types T[], {K:V} and (T1,...,Tn) already name — not a
+                    // separate type, so this redirects the built-in class's own construction onto
+                    // the identical, structurally-interned composite TypeSymbol the symbolic form
+                    // produces, rather than a constructed NamedTypeSymbol of the class. Unqualified
+                    // `array`/`dict`/`tuple` name lookup (and MemberLookup.BackingType, which never
+                    // reaches this method at all) is untouched — this only fires once a full type
+                    // application has resolved to one of these three built-ins specifically, via
+                    // reference identity so a user's own shadowing declaration is never affected.
+                    //
+                    // tuple's imported Arity is 0 - its arity varies per value, not per declaration,
+                    // per docs/VM-Plan.md §4.6 - so its check has to run before the ordinary arity
+                    // test below rejects every non-empty argument list out of hand.
+                    if (ReferenceEquals(named, _importer.TupleType))
+                    {
+                        if (arguments.Length > MaxTupleArity)
+                        {
+                            ReportError(
+                                SurtrDiagnosticCode.WrongTypeArgumentCount,
+                                $"A tuple can have at most {MaxTupleArity} elements, not {arguments.Length}.",
+                                sourceName,
+                                syntax.Span);
+
+                            return _factory.ErrorType;
+                        }
+
+                        return _factory.Tuple(arguments);
+                    }
+
                     if (named.Arity != arguments.Length)
                     {
                         ReportError(
@@ -424,6 +486,12 @@ namespace Surtr.Compiler.Binding
                     // qualified one, and each step of a nested one — so accessibility is asked once,
                     // where the type is finally settled on.
                     RequireAccessible(named, syntax, sourceName);
+
+                    if (ReferenceEquals(named, _importer.ArrayType))
+                        return _factory.Array(arguments[0]);
+
+                    if (ReferenceEquals(named, _importer.DictionaryType))
+                        return _factory.Dictionary(arguments[0], arguments[1]);
 
                     if (arguments.Length == 0)
                         return named;

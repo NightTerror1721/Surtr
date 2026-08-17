@@ -1,5 +1,5 @@
 module surtr.math.Math
-  constants: 7   types: 0   fields: 0   methods: 34   modules: 0
+  constants: 7   types: 0   fields: 0   methods: 35   modules: 0
 
   method table:
     #0  sin(float) -> float
@@ -17,25 +17,26 @@ module surtr.math.Math
     #12  floor(float) -> float
     #13  ceil(float) -> float
     #14  round(float) -> float
-    #15  isNaN(float) -> bool
-    #16  isInfinity(float) -> bool
-    #17  degreesToRadians(float) -> float
-    #18  radiansToDegrees(float) -> float
-    #19  abs(int) -> int
-    #20  abs(float) -> float
-    #21  min(int, int) -> int
-    #22  max(int, int) -> int
-    #23  min(float, float) -> float
-    #24  max(float, float) -> float
-    #25  clamp(int, int, int) -> int
-    #26  clamp(float, float, float) -> float
-    #27  clamp01(float) -> float
-    #28  lerp(float, float, float) -> float
-    #29  lerpUnclamped(float, float, float) -> float
-    #30  approximately(float, float) -> bool
-    #31  sign(float) -> int
-    #32  sign(int) -> int
-    #33  repeat(float, float) -> float
+    #15  hypot(float, float) -> float
+    #16  isNaN(float) -> bool
+    #17  isInfinity(float) -> bool
+    #18  degreesToRadians(float) -> float
+    #19  radiansToDegrees(float) -> float
+    #20  abs(int) -> int
+    #21  abs(float) -> float
+    #22  min(int, int) -> int
+    #23  max(int, int) -> int
+    #24  min(float, float) -> float
+    #25  max(float, float) -> float
+    #26  clamp(int, int, int) -> int
+    #27  clamp(float, float, float) -> float
+    #28  clamp01(float) -> float
+    #29  lerp(float, float, float) -> float
+    #30  lerpUnclamped(float, float, float) -> float
+    #31  approximately(float, float) -> bool
+    #32  sign(float) -> int
+    #33  sign(int) -> int
+    #34  repeat(float, float) -> float
 
 [public] static abs(n: int): int
   ; entry 4, locals 1, stack 2, code 001B..0029
@@ -166,6 +167,9 @@ module surtr.math.Math
 
 [public] static native floor(x: float): float
   ; native link="floor" unbound declared
+
+[public] static native hypot(x: float, y: float): float
+  ; native link="hypot" unbound declared
 
 [public] static isInfinity(value: float): bool
   ; entry 1, locals 1, stack 2, code 0004..0013

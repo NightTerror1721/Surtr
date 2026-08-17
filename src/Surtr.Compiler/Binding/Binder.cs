@@ -108,7 +108,7 @@ namespace Surtr.Compiler.Binding
             _compilation = compilation;
             _diagnostics = compilation.Diagnostics;
             _factory = compilation.TypeFactory;
-            _resolver = new TypeResolver(_factory, compilation.Importer, _diagnostics);
+            _resolver = new TypeResolver(_factory, compilation.Importer, _diagnostics, compilation.Dependencies);
             MemberLookup = new MemberLookup(_factory, compilation.Importer);
             Conversions = new Conversions(_factory, MemberLookup);
             OverloadResolution = new OverloadResolution(Conversions);

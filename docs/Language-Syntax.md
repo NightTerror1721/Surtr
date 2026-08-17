@@ -55,9 +55,16 @@ surface syntax just gives each descriptor symbol a spelling:
 | `range` | *(new — see §5.4)* | a half-open or closed interval of `int`s; the only built-in type here that the descriptor grammar does **not** already have a symbol for |
 | `unknown` | `E` | holds any value; must be cast before use (§5.10) |
 
-Composite built-ins (array, dictionary, tuple, closure) have no bare name — they're always written
-in the parameterised forms in §5.3. There is no root `object` type; `unknown` is *not* one, and
-§5.10 explains why the distinction matters.
+Composite built-ins are written in the parameterised forms of §5.3 — `T[]`, `{K: V}`, `(T, T, ...)`,
+`(T, ...) -> R` — and that stays the idiomatic spelling everywhere a type is written. Three of the
+four also have a nameable, callable identifier alongside it: `array<T>`, `dict<K, V>` and
+`tuple<T1, ..., Tn>` name exactly the same types `T[]`, `{K: V}` and `(T1, ..., Tn)` already do —
+not a distinct type, not a conversion target, just another spelling that happens to be an
+identifier — and exist specifically so a constructor can be called on them (§5.5 has no `new`, so a
+form with no identifier can never be callable). §5.3.1 covers the identifier form and the
+constructors it enables; `closure` stays purely symbolic, since a closure is never directly
+constructed from source — it is always a lambda or a value already holding one. There is no root
+`object` type; `unknown` is *not* one, and §5.10 explains why the distinction matters.
 
 A method returning nothing must still write `: void` explicitly; the return-type annotation is
 never omitted, so a declaration's shape doesn't change based on what it returns.
@@ -1076,7 +1083,9 @@ Tuple and closure types reuse their literal/lambda shape outright rather than a 
 `(1, "a")` is a tuple value, and `(int, int) -> float` is a closure type because
 `(x: int, y: int) => ...` is how you write one. `->` (not `=>`) in the type keeps "the type of a
 function" visually distinct from "a function value" even though they're always used in matching
-positions.
+positions. That's a rejection of a generic name as the *idiomatic type-syntax spelling* — §5.3.1
+gives `array`, `dict` and `tuple` a generic name anyway, but only so they can be called as
+constructors; nothing about how a type is written changes.
 
 **A tuple element is read by position, and the position has to be a compile-time constant:**
 
@@ -1110,6 +1119,220 @@ for (entry in scores) {
     print(entry[1]);        // the value
 }
 ```
+
+### 5.3.1 Naming a composite so it can be constructed
+
+`array<T>`, `dict<K, V>` and `tuple<T1, ..., Tn>` name exactly the types `T[]`, `{K: V}` and
+`(T1, ..., Tn)` already name — the same descriptor, the same `SurtrClass`, the same everything.
+Nothing distinguishes them at the type level:
+
+```
+let a: array<int> = [1, 2, 3];   // a is int[]; array<int> and int[] are the same type
+let b: int[] = a;                // no cast, no conversion — there was never a second type
+```
+
+They exist for one reason: §5.5 has no `new`, so a construction is an ordinary call on an
+identifier, and `int[]`, `{K: V}` and `(T1, ..., Tn)` aren't identifiers — nothing can be *called*
+`int[]`. Giving the three types a nameable form is what makes them callable at all, and the form is
+usable anywhere a type is legal, exactly like the symbolic one — the pair above is a genuine choice,
+not a special case carved out only for constructor position. `closure` gets no such form, since a
+closure is never directly constructed; it only ever arrives as a lambda or a value that already
+holds one.
+
+Three shapes are supported, and each folds to the allocation opcodes `docs/Opcodes.md` already
+documents — never the general object-allocation path a `class` construction goes through, since none
+of these three are ever a `SurtrInstance`:
+
+**Empty**, no arguments — the same value the equivalent empty literal already produces:
+
+```
+let a = array<int>();     // int[], length 0 — same as ([] as int[])
+let d = dict<int, string>();  // {int: string}, length 0 — same as ({} as {int: string})
+let u = tuple<>();        // the 0-arity/unit tuple — the only tuple with a no-arg form at all
+```
+
+**Capacity**, one `int` argument — and the two collections mean it differently, which is worth
+being explicit about rather than papering over. `array<T>(n)` is `new T[n]`-style: a real array of
+length `n`, every element the zero of its family, folding to the single existing `ArrNewX`
+instruction — "for arrays of statically known size" is precisely what that opcode was for, and
+nothing in the compiler emitted it before this. `dict<K, V>(n)` stays a reserve-style capacity hint
+— length 0, a pre-sized backing store — because `DictNew` allocates only ever an *empty* dict; there
+is no `DictNewX`. It folds to `DictNew` plus a call to `dict`'s own existing `reserve` method, the
+one shape here that isn't a single opcode:
+
+```
+let padded = array<int>(5);       // [0, 0, 0, 0, 0]
+let scores = dict<string, int>(32); // {}, but the backing store is pre-sized for 32 entries
+```
+
+`tuple<...>` has **no** capacity constructor at all — a tuple's arity is part of its type, not a
+number requested at construction, so there's nothing for one to mean; writing one is a compile
+error naming that rule.
+
+**Casting, between `array` and `tuple` only** — the one pair with a natural, total correspondence in
+both directions, everything else is left alone rather than forced:
+
+```
+let t = (1, 2, 3);
+let a = array<int>(t);         // [1, 2, 3] — N is the tuple's own declared arity, known at compile time
+
+let xs = [10, 20, 30];
+let back = tuple<int, int, int>(xs);  // (10, 20, 30)
+```
+
+`array<T>` from a tuple reads every element by its constant index and packs them, so it costs one
+instruction per element plus the pack — nothing runtime-conditional, since a tuple's arity is always
+a compile-time fact. `tuple<...>` from an array runs the other way: the tuple's arity is still known
+at compile time, but the array's actual length is a runtime value, so a length check comes first —
+a mismatch raises `InvalidCastException` (§13.3), the same class a failed `as` already raises, before
+any element is read. Either direction accepts an element-wise implicit conversion (§5.6 excludes
+`operator as`, since that's never implicit) — `array<float>(anIntTuple)` widens each element on the
+way in, the same conversion an ordinary assignment would insert.
+
+Casting `dict<K, V>` from or to a single value the way array/tuple cast between each other is not
+supported — there's no single source shape as natural for a dict as a tuple is for an array. §5.3.3
+gives it two constructors of its own instead, built from a *pair* of sources rather than a cast.
+
+**`tuple<...>` also takes its elements directly, and copies itself for free.** Besides the empty and
+array-cast forms above:
+
+```
+let t = tuple<int, string>(1, "a");   // (1, "a") — identical to the literal, reached by a second path
+let u = tuple<int, int>(t2);          // t2 must already be a (int, int) — see below
+```
+
+`tuple<T1,...,Tn>(v1,...,vn)` written with one value per declared element is exactly the tuple
+literal `(v1,...,vn)`, bound and emitted the same way — the constructor call is a second spelling of
+the same thing, not a second mechanism. `(T1,T2)(pair: (T1,T2))` — a tuple built from *another value
+of the same tuple type* — is the one constructor in this whole section that folds to nothing at all:
+tuples are immutable and `(T1,T2)` names one interned type, so "the same type on both sides" is
+reference identity, not mere convertibility, and the argument already *is* the value this
+construction would build. Passing a tuple that would need widening (say, `(int,int)` into
+`(float,float)`) is a different, non-identical type, and has no constructor to reach it — write the
+individual elements instead.
+
+### 5.3.2 Constructing a primitive, `string` or `range`
+
+`int`, `float`, `char`, `bool`, `string` and `range` were always nameable — §1.1 already makes every
+one of them an ordinary identifier — so unlike §5.3.1's composites, nothing new had to be added just
+to make them callable. What's new is what they can be called *with*: besides the parameterless
+default each already had, every one of these six now accepts arguments, and every shape folds onto
+something that already existed before this section did.
+
+**A primitive built from another primitive is exactly the equivalent `as` cast** — not a new
+conversion with its own rules, the same one:
+
+```
+let n = int(3.9);      // 3 — identical to `3.9 as int`
+let big = float(3);    // 3.0 — the one implicit widening the language already had
+let c = char(65);      // 'A' — identical to `65 as char`, no validation (see below)
+let b = bool(1);       // true
+```
+
+Every ordered pair among the four (excluding identity, which is a no-op either way) already
+classified as an explicit numeric conversion before this section existed — `Conversions.ClassifyExplicit`
+never had a rule specific to primitives elsewhere, so a constructor call and an `as` cast between the
+same two types share the exact same conversion, the exact same opcode, and the exact same edge cases.
+That includes `float` → `int`, which this section is what finally pins down: it **truncates toward
+zero**, saturates to the nearest `int` bound outside `int`'s range, and reads `NaN` as `0` — matching
+C#/Java/Kotlin's own explicit narrowing rather than rounding, and matching the truncation §5.7
+already gives `/` between two `int`s. `char(code: int)` deliberately validates nothing, for the same
+reason `code as char` doesn't: a `char` is a 16-bit code unit, not a full Unicode scalar value, so
+"validate the codepoint" has no representation-accurate meaning to give it — it retags and truncates
+to 16 bits, silently, exactly like the cast it's sugar for.
+
+**A primitive parsed from `string` throws on bad input** — the one place this section adds real
+behavior rather than reusing an existing conversion, since nothing previously in the language could
+fail this way from a bare cast:
+
+```
+let n = int("42");          // 42
+let r = int("2a", 16);      // 42 — radix parse, base 2..36
+let f = float("3.14");      // 3.14
+let b = bool("TRUE");       // true — "true"/"1" and "false"/"0", case-insensitive on the words
+let c = char("hi");         // 'h' — the first character; the rest is ignored, not an error
+```
+
+A `radix` outside `[2, 36]` — the range every digit-and-letter alphabet can name — is an
+`ArgumentException`, since the *argument* is what's wrong, not the text. Everything else that keeps
+a string from parsing — an empty string for `char`, a malformed number, a digit outside its radix's
+alphabet — is a `FormatException` (§13.3): the argument was the right *shape* (a `string`), so the
+problem is its *content*. `int(aString)`/`float(aString)` deliberately do not reuse the existing
+`int.parse`/`float.parse` static methods, which silently answer `0`/`NaN` on bad input instead of
+throwing — those are unchanged; the constructor form is a separate, throwing native method.
+
+**`string` composes the other direction**, plus two shapes nothing before this section could build in
+one step:
+
+```
+let s1 = string(42);            // "42" — sugar for 42.toString()
+let s2 = string(3.14);          // "3.14"
+let s3 = string(true);          // "true"
+let s4 = string('x');           // "x"
+let s5 = string(0..10);         // "0..10" — range now declares its own toString()
+let s6 = string('*', 5);        // "*****"
+let s7 = string(['h', 'i']);    // "hi"
+let s8 = string(['h', 'e', 'l', 'l', 'o'], 1, 3);  // "ell" — a slice, offset then length
+```
+
+`string(v)` for any of `int`/`float`/`bool`/`char`/`range` is sugar for `v.toString()` — every one of
+those already existed except `range`'s, which this section adds. `string(c, count)`, `string(chars)`
+and `string(chars, offset, length)` are genuinely new: nothing composed a repeated character, a
+joined `char[]`, or a slice of one in one pass before, so each gets its own native method rather than
+building through an intermediate `string[]` (or a copied sub-array, for the slice) the way composing
+`string.fromChar` per element and `string.join` would. The slice form checks `offset`/`length` against
+the array's own bounds and raises `IndexOutOfRangeException` (§13.3) — the same class any other
+array/string index trap already raises — rather than reading past either end.
+
+**`range` gains two constructors, folding onto the same `RangeNew`/`RangeNewInclusive` the `..`/`..=`
+operators already emit** — no opcode work, no VM change:
+
+```
+let a = range(0, 10);              // 0..10 — the same node `0..10` itself binds to
+let b = range(0, 10, true);        // 0..=10 — a written constant picks the opcode at bind time
+let c = range(0, 10, flag);        // a runtime bool: an ordinary ternary between the two forms
+```
+
+When the third argument is a written `true`/`false`, this is zero-cost — the same fold as writing
+`..`/`..=` directly, decided at compile time. A genuine runtime `bool` falls back to an ordinary
+conditional expression between the two forms, which is already how every other ternary in the
+language works — nothing new needed there either. `range(start, end, step)` — a stepped range — is
+not part of this: `RangeNew` has room for exactly two operands and `SurtrRange` for exactly two
+bounds, so a step needs either a changed or an additional opcode, a VM change, and a
+`SurtrRange` field this section deliberately leaves alone.
+
+### 5.3.3 The array/dict shapes a single value can't cover
+
+§5.3.1 covers `array<T>`/`dict<K,V>`'s empty, capacity and (for array) tuple-cast constructors. Four
+more shapes build from a *source with its own runtime length* rather than a compile-time-constant
+one, so unlike everything in §5.3.1 these fold to a compiled loop, not a straight-line unrolled
+sequence — still only opcodes already documented in `docs/Opcodes.md`, just run more than once:
+
+```
+let padded = array<int>(5, -1);         // [-1, -1, -1, -1, -1]
+let copy = array<int>(existingArray);    // an independent element-by-element copy
+let fromRange = array<int>(0..5);        // [0, 1, 2, 3, 4] — anything implementing IIterable<T>
+let pairs = [("a", 1), ("b", 2)];
+let d1 = dict<string, int>(pairs);       // {"a": 1, "b": 2}
+let d2 = dict<string, int>(["a", "b"], [1, 2]);  // the same dict, from two parallel arrays
+```
+
+`array<T>(size, defaultValue)` zero-fills exactly like `array<T>(size)` when `defaultValue` is
+written as a literal equal to `T`'s own zero — the same single-opcode fold, nothing new. Any other
+default value evaluates once, then a loop fills each slot. `array<T>(anotherArray)` and
+`array<T>(anIterable)` are two different shapes, deliberately: an argument that's already an
+`array<T>` (or convertible element-wise) takes the fast path — one length read, one allocation, an
+indexed copy loop, no interface dispatch — and only something that isn't an array at all (a `range`,
+a `dict` read as `(K,V)` pairs, a `string` read as `char`, or a user type implementing
+`IIterable<T>`) falls to the general path, which walks it exactly the way a `for-in` loop already
+would (`iterate`/`moveNext`/`current`), since its length isn't known ahead of time. A tuple argument
+is not either of these — it still takes §5.3.1's own unrolled `array<T>(aTuple)` path, since a
+tuple's arity is always a compile-time fact and never needs a loop at all.
+
+`dict<K,V>(pairs)` needs each pair's two slots convert to `K`/`V`; `dict<K,V>(keys, values)` needs
+the two arrays' element types to match `K`/`V` exactly, with no conversion — arrays are invariant
+(§6), so this is the same rule as any other array-typed parameter, not a new one — and raises
+`ArgumentException` if the two arrays' lengths differ, checked once before either is read.
 
 ### 5.4 Collection and range literals
 

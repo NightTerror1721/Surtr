@@ -45,7 +45,7 @@ public class LinkedList<T> : IList<T>
     {
         get
         {
-            if (this._head == null) throw IndexOutOfRangeException("LinkedList is empty");
+            if (this._head === null) throw IndexOutOfRangeException("LinkedList is empty");
             return this._head.value;
         }
     }
@@ -54,7 +54,7 @@ public class LinkedList<T> : IList<T>
     {
         get
         {
-            if (this._tail == null) throw IndexOutOfRangeException("LinkedList is empty");
+            if (this._tail === null) throw IndexOutOfRangeException("LinkedList is empty");
             return this._tail.value;
         }
     }
@@ -62,7 +62,7 @@ public class LinkedList<T> : IList<T>
     public override fun add(value: T): void
     {
         var newNode = Node(value);
-        if (_tail == null)
+        if (_tail === null)
         {
             _head = newNode;
             _tail = newNode;

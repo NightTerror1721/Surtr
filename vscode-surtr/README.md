@@ -21,6 +21,9 @@ Syntax highlighting, hover, go-to-definition and diagnostics for the
     lists, type annotations, generic constraints, return types, `as`/`as?`/`is`
     targets, and catch bindings — everything except the built-in primitives, which
     stay `storage.type.primitive.surtr`
+  - `array<T>`, `dict<K, V>` and `tuple<...>` (`support.type.surtr`) — the nameable,
+    callable forms of `T[]`, `{K: V}` and `(T1, ..., Tn)`, recognized wherever they're
+    followed by `<`, including in constructor-call position (`array<int>(5)`)
   - attributes (`@Range(0, 100)`)
   - every operator from the §5.7 precedence table
 - **Hover signatures** — type-accurate, cross-file, produced by the real compiler

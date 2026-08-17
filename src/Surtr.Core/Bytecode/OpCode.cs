@@ -823,8 +823,10 @@ namespace Surtr.Bytecode
         /// <remarks>
         /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
         /// Stack: <c>..., a -&gt; ..., int</c><br/>
-        /// Notes: lossy. The rounding mode, and what happens for NaN or out-of-range values,
-        /// still need to be pinned down.
+        /// Notes: lossy, and pinned down rather than an unchecked C# cast, whose behaviour for an
+        /// out-of-range double is platform-defined and would differ between x64 and ARM. Truncates
+        /// toward zero in range; saturates to <c>int.MinValue</c>/<c>int.MaxValue</c> outside it;
+        /// <c>NaN</c> converts to <c>0</c>.
         /// </remarks>
         F2I = 0x62,
 

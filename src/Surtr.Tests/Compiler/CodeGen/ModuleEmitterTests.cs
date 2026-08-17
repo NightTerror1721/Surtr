@@ -1528,6 +1528,53 @@ namespace Surtr.Tests.Compiler.CodeGen
 
             Assert.Equal(6, Int(runtime, "run"));
         }
+
+        /// <summary>
+        /// §2.6 lets a fully qualified name reach a type with no <c>import</c> at all, and binding
+        /// already resolved one that way (<see cref="Binding.BinderTests.AFullyQualifiedNameWorksWithoutAnImport"/>)
+        /// — but until now, the dependency graph <see cref="ModuleEmitter"/> emits in
+        /// (<c>SurtrCompilation.LoadOrder</c>) only ever learned about an edge from an explicit
+        /// <c>import</c>, scanned once at parse time before binding ran. A construction reached only
+        /// through a fully qualified name had no edge recorded at all, so the two modules could come
+        /// out in either relative order — and calling into whichever one hadn't been built yet threw
+        /// "uses a call to 'ctor', which is neither being emitted here nor already built" (SURTR4001)
+        /// at emission, though binding itself reported nothing wrong. Fixed by having
+        /// <c>TypeResolver</c> record the edge itself, the moment it resolves such a name, and having
+        /// <c>ModuleEmitter</c> ask <c>SurtrCompilation</c> to recompute the load order right before
+        /// it starts emitting — by which point binding has always finished discovering every one.
+        /// </summary>
+        [Fact]
+        public void ConstructingAClassFromAnotherModuleWorksWithNoImportAtAll()
+        {
+            var runtime = Run(
+                "fun run(): int { return game.util.Thing(9).n(); }",
+                ("/game/util/Thing.surtr", "public class Thing { private let _n: int; public constructor(n: int) { _n = n; } public fun n(): int { return _n; } }"));
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The same gap, for a class whose constructor is <em>written</em> rather than synthesised —
+        /// the shape <see cref="ConstructingAClassFromAnotherModuleWorksWithNoImportAtAll"/> exercises,
+        /// but confirmed once more against exactly the reduced case the bug was first reproduced with.
+        /// </summary>
+        [Fact]
+        public void AnExplicitConstructorFromAnotherModuleIsCallableWithNoImport()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let simple = game.util.Simple(4);\n"
+                    + "  return simple.get();\n"
+                    + "}",
+                ("/game/util/Simple.surtr",
+                    "public class Simple {\n"
+                        + "  private var _n: int;\n"
+                        + "  public constructor(n: int) { this._n = n; }\n"
+                        + "  public fun get(): int { return this._n; }\n"
+                        + "}"));
+
+            Assert.Equal(4, Int(runtime, "run"));
+        }
         #endregion
 
         #region Static blocks (§2.5, §3.2)
@@ -3755,6 +3802,470 @@ namespace Surtr.Tests.Compiler.CodeGen
                     + "}");
 
             Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        #endregion
+
+        #region Nameable collection constructors (§5.3.1)
+
+        [Fact]
+        public void ArrayEmptyConstructorIsEmpty()
+        {
+            var runtime = Run("fun run(): int { let xs = array<int>(); return xs.length; }");
+            Assert.Equal(0, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ArrayCapacityConstructorZeroFillsToTheGivenLength()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let xs = array<int>(5);\n"
+                    + "  return xs.length * 1000 + xs.get(0) + xs.get(4);\n"
+                    + "}");
+
+            // Every element starts at int's zero, so both the first and the last read back 0.
+            Assert.Equal(5000, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ArrayCapacityConstructorWorksWithARuntimeSizeToo()
+        {
+            // Not a written constant, so this exercises the runtime ArrNew form rather than ArrNewX.
+            var runtime = Run("fun run(n: int): int { let xs = array<int>(n); return xs.length; }");
+            Assert.Equal(7, Int(runtime, "run", SurtrValue.CreateInt(7)));
+        }
+
+        [Fact]
+        public void DictEmptyConstructorIsEmptyAndStillUsable()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let m = dict<string, int>();\n"
+                    + "  let before = m.length;\n"
+                    + "  m.set(\"x\", 7);\n"
+                    + "  return before * 1000 + m.get(\"x\");\n"
+                    + "}");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void DictCapacityConstructorStaysEmptyUntilSomethingIsSet()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let m = dict<string, int>(32);\n"
+                    + "  let before = m.length;\n"
+                    + "  m.set(\"x\", 5);\n"
+                    + "  return before * 1000 + m.get(\"x\");\n"
+                    + "}");
+
+            // before == 0: capacity is a hint, not a length, exactly like array.reserve/dict.reserve.
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ArrayFromTupleCastReadsEveryElementInOrder()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let a = array<int>((10, 20, 30));\n"
+                    + "  return a.length * 1000 + a.get(0) + a.get(1) + a.get(2);\n"
+                    + "}");
+
+            Assert.Equal(3000 + 60, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ArrayFromTupleCastWidensElementsImplicitly()
+        {
+            var runtime = Run(
+                "fun run(): float {\n"
+                    + "  let a = array<float>((1, 2, 3));\n"
+                    + "  return a.get(0) + a.get(1) + a.get(2);\n"
+                    + "}");
+
+            Assert.Equal(6.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void TupleFromArrayCastReadsEveryElementIntoItsSlot()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let xs: int[] = [10, 20, 30];\n"
+                    + "  let t = tuple<int, int, int>(xs);\n"
+                    + "  return t[0] + t[1] + t[2];\n"
+                    + "}");
+
+            Assert.Equal(60, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void TupleFromArrayArityMismatchThrowsInvalidCastException()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let xs: int[] = [1, 2];\n"
+                    + "  try { let t = tuple<int, int, int>(xs); return 0; }\n"
+                    + "  catch (e: InvalidCastException) { return 1; }\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void TheUnitTupleConstructsWithNoElements()
+        {
+            var runtime = Run("fun run(): int { let u = tuple<>(); return u.length; }");
+            Assert.Equal(0, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// <c>array&lt;int&gt;</c> and <c>int[]</c> aren't just convertible — they're the same type,
+        /// so a value built through one name behaves exactly as one declared through the other.
+        /// </summary>
+        [Fact]
+        public void ArrayGenericFormAndSymbolicFormAreTheSameTypeAtRuntimeToo()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let a: array<int> = [1, 2, 3];\n"
+                    + "  a.push(4);\n"
+                    + "  return a.length;\n"
+                    + "}");
+
+            Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ANoArgConstructionOfANonEmptyTupleIsRejected()
+        {
+            using var compilation = Reject("fun run(): int { let t = tuple<int, string>(); return 0; }");
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.TupleArityFixed);
+        }
+
+        [Fact]
+        public void ACapacityConstructionOfATupleIsRejected()
+        {
+            using var compilation = Reject("fun run(): int { let t = tuple<int, string>(5); return 0; }");
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.TupleArityFixed);
+        }
+
+        [Fact]
+        public void CastingIntoADictIsRejected()
+        {
+            using var compilation = Reject(
+                "fun run(): int { let m = dict<int, string>((1, \"a\")); return 0; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.CollectionCastNotSupported);
+        }
+
+        [Fact]
+        public void AnArrayCastFromATupleWithNoConversionToTheElementTypeIsRejected()
+        {
+            using var compilation = Reject(
+                "fun run(): int { let a = array<int>((\"x\", \"y\")); return 0; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.CollectionElementConversionMissing);
+        }
+
+        #endregion
+
+        #region Nameable primitive/string/range constructors (§5.3.2)
+
+        [Fact]
+        public void APrimitiveConstructorConvertsBetweenPrimitives()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let a = int(3.9);\n"
+                    + "  let b = int(-3.9);\n"
+                    + "  let c = int(true);\n"
+                    + "  let d = int('A');\n"
+                    + "  return a * 1000 + b * 100 + c * 10 + d;\n"
+                    + "}");
+
+            // 3*1000 + (-3)*100 + 1*10 + 65 = 3000 - 300 + 10 + 65 = 2775
+            Assert.Equal(2775, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void FloatToIntTruncatesTowardZeroSaturatesAndReadsNaNAsZero()
+        {
+            var runtime = Run(
+                "fun truncPos(): int { return int(2.9); }\n"
+                    + "fun truncNeg(): int { return int(-2.9); }\n"
+                    + "fun tooBig(): int { return int(1e300); }\n"
+                    + "fun tooSmall(): int { return int(-1e300); }\n"
+                    + "fun notANumber(): int { return int(0.0 / 0.0); }\n");
+
+            Assert.Equal(2, Int(runtime, "truncPos"));
+            Assert.Equal(-2, Int(runtime, "truncNeg"));
+            Assert.Equal(int.MaxValue, Int(runtime, "tooBig"));
+            Assert.Equal(int.MinValue, Int(runtime, "tooSmall"));
+            Assert.Equal(0, Int(runtime, "notANumber"));
+        }
+
+        [Fact]
+        public void IntParsesFromAValidString()
+        {
+            var runtime = Run("fun run(): int { return int(\"123\") + int(\"-7\"); }");
+            Assert.Equal(116, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void IntConstructorThrowsFormatExceptionOnBadText()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  try { let x = int(\"abc\"); return 0; }\n"
+                    + "  catch (e: FormatException) { return 1; }\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void IntParsesWithARadix()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let hex = int(\"ff\", 16);\n"
+                    + "  let bin = int(\"1010\", 2);\n"
+                    + "  let neg = int(\"-z\", 36);\n"
+                    + "  return hex * 1000000 + bin * 1000 + neg;\n"
+                    + "}");
+
+            Assert.Equal(255 * 1000000 + 10 * 1000 - 35, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void IntRadixConstructorThrowsFormatExceptionOnAnInvalidDigit()
+        {
+            // '2' is not a valid base-2 digit.
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  try { let x = int(\"102\", 2); return 0; }\n"
+                    + "  catch (e: FormatException) { return 1; }\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void IntRadixConstructorThrowsArgumentExceptionOnABadRadix()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  try { let x = int(\"5\", 37); return 0; }\n"
+                    + "  catch (e: ArgumentException) { return 1; }\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void FloatParsesFromAValidStringAndThrowsOnAnInvalidOne()
+        {
+            var runtime = Run(
+                "fun run(): float { return float(\"3.5\"); }\n"
+                    + "fun bad(): int {\n"
+                    + "  try { let x = float(\"nope\"); return 0; }\n"
+                    + "  catch (e: FormatException) { return 1; }\n"
+                    + "}");
+
+            Assert.Equal(3.5, Call(runtime, "run").AsFloat);
+            Assert.Equal(1, Int(runtime, "bad"));
+        }
+
+        [Fact]
+        public void BoolParsesCaseInsensitivelyAndThrowsOnAnInvalidString()
+        {
+            var runtime = Run(
+                "fun run(): bool { return bool(\"TRUE\") && bool(\"1\") && !bool(\"false\") && !bool(\"0\"); }\n"
+                    + "fun bad(): int {\n"
+                    + "  try { let x = bool(\"maybe\"); return 0; }\n"
+                    + "  catch (e: FormatException) { return 1; }\n"
+                    + "}");
+
+            Assert.True(Call(runtime, "run").AsBool);
+            Assert.Equal(1, Int(runtime, "bad"));
+        }
+
+        [Fact]
+        public void CharTakesTheFirstCharacterAndThrowsOnAnEmptyString()
+        {
+            var runtime = Run(
+                "fun run(): char { return char(\"hi\"); }\n"
+                    + "fun bad(): int {\n"
+                    + "  try { let x = char(\"\"); return 0; }\n"
+                    + "  catch (e: FormatException) { return 1; }\n"
+                    + "}");
+
+            Assert.Equal('h', (char)Call(runtime, "run").AsChar);
+            Assert.Equal(1, Int(runtime, "bad"));
+        }
+
+        [Fact]
+        public void StringConstructorsComposeFromEveryScalar()
+        {
+            var runtime = Run(
+                "fun run(): string {\n"
+                    + "  return string(42) + \"|\" + string(3.5) + \"|\" + string(true) + \"|\" + string('x') + \"|\" + string(0..10) + \"|\" + string('*', 3) + \"|\" + string(['h', 'i']) + \"|\" + string(['h', 'e', 'l', 'l', 'o'], 1, 3);\n"
+                    + "}");
+
+            Assert.Equal("42|3.5|true|x|0..10|***|hi|ell", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void StringSliceConstructorThrowsIndexOutOfRangeOnABadOffsetOrLength()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let chars = ['a', 'b', 'c'];\n"
+                    + "  try { let x = string(chars, 2, 5); return 0; }\n"
+                    + "  catch (e: IndexOutOfRangeException) { return 1; }\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void RangeConstructorsMatchTheEquivalentOperators()
+        {
+            var runtime = Run(
+                "fun exclusive(): int { let r = range(1, 5); return r.length; }\n"
+                    + "fun inclusiveConstant(): int { let r = range(1, 5, true); return r.length; }\n"
+                    + "fun exclusiveConstant(): int { let r = range(1, 5, false); return r.length; }\n"
+                    + "fun runtimeFlag(flag: bool): int { let r = range(1, 5, flag); return r.length; }\n");
+
+            Assert.Equal(4, Int(runtime, "exclusive"));
+            Assert.Equal(5, Int(runtime, "inclusiveConstant"));
+            Assert.Equal(4, Int(runtime, "exclusiveConstant"));
+            Assert.Equal(5, Int(runtime, "runtimeFlag", SurtrValue.CreateBool(true)));
+            Assert.Equal(4, Int(runtime, "runtimeFlag", SurtrValue.CreateBool(false)));
+        }
+
+        [Fact]
+        public void APrimitiveConstructorWithNoMatchingArgumentsIsRejected()
+        {
+            using var compilation = Reject("fun run(): int { let x = int(true, false); return 0; }");
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.NoBuiltInConstructorMatch);
+        }
+
+        #endregion
+
+        #region Nameable array/dict shapes with a runtime length (§5.3.3)
+
+        [Fact]
+        public void ArraySizeDefaultConstructorFillsEveryElement()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let a = array<int>(5, -1);\n"
+                    + "  var sum = 0;\n"
+                    + "  for (x in a) sum += x;\n"
+                    + "  return a.length * 1000 + sum;\n"
+                    + "}");
+
+            Assert.Equal(5000 - 5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ArrayCopyConstructorIsAGenuineIndependentCopy()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let src: int[] = [1, 2, 3];\n"
+                    + "  let copy = array<int>(src);\n"
+                    + "  copy.push(99);\n"
+                    + "  return copy.length * 1000 + copy.get(0) + src.length;\n"
+                    + "}");
+
+            // src stays length 3 after mutating copy — proof they don't alias the same buffer.
+            Assert.Equal(4000 + 1 + 3, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ArrayCopyConstructorWidensElementsImplicitly()
+        {
+            var runtime = Run(
+                "fun run(): float {\n"
+                    + "  let src: int[] = [1, 2, 3];\n"
+                    + "  let copy = array<float>(src);\n"
+                    + "  return copy.get(0) + copy.get(1) + copy.get(2);\n"
+                    + "}");
+
+            Assert.Equal(6.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void ArrayFromIterableConstructorWalksARange()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let a = array<int>(0..5);\n"
+                    + "  var sum = 0;\n"
+                    + "  for (x in a) sum += x;\n"
+                    + "  return a.length * 1000 + sum;\n"
+                    + "}");
+
+            Assert.Equal(5000 + 10, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void DictFromPairsConstructorBuildsEveryEntry()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let pairs = [(\"a\", 1), (\"b\", 2), (\"c\", 3)];\n"
+                    + "  let d = dict<string, int>(pairs);\n"
+                    + "  return d.length * 1000 + d.get(\"b\");\n"
+                    + "}");
+
+            Assert.Equal(3002, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void DictFromParallelArraysConstructorBuildsEveryEntry()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let keys: string[] = [\"x\", \"y\", \"z\"];\n"
+                    + "  let values: int[] = [10, 20, 30];\n"
+                    + "  let d = dict<string, int>(keys, values);\n"
+                    + "  return d.length * 1000 + d.get(\"y\");\n"
+                    + "}");
+
+            Assert.Equal(3020, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void DictFromParallelArraysThrowsArgumentExceptionOnMismatchedLengths()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let keys: string[] = [\"x\", \"y\"];\n"
+                    + "  let values: int[] = [10, 20, 30];\n"
+                    + "  try { let d = dict<string, int>(keys, values); return 0; }\n"
+                    + "  catch (e: ArgumentException) { return 1; }\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void TupleExplicitPositionalConstructorMatchesTheLiteral()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let t = tuple<int, int, int>(10, 20, 30);\n"
+                    + "  return t[0] + t[1] + t[2];\n"
+                    + "}");
+
+            Assert.Equal(60, Int(runtime, "run"));
         }
 
         #endregion

@@ -293,6 +293,43 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         InvalidConstType = 3045,
 
+        /// <summary>
+        /// A no-arg or capacity construction attempted on <c>tuple&lt;...&gt;</c> where its declared
+        /// arity is not 0 (§5.3). A tuple's arity is part of its type, fixed at every position, so
+        /// there is nothing a size-changing constructor could mean — every element has to come from
+        /// somewhere, either written out or cast from an <c>array&lt;T&gt;</c> of the right length.
+        /// </summary>
+        TupleArityFixed = 3046,
+
+        /// <summary>
+        /// A construction of <c>array&lt;T&gt;</c>, <c>dict&lt;K,V&gt;</c> or <c>tuple&lt;...&gt;</c>
+        /// through their nameable form (§5.3) whose argument(s) name none of the shapes that type
+        /// supports — a capacity, a matching source collection to cast/build from, a size-and-default
+        /// pair, or a pair of parallel arrays — including any attempt to cast into or out of
+        /// <c>dict&lt;K,V&gt;</c> other than from pairs or parallel arrays, which this pass does not
+        /// support.
+        /// </summary>
+        CollectionCastNotSupported = 3047,
+
+        /// <summary>
+        /// One element or key/value of an <c>array&lt;T&gt;</c>/<c>dict&lt;K,V&gt;</c>/<c>tuple&lt;...&gt;</c>
+        /// constructor's source (a cast, a size-and-default fill, an iterable, a pairs array, or
+        /// parallel arrays) has no implicit conversion to the slot it would fill. Checked per element
+        /// rather than as a single pass/fail, so the diagnostic names the one position that does not
+        /// line up.
+        /// </summary>
+        CollectionElementConversionMissing = 3048,
+
+        /// <summary>
+        /// A construction of a primitive, <c>string</c> or <c>range</c> through its nameable form
+        /// (§5.3.2) whose argument(s) match none of the shapes that type supports — a conversion from
+        /// another primitive, a parse from <c>string</c>, or one of <c>string</c>'s/<c>range</c>'s own
+        /// composing shapes. One code shared across every built-in scalar, the same way
+        /// <see cref="CollectionCastNotSupported"/> is shared across array/dict/tuple, rather than one
+        /// per type.
+        /// </summary>
+        NoBuiltInConstructorMatch = 3049,
+
         #endregion
 
         #region Code generation — 4xxx

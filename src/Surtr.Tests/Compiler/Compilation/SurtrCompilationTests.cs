@@ -181,6 +181,53 @@ namespace Surtr.Tests.Compiler.Compilation
             Assert.False(compilation.HasErrors);
             Assert.Single(compilation.LoadOrder);
         }
+
+        /// <summary>
+        /// §2.6: a fully qualified name reaches a type with no <c>import</c> at all, and until this
+        /// was fixed, that was the one path <see cref="ModuleDependencyGraph"/> never learned about —
+        /// <see cref="Create"/> only scans <c>import</c> syntax, at parse time, before binding has
+        /// resolved anything. <see cref="TypeResolver"/> now records the edge itself, the moment it
+        /// resolves such a name — which only happens once binding runs, hence <c>Bind().BindBodies()</c>
+        /// here rather than asserting straight after <c>Create</c>.
+        /// </summary>
+        [Fact]
+        public void AFullyQualifiedReferenceWithNoImportBecomesADependencyEdgeOnceBound()
+        {
+            var compilation = SurtrCompilation.Create(Project()
+                .AddSourceFile(Root + "/game/math/Vec2.surtr", "public class Vec2 { }")
+                .AddSourceFile(Root + "/game/core/Entity.surtr", "class Entity { public var p: game.math.Vec2; }"));
+
+            // Create() alone never saw an import, so the edge does not exist yet.
+            Assert.DoesNotContain("game.math", compilation.Dependencies.DependenciesOf("game.core"));
+
+            compilation.Bind().BindBodies();
+
+            Assert.False(compilation.HasErrors);
+            Assert.Contains("game.math", compilation.Dependencies.DependenciesOf("game.core"));
+        }
+
+        /// <summary>
+        /// The edge alone is not the fix — <see cref="Create"/>'s own <c>LoadOrder</c> was already
+        /// computed before binding ran, so it still needs recomputing. This is what
+        /// <c>CodeGen.ModuleEmitter</c> does, via <c>RefreshLoadOrder</c>, right before it starts
+        /// emitting.
+        /// </summary>
+        [Fact]
+        public void RefreshingTheLoadOrderPicksUpAFullyQualifiedDependency()
+        {
+            var compilation = SurtrCompilation.Create(Project()
+                .AddSourceFile(Root + "/game/math/Vec2.surtr", "public class Vec2 { }")
+                .AddSourceFile(Root + "/game/core/Entity.surtr", "class Entity { public var p: game.math.Vec2; }"));
+
+            // Nothing connects the two modules yet, so their relative order is whichever the
+            // alphabetical tie-break gives unconnected modules — "game.core" before "game.math".
+            Assert.Equal(new[] { "game.core", "game.math" }, compilation.LoadOrder.Select(m => m.Path));
+
+            compilation.Bind().BindBodies();
+            compilation.RefreshLoadOrder();
+
+            Assert.Equal(new[] { "game.math", "game.core" }, compilation.LoadOrder.Select(m => m.Path));
+        }
         #endregion
 
         #region References

@@ -84,6 +84,13 @@ namespace Surtr.Compiler.CodeGen
             if (_emitted is bool already)
                 return already;
 
+            // Binding has already run by the time an emitter exists, so this is the first point a
+            // fully qualified reference with no `import` — recorded lazily, by TypeResolver, only
+            // once the binder actually resolves one — can be reflected in LoadOrder. Create()'s own
+            // order saw only the import-derived edges; this brings it up to date, including a cycle
+            // that only such a reference introduces.
+            _compilation.RefreshLoadOrder();
+
             if (_compilation.HasErrors)
                 return (bool)(_emitted = false);
 

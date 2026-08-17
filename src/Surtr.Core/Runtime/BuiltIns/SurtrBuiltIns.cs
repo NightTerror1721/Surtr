@@ -127,6 +127,14 @@ namespace Surtr.Runtime.BuiltIns
         /// <summary>Raised when an argument is outside what a member accepts.</summary>
         public static readonly SurtrClass ArgumentException;
 
+        /// <summary>
+        /// Raised when text handed to a parsing constructor (<c>int(aString)</c>,
+        /// <c>float(aString)</c>, <c>bool(aString)</c>, <c>char(aString)</c>) is not in the shape
+        /// that type expects. Kept distinct from <see cref="ArgumentException"/>: the argument here
+        /// is the right <em>type</em> (a string), so the problem is its content, not its shape.
+        /// </summary>
+        public static readonly SurtrClass FormatException;
+
         /// <summary>Raised by an array, string or tuple index outside its bounds.</summary>
         public static readonly SurtrClass IndexOutOfRangeException;
 
@@ -234,6 +242,7 @@ namespace Surtr.Runtime.BuiltIns
             // to be a slot the linker lays out and the collector traces.
             Exception = DeclareObject("Exception");
             ArgumentException = DeclareObject("ArgumentException", Exception);
+            FormatException = DeclareObject("FormatException", Exception);
             IndexOutOfRangeException = DeclareObject("IndexOutOfRangeException", Exception);
             KeyNotFoundException = DeclareObject("KeyNotFoundException", Exception);
             NullReferenceException = DeclareObject("NullReferenceException", Exception);
@@ -285,6 +294,7 @@ namespace Surtr.Runtime.BuiltIns
 
             SurtrStandardLibrary.DeclareException(BuilderFor(Exception, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(ArgumentException, handles));
+            SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(FormatException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(IndexOutOfRangeException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(KeyNotFoundException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(NullReferenceException, handles));
@@ -449,6 +459,7 @@ namespace Surtr.Runtime.BuiltIns
                 System.NullReferenceException => NullReferenceException,
                 System.DivideByZeroException => DivideByZeroException,
                 System.InvalidCastException => InvalidCastException,
+                System.FormatException => FormatException,
                 System.ArgumentException => ArgumentException,
                 System.InvalidOperationException => InvalidOperationException,
                 _ => null,

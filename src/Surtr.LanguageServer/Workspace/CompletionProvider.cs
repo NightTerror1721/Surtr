@@ -915,6 +915,19 @@ namespace Surtr.LanguageServer.Workspace
                         yield return argument;
                     break;
 
+                case BoundCollectionCreationExpression collection:
+                    if (collection.Capacity is not null)
+                        yield return collection.Capacity;
+                    if (collection.Source is not null)
+                        yield return collection.Source;
+                    if (collection.Source2 is not null)
+                        yield return collection.Source2;
+                    if (collection.DefaultValue is not null)
+                        yield return collection.DefaultValue;
+                    if (collection.Thrown is not null)
+                        yield return collection.Thrown;
+                    break;
+
                 case BoundBinaryExpression binary:
                     yield return binary.Left;
                     yield return binary.Right;

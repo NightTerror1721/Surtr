@@ -1365,6 +1365,10 @@ namespace Surtr.Compiler.CodeGen
                     EmitDictLiteral(dictionary);
                     return;
 
+                case BoundCollectionCreationExpression collection:
+                    EmitCollectionCreation(collection);
+                    return;
+
                 case BoundInterpolatedStringExpression interpolated:
                     EmitInterpolatedString(interpolated);
                     return;
@@ -1469,8 +1473,25 @@ namespace Surtr.Compiler.CodeGen
             }
 
             Expression(conversion.Operand);
+            EmitConversionTail(conversion.Conversion, from, to);
+        }
 
-            switch (conversion.Conversion.Kind)
+        /// <summary>
+        /// The part of a conversion that runs once the value it applies to is already on the stack.
+        /// </summary>
+        /// <remarks>
+        /// Split out of <see cref="EmitConversion"/> so a collection cast constructor's per-element
+        /// loop (<see cref="EmitCollectionCreation"/>) can apply the same conversion to a value it
+        /// just read with <c>TupGetC</c>/<c>ArrGet</c> — there is no <see cref="BoundConversionExpression"/>
+        /// node mid-loop for it to be the operand of, only the classified <see cref="Conversion"/>
+        /// the binder already worked out. Every caller from that loop is restricted to
+        /// <see cref="Conversion.IsImplicit"/> (§5.6 makes a user-defined <c>operator as</c>
+        /// explicit-only), so only the identity/nullable/reference/numeric/erasure branches below are
+        /// ever reached from there.
+        /// </remarks>
+        private void EmitConversionTail(Conversion conversion, TypeSymbol from, TypeSymbol to)
+        {
+            switch (conversion.Kind)
             {
                 case ConversionKind.Identity:
                 case ConversionKind.ImplicitNullable:
@@ -1513,7 +1534,7 @@ namespace Surtr.Compiler.CodeGen
                 }
 
                 default:
-                    throw Unsupported($"a {conversion.Conversion.Kind} conversion");
+                    throw Unsupported($"a {conversion.Kind} conversion");
             }
         }
 
@@ -3537,6 +3558,424 @@ case BoundFieldExpression field:
             }
 
             Code.PackDictionary(Descriptors.Emit(dictionary.Type.NonNullable), dictionary.Entries.Count);
+        }
+
+        /// <summary>
+        /// Emits a construction of <c>array</c>, <c>dict</c> or <c>tuple</c> through their nameable
+        /// generic form (§5.3). Every shape folds to the same allocation opcodes the equivalent
+        /// literal already uses — never <c>ObjNew</c> — plus at most one native call
+        /// (<see cref="BoundCollectionCreationExpression.ReserveMethod"/>, the one shape that has no
+        /// single-opcode fold available).
+        /// </summary>
+        private void EmitCollectionCreation(BoundCollectionCreationExpression creation)
+        {
+            var type = Descriptors.Emit(creation.Type.NonNullable);
+
+            switch (creation.Kind)
+            {
+                case CollectionCreationKind.ArrayEmpty:
+                    // Identical to what an empty `[]` literal already emits (EmitArrayLiteral) —
+                    // routed through the same ArrPack rather than re-derived.
+                    Code.PackArray(type, 0);
+                    return;
+
+                case CollectionCreationKind.TupleEmpty:
+                    Code.PackTuple(type, 0);
+                    return;
+
+                case CollectionCreationKind.DictEmpty:
+                    Code.NewDictionary(type);
+                    return;
+
+                case CollectionCreationKind.ArrayCapacity:
+                    EmitArrayCapacity(creation, type);
+                    return;
+
+                case CollectionCreationKind.DictCapacity:
+                    // DictNew has no capacity operand, so this is the one shape that does not fold
+                    // to a single opcode: allocate empty, then dup + call dict's own existing
+                    // `reserve` — the same "dup, call a void-returning instance method, keep one
+                    // copy" idiom EmitObjectCreation already uses for a synthesized default
+                    // constructor.
+                    Code.NewDictionary(type);
+                    Code.Dup();
+                    Expression(creation.Capacity!);
+                    EmitResolvedCall(creation.ReserveMethod!, virtualCall: false, discardResult: true);
+                    return;
+
+                case CollectionCreationKind.ArrayFromTuple:
+                    EmitArrayFromTuple(creation, type);
+                    return;
+
+                case CollectionCreationKind.TupleFromArray:
+                    EmitTupleFromArray(creation, type);
+                    return;
+
+                case CollectionCreationKind.ArraySizeDefault:
+                    EmitArraySizeDefault(creation, type);
+                    return;
+
+                case CollectionCreationKind.ArrayCopy:
+                    EmitArrayCopy(creation, type);
+                    return;
+
+                case CollectionCreationKind.ArrayFromIterable:
+                    EmitArrayFromIterable(creation, type);
+                    return;
+
+                case CollectionCreationKind.DictFromPairs:
+                    EmitDictFromPairs(creation, type);
+                    return;
+
+                case CollectionCreationKind.DictFromParallelArrays:
+                    EmitDictFromParallelArrays(creation, type);
+                    return;
+
+                default:
+                    throw Unsupported($"a {creation.Kind} collection construction");
+            }
+        }
+
+        private void EmitArrayCapacity(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            // A written literal folds straight to ArrNewX — the addressing mode Opcodes.md already
+            // documents for exactly this, "for arrays of statically known size" — with zero runtime
+            // work; anything else pushes the runtime value and falls back to the stack-popping ArrNew.
+            if (creation.Capacity is BoundLiteralExpression { Value: long constant }
+                && constant >= 0
+                && constant <= int.MaxValue)
+            {
+                Code.NewArray(type, (int)constant);
+                return;
+            }
+
+            Expression(creation.Capacity!);
+            Code.NewArray(type);
+        }
+
+        private void EmitArrayFromTuple(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            var tupleType = (TupleTypeSymbol)creation.Source!.Type.NonNullable;
+            var elementType = ((ArrayTypeSymbol)creation.Type.NonNullable).ElementType;
+            var conversions = creation.ElementConversions!;
+
+            var slot = _method.DeclareLocal("$collect");
+            Expression(creation.Source);
+            Code.StoreLocal(slot);
+
+            // Element 0 first, ..., element N-1 last: ArrPack pops in the same order EmitArrayLiteral
+            // already pushes for a written literal, "the deepest popped value becomes element 0."
+            for (int i = 0; i < conversions.Count; i++)
+            {
+                Code.LoadLocal(slot);
+                Code.TupleElement(i);
+                EmitConversionTail(conversions[i], tupleType.ElementTypes[i], elementType);
+            }
+
+            Code.PackArray(type, conversions.Count);
+        }
+
+        private void EmitTupleFromArray(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            var tupleType = (TupleTypeSymbol)creation.Type.NonNullable;
+            var conversions = creation.ElementConversions!;
+
+            var slot = _method.DeclareLocal("$collect");
+            Expression(creation.Source!);
+            Code.StoreLocal(slot);
+
+            // The library not declaring InvalidCastException is treated the same way EmitNullAssert
+            // treats a missing NullReferenceException: the check is skipped rather than left with
+            // nothing to throw, so a mismatched length falls through unchecked instead of failing to
+            // compile.
+            if (creation.Thrown is not null)
+            {
+                var ok = Code.NewLabel();
+
+                Code.LoadLocal(slot);
+                Code.ArrLen();
+                Code.LoadInt(conversions.Count);
+                Code.JumpIfCompare(SurtrComparison.Equal, SurtrValueTypeCode.Integer, ok);
+
+                Expression(creation.Thrown);
+                Code.Throw();
+                Code.MarkLabel(ok);
+            }
+
+            for (int i = 0; i < conversions.Count; i++)
+            {
+                Code.LoadLocal(slot);
+                Code.LoadInt(i);
+                Code.ArrGet();
+                EmitConversionTail(conversions[i], ((ArrayTypeSymbol)creation.Source!.Type.NonNullable).ElementType, tupleType.ElementTypes[i]);
+            }
+
+            Code.PackTuple(type, conversions.Count);
+        }
+
+        /// <summary>
+        /// <c>array&lt;T&gt;(size, defaultValue)</c> for a non-zero (or non-constant) default — the
+        /// zero-value case never reaches here, folded onto <see cref="EmitArrayCapacity"/> instead
+        /// (which already zero-fills) back in the binder. Every loop method below follows the same
+        /// hand-rolled counted-loop idiom <c>EmitForInIndexed</c>/<c>EmitForInRange</c> already use —
+        /// no shared "emit a counted loop" helper exists anywhere in this emitter, and none of these
+        /// synthesized loops has a user-visible body to give <c>break</c>/<c>continue</c> targets to,
+        /// so none of them call <c>PushLoop</c>/<c>PopTargets</c> either.
+        /// </summary>
+        private void EmitArraySizeDefault(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            var arraySlot = _method.DeclareLocal("$collect");
+            var defaultSlot = _method.DeclareLocal("$default");
+            var indexSlot = _method.DeclareLocal("$index");
+
+            // Zero-filled by ArrNew/ArrNewX already; the loop below overwrites every slot with the
+            // real default, evaluated once up front rather than once per index.
+            EmitArrayCapacity(creation, type);
+            Code.StoreLocal(arraySlot);
+
+            Expression(creation.DefaultValue!);
+            Code.StoreLocal(defaultSlot);
+
+            Code.LoadInt(0);
+            Code.StoreLocal(indexSlot);
+
+            var top = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.MarkLabel(top);
+            Code.LoadLocal(indexSlot);
+            Code.LoadLocal(arraySlot);
+            Code.ArrLen();
+            Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
+
+            Code.LoadLocal(arraySlot);
+            Code.LoadLocal(indexSlot);
+            Code.LoadLocal(defaultSlot);
+            Code.ArrSet();
+
+            Code.IncrementLocal(indexSlot, 1);
+            Code.Jump(top);
+            Code.MarkLabel(end);
+            Code.LoadLocal(arraySlot);
+        }
+
+        /// <summary>
+        /// <c>array&lt;T&gt;(anotherArray)</c> — checked ahead of <see cref="EmitArrayFromIterable"/>
+        /// in the binder precisely so this faster, non-interface-dispatch path is what an array
+        /// argument actually takes: one <c>ArrLen</c>, one runtime <c>ArrNew</c>, then indexed
+        /// <c>ArrGet</c>/<c>ArrSet</c> — never <c>CallInterface</c>.
+        /// </summary>
+        private void EmitArrayCopy(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            var elementType = ((ArrayTypeSymbol)creation.Type.NonNullable).ElementType;
+            var sourceElementType = ((ArrayTypeSymbol)creation.Source!.Type.NonNullable).ElementType;
+            var conversion = creation.ElementConversions![0];
+
+            var sourceSlot = _method.DeclareLocal("$collect");
+            var destSlot = _method.DeclareLocal("$collectDest");
+            var indexSlot = _method.DeclareLocal("$index");
+
+            Expression(creation.Source);
+            Code.StoreLocal(sourceSlot);
+
+            Code.LoadLocal(sourceSlot);
+            Code.ArrLen();
+            Code.NewArray(type);
+            Code.StoreLocal(destSlot);
+
+            Code.LoadInt(0);
+            Code.StoreLocal(indexSlot);
+
+            var top = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.MarkLabel(top);
+            Code.LoadLocal(indexSlot);
+            Code.LoadLocal(sourceSlot);
+            Code.ArrLen();
+            Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
+
+            Code.LoadLocal(destSlot);
+            Code.LoadLocal(indexSlot);
+            Code.LoadLocal(sourceSlot);
+            Code.LoadLocal(indexSlot);
+            Code.ArrGet();
+            EmitConversionTail(conversion, sourceElementType, elementType);
+            Code.ArrSet();
+
+            Code.IncrementLocal(indexSlot, 1);
+            Code.Jump(top);
+            Code.MarkLabel(end);
+            Code.LoadLocal(destSlot);
+        }
+
+        /// <summary>
+        /// <c>array&lt;T&gt;(anIterable)</c> — the lowest-priority, general-purpose shape, walking
+        /// the source through <c>IIterable&lt;T&gt;</c> exactly as <c>EmitForInIterable</c> already
+        /// does (interface dispatch on <c>iterate</c>/<c>moveNext</c>/<c>current</c>, the same
+        /// <c>Unerase</c> rule for a reference element), pushing each result rather than storing to a
+        /// loop variable. The destination starts empty and growable since the source's length is not
+        /// known ahead of time for a general iterable.
+        /// </summary>
+        private void EmitArrayFromIterable(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            var elementType = ((ArrayTypeSymbol)creation.Type.NonNullable).ElementType;
+            var sourceElementType = creation.SourceElementType!;
+            var conversion = creation.ElementConversions![0];
+
+            var iterate = ContractMethod(SurtrBuiltIns.IIterable, "iterate");
+            var moveNext = ContractMethod(SurtrBuiltIns.IIterator, "moveNext");
+            var current = ContractMethod(SurtrBuiltIns.IIterator, MemberNames.Getter("current"));
+
+            var destSlot = _method.DeclareLocal("$collectDest");
+            var cursorSlot = _method.DeclareLocal("$iterator");
+
+            Code.PackArray(type, 0);
+            Code.StoreLocal(destSlot);
+
+            Expression(creation.Source!);
+            Code.CallInterface(iterate);
+            Code.StoreLocal(cursorSlot);
+
+            var top = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.MarkLabel(top);
+            Code.LoadLocal(cursorSlot);
+            Code.CallInterface(moveNext);
+            Code.JumpIfFalse(end);
+
+            Code.LoadLocal(destSlot);
+            Code.LoadLocal(cursorSlot);
+            Code.CallInterface(current);
+
+            if (sourceElementType.IsReferenceType && !sourceElementType.IsVoid)
+                Unerase(sourceElementType);
+
+            EmitConversionTail(conversion, sourceElementType, elementType);
+            Code.ArrPush();
+
+            Code.Jump(top);
+            Code.MarkLabel(end);
+            Code.LoadLocal(destSlot);
+        }
+
+        /// <summary>
+        /// <c>{K:V}(pairs)</c> — the pair read twice (once per slot) through a temp local, the same
+        /// "evaluate once, use more than once" idiom every other cast/copy shape here already uses,
+        /// rather than juggling a duplicate mid-stack.
+        /// </summary>
+        private void EmitDictFromPairs(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            var dictType = (DictionaryTypeSymbol)creation.Type.NonNullable;
+            var pairType = (TupleTypeSymbol)((ArrayTypeSymbol)creation.Source!.Type.NonNullable).ElementType;
+            var conversions = creation.ElementConversions!;
+
+            var sourceSlot = _method.DeclareLocal("$collect");
+            var dictSlot = _method.DeclareLocal("$collectDict");
+            var indexSlot = _method.DeclareLocal("$index");
+            var pairSlot = _method.DeclareLocal("$pair");
+
+            Expression(creation.Source);
+            Code.StoreLocal(sourceSlot);
+
+            Code.NewDictionary(type);
+            Code.StoreLocal(dictSlot);
+
+            Code.LoadInt(0);
+            Code.StoreLocal(indexSlot);
+
+            var top = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.MarkLabel(top);
+            Code.LoadLocal(indexSlot);
+            Code.LoadLocal(sourceSlot);
+            Code.ArrLen();
+            Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
+
+            Code.LoadLocal(sourceSlot);
+            Code.LoadLocal(indexSlot);
+            Code.ArrGet();
+            Code.StoreLocal(pairSlot);
+
+            Code.LoadLocal(dictSlot);
+            Code.LoadLocal(pairSlot);
+            Code.TupleElement(0);
+            EmitConversionTail(conversions[0], pairType.ElementTypes[0], dictType.KeyType);
+            Code.LoadLocal(pairSlot);
+            Code.TupleElement(1);
+            EmitConversionTail(conversions[1], pairType.ElementTypes[1], dictType.ValueType);
+            Code.DictSet();
+
+            Code.IncrementLocal(indexSlot, 1);
+            Code.Jump(top);
+            Code.MarkLabel(end);
+            Code.LoadLocal(dictSlot);
+        }
+
+        /// <summary>
+        /// <c>{K:V}(keys, values)</c> — no element conversions: the binder only takes this path on an
+        /// exact element-type match (arrays are invariant, §6), so nothing here needs
+        /// <see cref="EmitConversionTail"/> the way every other cast/copy/pairs shape does.
+        /// </summary>
+        private void EmitDictFromParallelArrays(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            var keysSlot = _method.DeclareLocal("$collect");
+            var valuesSlot = _method.DeclareLocal("$collect2");
+            var dictSlot = _method.DeclareLocal("$collectDict");
+            var indexSlot = _method.DeclareLocal("$index");
+
+            Expression(creation.Source!);
+            Code.StoreLocal(keysSlot);
+            Expression(creation.Source2!);
+            Code.StoreLocal(valuesSlot);
+
+            // Same "skip the check if the library doesn't declare the exception" idiom EmitNullAssert
+            // and EmitTupleFromArray already established.
+            if (creation.Thrown is not null)
+            {
+                var ok = Code.NewLabel();
+
+                Code.LoadLocal(keysSlot);
+                Code.ArrLen();
+                Code.LoadLocal(valuesSlot);
+                Code.ArrLen();
+                Code.JumpIfCompare(SurtrComparison.Equal, SurtrValueTypeCode.Integer, ok);
+
+                Expression(creation.Thrown);
+                Code.Throw();
+                Code.MarkLabel(ok);
+            }
+
+            Code.NewDictionary(type);
+            Code.StoreLocal(dictSlot);
+
+            Code.LoadInt(0);
+            Code.StoreLocal(indexSlot);
+
+            var top = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.MarkLabel(top);
+            Code.LoadLocal(indexSlot);
+            Code.LoadLocal(keysSlot);
+            Code.ArrLen();
+            Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
+
+            Code.LoadLocal(dictSlot);
+            Code.LoadLocal(keysSlot);
+            Code.LoadLocal(indexSlot);
+            Code.ArrGet();
+            Code.LoadLocal(valuesSlot);
+            Code.LoadLocal(indexSlot);
+            Code.ArrGet();
+            Code.DictSet();
+
+            Code.IncrementLocal(indexSlot, 1);
+            Code.Jump(top);
+            Code.MarkLabel(end);
+            Code.LoadLocal(dictSlot);
         }
 
         /// <summary>
