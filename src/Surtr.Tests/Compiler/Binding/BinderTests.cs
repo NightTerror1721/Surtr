@@ -1182,5 +1182,31 @@ namespace Surtr.Tests.Compiler.Binding
             AssertNoErrors(compilation);
         }
         #endregion
+
+        #region Inherited members through a construction
+        [Fact]
+        public void AnInheritedMemberIsReadThroughTheReceiversConstruction()
+        {
+            // The stdlib Collection.surtr shape: `iterate()` is not declared on IReadOnlyCollection<T>
+            // itself, so reaching it walks the inherited IIterable<T> — and that walk must apply the
+            // receiver's own type argument, not leak the interface's parameter.
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IReadOnlyCollection<T> : IIterable<T>\n"
+                + "{\n"
+                + "    fun get(index: int): T;\n"
+                + "}\n"
+                + "private value class ReadOnlyCollection<T> : IReadOnlyCollection<T>\n"
+                + "{\n"
+                + "    private let _col: IReadOnlyCollection<T>;\n"
+                + "    public inline constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
+                + "    public override fun get(index: int): T { return _col.get(index); }\n"
+                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+        }
+        #endregion
     }
 }

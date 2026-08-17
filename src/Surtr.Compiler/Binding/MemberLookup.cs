@@ -172,11 +172,35 @@ namespace Surtr.Compiler.Binding
                 foreach (var member in MembersOf(current))
                     yield return member;
 
-                if (current.BaseType is NamedTypeSymbol baseType)
-                    queue.Enqueue(baseType);
+                // A construction's declared base and interfaces are written in terms of the
+                // declaration's own type parameters (§6), so they must be read as the receiver's
+                // construction makes them before the walk continues down them. Without this, a
+                // member inherited through a constructed interface answers with the interface's
+                // parameter instead of the argument supplied to the receiver — `iterate()` reached
+                // through `IReadOnlyCollection<T>`'s `IIterable<T>` would return `IIterator<T>`
+                // with the interface's `T`, unequal to the same spelling against the receiver's.
+                // The mirror of this is `Conversions.WalkForBase`'s `AsSeenFrom`.
+                var substitution = current.SubstitutionFromArguments(_factory);
+                if (substitution.IsEmpty)
+                {
+                    if (current.BaseType is NamedTypeSymbol baseType)
+                        queue.Enqueue(baseType);
 
-                foreach (var contract in current.Interfaces)
-                    queue.Enqueue(contract);
+                    foreach (var contract in current.Interfaces)
+                        queue.Enqueue(contract);
+                }
+                else
+                {
+                    if (current.BaseType is NamedTypeSymbol baseType
+                        && substitution.Apply(baseType) is NamedTypeSymbol substitutedBase)
+                        queue.Enqueue(substitutedBase);
+
+                    foreach (var contract in current.Interfaces)
+                    {
+                        if (substitution.Apply(contract) is NamedTypeSymbol substitutedContract)
+                            queue.Enqueue(substitutedContract);
+                    }
+                }
             }
         }
 
