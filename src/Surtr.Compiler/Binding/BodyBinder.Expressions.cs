@@ -27,7 +27,7 @@ namespace Surtr.Compiler.Binding
             {
                 case LiteralExpressionSyntax literal: return BindLiteral(literal, expected);
                 case InterpolatedStringExpressionSyntax interpolated: return BindInterpolatedString(interpolated);
-                case IdentifierExpressionSyntax identifier: return BindIdentifier(identifier);
+                case IdentifierExpressionSyntax identifier: return BindIdentifier(identifier, expected);
                 case ThisExpressionSyntax @this: return BindThis(@this, isSuper: false);
                 case SuperExpressionSyntax super: return BindThis(super, isSuper: true);
                 case BinaryExpressionSyntax binary: return BindBinary(binary, expected);
@@ -38,7 +38,7 @@ namespace Surtr.Compiler.Binding
                 // (§6): `let b: Box<int> = Box();` has nothing else to infer them from.
                 case CallExpressionSyntax call: return BindCall(call, expected);
                 case IndexExpressionSyntax index: return BindIndex(index);
-                case MemberAccessExpressionSyntax member: return BindMemberAccess(member);
+                case MemberAccessExpressionSyntax member: return BindMemberAccess(member, expected);
                 case CastExpressionSyntax cast: return BindCast(cast);
                 case TypeTestExpressionSyntax test: return BindTypeTest(test);
                 case LambdaExpressionSyntax lambda: return BindLambda(lambda, expected);
@@ -121,7 +121,7 @@ namespace Surtr.Compiler.Binding
         #endregion
 
         #region Names
-        private BoundExpression BindIdentifier(IdentifierExpressionSyntax syntax)
+        private BoundExpression BindIdentifier(IdentifierExpressionSyntax syntax, TypeSymbol? expected = null)
         {
             var found = _values.Lookup(syntax.Name);
 
@@ -157,7 +157,153 @@ namespace Surtr.Compiler.Binding
             if (BindModuleMember(syntax, syntax.Name) is BoundExpression moduleMember)
                 return moduleMember;
 
+            // §8: a bare name that names a method, where a closure is expected, is sugar for a
+            // lambda that calls it — nothing else here resolved the name, so a method group is the
+            // last thing tried rather than something that could shadow a field or a property.
+            if (TryBindMethodGroup(syntax, expected, MethodCandidatesForBareName(syntax.Name), receiverSyntax: null) is BoundExpression group)
+                return group;
+
             return Error(syntax, SurtrDiagnosticCode.UnresolvedName, $"'{syntax.Name}' does not name anything in scope.");
+        }
+
+        /// <summary>
+        /// Every method a bare name could name: the containing type's (instance ones only where
+        /// <c>this</c> is actually available), then this module's own, then each wildcard import's —
+        /// the same order <see cref="BindModuleMember"/> already resolves a field or property in.
+        /// </summary>
+        private List<MethodSymbol> MethodCandidatesForBareName(string name)
+        {
+            var candidates = new List<MethodSymbol>();
+
+            if (_containingType is not null)
+            {
+                foreach (var candidate in _lookup.FindMethods(_containingType, name))
+                {
+                    if (candidate.IsStatic || !_method.IsStatic)
+                        candidates.Add(candidate);
+                }
+            }
+
+            AddModuleMethods(_module, name, candidates);
+            foreach (var imported in _imported)
+                AddModuleMethods(imported, name, candidates);
+
+            return candidates;
+        }
+
+        private static void AddModuleMethods(ModuleSymbol module, string name, List<MethodSymbol> candidates)
+        {
+            foreach (var method in module.Methods)
+            {
+                if (string.Equals(method.Name, name, StringComparison.Ordinal))
+                    candidates.Add(method);
+            }
+        }
+
+        /// <summary>
+        /// §8's method-group-to-closure conversion: when the context expects a closure and one of
+        /// <paramref name="candidates"/> matches its shape, this is sugar for a lambda that calls it
+        /// — capture tracking, dispatch and emission are then exactly a lambda's, for free.
+        /// </summary>
+        /// <param name="syntax">The name or member access naming the method group.</param>
+        /// <param name="expected">The type the surrounding context expects, or <see langword="null"/>.</param>
+        /// <param name="candidates">Every method the name could resolve to, in priority order.</param>
+        /// <param name="receiverSyntax">
+        /// The receiver's own syntax for an instance method reached through one (<c>obj.method</c>),
+        /// bound fresh inside the synthesized lambda so an outer local it names is captured the same
+        /// way any other lambda capture is — never <see langword="null"/> together with a static
+        /// candidate reading it, since a static candidate never does. <see langword="null"/> for a
+        /// bare name, where an instance candidate reads the implicit <c>this</c> instead.
+        /// </param>
+        private BoundExpression? TryBindMethodGroup(
+            SyntaxNode syntax, TypeSymbol? expected, IReadOnlyList<MethodSymbol> candidates, ExpressionSyntax? receiverSyntax)
+        {
+            if (expected?.NonNullable is not ClosureTypeSymbol closure)
+                return null;
+
+            foreach (var candidate in candidates)
+            {
+                if (MatchesClosureShape(candidate, closure))
+                    return BindMethodGroupLambda(syntax, closure, candidate, receiverSyntax);
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Whether a method could stand in for a closure of this shape: same arity, every parameter
+        /// accepts what the closure's would carry, and the returns agree on voidness (a void closure
+        /// never reads a result, so wrapping a value-returning method into one would leave the
+        /// runtime's own return-count expectation mismatched against what the method actually
+        /// pushes) and, when both carry a value, the method's is assignable to the closure's.
+        /// </summary>
+        private bool MatchesClosureShape(MethodSymbol method, ClosureTypeSymbol closure)
+        {
+            if (method.Parameters.Count != closure.ParameterTypes.Count)
+                return false;
+
+            if (closure.ReturnType.IsVoid != method.ReturnType.IsVoid)
+                return false;
+
+            for (int i = 0; i < method.Parameters.Count; i++)
+            {
+                if (!_conversions.IsAssignable(closure.ParameterTypes[i], method.Parameters[i].Type))
+                    return false;
+            }
+
+            return closure.ReturnType.IsVoid || _conversions.IsAssignable(method.ReturnType, closure.ReturnType);
+        }
+
+        /// <summary>
+        /// Builds the lambda a method-group conversion is sugar for: <c>(p0, p1, ...) =&gt;
+        /// method(p0, p1, ...)</c>, receiver included where there is one. Goes through the exact
+        /// scaffolding <see cref="BindLambda"/> does — a fresh scope pushed onto <see cref="_lambdas"/>
+        /// before anything in the body binds — so a captured local or the enclosing instance is
+        /// noted exactly as it would be for a lambda a caller wrote by hand.
+        /// </summary>
+        private BoundExpression BindMethodGroupLambda(
+            SyntaxNode syntax, ClosureTypeSymbol closure, MethodSymbol method, ExpressionSyntax? receiverSyntax)
+        {
+            var parameters = new ParameterSymbol[closure.ParameterTypes.Count];
+            for (int i = 0; i < parameters.Length; i++)
+                parameters[i] = new ParameterSymbol("$" + i, closure.ParameterTypes[i], i);
+
+            var outerValues = _values;
+            _values = _values.CreateChild();
+            var frame = new LambdaFrame(_values);
+            _lambdas.Add(frame);
+
+            for (int i = 0; i < parameters.Length; i++)
+                _values.TryDeclare(parameters[i].Name, parameters[i]);
+
+            BoundExpression? receiver = method.IsStatic
+                ? null
+                : receiverSyntax is not null
+                    ? BindExpression(receiverSyntax)
+                    : ImplicitThis(syntax, (NamedTypeSymbol)method.ContainingSymbol!);
+
+            var arguments = new BoundExpression[parameters.Length];
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                arguments[i] = Convert(new BoundParameterExpression(syntax, parameters[i]), method.Parameters[i].Type, syntax.Span);
+            }
+
+            bool isVirtual = !method.IsStatic && method.ContainingType is not null && method.Dispatch != MethodDispatch.Direct;
+            var call = new BoundCallExpression(syntax, receiver, method, arguments, isVirtual);
+
+            BoundStatement body = closure.ReturnType.IsVoid
+                ? new BoundExpressionStatement(syntax, call)
+                : new BoundReturnStatement(syntax, Convert(call, closure.ReturnType, syntax.Span));
+
+            _lambdas.RemoveAt(_lambdas.Count - 1);
+            _values = outerValues;
+
+            var parameterTypes = new TypeSymbol[parameters.Length];
+            for (int i = 0; i < parameters.Length; i++)
+                parameterTypes[i] = parameters[i].Type;
+
+            return new BoundLambdaExpression(
+                syntax, _factory.Closure(parameterTypes, closure.ReturnType), parameters, body, frame.Captures, frame.CapturesReceiver);
         }
 
         /// <summary>
@@ -358,15 +504,15 @@ namespace Surtr.Compiler.Binding
                 ? new BoundFieldExpression(syntax, null, instance)
                 : null;
 
-        private BoundExpression BindMemberAccess(MemberAccessExpressionSyntax syntax)
+        private BoundExpression BindMemberAccess(MemberAccessExpressionSyntax syntax, TypeSymbol? expected = null)
         {
             // `Suit.Hearts` is a static member, not a field on a value called Suit.
             if (TryBindAsType(syntax.Target, out var staticType))
             {
                 if (Singleton(syntax.Target, staticType) is BoundExpression instance)
-                    return BindInstanceMember(syntax, instance);
+                    return BindInstanceMember(syntax, instance, expected);
 
-                return BindStaticMember(syntax, staticType);
+                return BindStaticMember(syntax, staticType, expected);
             }
 
             var receiver = BindExpression(syntax.Target);
@@ -376,7 +522,7 @@ namespace Surtr.Compiler.Binding
             if (syntax.IsNullConditional)
                 RequireNullable(receiver, syntax);
 
-            return BindInstanceMember(syntax, receiver);
+            return BindInstanceMember(syntax, receiver, expected);
         }
 
         /// <summary>
@@ -425,7 +571,7 @@ namespace Surtr.Compiler.Binding
                 $"'{receiver.Type.ToDisplayString()}' cannot be null, so '?.' has nothing to guard against.");
         }
 
-        private BoundExpression BindInstanceMember(MemberAccessExpressionSyntax syntax, BoundExpression receiver)
+        private BoundExpression BindInstanceMember(MemberAccessExpressionSyntax syntax, BoundExpression receiver, TypeSymbol? expected = null)
         {
             var lookupType = receiver.Type.NonNullable;
 
@@ -445,6 +591,15 @@ namespace Surtr.Compiler.Binding
             {
                 RequireAccessible(property, property.Accessibility, property.Name, syntax);
                 return Guard(new BoundPropertyExpression(syntax, property.IsStatic ? null : accessed, property), syntax);
+            }
+
+            // §8: `obj.method` where a closure is expected is sugar for a lambda calling it — never
+            // tried under `?.`, since a closure built from a short-circuited receiver has nothing
+            // sound to close over.
+            if (!syntax.IsNullConditional
+                && TryBindMethodGroup(syntax, expected, _lookup.FindMethods(lookupType, syntax.Name), syntax.Target) is BoundExpression group)
+            {
+                return group;
             }
 
             return Error(
@@ -472,7 +627,7 @@ namespace Surtr.Compiler.Binding
                 access,
                 access.Type.IsVoid || access.Type.IsError ? access.Type : access.Type.Nullable);
 
-        private BoundExpression BindStaticMember(MemberAccessExpressionSyntax syntax, NamedTypeSymbol type)
+        private BoundExpression BindStaticMember(MemberAccessExpressionSyntax syntax, NamedTypeSymbol type, TypeSymbol? expected = null)
         {
             RequireAccessibleType(type, syntax);
 
@@ -488,10 +643,28 @@ namespace Surtr.Compiler.Binding
                 return new BoundPropertyExpression(syntax, null, property);
             }
 
+            // §8: `Type.method` where a closure is expected is sugar for a lambda calling it —
+            // static candidates only, since accessing a member through a type name never has a
+            // receiver for an instance one to read.
+            if (TryBindMethodGroup(syntax, expected, StaticMethodsOf(type, syntax.Name), receiverSyntax: null) is BoundExpression group)
+                return group;
+
             return Error(
                 syntax,
                 SurtrDiagnosticCode.UnresolvedMember,
                 $"'{type.ToDisplayString()}' has no static member called '{syntax.Name}'.");
+        }
+
+        private List<MethodSymbol> StaticMethodsOf(NamedTypeSymbol type, string name)
+        {
+            var candidates = new List<MethodSymbol>();
+            foreach (var candidate in _lookup.FindMethods(type, name))
+            {
+                if (candidate.IsStatic)
+                    candidates.Add(candidate);
+            }
+
+            return candidates;
         }
         #endregion
 

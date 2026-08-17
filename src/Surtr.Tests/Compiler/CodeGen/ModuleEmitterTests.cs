@@ -1285,6 +1285,92 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Method-group to closure (§8)
+        [Fact]
+        public void ABareModuleFunctionNameConvertsToAClosureWithNoLambdaWritten()
+        {
+            var runtime = Run(
+                "fun add(a: int, b: int): int { return a + b; }\n"
+                    + "fun run(): int { let f: (int, int) -> int = add; return f(2, 3); }");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AStaticMethodConvertsToAClosureThroughItsTypeName()
+        {
+            var runtime = Run(
+                "class Math2 { public static fun square(x: int): int { return x * x; } }\n"
+                    + "fun run(): int { let f: (int) -> int = Math2.square; return f(6); }");
+
+            Assert.Equal(36, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnInstanceMethodConvertsToAClosureThroughTheImplicitThis()
+        {
+            var runtime = Run(
+                "class Counter {\n"
+                    + "  private var _value: int;\n"
+                    + "  public constructor(v: int) { _value = v; }\n"
+                    + "  public fun getValue(): int { return _value; }\n"
+                    + "  public fun asClosure(): () -> int { let f: () -> int = getValue; return f; }\n"
+                    + "}\n"
+                    + "fun run(): int { return Counter(41).asClosure()(); }");
+
+            Assert.Equal(41, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnInstanceMethodConvertsToAClosureThroughAnExplicitReceiver()
+        {
+            var runtime = Run(
+                "class Counter {\n"
+                    + "  private var _value: int;\n"
+                    + "  public constructor(v: int) { _value = v; }\n"
+                    + "  public fun getValue(): int { return _value; }\n"
+                    + "}\n"
+                    + "fun run(): int { let c = Counter(9); let f: () -> int = c.getValue; return f(); }");
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AVoidMethodConvertsToAVoidClosureAndRunsForEffect()
+        {
+            var runtime = Run(
+                "class Counter {\n"
+                    + "  private var _value: int;\n"
+                    + "  public fun bump(): void { _value = _value + 1; }\n"
+                    + "  public fun value(): int { return _value; }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "  let c = Counter();\n"
+                    + "  let f: () -> void = c.bump;\n"
+                    + "  f(); f(); f();\n"
+                    + "  return c.value();\n"
+                    + "}");
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The receiver's own value is captured once, at conversion time - not re-read on every
+        /// call - and a virtual method still dispatches through the captured receiver's real class,
+        /// exactly as `c.speak()` written directly would.
+        /// </summary>
+        [Fact]
+        public void AVirtualMethodClosureDispatchesThroughTheReceiversActualClass()
+        {
+            var runtime = Run(
+                "class Animal { public virtual fun speak(): int { return 1; } }\n"
+                    + "class Dog : Animal { public override fun speak(): int { return 2; } }\n"
+                    + "fun run(): int { let a: Animal = Dog(); let f: () -> int = a.speak; return f(); }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+        #endregion
+
         #region Refusals
         [Fact]
         public void OverridingASealedMemberIsReported()

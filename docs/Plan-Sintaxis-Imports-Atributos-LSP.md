@@ -11,7 +11,7 @@ mismo formato que `docs/Plan-Globales-Nativos-Inline-Operadores.md`.
 | # | Propuesta | Veredicto | Alcance |
 |---|---|---|---|
 | 1 | Bug reportado: interfaces built-in (`IIterable<T>`, `IIterator<T>`, ...) no reconocidas al implementarlas/extenderlas/usarlas | **No reproducido en HEAD** (`develop`, commit `0bef8a2`). Todo indica que ya lo arreglaron los dos últimos commits (`5cca11a`, `0bef8a2`) — ver detalle abajo. Pendiente de confirmación con el usuario | Por confirmar |
-| 2 | Asignar una función a una variable/campo/parámetro de tipo closure solo por su nombre, sin lambda explícita | Ausente. `SurtrClosure` ya soporta un closure de cero capturas sobre cualquier `SurtrMethodInfo`; falta la conversión en el binder | Medio |
+| 2 | Asignar una función a una variable/campo/parámetro de tipo closure solo por su nombre, sin lambda explícita | **Hecho** — implementado como azúcar de lambda (`obj.method` ↔ `(p) => obj.method(p)`), no como un opcode nuevo, tras descubrir que `InvokeClosure` no antepone upvalues a los argumentos | — |
 | 3 | Métodos y propiedades de solo lectura con `=>` | Ausente. `FatArrow` ya existe como token (solo lo usan las lambdas); es azúcar sintáctica pura | Pequeño |
 | 4 | Modificadores (`inline`, `forceinline`, `override`, etc.) independientes por `get`/`set` | **Hecho** — alcance completo (visibilidad, inline/forceinline, virtual/override/abstract/sealed), más el descubrimiento y arreglo de un bug real (`sealed` en una propiedad nunca sellaba nada) | — |
 | 5 | Atributos declarables con `attribute`, con retención y target | **Hecho** — keyword `attribute`, target y retención `CompileTimeOnly`/`Runtime` completos (comprobados en la misma compilación; import cruzado de target queda documentado como límite). Falta la API de reflexión desde Surtr (Fase 6) | — |
@@ -269,22 +269,46 @@ de métodos como valor — solo resuelve locales, parámetros, singletons y miem
 closure. `ClosureValue` hace lo contrario: lee un campo/propiedad *ya* de tipo closure para
 invocarlo, no envuelve un `MethodSymbol` suelto.
 
+**Confirmado con el usuario**: sintaxis implícita (nombre suelto en contexto target-typed a un
+closure); un método de instancia captura `this` implícitamente, igual que el delegado
+`obj.Method` de C#.
+
+**Decisión de diseño clave, encontrada al investigar el runtime antes de implementar**: intentar
+envolver directamente un `MethodSymbol` *ya existente* en un `NewClosure` con el receptor como
+upvalue **no funciona** — `InvokeClosure` (`SurtrVirtualMachine.cs`) arma el frame del método
+invocado solo con los argumentos del sitio de llamada, sin anteponer los upvalues; un método
+normal compilado espera su receptor en el slot 0 de argumentos ordinario, no vía `UpValueGet`
+(eso solo lo entienden los cuerpos de lambda *lifted*, que se compilan sabiendo que van a leer
+sus capturas así). La solución: **no se creó ningún `BoundExpression` ni opcode nuevo** — la
+conversión se resuelve enteramente como azúcar de una lambda: `obj.method` con tipo esperado
+`(T) -> R` se liga exactamente como se ligaría `(p) => obj.method(p)` escrita a mano,
+reutilizando `BindLambda`/`EmitLambda` al 100% (captura del receptor por valor en el momento de
+la conversión, dispatch virtual correcto, emisión) sin tocar `MethodBodyEmitter` en absoluto.
+
 **Cambios**:
-- Decidir sintaxis: recomendado el camino implícito (un nombre suelto en contexto
-  target-typed a un tipo closure se resuelve como grupo de métodos, reutilizando el mismo
-  target-typing que ya usan las lambdas, §5.9) en vez de introducir un operador nuevo tipo
-  `::method` de Kotlin — menos superficie de sintaxis.
-- `BindIdentifier`/`BindMemberOf`: rama nueva que, cuando el nombre no resuelve a nada mejor y
-  el tipo esperado es un closure, busca métodos candidatos vía `_lookup.FindMethods` y aplica
-  resolución de sobrecarga contra la forma del tipo closure esperado (mismo mecanismo que ya
-  usa `BodyBinder` para lambdas sin tipos de parámetro escritos).
-- Nuevo `BoundExpression` para "referencia a método ligada a un tipo closure"; decidir si un
-  método de instancia captura `this` implícitamente (recomendado: sí, igual que C#
-  `obj.Method` como delegado) o si solo se permite sobre métodos estáticos/de módulo en una
-  primera iteración para reducir alcance.
-- `MethodBodyEmitter`: emitir `ClosureNew`/equivalente con el método resuelto, sin capturas o
-  con `this` como única captura.
-- Actualizar `Language-Syntax.md` §8.
+- `BindExpression` pasa ahora `expected` a `BindIdentifier` y `BindMemberAccess` (antes se
+  perdía completamente para estos dos casos).
+- Nuevo `TryBindMethodGroup`/`MatchesClosureShape`/`BindMethodGroupLambda` en
+  `BodyBinder.Expressions.cs`: cuando el tipo esperado es un `ClosureTypeSymbol` y ningún otro
+  camino resolvió el nombre, busca candidatos por aridad + asignabilidad de parámetros +
+  igualdad de "vacuidad" de retorno (un closure `void` nunca puede envolver un método que sí
+  retorna algo, para no desalinear el conteo de resultados que espera `InvokeClosure`), y arma
+  la lambda sintética: parámetros frescos, receptor (si lo hay) ligado *dentro* del nuevo frame
+  de lambda para que `NoteCapture`/`NoteReceiverCapture` lo atribuyan correctamente, cuerpo =
+  una llamada al método con dispatch virtual si corresponde.
+- Tres puntos de caída añadidos: `BindIdentifier` (nombre suelto — métodos de instancia del
+  tipo contenedor si hay `this` disponible, más los del propio módulo y de cada import
+  wildcard, en ese orden), `BindInstanceMember` (`obj.method`, nunca bajo `?.`), `BindStaticMember`
+  (`Type.method`, solo candidatos estáticos).
+- **No es resolución de sobrecarga completa**: si varias sobrecargas encajan con la forma del
+  closure, gana la primera encontrada — decisión deliberada dado lo raro que es convertir un
+  nombre *sobrecargado* a closure; documentado en §8, no silencioso.
+- 6 tests de punta a punta en `ModuleEmitterTests.cs` (región "Method-group to closure (§8)"):
+  función de módulo, método estático, método de instancia por `this` implícito y por receptor
+  explícito, método `void` (efecto), y dispatch virtual a través del receptor capturado — los 6
+  pasaron a la primera.
+- Actualizado `docs/Language-Syntax.md` §8.
+- Suite completa verificada: 2093/2093 tests en verde.
 
 **Commit**: `Feature: conversion de grupo de metodos a valor closure sin lambda explicita`
 
@@ -557,7 +581,7 @@ cada fase), una pasada de cierre:
 | 1 | Verificación del bug de interfaces built-in genéricas | **Hecha** (no reproducido; tests de regresión añadidos) |
 | 2 | Sintaxis `=>` en métodos/propiedades | **Hecha** |
 | 3 | Modificadores independientes por accessor | **Hecha** (alcance completo, incluye fix de bug de `sealed`) |
-| 4 | Método → valor closure sin lambda | Pendiente |
+| 4 | Método → valor closure sin lambda | **Hecha** |
 | 5 | Keyword `attribute`, target y retención | **Hecha** |
 | 6 | API de reflexión de atributos en Surtr | Pendiente (depende de 5) |
 | 7 | Alias de import | Pendiente |

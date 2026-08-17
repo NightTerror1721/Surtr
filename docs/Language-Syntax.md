@@ -2072,6 +2072,41 @@ captured it is a compile error, the same restriction Java places on captured loc
 reason. This is the syntax layer being honest about a constraint the object model already imposes,
 not a new restriction invented for its own sake.
 
+**A method name converts to a closure wherever a closure is expected, with no lambda written at
+all**, the same target-typing §5.9 already gives an untyped lambda parameter — a bare name, or one
+reached through a receiver, is tried as a method group only after every other reading of it (a
+local, a field, a property, an implicit or module member) has already failed to name anything:
+
+```
+fun add(a: int, b: int): int { return a + b; }
+let f: (int, int) -> int = add;               // sugar for (a, b) => add(a, b)
+
+class Counter {
+    private var _value: int;
+    public fun get(): int { return _value; }
+}
+let c = Counter();
+let read: () -> int = c.get;                  // sugar for () => c.get()
+```
+
+This is sugar in the exact sense §3.6's `inline` is not: `let f: (int, int) -> int = add;` binds to
+precisely the lambda `(a, b) => add(a, b)` would, so capture rules, dispatch and the closure's own
+emission are a lambda's throughout — the receiver, when there is one, is captured **by value at the
+conversion**, the same moment a lambda would capture it, not re-read on every call. Reached through
+an instance method, that receiver is `this` when the name is bare (usable anywhere `this` itself is,
+so never inside a `static` method — §3.2) or whatever expression precedes the `.` when it is not,
+evaluated once, right there. A method that dispatches virtually still does: `f()` above calls
+whatever override the captured receiver's actual class has, exactly as `c.get()` written directly
+would, because the desugared call is an ordinary virtual call like any other.
+
+Only an overload whose shape the target closure type actually accepts is considered: the same
+arity, every parameter able to receive what the closure's declares, and the returns agreeing on
+`void`-ness (a closure returning `void` never reads a result, so it cannot wrap a method that
+returns one — there is nowhere for that value to go). Where more than one overload fits, the first
+one found wins; this is deliberately not full overload resolution the way a call site gets (§3.5) —
+converting an *overloaded* name to a closure is expected to be rare enough that determinism beats
+specificity here.
+
 ---
 
 ## 9. Exceptions
