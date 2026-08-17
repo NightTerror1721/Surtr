@@ -217,6 +217,39 @@ namespace Surtr.Compiler.Compilation
                 {
                     foreach (var import in unit.Syntax.Imports)
                     {
+                        if (import.IsWildcard)
+                        {
+                            // A directory wildcard (§2.1, Fase 9) may resolve to the exact module,
+                            // to one or more submodules nested under it, or both at once - so it
+                            // gets its own resolution instead of `TryResolveImport`'s one-target
+                            // shape, and one dependency edge per module it actually matched.
+                            string prefix = Prefix(import.Path, import.Path.Count);
+                            bool matchedAny = false;
+
+                            if (KnowsModule(prefix))
+                            {
+                                Dependencies.AddDependency(module.Path, prefix);
+                                matchedAny = true;
+                            }
+
+                            foreach (string nested in ModulesUnderPrefix(prefix))
+                            {
+                                Dependencies.AddDependency(module.Path, nested);
+                                matchedAny = true;
+                            }
+
+                            if (!matchedAny)
+                            {
+                                Diagnostics.ReportError(
+                                    SurtrDiagnosticCode.UnresolvedImport,
+                                    $"No module provides '{string.Join(".", import.Path)}'.",
+                                    unit.File.Path,
+                                    import.Span);
+                            }
+
+                            continue;
+                        }
+
                         if (!TryResolveImport(import, out string target))
                         {
                             Diagnostics.ReportError(
@@ -235,21 +268,40 @@ namespace Surtr.Compiler.Compilation
         }
 
         /// <summary>
-        /// Works out which module an import names.
+        /// Every module in this compilation whose path sits strictly under <paramref name="prefix"/>
+        /// - what makes a directory wildcard (§2.1, Fase 9) reach a submodule a plain exact-match
+        /// lookup never would, since a module is a directory (`ModulePath.cs`) and `a.b` is a
+        /// different directory from `a`, not a member of it.
+        /// </summary>
+        private IEnumerable<string> ModulesUnderPrefix(string prefix)
+        {
+            string dotted = prefix + ModulePath.Separator;
+            foreach (string path in _modules.Keys)
+            {
+                if (path.StartsWith(dotted, StringComparison.Ordinal))
+                    yield return path;
+            }
+        }
+
+        /// <summary>
+        /// Works out which module a non-wildcard import names.
         /// </summary>
         /// <remarks>
-        /// A wildcard import names a module outright. A named one names a type, and only the
-        /// modules that exist say where the module path ends and the type name begins — so the
-        /// longest known prefix wins, which is also what makes a nested type importable.
+        /// A wildcard import gets its own resolution in <see cref="BuildDependencyGraph"/> (it may
+        /// match several modules at once, §2.1's Fase 9) and never reaches this method. An aliased
+        /// or selective-list import names a module outright by its whole path. A plain named one
+        /// names a type, and only the modules that exist say where the module path ends and the
+        /// type name begins — so the longest known prefix wins, which is also what makes a nested
+        /// type importable.
         /// </remarks>
         private bool TryResolveImport(ImportSyntax import, out string modulePath)
         {
             var segments = import.Path;
 
-            if (import.IsWildcard || import.Alias is not null || import.Members is not null)
+            if (import.Alias is not null || import.Members is not null)
             {
-                // A wildcard, an aliased import, and a selective list all name a module outright -
-                // unlike a plain named import, there is no trailing type name to peel off the end.
+                // An aliased import and a selective list both name a module outright - unlike a
+                // plain named import, there is no trailing type name to peel off the end.
                 modulePath = Prefix(segments, segments.Count);
                 return KnowsModule(modulePath);
             }

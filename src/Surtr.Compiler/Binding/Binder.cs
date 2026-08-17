@@ -523,16 +523,17 @@ namespace Surtr.Compiler.Binding
                 {
                     if (import.IsWildcard)
                     {
-                        if (TryGetModuleSymbol(Join(import.Path, import.Path.Count), out var module))
-                        {
-                            foreach (var type in module.Types)
-                                scope.AddCandidate(type.Name, type);
+                        // A directory wildcard (§2.1, Fase 9) reaches the exact module if it
+                        // exists, plus every submodule nested under it - a module is a directory,
+                        // so `a.b` is a different one from `a`, not a member of it, and neither
+                        // resolving nor missing the other stops the rest from being brought in.
+                        string wildcardPath = Join(import.Path, import.Path.Count);
 
-                            // §2.5 makes a module a container of members, so a wildcard import
-                            // brings its functions and variables in too — not only its types.
-                            if (!imported.Contains(module))
-                                imported.Add(module);
-                        }
+                        if (TryGetModuleSymbol(wildcardPath, out var module))
+                            ImportWildcardModule(scope, imported, module);
+
+                        foreach (var nested in ModulesUnderPrefix(wildcardPath))
+                            ImportWildcardModule(scope, imported, nested);
 
                         continue;
                     }
@@ -596,6 +597,36 @@ namespace Surtr.Compiler.Binding
         private bool TryGetModuleSymbol(string modulePath, out ModuleSymbol module)
             => _modules.TryGetValue(modulePath, out module!)
                 || _compilation.Importer.TryGetModuleSymbol(modulePath, out module!);
+
+        /// <summary>Brings one module's types and members into scope for a wildcard import, the exact module or one nested under it.</summary>
+        private static void ImportWildcardModule(Scope scope, List<ModuleSymbol> imported, ModuleSymbol module)
+        {
+            foreach (var type in module.Types)
+                scope.AddCandidate(type.Name, type);
+
+            // §2.5 makes a module a container of members, so a wildcard import brings its
+            // functions and variables in too — not only its types.
+            if (!imported.Contains(module))
+                imported.Add(module);
+        }
+
+        /// <summary>
+        /// Every module in this compilation whose path sits strictly under <paramref name="prefix"/>
+        /// - what lets a directory wildcard (§2.1, Fase 9) reach a submodule. A module is a
+        /// directory, so `a.b` is a different one from `a`, not a member of it, and an exact-match
+        /// lookup on `a` alone would never find it. Restricted to this compilation's own modules,
+        /// the same set <c>ModuleDependencyGraph</c> already reasons about — an already-compiled
+        /// image has no directory index for this to walk.
+        /// </summary>
+        private IEnumerable<ModuleSymbol> ModulesUnderPrefix(string prefix)
+        {
+            string dotted = prefix + ModulePath.Separator;
+            foreach (var module in _modules.Values)
+            {
+                if (module.Path.StartsWith(dotted, StringComparison.Ordinal))
+                    yield return module;
+            }
+        }
         #endregion
 
         #region Phase 2 - hierarchy and members

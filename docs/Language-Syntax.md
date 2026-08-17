@@ -173,6 +173,17 @@ a name can still be written fully qualified (`Ogame.core.Entity`) even without i
 import is convenience, not a requirement to reference something. A colliding name pulled in from
 two imports is a compile error at the point of use, not at the `import` line itself.
 
+**A wildcard import also reaches every submodule nested under that path, recursively.** A module is
+a directory (this section's opening), so `Ogame.core` and `Ogame.core.geometry` are two different
+modules, not one containing the other — without this, `import Ogame.core.*;` would silently miss
+anything declared one directory deeper. `Ogame.core.*` brings in `Ogame.core`'s own declarations
+if it has any, *and* every declaration from `Ogame.core.geometry`, `Ogame.core.geometry.solid`, and
+so on at any depth, unified into the same scope a same-level wildcard would populate — a directory
+that holds only subdirectories and no `.surtr` files of its own works exactly the same way, since
+there is nothing special about the exact path matching a real module versus only its descendants
+doing so. A name collision between two submodules, or between a submodule and the directory's own
+declarations, is diagnosed the same way as any other wildcard collision: at the point of use.
+
 **`import ModulePath as Name;` aliases a whole module** rather than bringing anything into
 unqualified scope — `Name` itself resolves nowhere on its own, only qualified: `Core.Entity` reads
 exactly as `Ogame.core.Entity` would, everywhere a type may be named (an annotation, a base class

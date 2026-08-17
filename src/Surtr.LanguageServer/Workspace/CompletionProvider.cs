@@ -1408,14 +1408,25 @@ namespace Surtr.LanguageServer.Workspace
             if (unit is null)
                 return result;
 
+            var binder = snapshot.Binder!;
+
             foreach (var import in unit.Syntax.Imports)
             {
                 if (!import.IsWildcard)
                     continue;
 
                 string path = string.Join(".", import.Path);
-                if (path != current.Path && snapshot.Binder!.Modules.ContainsKey(path))
+                if (path != current.Path && binder.Modules.ContainsKey(path))
                     result.Add(path);
+
+                // A directory wildcard (§2.1, Fase 9) also reaches every submodule nested under
+                // it - the exact module may not even exist on its own, only its submodules do.
+                string dotted = path + ".";
+                foreach (string candidate in binder.Modules.Keys)
+                {
+                    if (candidate != current.Path && candidate.StartsWith(dotted, StringComparison.Ordinal))
+                        result.Add(candidate);
+                }
             }
 
             return result;

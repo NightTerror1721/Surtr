@@ -259,6 +259,34 @@ namespace Surtr.Tests.LanguageServer
             Assert.DoesNotContain(completion.Items, item => item.Label == "Widget");
         }
 
+        /// <summary>`proj.core` has no files of its own here - only its submodule `proj.core.geo` does.</summary>
+        [Fact]
+        public void ADirectoryWildcardBringsASubmodulesTypeIntoBareCompletion()
+        {
+            const string nestedSource = "public class Entity { }\n";
+            const string appSource =
+                "import proj.core.*;\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        \n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/geo/Entity.surtr", nestedSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            int insideBody = appSource.IndexOf("        \n", StringComparison.Ordinal) + "        ".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, appPath, appSource, insideBody);
+            Assert.Contains(completion.Items, item => item.Label == "Entity");
+        }
+
         private static string Describe(System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<Surtr.Compiler.Diagnostics.SurtrDiagnostic>> diagnostics)
             => string.Join(" | ", diagnostics.SelectMany(pair => pair.Value).Select(d => d.ToString()));
     }

@@ -231,6 +231,69 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Import: wildcard de directorio recursivo (§2.1, Fase 9)
+        /// <summary>
+        /// `game.math` has no files of its own - only its submodules do - which is exactly the
+        /// case the old exact-match-only wildcard could never resolve at all.
+        /// </summary>
+        [Fact]
+        public void ADirectoryWildcardReachesEverySubmoduleWhenTheDirectoryHasNoFilesOfItsOwn()
+        {
+            var runtime = Run(
+                "import game.math.*;\nfun run(): int { return Sin(3).value + Eq(4).value; }",
+                ("/game/math/trig/Sin.surtr", "public class Sin { public let value: int = 0; public constructor(value: int) { this.value = value; } }"),
+                ("/game/math/algebra/Eq.surtr", "public class Eq { public let value: int = 0; public constructor(value: int) { this.value = value; } }"));
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        /// <summary>The exact module's own declarations and its submodules' both come in - one does not shadow the other.</summary>
+        [Fact]
+        public void ADirectoryWildcardReachesBothTheModulesOwnTypesAndItsSubmodules()
+        {
+            var runtime = Run(
+                "import game.math.*;\nfun run(): int { return Box(3).value + Sin(4).value; }",
+                ("/game/math/Box.surtr", "public class Box { public let value: int = 0; public constructor(value: int) { this.value = value; } }"),
+                ("/game/math/trig/Sin.surtr", "public class Sin { public let value: int = 0; public constructor(value: int) { this.value = value; } }"));
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        /// <summary>Recursion is not just one directory level deep.</summary>
+        [Fact]
+        public void ADirectoryWildcardReachesADeeplyNestedSubmodule()
+        {
+            var runtime = Run(
+                "import game.math.*;\nfun run(): int { return Sin(5).value; }",
+                ("/game/math/trig/hyperbolic/Sin.surtr", "public class Sin { public let value: int = 0; public constructor(value: int) { this.value = value; } }"));
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        /// <summary>A sibling directory (`game.other`) is not under the `game.math` prefix and must not leak in.</summary>
+        [Fact]
+        public void ADirectoryWildcardDoesNotReachASiblingModule()
+        {
+            using var compilation = Reject(
+                "import game.math.*;\nfun run(): int { return Other(1).value; }",
+                ("/game/math/trig/Sin.surtr", "public class Sin { public let value: int = 0; }"),
+                ("/game/other/Other.surtr", "public class Other { public let value: int = 0; public constructor(value: int) { this.value = value; } }"));
+
+            Assert.True(compilation.HasErrors, "'game.other' is not nested under 'game.math' and must not be reachable.");
+        }
+
+        /// <summary>A wildcard's functions/variables reach unqualified too (§2.5), for a submodule exactly as for the exact module.</summary>
+        [Fact]
+        public void ADirectoryWildcardBringsASubmodulesFunctionsInToo()
+        {
+            var runtime = Run(
+                "import game.math.*;\nfun run(): int { return twice(21); }",
+                ("/game/math/trig/Trig.surtr", "public fun twice(x: int): int { return x + x; }"));
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+        #endregion
+
         #region Classes
         [Fact]
         public void AClassIsConstructedAndItsFieldsRead()

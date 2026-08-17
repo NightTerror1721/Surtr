@@ -19,7 +19,7 @@ mismo formato que `docs/Plan-Globales-Nativos-Inline-Operadores.md`.
 | 7 | Varianza de genéricos (`in`/`out`) | Genéricos correctos y completos hoy (§10.1b cerrado, sin TODOs). Varianza está **deliberadamente diferida** en `Language-Syntax.md` §14.4 — no es prioritaria mientras quede pendiente §10.2 (STDLIB en Surtr) | Diferido, no se planifica |
 | 8 | Cargador de STDLIB con selección de módulos (sandbox) + enlace nativo portable | El mecanismo de carga (`SurtrStdlib.LoadInto`) ya existe pero es todo-o-nada; el enlace nativo ya es independiente del código fuente `.surtr` en tiempo de ejecución, pero las imágenes no están embebidas como recursos y no hay detección temprana de desincronización | Pequeño-medio |
 | 9 | Declarar clases/enums/interfaces/singletons/value classes dentro de un método | Totalmente ausente en parser, AST, binder y emisor | Medio-grande |
-| 10 | Import de directorio completo (wildcard recursivo), import selectivo de miembros, alias de módulo | Import de módulo completo y wildcard de un módulo ya existen. Alias (`import X as Y`) **hecho** — Fase 7. Selectivo (`import X.{Y, Z}`) **hecho** — Fase 8. Wildcard de directorio, ausente | Medio (wildcard de directorio) |
+| 10 | Import de directorio completo (wildcard recursivo), import selectivo de miembros, alias de módulo | Alias (`import X as Y`) **hecho** — Fase 7. Selectivo (`import X.{Y, Z}`) **hecho** — Fase 8. Wildcard de directorio (recursivo sobre submódulos) **hecho** — Fase 9 | — |
 | 11 | Built-ins siempre disponibles sin import, nunca rotos por imports | **Ya correcto**, con tests dedicados (`BinderTests.cs`) | — |
 | 12 | LSP correcto para todo lo anterior, especialmente imports y built-ins | Implementación real sobre el compilador real (no un analizador simplificado), pero sin ningún test propio y con una lista de keywords desincronizada de §1.2 | Transversal a cada fase |
 
@@ -520,7 +520,7 @@ hermano no listado). 2112/2112 tests en verde, 0 warnings.
 
 ---
 
-## Fase 9 — Import: wildcard de directorio (recursivo)
+## Fase 9 — Import: wildcard de directorio (recursivo) — **Hecha**
 
 **Estado actual**: `import a.*` solo alcanza los tipos declarados directamente en el módulo
 `a` — un módulo es un directorio (`ModulePath.cs`), así que no llega a submódulos como `a.b`.
@@ -530,15 +530,36 @@ hermano no listado). 2112/2112 tests en verde, 0 warnings.
 **Es la pieza más difícil del bloque de imports** porque requiere ese índice nuevo, no solo
 gramática.
 
-**Cambios**:
-- `Compilation`/`ModuleDependencyGraph`: exponer "todo módulo cuya ruta empieza por este
-  prefijo", construido una vez a partir del conjunto de módulos de la compilación.
-- `Binder.BindImports`: la rama wildcard, cuando el path no resuelve a un módulo exacto pero
-  sí es prefijo de uno o más módulos, itera todos los módulos coincidentes en vez de exigir un
-  único acierto exacto. Un edge de `ModuleDependencyGraph` por módulo resuelto basta — no
-  hacen falta edges por símbolo (la ambigüedad ya se resuelve en el punto de uso, §2.1).
-- Actualizar `Language-Syntax.md` §2.1 y el índice de módulos que consulta el LSP para
-  completar imports de directorio.
+**Diseño real**: `import a.*;` trae la unión de dos cosas — las declaraciones propias de `a`
+si `a` existe como módulo por sí mismo, **y** las de todo módulo cuya ruta empiece por `a.` a
+cualquier profundidad — no solo cuando `a` no resuelve por sí mismo (aunque ese es el caso que
+antes fallaba en silencio, ya que un directorio que solo contiene subdirectorios no es un
+módulo por sí mismo). No hizo falta ningún índice persistente nuevo: un recorrido lineal sobre
+el conjunto de módulos de la compilación (`_modules.Values` en el binder,
+`_modules.Keys` en `SurtrCompilation`) filtrando por prefijo es suficiente — el número de
+módulos de un proyecto no justifica una estructura de índice dedicada, y esto está fuera del
+camino de ejecución del VM (las reglas de rendimiento de `CLAUDE.md` no aplican al compilador).
+Restringido a los módulos **de esta compilación**: un módulo ya compilado a imagen (`.surtrc`)
+no tiene índice de directorio que recorrer.
+
+**Dos sitios necesitaban el mismo ajuste, no solo uno**:
+- `SurtrCompilation.BuildDependencyGraph` (validación previa al binder): antes solo pasaba una
+  ruta exacta a `TryResolveImport`. Un wildcard gana su propia resolución ahí — un edge de
+  `ModuleDependencyGraph` por cada módulo que coincide (exacto y/o cada submódulo), y solo se
+  reporta `UnresolvedImport` si ninguno coincidió. `TryResolveImport` (que sigue existiendo
+  para import con nombre/alias/lista selectiva) ya no necesita su rama de wildcard, que era
+  inalcanzable desde este punto tras el cambio.
+- `Binder.BindImports`: la rama wildcard ahora trae el módulo exacto (si existe) y cada
+  submódulo (`ModulesUnderPrefix`), factorizando la lógica de "traer tipos + registrar para
+  miembros de módulo" en `ImportWildcardModule` para no repetirla.
+- LSP (`CompletionProvider.ImportedModules`, ya usada tanto por el completado suelto como por
+  `FindType`): mismo ajuste — además de la ruta exacta, añade cada módulo cuya ruta empiece
+  por el prefijo seguido de `.`.
+
+**Tests**: 5 en `ModuleEmitterTests.cs` (directorio sin ficheros propios, unión con los tipos
+propios del módulo exacto, recursión a más de un nivel, un módulo hermano no se cuela, las
+funciones de un submódulo también llegan sin calificar) + 1 en
+`LanguageServerWorkspaceTests.cs`. 2118/2118 tests en verde, 0 warnings.
 
 **Commit**: `Feature: import wildcard de directorio (recursivo sobre submodulos)`
 
