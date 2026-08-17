@@ -3158,6 +3158,23 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(4, Int(runtime, "run"));
         }
 
+        /// <summary>
+        /// A non-generic class implementing a built-in generic interface with a fixed argument and
+        /// no chain involved — the simplest shape of the scenario reported as failing to resolve;
+        /// runs end to end on the real VM, not just through the binder.
+        /// </summary>
+        [Fact]
+        public void ANonGenericClassImplementsABuiltInGenericInterfaceDirectly()
+        {
+            var runtime = Run(
+                "class Counter : IIterable<int> {\n"
+                    + "  public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
+                    + "}\n"
+                    + "fun run(): int { var total = 0; for (n in Counter()) { total += n; } return total; }");
+
+            Assert.Equal(6, Int(runtime, "run"));
+        }
+
         [Fact]
         public void AConstructionMayStopShortOfADefaultedParameter()
         {

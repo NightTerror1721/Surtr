@@ -1285,5 +1285,69 @@ namespace Surtr.Tests.Compiler.Binding
             AssertNoErrors(compilation);
         }
         #endregion
+
+        #region Built-in generic interfaces (regression net for the substitution fixes in 5cca11a/0bef8a2)
+        // These are deliberately independent of the "Inherited members through a construction" and
+        // "Override signature compatibility" regions above: those cover a *chain* of user-declared
+        // interfaces walking into a built-in one, and a *generic* class implementing a built-in
+        // generic interface in terms of its own parameter. The scenarios below are the simpler ones
+        // reported as broken — implementing, extending or using a built-in generic interface with no
+        // chain and no substitution involved at all — which the investigation could not reproduce on
+        // this branch, but which had no test of their own naming them explicitly.
+
+        [Fact]
+        public void AClassMayImplementABuiltInGenericInterfaceWithAConcreteArgumentDirectly()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Counter : IIterable<int>\n"
+                + "{\n"
+                + "    public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void AnInterfaceMayExtendABuiltInGenericInterfaceWithoutAddingMembersOfItsOwn()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface INumbers : IIterable<int> { }"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void AClassImplementingAPassThroughInterfaceMustStillProvideTheInheritedBuiltInMember()
+        {
+            // INumbers itself declares nothing - the obligation it owes to Counter comes entirely
+            // from the built-in IIterable<int> it extends, so this fails only if that walk sees it.
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface INumbers : IIterable<int> { }\n"
+                + "class Counter : INumbers { }"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.MissingImplementation);
+        }
+
+        [Fact]
+        public void AClassImplementingAPassThroughInterfaceSatisfiesItByImplementingTheInheritedBuiltInMember()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface INumbers : IIterable<int> { }\n"
+                + "class Counter : INumbers\n"
+                + "{\n"
+                + "    public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+        }
+        #endregion
     }
 }

@@ -125,15 +125,28 @@ Antes de escribir ningún fix nuevo hace falta **confirmación del usuario**:
   no llegó a ejercitar el camino completo de round-trip por imagen `.surtrc` a través del
   proyecto `Surtr.Stdlib` por separado — es el único hueco no descartado con certeza).
 
-**Cambios** (independientemente de la respuesta):
-- Añadir a `BinderTests.cs`/`ModuleEmitterTests.cs` regresión explícita para los seis
-  escenarios de arriba, con nombres que dejen claro qué protegen (hoy la cobertura existe pero
-  dispersa, sin agrupar bajo el nombre del bug) — así una futura regresión en
-  `MemberLookup`/`CheckObligation` se detecta inmediatamente.
-- Si el usuario confirma un repro concreto que siga fallando: root-causearlo y corregirlo en
-  este mismo commit en vez de abrir una fase nueva.
+**Resuelto con el usuario**: confirmó que ya no ve el fallo — cierre solo con tests de
+regresión, sin buscar más.
 
-**Commit**: `Test: cobertura de regresion para interfaces built-in genericas (IIterable/IIterator) en herencia/implementacion` (o, si aparece un repro real, `Fix: <lo que corresponda> + tests de regresion`)
+**Cambios**: añadida una región nueva "Built-in generic interfaces (regression net for the
+substitution fixes in 5cca11a/0bef8a2)" en `BinderTests.cs`, con los tres escenarios exactos
+del reporte que **no** tenían cobertura propia (la cobertura existente en `BinderTests.cs`
+líneas 1188-1286 y en `ModuleEmitterTests.cs:3148` cubre una *cadena* de interfaces de usuario
+hacia un built-in y una clase *genérica* implementándolo — casos relacionados pero distintos,
+que sí ejercitan la sustitución que arreglaron los dos commits):
+- `AClassMayImplementABuiltInGenericInterfaceWithAConcreteArgumentDirectly` — clase no
+  genérica implementando `IIterable<int>` directamente, sin cadena.
+- `AnInterfaceMayExtendABuiltInGenericInterfaceWithoutAddingMembersOfItsOwn` — interfaz vacía
+  que solo extiende un built-in genérico.
+- `AClassImplementingAPassThroughInterfaceMustStillProvideTheInheritedBuiltInMember` /
+  `...SatisfiesItByImplementingTheInheritedBuiltInMember` — la obligación de implementar
+  `iterate()` debe verse a través de una interfaz de paso que no declara nada propio (el caso
+  exacto que `CollectInterfaces` sin sustitución dejaba mal, según 0bef8a2).
+- `ANonGenericClassImplementsABuiltInGenericInterfaceDirectly` (`ModuleEmitterTests.cs`) — la
+  misma forma, pero de punta a punta contra la VM real con un `for-in`.
+- Suite completa verificada: 2065/2065 tests en verde.
+
+**Commit**: `Test: cobertura de regresion para interfaces built-in genericas (IIterable/IIterator) en implementacion directa y a traves de una interfaz de paso`
 
 ---
 
@@ -447,7 +460,7 @@ cada fase), una pasada de cierre:
 | Fase | Descripción | Estado |
 |---|---|---|
 | 0 | Red de seguridad LSP + fix de keywords (+ 2 bugs reales de hover/imports encontrados y corregidos) | **Hecha** |
-| 1 | Verificación del bug de interfaces built-in genéricas | Pendiente confirmación del usuario |
+| 1 | Verificación del bug de interfaces built-in genéricas | **Hecha** (no reproducido; tests de regresión añadidos) |
 | 2 | Sintaxis `=>` en métodos/propiedades | Pendiente |
 | 3 | Modificadores independientes por accessor | Pendiente |
 | 4 | Método → valor closure sin lambda | Pendiente |
