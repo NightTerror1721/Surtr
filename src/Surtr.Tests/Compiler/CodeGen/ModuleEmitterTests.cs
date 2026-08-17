@@ -305,6 +305,27 @@ namespace Surtr.Tests.Compiler.CodeGen
 
             Assert.Equal(9, Int(runtime, "run"));
         }
+
+        /// <summary>
+        /// A getter marked <c>virtual</c> on its own, with no dispatch modifier on the property
+        /// itself, still gets a real vtable slot and dispatches through it (§3.2, §3.4) — not just
+        /// metadata that says so, but an actual call through an <c>Animal</c>-typed reference landing
+        /// on <c>Dog</c>'s override.
+        /// </summary>
+        [Fact]
+        public void APerAccessorVirtualGetterDispatchesThroughTheVtable()
+        {
+            var runtime = Run(
+                "class Animal {\n"
+                    + "  public name: string { virtual get => \"Animal\"; }\n"
+                    + "}\n"
+                    + "class Dog : Animal {\n"
+                    + "  public override name: string { get => \"Dog\"; }\n"
+                    + "}\n"
+                    + "fun run(): string { let a: Animal = Dog(); return a.name; }");
+
+            Assert.Equal("Dog", Text(runtime, "run"));
+        }
         #endregion
 
         #region Enums

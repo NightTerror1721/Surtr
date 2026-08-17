@@ -578,6 +578,9 @@ class Dog : Animal {
   base-class receiver described above, and `value` is the incoming value inside a property's `set`
   accessor. All three are contextual — they mean this only in the positions where they're legal,
   and are ordinary identifiers elsewhere.
+- **A property's `get`/`set` may each carry this same modifier run of their own** (§3.4) —
+  independently of the property and of each other, and of anything an accessor does not write, it
+  inherits from the property.
 
 ### 3.3 Method dispatch
 
@@ -629,7 +632,49 @@ switches that accessor to custom logic while leaving the other one auto-generate
 error. This is exactly the `get_x`/`set_x` accessor-method shape `SurtrPropertyBuilder` already
 wires for built-ins, applied to user-declared classes too.
 
-An `inline`/`forceinline` on the property applies to its accessors (§3.6).
+An `inline`/`forceinline` on the property applies to its accessors (§3.6) — unless the accessor
+writes its own, per the rule below.
+
+**An accessor may carry its own modifier run**, independently of the other and of the property:
+visibility, `virtual`/`override`/`abstract`, `sealed`, and `inline`/`forceinline`, written directly
+before `get`/`set` in the same left-to-right order §3.2 fixes for a member. Whatever an accessor
+does *not* write, it inherits from the property — visibility and the inline hint independently of
+each other, and dispatch (`virtual`/`override`/`abstract`) together with `sealed` as one pair, since
+`sealed` only qualifies an `override`. This is why writing just `private` on a setter changes
+nothing else about it: the setter still inherits the property's own dispatch and inline hint, only
+its visibility narrowed.
+
+```
+public value: int {
+    get => _x;
+    private set { _x = value; }        // narrower than the property, not wider
+}
+
+class Animal {
+    public name: string { virtual get => "Animal"; }   // only the getter is virtual
+}
+
+class Dog : Animal {
+    public name: string { sealed override get => "Dog"; }   // only the getter overrides, and seals
+}
+
+abstract class Shape {
+    public value: int { abstract get; set { } }   // getter is abstract, setter is concrete
+}
+```
+
+**An accessor's own visibility must be strictly narrower than the property's**, never equal (the
+accessor could have written nothing) and never wider (a caller could then reach, through that one
+accessor, something the property itself already hides from them) — checked at the declaration, not
+left to surface only where the accessor is used. A write through a narrowed setter, or (were a
+getter ever the narrower one) a read through a narrowed getter, is checked against that accessor's
+own visibility at every call site, on top of the property's own — which is why `public get; private
+set;` genuinely restricts assignment from outside the setter's reach, not just documents an
+intention. `virtual`/`override`/`abstract`/`sealed` carry no such narrowing rule: since a getter and
+a setter are two independent methods to the runtime (`get_x`/`set_x`, per `CLAUDE.md`), each already
+gets its own vtable slot and its own obligation to satisfy, whether that dispatch was written on the
+accessor or inherited from the property — the same override/obligation checking a plain method
+already gets, applied per accessor rather than assumed uniform across both.
 
 **Each accessor may use the same `=>` sugar §3.3 gives a method**, independently of the other:
 `get => _x;` is sugar for `get { return _x; }`, and `set => _x = value;` is sugar for

@@ -397,14 +397,60 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>The accessor's body, or <c>null</c> when it was written bare and the compiler generates it.</summary>
         public BlockStatementSyntax? Body { get; }
 
+        /// <summary>
+        /// Its own visibility, written directly on this accessor (e.g. <c>private set</c>) rather than
+        /// on the property. <see cref="Visibility.Default"/> means none was written, so it inherits
+        /// the property's (§3.2, §3.4) — an accessor's own visibility, when written, must be strictly
+        /// narrower than the property's.
+        /// </summary>
+        public Visibility Visibility { get; }
+
+        /// <summary>
+        /// Whether this accessor wrote any of its own <c>virtual</c>/<c>override</c>/<c>abstract</c>/
+        /// <c>sealed</c> — when false, <see cref="Dispatch"/> and <see cref="IsSealed"/> are
+        /// meaningless and the accessor inherits the property's dispatch and sealed-ness as a pair.
+        /// </summary>
+        public bool HasOwnDispatch { get; }
+
+        /// <summary>This accessor's own dispatch, meaningful only when <see cref="HasOwnDispatch"/>.</summary>
+        public DispatchModifier Dispatch { get; }
+
+        /// <summary>Whether this accessor's own <c>override</c> was also <c>sealed</c>.</summary>
+        public bool IsSealed { get; }
+
+        /// <summary>
+        /// Its own <c>inline</c>/<c>forceinline</c> hint. <see cref="InlineModifier.None"/> means none
+        /// was written, so it inherits the property's (§3.6).
+        /// </summary>
+        public InlineModifier Inline { get; }
+
         /// <summary>Initializes an accessor.</summary>
         /// <param name="span">The source the accessor covers.</param>
         /// <param name="isGetter">True for <c>get</c>.</param>
         /// <param name="body">Its body, or <c>null</c>.</param>
-        public AccessorSyntax(SourceSpan span, bool isGetter, BlockStatementSyntax? body) : base(span)
+        /// <param name="visibility">Its own visibility, or <see cref="Visibility.Default"/> to inherit the property's.</param>
+        /// <param name="hasOwnDispatch">Whether this accessor wrote its own dispatch/sealed modifiers.</param>
+        /// <param name="dispatch">Its own dispatch, meaningful only when <paramref name="hasOwnDispatch"/>.</param>
+        /// <param name="isSealed">Whether its own <c>override</c> was also <c>sealed</c>.</param>
+        /// <param name="inline">Its own inline hint, or <see cref="InlineModifier.None"/> to inherit the property's.</param>
+        public AccessorSyntax(
+            SourceSpan span,
+            bool isGetter,
+            BlockStatementSyntax? body,
+            Visibility visibility = Visibility.Default,
+            bool hasOwnDispatch = false,
+            DispatchModifier dispatch = DispatchModifier.None,
+            bool isSealed = false,
+            InlineModifier inline = InlineModifier.None)
+            : base(span)
         {
             IsGetter = isGetter;
             Body = body;
+            Visibility = visibility;
+            HasOwnDispatch = hasOwnDispatch;
+            Dispatch = dispatch;
+            IsSealed = isSealed;
+            Inline = inline;
         }
     }
 

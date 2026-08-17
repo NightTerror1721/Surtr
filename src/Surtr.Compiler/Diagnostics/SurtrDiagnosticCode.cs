@@ -342,6 +342,14 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         NoBuiltInConstructorMatch = 3049,
 
+        /// <summary>
+        /// An accessor's own visibility (§3.2, §3.4), written directly on <c>get</c>/<c>set</c>, is
+        /// not strictly narrower than the property's — either it is the same, which the accessor
+        /// inherits for free by writing nothing, or it is wider, which would let a caller reach
+        /// through the accessor something the property itself already hides from them.
+        /// </summary>
+        AccessorVisibilityNotNarrower = 3051,
+
         #endregion
 
         #region Code generation — 4xxx

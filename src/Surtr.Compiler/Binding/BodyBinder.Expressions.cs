@@ -931,6 +931,15 @@ namespace Surtr.Compiler.Binding
                         : "This cannot be assigned to; it is a value, a 'let', or a property with no setter.");
             }
 
+            // The property was already found reachable at resolution time (`RequireAccessible`
+            // above `target` was bound), using the property's own — widest — accessibility. A
+            // setter narrower than that (§3.4's per-accessor visibility) needs its own, stricter
+            // check here, at the one place every write actually goes through.
+            if (target is BoundPropertyExpression { Property.Setter: MethodSymbol setter } propertyTarget)
+            {
+                RequireAccessible(setter, setter.Accessibility, propertyTarget.Property.Name, syntax.Target);
+            }
+
             if (syntax.Operator == AssignmentOperator.Assign)
                 return new BoundAssignmentExpression(syntax, target, BindConverted(syntax.Value, target.Type));
 

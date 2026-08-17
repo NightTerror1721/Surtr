@@ -13,7 +13,7 @@ mismo formato que `docs/Plan-Globales-Nativos-Inline-Operadores.md`.
 | 1 | Bug reportado: interfaces built-in (`IIterable<T>`, `IIterator<T>`, ...) no reconocidas al implementarlas/extenderlas/usarlas | **No reproducido en HEAD** (`develop`, commit `0bef8a2`). Todo indica que ya lo arreglaron los dos últimos commits (`5cca11a`, `0bef8a2`) — ver detalle abajo. Pendiente de confirmación con el usuario | Por confirmar |
 | 2 | Asignar una función a una variable/campo/parámetro de tipo closure solo por su nombre, sin lambda explícita | Ausente. `SurtrClosure` ya soporta un closure de cero capturas sobre cualquier `SurtrMethodInfo`; falta la conversión en el binder | Medio |
 | 3 | Métodos y propiedades de solo lectura con `=>` | Ausente. `FatArrow` ya existe como token (solo lo usan las lambdas); es azúcar sintáctica pura | Pequeño |
-| 4 | Modificadores (`inline`, `forceinline`, `override`, etc.) independientes por `get`/`set` | Ausente. Hoy `WireAccessors` copia un único juego de modificadores a ambos accessors, incluida la visibilidad | Pequeño-medio |
+| 4 | Modificadores (`inline`, `forceinline`, `override`, etc.) independientes por `get`/`set` | **Hecho** — alcance completo (visibilidad, inline/forceinline, virtual/override/abstract/sealed), más el descubrimiento y arreglo de un bug real (`sealed` en una propiedad nunca sellaba nada) | — |
 | 5 | Atributos declarables con `attribute`, con retención y target | Los atributos ya funcionan de punta a punta (declarar, aplicar, leer desde C#), pero sin keyword `attribute`, sin retención, sin restricción de target y sin API de reflexión desde Surtr | Medio |
 | 6 | `operator[]` y operadores como miembros de instancia, no solo estáticos | **Ya implementado** — ver `docs/Plan-Globales-Nativos-Inline-Operadores.md`, Fase C (Ruta A: operadores de instancia con `abstract`/`virtual`/interfaz). Sin trabajo pendiente | — |
 | 7 | Varianza de genéricos (`in`/`out`) | Genéricos correctos y completos hoy (§10.1b cerrado, sin TODOs). Varianza está **deliberadamente diferida** en `Language-Syntax.md` §14.4 — no es prioritaria mientras quede pendiente §10.2 (STDLIB en Surtr) | Diferido, no se planifica |
@@ -191,27 +191,73 @@ accessor. No hay binder/emisor que tocar — es azúcar sintáctica pura sobre
 
 ## Fase 3 — Modificadores independientes por accessor (`get`/`set`)
 
-**Estado actual**: `AccessorSyntax` (`DeclarationSyntax.cs:392-409`) solo tiene `IsGetter` y
-`Body`; todos los modificadores (visibilidad incluida) viven en `PropertyDeclarationSyntax` y
-`WireAccessors` (`Binder.cs:2170-2233`) los copia tal cual a ambos accessors. Ni siquiera la
-asimetría de visibilidad al estilo C# (`public int X { get; private set; }`) funciona hoy.
+**Confirmado con el usuario**: alcance completo, incluyendo `override`/`sealed`/`abstract` por
+accessor (no solo visibilidad + inline/forceinline).
+
+**Estado previo**: `AccessorSyntax` (`DeclarationSyntax.cs:392-409`) solo tenía `IsGetter` y
+`Body`; todos los modificadores (visibilidad incluida) vivían en `PropertyDeclarationSyntax` y
+`WireAccessors` (`Binder.cs:2170-2233`) los copiaba tal cual a ambos accessors.
+
+**Investigación previa a implementar** (clave para acotar el riesgo real): `WireAccessors` ya
+crea un `MethodSymbol` **independiente** por `get_x`/`set_x`, y ambos entran en
+`symbol.Members` como miembros de primer orden (`Binder.cs:1116-1124`). Todo el chequeo de
+`override`/`sealed`/obligaciones de interfaz (`CheckSealedOverrides`, `CheckObligation`,
+`CheckMembersImplemented`) ya opera sobre `MethodSymbol`s individuales por nombre, sin ningún
+concepto de "propiedad" a ese nivel — así que una vez que `WireAccessors` fija `Dispatch`/
+`IsOverride`/`IsSealed` de forma independiente por accessor, el resto de la maquinaria (vtable,
+obligaciones, `sealed`) ya lo respeta sin tocar nada más. El riesgo real no estaba en el linker,
+sino en la **visibilidad**: el único punto donde se comprueba accesibilidad de una propiedad
+(`RequireAccessible(property, property.Accessibility, ...)`, `BodyBinder.Expressions.cs`) se
+llama una vez, igual para lectura que para escritura, así que una visibilidad asimétrica
+(`public get; private set;`) necesitaba una comprobación adicional específica en el punto de
+escritura.
+
+**Bug real encontrado en la propia investigación**: `PropertyDeclarationSyntax.IsSealed` se
+parseaba correctamente pero **nunca llegaba a `WireAccessors`** — ni la llamada desde
+`BindProperty` se lo pasaba, ni `WireAccessors` fijaba `MethodSymbol.IsSealed` en ningún sitio.
+Es decir, `sealed override` en una propiedad se aceptaba sintácticamente pero **no sellaba
+nada** — una subclase podía seguir sobrescribiéndola sin ningún error. Corregido como parte de
+esta fase (test de regresión incluido: `APropertyLevelSealedOverrideActuallySealsItsAccessors`).
 
 **Cambios**:
-- Grammar: modificador opcional antes de `get`/`set` dentro del bloque de la propiedad;
-  ausente = hereda el de la propiedad (compatible con todo el código existente).
-- AST: campos de visibilidad/inline en `AccessorSyntax` (y espacio para atributos por
-  accessor, ver Fase 5 — §11 ya dice que los atributos aplican a "cualquier declaración").
-- Parser: extender el bucle de accessors de `ParseProperty`.
-- Binder: `WireAccessors` recibe valores por accessor en vez de uno compartido; regla de
-  validez — la visibilidad de un accessor debe ser igual o más restrictiva que la de la
-  propiedad (como C#). Empezar solo por visibilidad + inline/forceinline (bajo riesgo);
-  `override`/`sealed`/`abstract` por accessor es mecánicamente posible (getter y setter ya
-  son `MethodSymbol`s y slots de vtable independientes) pero necesita que
-  `SurtrTypeLinker`/el chequeo de overrides razone por accessor, no por propiedad — dejarlo
-  para una fase posterior si hace falta, no bloquea el resto del plan.
-- Actualizar `Language-Syntax.md` §3.2/§3.4.
+- `AccessorSyntax`: nuevos campos `Visibility`, `HasOwnDispatch`, `Dispatch`, `IsSealed`,
+  `Inline` (con valores por defecto en el constructor para no romper los 3 sitios existentes
+  que ya lo construían).
+- Parser: nuevo `AccessorModifiers`/`ParseAccessorModifiers()` en `Parser.Declarations.cs`,
+  con el mismo orden de modificadores que ya fija §3.2 pero sin `static`/`const`/`native`
+  (no tienen sentido por accessor); se llama justo antes de reconocer `get`/`set`.
+- `WireAccessors` gana un parámetro `isSealed` (cierra el bug de arriba) y, por accessor:
+  visibilidad efectiva = la propia si se escribió, si no la de la propiedad
+  (`ResolveAccessorAccessibility`, que también valida que sea **estrictamente** más
+  restrictiva, nunca igual ni más permisiva — nuevo diagnóstico `AccessorVisibilityNotNarrower`
+  = 3051); dispatch+sealed efectivos = los propios si el accessor escribió alguno de
+  `virtual`/`override`/`abstract`/`sealed` (`HasOwnDispatch`), si no los de la propiedad, como
+  un par (evita la ambigüedad de que escribir solo `private` en un setter le resetee
+  silenciosamente el dispatch heredado); inline efectivo = el propio si no es `None`, si no el
+  de la propiedad.
+- `BodyBinder.BindAssignment` (`BodyBinder.Expressions.cs`): nueva comprobación de
+  accesibilidad contra `property.Setter.Accessibility` específicamente, en el único punto por
+  el que pasa toda escritura — la comprobación de la propiedad en general (en la resolución
+  inicial) sigue existiendo tal cual y usa la visibilidad más permisiva de las dos, así que
+  esta es estrictamente una comprobación adicional, nunca menos estricta que antes.
+- **Límite documentado, no implementado**: la lectura a través de un *getter* más estrecho que
+  la propiedad (`private get; public set;`, patrón muy poco habitual) no tiene un punto de
+  intercepción único análogo a `BindAssignment` — cada lectura consume el valor donde sea que
+  fluya la expresión, no en un único sitio. Se deja sin reforzar (la metadata se guarda
+  correctamente, solo falta el chequeo), documentado como límite deliberado en vez de
+  implementado a medias en silencio.
+- Cobertura en `BinderTests.cs` (10 tests nuevos): narrowing aceptado/rechazado (más
+  restrictivo, igual, más permisivo), escritura rechazada desde fuera del alcance del setter,
+  dispatch independiente por accessor, abstract en un accessor con el otro concreto,
+  satisfacción de una obligación abstracta heredada, y el regression test del bug de `sealed`
+  (incluyendo `sealed` escrito directamente en el accessor). Más un test de punta a punta en
+  `ModuleEmitterTests.cs` que confirma que un getter `virtual` por accessor (sin modificador a
+  nivel de propiedad) despacha de verdad a través de la vtable en la VM real.
+- Actualizado `docs/Language-Syntax.md` §3.2 y §3.4.
+- Suite completa verificada: 2080/2080 tests en verde. Los 10+1 tests nuevos pasaron a la
+  primera, sin necesitar ninguna corrección tras escribirlos.
 
-**Commit**: `Feature: modificadores independientes en accessors get/set`
+**Commit**: `Feature: modificadores independientes en accessors get/set + fix de sealed en propiedades`
 
 ---
 
@@ -476,7 +522,7 @@ cada fase), una pasada de cierre:
 | 0 | Red de seguridad LSP + fix de keywords (+ 2 bugs reales de hover/imports encontrados y corregidos) | **Hecha** |
 | 1 | Verificación del bug de interfaces built-in genéricas | **Hecha** (no reproducido; tests de regresión añadidos) |
 | 2 | Sintaxis `=>` en métodos/propiedades | **Hecha** |
-| 3 | Modificadores independientes por accessor | Pendiente |
+| 3 | Modificadores independientes por accessor | **Hecha** (alcance completo, incluye fix de bug de `sealed`) |
 | 4 | Método → valor closure sin lambda | Pendiente |
 | 5 | Keyword `attribute`, target y retención | Pendiente |
 | 6 | API de reflexión de atributos en Surtr | Pendiente (depende de 5) |

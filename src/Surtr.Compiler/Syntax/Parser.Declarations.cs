@@ -195,6 +195,81 @@ namespace Surtr.Compiler.Syntax
             }
         }
 
+        /// <summary>
+        /// The modifiers an accessor may carry on top of its property's (§3.2, §3.4). Unlike
+        /// <see cref="Modifiers"/>, static/const/native have no per-accessor meaning, so they are not
+        /// part of this run at all.
+        /// </summary>
+        private struct AccessorModifiers
+        {
+            internal Visibility Visibility;
+            internal bool HasDispatch;
+            internal DispatchModifier Dispatch;
+            internal bool IsSealed;
+            internal InlineModifier Inline;
+        }
+
+        /// <summary>Reads the modifier run an accessor may carry before its `get`/`set` keyword.</summary>
+        private AccessorModifiers ParseAccessorModifiers()
+        {
+            AccessorModifiers modifiers = default;
+
+            while (true)
+            {
+                switch (reader.CurrentType)
+                {
+                    case TokenType.KeywordPublic:
+                    case TokenType.KeywordPrivate:
+                    case TokenType.KeywordProtected:
+                    case TokenType.KeywordInternal:
+                        if (modifiers.Visibility != Visibility.Default)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "An accessor can only carry one visibility.");
+                        }
+
+                        modifiers.Visibility = ToVisibility(reader.Advance().Type);
+                        continue;
+
+                    case TokenType.KeywordSealed:
+                        modifiers.HasDispatch = true;
+                        modifiers.IsSealed = true;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordAbstract:
+                        modifiers.HasDispatch = true;
+                        modifiers.Dispatch = DispatchModifier.Abstract;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordVirtual:
+                        modifiers.HasDispatch = true;
+                        modifiers.Dispatch = DispatchModifier.Virtual;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordOverride:
+                        modifiers.HasDispatch = true;
+                        modifiers.Dispatch = DispatchModifier.Override;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordInline:
+                        modifiers.Inline = InlineModifier.Inline;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordForceInline:
+                        modifiers.Inline = InlineModifier.ForceInline;
+                        reader.Advance();
+                        continue;
+
+                    default:
+                        return modifiers;
+                }
+            }
+        }
+
         private static Visibility ToVisibility(TokenType type)
         {
             switch (type)
@@ -372,6 +447,12 @@ namespace Surtr.Compiler.Syntax
             {
                 SourceLocation accessorStart = reader.CurrentLocation;
 
+                // An accessor may carry its own modifier run before `get`/`set` (§3.2, §3.4) —
+                // visibility, `virtual`/`override`/`abstract`/`sealed`, and `inline`/`forceinline` —
+                // independently of the property's own. Whatever it does not write inherits the
+                // property's.
+                AccessorModifiers accessorModifiers = ParseAccessorModifiers();
+
                 if (!reader.Check(TokenType.Identifier))
                 {
                     throw reader.Error(SurtrDiagnosticCode.UnexpectedToken, "Expected 'get' or 'set'.");
@@ -402,7 +483,10 @@ namespace Surtr.Compiler.Syntax
                     reader.Expect(TokenType.Semicolon, "';' after the accessor");
                 }
 
-                accessors.Add(new AccessorSyntax(SpanFrom(accessorStart), isGetter, body));
+                accessors.Add(new AccessorSyntax(
+                    SpanFrom(accessorStart), isGetter, body,
+                    accessorModifiers.Visibility, accessorModifiers.HasDispatch, accessorModifiers.Dispatch,
+                    accessorModifiers.IsSealed, accessorModifiers.Inline));
             }
 
             reader.Expect(TokenType.RightBrace, "'}' to close the property accessors");

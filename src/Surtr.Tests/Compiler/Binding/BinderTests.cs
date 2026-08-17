@@ -1349,5 +1349,178 @@ namespace Surtr.Tests.Compiler.Binding
             AssertNoErrors(compilation);
         }
         #endregion
+
+        #region Per-accessor modifiers (§3.2, §3.4)
+        [Fact]
+        public void AnAccessorMayNarrowItsOwnVisibilityBelowTheProperty()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Box\n"
+                + "{\n"
+                + "    private var _value: int;\n"
+                + "    public value: int { get => _value; private set { _value = value; } }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+
+            var box = Type(binder, "game.core", "Box");
+            var property = box.Members.OfType<PropertySymbol>().Single(p => p.Name == "value");
+            Assert.Equal(Accessibility.Public, property.Getter!.Accessibility);
+            Assert.Equal(Accessibility.Private, property.Setter!.Accessibility);
+        }
+
+        [Fact]
+        public void AnAccessorWiderThanThePropertyIsRejected()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Box\n"
+                + "{\n"
+                + "    private var _value: int;\n"
+                + "    private value: int { get => _value; public set { _value = value; } }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.AccessorVisibilityNotNarrower);
+        }
+
+        [Fact]
+        public void AnAccessorRepeatingThePropertysOwnVisibilityIsRejected()
+        {
+            // Equal is not narrower - the accessor could have written nothing and inherited it.
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Box\n"
+                + "{\n"
+                + "    private var _value: int;\n"
+                + "    public value: int { get => _value; public set { _value = value; } }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.AccessorVisibilityNotNarrower);
+        }
+
+        [Fact]
+        public void AWriteThroughANarrowerSetterIsRejectedFromOutsideItsReach()
+        {
+            var binder = Bind(out var compilation, (
+                "game/core/Box.surtr",
+                "public class Box\n"
+                + "{\n"
+                + "    private var _value: int;\n"
+                + "    public value: int { get => _value; private set { _value = value; } }\n"
+                + "}"),
+                ("game/core/Other.surtr",
+                "class Other { public fun run(): void { let b = Box(); b.value = 1; } }"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.Inaccessible);
+        }
+
+        [Fact]
+        public void AnAccessorMayDeclareItsOwnDispatchIndependentlyOfTheOtherAccessor()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Box\n"
+                + "{\n"
+                + "    private var _value: int;\n"
+                + "    public value: int { virtual get => _value; set { _value = value; } }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+
+            var box = Type(binder, "game.core", "Box");
+            var property = box.Members.OfType<PropertySymbol>().Single(p => p.Name == "value");
+            Assert.Equal(MethodDispatch.Virtual, property.Getter!.Dispatch);
+            Assert.Equal(MethodDispatch.Direct, property.Setter!.Dispatch);
+        }
+
+        [Fact]
+        public void AnAccessorMayBeAbstractWhileItsSiblingIsConcrete()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "abstract class Shape\n"
+                + "{\n"
+                + "    public value: int { abstract get; set { } }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+
+            var shape = Type(binder, "game.core", "Shape");
+            var property = shape.Members.OfType<PropertySymbol>().Single(p => p.Name == "value");
+            Assert.Equal(MethodDispatch.Abstract, property.Getter!.Dispatch);
+            Assert.Equal(MethodDispatch.Direct, property.Setter!.Dispatch);
+        }
+
+        [Fact]
+        public void AConcreteClassMaySatisfyAnAbstractAccessorDeclaredOnAnAbstractBase()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "abstract class Shape\n"
+                + "{\n"
+                + "    public value: int { abstract get; set { } }\n"
+                + "}\n"
+                + "class Square : Shape\n"
+                + "{\n"
+                + "    public override value: int { get => 4; }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void ALeftoverAbstractAccessorIsReportedOnAConcreteSubclass()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "abstract class Shape\n"
+                + "{\n"
+                + "    public value: int { abstract get; set { } }\n"
+                + "}\n"
+                + "class Square : Shape { }"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.MissingImplementation);
+        }
+
+        [Fact]
+        public void APropertyLevelSealedOverrideActuallySealsItsAccessors()
+        {
+            // Regression: WireAccessors used to drop `sealed` on the floor entirely - a property's
+            // `sealed override` looked accepted but never reached the accessor MethodSymbols, so
+            // nothing downstream ever rejected a further override. This is the same shape
+            // CheckSealedOverrides already tests for an ordinary method.
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Animal { public virtual name: string { get => \"Animal\"; } }\n"
+                + "class Dog : Animal { public sealed override name: string { get => \"Dog\"; } }\n"
+                + "class Puppy : Dog { public override name: string { get => \"Puppy\"; } }"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidBaseType);
+        }
+
+        [Fact]
+        public void AnAccessorMaySealItsOwnOverrideIndependentlyOfTheProperty()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Animal { public virtual name: string { get => \"Animal\"; } }\n"
+                + "class Dog : Animal { public name: string { sealed override get => \"Dog\"; } }\n"
+                + "class Puppy : Dog { public override name: string { get => \"Puppy\"; } }"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidBaseType);
+        }
+        #endregion
     }
 }

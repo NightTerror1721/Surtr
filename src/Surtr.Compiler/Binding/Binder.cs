@@ -2132,7 +2132,7 @@ namespace Surtr.Compiler.Binding
             };
 
             WireAccessors(
-                property, syntax.Accessors, owner, syntax.Dispatch, isInterface, accessibility,
+                property, syntax.Accessors, owner, syntax.Dispatch, syntax.IsSealed, isInterface, accessibility,
                 binding.Scope, binding.Module, owner, binding.SourceName, syntax.Inline, syntax.IsNative);
 
             RecordAttributes(property, syntax.Attributes, binding.Scope, binding.SourceName);
@@ -2152,7 +2152,7 @@ namespace Surtr.Compiler.Binding
             };
 
             WireAccessors(
-                property, syntax.Accessors, owner, DispatchModifier.None, isInterface: false, property.Accessibility,
+                property, syntax.Accessors, owner, DispatchModifier.None, isSealed: false, isInterface: false, property.Accessibility,
                 scope, owner, containingType: null, sourceName, syntax.Inline, syntax.IsNative);
 
             RecordAttributes(property, syntax.Attributes, scope, sourceName);
@@ -2172,6 +2172,7 @@ namespace Surtr.Compiler.Binding
             IReadOnlyList<AccessorSyntax> accessors,
             Symbol owner,
             DispatchModifier dispatch,
+            bool isSealed,
             bool isInterface,
             Accessibility accessibility,
             Scope scope,
@@ -2196,15 +2197,17 @@ namespace Surtr.Compiler.Binding
 
             if (getter is not null)
             {
+                Accessibility getterAccessibility = ResolveAccessorAccessibility(getter, accessibility, sourceName);
                 var bound = new MethodSymbol(MemberNames.Getter(property.Name), owner, property.Type)
                 {
                     IsStatic = property.IsStatic,
-                    Accessibility = accessibility,
+                    Accessibility = getterAccessibility,
                     Role = MethodRole.PropertyGetter,
-                    Dispatch = TranslateDispatch(dispatch, isInterface),
-                    IsOverride = dispatch == DispatchModifier.Override,
-                    IsInline = inline == InlineModifier.Inline,
-                    IsForceInline = inline == InlineModifier.ForceInline,
+                    Dispatch = TranslateDispatch(getter.HasOwnDispatch ? getter.Dispatch : dispatch, isInterface),
+                    IsOverride = (getter.HasOwnDispatch ? getter.Dispatch : dispatch) == DispatchModifier.Override,
+                    IsSealed = getter.HasOwnDispatch ? getter.IsSealed : isSealed,
+                    IsInline = (getter.Inline != InlineModifier.None ? getter.Inline : inline) == InlineModifier.Inline,
+                    IsForceInline = (getter.Inline != InlineModifier.None ? getter.Inline : inline) == InlineModifier.ForceInline,
                     IsNative = isNative,
                 };
 
@@ -2214,15 +2217,17 @@ namespace Surtr.Compiler.Binding
 
             if (setter is not null)
             {
+                Accessibility setterAccessibility = ResolveAccessorAccessibility(setter, accessibility, sourceName);
                 var bound = new MethodSymbol(MemberNames.Setter(property.Name), owner, _factory.Void)
                 {
                     IsStatic = property.IsStatic,
-                    Accessibility = accessibility,
+                    Accessibility = setterAccessibility,
                     Role = MethodRole.PropertySetter,
-                    Dispatch = TranslateDispatch(dispatch, isInterface),
-                    IsOverride = dispatch == DispatchModifier.Override,
-                    IsInline = inline == InlineModifier.Inline,
-                    IsForceInline = inline == InlineModifier.ForceInline,
+                    Dispatch = TranslateDispatch(setter.HasOwnDispatch ? setter.Dispatch : dispatch, isInterface),
+                    IsOverride = (setter.HasOwnDispatch ? setter.Dispatch : dispatch) == DispatchModifier.Override,
+                    IsSealed = setter.HasOwnDispatch ? setter.IsSealed : isSealed,
+                    IsInline = (setter.Inline != InlineModifier.None ? setter.Inline : inline) == InlineModifier.Inline,
+                    IsForceInline = (setter.Inline != InlineModifier.None ? setter.Inline : inline) == InlineModifier.ForceInline,
                     IsNative = isNative,
                 };
 
@@ -2231,6 +2236,35 @@ namespace Surtr.Compiler.Binding
                 property.Setter = bound;
             }
         }
+
+        /// <summary>
+        /// An accessor's effective accessibility: its own, when it wrote one, otherwise the
+        /// property's. An accessor's own visibility must be strictly narrower than the property's —
+        /// equal is pointless (the accessor could have written nothing) and wider would let a caller
+        /// reach, through that one accessor, something the property itself already hides from them.
+        /// </summary>
+        private Accessibility ResolveAccessorAccessibility(AccessorSyntax accessor, Accessibility propertyAccessibility, string sourceName)
+        {
+            if (accessor.Visibility == Visibility.Default)
+                return propertyAccessibility;
+
+            Accessibility resolved = Translate(accessor.Visibility, propertyAccessibility);
+            if (resolved >= propertyAccessibility)
+            {
+                ReportAt(sourceName, accessor.Span, SurtrDiagnosticCode.AccessorVisibilityNotNarrower,
+                    $"An accessor's own visibility must be narrower than the property's — '{Describe(resolved)}' is not narrower than '{Describe(propertyAccessibility)}'.");
+            }
+
+            return resolved;
+        }
+
+        private static string Describe(Accessibility accessibility) => accessibility switch
+        {
+            Accessibility.Private => "private",
+            Accessibility.Protected => "protected",
+            Accessibility.Internal => "internal",
+            _ => "public",
+        };
 
         private MethodSymbol BindMethod(
             MethodDeclarationSyntax syntax,
