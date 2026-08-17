@@ -207,14 +207,19 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>True when written with a trailing <c>.*</c>.</summary>
         public bool IsWildcard { get; }
 
+        /// <summary>The name after <c>as</c>, or <see langword="null"/> when the import is unaliased.</summary>
+        public string? Alias { get; }
+
         /// <summary>Initializes an import.</summary>
         /// <param name="span">The source the import covers.</param>
         /// <param name="path">The dotted path's segments.</param>
         /// <param name="isWildcard">True when written with a trailing <c>.*</c>.</param>
-        public ImportSyntax(SourceSpan span, IReadOnlyList<string> path, bool isWildcard) : base(span)
+        /// <param name="alias">The name after <c>as</c>, if any.</param>
+        public ImportSyntax(SourceSpan span, IReadOnlyList<string> path, bool isWildcard, string? alias = null) : base(span)
         {
             Path = path;
             IsWildcard = isWildcard;
+            Alias = alias;
         }
     }
 

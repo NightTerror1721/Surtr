@@ -537,6 +537,23 @@ namespace Surtr.Compiler.Binding
                         continue;
                     }
 
+                    // `import X as Y` names a module by its whole path - unlike the named-import
+                    // split below, there is no trailing type name to peel off the end.
+                    if (import.Alias is not null)
+                    {
+                        if (TryGetModuleSymbol(Join(import.Path, import.Path.Count), out var aliased)
+                            && !scope.TryDeclareModuleAlias(import.Alias, aliased))
+                        {
+                            ReportAt(
+                                unit.File.Path,
+                                import.Span,
+                                SurtrDiagnosticCode.DuplicateModuleAlias,
+                                $"'{import.Alias}' is already used as a module alias in this module.");
+                        }
+
+                        continue;
+                    }
+
                     // A named import brings exactly one name in, and the longest module prefix says
                     // where the module ends.
                     for (int split = import.Path.Count - 1; split > 0; split--)

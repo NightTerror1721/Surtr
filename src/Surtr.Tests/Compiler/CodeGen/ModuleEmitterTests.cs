@@ -147,6 +147,51 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Import: alias de modulo (§2.1, Fase 7)
+        [Fact]
+        public void AModuleAliasConstructsATypeThroughTheAliasedName()
+        {
+            var runtime = Run(
+                "import game.math as M;\nfun run(): int { return M.Box(21).value; }",
+                ("/game/math/Box.surtr", "public class Box { public let value: int = 0; public constructor(value: int) { this.value = value; } }"));
+
+            Assert.Equal(21, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AModuleAliasWorksInATypeAnnotation()
+        {
+            var runtime = Run(
+                "import game.math as M;\n"
+                    + "fun run(): int { let b: M.Box = M.Box(7); return b.value; }",
+                ("/game/math/Box.surtr", "public class Box { public let value: int = 0; public constructor(value: int) { this.value = value; } }"));
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        /// <summary>An alias only reaches its module's types qualified - it is not also a wildcard import.</summary>
+        [Fact]
+        public void AModuleAliasDoesNotBringTheUnqualifiedNameIntoScope()
+        {
+            using var compilation = Reject(
+                "import game.math as M;\nfun run(): int { return Box(1).value; }",
+                ("/game/math/Box.surtr", "public class Box { public let value: int = 0; public constructor(value: int) { this.value = value; } }"));
+
+            Assert.True(compilation.HasErrors, "'Box' should not be reachable unqualified through an alias-only import.");
+        }
+
+        [Fact]
+        public void TwoImportsCannotClaimTheSameAlias()
+        {
+            using var compilation = Reject(
+                "import game.math as M;\nimport game.other as M;\nfun run(): int { return 1; }",
+                ("/game/math/Box.surtr", "public class Box { public let value: int = 0; }"),
+                ("/game/other/Thing.surtr", "public class Thing { }"));
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.DuplicateModuleAlias);
+        }
+        #endregion
+
         #region Classes
         [Fact]
         public void AClassIsConstructedAndItsFieldsRead()

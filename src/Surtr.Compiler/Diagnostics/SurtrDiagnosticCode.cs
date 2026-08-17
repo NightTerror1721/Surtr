@@ -357,6 +357,14 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         AttributeTargetMismatch = 3052,
 
+        /// <summary>
+        /// Two <c>import ... as Name;</c> lines in the same module declare the same alias (§2.1).
+        /// Unlike a named/wildcard import colliding with another, this is reported at the
+        /// <c>import</c> line itself rather than at the point of use, because an alias has no
+        /// other declaration it could be shadowing - two imports simply claimed the same name.
+        /// </summary>
+        DuplicateModuleAlias = 3053,
+
         #endregion
 
         #region Code generation — 4xxx

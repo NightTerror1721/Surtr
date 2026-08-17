@@ -329,8 +329,12 @@ namespace Surtr.Compiler.Syntax
                 path.Add(reader.ExpectIdentifier("a name after '.'"));
             }
 
+            string? alias = null;
+            if (!wildcard && reader.Match(TokenType.KeywordAs))
+                alias = reader.ExpectIdentifier("a name after 'as'");
+
             reader.Expect(TokenType.Semicolon, "';' after the import");
-            return new ImportSyntax(SpanFrom(start), path, wildcard);
+            return new ImportSyntax(SpanFrom(start), path, wildcard, alias);
         }
 
         /// <summary>Collects the <c>///</c> doc comment lines sitting immediately before a declaration.</summary>

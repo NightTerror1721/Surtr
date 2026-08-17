@@ -123,6 +123,20 @@ namespace Surtr.LanguageServer.Workspace
                 }
             }
 
+            // A module alias (§2.1, Fase 7): its own types, the same way a fully qualified module
+            // path's would be if the receiver had been written out in full.
+            string? aliasedModulePath = ResolveModuleAlias(snapshot, filePath, receiverText);
+            if (aliasedModulePath is not null && binder.Modules.TryGetValue(aliasedModulePath, out ModuleSymbol? aliasedModule))
+            {
+                foreach (var aliasedType in aliasedModule.Types)
+                {
+                    if (MemberItem(aliasedType, includeStatics: true) is CompletionItem item)
+                        items.Add(item);
+                }
+
+                return new CompletionList { IsIncomplete = false, Items = items };
+            }
+
             // A type name: its statics, its nested types, a singleton's instance surface, and an
             // enum's cases.
             NamedTypeSymbol? type = module is null ? null : FindType(binder, snapshot, filePath, module, receiverText);
@@ -209,6 +223,19 @@ namespace Surtr.LanguageServer.Workspace
                 {
                     if (MemberItem(type, includeStatics: true) is CompletionItem item)
                         Add(item);
+                }
+            }
+
+            // A module alias (§2.1, Fase 7) is not reachable by its own name as a value or a type -
+            // only qualified, `Alias.Something` - but the name itself belongs in the list so typing
+            // it is discoverable at all.
+            var unitForAliases = snapshot.UnitFor(filePath);
+            if (unitForAliases is not null)
+            {
+                foreach (var import in unitForAliases.Syntax.Imports)
+                {
+                    if (import.Alias is string alias)
+                        Add(new CompletionItem { Label = alias, Kind = CompletionItemKinds.Module, SortText = "3" + alias });
                 }
             }
 
@@ -419,9 +446,14 @@ namespace Surtr.LanguageServer.Workspace
 
             if (prefix.Length > 0)
             {
-                // A qualified name: a foreign module, or a member of a type in this one.
+                // A qualified name: a foreign module, that module reached through an alias, or a
+                // member of a type in this one.
                 if (binder.Modules.TryGetValue(prefix, out ModuleSymbol? foreign))
                     return MethodsNamed(foreign, name);
+
+                string? aliasedModulePath = ResolveModuleAlias(snapshot, filePath, prefix);
+                if (aliasedModulePath is not null && binder.Modules.TryGetValue(aliasedModulePath, out ModuleSymbol? aliasedForeign))
+                    return MethodsNamed(aliasedForeign, name);
 
                 NamedTypeSymbol? type = FindType(binder, snapshot, filePath, module, prefix);
                 if (type is not null)
@@ -1280,6 +1312,31 @@ namespace Surtr.LanguageServer.Workspace
                 types = foreign.FindTypes(name);
                 if (types.Count > 0)
                     return types[0];
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// The module path an <c>import X as Name;</c> line in this file names, or
+        /// <see langword="null"/> if <paramref name="name"/> is not an alias here.
+        /// </summary>
+        /// <remarks>
+        /// Reads the file's own <see cref="ImportSyntax"/> rather than the binder's compiled
+        /// symbols: a module alias (§2.1, Fase 7) resolves through <c>Scope</c> at bind time and
+        /// is not itself stored as a <see cref="Symbol"/> anywhere a completion pass could ask a
+        /// module for it back.
+        /// </remarks>
+        private static string? ResolveModuleAlias(CompilationSnapshot snapshot, string filePath, string name)
+        {
+            var unit = snapshot.UnitFor(filePath);
+            if (unit is null)
+                return null;
+
+            foreach (var import in unit.Syntax.Imports)
+            {
+                if (import.Alias == name)
+                    return string.Join(".", import.Path);
             }
 
             return null;

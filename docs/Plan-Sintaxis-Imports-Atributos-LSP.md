@@ -19,7 +19,7 @@ mismo formato que `docs/Plan-Globales-Nativos-Inline-Operadores.md`.
 | 7 | Varianza de genéricos (`in`/`out`) | Genéricos correctos y completos hoy (§10.1b cerrado, sin TODOs). Varianza está **deliberadamente diferida** en `Language-Syntax.md` §14.4 — no es prioritaria mientras quede pendiente §10.2 (STDLIB en Surtr) | Diferido, no se planifica |
 | 8 | Cargador de STDLIB con selección de módulos (sandbox) + enlace nativo portable | El mecanismo de carga (`SurtrStdlib.LoadInto`) ya existe pero es todo-o-nada; el enlace nativo ya es independiente del código fuente `.surtr` en tiempo de ejecución, pero las imágenes no están embebidas como recursos y no hay detección temprana de desincronización | Pequeño-medio |
 | 9 | Declarar clases/enums/interfaces/singletons/value classes dentro de un método | Totalmente ausente en parser, AST, binder y emisor | Medio-grande |
-| 10 | Import de directorio completo (wildcard recursivo), import selectivo de miembros, alias de módulo | Import de módulo completo y wildcard de un módulo ya existen; selectivo, wildcard de directorio y alias, ausentes | Pequeño-medio (alias/selectivo), medio (wildcard de directorio) |
+| 10 | Import de directorio completo (wildcard recursivo), import selectivo de miembros, alias de módulo | Import de módulo completo y wildcard de un módulo ya existen. Alias (`import X as Y`) **hecho** — Fase 7. Selectivo y wildcard de directorio, ausentes | Pequeño-medio (selectivo), medio (wildcard de directorio) |
 | 11 | Built-ins siempre disponibles sin import, nunca rotos por imports | **Ya correcto**, con tests dedicados (`BinderTests.cs`) | — |
 | 12 | LSP correcto para todo lo anterior, especialmente imports y built-ins | Implementación real sobre el compilador real (no un analizador simplificado), pero sin ningún test propio y con una lista de keywords desincronizada de §1.2 | Transversal a cada fase |
 
@@ -432,21 +432,52 @@ y siendo `null` en la raíz. 2102/2102 tests en verde, 0 warnings.
 
 ---
 
-## Fase 7 — Import: alias de módulo (`import X as Y`)
+## Fase 7 — Import: alias de módulo (`import X as Y`) — **Hecha**
 
 **Estado actual**: `ImportSyntax` (`DeclarationSyntax.cs:202-219`) no tiene campo de alias;
 `ParseImport` (`Parser.cs:313-334`) va directo del path punteado a `;`. `as` ya es un token
 reservado (`operator as`, §5.6) así que no hace falta una keyword nueva.
 
 **Cambios**:
-- `ImportSyntax.Alias: string?`; `ParseImport` acepta `as Identifier` opcional antes de `;`.
-- Binder: como Surtr no tiene módulos como valor de primera clase (solo `singleton` puede
-  serlo, §2.8), el alias se resuelve como una entrada de scope sintética cuya búsqueda
-  delega en los tipos de ese módulo — reutilizando el camino de `TypeResolver` que ya lee un
-  nombre punteado como tipo anidado antes que como nombre completamente calificado.
-- Nuevos `SurtrDiagnosticCode` para colisión de alias.
-- Actualizar `Language-Syntax.md` §2.1. Actualizar `CompletionProvider.ImportedModules` en el
-  LSP para reconocer el alias (Fase 0 ya deja tests que detectan la regresión si no se hace).
+- `ImportSyntax.Alias: string?`; `ParseImport` acepta `as Identifier` opcional antes de `;`,
+  solo en la forma no comodín.
+- `SurtrCompilation.TryResolveImport` (validación previa al binder, en `BuildDependencyGraph`)
+  necesitó su propio ajuste: un import con alias trata el path **completo** como módulo — a
+  diferencia de un import con nombre, no hay un segmento final que sea un tipo — igual que ya
+  hacía la rama de wildcard. Sin este cambio, `import game.math as M;` se reportaba como
+  `UnresolvedImport` antes de que el binder llegara a verlo.
+- Binder (`BindImports`): con alias, resuelve el path completo como módulo y lo declara en el
+  scope de imports del módulo fuente. Sin alias, la rama existente (prefijo de módulo más largo
+  + nombre de tipo) sigue igual.
+- **Diseño real, distinto del boceto original**: en vez de una "entrada de scope sintética"
+  compartiendo el diccionario de tipos de `Scope` (lo que habría expuesto un `ModuleSymbol` a
+  cualquier consumidor existente de `Scope.Lookup` que asume que solo hay tipos/miembros ahí),
+  `Scope` ganó un diccionario **separado** solo para alias de módulo
+  (`TryDeclareModuleAlias`/`LookupModuleAlias`, con la misma cadena "innermost primero" que
+  `Lookup`) — cero riesgo de romper ningún consumidor existente. En `TypeResolver.ResolveNamed`,
+  entre `TryResolveThroughScope` (tipo anidado) y `TryResolveQualified` (módulo escrito
+  completo), se añadió `TryResolveThroughAlias`. Los dos casos comparten la parte de "leer el
+  primer segmento tras el módulo como tipo de nivel superior y caminar el resto como tipos
+  anidados" a través de un nuevo helper común, `TryResolveFromModule`.
+- Nuevo `SurtrDiagnosticCode.DuplicateModuleAlias = 3053`: dos `import ... as` con el mismo
+  alias en el mismo módulo, reportado en la propia línea `import` (a diferencia de una colisión
+  de import con nombre/wildcard, que se reporta en el punto de uso — un alias no tiene un
+  import propio al que hacerle *shadow*, así que no hay nada a lo que el segundo pueda perder).
+- `Language-Syntax.md` §2.1 actualizado: el alias es deliberadamente más estrecho que un import
+  de valor — solo alcanza *tipos* calificados (`Core.Entity`, en anotación, lista de
+  base/interfaces, `is`/`as`, construcción), nunca una función o variable a nivel de módulo, y
+  el nombre del alias no se añade al scope sin calificar (no es también un wildcard).
+- LSP (`CompletionProvider.cs`): nuevo helper `ResolveModuleAlias` (lee `ImportSyntax.Alias` del
+  archivo actual, ya que un alias no queda como `Symbol` en ningún sitio que el binder exponga).
+  Usado en `CompleteMember` (completado tras `Alias.`), en `ResolveCallableByName` (hints de
+  parámetro tras `Alias.Tipo(`), y el propio nombre del alias se añade a la lista de completado
+  de identificador suelto (kind `Module`) para que sea descubrible aunque no resuelva nada por
+  sí solo.
+
+**Tests**: 4 en `ModuleEmitterTests.cs` (construcción y anotación de tipo a través del alias,
+que el alias NO trae el nombre sin calificar a scope, colisión de dos alias) + 2 en
+`LanguageServerWorkspaceTests.cs` (completado de los tipos de un módulo aliasado, el nombre del
+alias en el completado suelto). 2108/2108 tests en verde, 0 warnings.
 
 **Commit**: `Feature: alias de modulo en import (import X as Y)`
 

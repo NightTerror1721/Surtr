@@ -177,6 +177,60 @@ namespace Surtr.Tests.LanguageServer
             Assert.Equal(Path.GetFullPath(corePath), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
         }
 
+        [Fact]
+        public void AModuleAliasCompletesItsModulesTypes()
+        {
+            const string coreSource = "public class Entity {\n    public fun greet(): string { return \"hi\"; }\n}\n";
+            const string appSource =
+                "import proj.core as Core;\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let e = Core.Entity();\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Entity.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            int dotEnd = appSource.IndexOf("Core.Entity()", StringComparison.Ordinal) + "Core.".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, appPath, appSource, dotEnd);
+            Assert.Contains(completion.Items, item => item.Label == "Entity");
+        }
+
+        [Fact]
+        public void AModuleAliasNameItselfAppearsInBareCompletion()
+        {
+            const string coreSource = "public class Entity { }\n";
+            const string appSource =
+                "import proj.core as Core;\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        \n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Entity.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            int insideBody = appSource.IndexOf("        \n", StringComparison.Ordinal) + "        ".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, appPath, appSource, insideBody);
+            Assert.Contains(completion.Items, item => item.Label == "Core");
+        }
+
         private static string Describe(System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<Surtr.Compiler.Diagnostics.SurtrDiagnostic>> diagnostics)
             => string.Join(" | ", diagnostics.SelectMany(pair => pair.Value).Select(d => d.ToString()));
     }

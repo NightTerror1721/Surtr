@@ -213,6 +213,9 @@ namespace Surtr.Compiler.Binding
             if (TryResolveThroughScope(syntax, arguments, scope, sourceName, out var nested))
                 return nested;
 
+            if (TryResolveThroughAlias(syntax, arguments, scope, sourceName, out var aliased))
+                return aliased;
+
             if (TryResolveQualified(syntax, arguments, sourceName, out var qualified))
                 return qualified;
 
@@ -293,49 +296,8 @@ namespace Surtr.Compiler.Binding
             {
                 string modulePath = Join(syntax.Path, split);
 
-                if (!TryGetModule(modulePath, out var module))
+                if (!TryGetModule(modulePath, out var module) || !TryResolveFromModule(syntax, module, split, arguments, sourceName, out resolved))
                     continue;
-
-                var candidates = module.FindTypes(syntax.Path[split]);
-                if (candidates.Count == 0)
-                    continue;
-
-                NamedTypeSymbol? container = null;
-                bool last = split == syntax.Path.Count - 1;
-                int wanted = last ? arguments.Length : 0;
-
-                for (int c = 0; c < candidates.Count; c++)
-                {
-                    if (candidates[c].Arity == wanted)
-                    {
-                        container = candidates[c];
-                        break;
-                    }
-                }
-
-                if (container is null)
-                    continue;
-
-                for (int i = split + 1; i < syntax.Path.Count && container is not null; i++)
-                {
-                    var nested = container.FindNestedTypes(syntax.Path[i]);
-                    int nestedWanted = i == syntax.Path.Count - 1 ? arguments.Length : 0;
-
-                    container = null;
-                    for (int c = 0; c < nested.Count; c++)
-                    {
-                        if (nested[c].Arity == nestedWanted)
-                        {
-                            container = nested[c];
-                            break;
-                        }
-                    }
-                }
-
-                if (container is null)
-                    continue;
-
-                resolved = Apply(syntax, container, arguments, sourceName);
 
                 // The one edge `SurtrCompilation.BuildDependencyGraph` cannot see at parse time: a
                 // name reached with no `import` (§2.6 allows one) is only known to cross a module
@@ -352,6 +314,91 @@ namespace Surtr.Compiler.Binding
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// <c>Alias.Entity</c> or <c>Alias.Outer.Inner</c>, where <c>Alias</c> resolves through
+        /// <c>import X as Alias;</c> (§2.1) rather than through a scope-visible type or a written-
+        /// out module path.
+        /// </summary>
+        private bool TryResolveThroughAlias(
+            NamedTypeSyntax syntax,
+            TypeSymbol[] arguments,
+            Scope scope,
+            string sourceName,
+            out TypeSymbol resolved)
+        {
+            resolved = _factory.ErrorType;
+
+            var module = scope.LookupModuleAlias(syntax.Path[0]);
+            if (module is null || !TryResolveFromModule(syntax, module, 1, arguments, sourceName, out resolved))
+                return false;
+
+            // The alias itself already crossed the module boundary at its own `import` line; a use
+            // of it is a second, independent reference to that same dependency.
+            if (CurrentModule is ModuleSymbol current)
+                _dependencies.AddDependency(current.Path, module.Path);
+
+            return true;
+        }
+
+        /// <summary>
+        /// Reads <c>syntax.Path[startIndex]</c> as a top-level type declared in <paramref name="module"/>,
+        /// then walks any further segments as nested types - the shared tail of both a fully
+        /// qualified name (where <paramref name="startIndex"/> is where the module path ended) and
+        /// a name reached through a module alias (where it is always <c>1</c>).
+        /// </summary>
+        private bool TryResolveFromModule(
+            NamedTypeSyntax syntax,
+            ModuleSymbol module,
+            int startIndex,
+            TypeSymbol[] arguments,
+            string sourceName,
+            out TypeSymbol resolved)
+        {
+            resolved = _factory.ErrorType;
+
+            var candidates = module.FindTypes(syntax.Path[startIndex]);
+            if (candidates.Count == 0)
+                return false;
+
+            NamedTypeSymbol? container = null;
+            bool last = startIndex == syntax.Path.Count - 1;
+            int wanted = last ? arguments.Length : 0;
+
+            for (int c = 0; c < candidates.Count; c++)
+            {
+                if (candidates[c].Arity == wanted)
+                {
+                    container = candidates[c];
+                    break;
+                }
+            }
+
+            if (container is null)
+                return false;
+
+            for (int i = startIndex + 1; i < syntax.Path.Count && container is not null; i++)
+            {
+                var nested = container.FindNestedTypes(syntax.Path[i]);
+                int nestedWanted = i == syntax.Path.Count - 1 ? arguments.Length : 0;
+
+                container = null;
+                for (int c = 0; c < nested.Count; c++)
+                {
+                    if (nested[c].Arity == nestedWanted)
+                    {
+                        container = nested[c];
+                        break;
+                    }
+                }
+            }
+
+            if (container is null)
+                return false;
+
+            resolved = Apply(syntax, container, arguments, sourceName);
+            return true;
         }
 
         private bool TryGetModule(string modulePath, out ModuleSymbol module)

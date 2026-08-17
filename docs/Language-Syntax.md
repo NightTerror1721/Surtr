@@ -163,6 +163,7 @@ file, above any declarations:
 ```
 import Ogame.core.Entity;
 import Ogame.core.*;
+import Ogame.core as Core;
 ```
 
 A named import brings exactly that one type into unqualified scope; a wildcard import
@@ -170,6 +171,18 @@ A named import brings exactly that one type into unqualified scope; a wildcard i
 a name can still be written fully qualified (`Ogame.core.Entity`) even without importing it — the
 import is convenience, not a requirement to reference something. A colliding name pulled in from
 two imports is a compile error at the point of use, not at the `import` line itself.
+
+**`import ModulePath as Name;` aliases a whole module** rather than bringing anything into
+unqualified scope — `Name` itself resolves nowhere on its own, only qualified: `Core.Entity` reads
+exactly as `Ogame.core.Entity` would, everywhere a type may be named (an annotation, a base class
+or interface list, `is`/`as`, or a construction like `Core.Entity(1, 2)`). This is deliberately
+narrower than a value import: Surtr has no first-class module value (§2.8's `singleton` is the one
+kind of module-like thing that can be one), so an alias is a compile-time rewrite of a qualifier,
+not a reference to anything a program holds — it cannot be passed around, stored, or reach a
+module-level function or variable the way `Core.Entity` reaches a type. `as` needs no new keyword;
+it is already reserved by `operator as` (§5.6). Two `import` lines claiming the same alias in one
+module is a compile error at the `import` line itself, unlike a colliding named/wildcard import —
+an alias has no import of its own to shadow, so there is nothing for the second one to lose to.
 
 ### 2.2 Classes
 
