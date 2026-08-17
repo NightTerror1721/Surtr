@@ -1208,5 +1208,82 @@ namespace Surtr.Tests.Compiler.Binding
             AssertNoErrors(compilation);
         }
         #endregion
+
+        #region Override signature compatibility
+        [Fact]
+        public void AMemberImplementingTheWrongConstructionIsRejected()
+        {
+            // The runtime cannot see this: it matches by name plus erased parameter types and
+            // excludes the return, so `ReadOnlyCollection<T>` implementing `IReadOnlyCollection<int>`
+            // with members typed on its own `T` links cleanly and misbehaves at a call site compiled
+            // against the contract. The compiler has to reject it.
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IReadOnlyCollection<T> : IIterable<T>\n"
+                + "{\n"
+                + "    fun get(index: int): T;\n"
+                + "}\n"
+                + "private value class ReadOnlyCollection<T> : IReadOnlyCollection<int>\n"
+                + "{\n"
+                + "    private let _col: IReadOnlyCollection<T>;\n"
+                + "    public inline constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
+                + "    public override fun get(index: int): T { return _col.get(index); }\n"
+                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.OverrideSignatureMismatch);
+        }
+
+        [Fact]
+        public void TheSubstitutionSurvivesAnInterfaceChain()
+        {
+            // `ICollection<int>` extends `IReadOnlyCollection<T>` in terms of *its own* parameter,
+            // so the `int` must follow the walk into the inherited contract or the members reached
+            // through it would be checked against `IReadOnlyCollection<ICollection.T>` instead.
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IReadOnlyCollection<T> : IIterable<T>\n"
+                + "{\n"
+                + "    fun get(index: int): T;\n"
+                + "}\n"
+                + "interface ICollection<T> : IReadOnlyCollection<T>\n"
+                + "{\n"
+                + "    fun add(item: T): void;\n"
+                + "}\n"
+                + "private value class ReadOnlyCollection<T> : ICollection<int>\n"
+                + "{\n"
+                + "    private let _col: IReadOnlyCollection<T>;\n"
+                + "    public inline constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
+                + "    public override fun get(index: int): T { return _col.get(index); }\n"
+                + "    public override fun add(item: int): void { }\n"
+                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.OverrideSignatureMismatch);
+        }
+
+        [Fact]
+        public void AMemberImplementingTheMatchingConstructionIsAccepted()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IReadOnlyCollection<T> : IIterable<T>\n"
+                + "{\n"
+                + "    fun get(index: int): T;\n"
+                + "}\n"
+                + "private value class ReadOnlyCollection<T> : IReadOnlyCollection<T>\n"
+                + "{\n"
+                + "    private let _col: IReadOnlyCollection<T>;\n"
+                + "    public inline constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
+                + "    public override fun get(index: int): T { return _col.get(index); }\n"
+                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+        }
+        #endregion
     }
 }

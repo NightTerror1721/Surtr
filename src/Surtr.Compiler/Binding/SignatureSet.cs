@@ -91,6 +91,40 @@ namespace Surtr.Compiler.Binding
             _seen.Add(signature, method);
         }
 
+        /// <summary>
+        /// Whether <paramref name="candidate"/> and <paramref name="required"/> occupy the same
+        /// vtable slot: same name, same erased parameter types (an instance operator's receiver
+        /// excluded, since the runtime keeps it implicit), and — unlike the runtime's own key, which
+        /// excludes it — the same erased return type.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The runtime's <c>SignatureKey</c> is deliberately return-blind (<c>docs/VM-Plan.md</c>
+        /// §4.1), and it erases <c>G&lt;n&gt;</c>, so an override whose parameter <em>shape</em>
+        /// matches but whose types differ — <c>get(int): T</c> where the contract, read as the
+        /// construction the class declares, is <c>get(int): int</c> — links cleanly with nothing
+        /// downstream to notice. That is the check this adds: the same <see cref="Erase"/> view
+        /// <see cref="Add"/> compares overloads with, plus the return type the linker cannot see.
+        /// </para>
+        /// </remarks>
+        internal bool Matches(MethodSymbol candidate, MethodSymbol required)
+        {
+            if (!string.Equals(candidate.Name, required.Name, StringComparison.Ordinal)
+                || candidate.Parameters.Count != required.Parameters.Count)
+            {
+                return false;
+            }
+
+            int first = candidate.Role == MethodRole.Operator && !candidate.IsStatic ? 1 : 0;
+            for (int i = first; i < candidate.Parameters.Count; i++)
+            {
+                if (!ReferenceEquals(Erase(candidate.Parameters[i].Type), Erase(required.Parameters[i].Type)))
+                    return false;
+            }
+
+            return ReferenceEquals(Erase(candidate.ReturnType), Erase(required.ReturnType));
+        }
+
         private TypeSymbol Erase(TypeSymbol type)
         {
             switch (type)

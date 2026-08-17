@@ -112,6 +112,7 @@ namespace Surtr.Compiler.Binding
             MemberLookup = new MemberLookup(_factory, compilation.Importer);
             Conversions = new Conversions(_factory, MemberLookup);
             OverloadResolution = new OverloadResolution(Conversions);
+            _signatures = new SignatureSet(_factory, _diagnostics);
             Constants = new ConstantEvaluator(compilation.Project.BuildConstants);
         }
 
@@ -129,6 +130,12 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>Finding a member on a type.</summary>
         public MemberLookup MemberLookup { get; }
+
+        /// <summary>
+        /// Compares an <c>override</c> against the member it replaces by the emitted signature.
+        /// Shared, not per-call, so the hierarchy checks do not build one per obligation.
+        /// </summary>
+        private readonly SignatureSet _signatures;
 
         /// <summary>Picking the member a call site means.</summary>
         public OverloadResolution OverloadResolution { get; }
@@ -687,33 +694,44 @@ namespace Surtr.Compiler.Binding
                 foreach (var member in contract.Members)
                 {
                     if (member is MethodSymbol { Dispatch: MethodDispatch.Abstract } required)
-                        CheckObligation(binding, symbol, required, contract.Name);
+                        CheckObligation(binding, symbol, contract, required);
                 }
             }
 
-            for (var ancestor = symbol.BaseType; ancestor is not null; ancestor = ancestor.BaseType)
+            for (var ancestor = symbol.BaseType; ancestor is not null; ancestor = SubstitutedBase(ancestor))
             {
                 foreach (var member in ancestor.Members)
                 {
                     if (member is MethodSymbol { Dispatch: MethodDispatch.Abstract } required)
-                        CheckObligation(binding, symbol, required, ancestor.Name);
+                        CheckObligation(binding, symbol, ancestor, required);
                 }
             }
         }
 
         /// <summary>
         /// Confirms <paramref name="symbol"/>'s own hierarchy answers one abstract obligation named
-        /// by <paramref name="owner"/> (an interface, or a base class), mirroring the two checks
+        /// by <paramref name="contract"/> (an interface, or a base class), mirroring the two checks
         /// <c>SurtrTypeLinker</c> makes at load time.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// <c>BuildInterfaceDispatch</c> needs a vtable slot to exist for it at all — which only a
         /// <c>virtual</c>/<c>override</c> or another <c>abstract</c> declaration creates, since a
         /// plain, non-overriding method never enters the vtable and so can never satisfy one, even
         /// where its name and parameters happen to match. <c>VerifyConcrete</c> then refuses to let
         /// a concrete class leave the slot it found still abstract.
+        /// </para>
+        /// <para>
+        /// The signature check is the half the runtime cannot see. <c>SurtrTypeLinker</c> matches by
+        /// name plus <em>erased</em> parameter types, so a member whose erased shape matches but
+        /// whose types differ — <c>get(int): T</c> where <c>IReadOnlyCollection&lt;int&gt;</c>
+        /// declares <c>get(int): int</c> — links cleanly and then reads its return as the contract's
+        /// type at a call site. So <paramref name="required"/> is read as <paramref name="contract"/>
+        /// declares it (substituted through the construction) and compared against what was found,
+        /// by the emitted signature, return included.
+        /// </para>
         /// </remarks>
-        private void CheckObligation(TypeBinding binding, NamedTypeSymbol symbol, MethodSymbol required, string owner)
+        private void CheckObligation(TypeBinding binding, NamedTypeSymbol symbol, NamedTypeSymbol contract, MethodSymbol required)
         {
             var found = FindMember(symbol, required.Name, required.Parameters.Count);
             if (found is null)
@@ -722,7 +740,7 @@ namespace Surtr.Compiler.Binding
                     SurtrDiagnosticCode.MissingImplementation,
                     binding,
                     binding.Syntax.Span,
-                    $"'{symbol.Name}' does not implement '{owner}.{required.Name}'; implement it with 'override', "
+                    $"'{symbol.Name}' does not implement '{contract.Name}.{required.Name}'; implement it with 'override', "
                         + $"or declare it 'abstract' on '{symbol.Name}' to leave it for a subclass.");
                 return;
             }
@@ -733,8 +751,19 @@ namespace Surtr.Compiler.Binding
                     SurtrDiagnosticCode.MissingImplementation,
                     binding,
                     binding.Syntax.Span,
-                    $"'{symbol.Name}' does not implement '{owner}.{required.Name}'; "
+                    $"'{symbol.Name}' does not implement '{contract.Name}.{required.Name}'; "
                         + $"implement it, or declare '{symbol.Name}' abstract.");
+            }
+
+            var substituted = MemberLookup.SubstituteMethod(required, contract.SubstitutionFromArguments(_factory));
+            if (!_signatures.Matches(substituted, found))
+            {
+                Report(
+                    SurtrDiagnosticCode.OverrideSignatureMismatch,
+                    binding,
+                    binding.Syntax.Span,
+                    $"'{symbol.Name}.{found.ToDisplayString()}' does not implement "
+                        + $"'{contract.Name}.{substituted.ToDisplayString()}' as '{contract.ToDisplayString()}' declares it.");
             }
         }
 
@@ -743,14 +772,17 @@ namespace Surtr.Compiler.Binding
         /// chain's, and each interface's own <c>interface : interface</c> extensions.
         /// </summary>
         /// <remarks>
-        /// Deliberately not substitution-aware, unlike <c>Conversions.WalkForBase</c> — matching is
-        /// by name and arity (the same looseness <see cref="Overridden"/> already uses), which a
-        /// type argument cannot change, so walking the unsubstituted declarations still finds every
-        /// obligation. What it costs is precision in the diagnostic's own wording for a base reached
-        /// through a constructed generic, which would name the interface in terms of the base's own
-        /// type parameter rather than the argument supplied to it.
+        /// Substitution-aware, the same way <c>MemberLookup.Reachable</c> and
+        /// <c>Conversions.WalkForBase</c> are: a construction's declared bases and interfaces are
+        /// written in terms of its own parameters (§6), so they have to be read as the construction
+        /// makes them or the <c>int</c> in <c>IReadOnlyCollection&lt;int&gt;</c> is lost on the way
+        /// to the members reached through it — a class implementing <c>ICollection&lt;int&gt;</c>
+        /// would then be checked against <c>IReadOnlyCollection&lt;ICollection.T&gt;</c> rather than
+        /// <c>IReadOnlyCollection&lt;int&gt;</c>. Finding an obligation needs none of this (name and
+        /// arity a type argument cannot change), but the signature check in
+        /// <see cref="CheckObligation"/> leans on it to read the contract's members correctly.
         /// </remarks>
-        private static void CollectInterfaces(NamedTypeSymbol from, HashSet<NamedTypeSymbol> visited, List<NamedTypeSymbol> interfaces)
+        private void CollectInterfaces(NamedTypeSymbol from, HashSet<NamedTypeSymbol> visited, List<NamedTypeSymbol> interfaces)
         {
             if (!visited.Add(from))
                 return;
@@ -758,11 +790,32 @@ namespace Surtr.Compiler.Binding
             if (from.TypeKind == TypeSymbolKind.Interface)
                 interfaces.Add(from);
 
+            var substitution = from.SubstitutionFromArguments(_factory);
+
             foreach (var contract in from.Interfaces)
-                CollectInterfaces(contract, visited, interfaces);
+            {
+                if (substitution.IsEmpty)
+                    CollectInterfaces(contract, visited, interfaces);
+                else if (substitution.Apply(contract) is NamedTypeSymbol substitutedContract)
+                    CollectInterfaces(substitutedContract, visited, interfaces);
+            }
 
             if (from.BaseType is NamedTypeSymbol baseType)
-                CollectInterfaces(baseType, visited, interfaces);
+                CollectInterfaces(substitution.IsEmpty ? baseType : (NamedTypeSymbol)baseType.Substitute(substitution), visited, interfaces);
+        }
+
+        /// <summary>
+        /// The base of <paramref name="current"/>, read as <paramref name="current"/>'s construction
+        /// makes it — the next level of the base-abstract-member walk, substituted so a signature
+        /// check against it sees the concrete type arguments, not the open declaration's parameters.
+        /// </summary>
+        private NamedTypeSymbol? SubstitutedBase(NamedTypeSymbol current)
+        {
+            if (current.BaseType is not NamedTypeSymbol baseType)
+                return null;
+
+            var substitution = current.SubstitutionFromArguments(_factory);
+            return substitution.IsEmpty ? baseType : (NamedTypeSymbol)baseType.Substitute(substitution);
         }
 
         /// <summary>

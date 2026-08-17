@@ -281,6 +281,18 @@ namespace Surtr.Compiler.Diagnostics
         MissingImplementation = 3043,
 
         /// <summary>
+        /// An <c>override</c> (or interface implementation, written <c>override</c>, §2.2) whose
+        /// signature does not match what it replaces — the same name and arity, but a parameter or
+        /// the return that differs once the contract is read as the construction the class declares.
+        /// The runtime cannot catch this: <c>SurtrTypeLinker</c> matches by name plus <em>erased</em>
+        /// parameter types, blind to a concrete type argument like the <c>int</c> in
+        /// <c>IReadOnlyCollection&lt;int&gt;</c>, and it excludes the return type entirely — so a
+        /// class implementing the <c>int</c> construction with members typed on its own <c>T</c>
+        /// links cleanly and then misbehaves at a call site compiled against the contract.
+        /// </summary>
+        OverrideSignatureMismatch = 3050,
+
+        /// <summary>
         /// An operator overload's arity or return type does not match what §5.6's table fixes for
         /// the token it overloads — checked at the declaration, not left to surface only as an
         /// unreachable overload the first time something tries to use it.
