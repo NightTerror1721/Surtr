@@ -36,6 +36,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Surtr.Core\Surtr.Core.csproj" />
     <ProjectReference Include="..\Surtr.Compiler\Surtr.Compiler.csproj" />
+    <ProjectReference Include="..\Surtr.LanguageServer\Surtr.LanguageServer.csproj" />
   </ItemGroup>
 
 </Project>

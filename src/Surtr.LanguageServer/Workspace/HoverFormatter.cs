@@ -97,8 +97,16 @@ namespace Surtr.LanguageServer.Workspace
             return Fence(declaration) + Break + "type alias";
         }
 
-        /// <summary>The label card for a built-in primitive reached by name rather than by symbol.</summary>
-        public static string BuiltInLabel(string name)
+        /// <summary>
+        /// The label card for a primitive reached by name rather than by symbol — <c>int</c>,
+        /// <c>string</c> and the rest of §1.1's ordinary-identifier type names, which have no
+        /// declaration of their own to show. <see langword="null"/> for anything else: a built-in
+        /// *class* or *interface* (<c>Exception</c>, <c>IIterable</c>, ...) is a real symbol reached
+        /// by the ordinary lookup chain like any user-declared type, and an unresolved name is not
+        /// built-in just because it wasn't found — both must fall through to that lookup rather than
+        /// being mislabeled here.
+        /// </summary>
+        public static string? BuiltInLabel(string name)
         {
             string kind;
             switch (name)
@@ -119,8 +127,7 @@ namespace Surtr.LanguageServer.Workspace
                     kind = "unknown: holds anything, cast before use";
                     break;
                 default:
-                    kind = "built-in type";
-                    break;
+                    return null;
             }
 
             return Fence(name) + Break + kind;

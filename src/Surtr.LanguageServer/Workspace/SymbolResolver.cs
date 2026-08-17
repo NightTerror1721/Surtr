@@ -984,13 +984,20 @@ namespace Surtr.LanguageServer.Workspace
                 };
             }
 
-            // A named type the module declares gets its real card.
+            // A named type the module declares — or reaches through a wildcard import (§2.1) —
+            // gets its real card. A type-annotation position (field, property, parameter, return,
+            // base type, constraint) has no bound-expression node for pass one to find, so this is
+            // the only pass that ever sees a type named solely through an import.
             var unit = snapshot.UnitFor(filePath);
             if (unit is not null && snapshot.Binder is not null)
             {
                 if (snapshot.Binder.Modules.TryGetValue(unit.ModulePath, out var module))
                 {
-                    foreach (var type in module.FindTypes(name))
+                    var candidates = module.FindTypes(name);
+                    if (candidates.Count == 0)
+                        candidates = FindTypesInWildcardImports(snapshot, unit, module, name);
+
+                    foreach (var type in candidates)
                     {
                         var (file, start, length) = FindTypeDeclaration(type, snapshot);
                         return new Hit
@@ -1004,6 +1011,24 @@ namespace Surtr.LanguageServer.Workspace
                         };
                     }
                 }
+
+                // §13: the standard library sits in the outermost scope regardless of what this
+                // file imports, so a built-in class or interface (`Exception`, `IIterable`, ...)
+                // used unqualified is looked up there rather than falling through unresolved. It
+                // has no `.surtr` source, so `FindTypeDeclaration` correctly finds no file for it.
+                if (snapshot.Binder.GlobalScope.Lookup(name).Symbol is NamedTypeSymbol builtInType)
+                {
+                    var (file, start, length) = FindTypeDeclaration(builtInType, snapshot);
+                    return new Hit
+                    {
+                        Markdown = HoverFormatter.FormatType(builtInType),
+                        AnchorStart = anchor.Span.Start.Position,
+                        AnchorLength = anchor.Span.Length,
+                        DefinitionFile = file,
+                        DefinitionStart = start,
+                        DefinitionLength = length,
+                    };
+                }
             }
 
             return new Hit
@@ -1012,6 +1037,30 @@ namespace Surtr.LanguageServer.Workspace
                 AnchorStart = anchor.Span.Start.Position,
                 AnchorLength = anchor.Span.Length,
             };
+        }
+
+        /// <summary>A named type reached through one of this file's wildcard imports, if any names it.</summary>
+        private static IReadOnlyList<NamedTypeSymbol> FindTypesInWildcardImports(
+            CompilationSnapshot snapshot, Surtr.Compiler.Compilation.SurtrSourceUnit unit, ModuleSymbol current, string name)
+        {
+            foreach (var import in unit.Syntax.Imports)
+            {
+                if (!import.IsWildcard)
+                    continue;
+
+                string importedPath = string.Join(".", import.Path);
+                if (importedPath == current.Path)
+                    continue;
+
+                if (!snapshot.Binder!.Modules.TryGetValue(importedPath, out var imported))
+                    continue;
+
+                var candidates = imported.FindTypes(name);
+                if (candidates.Count > 0)
+                    return candidates;
+            }
+
+            return Array.Empty<NamedTypeSymbol>();
         }
 
         // ------------------------------------------------------------------------------------
