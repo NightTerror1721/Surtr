@@ -203,7 +203,7 @@ type name.
 unqualified scope — `Name` itself resolves nowhere on its own, only qualified: `Core.Entity` reads
 exactly as `Ogame.core.Entity` would, everywhere a type may be named (an annotation, a base class
 or interface list, `is`/`as`, or a construction like `Core.Entity(1, 2)`). This is deliberately
-narrower than a value import: an alias is not itself a value — `moduleof` (§11) is the one way to
+narrower than a value import: an alias is not itself a value — `moduleof` (§13.5) is the one way to
 turn a module path into a real, first-class `Module` value, and an alias is not that either, only a
 compile-time rewrite of a qualifier, not a reference to anything a program holds — it cannot be
 passed around, stored, or reach a module-level function or variable the way `Core.Entity` reaches a
@@ -2359,164 +2359,22 @@ own declaration — an attribute imported from an already-compiled module image 
 against its target list at the use site, only at its own declaration. Declaring an attribute in the
 same project as everything that uses it, which is by far the common case, is unaffected.
 
-**Reading an attribute back from Surtr itself, not just from a host, goes through `Type` and
-`Member`** — two more built-ins, always in scope like `Attribute`, and the general reflection
-surface over a class's or interface's own metadata (attributes are one thing they can read, not
-the only thing):
+**An attribute usage is readable back from Surtr itself, not just from a host.** `Type` and
+`Member` — two more built-ins, always in scope like `Attribute` — enumerate a class's or
+interface's own declared members and the `Runtime`-retention attributes written on each:
 
 ```
-let t = Type.of(someValue);   // the runtime class behind any value, primitives included
-t.name;                       // "Player"
-t.baseType;                   // the Type one level up, or null at the root or on an interface
-t.isInterface;                // false for Player, true for a Type wrapping an interface
-t.members();                  // Member[] - this type's own declared fields, properties,
-                               // methods and nested types, one entry each
-t.attributes();                // Attribute[] written directly on the type
-
+let t = Type.of(someValue);
 for (m in t.members()) {
-    m.name;                   // "health"
-    m.kind;                   // "field" | "property" | "method" | "class" | "enum" | "interface"
-    m.isStatic;
-    m.declaringType;          // the Type that declared it, or null for a module-level member
-    m.attributes();           // Attribute[] written on this member, `Runtime`-retention only
+    for (a in m.attributes()) {
+        // a as Range, etc. - already the real, constructed instance this section describes above
+    }
 }
 ```
 
-`Type`'s full surface:
-
-- `Type.of(value: unknown): Type` — the runtime class behind any value, primitives included
-  (boxed on the way in, the same conversion an `unknown` parameter always costs). The only way to
-  get one from an arbitrary value; `typeof` below is the other, for a name known at compile time.
-- `Type.get(name: string): Type` / `Type.tryGet(name: string): Type?` — the same lookup, from a
-  descriptor computed at run time instead of a value or a name written in source; covered in full
-  further down, alongside `moduleof`.
-- `name: string` — the type's own declared name, unqualified (`"Player"`, not `"game.core:Player;"`).
-- `baseType: Type?` — the `Type` one level up the class hierarchy, or `null` at the root and on
-  every interface (which has no single base — only however many it extends).
-- `isInterface: bool` — whether this `Type` wraps an interface rather than a class, enum, value
-  class or singleton.
-- `members(): Member[]` — this type's own declared fields, properties, methods and nested types,
-  one entry each; see below for exactly what "own declared" excludes.
-- `attributes(): Attribute[]` — every `Runtime`-retention attribute written directly on the type.
-
-`Member`'s full surface:
-
-- `name: string` — the member's own name (`"health"`, `"ctor"` for a constructor).
-- `kind: string` — one of `"field"`, `"property"`, `"method"`, `"class"`, `"enum"` or `"interface"`,
-  naming what kind of declaration this is.
-- `isStatic: bool`.
-- `declaringType: Type?` — the `Type` that declared this member, or `null` when it has none to
-  name: a module-level field or function (§2.5), reached through `Module.members()` below, belongs
-  to a module, not a type, so there is nothing for this to point at.
-- `attributes(): Attribute[]` — every `Runtime`-retention attribute written on this member.
-
-Declaring a bare `Type()`/`Member()` is rejected, the same way `iterator()` is: neither declares a
-constructor, so `Type.of`/`Type.get`/`Type.tryGet` (and, for `Member`, only ever reading one back
-off a `Type.members()`/`Module.members()` call) are the only ways to get one. `members()` reports
-each declaration once, under the shape a reader of the source would recognize: an auto-property's
-synthesized backing field and its `get_x`/`set_x` accessors fold into the one `property` entry, and
-a name the compiler made up (leading `$` — bridges, lambdas, backing fields the source never wrote)
-is left out entirely. A constructor appears once, named `ctor`. An attribute an attribute usage
-names is already the real, constructed instance §11 describes above — `m.attributes()[0] as Range`
-reads its fields directly, no separate value-reading API needed. Only `Runtime`-retention
-attributes are ever reachable this way, and there is nothing to filter for it at read time:
-`CompileTimeOnly` never reaches a member's attribute list in the first place (`ModuleEmitter` never
-emits it), so `Type` and `Member` only ever see what was already there.
-
-This is deliberately read-only: `Type`/`Member` enumerate declarations and their attributes, and
-stop there. Reading or calling the member itself — `field.get(instance)`, `method.invoke(instance,
-args)` — is a different and considerably larger feature and is not part of this surface.
-
-**`typeof(X)` is the keyword form of the same `Type`**, and covers both directions `Type.of`
-cannot reach on its own:
-
-```
-typeof(SomeClass)      // the Type for a class name, no instance needed
-typeof(ISomeInterface)  // a Type can name an interface too - baseType is always null on one
-typeof(someValue)      // the same answer Type.of(someValue) gives, for an ordinary expression
-```
-
-Unlike `is`/`as`, `X` cannot always be parsed as a type — `typeof` has to reach an arbitrary value
-too, and a call or an arithmetic expression is not type syntax. Only a name followed by a generic
-argument list can never also be an expression (a bare call has no `<...>` of its own outside
-`pick<int>(...)`, which needs a `(` after the close rather than the `)` that ends `typeof`), so
-that is the one shape parsed as a type outright; everything else — a bare or qualified name
-included — parses as an ordinary expression. A bare or qualified name is then the one shape that
-could still be either, since §1.1 keeps type names and value names in separate namespaces; it
-resolves as a type first, and only falls back to reading it as a value when no type of that name
-is in scope — the same order every other place this exact ambiguity comes up (a singleton's own
-name, a construction, a static member access) already resolves it in. In practice this only
-matters when a local variable or field shadows a visible class name, which is unusual enough that
-either reading would surprise someone; `typeof` picks the type. An array, nullable, dictionary,
-tuple or closure *type* directly as a static operand (`typeof(int[])`) is not reachable this way —
-neither is valid expression syntax either, so there is nothing to fall back to — but a value of
-any such type still reflects fine through the instance form.
-
-Nothing about what `typeof` returns differs from `Type.of` — same `Type` object, same identity
-for the same class or interface within one running program — but a primitive operand skips the
-box `Type.of`'s `unknown` parameter always pays for, since a primitive's class can never differ
-from its own static type: `typeof(5)` never allocates a boxed `int` the way `Type.of(5)` does.
-
-`typeof` is a reserved word, unlike `value`/`attribute`/`this`/`super`: it never needs to double
-as an ordinary identifier the way those four do, so reserving it outright avoids the ambiguity
-instead of relocating it into the parser.
-
-**`moduleof(ModulePath)` is the reflective counterpart for modules**, and the first genuine
-first-class module value the language has — §2.1's note that Surtr has none is no longer quite
-true of what `moduleof` hands back, though a module *alias* (`import X as Y;`) still is not one; an
-alias stays a compile-time qualifier rewrite, never a value:
-
-```
-moduleof(Ogame.core)          // the Module for a module by its full path
-moduleof(Core)                 // Core resolved through `import Ogame.core as Core;` first
-```
-
-Unlike `typeof`, `moduleof` has **no instance form** — there is no value in the language a module
-could be read off, the way a value's runtime class always answers `typeof`. The operand is always a
-dotted module path, resolved entirely at compile time, and the parenthesised call shape mirrors
-`typeof(X)` rather than `import`'s bare trailing path, for consistency with the language's other
-reflection operator. When the path's first segment is a declared module alias, it resolves through
-the alias first, exactly as a qualified type name already does — `moduleof(Core)` reads exactly as
-`moduleof(Ogame.core)` would. Resolving a path that names no known module is a compile error.
-
-`Module` is the value `moduleof` returns, alongside `Type` and `Member`:
-
-- `path: string` — the module's full dotted path.
-- `classes(): Type[]` / `interfaces(): Type[]` — the classes, enums and interfaces declared
-  directly in the module, each wrapped exactly as `typeof`/`Type.of` would wrap it — the same
-  `Type` object either way, same identity.
-- `members(): Member[]` — the module's own fields and functions (§2.5 makes what look like globals
-  module-level members), under the same rules `Type.members()` already follows: a name the
-  compiler made up (leading `$`) is left out, and a synthesised module initializer — needed
-  whenever the module declares a variable with an initializer — appears once, named `cinit`, the
-  same way a synthesised constructor appears as `ctor` on `Type.members()`. Deliberately separate
-  from `classes()`/`interfaces()`, which already cover the module's types on their own.
-- `submodules(): Module[]` — every module loaded in the running program whose path sits strictly
-  under this one's, since a module is a directory (§2.1): `Ogame.core` and `Ogame.core.geometry`
-  are different modules, not one nested in the other, and this is `submodules()`'s way of walking
-  from a parent to what is nested under it at runtime, the same relationship a directory wildcard
-  import already walks at compile time.
-- `Module.get(path: string): Module` / `Module.tryGet(path: string): Module?` — finds an already
-  loaded module by its full path, dynamically, from a `string` computed at run time rather than a
-  path written in source. `get` throws `KeyNotFoundException` if no module is loaded under that
-  path; `tryGet` answers `null` instead. The built-in module (`surtr`) resolves under that literal
-  path even though it is process-wide rather than registered per runtime, the same special case
-  `typeof`'s own resolution already needs for it.
-
-**`Type.get`/`Type.tryGet`, named above, are the runtime-string analogue of `typeof`/`Type.of`**,
-the same way `Module.get`/`tryGet` are of `moduleof`. `name` is a **descriptor** (§"Type references
-are
-descriptor strings" — `Ogame.core:Entity;`, `AI` for `int[]`, a mangled generic construction like
-`` Obox:Box`1;I ``), not a display name: the canonical, unambiguous form the runtime already
-resolves every type reference against, reused here with no new parsing rather than a second,
-friendlier grammar this API would have to parse and maintain on its own — the tradeoff is that
-`Type.get` is a cruder surface than the rest of this API, closer to the compiler's own internal
-encoding than to something meant to be typed by hand. `get` throws `KeyNotFoundException` for a
-descriptor naming nothing known; `tryGet` answers `null`.
-
-Neither `get` nor `tryGet`, on either class, appears in a `try`/`catch` by itself — an uncaught
-`KeyNotFoundException` from either escapes a running program exactly as any other uncaught native
-exception does.
+§13.5 covers the whole reflection surface these belong to — `Type`, `Member` and `Module`, and the
+`typeof`/`moduleof` operators that produce them — alongside the rest of the built-in types §13
+documents.
 
 ---
 
@@ -2663,6 +2521,166 @@ Two members are worth naming because their shape was a decision rather than a tr
   language knows what every argument is, so converting at the call site with `.toString()` is one
   visible call instead of a type walk hidden inside `format`. An index with no argument behind it
   is an error, not an empty string.
+
+### 13.5 Reflection: `Type`, `Member` and `Module`
+
+Three more built-ins, always in scope like every other name this section documents: `Type` wraps a
+class or interface's own metadata, `Member` one of its declarations, and `Module` a loaded module's
+(§2.1). All three are read-only — they enumerate what is there and stop; reading or invoking a
+member's actual value (`field.get(instance)`, `method.invoke(instance, args)`) is a different and
+considerably larger feature, not part of this surface.
+
+```
+let t = Type.of(someValue);   // the runtime class behind any value, primitives included
+t.name;                       // "Player"
+t.baseType;                   // the Type one level up, or null at the root or on an interface
+t.isInterface;                // false for Player, true for a Type wrapping an interface
+t.members();                  // Member[] - this type's own declared fields, properties,
+                               // methods and nested types, one entry each
+t.attributes();                // Attribute[] written directly on the type (§11)
+
+for (m in t.members()) {
+    m.name;                   // "health"
+    m.kind;                   // "field" | "property" | "method" | "class" | "enum" | "interface"
+    m.isStatic;
+    m.declaringType;          // the Type that declared it, or null for a module-level member
+    m.attributes();           // Attribute[] written on this member, `Runtime`-retention only
+}
+
+moduleof(Ogame.core).path;    // "Ogame.core"
+```
+
+**`Type`'s full surface:**
+
+- `Type.of(value: unknown): Type` — the runtime class behind any value, primitives included
+  (boxed on the way in, the same conversion an `unknown` parameter always costs). The only way to
+  get one from an arbitrary value; `typeof` below is the other, for a name known at compile time.
+- `Type.get(name: string): Type` / `Type.tryGet(name: string): Type?` — the same lookup, from a
+  descriptor computed at run time instead of a value or a name written in source; covered in full
+  further down, alongside `moduleof`.
+- `name: string` — the type's own declared name, unqualified (`"Player"`, not `"game.core:Player;"`).
+- `baseType: Type?` — the `Type` one level up the class hierarchy, or `null` at the root and on
+  every interface (which has no single base — only however many it extends).
+- `isInterface: bool` — whether this `Type` wraps an interface rather than a class, enum, value
+  class or singleton.
+- `members(): Member[]` — this type's own declared fields, properties, methods and nested types,
+  one entry each; see below for exactly what "own declared" excludes.
+- `attributes(): Attribute[]` — every `Runtime`-retention attribute (§11) written directly on the
+  type.
+
+**`Member`'s full surface:**
+
+- `name: string` — the member's own name (`"health"`, `"ctor"` for a constructor).
+- `kind: string` — one of `"field"`, `"property"`, `"method"`, `"class"`, `"enum"` or `"interface"`,
+  naming what kind of declaration this is.
+- `isStatic: bool`.
+- `declaringType: Type?` — the `Type` that declared this member, or `null` when it has none to
+  name: a module-level field or function (§2.5), reached through `Module.members()` below, belongs
+  to a module, not a type, so there is nothing for this to point at.
+- `attributes(): Attribute[]` — every `Runtime`-retention attribute written on this member.
+
+Declaring a bare `Type()`/`Member()` is rejected, the same way `iterator()` is: neither declares a
+constructor, so `Type.of`/`Type.get`/`Type.tryGet` (and, for `Member`, only ever reading one back
+off a `Type.members()`/`Module.members()` call) are the only ways to get one. `members()` reports
+each declaration once, under the shape a reader of the source would recognize: an auto-property's
+synthesized backing field and its `get_x`/`set_x` accessors fold into the one `property` entry, and
+a name the compiler made up (leading `$` — bridges, lambdas, backing fields the source never wrote)
+is left out entirely. A constructor appears once, named `ctor`. An attribute an attribute usage
+names is already the real, constructed instance §11 describes — `m.attributes()[0] as Range` reads
+its fields directly, no separate value-reading API needed. Only `Runtime`-retention attributes are
+ever reachable this way, and there is nothing to filter for it at read time: `CompileTimeOnly`
+never reaches a member's attribute list in the first place (`ModuleEmitter` never emits it), so
+`Type` and `Member` only ever see what was already there.
+
+**`typeof(X)` is the keyword form of the same `Type`**, and covers both directions `Type.of`
+cannot reach on its own:
+
+```
+typeof(SomeClass)      // the Type for a class name, no instance needed
+typeof(ISomeInterface)  // a Type can name an interface too - baseType is always null on one
+typeof(someValue)      // the same answer Type.of(someValue) gives, for an ordinary expression
+```
+
+Unlike `is`/`as`, `X` cannot always be parsed as a type — `typeof` has to reach an arbitrary value
+too, and a call or an arithmetic expression is not type syntax. Only a name followed by a generic
+argument list can never also be an expression (a bare call has no `<...>` of its own outside
+`pick<int>(...)`, which needs a `(` after the close rather than the `)` that ends `typeof`), so
+that is the one shape parsed as a type outright; everything else — a bare or qualified name
+included — parses as an ordinary expression. A bare or qualified name is then the one shape that
+could still be either, since §1.1 keeps type names and value names in separate namespaces; it
+resolves as a type first, and only falls back to reading it as a value when no type of that name
+is in scope — the same order every other place this exact ambiguity comes up (a singleton's own
+name, a construction, a static member access) already resolves it in. In practice this only
+matters when a local variable or field shadows a visible class name, which is unusual enough that
+either reading would surprise someone; `typeof` picks the type. An array, nullable, dictionary,
+tuple or closure *type* directly as a static operand (`typeof(int[])`) is not reachable this way —
+neither is valid expression syntax either, so there is nothing to fall back to — but a value of
+any such type still reflects fine through the instance form.
+
+Nothing about what `typeof` returns differs from `Type.of` — same `Type` object, same identity
+for the same class or interface within one running program — but a primitive operand skips the
+box `Type.of`'s `unknown` parameter always pays for, since a primitive's class can never differ
+from its own static type: `typeof(5)` never allocates a boxed `int` the way `Type.of(5)` does.
+
+`typeof` is a reserved word, unlike `value`/`attribute`/`this`/`super`: it never needs to double
+as an ordinary identifier the way those four do, so reserving it outright avoids the ambiguity
+instead of relocating it into the parser.
+
+**`moduleof(ModulePath)` is the reflective counterpart for modules**, and the first genuine
+first-class module value the language has — §2.1's note that Surtr has none is no longer quite
+true of what `moduleof` hands back, though a module *alias* (`import X as Y;`) still is not one; an
+alias stays a compile-time qualifier rewrite, never a value:
+
+```
+moduleof(Ogame.core)          // the Module for a module by its full path
+moduleof(Core)                 // Core resolved through `import Ogame.core as Core;` first
+```
+
+Unlike `typeof`, `moduleof` has **no instance form** — there is no value in the language a module
+could be read off, the way a value's runtime class always answers `typeof`. The operand is always a
+dotted module path, resolved entirely at compile time, and the parenthesised call shape mirrors
+`typeof(X)` rather than `import`'s bare trailing path, for consistency with the language's other
+reflection operator. When the path's first segment is a declared module alias, it resolves through
+the alias first, exactly as a qualified type name already does — `moduleof(Core)` reads exactly as
+`moduleof(Ogame.core)` would. Resolving a path that names no known module is a compile error.
+
+**`Module`'s full surface** — the value `moduleof` returns, alongside `Type` and `Member`:
+
+- `path: string` — the module's full dotted path.
+- `classes(): Type[]` / `interfaces(): Type[]` — the classes, enums and interfaces declared
+  directly in the module, each wrapped exactly as `typeof`/`Type.of` would wrap it — the same
+  `Type` object either way, same identity.
+- `members(): Member[]` — the module's own fields and functions (§2.5 makes what look like globals
+  module-level members), under the same rules `Type.members()` already follows: a name the
+  compiler made up (leading `$`) is left out, and a synthesised module initializer — needed
+  whenever the module declares a variable with an initializer — appears once, named `cinit`, the
+  same way a synthesised constructor appears as `ctor` on `Type.members()`. Deliberately separate
+  from `classes()`/`interfaces()`, which already cover the module's types on their own.
+- `submodules(): Module[]` — every module loaded in the running program whose path sits strictly
+  under this one's, since a module is a directory (§2.1): `Ogame.core` and `Ogame.core.geometry`
+  are different modules, not one nested in the other, and this is `submodules()`'s way of walking
+  from a parent to what is nested under it at runtime, the same relationship a directory wildcard
+  import already walks at compile time.
+- `Module.get(path: string): Module` / `Module.tryGet(path: string): Module?` — finds an already
+  loaded module by its full path, dynamically, from a `string` computed at run time rather than a
+  path written in source. `get` throws `KeyNotFoundException` if no module is loaded under that
+  path; `tryGet` answers `null` instead. The built-in module (`surtr`) resolves under that literal
+  path even though it is process-wide rather than registered per runtime, the same special case
+  `typeof`'s own resolution already needs for it.
+
+**`Type.get`/`Type.tryGet`, named above, are the runtime-string analogue of `typeof`/`Type.of`**,
+the same way `Module.get`/`tryGet` are of `moduleof`. `name` is a **descriptor** (§"Type references
+are descriptor strings" — `Ogame.core:Entity;`, `AI` for `int[]`, a mangled generic construction
+like `` Obox:Box`1;I ``), not a display name: the canonical, unambiguous form the runtime already
+resolves every type reference against, reused here with no new parsing rather than a second,
+friendlier grammar this API would have to parse and maintain on its own — the tradeoff is that
+`Type.get` is a cruder surface than the rest of this API, closer to the compiler's own internal
+encoding than to something meant to be typed by hand. `get` throws `KeyNotFoundException` for a
+descriptor naming nothing known; `tryGet` answers `null`.
+
+Neither `get` nor `tryGet`, on either class, appears in a `try`/`catch` by itself — an uncaught
+`KeyNotFoundException` from either escapes a running program exactly as any other uncaught native
+exception does.
 
 ---
 
