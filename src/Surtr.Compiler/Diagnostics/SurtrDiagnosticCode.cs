@@ -425,10 +425,10 @@ namespace Surtr.Compiler.Diagnostics
         InvalidExtensionTarget = 3061,
 
         /// <summary>
-        /// A member declared inside an <c>extension</c> block (§15) is not an instance method — a
-        /// field, constructor, static block, or a kind Phase 1 does not support yet (a static or
-        /// generic method, a property). Nothing here has a storage position or a receiver to run
-        /// against on a type the block does not own.
+        /// A member declared inside an <c>extension</c> block (§15) is not a plain method — a field,
+        /// constructor, static block, property, or a method kind not supported yet (generic, native,
+        /// const, abstract/virtual/override, sealed, bodyless). Nothing here has a storage position
+        /// or a receiver to run against on a type the block does not own.
         /// </summary>
         InvalidExtensionMember = 3062,
 

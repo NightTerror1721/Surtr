@@ -1741,11 +1741,11 @@ namespace Surtr.Compiler.Binding
                     continue;
                 }
 
-                if (method.IsStatic || method.TypeParameters.Count > 0 || method.IsNative || method.IsConst
+                if (method.TypeParameters.Count > 0 || method.IsNative || method.IsConst
                     || method.Dispatch != DispatchModifier.None || method.IsSealed || method.Body is null)
                 {
                     ReportAt(sourceName, method.Span, SurtrDiagnosticCode.InvalidExtensionMember,
-                        $"'{method.Name}' cannot be static, generic, native, const, abstract/virtual/override, sealed, or bodyless — an extension block only supports a plain instance method yet (§15).");
+                        $"'{method.Name}' cannot be generic, native, const, abstract/virtual/override, sealed, or bodyless — an extension block does not support that yet (§15).");
                     continue;
                 }
 
@@ -1758,17 +1758,21 @@ namespace Surtr.Compiler.Binding
                     IsForceInline = method.Inline == InlineModifier.ForceInline,
                     ExtensionTargetType = target,
                     ExtensionDeclaringContainer = containingType,
+                    ExtensionIsStatic = method.IsStatic,
                 };
 
                 extMethod.ReturnType = _resolver.Resolve(method.ReturnType, methodScope, sourceName);
                 extMethod.Parameters = BindParameters(method.Parameters, extMethod, methodScope, sourceName);
 
-                // The receiver `obj.method()` is bound against: an ordinary, explicitly-named first
-                // parameter rather than an implicit `this` — extension methods are module-level
-                // functions (`ContainingSymbol` is `module`, not `target`), and `this`/implicit
-                // member access both require a non-static method whose container is a real type
-                // (BodyBinder.BindThis), which this deliberately is not.
-                if (extMethod.Parameters.Count == 0 || !ReferenceEquals(extMethod.Parameters[0].Type, target))
+                // An instance extension's receiver — `obj.method()` is bound against it — is an
+                // ordinary, explicitly-named first parameter rather than an implicit `this`:
+                // extension methods are module-level functions (`ContainingSymbol` is `module`, not
+                // `target`), and `this`/implicit member access both require a non-static method whose
+                // container is a real type (BodyBinder.BindThis), which this deliberately is not. A
+                // `static fun` (§15.3) takes no receiver at all — it is reached as `Type.method()`,
+                // resolved by matching the type named at the call site, never an argument.
+                if (!method.IsStatic
+                    && (extMethod.Parameters.Count == 0 || !ReferenceEquals(extMethod.Parameters[0].Type, target)))
                 {
                     ReportAt(sourceName, method.Span, SurtrDiagnosticCode.InvalidExtensionReceiver,
                         $"'{method.Name}' must take '{target.Name}' as its first parameter — the receiver 'obj.{method.Name}(...)' is bound against.");

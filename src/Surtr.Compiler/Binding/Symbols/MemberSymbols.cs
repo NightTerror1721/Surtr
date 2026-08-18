@@ -196,6 +196,22 @@ namespace Surtr.Compiler.Binding.Symbols
         /// </remarks>
         public NamedTypeSymbol? ExtensionDeclaringContainer { get; internal set; }
 
+        /// <summary>
+        /// Whether a member of an <c>extension</c> block was declared <c>static</c> in source (§15.3)
+        /// — reached as <c>Type.foo()</c>, with no receiver parameter at all.
+        /// </summary>
+        /// <remarks>
+        /// A separate flag from <see cref="IsStatic"/> because that one is always <see langword="true"/>
+        /// on every extension method, static or not — an instance extension is still a module-level
+        /// function to every part of the binder that reads <see cref="IsStatic"/>/<see cref="ContainingSymbol"/>
+        /// together (<c>BodyBinder.BindThis</c> among them), only with its receiver as an ordinary,
+        /// explicitly-declared first parameter instead of an absent one. This is what call-site
+        /// resolution actually branches on: an instance extension is found by matching a receiver
+        /// argument against that first parameter, a static one by matching the type named at the call
+        /// site against <see cref="ExtensionTargetType"/> with no argument involved at all.
+        /// </remarks>
+        public bool ExtensionIsStatic { get; internal set; }
+
         /// <inheritdoc/>
         public override string ToDisplayString()
         {

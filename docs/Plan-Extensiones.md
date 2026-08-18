@@ -389,8 +389,8 @@ actualizó con este modelo (ejemplos y §15.1/§15.4 reescritos).
   resolviendo independientemente (`Vec2`/`int`), extensión anidada en clase alcanzable desde sus
   propios miembros y no alcanzable desde fuera, miembro más estrecho que el bloque (aceptado) y
   más amplio (rechazado), objetivo compuesto rechazado, receptor ausente/incorrecto rechazado,
-  campo/constructor/estático dentro del bloque rechazados, modificador no-visibilidad en el
-  bloque rechazado en el parser.
+  campo/constructor dentro del bloque rechazados (estático dejó de estar rechazado en la Fase 3),
+  modificador no-visibilidad en el bloque rechazado en el parser.
 - Suite completa verificada: 2224/2228 en verde — los 4 fallos restantes son preexistentes al
   WIP de `Stack.surtr` (`docs/Plan-Stdlib.md`, "no tocar"), confirmado sin relación con `extension`
   (`Stack.surtr` no usa la palabra, y el error es sobre `ICollection.iterate`/una referencia de
@@ -440,16 +440,49 @@ actualizó con este modelo (ejemplos y §15.1/§15.4 reescritos).
 
 **Commit sugerido**: `Feature: extension methods via imports wildcard (Fase 2 de §15)`
 
-### Fase 3 — Extension methods estáticos
+### Fase 3 — Extension methods estáticos — **Hecha**
 
-- `extension Type { static fun foo(): void { ... } }` → invocable como `Type.foo()`.
-- Rama estática de `BindCall` (1267-1277) y `BindStaticMember` (660-686): fallback a candidatos
-  estáticos de extensión antes del `Error` final, **sin** insertar receptor como argumento (es
-  genuinamente estático — mismo mecanismo de resolución de scope que la Fase 2, sin la
-  reescritura de argumentos de la Fase 1).
-- Diagnóstico de colisión con un miembro estático real del tipo (mismo criterio de prioridad
-  silenciosa que la Fase 1).
-- Tests end-to-end en `ModuleEmitterTests.cs`.
+`extension Type { static fun foo(): void { ... } }` → invocable como `Type.foo()`.
+
+**Cambios**:
+- `MethodSymbol.ExtensionIsStatic` (`MemberSymbols.cs`) nuevo — necesario porque `IsStatic` en sí
+  ya vale `true` para **cualquier** método de extensión, estático o no (es lo que evita el
+  invariante roto de la Fase 1, `!IsStatic ⟹ ContainingSymbol is NamedTypeSymbol`); este campo
+  aparte es lo que de verdad distingue "recibe el receptor como primer parámetro explícito" de
+  "no recibe receptor en absoluto", y es lo que usa la resolución de llamada para elegir entre
+  `ExtensionCandidates` (instancia) y `StaticExtensionCandidates` (estático).
+- `Binder.BindExtension`: la comprobación de receptor (primer parámetro == tipo objetivo) ahora
+  se salta por completo cuando el método fue declarado `static` en la sintaxis — un estático no
+  necesita ningún parámetro especial, se liga exactamente como una función de módulo corriente.
+  El resto de rechazos (genérico/nativo/const/dispatch/sealed/sin cuerpo) se mantienen igual para
+  estáticos e instancias.
+- `BodyBinder.Expressions.cs`: nuevo `StaticExtensionCandidates`/`AddStaticExtensionCandidates`,
+  enganchado en la rama de `BindCall` que ya maneja `Type.miembro(...)` (`TryBindAsType` sobre el
+  receptor) — solo se prueba cuando `_lookup.FindMethods(staticOwner, name)` da cero candidatos
+  reales (mismo criterio de prioridad silenciosa que la Fase 1), y se completa con el `Complete`
+  **ya existente** sin ningún truco de inserción de receptor: un estático no tiene receptor, así
+  que se liga exactamente como una llamada a función de módulo. A diferencia del receptor de una
+  instancia (emparejado por conversión de argumento, por tanto polimórfico vía jerarquía), el
+  candidato estático se empareja por **identidad de referencia** contra
+  `ExtensionTargetType` — `Type.miembro` nunca se hereda a través de un nombre de tipo, ni
+  siquiera para un miembro estático real (§3.1), así que un estático de extensión no debería
+  comportarse de otra forma.
+- `AddExtensionCandidates` (instancia) gana el filtro `!method.ExtensionIsStatic`, para que un
+  estático nunca aparezca como candidato de una llamada `obj.foo()`.
+- Sin cambios en `ModuleEmitter` — los tres sitios ya arreglados en las Fases 1-2
+  (`DeclareModuleMembers`/`EmitModuleBodies`/`Record`) recorren `module.ExtensionMethods` sin
+  distinguir estático de instancia, así que un estático de extensión ya se declaraba/emitía/
+  registraba correctamente en cuanto el binder lo produjo.
+- Test de Fase 1 obsoleto (`AStaticMethodInsideAnExtensionBlockIsRejectedForNow`, que esperaba
+  el rechazo que esta fase retira) eliminado.
+- Tests: `ModuleEmitterTests.cs`, región "Extension methods (§15) — Fase 3" (5 tests) —
+  estático básico contra la VM real, estático con argumentos ordinarios, colisión con un
+  estático real del tipo (el real gana en silencio), estático traído por import wildcard,
+  estático `internal` (default) no alcanzable desde un módulo que importa.
+- Suite completa verificada: 2232/2236 en verde (mismos 4 fallos preexistentes del WIP de
+  `Stack.surtr`, sin relación).
+
+**Commit sugerido**: `Feature: extension methods estaticos (Fase 3 de §15)`
 
 ### Fase 4 — Extension properties
 

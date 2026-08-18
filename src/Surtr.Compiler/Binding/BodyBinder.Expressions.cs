@@ -1273,6 +1273,19 @@ namespace Surtr.Compiler.Binding
                         if (ClosureValue(staticOwner, instance, name, member) is BoundExpression stored)
                             return BindClosureInvocation(syntax, stored);
 
+                        // §15.3: a static extension is tried only once `staticOwner` has no real
+                        // static member of this name at all — same silent priority the instance case
+                        // gives a real member over an extension. There is no receiver to insert: a
+                        // static extension is reached by matching the type named at the call site
+                        // against `ExtensionTargetType`, so it completes exactly like a call to an
+                        // ordinary module function.
+                        if (_lookup.FindMethods(staticOwner, name).Count == 0)
+                        {
+                            var staticExtensionCandidates = StaticExtensionCandidates(staticOwner, name);
+                            if (staticExtensionCandidates.Count > 0)
+                                return Complete(syntax, null, staticExtensionCandidates, name, isVirtual: false);
+                        }
+
                         return BindMethodCall(syntax, instance, staticOwner, name, isVirtual: false);
                     }
 
@@ -1486,8 +1499,51 @@ namespace Surtr.Compiler.Binding
         {
             foreach (var method in module.ExtensionMethods)
             {
-                if (string.Equals(method.Name, name, StringComparison.Ordinal) && IsExtensionAccessible(method))
+                // A static extension (§15.3) has no receiver-shaped first parameter to match an
+                // instance call's receiver against — `StaticExtensionCandidates` is its call site.
+                if (!method.ExtensionIsStatic
+                    && string.Equals(method.Name, name, StringComparison.Ordinal)
+                    && IsExtensionAccessible(method))
+                {
                     candidates.Add(method);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Every static extension method (§15.3) named <paramref name="name"/> declared for
+        /// exactly <paramref name="type"/> and visible from here — this body's own module, or one it
+        /// wildcard-imports, the same reach <see cref="ExtensionCandidates"/> gives an instance one.
+        /// </summary>
+        /// <remarks>
+        /// Matched by reference identity against <see cref="MethodSymbol.ExtensionTargetType"/>
+        /// rather than walked through <paramref name="type"/>'s hierarchy the way an instance
+        /// extension's receiver is: there is no argument here for <c>Conversions</c> to classify, only
+        /// the type named at the call site, and an ordinary static member is not inherited through a
+        /// type name either (§3.1) — `Type.member` only ever means <em>this</em> type's own.
+        /// </remarks>
+        private List<MethodSymbol> StaticExtensionCandidates(NamedTypeSymbol type, string name)
+        {
+            var candidates = new List<MethodSymbol>();
+            AddStaticExtensionCandidates(_module, type, name, candidates);
+
+            foreach (var imported in _imported)
+                AddStaticExtensionCandidates(imported, type, name, candidates);
+
+            return candidates;
+        }
+
+        private void AddStaticExtensionCandidates(ModuleSymbol module, NamedTypeSymbol type, string name, List<MethodSymbol> candidates)
+        {
+            foreach (var method in module.ExtensionMethods)
+            {
+                if (method.ExtensionIsStatic
+                    && ReferenceEquals(method.ExtensionTargetType, type)
+                    && string.Equals(method.Name, name, StringComparison.Ordinal)
+                    && IsExtensionAccessible(method))
+                {
+                    candidates.Add(method);
+                }
             }
         }
 

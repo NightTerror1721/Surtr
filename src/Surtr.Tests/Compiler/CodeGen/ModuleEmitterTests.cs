@@ -5991,15 +5991,6 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         [Fact]
-        public void AStaticMethodInsideAnExtensionBlockIsRejectedForNow()
-        {
-            using var compilation = Reject(
-                Vec2 + "extension Vec2 { static fun zero(): float => 0.0; }\nfun run(): int { return 1; }");
-
-            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidExtensionMember);
-        }
-
-        [Fact]
         public void AConstructorInsideAnExtensionBlockIsRejected()
         {
             using var compilation = Reject(
@@ -6068,6 +6059,79 @@ namespace Surtr.Tests.Compiler.CodeGen
                     Vec2 + "extension Vec2 { fun lengthSquared(v: Vec2): float => v.x * v.x + v.y * v.y; }"));
 
             Assert.True(compilation.HasErrors, "An extension block with no visibility written defaults to internal (§3.1) and should not reach another module.");
+        }
+        #endregion
+
+        #region Extension methods (§15) — Fase 3: static methods
+        [Fact]
+        public void AStaticExtensionMethodIsCallableOnItsTargetType()
+        {
+            var runtime = Run(
+                Vec2
+                    + "extension Vec2 { static fun zero(): Vec2 => Vec2(0.0, 0.0); }\n"
+                    + "fun run(): float { return Vec2.zero().x; }");
+
+            Assert.Equal(0.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AStaticExtensionMethodTakesOrdinaryArguments()
+        {
+            var runtime = Run(
+                Vec2
+                    + "extension Vec2 { static fun of(x: float, y: float): Vec2 => Vec2(x, y); }\n"
+                    + "fun run(): float { return Vec2.of(3.0, 4.0).x + Vec2.of(3.0, 4.0).y; }");
+
+            Assert.Equal(7.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void ARealStaticMemberWinsSilentlyOverAStaticExtensionWithTheSameName()
+        {
+            var runtime = Run(
+                "class Vec2 {\n"
+                    + "  public let x: float;\n"
+                    + "  public constructor(x: float) { this.x = x; }\n"
+                    + "  public static fun zero(): Vec2 => Vec2(9.0);\n"
+                    + "}\n"
+                    + "extension Vec2 { static fun zero(): Vec2 => Vec2(-1.0); }\n"
+                    + "fun run(): float { return Vec2.zero().x; }");
+
+            Assert.Equal(9.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AStaticExtensionMethodBroughtByAWildcardImportIsCallable()
+        {
+            var runtime = Run(
+                "import game.util.*;\nfun run(): float { return Vec2.zero().x; }",
+                ("/game/util/M.surtr",
+                    "public class Vec2 {\n"
+                        + "  public let x: float;\n"
+                        + "  public let y: float;\n"
+                        + "  public constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                        + "}\n"
+                        + "public extension Vec2 { static fun zero(): Vec2 => Vec2(0.0, 0.0); }"));
+
+            Assert.Equal(0.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AnInternalStaticExtensionIsNotReachableFromAnImportingModule()
+        {
+            // Vec2 itself is public, so this isolates the extension's own default visibility
+            // (internal, unwritten) rather than confounding it with the type's.
+            using var compilation = Reject(
+                "import game.util.*;\nfun run(): float { return Vec2.zero().x; }",
+                ("/game/util/M.surtr",
+                    "public class Vec2 {\n"
+                        + "  public let x: float;\n"
+                        + "  public let y: float;\n"
+                        + "  public constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                        + "}\n"
+                        + "extension Vec2 { static fun zero(): Vec2 => Vec2(0.0, 0.0); }"));
+
+            Assert.True(compilation.HasErrors, "A static extension with no visibility written defaults to internal (§3.1) and should not reach another module.");
         }
         #endregion
     }
