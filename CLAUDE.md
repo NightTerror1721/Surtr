@@ -21,7 +21,7 @@ This file is the orientation; each of these goes deep on one thing. Read the rel
 |---|---|
 | `docs/Language-Syntax.md` | The surface language, and the reasoning behind each choice. §1.2 is the authoritative reserved word list, §5.7 the operator table. |
 | `docs/Runtime-Model.md` | How classes, methods, properties, enums, interfaces and modules fit together, what linking builds, and what the compiler owes the runtime. |
-| `docs/Opcodes.md` | All 224 opcodes by family, with values, encodings and stack effects. Generated from `OpCode.cs`, which stays the source of truth. |
+| `docs/Opcodes.md` | All 227 opcodes by family, with values, encodings and stack effects. Generated from `OpCode.cs`, which stays the source of truth. |
 | `docs/Module-Format.md` | The `.surtrc` byte layout, and what is bound at load rather than written. |
 | `docs/VM-Plan.md` | The interpreter's design decisions, the remaining gaps, and the ordered plan. |
 
@@ -182,7 +182,7 @@ A member implementing a generic interface is matched on the **erased** signature
 
 ## The instruction set
 
-`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — **224 opcodes**, `0x00`–`0xDF`, leaving 32 free values in the `byte` space. It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
+`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — **227 opcodes**, `0x00`–`0xE2`, leaving 29 free values in the `byte` space. It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
 
 Surtr is a stack machine. Operands come from the evaluation stack; pool indices, jump offsets and argument counts are encoded inline after the opcode byte as little-endian immediates.
 

@@ -294,6 +294,265 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Import: modulo completo sin wildcard (§2.1)
+        /// <summary>Regression: a real trailing type name still wins - this phase must not change it.</summary>
+        [Fact]
+        public void ANamedImportWithARealTrailingTypeStillWorks()
+        {
+            var runtime = Run(
+                "import game.entities.Foo;\nfun run(): int { return Foo(9).n; }",
+                ("/game/entities/Foo.surtr", "public class Foo { public let n: int = 0; public constructor(n: int) { this.n = n; } }"));
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+
+        /// <summary>A bare `import ModulePath;` over a real directory module brings its own declarations in, exactly like `import ModulePath.*;`.</summary>
+        [Fact]
+        public void ABareModuleImportBringsInTheModulesOwnDeclarations()
+        {
+            var runtime = Run(
+                "import game.entities;\nfun run(): int { return Foo(3).n; }",
+                ("/game/entities/Foo.surtr", "public class Foo { public let n: int = 0; public constructor(n: int) { this.n = n; } }"));
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        /// <summary>`game.entities` has no files of its own - only its submodules do - same recursive case that motivated Fase 9's wildcard.</summary>
+        [Fact]
+        public void ABareModuleImportReachesEverySubmoduleWhenTheDirectoryHasNoFilesOfItsOwn()
+        {
+            var runtime = Run(
+                "import game.entities;\nfun run(): int { return Sin(3).value + Eq(4).value; }",
+                ("/game/entities/trig/Sin.surtr", "public class Sin { public let value: int = 0; public constructor(value: int) { this.value = value; } }"),
+                ("/game/entities/algebra/Eq.surtr", "public class Eq { public let value: int = 0; public constructor(value: int) { this.value = value; } }"));
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        /// <summary>A bare module import's functions/variables reach unqualified too, same as the wildcard's.</summary>
+        [Fact]
+        public void ABareModuleImportBringsTheModulesFunctionsInToo()
+        {
+            var runtime = Run(
+                "import game.entities;\nfun run(): int { return twice(21); }",
+                ("/game/entities/Entities.surtr", "public fun twice(x: int): int { return x + x; }"));
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        /// <summary>A sibling directory does not leak in through a bare module import.</summary>
+        [Fact]
+        public void ABareModuleImportDoesNotReachASiblingModule()
+        {
+            using var compilation = Reject(
+                "import game.entities;\nfun run(): int { return Other(1).value; }",
+                ("/game/entities/Foo.surtr", "public class Foo { public let n: int = 0; }"),
+                ("/game/other/Other.surtr", "public class Other { public let value: int = 0; public constructor(value: int) { this.value = value; } }"));
+
+            Assert.True(compilation.HasErrors, "'game.other' is not nested under 'game.entities' and must not be reachable.");
+        }
+
+        /// <summary>
+        /// When the whole path resolves as a module AND a shorter prefix + trailing type of the
+        /// same name would also resolve, the longest prefix (the whole path, as a module) wins -
+        /// same rule the split loop already used for two module prefixes of different lengths.
+        /// </summary>
+        [Fact]
+        public void TheWholePathAsAModuleWinsOverAShorterPrefixWithATypeOfTheSameName()
+        {
+            var runtime = Run(
+                "import game.entities;\nfun run(): int { return Foo(5).n; }",
+                // `game` also declares a type literally named `entities` - it must lose to the
+                // longer prefix, `game.entities` resolving as a module in its own right.
+                ("/game/Shadow.surtr", "public class entities { public let n: int = 999; }"),
+                ("/game/entities/Foo.surtr", "public class Foo { public let n: int = 0; public constructor(n: int) { this.n = n; } }"));
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+        #endregion
+
+        #region moduleof (§2.1)
+        [Fact]
+        public void ModuleOfOnTheCurrentModuleCompilesAndRuns()
+        {
+            var runtime = Run("fun run(): int { let m: Module = moduleof(game.core); return 1; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ModuleOfOnAnotherModuleCompilesAndRuns()
+        {
+            var runtime = Run(
+                "import game.entities.Foo;\nfun run(): int { let m: Module = moduleof(game.entities); return Foo(5).n; }",
+                ("/game/entities/Foo.surtr", "public class Foo { public let n: int = 0; public constructor(n: int) { this.n = n; } }"));
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        /// <summary>No `import` at all - only `moduleof` crosses the module boundary, which has to add its own dependency edge for load order to come out right.</summary>
+        [Fact]
+        public void ModuleOfAloneCreatesADependencyEdgeWithNoImport()
+        {
+            var runtime = Run(
+                "fun run(): int { let m: Module = moduleof(game.entities); return 1; }",
+                ("/game/entities/Foo.surtr", "public class Foo { public let n: int = 0; }"));
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ModuleOfThroughAnAliasResolvesTheAliasedModule()
+        {
+            var runtime = Run(
+                "import game.entities as GE;\nfun run(): int { let m: Module = moduleof(GE); return 1; }",
+                ("/game/entities/Foo.surtr", "public class Foo { public let n: int = 0; }"));
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>The runtime caches one `Module` value per `SurtrModule`, the same as `Type`.</summary>
+        [Fact]
+        public void ModuleOfOnTheSameModuleTwiceReturnsTheSameValue()
+        {
+            var runtime = Run(
+                "fun a(): Module { return moduleof(game.core); }\nfun b(): Module { return moduleof(game.core); }");
+
+            var first = Call(runtime, "a");
+            var second = Call(runtime, "b");
+
+            Assert.Equal(first.AsReference, second.AsReference);
+        }
+
+        [Fact]
+        public void ModuleOfOnAnUnknownPathReportsADiagnostic()
+        {
+            using var compilation = Reject("fun run(): int { let m: Module = moduleof(no.such.module); return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedModuleOf);
+        }
+
+        [Fact]
+        public void ModulePathReturnsTheDottedPath()
+        {
+            var runtime = Run("fun run(): string { return moduleof(game.core).path; }");
+
+            Assert.Equal("game.core", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void ModuleClassesEnumeratesItsOwnDeclaredClasses()
+        {
+            var runtime = Run("class Foo { }\nclass Bar { }\nfun run(): int { return moduleof(game.core).classes().length; }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ModuleInterfacesEnumeratesItsOwnDeclaredInterfaces()
+        {
+            var runtime = Run("interface Named { }\nfun run(): int { return moduleof(game.core).interfaces().length; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ModuleMembersIncludesAFunctionAndAVariableButNotAClass()
+        {
+            // Four, not two: `bump` and the field, but also `run` itself (a function of this same
+            // module) and the synthesised module initializer ("cinit", needed because `counter` has
+            // one) - `Type.members()` already includes a synthesised constructor the same way
+            // (documented as appearing under `ctor`), so this mirrors established behaviour rather
+            // than filtering it out.
+            var runtime = Run(
+                "var counter: int = 0;\nfun bump(): int { return 1; }\nclass Foo { }\n"
+                    + "fun run(): int { return moduleof(game.core).members().length; }");
+
+            Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ModuleSubmodulesReachesANestedModule()
+        {
+            var runtime = Run(
+                "fun run(): int { return moduleof(game.core).submodules().length; }",
+                ("/game/core/sub/Deep.surtr", "public class Deep { }"));
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ModuleGetFindsALoadedModuleByPath()
+        {
+            var runtime = Run(
+                "import game.entities.Foo;\nfun run(): string { return Module.get(\"game.entities\").path; }",
+                ("/game/entities/Foo.surtr", "public class Foo { }"));
+
+            Assert.Equal("game.entities", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void ModuleGetFindsTheBuiltInModuleByItsReservedPath()
+        {
+            var runtime = Run("fun run(): string { return Module.get(\"surtr\").path; }");
+
+            Assert.Equal("surtr", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void ModuleTryGetReturnsNullForAnUnknownPath()
+        {
+            var runtime = Run(
+                "fun run(): int { if (Module.tryGet(\"no.such.module\") == null) { return 1; } return 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ModuleGetThrowsForAnUnknownPath()
+        {
+            var runtime = Run("fun run(): Module { return Module.get(\"no.such.module\"); }");
+
+            // Uncaught and native-thrown, with no Surtr handler anywhere on the stack to search -
+            // the trap-to-class mapping only rewrites what a `catch` actually looks for, so this
+            // escapes as the CLR exception itself rather than as SurtrThrownException.
+            Assert.Throws<KeyNotFoundException>(() => Call(runtime, "run"));
+        }
+
+        [Fact]
+        public void TypeGetResolvesAUserClassByDescriptor()
+        {
+            var runtime = Run("class Foo { }\nfun run(): string { return Type.get(\"Ogame.core:Foo;\").name; }");
+
+            Assert.Equal("Foo", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void TypeGetResolvesAPrimitiveByDescriptor()
+        {
+            var runtime = Run("fun run(): string { return Type.get(\"I\").name; }");
+
+            Assert.Equal("int", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void TypeTryGetReturnsNullForAnUnknownDescriptor()
+        {
+            var runtime = Run(
+                "fun run(): int { if (Type.tryGet(\"Ogame.core:NoSuchType;\") == null) { return 1; } return 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void TypeGetThrowsForAnUnknownDescriptor()
+        {
+            var runtime = Run("fun run(): Type { return Type.get(\"Ogame.core:NoSuchType;\"); }");
+
+            Assert.Throws<KeyNotFoundException>(() => Call(runtime, "run"));
+        }
+        #endregion
+
         #region Classes
         [Fact]
         public void AClassIsConstructedAndItsFieldsRead()

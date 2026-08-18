@@ -41,6 +41,20 @@ namespace Surtr.Runtime.BuiltIns
                 builder.Params(("value", SurtrClassReference.Erased)),
                 isStatic: true);
 
+            builder.Method(
+                "get",
+                selfType,
+                SurtrNativeEntryPoint.FromFunctionPointer(&TypeGet),
+                builder.Params(("name", SurtrClassReference.String)),
+                isStatic: true);
+
+            builder.Method(
+                "tryGet",
+                selfType,
+                SurtrNativeEntryPoint.FromFunctionPointer(&TypeTryGet),
+                builder.Params(("name", SurtrClassReference.String)),
+                isStatic: true);
+
             builder.Property("name", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&TypeName));
             builder.Property("baseType", selfType, SurtrNativeEntryPoint.FromFunctionPointer(&TypeBaseType));
             builder.Property("isInterface", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&TypeIsInterface));
@@ -66,6 +80,30 @@ namespace Surtr.Runtime.BuiltIns
             // there is no primitive case to handle here, unlike a receiver of a concrete class.
             var target = arguments.GetUnchecked<SurtrObject>(0);
             return WrapType(arguments.Runtime, target.GetClass());
+        }
+
+        /// <summary>
+        /// <c>name</c> is a descriptor (§"Type references are descriptor strings" -
+        /// <c>Ogame.core:Entity;</c>, <c>AI</c> for <c>int[]</c>, a mangled generic construction),
+        /// not a display name - the canonical, unambiguous form the runtime already resolves
+        /// everything else against, reused here with zero new parsing rather than a second,
+        /// friendlier grammar this API would have to maintain on its own.
+        /// </summary>
+        private static SurtrValue TypeGet(SurtrCallArguments arguments)
+        {
+            string name = arguments.GetString(0).Text;
+            if (!arguments.Runtime.TryResolveReference(SurtrClassReference.FromDescriptor(name), out var resolved))
+                throw new KeyNotFoundException($"No type is known under descriptor '{name}'.");
+
+            return WrapType(arguments.Runtime, resolved!);
+        }
+
+        private static SurtrValue TypeTryGet(SurtrCallArguments arguments)
+        {
+            string name = arguments.GetString(0).Text;
+            return arguments.Runtime.TryResolveReference(SurtrClassReference.FromDescriptor(name), out var resolved)
+                ? WrapType(arguments.Runtime, resolved!)
+                : SurtrValue.Null;
         }
 
         private static SurtrValue TypeName(SurtrCallArguments arguments)

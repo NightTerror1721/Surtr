@@ -81,9 +81,9 @@ Hard-reserved, never usable as an identifier:
 abstract   alias     as        break     case      catch       class     const
 constructor          continue  default   else      enum        false     finally
 for        forceinline         fun       if        import      in        inline
-interface  internal  is        let       native    null        operator  override
-private    protected public    return    sealed    singleton   static    switch
-throw      true      try       typeof    var       virtual     while
+interface  internal  is        let       moduleof  native      null      operator
+override   private   protected public    return    sealed      singleton static
+switch     throw     true      try       typeof    var         virtual   while
 ```
 
 Four words are **contextual**, not reserved (§3.2): `this`, `super`, `value` and `attribute` mean
@@ -165,6 +165,7 @@ import Ogame.core.Entity;
 import Ogame.core.*;
 import Ogame.core as Core;
 import Ogame.core.{Entity, Vec2};
+import Ogame.core;
 ```
 
 A named import brings exactly that one type into unqualified scope; a wildcard import
@@ -184,14 +185,29 @@ there is nothing special about the exact path matching a real module versus only
 doing so. A name collision between two submodules, or between a submodule and the directory's own
 declarations, is diagnosed the same way as any other wildcard collision: at the point of use.
 
+**`import ModulePath;` with nothing after it — no type, no `*`, no `as`, no `{}` — is equivalent to
+`import ModulePath.*;` when `ModulePath` is itself a real module.** A named import and this form
+share one syntax (`import` followed by a dotted path and nothing else); which one a given line is
+comes down to whether anything is left over to be a type name. Resolution tries the longest
+possible module prefix first: if the whole path already names a module — directly, or only through
+submodules nested under it, exactly as a wildcard's own resolution does — that wins outright and
+the line behaves as the wildcard form over that path, submodules and module-level functions/
+variables included. Only when the whole path does *not* resolve as a module does the shorter
+prefix-plus-trailing-type reading get a chance, exactly as `import Ogame.core.Entity;` already
+works. This also settles the one case where both readings could apply — a module `Ogame.core` and
+a type named `core` declared directly in module `Ogame`, say: the longest prefix, `Ogame.core` as
+a module, wins, the same way a longer module prefix always wins over a shorter one plus a trailing
+type name.
+
 **`import ModulePath as Name;` aliases a whole module** rather than bringing anything into
 unqualified scope — `Name` itself resolves nowhere on its own, only qualified: `Core.Entity` reads
 exactly as `Ogame.core.Entity` would, everywhere a type may be named (an annotation, a base class
 or interface list, `is`/`as`, or a construction like `Core.Entity(1, 2)`). This is deliberately
-narrower than a value import: Surtr has no first-class module value (§2.8's `singleton` is the one
-kind of module-like thing that can be one), so an alias is a compile-time rewrite of a qualifier,
-not a reference to anything a program holds — it cannot be passed around, stored, or reach a
-module-level function or variable the way `Core.Entity` reaches a type. `as` needs no new keyword;
+narrower than a value import: an alias is not itself a value — `moduleof` (§11) is the one way to
+turn a module path into a real, first-class `Module` value, and an alias is not that either, only a
+compile-time rewrite of a qualifier, not a reference to anything a program holds — it cannot be
+passed around, stored, or reach a module-level function or variable the way `Core.Entity` reaches a
+type. `as` needs no new keyword;
 it is already reserved by `operator as` (§5.6). Two `import` lines claiming the same alias in one
 module is a compile error at the `import` line itself, unlike a colliding named/wildcard import —
 an alias has no import of its own to shadow, so there is nothing for the second one to lose to.
@@ -2374,6 +2390,63 @@ from its own static type: `typeof(5)` never allocates a boxed `int` the way `Typ
 `typeof` is a reserved word, unlike `value`/`attribute`/`this`/`super`: it never needs to double
 as an ordinary identifier the way those four do, so reserving it outright avoids the ambiguity
 instead of relocating it into the parser.
+
+**`moduleof(ModulePath)` is the reflective counterpart for modules**, and the first genuine
+first-class module value the language has — §2.1's note that Surtr has none is no longer quite
+true of what `moduleof` hands back, though a module *alias* (`import X as Y;`) still is not one; an
+alias stays a compile-time qualifier rewrite, never a value:
+
+```
+moduleof(Ogame.core)          // the Module for a module by its full path
+moduleof(Core)                 // Core resolved through `import Ogame.core as Core;` first
+```
+
+Unlike `typeof`, `moduleof` has **no instance form** — there is no value in the language a module
+could be read off, the way a value's runtime class always answers `typeof`. The operand is always a
+dotted module path, resolved entirely at compile time, and the parenthesised call shape mirrors
+`typeof(X)` rather than `import`'s bare trailing path, for consistency with the language's other
+reflection operator. When the path's first segment is a declared module alias, it resolves through
+the alias first, exactly as a qualified type name already does — `moduleof(Core)` reads exactly as
+`moduleof(Ogame.core)` would. Resolving a path that names no known module is a compile error.
+
+`Module` is the value `moduleof` returns, alongside `Type` and `Member`:
+
+- `path: string` — the module's full dotted path.
+- `classes(): Type[]` / `interfaces(): Type[]` — the classes, enums and interfaces declared
+  directly in the module, each wrapped exactly as `typeof`/`Type.of` would wrap it — the same
+  `Type` object either way, same identity.
+- `members(): Member[]` — the module's own fields and functions (§2.5 makes what look like globals
+  module-level members), under the same rules `Type.members()` already follows: a name the
+  compiler made up (leading `$`) is left out, and a synthesised module initializer — needed
+  whenever the module declares a variable with an initializer — appears once, named `cinit`, the
+  same way a synthesised constructor appears as `ctor` on `Type.members()`. Deliberately separate
+  from `classes()`/`interfaces()`, which already cover the module's types on their own.
+- `submodules(): Module[]` — every module loaded in the running program whose path sits strictly
+  under this one's, since a module is a directory (§2.1): `Ogame.core` and `Ogame.core.geometry`
+  are different modules, not one nested in the other, and this is `submodules()`'s way of walking
+  from a parent to what is nested under it at runtime, the same relationship a directory wildcard
+  import already walks at compile time.
+- `Module.get(path: string): Module` / `Module.tryGet(path: string): Module?` — finds an already
+  loaded module by its full path, dynamically, from a `string` computed at run time rather than a
+  path written in source. `get` throws `KeyNotFoundException` if no module is loaded under that
+  path; `tryGet` answers `null` instead. The built-in module (`surtr`) resolves under that literal
+  path even though it is process-wide rather than registered per runtime, the same special case
+  `typeof`'s own resolution already needs for it.
+
+**`Type` gained the same dynamic counterpart**: `Type.get(name: string): Type` and
+`Type.tryGet(name: string): Type?`, the runtime-string analogue of `typeof`/`Type.of` the same way
+`Module.get`/`tryGet` are of `moduleof`. `name` is a **descriptor** (§"Type references are
+descriptor strings" — `Ogame.core:Entity;`, `AI` for `int[]`, a mangled generic construction like
+`` Obox:Box`1;I ``), not a display name: the canonical, unambiguous form the runtime already
+resolves every type reference against, reused here with no new parsing rather than a second,
+friendlier grammar this API would have to parse and maintain on its own — the tradeoff is that
+`Type.get` is a cruder surface than the rest of this API, closer to the compiler's own internal
+encoding than to something meant to be typed by hand. `get` throws `KeyNotFoundException` for a
+descriptor naming nothing known; `tryGet` answers `null`.
+
+Neither `get` nor `tryGet`, on either class, appears in a `try`/`catch` by itself — an uncaught
+`KeyNotFoundException` from either escapes a running program exactly as any other uncaught native
+exception does.
 
 ---
 

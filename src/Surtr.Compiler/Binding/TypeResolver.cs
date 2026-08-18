@@ -401,6 +401,37 @@ namespace Surtr.Compiler.Binding
             return true;
         }
 
+        /// <summary>
+        /// Resolves a <c>moduleof</c> path (§2.1) to the module it names as a whole. Unlike a type
+        /// reference there is no trailing type name to peel off the end, and unlike an import there
+        /// is no wildcard union to take: the whole path — or, when its one segment is a declared
+        /// alias, the alias's target — has to name exactly one module.
+        /// </summary>
+        public bool TryResolveModulePath(IReadOnlyList<string> path, Scope scope, string sourceName, out ModuleSymbol module)
+        {
+            module = null!;
+
+            if (path.Count == 0)
+                return false;
+
+            // `moduleof(Alias)` reads exactly as `moduleof(<the alias's target>)` would (§2.1) - the
+            // same compile-time qualifier rewrite an alias already is everywhere else a module may
+            // be named.
+            if (path.Count == 1 && scope.LookupModuleAlias(path[0]) is ModuleSymbol aliased)
+            {
+                module = aliased;
+            }
+            else if (!TryGetModule(Join(path, path.Count), out module))
+            {
+                return false;
+            }
+
+            if (CurrentModule is ModuleSymbol current)
+                _dependencies.AddDependency(current.Path, module.Path);
+
+            return true;
+        }
+
         private bool TryGetModule(string modulePath, out ModuleSymbol module)
             => _modules.TryGetValue(modulePath, out module!) || _importer.TryGetModuleSymbol(modulePath, out module!);
 

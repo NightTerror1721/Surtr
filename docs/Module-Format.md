@@ -118,7 +118,7 @@ Then the chunk (§3.3), then the declarations (§3.4).
 | `methodOffsets` | `i32[]` | Where each method's body starts in `code`, indexed by entry index. |
 | `stringLiterals` | `{ text: str, slot: i32 }[]` | The text, and the constant-pool slot a reference to it is patched into at load. |
 | `typeTable` | `str[]` | Type descriptors the bytecode names by index. |
-| `moduleTable` | `str[]` | Other modules this one calls into, **by path**. |
+| `moduleTable` | `str[]` | Other modules this one names, **by path** — every one it calls into (`CallModule`/`CallModuleX`), plus every one it names through `moduleof` (`LoadModule`/`LoadModuleX`) without necessarily calling anything in it. A module naming itself through `moduleof` never adds an entry here — see `LoadCurrentModule` in `docs/Opcodes.md`. |
 | `fieldTable` | `MemberRef[]` | Fields the bytecode names by index. |
 | `methodTable` | `SignedMemberRef[]` | Call targets the bytecode names by index. |
 

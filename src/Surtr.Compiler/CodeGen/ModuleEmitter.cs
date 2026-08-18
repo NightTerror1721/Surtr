@@ -65,6 +65,9 @@ namespace Surtr.Compiler.CodeGen
 
         private readonly List<SurtrModule> _modules = new List<SurtrModule>();
 
+        private readonly Dictionary<string, SurtrModule> _modulesByPath =
+            new Dictionary<string, SurtrModule>(StringComparer.Ordinal);
+
         /// <summary>Creates an emitter over a bound compilation.</summary>
         public ModuleEmitter(SurtrCompilation compilation, Binder binder)
         {
@@ -108,6 +111,7 @@ namespace Surtr.Compiler.CodeGen
                         return (bool)(_emitted = false);
 
                     _modules.Add(built);
+                    _modulesByPath[built.Path] = built;
                 }
                 catch (Exception exception) when (exception is SurtrCompilerException or InvalidOperationException or ArgumentException)
                 {
@@ -210,6 +214,7 @@ namespace Surtr.Compiler.CodeGen
                 Bodies = _binder.Bodies,
                 Folder = _binder.ConstFolder,
                 Importer = _compilation.Importer,
+                BuiltModules = _modulesByPath,
             };
 
             // Everything built earlier is nameable from here: a symbol resolves to real metadata,

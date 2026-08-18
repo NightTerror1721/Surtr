@@ -1181,6 +1181,48 @@ namespace Surtr.VM
                 }
                 #endregion
 
+                #region Module Access
+                case OpCode.LoadModule:
+                {
+                    var target = moduleTable[(ip[0] | (ip[1] << 8))]!;
+                    ip += 2;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var moduleValue = runtime.GetOrCreateModuleValue(target);
+                    entities = context.EntityRegistry.Entities;
+                    *sp++ = SurtrValue.TagMaskReference | (uint)moduleValue.GetSurtrReference();
+                    goto Dispatch;
+                }
+
+                case OpCode.LoadModuleX:
+                {
+                    var target = moduleTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))]!;
+                    ip += 4;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var moduleValue = runtime.GetOrCreateModuleValue(target);
+                    entities = context.EntityRegistry.Entities;
+                    *sp++ = SurtrValue.TagMaskReference | (uint)moduleValue.GetSurtrReference();
+                    goto Dispatch;
+                }
+
+                // A module does not reach itself through moduleTable - the same rule
+                // CallLocalModule already follows for a call - so this reads the owning module off
+                // the executing chunk instead of an index.
+                case OpCode.LoadCurrentModule:
+                {
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var moduleValue = runtime.GetOrCreateModuleValue(chunk.OwningModule!);
+                    entities = context.EntityRegistry.Entities;
+                    *sp++ = SurtrValue.TagMaskReference | (uint)moduleValue.GetSurtrReference();
+                    goto Dispatch;
+                }
+                #endregion
+
                 #region Bitwise Operations
                 case OpCode.And:
                 {

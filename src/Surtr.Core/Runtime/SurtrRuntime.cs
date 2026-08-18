@@ -6,6 +6,7 @@ using Surtr.Runtime.Objects;
 using Surtr.Runtime.Utilities;
 using Surtr.VM;
 using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
 namespace Surtr.Runtime
@@ -344,6 +345,28 @@ namespace Surtr.Runtime
             return value;
         }
 
+        /// <summary>
+        /// Wraps a <see cref="SurtrModule"/> as a first-class <c>Module</c> value, as <c>moduleof</c>
+        /// and <c>Module.get</c>/<c>Module.tryGet</c> do.
+        /// </summary>
+        /// <remarks>
+        /// Same caching and rooting as <see cref="GetOrCreateTypeValue"/>: created and permanently
+        /// rooted the first time this runtime is asked about <paramref name="wrapped"/>, and the
+        /// cached object returned on every call after that - see
+        /// <see cref="SurtrContext.ModuleValueCache"/>.
+        /// </remarks>
+        public SurtrModuleValue GetOrCreateModuleValue(SurtrModule wrapped)
+        {
+            if (_context.ModuleValueCache.TryGetValue(wrapped, out var existing))
+                return existing;
+
+            var value = new SurtrModuleValue(wrapped);
+            SurtrRef reference = _context.EntityRegistry.Register(value);
+            _context.ModuleValueCache.Add(wrapped, value);
+            _context.AddRoot(SurtrValue.CreateReference(reference).Raw);
+            return value;
+        }
+
         /// <summary>Wraps a declaration as a first-class <c>Member</c> value, as <c>Type.members</c> does.</summary>
         public SurtrMemberValue NewMemberValue(SurtrMemberInfo wrapped)
         {
@@ -540,7 +563,25 @@ namespace Surtr.Runtime
             if (handle.IsResolved)
                 return true;
 
-            var reference = handle.Reference;
+            if (!TryResolveReference(handle.Reference, out var resolved))
+                return false;
+
+            handle.Resolve(resolved!);
+            return true;
+        }
+
+        /// <summary>
+        /// Resolves a descriptor to the metadata it names, against this runtime's loaded modules,
+        /// the built-in module, and any host-declared native classes.
+        /// </summary>
+        /// <remarks>
+        /// The same resolution every type handle in a loading module goes through, factored out so
+        /// it can also run from a raw descriptor string with no handle behind it -
+        /// <c>Type.get</c>/<c>Type.tryGet</c> are the other caller.
+        /// </remarks>
+        internal bool TryResolveReference(SurtrClassReference reference, out SurtrTypeInfo? resolved)
+        {
+            resolved = null;
             var typeCode = reference.TypeCode;
 
             // Every built-in family collapses onto one shared class, whatever it is parameterised
@@ -548,7 +589,7 @@ namespace Surtr.Runtime
             // fact the compiler enforces, not something the object carries.
             if (typeCode.IsPrimitive || typeCode.IsBuiltIn || typeCode.IsVoid || typeCode.IsErased)
             {
-                handle.Resolve(SurtrBuiltIns.ForTypeCode(typeCode));
+                resolved = SurtrBuiltIns.ForTypeCode(typeCode);
                 return true;
             }
 
@@ -560,7 +601,7 @@ namespace Surtr.Runtime
                 if (!_context.NativeClasses.TryGetValue(fullName, out var nativeClass))
                     return false;
 
-                handle.Resolve(nativeClass);
+                resolved = nativeClass;
                 return true;
             }
 
@@ -583,7 +624,7 @@ namespace Surtr.Runtime
             var declared = module.FindClass(typePath);
             if (declared is not null)
             {
-                handle.Resolve(declared);
+                resolved = declared;
                 return true;
             }
 
@@ -592,7 +633,7 @@ namespace Surtr.Runtime
             // tried as one before giving up.
             if (module.TryGetInterface(typePath, out var contract))
             {
-                handle.Resolve(contract);
+                resolved = contract;
                 return true;
             }
 
@@ -1046,6 +1087,14 @@ namespace Surtr.Runtime
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public bool TryGetModule(string path, out SurtrModule module)
             => _context.Modules.TryGetValue(path, out module!);
+
+        /// <summary>Every module loaded into this runtime, for <c>Module.submodules()</c> to scan by path prefix.</summary>
+        /// <remarks>
+        /// The built-in module (<see cref="SurtrBuiltIns.ModulePath"/>) is deliberately absent - it
+        /// is process-wide and never registered in this runtime's own table, the same reason
+        /// <see cref="TryResolveHandle"/> reaches it as a special case rather than through here.
+        /// </remarks>
+        public IReadOnlyCollection<SurtrModule> LoadedModules => _context.Modules.Values;
 
         private void RetryHostHandles()
         {

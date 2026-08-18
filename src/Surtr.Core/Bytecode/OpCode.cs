@@ -1021,6 +1021,40 @@ namespace Surtr.Bytecode
         #endregion
 
 
+        #region Module Access
+        /// <summary>Pushes the <c>Module</c> value for another module, named by its slot in the module table.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) moduleIdx(2)</c> - 3 bytes.<br/>
+        /// Stack: <c>... -&gt; ..., module</c><br/>
+        /// Notes: what <c>moduleof(ModulePath)</c> lowers to when the path names a module other
+        /// than the one emitting it - the same module table <see cref="CallModule"/> already reads,
+        /// interned once per distinct target by the emitter, so naming a module through
+        /// <c>moduleof</c> and calling into it share one table entry. The target must already be
+        /// loaded and linked. Allocates only the first time a given module is asked for on this
+        /// runtime - see <see cref="LoadType"/>'s identical caching for <c>Type</c>.
+        /// </remarks>
+        LoadModule = 0xE0,
+
+        /// <summary>Loads another module's <c>Module</c> value, with a 4-byte module index.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) moduleIdx(4)</c> - 5 bytes.<br/>
+        /// Stack: <c>... -&gt; ..., module</c>
+        /// </remarks>
+        LoadModuleX = 0xE1,
+
+        /// <summary>Pushes the <c>Module</c> value for the module this frame's chunk belongs to.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>... -&gt; ..., module</c><br/>
+        /// Notes: what <c>moduleof(ModulePath)</c> lowers to when the path names the same module
+        /// emitting it. A module does not reach itself through the module table - the same rule
+        /// <see cref="CallLocalModule"/> already follows for a call - so this reads the owning
+        /// module straight off the executing chunk instead of an index.
+        /// </remarks>
+        LoadCurrentModule = 0xE2,
+        #endregion
+
+
         #region Control Flow Operations
         /// <summary>Branches unconditionally.</summary>
         /// <remarks>

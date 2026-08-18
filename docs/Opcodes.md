@@ -8,13 +8,13 @@ documentation on each member; this file is that content laid out for reading, pl
 only make sense across the whole set. `docs/VM-Plan.md` has the *why* behind the interpreter's
 shape, and `docs/Module-Format.md` describes the file these bytes live in.
 
-**218 opcodes are defined, spanning `0x00` through `0xDF`.** Six values inside that span —
+**221 opcodes are defined, spanning `0x00` through `0xE2`.** Six values inside that span —
 `0x2C`–`0x2F` (the old `Ldg`/`LdgX`/`Stg`/`StgX`) and `0xAA`–`0xAB` (the old
 `CallGlobalNative`/`CallGlobalNativeX`) — are **retired**: they used to cover the host-globals
 mechanism, which is gone now that a `native` member (module-level or on a class) is an ordinary
 member reached through the same tables and call opcodes as any other. A retired value is never
 reused — reusing one would make an old module silently execute a different instruction — so those
-six numbers simply have no opcode and never will. The 32 values `0xE0`–`0xFF`, plus the six retired
+six numbers simply have no opcode and never will. The 29 values `0xE3`–`0xFF`, plus the six retired
 ones, are what is free.
 
 ---
@@ -381,6 +381,16 @@ One question asked three ways, because what the call site wants done on a mismat
 | `0xDD` | `LoadType` | `opcode(1) typeIdx(2)` · 3 bytes | `... -> ..., type` | Pushes the `Type` value for the compile-time-known type at `typeIdx`. What the static form of `typeof` lowers to - `typeof(SomeClass)` or `typeof(ISomeInterface)`, neither of which reads any value off the stack. The type is an immediate, resolved once at module load through `typeTable[typeIdx]` exactly as `InstanceOf` resolves its own. Allocates only the first time a given type is asked for on this runtime - the runtime caches one `Type` object per class or interface, so a repeated `typeof` on the same type is a cache hit, not a fresh entity every call. |
 | `0xDE` | `LoadTypeX` | `opcode(1) typeIdx(4)` · 5 bytes | `... -> ..., type` | Loads the compile-time-known type's `Type` value, with a 4-byte type index. |
 | `0xDF` | `GetTypeOfValue` | `opcode(1)` · 1 byte | `..., ref -> ..., type` | Reads the class of the value on top of the stack and pushes its `Type`. What the instance form of `typeof` lowers to when the operand's static type cannot say the answer by itself - reads `.Class` off the reference exactly as `InstanceOf`'s reference half does. The subject is never checked for null, matching `FieldGet` and the native `Type.of` this replaces. A primitive operand never reaches this at all - the compiler lowers `typeof` straight to `LoadType` against that type instead, skipping both the box and this read. |
+
+## Module Access
+
+What `moduleof(ModulePath)` lowers to - always the static form, since `moduleof` has no instance form over an arbitrary value (§2.1). `LoadModule`/`LoadModuleX` name another module through the chunk's module access table, the same `moduleTable` `CallModule`/`CallModuleX` already read - naming a module through `moduleof` and calling into it share one interned entry, so this table now holds "modules named, not only modules called." `LoadCurrentModule` exists because a module does not reach itself through that table - the same rule `CallLocalModule` already follows for a call - so `moduleof` on the module's own path reads the owning module straight off the executing chunk instead.
+
+| Value | Opcode | Encoding | Stack | What it does |
+|---|---|---|---|---|
+| `0xE0` | `LoadModule` | `opcode(1) moduleIdx(2)` · 3 bytes | `... -> ..., module` | Pushes the `Module` value for another module, named by its slot in the module table. The target must already be loaded and linked. Allocates only the first time a given module is asked for on this runtime - the runtime caches one `Module` object per `SurtrModule`, the same as `LoadType` does for `Type`. |
+| `0xE1` | `LoadModuleX` | `opcode(1) moduleIdx(4)` · 5 bytes | `... -> ..., module` | Loads another module's `Module` value, with a 4-byte module index. |
+| `0xE2` | `LoadCurrentModule` | `opcode(1)` · 1 byte | `... -> ..., module` | Pushes the `Module` value for the module this frame's chunk belongs to - what `moduleof` lowers to when the path names the same module emitting it. |
 
 ## Control Flow Operations
 

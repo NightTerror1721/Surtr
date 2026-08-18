@@ -1382,6 +1382,10 @@ namespace Surtr.Compiler.CodeGen
                     EmitTypeOf(typeOf);
                     return;
 
+                case BoundModuleOfExpression moduleOf:
+                    EmitModuleOf(moduleOf);
+                    return;
+
                 case BoundSwitchExpression @switch:
                     EmitSwitchExpression(@switch);
                     return;
@@ -1472,6 +1476,20 @@ namespace Surtr.Compiler.CodeGen
             }
 
             Code.GetTypeOfValue();
+        }
+
+        /// <summary>
+        /// <c>moduleof(ModulePath)</c>. Always static: the binder already resolved the path to a
+        /// <see cref="ModuleSymbol"/>, so there is nothing left to evaluate -
+        /// <see cref="SurtrCodeEmitter.LoadModuleOf(SurtrModule)"/> picks between the current
+        /// module and the module table entirely from the target's own identity.
+        /// </summary>
+        private void EmitModuleOf(BoundModuleOfExpression moduleOf)
+        {
+            if (!_context.TryGetModule(moduleOf.Module.Path, out var target))
+                throw Unsupported($"moduleof('{moduleOf.Module.Path}'), which is neither being emitted here nor already built");
+
+            Code.LoadModuleOf(target);
         }
 
         private void EmitConversion(BoundConversionExpression conversion)

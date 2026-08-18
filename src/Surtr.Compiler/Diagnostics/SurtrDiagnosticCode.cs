@@ -365,6 +365,12 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         DuplicateModuleAlias = 3053,
 
+        /// <summary>
+        /// A <c>moduleof(ModulePath)</c> path (§2.1) does not name any module known to this
+        /// compilation - neither directly nor through a declared alias.
+        /// </summary>
+        UnresolvedModuleOf = 3054,
+
         #endregion
 
         #region Code generation — 4xxx

@@ -368,6 +368,25 @@ namespace Surtr.Compiler.Syntax.Ast
         }
     }
 
+    /// <summary>
+    /// <c>moduleof ModulePath</c> - the module a compile-time-known dotted path names (§2.1).
+    /// Always static: unlike <c>typeof</c>, there is no instance form over an arbitrary value, so
+    /// the path is the only shape this node ever carries.
+    /// </summary>
+    public sealed class ModuleOfExpressionSyntax : ExpressionSyntax
+    {
+        /// <summary>The dotted module path as written, one entry per segment.</summary>
+        public IReadOnlyList<string> Path { get; }
+
+        /// <summary>Initializes a <c>moduleof</c> expression.</summary>
+        /// <param name="span">The source the expression covers.</param>
+        /// <param name="path">The dotted module path as written.</param>
+        public ModuleOfExpressionSyntax(SourceSpan span, IReadOnlyList<string> path) : base(span)
+        {
+            Path = path;
+        }
+    }
+
     /// <summary>A lambda, <c>(x) =&gt; expr</c> or <c>(x) =&gt; { ... }</c>.</summary>
     public sealed class LambdaExpressionSyntax : ExpressionSyntax
     {

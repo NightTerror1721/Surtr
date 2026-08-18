@@ -468,6 +468,9 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordTypeOf:
                     return ParseTypeOf();
 
+                case TokenType.KeywordModuleOf:
+                    return ParseModuleOf();
+
                 case TokenType.LeftBracket:
                     return ParseArrayLiteral();
 
@@ -530,6 +533,28 @@ namespace Surtr.Compiler.Syntax
             ExpressionSyntax operand = ParseExpression();
             reader.Expect(TokenType.RightParen, "')' to close 'typeof'");
             return new TypeOfExpressionSyntax(SpanFrom(start), operand);
+        }
+
+        /// <summary>
+        /// Parses <c>moduleof(ModulePath)</c>. Always static, unlike <c>typeof</c>: there is no
+        /// instance form over an arbitrary value (§2.1), so the operand is always a dotted module
+        /// path - never an expression - and there is no type-vs-value ambiguity to resolve here.
+        /// The parenthesised shape mirrors <c>typeof(X)</c>'s rather than <c>import</c>'s
+        /// unparenthesised path, for consistency with the language's one other reflection operator.
+        /// </summary>
+        private ExpressionSyntax ParseModuleOf()
+        {
+            SourceLocation start = reader.CurrentLocation;
+            reader.Advance();
+
+            reader.Expect(TokenType.LeftParen, "'(' after 'moduleof'");
+
+            List<string> path = new List<string> { reader.ExpectIdentifier("a module path") };
+            while (reader.Match(TokenType.Dot))
+                path.Add(reader.ExpectIdentifier("a name after '.'"));
+
+            reader.Expect(TokenType.RightParen, "')' to close 'moduleof'");
+            return new ModuleOfExpressionSyntax(SpanFrom(start), path);
         }
 
         /// <summary>

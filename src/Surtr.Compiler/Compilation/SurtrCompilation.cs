@@ -250,6 +250,35 @@ namespace Surtr.Compiler.Compilation
                             continue;
                         }
 
+                        if (import.Alias is null && import.Members is null)
+                        {
+                            // A path that resolves entirely as a module - or has submodules
+                            // nested under it, even without a module of its own - is the longest
+                            // possible module prefix, so it wins over any shorter prefix + type
+                            // name `TryResolveImport` would try (§2.1: `import ModulePath;` is
+                            // then equivalent to `import ModulePath.*;`), and may match several
+                            // modules at once exactly like a wildcard does - so it gets the same
+                            // multi-edge resolution instead of `TryResolveImport`'s one-target
+                            // shape.
+                            string wholePath = Prefix(import.Path, import.Path.Count);
+                            bool matchedWhole = false;
+
+                            if (KnowsModule(wholePath))
+                            {
+                                Dependencies.AddDependency(module.Path, wholePath);
+                                matchedWhole = true;
+                            }
+
+                            foreach (string nested in ModulesUnderPrefix(wholePath))
+                            {
+                                Dependencies.AddDependency(module.Path, nested);
+                                matchedWhole = true;
+                            }
+
+                            if (matchedWhole)
+                                continue;
+                        }
+
                         if (!TryResolveImport(import, out string target))
                         {
                             Diagnostics.ReportError(

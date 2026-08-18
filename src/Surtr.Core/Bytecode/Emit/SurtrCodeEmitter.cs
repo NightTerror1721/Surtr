@@ -561,6 +561,13 @@ namespace Surtr.Bytecode.Emit
             return token.Index;
         }
 
+        private int ModuleIndex(SurtrModuleToken token)
+        {
+            if (!token.IsValid)
+                throw new ArgumentException("Module token was not obtained from a module builder.", nameof(token));
+            return token.Index;
+        }
+
         #endregion
 
         #region Resolution

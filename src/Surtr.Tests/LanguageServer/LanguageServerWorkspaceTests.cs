@@ -143,6 +143,7 @@ namespace Surtr.Tests.LanguageServer
             // `new` (§5.5) — nor "not"/"or", which do not exist as tokens at all (logical operators
             // are symbolic: &&, ||, !).
             Assert.Contains("constructor", labels);
+            Assert.Contains("moduleof", labels);
             Assert.DoesNotContain("new", labels);
             Assert.DoesNotContain("not", labels);
             Assert.DoesNotContain("or", labels);

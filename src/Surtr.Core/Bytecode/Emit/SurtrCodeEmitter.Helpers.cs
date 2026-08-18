@@ -217,6 +217,19 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Pushes the <c>Type</c> value for the named type.</summary>
         public SurtrCodeEmitter LoadTypeOf(SurtrClassReference type) => LoadTypeOf(_module.Type(type));
 
+        /// <summary>Pushes the <c>Module</c> value for another module, in the narrowest encoding that reaches it.</summary>
+        public SurtrCodeEmitter LoadModuleOf(SurtrModuleToken module)
+            => ModuleIndex(module) <= ushort.MaxValue ? LoadModule(module) : LoadModuleX(module);
+
+        /// <summary>
+        /// Pushes the <c>Module</c> value for <paramref name="target"/> - itself, or another module
+        /// already built. A module does not reach itself through the module table (the same rule
+        /// <see cref="SurtrModuleBuilder.ModuleReference"/> enforces for a call), so this picks
+        /// <see cref="LoadCurrentModule"/> instead of interning a self-reference.
+        /// </summary>
+        public SurtrCodeEmitter LoadModuleOf(SurtrModule target)
+            => ReferenceEquals(target, _module.Module) ? LoadCurrentModule() : LoadModuleOf(_module.ModuleReference(target));
+
         /// <summary>Allocates an array whose length comes from the stack.</summary>
         /// <param name="arrayType">The whole parameterised array type, for example <c>AI</c>.</param>
         public SurtrCodeEmitter NewArray(SurtrClassReference arrayType) => ArrNew(_module.Type(arrayType));

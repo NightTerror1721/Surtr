@@ -164,6 +164,9 @@ namespace Surtr.Compiler.Syntax
         /// <summary><c>is</c> - type test, without casting (§5.7).</summary>
         KeywordIs,
 
+        /// <summary><c>moduleof</c> - the module a compile-time-known path names (§2.1).</summary>
+        KeywordModuleOf,
+
         /// <summary><c>let</c> - an immutable binding (§1).</summary>
         KeywordLet,
 

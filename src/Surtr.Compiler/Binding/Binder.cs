@@ -572,6 +572,29 @@ namespace Surtr.Compiler.Binding
                         continue;
                     }
 
+                    // A path that resolves entirely as a module - or has submodules nested under
+                    // it, even without a module of its own (a directory holding only
+                    // subdirectories) - is the longest possible module prefix, so §2.1 makes it
+                    // win over any shorter prefix + trailing type name the loop below would try:
+                    // `import ModulePath;` is then equivalent to `import ModulePath.*;`.
+                    string wholePath = Join(import.Path, import.Path.Count);
+                    bool matchedWhole = false;
+
+                    if (TryGetModuleSymbol(wholePath, out var wholeModule))
+                    {
+                        ImportWildcardModule(scope, imported, wholeModule);
+                        matchedWhole = true;
+                    }
+
+                    foreach (var nested in ModulesUnderPrefix(wholePath))
+                    {
+                        ImportWildcardModule(scope, imported, nested);
+                        matchedWhole = true;
+                    }
+
+                    if (matchedWhole)
+                        continue;
+
                     // A named import brings exactly one name in, and the longest module prefix says
                     // where the module ends.
                     for (int split = import.Path.Count - 1; split > 0; split--)

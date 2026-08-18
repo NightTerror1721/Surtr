@@ -42,6 +42,7 @@ namespace Surtr.Compiler.Binding
                 case CastExpressionSyntax cast: return BindCast(cast);
                 case TypeTestExpressionSyntax test: return BindTypeTest(test);
                 case TypeOfExpressionSyntax typeOf: return BindTypeOf(typeOf);
+                case ModuleOfExpressionSyntax moduleOf: return BindModuleOf(moduleOf);
                 case LambdaExpressionSyntax lambda: return BindLambda(lambda, expected);
                 case ArrayLiteralExpressionSyntax array: return BindArrayLiteral(array, expected);
                 case DictLiteralExpressionSyntax dictionary: return BindDictLiteral(dictionary, expected);
@@ -3270,6 +3271,26 @@ namespace Surtr.Compiler.Binding
                 operand = Convert(operand, _factory.Unknown, operandSyntax.Span);
 
             return new BoundTypeOfExpression(syntax, null, operand, resultType);
+        }
+
+        /// <summary>
+        /// <c>moduleof(ModulePath)</c>. Always static (§2.1): unlike <c>typeof</c> there is no
+        /// instance form, so <see cref="ModuleOfExpressionSyntax.Path"/> is the only thing to
+        /// resolve - against the same "known modules, honoring a declared alias" set an import
+        /// already resolves against (<see cref="TypeResolver.TryResolveModulePath"/>).
+        /// </summary>
+        private BoundExpression BindModuleOf(ModuleOfExpressionSyntax syntax)
+        {
+            if (!_resolver.TryResolveModulePath(syntax.Path, _typeScope, _sourceName, out var module))
+            {
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.UnresolvedModuleOf,
+                    $"'{string.Join(".", syntax.Path)}' does not name a known module.");
+            }
+
+            var resultType = ResolveBuiltInType("Module", syntax.Span);
+            return new BoundModuleOfExpression(syntax, module, resultType);
         }
 
         /// <summary>Resolves a built-in type by name, the same way <c>attribute class</c> resolves <c>Attribute</c> with no explicit base.</summary>

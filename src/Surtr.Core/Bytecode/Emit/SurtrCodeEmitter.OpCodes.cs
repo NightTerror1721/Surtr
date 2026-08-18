@@ -513,6 +513,17 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Emits <see cref="OpCode.GetTypeOfValue"/>.</summary>
         public SurtrCodeEmitter GetTypeOfValue() => Simple(OpCode.GetTypeOfValue, 1, 1);
 
+        /// <summary>Emits <see cref="OpCode.LoadModule"/>.</summary>
+        public SurtrCodeEmitter LoadModule(SurtrModuleToken module)
+            => WithU16(OpCode.LoadModule, ModuleIndex(module), 0, 1, "moduleIdx");
+
+        /// <summary>Emits <see cref="OpCode.LoadModuleX"/>.</summary>
+        public SurtrCodeEmitter LoadModuleX(SurtrModuleToken module)
+            => WithI32(OpCode.LoadModuleX, ModuleIndex(module), 0, 1);
+
+        /// <summary>Emits <see cref="OpCode.LoadCurrentModule"/>.</summary>
+        public SurtrCodeEmitter LoadCurrentModule() => Simple(OpCode.LoadCurrentModule, 0, 1);
+
         #endregion
 
         #region String Operations

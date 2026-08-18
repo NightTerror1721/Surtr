@@ -185,6 +185,21 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass Member;
 
         /// <summary>
+        /// A first-class handle to a <see cref="Classes.SurtrModule"/>, behind every
+        /// <see cref="SurtrModuleValue"/> - what <c>moduleof</c> and <c>Module.get</c> return.
+        /// </summary>
+        /// <remarks>
+        /// Named <c>ModuleType</c> rather than <c>Module</c> on the C# side only: <see cref="Module"/>
+        /// already names the <see cref="Classes.SurtrModule"/> that owns every built-in class
+        /// itself, a completely different thing. The Surtr-visible name is still <c>Module</c>,
+        /// same as <see cref="Type"/> and <see cref="Member"/> are named on their own side.
+        /// Declares no constructor and no field of its own, so Surtr source can never write
+        /// <c>Module()</c> - the only way to get one is <c>moduleof(...)</c>, <c>Module.get</c>/
+        /// <c>Module.tryGet</c>, or another <c>Module</c> member handing one back.
+        /// </remarks>
+        public static readonly SurtrClass ModuleType;
+
+        /// <summary>
         /// The root native class, behind a <see cref="SurtrNativeProxy"/> the host did not declare
         /// a type for. Host-declared native classes are separate and live on the runtime.
         /// </summary>
@@ -267,6 +282,7 @@ namespace Surtr.Runtime.BuiltIns
             Attribute = DeclareObject("Attribute", isAbstract: true);
             Type = DeclareObject("Type");
             Member = DeclareObject("Member");
+            ModuleType = DeclareObject("Module");
             Iterator = DeclareObject("iterator");
 
             Erased = Declare("erased", SurtrValueTypeCode.Erased, SurtrClassReference.Erased, isAbstract: true);
@@ -325,6 +341,7 @@ namespace Surtr.Runtime.BuiltIns
             // here.
             SurtrReflectionBuiltIns.DeclareType(BuilderFor(Type, handles));
             SurtrReflectionBuiltIns.DeclareMember(BuilderFor(Member, handles));
+            SurtrModuleReflectionBuiltIns.DeclareModule(BuilderFor(ModuleType, handles));
 
             // Kept as fields because a compiler has to name them to lower `for-in` and `<=>`: those
             // lowerings are calls through a contract's own slots, and looking one up by a mangled

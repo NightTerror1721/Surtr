@@ -939,6 +939,7 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.BoxChar:
                 case OpCode.Unbox:
                 case OpCode.GetTypeOfValue:
+                case OpCode.LoadCurrentModule:
                 case OpCode.StrLen:
                 case OpCode.StrHash:
                 case OpCode.StrGet:
@@ -1038,6 +1039,13 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.BoxAsX:
                 case OpCode.LoadTypeX:
                     return AppendType(builder, chunk, operand, ReadI32(chunk, operand), 4);
+
+                // ---- module access table -------------------------------------------------------
+                case OpCode.LoadModule:
+                    return AppendModule(builder, chunk, operand, ReadU16(chunk, operand), 2);
+
+                case OpCode.LoadModuleX:
+                    return AppendModule(builder, chunk, operand, ReadI32(chunk, operand), 4);
 
                 case OpCode.ArrNewX:
                     AppendTypeName(builder, chunk, ReadU16(chunk, operand));
@@ -1260,6 +1268,21 @@ namespace Surtr.Bytecode.Emit
 
             if ((uint)index < (uint)chunk.TypeTable.Length)
                 builder.Append(" (").Append(chunk.TypeTable[index].Reference.ToDisplayString()).Append(')');
+        }
+
+        private static int AppendModule(StringBuilder builder, SurtrChunk chunk, int operand, int index, int width)
+        {
+            AppendModuleName(builder, chunk, index);
+            builder.AppendLine();
+            return operand + width;
+        }
+
+        private static void AppendModuleName(StringBuilder builder, SurtrChunk chunk, int index)
+        {
+            builder.Append(' ').Append(index);
+
+            if ((uint)index < (uint)chunk.ModuleTable.Length && chunk.ModuleTable[index] is { } module)
+                builder.Append(" (").Append(module.Path).Append(')');
         }
 
         private static int AppendFieldOperand(StringBuilder builder, SurtrChunk chunk, int operand, int index, int width)

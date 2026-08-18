@@ -500,6 +500,24 @@ namespace Surtr.Compiler.Binding.BoundTree
         public BoundExpression? Operand { get; }
     }
 
+    /// <summary>
+    /// <c>moduleof(ModulePath)</c> - the module a compile-time-known dotted path names (§2.1).
+    /// Always static, unlike <see cref="BoundTypeOfExpression"/>: there is no instance form over
+    /// an arbitrary value, so a resolved <see cref="ModuleSymbol"/> is the only shape this node
+    /// ever carries.
+    /// </summary>
+    public sealed class BoundModuleOfExpression : BoundExpression
+    {
+        internal BoundModuleOfExpression(SyntaxNode syntax, ModuleSymbol module, TypeSymbol type)
+            : base(syntax, type)
+        {
+            Module = module;
+        }
+
+        /// <summary>The module the path resolved to.</summary>
+        public ModuleSymbol Module { get; }
+    }
+
     /// <summary>A lambda, whose body is lifted to a static synthetic method at emit.</summary>
     public sealed class BoundLambdaExpression : BoundExpression
     {

@@ -83,6 +83,15 @@ namespace Surtr.Runtime.Classes
         internal SurtrModule[] ModuleTable;
 
         /// <summary>
+        /// The module this chunk belongs to, set once at construction. What
+        /// <see cref="Bytecode.OpCode.LoadCurrentModule"/> reads: a module does not reach itself
+        /// through <see cref="ModuleTable"/> (the same rule <c>CallLocalModule</c> already follows
+        /// for a call), so <c>moduleof</c> on the module's own path needs this back-pointer instead
+        /// of a table index.
+        /// </summary>
+        internal SurtrModule? OwningModule;
+
+        /// <summary>
         /// The paths behind <see cref="ModuleTable"/> when this chunk came from an image, in the
         /// same order; empty for a chunk the emitter produced.
         /// </summary>

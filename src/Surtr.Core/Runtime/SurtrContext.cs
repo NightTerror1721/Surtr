@@ -78,6 +78,14 @@ namespace Surtr.Runtime
         internal Dictionary<SurtrTypeInfo, SurtrTypeValue> TypeValueCache;
 
         /// <summary>
+        /// Text-to-object table backing <see cref="SurtrRuntime.GetOrCreateModuleValue"/>, so
+        /// <c>moduleof</c> and <c>Module.get</c>/<c>Module.tryGet</c> alike return the one shared
+        /// <c>Module</c> value for a given <see cref="SurtrModule"/> within this runtime.
+        /// </summary>
+        /// <remarks>Keyed by reference identity, the same reasoning as <see cref="TypeValueCache"/>.</remarks>
+        internal Dictionary<SurtrModule, SurtrModuleValue> ModuleValueCache;
+
+        /// <summary>
         /// Entities kept alive regardless of reachability, as raw reference values ready to hand
         /// to the collector.
         /// </summary>
@@ -137,6 +145,7 @@ namespace Surtr.Runtime
             HostTypeHandles = new SurtrTypeHandleTable();
             InternedStrings = new Dictionary<string, SurtrString>(StringComparer.Ordinal);
             TypeValueCache = new Dictionary<SurtrTypeInfo, SurtrTypeValue>();
+            ModuleValueCache = new Dictionary<SurtrModule, SurtrModuleValue>();
 
             Roots = new SurtrRawValue[InitialRootCapacity];
             RootCount = 0;
@@ -256,6 +265,7 @@ namespace Surtr.Runtime
 
             InternedStrings?.Clear();
             TypeValueCache?.Clear();
+            ModuleValueCache?.Clear();
             Roots = Array.Empty<SurtrRawValue>();
             RootCount = 0;
 
