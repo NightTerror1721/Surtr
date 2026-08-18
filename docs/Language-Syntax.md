@@ -52,7 +52,7 @@ surface syntax just gives each descriptor symbol a spelling:
 | `char` | `C` | |
 | `string` | `S` | |
 | `void` | `V` | **return position only** — `void` is deliberately not a type per `CLAUDE.md`, so a field, local or parameter can never be declared `void` |
-| `range` | *(new — see §5.4)* | a half-open or closed interval of `int`s; the only built-in type here that the descriptor grammar does **not** already have a symbol for |
+| `range` | `R` | a half-open or closed interval of `int`s (§5.4); unparameterised, since both bounds are always `int` |
 | `unknown` | `E` | holds any value; must be cast before use (§5.10) |
 
 Composite built-ins are written in the parameterised forms of §5.3 — `T[]`, `{K: V}`, `(T, T, ...)`,
@@ -1521,9 +1521,9 @@ nesting grammar entirely.
 Two consequences worth being explicit about, because "first-class" is the more expensive of the
 two options that were on the table here:
 
-- **It needs a new descriptor symbol.** `range` is the one entry in §1.1's table that the encoding
-  in `CLAUDE.md` has no letter for, so adding it means claiming one (`R` is free) and adding a
-  matching built-in class. That is real runtime work, tracked in §14.1.
+- **It needs its own descriptor symbol.** `range`'s is `R` (§1.1) — unparameterised, since a range
+  has nothing to be parameterised by: both bounds are always `int`, so the symbol alone names the
+  type completely, the same way `I`/`F`/`B`/`C`/`S` do for the other primitives.
 - **`for-in` over a range must not allocate.** A `range` is an object, and allocating one per loop
   entry would be exactly the kind of hidden per-iteration cost `CLAUDE.md`'s performance rules
   forbid. The compiler is therefore required to lower `for (i in <lo>..<hi>)` — where the range
@@ -2360,12 +2360,15 @@ against its target list at the use site, only at its own declaration. Declaring 
 same project as everything that uses it, which is by far the common case, is unaffected.
 
 **Reading an attribute back from Surtr itself, not just from a host, goes through `Type` and
-`Member`** — two more built-ins, always in scope like `Attribute`:
+`Member`** — two more built-ins, always in scope like `Attribute`, and the general reflection
+surface over a class's or interface's own metadata (attributes are one thing they can read, not
+the only thing):
 
 ```
 let t = Type.of(someValue);   // the runtime class behind any value, primitives included
 t.name;                       // "Player"
-t.baseType;                   // the Type one level up, or null at the root
+t.baseType;                   // the Type one level up, or null at the root or on an interface
+t.isInterface;                // false for Player, true for a Type wrapping an interface
 t.members();                  // Member[] - this type's own declared fields, properties,
                                // methods and nested types, one entry each
 t.attributes();                // Attribute[] written directly on the type
@@ -2374,22 +2377,51 @@ for (m in t.members()) {
     m.name;                   // "health"
     m.kind;                   // "field" | "property" | "method" | "class" | "enum" | "interface"
     m.isStatic;
-    m.declaringType;          // the Type that declared it
+    m.declaringType;          // the Type that declared it, or null for a module-level member
     m.attributes();           // Attribute[] written on this member, `Runtime`-retention only
 }
 ```
 
-`Type.of` is the only way to get one — declaring a bare `Type()`/`Member()` is rejected, the same
-way `iterator()` is: neither declares a constructor. `members()` reports each declaration once,
-under the shape a reader of the source would recognize: an auto-property's synthesized backing
-field and its `get_x`/`set_x` accessors fold into the one `property` entry, and a name the compiler
-made up (leading `$` — bridges, lambdas, backing fields the source never wrote) is left out
-entirely. A constructor appears once, named `ctor`. An attribute an attribute usage names is
-already the real, constructed instance §11 describes above — `m.attributes()[0] as Range` reads its
-fields directly, no separate value-reading API needed. Only `Runtime`-retention attributes are ever
-reachable this way, and there is nothing to filter for it at read time: `CompileTimeOnly` never
-reaches a member's attribute list in the first place (`ModuleEmitter` never emits it), so `Type`
-and `Member` only ever see what was already there.
+`Type`'s full surface:
+
+- `Type.of(value: unknown): Type` — the runtime class behind any value, primitives included
+  (boxed on the way in, the same conversion an `unknown` parameter always costs). The only way to
+  get one from an arbitrary value; `typeof` below is the other, for a name known at compile time.
+- `Type.get(name: string): Type` / `Type.tryGet(name: string): Type?` — the same lookup, from a
+  descriptor computed at run time instead of a value or a name written in source; covered in full
+  further down, alongside `moduleof`.
+- `name: string` — the type's own declared name, unqualified (`"Player"`, not `"game.core:Player;"`).
+- `baseType: Type?` — the `Type` one level up the class hierarchy, or `null` at the root and on
+  every interface (which has no single base — only however many it extends).
+- `isInterface: bool` — whether this `Type` wraps an interface rather than a class, enum, value
+  class or singleton.
+- `members(): Member[]` — this type's own declared fields, properties, methods and nested types,
+  one entry each; see below for exactly what "own declared" excludes.
+- `attributes(): Attribute[]` — every `Runtime`-retention attribute written directly on the type.
+
+`Member`'s full surface:
+
+- `name: string` — the member's own name (`"health"`, `"ctor"` for a constructor).
+- `kind: string` — one of `"field"`, `"property"`, `"method"`, `"class"`, `"enum"` or `"interface"`,
+  naming what kind of declaration this is.
+- `isStatic: bool`.
+- `declaringType: Type?` — the `Type` that declared this member, or `null` when it has none to
+  name: a module-level field or function (§2.5), reached through `Module.members()` below, belongs
+  to a module, not a type, so there is nothing for this to point at.
+- `attributes(): Attribute[]` — every `Runtime`-retention attribute written on this member.
+
+Declaring a bare `Type()`/`Member()` is rejected, the same way `iterator()` is: neither declares a
+constructor, so `Type.of`/`Type.get`/`Type.tryGet` (and, for `Member`, only ever reading one back
+off a `Type.members()`/`Module.members()` call) are the only ways to get one. `members()` reports
+each declaration once, under the shape a reader of the source would recognize: an auto-property's
+synthesized backing field and its `get_x`/`set_x` accessors fold into the one `property` entry, and
+a name the compiler made up (leading `$` — bridges, lambdas, backing fields the source never wrote)
+is left out entirely. A constructor appears once, named `ctor`. An attribute an attribute usage
+names is already the real, constructed instance §11 describes above — `m.attributes()[0] as Range`
+reads its fields directly, no separate value-reading API needed. Only `Runtime`-retention
+attributes are ever reachable this way, and there is nothing to filter for it at read time:
+`CompileTimeOnly` never reaches a member's attribute list in the first place (`ModuleEmitter` never
+emits it), so `Type` and `Member` only ever see what was already there.
 
 This is deliberately read-only: `Type`/`Member` enumerate declarations and their attributes, and
 stop there. Reading or calling the member itself — `field.get(instance)`, `method.invoke(instance,
@@ -2471,9 +2503,9 @@ the alias first, exactly as a qualified type name already does — `moduleof(Cor
   path even though it is process-wide rather than registered per runtime, the same special case
   `typeof`'s own resolution already needs for it.
 
-**`Type` gained the same dynamic counterpart**: `Type.get(name: string): Type` and
-`Type.tryGet(name: string): Type?`, the runtime-string analogue of `typeof`/`Type.of` the same way
-`Module.get`/`tryGet` are of `moduleof`. `name` is a **descriptor** (§"Type references are
+**`Type.get`/`Type.tryGet`, named above, are the runtime-string analogue of `typeof`/`Type.of`**,
+the same way `Module.get`/`tryGet` are of `moduleof`. `name` is a **descriptor** (§"Type references
+are
 descriptor strings" — `Ogame.core:Entity;`, `AI` for `int[]`, a mangled generic construction like
 `` Obox:Box`1;I ``), not a display name: the canonical, unambiguous form the runtime already
 resolves every type reference against, reused here with no new parsing rather than a second,
