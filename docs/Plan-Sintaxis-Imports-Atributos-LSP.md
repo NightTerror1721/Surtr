@@ -905,6 +905,30 @@ su `Type` correctamente.
 `attribute`) — a diferencia de esas dos, no necesita doblar como identificador en ningún otro
 contexto, así que reservarla evita cualquier ambigüedad de raíz en vez de trasladarla al parser.
 
+**LSP**: `typeof` necesitó dos arreglos reales, encontrados auditando el Language Server tras
+cerrar la fase — el mismo tipo de hueco que las Fases 0/12 de este plan ya encontraron para otras
+construcciones nuevas:
+- `SymbolResolver.WalkExpression` (hover/ir-a-definición) no tenía ningún caso para
+  `BoundTypeOfExpression` — caía al `default: break;` y no recorría nada, así que `Resolve`
+  devolvía `null` para **cualquier** cosa dentro de `typeof(...)` (ni siquiera un hover
+  degradado). Añadido un caso que llama a `ConsiderName` sobre `TargetType` (forma estática) y
+  recorre `Operand` (forma de instancia), igual que ya hace `BoundTypeTestExpression` para `is`.
+- `CompletionProvider.ChildrenOf(BoundExpression)` tampoco tenía caso para
+  `BoundTypeOfExpression`, así que el autocompletado tras un punto no podía bajar a través de un
+  receptor no trivial dentro de `typeof(...)` (`typeof(Box().value` no ofrecía nada). Mismo
+  arreglo: un caso que produce `Operand` cuando no es null.
+- Confirmado que **no** hacía falta nada en `CompletionProvider.Keywords` más allá de lo ya hecho
+  (`typeof` añadido durante la implementación), que diagnósticos/signature help ya funcionan sin
+  cambios (el primero por construcción — mismo `SurtrDiagnosticBag` sin filtrado; el segundo
+  porque `typeof(` no calza con ningún patrón de llamada y `SignatureHelp` devuelve `null` con
+  limpieza), y que no hay semantic tokens en este LSP (nada que sincronizar ahí).
+- 4 tests nuevos en `LanguageServerWorkspaceTests.cs`: hover sobre un local leído a través de
+  `typeof(...)` y sobre el nombre de una clase en la forma estática (ambos comprobando el
+  markdown, no `HasDefinition` — un hover sobre un tipo vía árbol ligado nunca lleva definición,
+  ni para `typeof` ni para `is`/`as`, y un local tampoco la lleva nunca en este LSP; eso ya era
+  así antes de esta fase), y autocompletado tras un punto atravesando un `typeof(...)` con
+  receptor no trivial.
+
 **Tests**: pinning de los 3 opcodes nuevos en `OpCodeValueTests.cs`; 12 tests de punta a punta en
 `ModuleEmitterTests.cs` (región "typeof (Fase 13)") — forma de instancia sobre un objeto y sobre
 un primitivo, forma estática sobre una clase, una interfaz (con `isInterface`/`baseType == null`)

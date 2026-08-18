@@ -377,6 +377,107 @@ namespace Surtr.Tests.LanguageServer
             Assert.Equal(Path.GetFullPath(nestedPath), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
         }
 
+        /// <summary>
+        /// `typeof`'s instance form (a bound <c>Operand</c> rather than a <c>TargetType</c>) has to
+        /// be walked into for hover to reach a local used as its argument - before
+        /// <c>SymbolResolver.WalkExpression</c> grew a <c>BoundTypeOfExpression</c> case, the walk
+        /// stopped dead at the <c>typeof</c> node and <c>Resolve</c> returned null for it entirely
+        /// (no hover at all, not even a degraded one - a local never gets <c>HasDefinition</c> in
+        /// this LSP regardless of construct, so the markdown text is what actually pins the fix).
+        /// </summary>
+        [Fact]
+        public void HoverOnATypeOfInstanceOperandReachesTheLocalItReads()
+        {
+            const string source =
+                "public class Box { public let value: int = 0; }\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let b: Box = Box();\n" +
+                "        let t = typeof(b);\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int nameOffset = source.IndexOf("typeof(b)", StringComparison.Ordinal) + "typeof(".Length;
+
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.Contains("b: Box", hit!.Markdown);
+        }
+
+        /// <summary>
+        /// `typeof`'s static form still resolves a type name directly, same as before the fix -
+        /// this pins that <c>BoundTypeOfExpression</c>'s <c>TargetType</c> path keeps working
+        /// alongside the newly-added <c>Operand</c> path above. A bound-tree type hover never
+        /// carries <c>HasDefinition</c> either, for <c>is</c>/<c>as</c> just as much as for
+        /// <c>typeof</c> (<c>ConsiderName</c> reaches it through <c>FromType</c>, which sets no
+        /// definition file), so the markdown is again what a fix or a regression would show up in.
+        /// </summary>
+        [Fact]
+        public void HoverOnATypeOfStaticOperandNamesTheClass()
+        {
+            const string coreSource = "public class Entity {\n    public fun greet(): string { return \"hi\"; }\n}\n";
+            const string appSource =
+                "import proj.core.*;\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let t = typeof(Entity);\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Entity.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+
+            int nameOffset = appSource.IndexOf("typeof(Entity)", StringComparison.Ordinal) + "typeof(".Length;
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, appPath, appSource, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.Contains("Entity", hit!.Markdown);
+        }
+
+        /// <summary>
+        /// Member completion after a dot has to descend through a <c>typeof(...)</c> wrapper to
+        /// reach a non-bare-identifier receiver - before <c>CompletionProvider.ChildrenOf</c> grew a
+        /// <c>BoundTypeOfExpression</c> case, the walk had nowhere to go past the outer node and
+        /// completion on <c>typeof(Box().</c> returned nothing.
+        /// </summary>
+        [Fact]
+        public void MemberCompletionAfterADotReachesThroughATypeOfWrapper()
+        {
+            const string source =
+                "public class Box { public let value: int = 0; }\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let t = typeof(Box().value);\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int dotEnd = source.IndexOf("typeof(Box().", StringComparison.Ordinal) + "typeof(Box().".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, path, source, dotEnd);
+
+            Assert.Contains(completion.Items, item => item.Label == "value");
+        }
+
         private static string Describe(System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<Surtr.Compiler.Diagnostics.SurtrDiagnostic>> diagnostics)
             => string.Join(" | ", diagnostics.SelectMany(pair => pair.Value).Select(d => d.ToString()));
     }

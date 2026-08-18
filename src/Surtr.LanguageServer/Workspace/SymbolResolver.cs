@@ -402,6 +402,13 @@ namespace Surtr.LanguageServer.Workspace
                     WalkExpression(typeTest.Operand, position, anchor, tokens, ref best, snapshot);
                     break;
 
+                case BoundTypeOfExpression typeOf:
+                    if (typeOf.TargetType is TypeSymbol typeOfTarget)
+                        ConsiderName(typeOf, typeOfTarget, typeOf.Span, anchor, tokens, ref best, snapshot);
+                    if (typeOf.Operand is BoundExpression typeOfOperand)
+                        WalkExpression(typeOfOperand, position, anchor, tokens, ref best, snapshot);
+                    break;
+
                 case BoundLambdaExpression lambda:
                     WalkStatement(lambda.Body, position, anchor, tokens, ref best, snapshot);
                     break;

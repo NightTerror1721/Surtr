@@ -1020,6 +1020,11 @@ namespace Surtr.LanguageServer.Workspace
                     yield return typeTest.Operand;
                     break;
 
+                case BoundTypeOfExpression typeOf:
+                    if (typeOf.Operand is not null)
+                        yield return typeOf.Operand;
+                    break;
+
                 case BoundArrayLiteralExpression array:
                     foreach (var element in array.Elements)
                         yield return element;
