@@ -11,6 +11,7 @@ using Surtr.Runtime.Objects;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 
 namespace Surtr.Tests.Compiler.CodeGen
@@ -91,6 +92,21 @@ namespace Surtr.Tests.Compiler.CodeGen
 
         private static string Text(SurtrRuntime runtime, string name, params SurtrValue[] arguments)
             => runtime.Resolve<SurtrString>(Call(runtime, name, arguments))!.Text;
+
+        private static string RepoRoot()
+        {
+            var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+            while (directory is not null)
+            {
+                if (File.Exists(Path.Combine(directory.FullName, "Surtr.sln")))
+                    return directory.FullName;
+
+                directory = directory.Parent;
+            }
+
+            throw new InvalidOperationException("Could not locate the repo root from " + AppContext.BaseDirectory);
+        }
 
         #region A whole module
         [Fact]
@@ -291,6 +307,137 @@ namespace Surtr.Tests.Compiler.CodeGen
                 ("/game/math/trig/Trig.surtr", "public fun twice(x: int): int { return x + x; }"));
 
             Assert.Equal(42, Int(runtime, "run"));
+        }
+        #endregion
+
+        #region Modulo por archivo con path explicito (§2.1)
+        /// <summary>
+        /// The stdlib keeps one module per file with the file name as the path's final segment, so
+        /// §2.1's directory derivation cannot name them and each file is told its module outright.
+        /// A module declared that way is a module like any other: one sibling can import it by its
+        /// whole path and reach its types. Regression for the stdlib build, where `List.surtr`'s
+        /// `import surtr.collections.Collection;` resolved against nothing but the built-in `surtr`
+        /// module and silently imported no `IReadOnlyCollection`.
+        /// </summary>
+        [Fact]
+        public void AFileWithAnExplicitModulePathCanBeImportedByASibling()
+        {
+            var project = new SurtrProject(Root, rootModulePath: "surtr");
+            project.AddSourceFile(
+                Root + "/surtr/collections/Collection.surtr",
+                "surtr.collections.Collection",
+                "public interface IReadOnlyCollection<T> : IIterable<T>\n"
+                    + "{\n"
+                    + "    length: int { get; }\n"
+                    + "    fun get(index: int): T;\n"
+                    + "    fun contains(item: T): bool;\n"
+                    + "}\n"
+                    + "public interface ICollection<T> : IReadOnlyCollection<T>\n"
+                    + "{\n"
+                    + "    fun add(item: T): void;\n"
+                    + "}");
+            project.AddSourceFile(
+                Root + "/surtr/collections/List.surtr",
+                "surtr.collections.List",
+                "import surtr.collections.Collection;\n"
+                    + "\n"
+                    + "public interface IReadOnlyList<T> : IReadOnlyCollection<T>\n"
+                    + "{\n"
+                    + "    length: int { get; }\n"
+                    + "    fun get(index: int): T;\n"
+                    + "}");
+
+            using var compilation = SurtrCompilation.Create(project);
+            var binder = compilation.Bind();
+            binder.BindBodies();
+
+            Assert.False(
+                compilation.HasErrors,
+                "Binding reported: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+
+            var emitter = new ModuleEmitter(compilation, binder);
+            Assert.True(
+                emitter.TryEmit(),
+                "Emission reported: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+            foreach (var module in emitter.Modules)
+                runtime.LoadModule(module);
+
+            Assert.True(runtime.TryGetModule("surtr.collections.Collection", out _));
+            Assert.True(runtime.TryGetModule("surtr.collections.List", out var listModule));
+
+            // The import is not a facade: `IReadOnlyList`'s declared parent is the very
+            // `IReadOnlyCollection` the sibling module declares, resolved across the module boundary.
+            Assert.True(listModule.TryGetInterface("IReadOnlyList`1", out var readOnlyList));
+            Assert.Equal(1, readOnlyList.DeclaredExtendedInterfaceHandles.Length);
+            var parent = readOnlyList.DeclaredExtendedInterfaceHandles[0].ResolvedType as SurtrInterface;
+            Assert.NotNull(parent);
+            Assert.True(
+                parent!.SelfReference.TryGetFullName(out string fullName)
+                && fullName.StartsWith("surtr.collections.Collection:", StringComparison.Ordinal));
+        }
+
+        /// <summary>
+        /// The stdlib's own <c>LinkedList&lt;T&gt;</c> — the exact sources the tool compiles —
+        /// runs against the extended contract the import enabled. Because
+        /// <c>IReadOnlyList&lt;T&gt; : IReadOnlyCollection&lt;T&gt;</c> now holds, the class must
+        /// implement <c>contains</c>/<c>copyTo</c>/<c>iterate</c> beside the original members, so
+        /// this exercises all of it at runtime rather than only asserting that it compiled.
+        /// </summary>
+        [Fact]
+        public void TheStdlibLinkedListRunsThroughItsExtendedContract()
+        {
+            string collections = RepoRoot() + "/src/Surtr.Stdlib/src/surtr/collections";
+            string collectionSource = File.ReadAllText(collections + "/Collection.surtr");
+            string listSource = File.ReadAllText(collections + "/List.surtr");
+
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "import surtr.collections.List;\n"
+                    + "fun run(): int {\n"
+                    + "    var list = LinkedList<int>();\n"
+                    + "    list.add(10); list.add(20); list.add(30);\n"
+                    + "    if (list.length != 3) return 1;\n"
+                    + "    if (!list.contains(20)) return 2;\n"
+                    + "    if (list.contains(99)) return 3;\n"
+                    + "    var sum = 0;\n"
+                    + "    for (var item in list) sum = sum + item;\n"
+                    + "    if (sum != 60) return 4;\n"
+                    + "    var target = [0, 0, 0];\n"
+                    + "    list.copyTo(target, 0);\n"
+                    + "    if (target[0] != 10 || target[1] != 20 || target[2] != 30) return 5;\n"
+                    + "    list.removeAt(1);\n"
+                    + "    if (list.length != 2 || list[1] != 30) return 6;\n"
+                    + "    list.clear();\n"
+                    + "    if (list.length != 0) return 7;\n"
+                    + "    return 0;\n"
+                    + "}");
+            project.AddSourceFile(
+                Root + "/surtr/collections/Collection.surtr", "surtr.collections.Collection", collectionSource);
+            project.AddSourceFile(
+                Root + "/surtr/collections/List.surtr", "surtr.collections.List", listSource);
+
+            var compilation = SurtrCompilation.Create(project);
+            _owned.Add(compilation);
+
+            var binder = compilation.Bind();
+            binder.BindBodies();
+
+            Assert.True(
+                !compilation.HasErrors,
+                "Binding reported: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+
+            var emitter = new ModuleEmitter(compilation, binder);
+
+            Assert.True(
+                emitter.TryEmit(),
+                "Emission reported: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+
+            var runtime = Load(emitter);
+            Assert.Equal(0, Call(runtime, "run").AsInt);
         }
         #endregion
 

@@ -19,10 +19,10 @@ namespace Surtr.Stdlib
     /// everything <c>Surtr.Stdlib.Tool</c> compiled.
     /// </summary>
     /// <remarks>
-    /// Coarse-grained on purpose: today no stdlib module imports another (confirmed by grep
-    /// across <c>Surtr.Stdlib/src</c> — every module only names the built-in <c>surtr</c>
-    /// module), so a category is exactly the unit a selection needs. If that stops being true,
-    /// <see cref="SurtrStdlib.LoadInto(SurtrRuntime, IReadOnlyList{SurtrModuleImage})"/>'s
+    /// Coarse-grained on purpose: stdlib modules today only import a sibling in the same category
+    /// (<c>surtr.collections.List</c> imports <c>surtr.collections.Collection</c>, never a module
+    /// in another category), so a category is exactly the unit a selection needs. If that stops
+    /// being true, <see cref="SurtrStdlib.LoadInto(SurtrRuntime, IReadOnlyList{SurtrModuleImage})"/>'s
     /// fixed-point retry loop still makes an incomplete selection fail cleanly — a module
     /// naming one this selection left out simply never resolves — rather than loading with a
     /// silent hole.
@@ -88,8 +88,8 @@ namespace Surtr.Stdlib
     /// Modules load in the order given, retrying what does not yet resolve until nothing more can
     /// be made to — the same fixed-point pass <c>Surtr.Run</c>'s module set uses, because an image
     /// carries no dependency list until it is instantiated. The stdlib build output is sorted, and
-    /// today every module only references the built-in <c>surtr</c> module, so order rarely
-    /// matters; the retry is what keeps it true once the modules start referencing each other.
+    /// today a module references at most a sibling in the same category, so order rarely matters;
+    /// the retry is what keeps it true as the modules grow into each other.
     /// </para>
     /// <para>
     /// The <c>.surtrc</c> images travel <em>inside this assembly</em>, embedded as resources by the

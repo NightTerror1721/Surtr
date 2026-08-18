@@ -179,17 +179,28 @@ namespace Surtr.Compiler.Compilation
         {
             foreach (var file in Project.SourceFiles)
             {
-                var status = ModulePath.TryDerive(
-                    Project.SourceRoot,
-                    file.Path,
-                    Project.RootModulePath,
-                    out string modulePath,
-                    out string offendingSegment);
-
-                if (status != ModulePathStatus.Ok)
+                // A file that names its own module is the exception, not the rule — the stdlib's
+                // one-module-per-file layout, whose module name ends in the file name — so the
+                // ordinary §2.1 directory derivation applies only where no module was given.
+                string modulePath;
+                if (file.ModulePath is not null)
                 {
-                    ReportModulePath(file, status, offendingSegment);
-                    continue;
+                    modulePath = file.ModulePath;
+                }
+                else
+                {
+                    var status = ModulePath.TryDerive(
+                        Project.SourceRoot,
+                        file.Path,
+                        Project.RootModulePath,
+                        out modulePath,
+                        out string offendingSegment);
+
+                    if (status != ModulePathStatus.Ok)
+                    {
+                        ReportModulePath(file, status, offendingSegment);
+                        continue;
+                    }
                 }
 
                 // One bag for the whole project: the lexer and parser report into the same place

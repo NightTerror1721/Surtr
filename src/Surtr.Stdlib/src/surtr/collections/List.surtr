@@ -1,16 +1,162 @@
-public interface IReadOnlyList<T>
-{
-    length: int { get; }
+import surtr.collections.Collection;
 
-    fun get(index: int): T;
+public interface IReadOnlyList<T> : IReadOnlyCollection<T>
+{
+    fun indexOf(item: T): int;
 }
 
-public interface IList<T> : IReadOnlyList<T>
+public interface IList<T> : IReadOnlyList<T>, ICollection<T>
 {
-    fun set(index: int, value: T): void;
-    fun add(value: T): void;
-    fun removeAt(index: int): void;
-    fun clear(): void;
+    fun insert(index: int, item: T): void;
+    fun removeAt(index: int): bool;
+}
+
+public class List<T> : IList<T>
+{
+    private const DefaultCapacity: int = 4;
+
+    private var _items: T[];
+    private var _length: int;
+    private var _capacity: int;
+
+    public constructor(initialCapacity: int = DefaultCapacity)
+    {
+        if (initialCapacity < 0) throw IndexOutOfRangeException("Initial capacity must be non-negative");
+        this._capacity = initialCapacity;
+        this._items = array<T>(_capacity);
+        this._length = 0;
+    }
+
+    public override inline length: int => _length;
+    public override inline isReadOnly: bool => false;
+
+    public override fun get(index: int): T
+    {
+        if (index < 0 || index >= _length) throw IndexOutOfRangeException("Index out of range");
+        return _items[index];
+    }
+
+    public override fun set(index: int, value: T): void
+    {
+        if (index < 0 || index >= _length) throw IndexOutOfRangeException("Index out of range");
+        _items[index] = value;
+    }
+
+    public override fun add(item: T): void
+    {
+        if (_length == _capacity) ensureCapacity(_length + 1);
+        _items[_length] = item;
+        _length++;
+    }
+
+    public override fun insert(index: int, item: T): void
+    {
+        if (index < 0 || index > _length) throw IndexOutOfRangeException("Index out of range");
+        if (_length == _capacity) ensureCapacity(_length + 1);
+        for (var i = _length; i > index; i--)
+            _items[i] = _items[i - 1];
+        _items[index] = item;
+        _length++;
+    }
+
+    public override fun removeAt(index: int): bool
+    {
+        if (index < 0 || index >= _length) throw IndexOutOfRangeException("Index out of range");
+        for (var i = index; i < _length - 1; i++)
+            _items[i] = _items[i + 1];
+        _length--;
+        return true;
+    }
+
+    public override fun remove(item: T): bool
+    {
+        var index = this.indexOf(item);
+        if (index >= 0)
+        {
+            this.removeAt(index);
+            return true;
+        }
+        return false;
+    }
+
+    public override inline fun clear(): void
+    {
+        _length = 0;
+    }
+
+    public override fun indexOf(item: T): int
+    {
+        for (var i = 0; i < _length; i++)
+        {
+            if (_items[i] == item) return i;
+        }
+        return -1;
+    }
+
+    public override inline fun contains(item: T): bool
+    {
+        return this.indexOf(item) >= 0;
+    }
+
+    public override fun copyTo(array: T[], arrayIndex: int): void
+    {
+        if (arrayIndex < 0) throw IndexOutOfRangeException("Array index must be non-negative");
+        if (array.length - arrayIndex < _length) throw ArgumentException("The number of elements in the source List is greater than the available space from arrayIndex to the end of the destination array.");
+        for (var i = 0; i < _length; i++)
+            array[arrayIndex + i] = _items[i];
+    }
+
+    public override inline fun iterate(): IIterator<T>
+    {
+        return Iterator<T>(_items, _length);
+    }
+
+    private fun ensureCapacity(min: int): void
+    {
+        if (_capacity < min)
+        {
+            var newCapacity = _capacity == 0 ? DefaultCapacity : _capacity * 2;
+            if (newCapacity < min) newCapacity = min;
+            var newItems = array<T>(newCapacity);
+            for (var i = 0; i < _length; i++)
+                newItems[i] = _items[i];
+            _items = newItems;
+            _capacity = newCapacity;
+        }
+    }
+
+    private sealed class Iterator<T> : IIterator<T>
+    {
+        private let _items: T[];
+        private let _length: int;
+        private var _index: int;
+
+        public constructor(items: T[], length: int, index: int = -1)
+        {
+            this._items = items;
+            this._length = length;
+            this._index = index;
+        }
+
+        public override current: T
+        {
+            get
+            {
+                if (_index < 0 || _index >= _length) throw IndexOutOfRangeException("Iterator is out of bounds");
+                return _items[_index];
+            }
+        }
+
+        public override fun moveNext(): bool
+        {
+            if (_index + 1 < _length)
+            {
+                _index++;
+                return true;
+            }
+            return false;
+        }
+    }
 }
 
 
@@ -28,6 +174,30 @@ public class LinkedList<T> : IList<T>
         }
     }
 
+    private sealed class ListIterator<T> : IIterator<T>
+    {
+        private var _node: Node<T>?;
+        private var _current: T;
+
+        public constructor(node: Node<T>?)
+        {
+            this._node = node;
+        }
+
+        public override fun moveNext(): bool
+        {
+            if (this._node === null) return false;
+            this._current = this._node.value;
+            this._node = this._node.next;
+            return true;
+        }
+
+        public override current: T
+        {
+            get { return this._current; }
+        }
+    }
+
     private var _head: Node<T>?;
     private var _tail: Node<T>?;
     private var _length: int;
@@ -39,7 +209,9 @@ public class LinkedList<T> : IList<T>
         this._length = 0;
     }
 
-    public override length: int { get { return this._length; } }
+    public override length: int => _length;
+
+    public override isReadOnly: bool => false;
 
     public front: T
     {
@@ -76,6 +248,36 @@ public class LinkedList<T> : IList<T>
         _length++;
     }
 
+    public override fun insert(index: int, value: T): void
+    {
+        if (index < 0 || index > this._length) throw IndexOutOfRangeException("Index out of range");
+        var newNode = Node<T>(value);
+        if (index == 0)
+        {
+            newNode.next = _head;
+            if (_head !== null) _head.prev = newNode;
+            _head = newNode;
+            if (_tail === null) _tail = newNode;
+        }
+        else if (index == this._length)
+        {
+            this.add(value);
+            return;
+        }
+        else
+        {
+            var current = _head;
+            for (var i = 0; i < index; i++)
+                current = current!!.next;
+
+            newNode.next = current;
+            newNode.prev = current!!.prev;
+            if (current.prev !== null) current.prev!!.next = newNode;
+            current.prev = newNode;
+        }
+        _length++;
+    }
+
     public override fun get(index: int): T
     {
         if (index < 0 || index >= this._length) throw IndexOutOfRangeException("Index out of range");
@@ -94,7 +296,48 @@ public class LinkedList<T> : IList<T>
         current.value = value;
     }
 
-    public override fun removeAt(index: int): void
+    public override fun contains(item: T): bool
+    {
+        var current = _head;
+        while (current !== null)
+        {
+            if (current.value == item) return true;
+            current = current.next;
+        }
+        return false;
+    }
+
+    public override fun copyTo(array: T[], arrayIndex: int): void
+    {
+        var current = _head;
+        var index = arrayIndex;
+        while (current !== null)
+        {
+            array[index] = current.value;
+            index++;
+            current = current.next;
+        }
+    }
+
+    public override fun indexOf(item: T): int
+    {
+        var current = _head;
+        var index = 0;
+        while (current !== null)
+        {
+            if (current.value == item) return index;
+            current = current.next;
+            index++;
+        }
+        return -1;
+    }
+
+    public override fun iterate(): IIterator<T>
+    {
+        return ListIterator<T>(this._head);
+    }
+
+    public override fun removeAt(index: int): bool
     {
         if (index < 0 || index >= this._length) throw IndexOutOfRangeException("Index out of range");
         var current = _head;
@@ -112,6 +355,32 @@ public class LinkedList<T> : IList<T>
             current.next!!.prev = current.prev;
 
         _length--;
+        return true;
+    }
+
+    public override fun remove(item: T): bool
+    {
+        var current = _head;
+        while (current !== null)
+        {
+            if (current.value == item)
+            {
+                if (current.prev == null)
+                    _head = current.next;
+                else
+                    current.prev!!.next = current.next;
+
+                if (current.next == null)
+                    _tail = current.prev;
+                else
+                    current.next!!.prev = current.prev;
+
+                _length--;
+                return true;
+            }
+            current = current.next;
+        }
+        return false;
     }
 
     public override fun clear(): void
@@ -120,7 +389,6 @@ public class LinkedList<T> : IList<T>
         _tail = null;
         _length = 0;
     }
-
 
     inline operator [](self: LinkedList<T>, index: int): T { return self.get(index); }
     inline operator [](self: LinkedList<T>, index: int, value: T): void { self.set(index, value); }

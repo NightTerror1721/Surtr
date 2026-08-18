@@ -1,61 +1,95 @@
 module surtr.collections.List
-  constants: 3   types: 3   fields: 6   methods: 20   modules: 0
-  string #0 = "LinkedList is empty"
+  constants: 7   types: 7   fields: 14   methods: 46   modules: 0
+  string #0 = "Initial capacity must be non-negative"
   string #1 = "Index out of range"
-  string #2 = "'Node<T>?' was null where '!!' asserted it was not."
+  string #2 = "Array index must be non-negative"
+  string #3 = "The number of elements in the source List is greater than the available space from arrayIndex to the end of the destination array."
+  string #4 = "Iterator is out of bounds"
+  string #5 = "LinkedList is empty"
+  string #6 = "'Node<T>?' was null where '!!' asserted it was not."
 
   type table:
     #0  surtr:IndexOutOfRangeException
-    #1  surtr.collections.List:LinkedList.Node<T0>
-    #2  surtr:NullReferenceException
+    #1  T0[]
+    #2  surtr:ArgumentException
+    #3  surtr.collections.List:List.Iterator<T0>
+    #4  surtr.collections.List:LinkedList.Node<T0>
+    #5  surtr:NullReferenceException
+    #6  surtr.collections.List:LinkedList.ListIterator<T0>
 
   field table:
-    #0  surtr.collections.List:LinkedList<._head: surtr.collections.List:LinkedList.Node<T0>
-    #1  surtr.collections.List:LinkedList<._tail: surtr.collections.List:LinkedList.Node<T0>
-    #2  surtr.collections.List:LinkedList<._length: int
-    #3  surtr.collections.List:LinkedList.Node<.value: T0
-    #4  surtr.collections.List:LinkedList.Node<.next: surtr.collections.List:LinkedList.Node<T0>
-    #5  surtr.collections.List:LinkedList.Node<.prev: surtr.collections.List:LinkedList.Node<T0>
+    #0  surtr.collections.List:List<._capacity: int
+    #1  surtr.collections.List:List<._items: T0[]
+    #2  surtr.collections.List:List<._length: int
+    #3  surtr.collections.List:List.Iterator<._items: T0[]
+    #4  surtr.collections.List:List.Iterator<._length: int
+    #5  surtr.collections.List:List.Iterator<._index: int
+    #6  surtr.collections.List:LinkedList<._head: surtr.collections.List:LinkedList.Node<T0>
+    #7  surtr.collections.List:LinkedList<._tail: surtr.collections.List:LinkedList.Node<T0>
+    #8  surtr.collections.List:LinkedList<._length: int
+    #9  surtr.collections.List:LinkedList.Node<.value: T0
+    #10  surtr.collections.List:LinkedList.Node<.next: surtr.collections.List:LinkedList.Node<T0>
+    #11  surtr.collections.List:LinkedList.Node<.prev: surtr.collections.List:LinkedList.Node<T0>
+    #12  surtr.collections.List:LinkedList.ListIterator<._node: surtr.collections.List:LinkedList.Node<T0>
+    #13  surtr.collections.List:LinkedList.ListIterator<._current: T0
 
   method table:
-    #0  surtr.collections.List:IReadOnlyList<.get_length() -> int
-    #1  surtr.collections.List:IReadOnlyList<.get(int) -> T0
-    #2  surtr.collections.List:IList<.set(int, T0) -> void
-    #3  surtr.collections.List:IList<.add(T0) -> void
-    #4  surtr.collections.List:IList<.removeAt(int) -> void
-    #5  surtr.collections.List:IList<.clear() -> void
-    #6  surtr.collections.List:LinkedList<.ctor() -> void
-    #7  surtr.collections.List:LinkedList<.get_length() -> int
-    #8  surtr.collections.List:LinkedList<.get_front() -> T0
-    #9  surtr.collections.List:LinkedList<.get_back() -> T0
-    #10  surtr.collections.List:LinkedList<.add(T0) -> void
-    #11  surtr.collections.List:LinkedList<.get(int) -> T0
-    #12  surtr.collections.List:LinkedList<.set(int, T0) -> void
-    #13  surtr.collections.List:LinkedList<.removeAt(int) -> void
-    #14  surtr.collections.List:LinkedList<.clear() -> void
-    #15  surtr.collections.List:LinkedList<.op_[](surtr.collections.List:LinkedList<T0>, int) -> T0
-    #16  surtr.collections.List:LinkedList<.op_[](surtr.collections.List:LinkedList<T0>, int, T0) -> void
-    #17  surtr.collections.List:LinkedList.Node<.ctor(T0) -> void
-    #18  surtr:IndexOutOfRangeException.ctor(string) -> void
-    #19  surtr:NullReferenceException.ctor(string) -> void
+    #0  surtr.collections.List:IReadOnlyList<.indexOf(T0) -> int
+    #1  surtr.collections.List:IList<.insert(int, T0) -> void
+    #2  surtr.collections.List:IList<.removeAt(int) -> bool
+    #3  surtr.collections.List:List<.ctor(int) -> void
+    #4  surtr.collections.List:List<.get_length() -> int
+    #5  surtr.collections.List:List<.get_isReadOnly() -> bool
+    #6  surtr.collections.List:List<.get(int) -> T0
+    #7  surtr.collections.List:List<.set(int, T0) -> void
+    #8  surtr.collections.List:List<.add(T0) -> void
+    #9  surtr.collections.List:List<.insert(int, T0) -> void
+    #10  surtr.collections.List:List<.removeAt(int) -> bool
+    #11  surtr.collections.List:List<.remove(T0) -> bool
+    #12  surtr.collections.List:List<.clear() -> void
+    #13  surtr.collections.List:List<.indexOf(T0) -> int
+    #14  surtr.collections.List:List<.contains(T0) -> bool
+    #15  surtr.collections.List:List<.copyTo(T0[], int) -> void
+    #16  surtr.collections.List:List<.iterate() -> surtr:IIterator<T0>
+    #17  surtr.collections.List:List<.ensureCapacity(int) -> void
+    #18  surtr.collections.List:List.Iterator<.ctor(T0[], int, int) -> void
+    #19  surtr.collections.List:List.Iterator<.get_current() -> T0
+    #20  surtr.collections.List:List.Iterator<.moveNext() -> bool
+    #21  surtr.collections.List:LinkedList<.ctor() -> void
+    #22  surtr.collections.List:LinkedList<.get_length() -> int
+    #23  surtr.collections.List:LinkedList<.get_isReadOnly() -> bool
+    #24  surtr.collections.List:LinkedList<.get_front() -> T0
+    #25  surtr.collections.List:LinkedList<.get_back() -> T0
+    #26  surtr.collections.List:LinkedList<.add(T0) -> void
+    #27  surtr.collections.List:LinkedList<.insert(int, T0) -> void
+    #28  surtr.collections.List:LinkedList<.get(int) -> T0
+    #29  surtr.collections.List:LinkedList<.set(int, T0) -> void
+    #30  surtr.collections.List:LinkedList<.contains(T0) -> bool
+    #31  surtr.collections.List:LinkedList<.copyTo(T0[], int) -> void
+    #32  surtr.collections.List:LinkedList<.indexOf(T0) -> int
+    #33  surtr.collections.List:LinkedList<.iterate() -> surtr:IIterator<T0>
+    #34  surtr.collections.List:LinkedList<.removeAt(int) -> bool
+    #35  surtr.collections.List:LinkedList<.remove(T0) -> bool
+    #36  surtr.collections.List:LinkedList<.clear() -> void
+    #37  surtr.collections.List:LinkedList<.op_[](surtr.collections.List:LinkedList<T0>, int) -> T0
+    #38  surtr.collections.List:LinkedList<.op_[](surtr.collections.List:LinkedList<T0>, int, T0) -> void
+    #39  surtr.collections.List:LinkedList.Node<.ctor(T0) -> void
+    #40  surtr.collections.List:LinkedList.ListIterator<.ctor(surtr.collections.List:LinkedList.Node<T0>) -> void
+    #41  surtr.collections.List:LinkedList.ListIterator<.moveNext() -> bool
+    #42  surtr.collections.List:LinkedList.ListIterator<.get_current() -> T0
+    #43  surtr:IndexOutOfRangeException.ctor(string) -> void
+    #44  surtr:ArgumentException.ctor(string) -> void
+    #45  surtr:NullReferenceException.ctor(string) -> void
 
-interface IList`1<T> : surtr.collections.List:IReadOnlyList<T0>  [public]
+interface IList`1<T> : surtr.collections.List:IReadOnlyList<T0>, surtr.collections.Collection:ICollection<T0>  [public]
 
-  [public] abstract add(value: T0): void
+  [public] abstract insert(index: int, item: T0): void
 
-  [public] abstract clear(): void
+  [public] abstract removeAt(index: int): bool
 
-  [public] abstract removeAt(index: int): void
+interface IReadOnlyList`1<T> : surtr.collections.Collection:IReadOnlyCollection<T0>  [public]
 
-  [public] abstract set(index: int, value: T0): void
-
-interface IReadOnlyList`1<T>  [public]
-
-  [public] property length: int { get; }
-    get:
-      ; abstract
-
-  [public] abstract get(index: int): T0
+  [public] abstract indexOf(item: T0): int
 
 class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
   [private] field _head: surtr.collections.List:LinkedList.Node<T0>
@@ -64,335 +98,683 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
 
   [public] property back: T0 { get; }
     get:
-      ; entry 3, locals 1, stack 3, code 0030..004A
-        0030  Ldl0
-        0031  FieldGet 1 (_tail)
-        0034  JPNN +11 -> L0 (0042)
-        0037  ObjNew 0 (surtr:IndexOutOfRangeException)
-        003A  Dup
-        003B  Ldc0
-        003C  InvokeSpecial 18 (ctor) args=2 ret=0
-        0041  Throw
+      ; entry 22, locals 1, stack 3, code 0300..031A
+        0300  Ldl0
+        0301  FieldGet 7 (_tail)
+        0304  JPNN +11 -> L0 (0312)
+        0307  ObjNew 0 (surtr:IndexOutOfRangeException)
+        030A  Dup
+        030B  Ldc5
+        030C  InvokeSpecial 43 (ctor) args=2 ret=0
+        0311  Throw
       L0:
-        0042  Ldl0
-        0043  FieldGet 1 (_tail)
-        0046  FieldGet 3 (value)
-        0049  ReturnValue
+        0312  Ldl0
+        0313  FieldGet 7 (_tail)
+        0316  FieldGet 9 (value)
+        0319  ReturnValue
 
   [public] property front: T0 { get; }
     get:
-      ; entry 2, locals 1, stack 3, code 0016..0030
-        0016  Ldl0
-        0017  FieldGet 0 (_head)
-        001A  JPNN +11 -> L0 (0028)
-        001D  ObjNew 0 (surtr:IndexOutOfRangeException)
-        0020  Dup
-        0021  Ldc0
-        0022  InvokeSpecial 18 (ctor) args=2 ret=0
-        0027  Throw
+      ; entry 21, locals 1, stack 3, code 02E6..0300
+        02E6  Ldl0
+        02E7  FieldGet 6 (_head)
+        02EA  JPNN +11 -> L0 (02F8)
+        02ED  ObjNew 0 (surtr:IndexOutOfRangeException)
+        02F0  Dup
+        02F1  Ldc5
+        02F2  InvokeSpecial 43 (ctor) args=2 ret=0
+        02F7  Throw
       L0:
-        0028  Ldl0
-        0029  FieldGet 0 (_head)
-        002C  FieldGet 3 (value)
-        002F  ReturnValue
+        02F8  Ldl0
+        02F9  FieldGet 6 (_head)
+        02FC  FieldGet 9 (value)
+        02FF  ReturnValue
+
+  [public] property isReadOnly: bool { get; }
+    get:
+      ; entry 20, locals 1, stack 1, code 02E4..02E6
+        02E4  PushFalse
+        02E5  ReturnValue
 
   [public] property length: int { get; }
     get:
-      ; entry 1, locals 1, stack 1, code 0011..0016
-        0011  Ldl0
-        0012  FieldGet 2 (_length)
-        0015  ReturnValue
+      ; entry 19, locals 1, stack 1, code 02DF..02E4
+        02DF  Ldl0
+        02E0  FieldGet 8 (_length)
+        02E3  ReturnValue
 
   [public] virtual add(value: T0): void
-    ; entry 4, locals 5, stack 3, code 004A..0090
-      004A  ObjNew 1 (surtr.collections.List:LinkedList.Node<T0>)
-      004D  Dup
-      004E  Ldl1
-      004F  InvokeSpecial 17 (ctor) args=2 ret=0
-      0054  Stl2
-      0055  Ldl0
-      0056  FieldGet 1 (_tail)
-      0059  JPNN +13 -> L0 (0069)
-      005C  Ldl0
-      005D  Ldl2
-      005E  FieldSet 0 (_head)
-      0061  Ldl0
-      0062  Ldl2
-      0063  FieldSet 1 (_tail)
-      0066  JP +21 -> L1 (007E)
+    ; entry 23, locals 5, stack 3, code 031A..0360
+      031A  ObjNew 4 (surtr.collections.List:LinkedList.Node<T0>)
+      031D  Dup
+      031E  Ldl1
+      031F  InvokeSpecial 39 (ctor) args=2 ret=0
+      0324  Stl2
+      0325  Ldl0
+      0326  FieldGet 7 (_tail)
+      0329  JPNN +13 -> L0 (0339)
+      032C  Ldl0
+      032D  Ldl2
+      032E  FieldSet 6 (_head)
+      0331  Ldl0
+      0332  Ldl2
+      0333  FieldSet 7 (_tail)
+      0336  JP +21 -> L1 (034E)
     L0:
-      0069  Ldl0
-      006A  FieldGet 1 (_tail)
-      006D  Ldl2
-      006E  FieldSet 4 (next)
-      0071  Ldl2
-      0072  Ldl0
-      0073  FieldGet 1 (_tail)
-      0076  FieldSet 5 (prev)
-      0079  Ldl0
-      007A  Ldl2
-      007B  FieldSet 1 (_tail)
+      0339  Ldl0
+      033A  FieldGet 7 (_tail)
+      033D  Ldl2
+      033E  FieldSet 10 (next)
+      0341  Ldl2
+      0342  Ldl0
+      0343  FieldGet 7 (_tail)
+      0346  FieldSet 11 (prev)
+      0349  Ldl0
+      034A  Ldl2
+      034B  FieldSet 7 (_tail)
     L1:
-      007E  Ldl0
-      007F  FieldGet 2 (_length)
-      0082  Stl3
-      0083  Ldl3
-      0084  PushI8 1
-      0086  Add
-      0087  Stl4
-      0088  Ldl0
-      0089  Ldl4
-      008A  FieldSet 2 (_length)
-      008D  Ldl3
-      008E  Pop
-      008F  ReturnVoid
+      034E  Ldl0
+      034F  FieldGet 8 (_length)
+      0352  Stl3
+      0353  Ldl3
+      0354  PushI8 1
+      0356  Add
+      0357  Stl4
+      0358  Ldl0
+      0359  Ldl4
+      035A  FieldSet 8 (_length)
+      035D  Ldl3
+      035E  Pop
+      035F  ReturnVoid
 
   [public] virtual clear(): void
-    ; entry 8, locals 1, stack 2, code 01DF..01F0
-      01DF  Ldl0
-      01E0  PushNull
-      01E1  FieldSet 0 (_head)
-      01E4  Ldl0
-      01E5  PushNull
-      01E6  FieldSet 1 (_tail)
-      01E9  Ldl0
-      01EA  PushI8 0
-      01EC  FieldSet 2 (_length)
-      01EF  ReturnVoid
+    ; entry 33, locals 1, stack 2, code 0692..06A3
+      0692  Ldl0
+      0693  PushNull
+      0694  FieldSet 6 (_head)
+      0697  Ldl0
+      0698  PushNull
+      0699  FieldSet 7 (_tail)
+      069C  Ldl0
+      069D  PushI8 0
+      069F  FieldSet 8 (_length)
+      06A2  ReturnVoid
+
+  [public] virtual contains(item: T0): bool
+    ; entry 27, locals 3, stack 2, code 04E7..0504
+      04E7  Ldl0
+      04E8  FieldGet 6 (_head)
+      04EB  Stl2
+    L0:
+      04EC  Ldl2
+      04ED  JPN +18 -> L2 (0502)
+      04F0  Ldl2
+      04F1  FieldGet 9 (value)
+      04F4  Ldl1
+      04F5  JPRNE +2 -> L1 (04FA)
+      04F8  PushTrue
+      04F9  ReturnValue
+    L1:
+      04FA  Ldl2
+      04FB  FieldGet 10 (next)
+      04FE  Stl2
+      04FF  JP -22 -> L0 (04EC)
+    L2:
+      0502  PushFalse
+      0503  ReturnValue
+
+  [public] virtual copyTo(array: T0[], arrayIndex: int): void
+    ; entry 28, locals 5, stack 3, code 0504..0522
+      0504  Ldl0
+      0505  FieldGet 6 (_head)
+      0508  Stl3
+      0509  Ldl2
+      050A  Stl4
+    L0:
+      050B  Ldl3
+      050C  JPN +18 -> L1 (0521)
+      050F  Ldl1
+      0510  Ldl4
+      0511  Ldl3
+      0512  FieldGet 9 (value)
+      0515  ArrSet
+      0516  IncLocal 4 by 1
+      0519  Ldl3
+      051A  FieldGet 10 (next)
+      051D  Stl3
+      051E  JP -22 -> L0 (050B)
+    L1:
+      0521  ReturnVoid
 
   [public] ctor (): void
-    ; entry 0, locals 1, stack 2, code 0000..0011
-      0000  Ldl0
-      0001  PushNull
-      0002  FieldSet 0 (_head)
-      0005  Ldl0
-      0006  PushNull
-      0007  FieldSet 1 (_tail)
-      000A  Ldl0
-      000B  PushI8 0
-      000D  FieldSet 2 (_length)
-      0010  ReturnVoid
+    ; entry 18, locals 1, stack 2, code 02CE..02DF
+      02CE  Ldl0
+      02CF  PushNull
+      02D0  FieldSet 6 (_head)
+      02D3  Ldl0
+      02D4  PushNull
+      02D5  FieldSet 7 (_tail)
+      02D8  Ldl0
+      02D9  PushI8 0
+      02DB  FieldSet 8 (_length)
+      02DE  ReturnVoid
 
   [public] virtual get(index: int): T0
-    ; entry 5, locals 4, stack 3, code 0090..00DD
-      0090  Ldl1
-      0091  PushI8 0
-      0093  LT
-      0094  Dup
-      0095  JPNZ +10 -> L0 (00A2)
-      0098  Pop
-      0099  Ldl1
-      009A  Ldl0
-      009B  FieldGet 2 (_length)
-      009E  GE
-      009F  JP +0 -> L0 (00A2)
+    ; entry 25, locals 4, stack 3, code 044C..0499
+      044C  Ldl1
+      044D  PushI8 0
+      044F  LT
+      0450  Dup
+      0451  JPNZ +10 -> L0 (045E)
+      0454  Pop
+      0455  Ldl1
+      0456  Ldl0
+      0457  FieldGet 8 (_length)
+      045A  GE
+      045B  JP +0 -> L0 (045E)
     L0:
-      00A2  JPZ +11 -> L1 (00B0)
-      00A5  ObjNew 0 (surtr:IndexOutOfRangeException)
-      00A8  Dup
-      00A9  Ldc1
-      00AA  InvokeSpecial 18 (ctor) args=2 ret=0
-      00AF  Throw
+      045E  JPZ +11 -> L1 (046C)
+      0461  ObjNew 0 (surtr:IndexOutOfRangeException)
+      0464  Dup
+      0465  Ldc1
+      0466  InvokeSpecial 43 (ctor) args=2 ret=0
+      046B  Throw
     L1:
-      00B0  Ldl0
-      00B1  FieldGet 0 (_head)
-      00B4  Stl2
-      00B5  PushI8 0
-      00B7  Stl3
+      046C  Ldl0
+      046D  FieldGet 6 (_head)
+      0470  Stl2
+      0471  PushI8 0
+      0473  Stl3
     L2:
-      00B8  Ldl3
-      00B9  Ldl1
-      00BA  JPGE +27 -> L4 (00D8)
-      00BD  Ldl2
-      00BE  FieldGet 4 (next)
-      00C1  Dup
-      00C2  JPNN +12 -> L3 (00D1)
-      00C5  Pop
-      00C6  ObjNew 2 (surtr:NullReferenceException)
-      00C9  Dup
-      00CA  Ldc2
-      00CB  InvokeSpecial 19 (ctor) args=2 ret=0
-      00D0  Throw
+      0474  Ldl3
+      0475  Ldl1
+      0476  JPGE +27 -> L4 (0494)
+      0479  Ldl2
+      047A  FieldGet 10 (next)
+      047D  Dup
+      047E  JPNN +12 -> L3 (048D)
+      0481  Pop
+      0482  ObjNew 5 (surtr:NullReferenceException)
+      0485  Dup
+      0486  Ldc6
+      0487  InvokeSpecial 45 (ctor) args=2 ret=0
+      048C  Throw
     L3:
-      00D1  Stl2
-      00D2  IncLocal 3 by 1
-      00D5  JP -32 -> L2 (00B8)
+      048D  Stl2
+      048E  IncLocal 3 by 1
+      0491  JP -32 -> L2 (0474)
     L4:
-      00D8  Ldl2
-      00D9  FieldGet 3 (value)
-      00DC  ReturnValue
+      0494  Ldl2
+      0495  FieldGet 9 (value)
+      0498  ReturnValue
+
+  [public] virtual indexOf(item: T0): int
+    ; entry 29, locals 4, stack 2, code 0522..0547
+      0522  Ldl0
+      0523  FieldGet 6 (_head)
+      0526  Stl2
+      0527  PushI8 0
+      0529  Stl3
+    L0:
+      052A  Ldl2
+      052B  JPN +21 -> L2 (0543)
+      052E  Ldl2
+      052F  FieldGet 9 (value)
+      0532  Ldl1
+      0533  JPRNE +2 -> L1 (0538)
+      0536  Ldl3
+      0537  ReturnValue
+    L1:
+      0538  Ldl2
+      0539  FieldGet 10 (next)
+      053C  Stl2
+      053D  IncLocal 3 by 1
+      0540  JP -25 -> L0 (052A)
+    L2:
+      0543  PushI8 1
+      0545  Neg
+      0546  ReturnValue
+
+  [public] virtual insert(index: int, value: T0): void
+    ; entry 24, locals 8, stack 4, code 0360..044C
+      0360  Ldl1
+      0361  PushI8 0
+      0363  LT
+      0364  Dup
+      0365  JPNZ +10 -> L0 (0372)
+      0368  Pop
+      0369  Ldl1
+      036A  Ldl0
+      036B  FieldGet 8 (_length)
+      036E  GT
+      036F  JP +0 -> L0 (0372)
+    L0:
+      0372  JPZ +11 -> L1 (0380)
+      0375  ObjNew 0 (surtr:IndexOutOfRangeException)
+      0378  Dup
+      0379  Ldc1
+      037A  InvokeSpecial 43 (ctor) args=2 ret=0
+      037F  Throw
+    L1:
+      0380  ObjNew 4 (surtr.collections.List:LinkedList.Node<T0>)
+      0383  Dup
+      0384  Ldl2
+      0385  InvokeSpecial 39 (ctor) args=2 ret=0
+      038A  Stl3
+      038B  Ldl1
+      038C  PushI8 0
+      038E  JPNE +43 -> L4 (03BC)
+      0391  Ldl3
+      0392  Ldl0
+      0393  FieldGet 6 (_head)
+      0396  FieldSet 10 (next)
+      0399  Ldl0
+      039A  FieldGet 6 (_head)
+      039D  JPN +8 -> L2 (03A8)
+      03A0  Ldl0
+      03A1  FieldGet 6 (_head)
+      03A4  Ldl3
+      03A5  FieldSet 11 (prev)
+    L2:
+      03A8  Ldl0
+      03A9  Ldl3
+      03AA  FieldSet 6 (_head)
+      03AD  Ldl0
+      03AE  FieldGet 7 (_tail)
+      03B1  JPNN +5 -> L3 (03B9)
+      03B4  Ldl0
+      03B5  Ldl3
+      03B6  FieldSet 7 (_tail)
+    L3:
+      03B9  JP +121 -> L12 (0435)
+    L4:
+      03BC  Ldl1
+      03BD  Ldl0
+      03BE  FieldGet 8 (_length)
+      03C1  JPNE +8 -> L5 (03CC)
+      03C4  Ldl0
+      03C5  Ldl2
+      03C6  InvokeVirtual 26 (add) args=2 ret=0
+      03CB  ReturnVoid
+    L5:
+      03CC  Ldl0
+      03CD  FieldGet 6 (_head)
+      03D0  Stl4
+      03D1  PushI8 0
+      03D3  Stl5
+    L6:
+      03D4  Ldl5
+      03D5  Ldl1
+      03D6  JPGE +27 -> L8 (03F4)
+      03D9  Ldl4
+      03DA  Dup
+      03DB  JPNN +12 -> L7 (03EA)
+      03DE  Pop
+      03DF  ObjNew 5 (surtr:NullReferenceException)
+      03E2  Dup
+      03E3  Ldc6
+      03E4  InvokeSpecial 45 (ctor) args=2 ret=0
+      03E9  Throw
+    L7:
+      03EA  FieldGet 10 (next)
+      03ED  Stl4
+      03EE  IncLocal 5 by 1
+      03F1  JP -32 -> L6 (03D4)
+    L8:
+      03F4  Ldl3
+      03F5  Ldl4
+      03F6  FieldSet 10 (next)
+      03F9  Ldl3
+      03FA  Ldl4
+      03FB  Dup
+      03FC  JPNN +12 -> L9 (040B)
+      03FF  Pop
+      0400  ObjNew 5 (surtr:NullReferenceException)
+      0403  Dup
+      0404  Ldc6
+      0405  InvokeSpecial 45 (ctor) args=2 ret=0
+      040A  Throw
+    L9:
+      040B  FieldGet 11 (prev)
+      040E  FieldSet 11 (prev)
+      0411  Ldl4
+      0412  FieldGet 11 (prev)
+      0415  JPN +24 -> L11 (0430)
+      0418  Ldl4
+      0419  FieldGet 11 (prev)
+      041C  Dup
+      041D  JPNN +12 -> L10 (042C)
+      0420  Pop
+      0421  ObjNew 5 (surtr:NullReferenceException)
+      0424  Dup
+      0425  Ldc6
+      0426  InvokeSpecial 45 (ctor) args=2 ret=0
+      042B  Throw
+    L10:
+      042C  Ldl3
+      042D  FieldSet 10 (next)
+    L11:
+      0430  Ldl4
+      0431  Ldl3
+      0432  FieldSet 11 (prev)
+    L12:
+      0435  Ldl0
+      0436  FieldGet 8 (_length)
+      0439  StlS 6
+      043B  LdlS 6
+      043D  PushI8 1
+      043F  Add
+      0440  StlS 7
+      0442  Ldl0
+      0443  LdlS 7
+      0445  FieldSet 8 (_length)
+      0448  LdlS 6
+      044A  Pop
+      044B  ReturnVoid
+
+  [public] virtual iterate(): surtr:IIterator<T0>
+    ; entry 30, locals 1, stack 3, code 0547..0555
+      0547  ObjNew 6 (surtr.collections.List:LinkedList.ListIterator<T0>)
+      054A  Dup
+      054B  Ldl0
+      054C  FieldGet 6 (_head)
+      054F  InvokeSpecial 40 (ctor) args=2 ret=0
+      0554  ReturnValue
 
   [public] static op_[](self: surtr.collections.List:LinkedList<T0>, index: int): T0
-    ; entry 9, locals 2, stack 2, code 01F0..01F8
-      01F0  Ldl0
-      01F1  Ldl1
-      01F2  InvokeVirtual 11 (get) args=2 ret=1
-      01F7  ReturnValue
+    ; entry 34, locals 2, stack 2, code 06A3..06AB
+      06A3  Ldl0
+      06A4  Ldl1
+      06A5  InvokeVirtual 28 (get) args=2 ret=1
+      06AA  ReturnValue
 
   [public] static op_[](self: surtr.collections.List:LinkedList<T0>, index: int, value: T0): void
-    ; entry 10, locals 3, stack 3, code 01F8..0201
-      01F8  Ldl0
-      01F9  Ldl1
-      01FA  Ldl2
-      01FB  InvokeVirtual 12 (set) args=3 ret=0
-      0200  ReturnVoid
+    ; entry 35, locals 3, stack 3, code 06AB..06B4
+      06AB  Ldl0
+      06AC  Ldl1
+      06AD  Ldl2
+      06AE  InvokeVirtual 29 (set) args=3 ret=0
+      06B3  ReturnVoid
 
-  [public] virtual removeAt(index: int): void
-    ; entry 7, locals 6, stack 3, code 012B..01DF
-      012B  Ldl1
-      012C  PushI8 0
-      012E  LT
-      012F  Dup
-      0130  JPNZ +10 -> L0 (013D)
-      0133  Pop
-      0134  Ldl1
-      0135  Ldl0
-      0136  FieldGet 2 (_length)
-      0139  GE
-      013A  JP +0 -> L0 (013D)
+  [public] virtual remove(item: T0): bool
+    ; entry 32, locals 5, stack 3, code 060A..0692
+      060A  Ldl0
+      060B  FieldGet 6 (_head)
+      060E  Stl2
     L0:
-      013D  JPZ +11 -> L1 (014B)
-      0140  ObjNew 0 (surtr:IndexOutOfRangeException)
-      0143  Dup
-      0144  Ldc1
-      0145  InvokeSpecial 18 (ctor) args=2 ret=0
-      014A  Throw
+      060F  Ldl2
+      0610  JPN +125 -> L8 (0690)
+      0613  Ldl2
+      0614  FieldGet 9 (value)
+      0617  Ldl1
+      0618  JPRNE +109 -> L7 (0688)
+      061B  Ldl2
+      061C  FieldGet 11 (prev)
+      061F  JPNN +11 -> L1 (062D)
+      0622  Ldl0
+      0623  Ldl2
+      0624  FieldGet 10 (next)
+      0627  FieldSet 6 (_head)
+      062A  JP +27 -> L3 (0648)
     L1:
-      014B  Ldl0
-      014C  FieldGet 0 (_head)
-      014F  Stl2
-      0150  PushI8 0
-      0152  Stl3
+      062D  Ldl2
+      062E  FieldGet 11 (prev)
+      0631  Dup
+      0632  JPNN +12 -> L2 (0641)
+      0635  Pop
+      0636  ObjNew 5 (surtr:NullReferenceException)
+      0639  Dup
+      063A  Ldc6
+      063B  InvokeSpecial 45 (ctor) args=2 ret=0
+      0640  Throw
     L2:
-      0153  Ldl3
-      0154  Ldl1
-      0155  JPGE +27 -> L4 (0173)
-      0158  Ldl2
-      0159  FieldGet 4 (next)
-      015C  Dup
-      015D  JPNN +12 -> L3 (016C)
-      0160  Pop
-      0161  ObjNew 2 (surtr:NullReferenceException)
-      0164  Dup
-      0165  Ldc2
-      0166  InvokeSpecial 19 (ctor) args=2 ret=0
-      016B  Throw
+      0641  Ldl2
+      0642  FieldGet 10 (next)
+      0645  FieldSet 10 (next)
     L3:
-      016C  Stl2
-      016D  IncLocal 3 by 1
-      0170  JP -32 -> L2 (0153)
+      0648  Ldl2
+      0649  FieldGet 10 (next)
+      064C  JPNN +11 -> L4 (065A)
+      064F  Ldl0
+      0650  Ldl2
+      0651  FieldGet 11 (prev)
+      0654  FieldSet 7 (_tail)
+      0657  JP +27 -> L6 (0675)
     L4:
-      0173  Ldl2
-      0174  FieldGet 5 (prev)
-      0177  JPNN +11 -> L5 (0185)
-      017A  Ldl0
-      017B  Ldl2
-      017C  FieldGet 4 (next)
-      017F  FieldSet 0 (_head)
-      0182  JP +27 -> L7 (01A0)
+      065A  Ldl2
+      065B  FieldGet 10 (next)
+      065E  Dup
+      065F  JPNN +12 -> L5 (066E)
+      0662  Pop
+      0663  ObjNew 5 (surtr:NullReferenceException)
+      0666  Dup
+      0667  Ldc6
+      0668  InvokeSpecial 45 (ctor) args=2 ret=0
+      066D  Throw
     L5:
-      0185  Ldl2
-      0186  FieldGet 5 (prev)
-      0189  Dup
-      018A  JPNN +12 -> L6 (0199)
-      018D  Pop
-      018E  ObjNew 2 (surtr:NullReferenceException)
-      0191  Dup
-      0192  Ldc2
-      0193  InvokeSpecial 19 (ctor) args=2 ret=0
-      0198  Throw
+      066E  Ldl2
+      066F  FieldGet 11 (prev)
+      0672  FieldSet 11 (prev)
     L6:
-      0199  Ldl2
-      019A  FieldGet 4 (next)
-      019D  FieldSet 4 (next)
+      0675  Ldl0
+      0676  FieldGet 8 (_length)
+      0679  Stl3
+      067A  Ldl3
+      067B  PushI8 1
+      067D  Sub
+      067E  Stl4
+      067F  Ldl0
+      0680  Ldl4
+      0681  FieldSet 8 (_length)
+      0684  Ldl3
+      0685  Pop
+      0686  PushTrue
+      0687  ReturnValue
     L7:
-      01A0  Ldl2
-      01A1  FieldGet 4 (next)
-      01A4  JPNN +11 -> L8 (01B2)
-      01A7  Ldl0
-      01A8  Ldl2
-      01A9  FieldGet 5 (prev)
-      01AC  FieldSet 1 (_tail)
-      01AF  JP +27 -> L10 (01CD)
+      0688  Ldl2
+      0689  FieldGet 10 (next)
+      068C  Stl2
+      068D  JP -129 -> L0 (060F)
     L8:
-      01B2  Ldl2
-      01B3  FieldGet 4 (next)
-      01B6  Dup
-      01B7  JPNN +12 -> L9 (01C6)
-      01BA  Pop
-      01BB  ObjNew 2 (surtr:NullReferenceException)
-      01BE  Dup
-      01BF  Ldc2
-      01C0  InvokeSpecial 19 (ctor) args=2 ret=0
-      01C5  Throw
+      0690  PushFalse
+      0691  ReturnValue
+
+  [public] virtual removeAt(index: int): bool
+    ; entry 31, locals 6, stack 3, code 0555..060A
+      0555  Ldl1
+      0556  PushI8 0
+      0558  LT
+      0559  Dup
+      055A  JPNZ +10 -> L0 (0567)
+      055D  Pop
+      055E  Ldl1
+      055F  Ldl0
+      0560  FieldGet 8 (_length)
+      0563  GE
+      0564  JP +0 -> L0 (0567)
+    L0:
+      0567  JPZ +11 -> L1 (0575)
+      056A  ObjNew 0 (surtr:IndexOutOfRangeException)
+      056D  Dup
+      056E  Ldc1
+      056F  InvokeSpecial 43 (ctor) args=2 ret=0
+      0574  Throw
+    L1:
+      0575  Ldl0
+      0576  FieldGet 6 (_head)
+      0579  Stl2
+      057A  PushI8 0
+      057C  Stl3
+    L2:
+      057D  Ldl3
+      057E  Ldl1
+      057F  JPGE +27 -> L4 (059D)
+      0582  Ldl2
+      0583  FieldGet 10 (next)
+      0586  Dup
+      0587  JPNN +12 -> L3 (0596)
+      058A  Pop
+      058B  ObjNew 5 (surtr:NullReferenceException)
+      058E  Dup
+      058F  Ldc6
+      0590  InvokeSpecial 45 (ctor) args=2 ret=0
+      0595  Throw
+    L3:
+      0596  Stl2
+      0597  IncLocal 3 by 1
+      059A  JP -32 -> L2 (057D)
+    L4:
+      059D  Ldl2
+      059E  FieldGet 11 (prev)
+      05A1  JPNN +11 -> L5 (05AF)
+      05A4  Ldl0
+      05A5  Ldl2
+      05A6  FieldGet 10 (next)
+      05A9  FieldSet 6 (_head)
+      05AC  JP +27 -> L7 (05CA)
+    L5:
+      05AF  Ldl2
+      05B0  FieldGet 11 (prev)
+      05B3  Dup
+      05B4  JPNN +12 -> L6 (05C3)
+      05B7  Pop
+      05B8  ObjNew 5 (surtr:NullReferenceException)
+      05BB  Dup
+      05BC  Ldc6
+      05BD  InvokeSpecial 45 (ctor) args=2 ret=0
+      05C2  Throw
+    L6:
+      05C3  Ldl2
+      05C4  FieldGet 10 (next)
+      05C7  FieldSet 10 (next)
+    L7:
+      05CA  Ldl2
+      05CB  FieldGet 10 (next)
+      05CE  JPNN +11 -> L8 (05DC)
+      05D1  Ldl0
+      05D2  Ldl2
+      05D3  FieldGet 11 (prev)
+      05D6  FieldSet 7 (_tail)
+      05D9  JP +27 -> L10 (05F7)
+    L8:
+      05DC  Ldl2
+      05DD  FieldGet 10 (next)
+      05E0  Dup
+      05E1  JPNN +12 -> L9 (05F0)
+      05E4  Pop
+      05E5  ObjNew 5 (surtr:NullReferenceException)
+      05E8  Dup
+      05E9  Ldc6
+      05EA  InvokeSpecial 45 (ctor) args=2 ret=0
+      05EF  Throw
     L9:
-      01C6  Ldl2
-      01C7  FieldGet 5 (prev)
-      01CA  FieldSet 5 (prev)
+      05F0  Ldl2
+      05F1  FieldGet 11 (prev)
+      05F4  FieldSet 11 (prev)
     L10:
-      01CD  Ldl0
-      01CE  FieldGet 2 (_length)
-      01D1  Stl4
-      01D2  Ldl4
-      01D3  PushI8 1
-      01D5  Sub
-      01D6  Stl5
-      01D7  Ldl0
-      01D8  Ldl5
-      01D9  FieldSet 2 (_length)
-      01DC  Ldl4
-      01DD  Pop
-      01DE  ReturnVoid
+      05F7  Ldl0
+      05F8  FieldGet 8 (_length)
+      05FB  Stl4
+      05FC  Ldl4
+      05FD  PushI8 1
+      05FF  Sub
+      0600  Stl5
+      0601  Ldl0
+      0602  Ldl5
+      0603  FieldSet 8 (_length)
+      0606  Ldl4
+      0607  Pop
+      0608  PushTrue
+      0609  ReturnValue
 
   [public] virtual set(index: int, value: T0): void
-    ; entry 6, locals 5, stack 3, code 00DD..012B
-      00DD  Ldl1
-      00DE  PushI8 0
-      00E0  LT
-      00E1  Dup
-      00E2  JPNZ +10 -> L0 (00EF)
-      00E5  Pop
-      00E6  Ldl1
-      00E7  Ldl0
-      00E8  FieldGet 2 (_length)
-      00EB  GE
-      00EC  JP +0 -> L0 (00EF)
+    ; entry 26, locals 5, stack 3, code 0499..04E7
+      0499  Ldl1
+      049A  PushI8 0
+      049C  LT
+      049D  Dup
+      049E  JPNZ +10 -> L0 (04AB)
+      04A1  Pop
+      04A2  Ldl1
+      04A3  Ldl0
+      04A4  FieldGet 8 (_length)
+      04A7  GE
+      04A8  JP +0 -> L0 (04AB)
     L0:
-      00EF  JPZ +11 -> L1 (00FD)
-      00F2  ObjNew 0 (surtr:IndexOutOfRangeException)
-      00F5  Dup
-      00F6  Ldc1
-      00F7  InvokeSpecial 18 (ctor) args=2 ret=0
-      00FC  Throw
+      04AB  JPZ +11 -> L1 (04B9)
+      04AE  ObjNew 0 (surtr:IndexOutOfRangeException)
+      04B1  Dup
+      04B2  Ldc1
+      04B3  InvokeSpecial 43 (ctor) args=2 ret=0
+      04B8  Throw
     L1:
-      00FD  Ldl0
-      00FE  FieldGet 0 (_head)
-      0101  Stl3
-      0102  PushI8 0
-      0104  Stl4
+      04B9  Ldl0
+      04BA  FieldGet 6 (_head)
+      04BD  Stl3
+      04BE  PushI8 0
+      04C0  Stl4
     L2:
-      0105  Ldl4
-      0106  Ldl1
-      0107  JPGE +27 -> L4 (0125)
-      010A  Ldl3
-      010B  FieldGet 4 (next)
-      010E  Dup
-      010F  JPNN +12 -> L3 (011E)
-      0112  Pop
-      0113  ObjNew 2 (surtr:NullReferenceException)
-      0116  Dup
-      0117  Ldc2
-      0118  InvokeSpecial 19 (ctor) args=2 ret=0
-      011D  Throw
+      04C1  Ldl4
+      04C2  Ldl1
+      04C3  JPGE +27 -> L4 (04E1)
+      04C6  Ldl3
+      04C7  FieldGet 10 (next)
+      04CA  Dup
+      04CB  JPNN +12 -> L3 (04DA)
+      04CE  Pop
+      04CF  ObjNew 5 (surtr:NullReferenceException)
+      04D2  Dup
+      04D3  Ldc6
+      04D4  InvokeSpecial 45 (ctor) args=2 ret=0
+      04D9  Throw
     L3:
-      011E  Stl3
-      011F  IncLocal 4 by 1
-      0122  JP -32 -> L2 (0105)
+      04DA  Stl3
+      04DB  IncLocal 4 by 1
+      04DE  JP -32 -> L2 (04C1)
     L4:
-      0125  Ldl3
-      0126  Ldl2
-      0127  FieldSet 3 (value)
-      012A  ReturnVoid
+      04E1  Ldl3
+      04E2  Ldl2
+      04E3  FieldSet 9 (value)
+      04E6  ReturnVoid
+
+  sealed class ListIterator`1<T> : surtr:IIterator<T0>  [private]
+    [private] field _current: T0
+    [private] field _node: surtr.collections.List:LinkedList.Node<T0>
+
+    [public] property current: T0 { get; }
+      get:
+        ; entry 39, locals 1, stack 1, code 06EB..06F0
+          06EB  Ldl0
+          06EC  FieldGet 13 (_current)
+          06EF  ReturnValue
+
+    [public] ctor (node: surtr.collections.List:LinkedList.Node<T0>): void
+      ; entry 37, locals 2, stack 2, code 06C4..06CA
+        06C4  Ldl0
+        06C5  Ldl1
+        06C6  FieldSet 12 (_node)
+        06C9  ReturnVoid
+
+    [public] virtual moveNext(): bool
+      ; entry 38, locals 1, stack 2, code 06CA..06EB
+        06CA  Ldl0
+        06CB  FieldGet 12 (_node)
+        06CE  JPNN +2 -> L0 (06D3)
+        06D1  PushFalse
+        06D2  ReturnValue
+      L0:
+        06D3  Ldl0
+        06D4  Ldl0
+        06D5  FieldGet 12 (_node)
+        06D8  FieldGet 9 (value)
+        06DB  FieldSet 13 (_current)
+        06DE  Ldl0
+        06DF  Ldl0
+        06E0  FieldGet 12 (_node)
+        06E3  FieldGet 10 (next)
+        06E6  FieldSet 12 (_node)
+        06E9  PushTrue
+        06EA  ReturnValue
 
   sealed class Node`1<T>  [private]
     [public] field next: surtr.collections.List:LinkedList.Node<T0>
@@ -400,14 +782,522 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
     [public] field value: T0
 
     [public] ctor (value: T0): void
-      ; entry 11, locals 2, stack 2, code 0201..0211
-        0201  Ldl0
-        0202  PushNull
-        0203  FieldSet 4 (next)
-        0206  Ldl0
-        0207  PushNull
-        0208  FieldSet 5 (prev)
-        020B  Ldl0
-        020C  Ldl1
-        020D  FieldSet 3 (value)
-        0210  ReturnVoid
+      ; entry 36, locals 2, stack 2, code 06B4..06C4
+        06B4  Ldl0
+        06B5  PushNull
+        06B6  FieldSet 10 (next)
+        06B9  Ldl0
+        06BA  PushNull
+        06BB  FieldSet 11 (prev)
+        06BE  Ldl0
+        06BF  Ldl1
+        06C0  FieldSet 9 (value)
+        06C3  ReturnVoid
+
+class List`1<T> : surtr.collections.List:IList<T0>  [public]
+  [private] field _capacity: int
+  [private] field _items: T0[]
+  [private] field _length: int
+
+  [public] property isReadOnly: bool { get; }
+    get:
+      ; entry 2, locals 1, stack 1, code 002D..002F
+        002D  PushFalse
+        002E  ReturnValue
+
+  [public] property length: int { get; }
+    get:
+      ; entry 1, locals 1, stack 1, code 0028..002D
+        0028  Ldl0
+        0029  FieldGet 2 (_length)
+        002C  ReturnValue
+
+  [public] virtual add(item: T0): void
+    ; entry 5, locals 4, stack 3, code 007E..00B2
+      007E  Ldl0
+      007F  FieldGet 2 (_length)
+      0082  Ldl0
+      0083  FieldGet 0 (_capacity)
+      0086  JPNE +13 -> L0 (0096)
+      0089  Ldl0
+      008A  Ldl0
+      008B  FieldGet 2 (_length)
+      008E  PushI8 1
+      0090  Add
+      0091  InvokeSpecial 17 (ensureCapacity) args=2 ret=0
+    L0:
+      0096  Ldl0
+      0097  FieldGet 1 (_items)
+      009A  Ldl0
+      009B  FieldGet 2 (_length)
+      009E  Ldl1
+      009F  ArrSet
+      00A0  Ldl0
+      00A1  FieldGet 2 (_length)
+      00A4  Stl2
+      00A5  Ldl2
+      00A6  PushI8 1
+      00A8  Add
+      00A9  Stl3
+      00AA  Ldl0
+      00AB  Ldl3
+      00AC  FieldSet 2 (_length)
+      00AF  Ldl2
+      00B0  Pop
+      00B1  ReturnVoid
+
+  [public] virtual clear(): void
+    ; entry 9, locals 1, stack 2, code 0190..0197
+      0190  Ldl0
+      0191  PushI8 0
+      0193  FieldSet 2 (_length)
+      0196  ReturnVoid
+
+  [public] virtual contains(item: T0): bool
+    ; entry 11, locals 2, stack 2, code 01B8..01C3
+      01B8  Ldl0
+      01B9  Ldl1
+      01BA  InvokeVirtual 13 (indexOf) args=2 ret=1
+      01BF  PushI8 0
+      01C1  GE
+      01C2  ReturnValue
+
+  [public] virtual copyTo(array: T0[], arrayIndex: int): void
+    ; entry 12, locals 4, stack 4, code 01C3..0207
+      01C3  Ldl2
+      01C4  PushI8 0
+      01C6  JPGE +11 -> L0 (01D4)
+      01C9  ObjNew 0 (surtr:IndexOutOfRangeException)
+      01CC  Dup
+      01CD  Ldc2
+      01CE  InvokeSpecial 43 (ctor) args=2 ret=0
+      01D3  Throw
+    L0:
+      01D4  Ldl1
+      01D5  ArrLen
+      01D6  Ldl2
+      01D7  Sub
+      01D8  Ldl0
+      01D9  FieldGet 2 (_length)
+      01DC  JPGE +11 -> L1 (01EA)
+      01DF  ObjNew 2 (surtr:ArgumentException)
+      01E2  Dup
+      01E3  Ldc3
+      01E4  InvokeSpecial 44 (ctor) args=2 ret=0
+      01E9  Throw
+    L1:
+      01EA  PushI8 0
+      01EC  Stl3
+    L2:
+      01ED  Ldl3
+      01EE  Ldl0
+      01EF  FieldGet 2 (_length)
+      01F2  JPGE +17 -> L3 (0206)
+      01F5  Ldl1
+      01F6  Ldl2
+      01F7  Ldl3
+      01F8  Add
+      01F9  Ldl0
+      01FA  FieldGet 1 (_items)
+      01FD  Ldl3
+      01FE  ArrGet
+      01FF  ArrSet
+      0200  IncLocal 3 by 1
+      0203  JP -25 -> L2 (01ED)
+    L3:
+      0206  ReturnVoid
+
+  [public] ctor (initialCapacity: int = 16): void
+    ; entry 0, locals 2, stack 3, code 0000..0028
+      0000  Ldl1
+      0001  PushI8 0
+      0003  JPGE +11 -> L0 (0011)
+      0006  ObjNew 0 (surtr:IndexOutOfRangeException)
+      0009  Dup
+      000A  Ldc0
+      000B  InvokeSpecial 43 (ctor) args=2 ret=0
+      0010  Throw
+    L0:
+      0011  Ldl0
+      0012  Ldl1
+      0013  FieldSet 0 (_capacity)
+      0016  Ldl0
+      0017  Ldl0
+      0018  FieldGet 0 (_capacity)
+      001B  ArrNew 1 (T0[])
+      001E  FieldSet 1 (_items)
+      0021  Ldl0
+      0022  PushI8 0
+      0024  FieldSet 2 (_length)
+      0027  ReturnVoid
+
+  [private] ensureCapacity(min: int): void
+    ; entry 14, locals 5, stack 4, code 021B..026B
+      021B  Ldl0
+      021C  FieldGet 0 (_capacity)
+      021F  Ldl1
+      0220  JPGE +71 -> L5 (026A)
+      0223  Ldl0
+      0224  FieldGet 0 (_capacity)
+      0227  PushI8 0
+      0229  EQ
+      022A  JPZ +5 -> L0 (0232)
+      022D  PushI8 16
+      022F  JP +7 -> L1 (0239)
+    L0:
+      0232  Ldl0
+      0233  FieldGet 0 (_capacity)
+      0236  PushI8 2
+      0238  Mul
+    L1:
+      0239  Stl2
+      023A  Ldl2
+      023B  Ldl1
+      023C  JPGE +2 -> L2 (0241)
+      023F  Ldl1
+      0240  Stl2
+    L2:
+      0241  Ldl2
+      0242  ArrNew 1 (T0[])
+      0245  Stl3
+      0246  PushI8 0
+      0248  Stl4
+    L3:
+      0249  Ldl4
+      024A  Ldl0
+      024B  FieldGet 2 (_length)
+      024E  JPGE +15 -> L4 (0260)
+      0251  Ldl3
+      0252  Ldl4
+      0253  Ldl0
+      0254  FieldGet 1 (_items)
+      0257  Ldl4
+      0258  ArrGet
+      0259  ArrSet
+      025A  IncLocal 4 by 1
+      025D  JP -23 -> L3 (0249)
+    L4:
+      0260  Ldl0
+      0261  Ldl3
+      0262  FieldSet 1 (_items)
+      0265  Ldl0
+      0266  Ldl2
+      0267  FieldSet 0 (_capacity)
+    L5:
+      026A  ReturnVoid
+
+  [public] virtual get(index: int): T0
+    ; entry 3, locals 2, stack 3, code 002F..0056
+      002F  Ldl1
+      0030  PushI8 0
+      0032  LT
+      0033  Dup
+      0034  JPNZ +10 -> L0 (0041)
+      0037  Pop
+      0038  Ldl1
+      0039  Ldl0
+      003A  FieldGet 2 (_length)
+      003D  GE
+      003E  JP +0 -> L0 (0041)
+    L0:
+      0041  JPZ +11 -> L1 (004F)
+      0044  ObjNew 0 (surtr:IndexOutOfRangeException)
+      0047  Dup
+      0048  Ldc1
+      0049  InvokeSpecial 43 (ctor) args=2 ret=0
+      004E  Throw
+    L1:
+      004F  Ldl0
+      0050  FieldGet 1 (_items)
+      0053  Ldl1
+      0054  ArrGet
+      0055  ReturnValue
+
+  [public] virtual indexOf(item: T0): int
+    ; entry 10, locals 3, stack 2, code 0197..01B8
+      0197  PushI8 0
+      0199  Stl2
+    L0:
+      019A  Ldl2
+      019B  Ldl0
+      019C  FieldGet 2 (_length)
+      019F  JPGE +18 -> L2 (01B4)
+      01A2  Ldl0
+      01A3  FieldGet 1 (_items)
+      01A6  Ldl2
+      01A7  ArrGet
+      01A8  Ldl1
+      01A9  JPRNE +2 -> L1 (01AE)
+      01AC  Ldl2
+      01AD  ReturnValue
+    L1:
+      01AE  IncLocal 2 by 1
+      01B1  JP -26 -> L0 (019A)
+    L2:
+      01B4  PushI8 1
+      01B6  Neg
+      01B7  ReturnValue
+
+  [public] virtual insert(index: int, item: T0): void
+    ; entry 6, locals 6, stack 5, code 00B2..0122
+      00B2  Ldl1
+      00B3  PushI8 0
+      00B5  LT
+      00B6  Dup
+      00B7  JPNZ +10 -> L0 (00C4)
+      00BA  Pop
+      00BB  Ldl1
+      00BC  Ldl0
+      00BD  FieldGet 2 (_length)
+      00C0  GT
+      00C1  JP +0 -> L0 (00C4)
+    L0:
+      00C4  JPZ +11 -> L1 (00D2)
+      00C7  ObjNew 0 (surtr:IndexOutOfRangeException)
+      00CA  Dup
+      00CB  Ldc1
+      00CC  InvokeSpecial 43 (ctor) args=2 ret=0
+      00D1  Throw
+    L1:
+      00D2  Ldl0
+      00D3  FieldGet 2 (_length)
+      00D6  Ldl0
+      00D7  FieldGet 0 (_capacity)
+      00DA  JPNE +13 -> L2 (00EA)
+      00DD  Ldl0
+      00DE  Ldl0
+      00DF  FieldGet 2 (_length)
+      00E2  PushI8 1
+      00E4  Add
+      00E5  InvokeSpecial 17 (ensureCapacity) args=2 ret=0
+    L2:
+      00EA  Ldl0
+      00EB  FieldGet 2 (_length)
+      00EE  Stl3
+    L3:
+      00EF  Ldl3
+      00F0  Ldl1
+      00F1  JPLE +21 -> L4 (0109)
+      00F4  Ldl0
+      00F5  FieldGet 1 (_items)
+      00F8  Ldl3
+      00F9  Ldl0
+      00FA  FieldGet 1 (_items)
+      00FD  Ldl3
+      00FE  PushI8 1
+      0100  Sub
+      0101  ArrGet
+      0102  ArrSet
+      0103  IncLocal 3 by -1
+      0106  JP -26 -> L3 (00EF)
+    L4:
+      0109  Ldl0
+      010A  FieldGet 1 (_items)
+      010D  Ldl1
+      010E  Ldl2
+      010F  ArrSet
+      0110  Ldl0
+      0111  FieldGet 2 (_length)
+      0114  Stl4
+      0115  Ldl4
+      0116  PushI8 1
+      0118  Add
+      0119  Stl5
+      011A  Ldl0
+      011B  Ldl5
+      011C  FieldSet 2 (_length)
+      011F  Ldl4
+      0120  Pop
+      0121  ReturnVoid
+
+  [public] virtual iterate(): surtr:IIterator<T0>
+    ; entry 13, locals 1, stack 5, code 0207..021B
+      0207  ObjNew 3 (surtr.collections.List:List.Iterator<T0>)
+      020A  Dup
+      020B  Ldl0
+      020C  FieldGet 1 (_items)
+      020F  Ldl0
+      0210  FieldGet 2 (_length)
+      0213  PushI8 -1
+      0215  InvokeSpecial 18 (ctor) args=4 ret=0
+      021A  ReturnValue
+
+  [public] virtual remove(item: T0): bool
+    ; entry 8, locals 3, stack 2, code 0177..0190
+      0177  Ldl0
+      0178  Ldl1
+      0179  InvokeVirtual 13 (indexOf) args=2 ret=1
+      017E  Stl2
+      017F  Ldl2
+      0180  PushI8 0
+      0182  JPLT +9 -> L0 (018E)
+      0185  Ldl0
+      0186  Ldl2
+      0187  InvokeVirtual 10 (removeAt) args=2 ret=0
+      018C  PushTrue
+      018D  ReturnValue
+    L0:
+      018E  PushFalse
+      018F  ReturnValue
+
+  [public] virtual removeAt(index: int): bool
+    ; entry 7, locals 5, stack 5, code 0122..0177
+      0122  Ldl1
+      0123  PushI8 0
+      0125  LT
+      0126  Dup
+      0127  JPNZ +10 -> L0 (0134)
+      012A  Pop
+      012B  Ldl1
+      012C  Ldl0
+      012D  FieldGet 2 (_length)
+      0130  GE
+      0131  JP +0 -> L0 (0134)
+    L0:
+      0134  JPZ +11 -> L1 (0142)
+      0137  ObjNew 0 (surtr:IndexOutOfRangeException)
+      013A  Dup
+      013B  Ldc1
+      013C  InvokeSpecial 43 (ctor) args=2 ret=0
+      0141  Throw
+    L1:
+      0142  Ldl1
+      0143  Stl2
+    L2:
+      0144  Ldl2
+      0145  Ldl0
+      0146  FieldGet 2 (_length)
+      0149  PushI8 1
+      014B  Sub
+      014C  JPGE +21 -> L3 (0164)
+      014F  Ldl0
+      0150  FieldGet 1 (_items)
+      0153  Ldl2
+      0154  Ldl0
+      0155  FieldGet 1 (_items)
+      0158  Ldl2
+      0159  PushI8 1
+      015B  Add
+      015C  ArrGet
+      015D  ArrSet
+      015E  IncLocal 2 by 1
+      0161  JP -32 -> L2 (0144)
+    L3:
+      0164  Ldl0
+      0165  FieldGet 2 (_length)
+      0168  Stl3
+      0169  Ldl3
+      016A  PushI8 1
+      016C  Sub
+      016D  Stl4
+      016E  Ldl0
+      016F  Ldl4
+      0170  FieldSet 2 (_length)
+      0173  Ldl3
+      0174  Pop
+      0175  PushTrue
+      0176  ReturnValue
+
+  [public] virtual set(index: int, value: T0): void
+    ; entry 4, locals 3, stack 3, code 0056..007E
+      0056  Ldl1
+      0057  PushI8 0
+      0059  LT
+      005A  Dup
+      005B  JPNZ +10 -> L0 (0068)
+      005E  Pop
+      005F  Ldl1
+      0060  Ldl0
+      0061  FieldGet 2 (_length)
+      0064  GE
+      0065  JP +0 -> L0 (0068)
+    L0:
+      0068  JPZ +11 -> L1 (0076)
+      006B  ObjNew 0 (surtr:IndexOutOfRangeException)
+      006E  Dup
+      006F  Ldc1
+      0070  InvokeSpecial 43 (ctor) args=2 ret=0
+      0075  Throw
+    L1:
+      0076  Ldl0
+      0077  FieldGet 1 (_items)
+      007A  Ldl1
+      007B  Ldl2
+      007C  ArrSet
+      007D  ReturnVoid
+
+  sealed class Iterator`1<T> : surtr:IIterator<T0>  [private]
+    [private] field _index: int
+    [private] readonly field _items: T0[]
+    [private] readonly field _length: int
+
+    [public] property current: T0 { get; }
+      get:
+        ; entry 16, locals 1, stack 3, code 027B..02AB
+          027B  Ldl0
+          027C  FieldGet 5 (_index)
+          027F  PushI8 0
+          0281  LT
+          0282  Dup
+          0283  JPNZ +13 -> L0 (0293)
+          0286  Pop
+          0287  Ldl0
+          0288  FieldGet 5 (_index)
+          028B  Ldl0
+          028C  FieldGet 4 (_length)
+          028F  GE
+          0290  JP +0 -> L0 (0293)
+        L0:
+          0293  JPZ +11 -> L1 (02A1)
+          0296  ObjNew 0 (surtr:IndexOutOfRangeException)
+          0299  Dup
+          029A  Ldc4
+          029B  InvokeSpecial 43 (ctor) args=2 ret=0
+          02A0  Throw
+        L1:
+          02A1  Ldl0
+          02A2  FieldGet 3 (_items)
+          02A5  Ldl0
+          02A6  FieldGet 5 (_index)
+          02A9  ArrGet
+          02AA  ReturnValue
+
+    [public] ctor (items: T0[], length: int, index: int = -1): void
+      ; entry 15, locals 4, stack 2, code 026B..027B
+        026B  Ldl0
+        026C  Ldl1
+        026D  FieldSet 3 (_items)
+        0270  Ldl0
+        0271  Ldl2
+        0272  FieldSet 4 (_length)
+        0275  Ldl0
+        0276  Ldl3
+        0277  FieldSet 5 (_index)
+        027A  ReturnVoid
+
+    [public] virtual moveNext(): bool
+      ; entry 17, locals 3, stack 2, code 02AB..02CE
+        02AB  Ldl0
+        02AC  FieldGet 5 (_index)
+        02AF  PushI8 1
+        02B1  Add
+        02B2  Ldl0
+        02B3  FieldGet 4 (_length)
+        02B6  JPGE +19 -> L0 (02CC)
+        02B9  Ldl0
+        02BA  FieldGet 5 (_index)
+        02BD  Stl1
+        02BE  Ldl1
+        02BF  PushI8 1
+        02C1  Add
+        02C2  Stl2
+        02C3  Ldl0
+        02C4  Ldl2
+        02C5  FieldSet 5 (_index)
+        02C8  Ldl1
+        02C9  Pop
+        02CA  PushTrue
+        02CB  ReturnValue
+      L0:
+        02CC  PushFalse
+        02CD  ReturnValue

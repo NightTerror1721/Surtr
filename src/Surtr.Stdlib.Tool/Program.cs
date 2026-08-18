@@ -80,14 +80,11 @@ namespace Surtr.Stdlib.Tool
 
             var nativeLinkNames = new List<string>();
 
-            foreach (string relative in sources)
+            if (!BuildAll(sourceRoot, sources, outputDirectory, disassemblyDirectory, nativeLinkNames, out string diagnostics))
             {
-                if (!BuildOne(sourceRoot, relative, outputDirectory, disassemblyDirectory, nativeLinkNames, out string diagnostics))
-                {
-                    Console.Error.WriteLine("Stdlib build failed for " + ModuleOf(relative) + ":");
-                    Console.Error.WriteLine(diagnostics);
-                    return 1;
-                }
+                Console.Error.WriteLine("Stdlib build failed:");
+                Console.Error.WriteLine(diagnostics);
+                return 1;
             }
 
             // Written next to the images themselves: what Surtr.Core embeds alongside them, and
@@ -131,26 +128,31 @@ namespace Surtr.Stdlib.Tool
         }
 
         /// <summary>
-        /// Compiles one source file into a <c>.surtrc</c> image written to <paramref name="outputDirectory"/>,
-        /// plus a disassembled text rendering written to <paramref name="disassemblyDirectory"/>.
+        /// Compiles every <c>.surtr</c> source in one compilation and writes one <c>.surtrc</c>
+        /// image per module into <paramref name="outputDirectory"/>, plus a disassembled text
+        /// rendering of each into <paramref name="disassemblyDirectory"/>.
         /// </summary>
-        private static bool BuildOne(
+        /// <remarks>
+        /// One compilation for all of them is what makes a cross-module <c>import</c> work — a
+        /// stdlib module can name another (<c>List.surtr</c> imports <c>surtr.collections.Collection</c>),
+        /// and a module only exists in the same compilation it is declared in. Each file is still
+        /// its own module: the project is told the module path outright rather than letting §2.1's
+        /// directory derivation fold every file in a folder into one module.
+        /// </remarks>
+        private static bool BuildAll(
             string sourceRoot,
-            string relative,
+            List<string> sources,
             string outputDirectory,
             string disassemblyDirectory,
             List<string> nativeLinkNames,
             out string diagnostics)
         {
-            string modulePath = ModuleOf(relative);
-
-            // The file's directory is the project's source root, and the full module path is the
-            // root module path, so §2.1's derivation reads exactly the name we computed: a file at
-            // its own source root belongs to whatever the root module path says, no synthetic
-            // directories needed to fold the file name in as a segment.
-            string realFile = Path.Combine(sourceRoot, ModulePrefix, relative.Replace('/', Path.DirectorySeparatorChar));
-            var project = new SurtrProject(Path.GetDirectoryName(realFile)!, rootModulePath: modulePath);
-            project.AddSourceFile(realFile, File.ReadAllText(realFile));
+            var project = new SurtrProject(sourceRoot, rootModulePath: ModulePrefix);
+            foreach (string relative in sources)
+            {
+                string realFile = Path.Combine(sourceRoot, ModulePrefix, relative.Replace('/', Path.DirectorySeparatorChar));
+                project.AddSourceFile(realFile, ModuleOf(relative), File.ReadAllText(realFile));
+            }
 
             var bag = new StringBuilder();
 
@@ -183,18 +185,23 @@ namespace Surtr.Stdlib.Tool
                 return false;
             }
 
-            string path = Path.Combine(outputDirectory, modulePath + SurtrModuleImage.FileExtension);
-            File.WriteAllBytes(path, images[0].ToBytes());
+            for (int i = 0; i < images.Count; i++)
+            {
+                var module = emitter.Modules[i];
 
-            // The disassembler reads an emitter-built module (the only form whose name tables are
-            // populated - it cannot render a module re-instantiated from image bytes), and the
-            // emitter module is exactly what just got serialized into the image above, so this is
-            // the human-checkable view of precisely what was compiled.
-            string disasm = SurtrBytecodeDisassembler.Disassemble(emitter.Modules[0]);
-            string disasmPath = Path.Combine(disassemblyDirectory, modulePath + ".txt");
-            File.WriteAllText(disasmPath, disasm);
+                string path = Path.Combine(outputDirectory, module.Path + SurtrModuleImage.FileExtension);
+                File.WriteAllBytes(path, images[i].ToBytes());
 
-            CollectNativeLinkNames(emitter.Modules[0], nativeLinkNames);
+                // The disassembler reads an emitter-built module (the only form whose name tables
+                // are populated - it cannot render a module re-instantiated from image bytes), and
+                // the emitter module is exactly what just got serialized into the image above, so
+                // this is the human-checkable view of precisely what was compiled.
+                string disasm = SurtrBytecodeDisassembler.Disassemble(module);
+                string disasmPath = Path.Combine(disassemblyDirectory, module.Path + ".txt");
+                File.WriteAllText(disasmPath, disasm);
+
+                CollectNativeLinkNames(module, nativeLinkNames);
+            }
 
             diagnostics = bag.ToString();
             return true;

@@ -11,8 +11,9 @@ public interface ICollection<T> : IReadOnlyCollection<T>
 {
     isReadOnly: bool { get; }
 
+    fun set(index: int, value: T): void;
     fun add(item: T): void;
-    fun remove(item: T): void;
+    fun remove(item: T): bool;
     fun clear(): void;
 }
 
