@@ -171,18 +171,65 @@ namespace Surtr.Tests.Compiler.Binding
             Assert.Equal(ConversionKind.ExplicitErasure, conversions.Classify(factory.Unknown, factory.Int).Kind);
         }
 
+        /// <summary>
+        /// `T` runs unboxed at the interpreter and erases to a reference at emit, but neither of
+        /// those is a fact the type checker owes anything to: to <see cref="Conversions"/> a type
+        /// parameter is an ordinary invariant type, and the only thing that reaches a `T`-typed slot
+        /// is `T` itself — never a concrete type, and never a different parameter, no matter what
+        /// either is constrained to. `unknown` (<see cref="AnythingReachesTheErasedSlot"/>) is the
+        /// one slot that is genuinely a wildcard; `T` only looks like one after substitution erases
+        /// it, which is a runtime fact and not a compile-time one.
+        /// </summary>
         [Fact]
-        public void ATypeParameterIsAnErasedSlotToo()
+        public void ATypeParameterAcceptsOnlyItself()
         {
             var conversions = Setup(out var factory);
 
             var box = Declare(factory, "Box");
             box.SetTypeParameters(new[] { factory.DeclareTypeParameter("T", box, 0) });
-
             var parameter = box.TypeParameters[0];
 
-            Assert.Equal(ConversionKind.ImplicitErasure, conversions.Classify(factory.Int, parameter).Kind);
+            var other = Declare(factory, "Other");
+            other.SetTypeParameters(new[] { factory.DeclareTypeParameter("U", other, 0) });
+            var unrelatedParameter = other.TypeParameters[0];
+
+            Assert.Equal(ConversionKind.None, conversions.Classify(factory.Int, parameter).Kind);
+            Assert.Equal(ConversionKind.None, conversions.Classify(factory.String, parameter).Kind);
+            Assert.False(conversions.IsAssignable(factory.Int, parameter));
+
+            // A different parameter is not implicitly assignable either — it just still reaches an
+            // erased destination the same explicit way any other erased source would (§1.11).
+            Assert.False(conversions.IsAssignable(unrelatedParameter, parameter));
+
+            Assert.True(conversions.IsAssignable(parameter, parameter));
+        }
+
+        /// <summary>`T` widens to its own `T?` exactly like any other type does (§5.1) — nothing more.</summary>
+        [Fact]
+        public void ATypeParameterWidensToItsOwnNullableForm()
+        {
+            var conversions = Setup(out var factory);
+
+            var box = Declare(factory, "Box");
+            box.SetTypeParameters(new[] { factory.DeclareTypeParameter("T", box, 0) });
+            var parameter = box.TypeParameters[0];
+
+            Assert.Equal(ConversionKind.ImplicitNullable, conversions.Classify(parameter, parameter.Nullable).Kind);
+            Assert.False(conversions.IsAssignable(parameter.Nullable, parameter));
+        }
+
+        /// <summary>A concrete type still reads back out of a `T`-typed slot only through a cast.</summary>
+        [Fact]
+        public void ReadingAConcreteTypeOutOfATypeParameterStillNeedsACast()
+        {
+            var conversions = Setup(out var factory);
+
+            var box = Declare(factory, "Box");
+            box.SetTypeParameters(new[] { factory.DeclareTypeParameter("T", box, 0) });
+            var parameter = box.TypeParameters[0];
+
             Assert.False(conversions.IsAssignable(parameter, factory.Int));
+            Assert.Equal(ConversionKind.ExplicitErasure, conversions.Classify(parameter, factory.Int).Kind);
         }
 
         [Fact]

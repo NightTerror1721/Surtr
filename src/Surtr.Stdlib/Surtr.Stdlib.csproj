@@ -1,0 +1,84 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <RootNamespace>Surtr.Stdlib</RootNamespace>
+    <AssemblyName>Surtr.Stdlib</AssemblyName>
+
+    <!-- Optional and modular by design: a host adds this project after constructing its own
+         SurtrRuntime, never the other way around. Surtr.Core carries no reference back to this
+         project and knows nothing of Math, the loader, or any other stdlib content - see
+         SurtrStdlib.cs's remarks. -->
+    <IsPackable>false</IsPackable>
+
+    <!-- SurtrStdlib.RegisterNativeBodies and SurtrMathNative's entry points take addresses of
+         static methods (`&SurtrMathNative.MathSin`), the same managed function-pointer convention
+         Surtr.Core's own built-ins use - see CLAUDE.md's note on why entry points are always
+         managed, never `unsafe[Cdecl]`. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The loader (SurtrStdlib.cs) and the native Math bodies (Native/SurtrMathNative.cs) consume
+         Surtr.Core exactly the way any other host would: SurtrRuntime, SurtrModuleImage,
+         SurtrNativeEntryPoint, SurtrCallArguments and SurtrValue are all public, so this reference
+         needs no InternalsVisibleTo on Surtr.Core's side. -->
+    <ProjectReference Include="..\Surtr.Core\Surtr.Core.csproj" />
+  </ItemGroup>
+
+  <!-- This project (netstandard2.1) cannot reference the tool (net8.0) - the target framework is
+       narrower - so there is no ProjectReference to it. Instead the tool is built and run on demand
+       with `dotnet run`. No circularity and no build recursion: Surtr.Stdlib.Tool references only
+       Surtr.Compiler, never this project, so running it does not rebuild this assembly (which is
+       what previously caused a hang).
+
+       Runs at BeforeTargets="BeforeBuild" rather than AfterTargets="Build", and that timing is
+       load-bearing, not cosmetic: the ItemGroup below embeds the freshly-written .surtrc files as
+       resources of this very assembly, and an EmbeddedResource item only reaches csc's resource
+       switch if it exists before PrepareResourceNames runs, which happens inside CoreBuild, itself
+       reached only after the empty BeforeBuild extension point this target hooks. Building this
+       project standalone ("dotnet build Surtr.Stdlib.csproj", not via the solution) still works:
+       the "dotnet run" invocation of Surtr.Stdlib.Tool below is a wholly separate process building
+       its own Tool/Compiler/Core graph, independent of whether Surtr.Stdlib's own ProjectReference
+       to Surtr.Core has resolved yet. -->
+  <Target Name="BuildStdlibImages" BeforeTargets="BeforeBuild">
+    <PropertyGroup>
+      <StdlibSourceRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)src'))</StdlibSourceRoot>
+      <StdlibOutputDirectory>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)build'))</StdlibOutputDirectory>
+      <StdlibDisassemblyDirectory>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)disasm'))</StdlibDisassemblyDirectory>
+      <StdlibToolProject>$(MSBuildThisFileDirectory)..\Surtr.Stdlib.Tool\Surtr.Stdlib.Tool.csproj</StdlibToolProject>
+    </PropertyGroup>
+    <MakeDir Directories="$(StdlibOutputDirectory)" />
+    <Exec Command="dotnet run --project &quot;$(StdlibToolProject)&quot; --configuration $(Configuration) -- &quot;$(StdlibSourceRoot)&quot; &quot;$(StdlibOutputDirectory)&quot; &quot;$(StdlibDisassemblyDirectory)&quot;"
+          WorkingDirectory="$(MSBuildThisFileDirectory)"
+          ConsoleToMSBuild="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="StdlibToolOutput" />
+    </Exec>
+    <Message Importance="high" Text="$(StdlibToolOutput)" />
+
+    <!-- Embedded under a fixed logical name rather than the SDK's default (RootNamespace + folder
+         path, which would bake "build" into the name and break the moment that folder is renamed).
+         SurtrStdlib.EmbeddedImages reads these back by prefix/suffix alone - see its remarks - so
+         the exact scheme here and there must agree. Evaluated dynamically: this ItemGroup runs
+         after the Exec above, in the same target, so the glob sees the files that Exec just wrote
+         even on a from-scratch checkout with an empty build/ directory.
+
+         Include and Update are deliberately two separate ItemGroups rather than one: %(Filename)/
+         %(Extension) metadata referenced on a wildcard Include's own children do not reliably
+         self-resolve when the item is created at target-execution time (a known MSBuild quirk,
+         distinct from the same reference used later against an already-existing item) - every
+         item gets an empty LogicalName and csc then rejects the resulting duplicate resource
+         identifiers. Update runs against items that already exist, where the same %(...) reference
+         resolves correctly per item. -->
+    <ItemGroup>
+      <EmbeddedResource Include="$(StdlibOutputDirectory)\*.surtrc" />
+    </ItemGroup>
+    <ItemGroup>
+      <EmbeddedResource Update="$(StdlibOutputDirectory)\*.surtrc">
+        <LogicalName>Surtr.Stdlib.Images.%(Filename)%(Extension)</LogicalName>
+        <Link>build\%(Filename)%(Extension)</Link>
+      </EmbeddedResource>
+    </ItemGroup>
+  </Target>
+
+</Project>

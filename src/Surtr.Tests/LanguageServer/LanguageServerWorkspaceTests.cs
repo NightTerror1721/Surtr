@@ -1,0 +1,485 @@
+#nullable enable
+
+using System;
+using System.IO;
+using System.Linq;
+using Surtr.LanguageServer.Workspace;
+
+namespace Surtr.Tests.LanguageServer
+{
+    /// <summary>
+    /// Exercises the Language Server's workspace/completion/hover pipeline against the real
+    /// compiler — the same path <see cref="Surtr.LanguageServer.LspServer"/> drives — focused on the
+    /// two things a request must always get right regardless of what a file imports: the built-in
+    /// surface (§13) is always in scope, and an import (§2.1) is resolved and diagnosed exactly like
+    /// the compiler's own binder does. These are the only tests the language server has today; each
+    /// one writes its own file tree under a fresh temp directory and deletes it afterwards.
+    /// </summary>
+    public sealed class LanguageServerWorkspaceTests : IDisposable
+    {
+        private readonly string _root = Path.Combine(
+            Path.GetTempPath(),
+            "surtr-lsp-tests",
+            Guid.NewGuid().ToString("N"));
+
+        public void Dispose()
+        {
+            if (Directory.Exists(_root))
+                Directory.Delete(_root, recursive: true);
+        }
+
+        private Workspace Tree(params (string Path, string Text)[] files)
+        {
+            foreach (var (path, text) in files)
+            {
+                string full = Path.Combine(_root, path);
+                Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+                File.WriteAllText(full, text);
+            }
+
+            return new Workspace(_root);
+        }
+
+        [Fact]
+        public void ABuiltInArrayMemberCompletesWithNoImportAtAll()
+        {
+            const string source =
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let xs: int[] = [1, 2, 3];\n" +
+                "        let n: int = xs.length;\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Count == 0 || diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int dotEnd = source.IndexOf("xs.length", StringComparison.Ordinal) + "xs.".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, path, source, dotEnd);
+
+            Assert.Contains(completion.Items, item => item.Label == "length");
+            Assert.Contains(completion.Items, item => item.Label == "push");
+        }
+
+        [Fact]
+        public void AWildcardImportedTypeAppearsInCompletionAndResolvesToItsDeclaration()
+        {
+            const string coreSource = "public class Entity {\n    public fun greet(): string { return \"hi\"; }\n}\n";
+            const string appSource =
+                "import proj.core.*;\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        \n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Entity.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            int insideBody = appSource.IndexOf("        \n", StringComparison.Ordinal) + "        ".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, appPath, appSource, insideBody);
+            Assert.Contains(completion.Items, item => item.Label == "Entity");
+        }
+
+        [Fact]
+        public void CollidingWildcardImportsAreDiagnosedAtTheUseNotTheImport()
+        {
+            const string firstSource = "public class Widget { }\n";
+            const string secondSource = "public class Widget { }\n";
+            const string appSource =
+                "import proj.first.*;\n" +
+                "import proj.second.*;\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let w: Widget = null;\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/first/Widget.surtr", firstSource),
+                ("proj/second/Widget.surtr", secondSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            Assert.True(diagnostics.TryGetValue(appPath, out var appDiagnostics) && appDiagnostics.Count > 0,
+                "Expected the ambiguous 'Widget' use to be reported against the consuming file, not the imports: " + Describe(diagnostics));
+        }
+
+        [Fact]
+        public void ExpressionCompletionKeywordsMatchSection1Point2()
+        {
+            const string source =
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        \n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int insideBody = source.IndexOf("        \n", StringComparison.Ordinal) + "        ".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, path, source, insideBody);
+            var labels = completion.Items.Select(item => item.Label).ToList();
+
+            // §1.2 reserves "constructor" and explicitly does *not* reserve "new" — Surtr has no
+            // `new` (§5.5) — nor "not"/"or", which do not exist as tokens at all (logical operators
+            // are symbolic: &&, ||, !).
+            Assert.Contains("constructor", labels);
+            Assert.Contains("moduleof", labels);
+            Assert.DoesNotContain("new", labels);
+            Assert.DoesNotContain("not", labels);
+            Assert.DoesNotContain("or", labels);
+        }
+
+        [Fact]
+        public void HoverAndDefinitionOnAWildcardImportedTypeReachTheDeclaringFile()
+        {
+            const string coreSource = "public class Entity {\n    public fun greet(): string { return \"hi\"; }\n}\n";
+            const string appSource =
+                "import proj.core.*;\n\n" +
+                "public class Holder {\n" +
+                "    public var e: Entity;\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Entity.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            string corePath = Path.Combine(_root, "proj", "core", "Entity.surtr");
+
+            int nameOffset = appSource.IndexOf("Entity;", StringComparison.Ordinal);
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, appPath, appSource, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.True(hit!.HasDefinition, "Expected the imported type name to resolve to a declaration.");
+            Assert.Equal(Path.GetFullPath(corePath), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
+        }
+
+        [Fact]
+        public void AModuleAliasCompletesItsModulesTypes()
+        {
+            const string coreSource = "public class Entity {\n    public fun greet(): string { return \"hi\"; }\n}\n";
+            const string appSource =
+                "import proj.core as Core;\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let e = Core.Entity();\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Entity.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            int dotEnd = appSource.IndexOf("Core.Entity()", StringComparison.Ordinal) + "Core.".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, appPath, appSource, dotEnd);
+            Assert.Contains(completion.Items, item => item.Label == "Entity");
+        }
+
+        [Fact]
+        public void AModuleAliasNameItselfAppearsInBareCompletion()
+        {
+            const string coreSource = "public class Entity { }\n";
+            const string appSource =
+                "import proj.core as Core;\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        \n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Entity.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            int insideBody = appSource.IndexOf("        \n", StringComparison.Ordinal) + "        ".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, appPath, appSource, insideBody);
+            Assert.Contains(completion.Items, item => item.Label == "Core");
+        }
+
+        [Fact]
+        public void ASelectiveImportBringsOnlyTheListedTypeIntoBareCompletion()
+        {
+            const string coreSource = "public class Entity { }\npublic class Widget { }\n";
+            const string appSource =
+                "import proj.core.{Entity};\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        \n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Shapes.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            int insideBody = appSource.IndexOf("        \n", StringComparison.Ordinal) + "        ".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, appPath, appSource, insideBody);
+            Assert.Contains(completion.Items, item => item.Label == "Entity");
+            Assert.DoesNotContain(completion.Items, item => item.Label == "Widget");
+        }
+
+        /// <summary>`proj.core` has no files of its own here - only its submodule `proj.core.geo` does.</summary>
+        [Fact]
+        public void ADirectoryWildcardBringsASubmodulesTypeIntoBareCompletion()
+        {
+            const string nestedSource = "public class Entity { }\n";
+            const string appSource =
+                "import proj.core.*;\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        \n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/geo/Entity.surtr", nestedSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            int insideBody = appSource.IndexOf("        \n", StringComparison.Ordinal) + "        ".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, appPath, appSource, insideBody);
+            Assert.Contains(completion.Items, item => item.Label == "Entity");
+        }
+
+        /// <summary>Fase 12's sweep: hover/definition on a type reached only through a module alias (Fase 7).</summary>
+        [Fact]
+        public void HoverAndDefinitionOnAModuleAliasedTypeReachTheDeclaringFile()
+        {
+            const string coreSource = "public class Entity {\n    public fun greet(): string { return \"hi\"; }\n}\n";
+            const string appSource =
+                "import proj.core as Core;\n\n" +
+                "public class Holder {\n" +
+                "    public var e: Core.Entity;\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Entity.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            string corePath = Path.Combine(_root, "proj", "core", "Entity.surtr");
+
+            int nameOffset = appSource.IndexOf("Core.Entity;", StringComparison.Ordinal) + "Core.".Length;
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, appPath, appSource, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.True(hit!.HasDefinition, "Expected the aliased type name to resolve to a declaration.");
+            Assert.Equal(Path.GetFullPath(corePath), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
+        }
+
+        /// <summary>Fase 12's sweep: hover/definition on a type reached only through a selective import (Fase 8).</summary>
+        [Fact]
+        public void HoverAndDefinitionOnASelectivelyImportedTypeReachTheDeclaringFile()
+        {
+            const string coreSource = "public class Entity {\n    public fun greet(): string { return \"hi\"; }\n}\npublic class Widget { }\n";
+            const string appSource =
+                "import proj.core.{Entity};\n\n" +
+                "public class Holder {\n" +
+                "    public var e: Entity;\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Shapes.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            string corePath = Path.Combine(_root, "proj", "core", "Shapes.surtr");
+
+            int nameOffset = appSource.IndexOf("Entity;", StringComparison.Ordinal);
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, appPath, appSource, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.True(hit!.HasDefinition, "Expected the selectively imported type name to resolve to a declaration.");
+            Assert.Equal(Path.GetFullPath(corePath), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
+        }
+
+        /// <summary>Fase 12's sweep: hover/definition on a type reached only through a directory wildcard's submodule (Fase 9).</summary>
+        [Fact]
+        public void HoverAndDefinitionOnADirectoryWildcardSubmoduleTypeReachTheDeclaringFile()
+        {
+            const string nestedSource = "public class Entity {\n    public fun greet(): string { return \"hi\"; }\n}\n";
+            const string appSource =
+                "import proj.core.*;\n\n" +
+                "public class Holder {\n" +
+                "    public var e: Entity;\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/geo/Entity.surtr", nestedSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            string nestedPath = Path.Combine(_root, "proj", "core", "geo", "Entity.surtr");
+
+            int nameOffset = appSource.IndexOf("Entity;", StringComparison.Ordinal);
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, appPath, appSource, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.True(hit!.HasDefinition, "Expected the directory-wildcard-imported submodule type to resolve to a declaration.");
+            Assert.Equal(Path.GetFullPath(nestedPath), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
+        }
+
+        /// <summary>
+        /// `typeof`'s instance form (a bound <c>Operand</c> rather than a <c>TargetType</c>) has to
+        /// be walked into for hover to reach a local used as its argument - before
+        /// <c>SymbolResolver.WalkExpression</c> grew a <c>BoundTypeOfExpression</c> case, the walk
+        /// stopped dead at the <c>typeof</c> node and <c>Resolve</c> returned null for it entirely
+        /// (no hover at all, not even a degraded one - a local never gets <c>HasDefinition</c> in
+        /// this LSP regardless of construct, so the markdown text is what actually pins the fix).
+        /// </summary>
+        [Fact]
+        public void HoverOnATypeOfInstanceOperandReachesTheLocalItReads()
+        {
+            const string source =
+                "public class Box { public let value: int = 0; }\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let b: Box = Box();\n" +
+                "        let t = typeof(b);\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int nameOffset = source.IndexOf("typeof(b)", StringComparison.Ordinal) + "typeof(".Length;
+
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.Contains("b: Box", hit!.Markdown);
+        }
+
+        /// <summary>
+        /// `typeof`'s static form still resolves a type name directly, same as before the fix -
+        /// this pins that <c>BoundTypeOfExpression</c>'s <c>TargetType</c> path keeps working
+        /// alongside the newly-added <c>Operand</c> path above. A bound-tree type hover never
+        /// carries <c>HasDefinition</c> either, for <c>is</c>/<c>as</c> just as much as for
+        /// <c>typeof</c> (<c>ConsiderName</c> reaches it through <c>FromType</c>, which sets no
+        /// definition file), so the markdown is again what a fix or a regression would show up in.
+        /// </summary>
+        [Fact]
+        public void HoverOnATypeOfStaticOperandNamesTheClass()
+        {
+            const string coreSource = "public class Entity {\n    public fun greet(): string { return \"hi\"; }\n}\n";
+            const string appSource =
+                "import proj.core.*;\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let t = typeof(Entity);\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Entity.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+
+            int nameOffset = appSource.IndexOf("typeof(Entity)", StringComparison.Ordinal) + "typeof(".Length;
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, appPath, appSource, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.Contains("Entity", hit!.Markdown);
+        }
+
+        /// <summary>
+        /// Member completion after a dot has to descend through a <c>typeof(...)</c> wrapper to
+        /// reach a non-bare-identifier receiver - before <c>CompletionProvider.ChildrenOf</c> grew a
+        /// <c>BoundTypeOfExpression</c> case, the walk had nowhere to go past the outer node and
+        /// completion on <c>typeof(Box().</c> returned nothing.
+        /// </summary>
+        [Fact]
+        public void MemberCompletionAfterADotReachesThroughATypeOfWrapper()
+        {
+            const string source =
+                "public class Box { public let value: int = 0; }\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let t = typeof(Box().value);\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int dotEnd = source.IndexOf("typeof(Box().", StringComparison.Ordinal) + "typeof(Box().".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, path, source, dotEnd);
+
+            Assert.Contains(completion.Items, item => item.Label == "value");
+        }
+
+        private static string Describe(System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<Surtr.Compiler.Diagnostics.SurtrDiagnostic>> diagnostics)
+            => string.Join(" | ", diagnostics.SelectMany(pair => pair.Value).Select(d => d.ToString()));
+    }
+}

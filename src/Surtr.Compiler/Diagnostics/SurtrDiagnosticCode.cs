@@ -92,6 +92,13 @@ namespace Surtr.Compiler.Diagnostics
         /// <summary>A malformed <c>$name</c> or <c>${ ... }</c> inside an interpolated string.</summary>
         InvalidInterpolation = 2011,
 
+        /// <summary>
+        /// A declared parameter list violates one of §3.5's shape rules: a default followed by a
+        /// parameter with none, more than one varargs parameter, or a varargs parameter that is
+        /// not last or carries a default of its own.
+        /// </summary>
+        InvalidParameterList = 2012,
+
         #endregion
 
         #region Binding — 3xxx
@@ -267,6 +274,148 @@ namespace Surtr.Compiler.Diagnostics
         /// before the module, so reading one declared later reads a zero rather than a value.
         /// </summary>
         InitializerOutOfOrder = 3042,
+
+        /// <summary>
+        /// A concrete class leaves a member unimplemented — one required by an interface it
+        /// implements (§2.3), or one it inherits <c>abstract</c> from a base class (§2.2) — instead
+        /// of supplying a body or declaring itself <c>abstract</c> in turn.
+        /// </summary>
+        /// <remarks>
+        /// <c>SurtrTypeLinker</c> also rejects this, but only when a module is <em>loaded</em>; this
+        /// is the same check run early enough to name the source class rather than surface as a
+        /// runtime <see cref="System.InvalidOperationException"/> with no span.
+        /// </remarks>
+        MissingImplementation = 3043,
+
+        /// <summary>
+        /// An <c>override</c> (or interface implementation, written <c>override</c>, §2.2) whose
+        /// signature does not match what it replaces — the same name and arity, but a parameter or
+        /// the return that differs once the contract is read as the construction the class declares.
+        /// The runtime cannot catch this: <c>SurtrTypeLinker</c> matches by name plus <em>erased</em>
+        /// parameter types, blind to a concrete type argument like the <c>int</c> in
+        /// <c>IReadOnlyCollection&lt;int&gt;</c>, and it excludes the return type entirely — so a
+        /// class implementing the <c>int</c> construction with members typed on its own <c>T</c>
+        /// links cleanly and then misbehaves at a call site compiled against the contract.
+        /// </summary>
+        OverrideSignatureMismatch = 3050,
+
+        /// <summary>
+        /// An operator overload's arity or return type does not match what §5.6's table fixes for
+        /// the token it overloads — checked at the declaration, not left to surface only as an
+        /// unreachable overload the first time something tries to use it.
+        /// </summary>
+        InvalidOperatorSignature = 3044,
+
+        /// <summary>
+        /// A <c>const</c>'s declared type is not a primitive or <c>string</c> (§7.1) — the only
+        /// shapes a value fixed at compile time and substituted at every use site can be.
+        /// </summary>
+        InvalidConstType = 3045,
+
+        /// <summary>
+        /// A no-arg or capacity construction attempted on <c>tuple&lt;...&gt;</c> where its declared
+        /// arity is not 0 (§5.3). A tuple's arity is part of its type, fixed at every position, so
+        /// there is nothing a size-changing constructor could mean — every element has to come from
+        /// somewhere, either written out or cast from an <c>array&lt;T&gt;</c> of the right length.
+        /// </summary>
+        TupleArityFixed = 3046,
+
+        /// <summary>
+        /// A construction of <c>array&lt;T&gt;</c>, <c>dict&lt;K,V&gt;</c> or <c>tuple&lt;...&gt;</c>
+        /// through their nameable form (§5.3) whose argument(s) name none of the shapes that type
+        /// supports — a capacity, a matching source collection to cast/build from, a size-and-default
+        /// pair, or a pair of parallel arrays — including any attempt to cast into or out of
+        /// <c>dict&lt;K,V&gt;</c> other than from pairs or parallel arrays, which this pass does not
+        /// support.
+        /// </summary>
+        CollectionCastNotSupported = 3047,
+
+        /// <summary>
+        /// One element or key/value of an <c>array&lt;T&gt;</c>/<c>dict&lt;K,V&gt;</c>/<c>tuple&lt;...&gt;</c>
+        /// constructor's source (a cast, a size-and-default fill, an iterable, a pairs array, or
+        /// parallel arrays) has no implicit conversion to the slot it would fill. Checked per element
+        /// rather than as a single pass/fail, so the diagnostic names the one position that does not
+        /// line up.
+        /// </summary>
+        CollectionElementConversionMissing = 3048,
+
+        /// <summary>
+        /// A construction of a primitive, <c>string</c> or <c>range</c> through its nameable form
+        /// (§5.3.2) whose argument(s) match none of the shapes that type supports — a conversion from
+        /// another primitive, a parse from <c>string</c>, or one of <c>string</c>'s/<c>range</c>'s own
+        /// composing shapes. One code shared across every built-in scalar, the same way
+        /// <see cref="CollectionCastNotSupported"/> is shared across array/dict/tuple, rather than one
+        /// per type.
+        /// </summary>
+        NoBuiltInConstructorMatch = 3049,
+
+        /// <summary>
+        /// An accessor's own visibility (§3.2, §3.4), written directly on <c>get</c>/<c>set</c>, is
+        /// not strictly narrower than the property's — either it is the same, which the accessor
+        /// inherits for free by writing nothing, or it is wider, which would let a caller reach
+        /// through the accessor something the property itself already hides from them.
+        /// </summary>
+        AccessorVisibilityNotNarrower = 3051,
+
+        /// <summary>
+        /// An <c>@Name(...)</c> use (§11) whose attribute class was declared <c>attribute(...)</c>
+        /// with a target list that does not include the kind of declaration it was written on —
+        /// e.g. a method-only attribute written above a field.
+        /// </summary>
+        AttributeTargetMismatch = 3052,
+
+        /// <summary>
+        /// Two <c>import ... as Name;</c> lines in the same module declare the same alias (§2.1).
+        /// Unlike a named/wildcard import colliding with another, this is reported at the
+        /// <c>import</c> line itself rather than at the point of use, because an alias has no
+        /// other declaration it could be shadowing - two imports simply claimed the same name.
+        /// </summary>
+        DuplicateModuleAlias = 3053,
+
+        /// <summary>
+        /// A <c>moduleof(ModulePath)</c> path (§2.1) does not name any module known to this
+        /// compilation - neither directly nor through a declared alias.
+        /// </summary>
+        UnresolvedModuleOf = 3054,
+
+        /// <summary>
+        /// A class is declared both <c>abstract</c> and <c>sealed</c> (§2.2) - the two are
+        /// mutually exclusive, since one promises a subclass will provide a body and the other
+        /// forbids a subclass existing at all.
+        /// </summary>
+        InvalidClassModifiers = 3055,
+
+        /// <summary>
+        /// An <c>enum</c>'s base-type list (§2.4) names a class rather than only interfaces - the
+        /// enum class itself already occupies the base-class slot, so nothing else may.
+        /// </summary>
+        InvalidEnumBase = 3056,
+
+        /// <summary>
+        /// A <c>throw</c> or <c>catch (e: T)</c> (§9) names a type that does not extend the
+        /// built-in <c>Exception</c>.
+        /// </summary>
+        InvalidThrowableType = 3057,
+
+        /// <summary>
+        /// A member's signature matches an inherited <c>virtual</c>/<c>abstract</c> member's, but
+        /// the member omits <c>override</c> (§3.2) - it would otherwise silently hide the base
+        /// member instead of replacing it.
+        /// </summary>
+        MissingOverride = 3058,
+
+        /// <summary>
+        /// The three-clause <c>for</c> loop's initializer (§4.2) declares its binding with
+        /// <c>let</c> (or <c>const</c>) rather than <c>var</c> - the step clause reassigns it on
+        /// every iteration, which only <c>var</c> allows.
+        /// </summary>
+        InvalidForLoopBinding = 3059,
+
+        /// <summary>
+        /// A call's argument list (§3.5) writes a positional argument after a named one - once
+        /// naming starts, it continues to the end of the call.
+        /// </summary>
+        PositionalArgumentAfterNamed = 3060,
 
         #endregion
 

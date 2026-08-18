@@ -65,6 +65,9 @@ namespace Surtr.Compiler.CodeGen
 
         private readonly List<SurtrModule> _modules = new List<SurtrModule>();
 
+        private readonly Dictionary<string, SurtrModule> _modulesByPath =
+            new Dictionary<string, SurtrModule>(StringComparer.Ordinal);
+
         /// <summary>Creates an emitter over a bound compilation.</summary>
         public ModuleEmitter(SurtrCompilation compilation, Binder binder)
         {
@@ -84,6 +87,13 @@ namespace Surtr.Compiler.CodeGen
             if (_emitted is bool already)
                 return already;
 
+            // Binding has already run by the time an emitter exists, so this is the first point a
+            // fully qualified reference with no `import` — recorded lazily, by TypeResolver, only
+            // once the binder actually resolves one — can be reflected in LoadOrder. Create()'s own
+            // order saw only the import-derived edges; this brings it up to date, including a cycle
+            // that only such a reference introduces.
+            _compilation.RefreshLoadOrder();
+
             if (_compilation.HasErrors)
                 return (bool)(_emitted = false);
 
@@ -101,6 +111,7 @@ namespace Surtr.Compiler.CodeGen
                         return (bool)(_emitted = false);
 
                     _modules.Add(built);
+                    _modulesByPath[built.Path] = built;
                 }
                 catch (Exception exception) when (exception is SurtrCompilerException or InvalidOperationException or ArgumentException)
                 {
@@ -203,6 +214,7 @@ namespace Surtr.Compiler.CodeGen
                 Bodies = _binder.Bodies,
                 Folder = _binder.ConstFolder,
                 Importer = _compilation.Importer,
+                BuiltModules = _modulesByPath,
             };
 
             // Everything built earlier is nameable from here: a symbol resolves to real metadata,
@@ -420,6 +432,12 @@ namespace Surtr.Compiler.CodeGen
             {
                 switch (member)
                 {
+                    // A const carries no slot at all (§7.1) — every read of it already folded to a
+                    // literal while binding (BodyBinder.ResolveField), so there is nothing here to
+                    // declare.
+                    case FieldSymbol { IsConst: true }:
+                        continue;
+
                     case FieldSymbol field:
                         DeclareField(context, @class, symbol, field);
                         continue;
@@ -575,7 +593,12 @@ namespace Surtr.Compiler.CodeGen
         private void Attach(EmitContext context, Symbol symbol, SurtrMemberInfo member)
         {
             foreach (var use in symbol.Attributes)
+            {
+                if (use.Type.IsCompileTimeOnlyAttribute)
+                    continue;
+
                 member.AddAttribute(Usage(context, use));
+            }
         }
 
         private SurtrAttributeUsage Usage(EmitContext context, AttributeUse use)
@@ -607,13 +630,50 @@ namespace Surtr.Compiler.CodeGen
                 property.Name, _descriptors.Emit(property.Type), property.IsStatic, Visibility(property.Accessibility));
 
             foreach (var use in property.Attributes)
+            {
+                if (use.Type.IsCompileTimeOnlyAttribute)
+                    continue;
+
                 declared.AddAttribute(Usage(context, use));
+            }
+
+            bool getterIsNative = property.Getter is { IsNative: true };
+            bool setterIsNative = property.Setter is { IsNative: true };
+
+            // A native accessor's body is the host's, published by link name (§10) - the same path
+            // DeclareMethod already takes for a plain native method (below). It needs neither a
+            // bytecode builder nor a backing field, so it is handled before the auto-property check
+            // that follows - which would otherwise mistake its bodyless accessor (a native accessor
+            // is never written with a `{ ... }` block either) for one to synthesize a field for, and
+            // silently turn a hybrid Surtr/host property into an ordinary auto-property that never
+            // reaches the host at all.
+            if (property.Getter is MethodSymbol nativeGetter && getterIsNative)
+            {
+                var native = @class.DeclareNativeMethod(
+                    nativeGetter.Name, _descriptors.Emit(nativeGetter.ReturnType), LinkName(nativeGetter),
+                    Array.Empty<SurtrParameterInfo>(), nativeGetter.IsStatic, Dispatch(nativeGetter),
+                    nativeGetter.IsOverride, Visibility(nativeGetter.Accessibility));
+                declared.BindGetter(native);
+                context.Bind(nativeGetter, native);
+            }
+
+            if (property.Setter is MethodSymbol nativeSetter && setterIsNative)
+            {
+                var native = @class.DeclareNativeMethod(
+                    nativeSetter.Name, _descriptors.Emit(nativeSetter.ReturnType), LinkName(nativeSetter),
+                    Parameters(context, nativeSetter), nativeSetter.IsStatic, Dispatch(nativeSetter),
+                    nativeSetter.IsOverride, Visibility(nativeSetter.Accessibility));
+                declared.BindSetter(native);
+                context.Bind(nativeSetter, native);
+            }
 
             // Either accessor being bare is enough: §3.4 lets `{ get; set { ... } }` mix them, and
-            // the bare half still needs somewhere to read from.
+            // the bare half still needs somewhere to read from. A native accessor is excluded here
+            // even though it is bare too - it has a body, the host's, so it never needs a backing
+            // field and must not contribute to `auto`.
             bool auto =
-                (property.Getter is not null && !_binder.Bodies.ContainsKey(property.Getter))
-                || (property.Setter is not null && !_binder.Bodies.ContainsKey(property.Setter));
+                (property.Getter is not null && !getterIsNative && !_binder.Bodies.ContainsKey(property.Getter))
+                || (property.Setter is not null && !setterIsNative && !_binder.Bodies.ContainsKey(property.Setter));
 
             if (auto)
             {
@@ -631,14 +691,14 @@ namespace Surtr.Compiler.CodeGen
             // `override` is dropped where it names no base accessor, for the reason it is dropped on
             // a method: §2.2 makes a contract a promise rather than an inheritance, both are written
             // `override`, and `SurtrTypeLinker` rejects an override with no base entry to replace.
-            if (property.Getter is MethodSymbol getter)
+            if (property.Getter is MethodSymbol getter && !getterIsNative)
             {
                 var builder = declared.DefineGetter(Dispatch(getter), OverridesABaseMethod(getter));
                 context.Declare(getter, builder);
                 emission.Methods.Add((getter, builder));
             }
 
-            if (property.Setter is MethodSymbol setter)
+            if (property.Setter is MethodSymbol setter && !setterIsNative)
             {
                 var builder = declared.DefineSetter(Dispatch(setter), OverridesABaseMethod(setter));
                 context.Declare(setter, builder);
@@ -656,7 +716,12 @@ namespace Surtr.Compiler.CodeGen
                 var constructor = @class.DefineConstructor(parameters, Visibility(method.Accessibility));
 
                 foreach (var use in method.Attributes)
+                {
+                    if (use.Type.IsCompileTimeOnlyAttribute)
+                        continue;
+
                     constructor.AddAttribute(Usage(context, use));
+                }
 
                 context.Declare(method, constructor);
                 emission.Methods.Add((method, constructor));
@@ -703,7 +768,12 @@ namespace Surtr.Compiler.CodeGen
                 method.IsSealed);
 
             foreach (var use in method.Attributes)
+            {
+                if (use.Type.IsCompileTimeOnlyAttribute)
+                    continue;
+
                 builder.AddAttribute(Usage(context, use));
+            }
 
             context.Declare(method, builder);
             emission.Methods.Add((method, builder));
@@ -743,14 +813,10 @@ namespace Surtr.Compiler.CodeGen
         {
             foreach (var field in module.Fields)
             {
-                // §10: a `native` variable declares nothing here. It has no static slot — the host
-                // owns the storage — and the import that reaches it is interned at each use site, so
-                // defining a variable of the same name would give the module a second, dead one.
-                if (field.IsNative)
-                {
-                    builder.NativeVariable(field.Name);
+                // §7.1: a const carries no slot at all — every read of it already folded to a
+                // literal while binding (BodyBinder.ResolveField).
+                if (field.IsConst)
                     continue;
-                }
 
                 var variable = builder.DefineVariable(field.Name, _descriptors.Emit(field.Type), field.IsReadOnly, Visibility(field.Accessibility));
                 context.Declare(field, variable);
@@ -762,21 +828,56 @@ namespace Surtr.Compiler.CodeGen
                 var declared = builder.DefineProperty(property.Name, _descriptors.Emit(property.Type), Visibility(property.Accessibility));
 
                 if (property.Getter is MethodSymbol getter)
-                    context.Declare(getter, declared.DefineGetter());
+                {
+                    if (getter.IsNative)
+                    {
+                        // §10: a native accessor travels as its link name; every runtime that loads
+                        // the image publishes its own body with `DefineNativeBody` (§3).
+                        var native = builder.DeclareNativeFunction(
+                            getter.Name, _descriptors.Emit(getter.ReturnType), LinkName(getter));
+                        declared.BindGetter(native);
+                        context.Bind(getter, native);
+                    }
+                    else
+                    {
+                        context.Declare(getter, declared.DefineGetter());
+                    }
+                }
 
                 if (property.Setter is MethodSymbol setter)
-                    context.Declare(setter, declared.DefineSetter());
+                {
+                    if (setter.IsNative)
+                    {
+                        var native = builder.DeclareNativeFunction(
+                            setter.Name,
+                            _descriptors.Emit(setter.ReturnType),
+                            LinkName(setter),
+                            new[] { new SurtrParameterInfo("value", builder.TypeHandle(_descriptors.Emit(property.Type))) });
+                        declared.BindSetter(native);
+                        context.Bind(setter, native);
+                    }
+                    else
+                    {
+                        context.Declare(setter, declared.DefineSetter());
+                    }
+                }
             }
 
             foreach (var method in module.Methods)
             {
-                // A module-level `native fun` is a host global (§10): it goes in the import table
-                // rather than the method table, and a call site emits `CallGlobalNative`. Declared
-                // here as well as at each use so a module that only ever passes it around still
-                // fails to load when the host never registered it.
+                // A module-level `native fun` is a native method like any other (§10): it lands in
+                // the method table and its body is published by link name, so a module that only
+                // ever passes it around still fails to load when the host never registered it.
                 if (method.IsNative)
                 {
-                    builder.NativeFunction(method.Name);
+                    var native = builder.DeclareNativeFunction(
+                        _descriptors.EmitMethodName(method),
+                        _descriptors.Emit(method.ReturnType),
+                        LinkName(method),
+                        Parameters(context, method),
+                        Visibility(method.Accessibility));
+
+                    context.Bind(method, native);
                     continue;
                 }
 
@@ -787,7 +888,12 @@ namespace Surtr.Compiler.CodeGen
                     Visibility(method.Accessibility));
 
                 foreach (var use in method.Attributes)
+                {
+                    if (use.Type.IsCompileTimeOnlyAttribute)
+                        continue;
+
                     function.AddAttribute(Usage(context, use));
+                }
 
                 context.Declare(method, function);
             }
@@ -795,11 +901,15 @@ namespace Surtr.Compiler.CodeGen
 
         private SurtrParameterInfo[] Parameters(EmitContext context, MethodSymbol method)
         {
-            var parameters = new SurtrParameterInfo[method.Parameters.Count];
+            var parameters = new SurtrParameterInfo[method.Parameters.Count - (method.Role == MethodRole.Operator && !method.IsStatic ? 1 : 0)];
+
+            // An instance operator names its receiver as its first parameter (§5.6); the runtime's
+            // receiver is implicit, so that one never enters the declared parameter list.
+            int first = method.Role == MethodRole.Operator && !method.IsStatic ? 1 : 0;
 
             for (int i = 0; i < parameters.Length; i++)
             {
-                var parameter = method.Parameters[i];
+                var parameter = method.Parameters[first + i];
 
                 // A varargs parameter is declared by its element type: the body sees an array of it,
                 // and the call site is what packs one.
@@ -1512,11 +1622,22 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// Derived rather than declared, so a member the source did not name still has a stable one:
         /// the owner's full name plus the member's, which cannot collide inside one type because a
-        /// signature already cannot.
+        /// signature already cannot. A module-level native is prefixed with its <em>module path</em>
+        /// rather than left bare, so two modules declaring a same-named <c>native fun</c> bind
+        /// against distinct link names instead of silently sharing one body.
         /// </remarks>
         private string LinkName(MethodSymbol method)
-            => (method.ContainingType is NamedTypeSymbol owner ? owner.FullMetadataName + "." : string.Empty)
-                + _descriptors.EmitMethodName(method);
+        {
+            switch (method.ContainingSymbol)
+            {
+                case NamedTypeSymbol owner:
+                    return owner.FullMetadataName + "." + _descriptors.EmitMethodName(method);
+                case ModuleSymbol module:
+                    return module.Path + "." + _descriptors.EmitMethodName(method);
+                default:
+                    return _descriptors.EmitMethodName(method);
+            }
+        }
         #endregion
     }
 }

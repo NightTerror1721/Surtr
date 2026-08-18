@@ -127,6 +127,14 @@ namespace Surtr.Runtime.BuiltIns
         /// <summary>Raised when an argument is outside what a member accepts.</summary>
         public static readonly SurtrClass ArgumentException;
 
+        /// <summary>
+        /// Raised when text handed to a parsing constructor (<c>int(aString)</c>,
+        /// <c>float(aString)</c>, <c>bool(aString)</c>, <c>char(aString)</c>) is not in the shape
+        /// that type expects. Kept distinct from <see cref="ArgumentException"/>: the argument here
+        /// is the right <em>type</em> (a string), so the problem is its content, not its shape.
+        /// </summary>
+        public static readonly SurtrClass FormatException;
+
         /// <summary>Raised by an array, string or tuple index outside its bounds.</summary>
         public static readonly SurtrClass IndexOutOfRangeException;
 
@@ -148,9 +156,6 @@ namespace Surtr.Runtime.BuiltIns
         /// <summary>Raised by an operation the runtime cannot perform in its current state.</summary>
         public static readonly SurtrClass InvalidOperationException;
 
-        /// <summary><c>Math</c>: static numeric helpers, all of them free functions in disguise.</summary>
-        public static readonly SurtrClass Math;
-
         /// <summary>
         /// The root every attribute class extends.
         /// </summary>
@@ -161,6 +166,38 @@ namespace Surtr.Runtime.BuiltIns
         /// class has to be one of these.
         /// </remarks>
         public static readonly SurtrClass Attribute;
+
+        /// <summary>
+        /// A first-class handle to another class's metadata, behind every <see cref="SurtrTypeValue"/>.
+        /// </summary>
+        /// <remarks>
+        /// Declares no constructor and no field of its own - the same reason <see cref="Iterator"/>
+        /// declares none - so Surtr source can never write <c>Type()</c> itself; the only way to
+        /// get one is <c>Type.of(...)</c> or another <c>Type</c>/<c>Member</c> member handing one
+        /// back.
+        /// </remarks>
+        public static readonly SurtrClass Type;
+
+        /// <summary>
+        /// A first-class handle to one field, property, method or nested type declaration, behind
+        /// every <see cref="SurtrMemberValue"/>.
+        /// </summary>
+        public static readonly SurtrClass Member;
+
+        /// <summary>
+        /// A first-class handle to a <see cref="Classes.SurtrModule"/>, behind every
+        /// <see cref="SurtrModuleValue"/> - what <c>moduleof</c> and <c>Module.get</c> return.
+        /// </summary>
+        /// <remarks>
+        /// Named <c>ModuleType</c> rather than <c>Module</c> on the C# side only: <see cref="Module"/>
+        /// already names the <see cref="Classes.SurtrModule"/> that owns every built-in class
+        /// itself, a completely different thing. The Surtr-visible name is still <c>Module</c>,
+        /// same as <see cref="Type"/> and <see cref="Member"/> are named on their own side.
+        /// Declares no constructor and no field of its own, so Surtr source can never write
+        /// <c>Module()</c> - the only way to get one is <c>moduleof(...)</c>, <c>Module.get</c>/
+        /// <c>Module.tryGet</c>, or another <c>Module</c> member handing one back.
+        /// </remarks>
+        public static readonly SurtrClass ModuleType;
 
         /// <summary>
         /// The root native class, behind a <see cref="SurtrNativeProxy"/> the host did not declare
@@ -234,6 +271,7 @@ namespace Surtr.Runtime.BuiltIns
             // to be a slot the linker lays out and the collector traces.
             Exception = DeclareObject("Exception");
             ArgumentException = DeclareObject("ArgumentException", Exception);
+            FormatException = DeclareObject("FormatException", Exception);
             IndexOutOfRangeException = DeclareObject("IndexOutOfRangeException", Exception);
             KeyNotFoundException = DeclareObject("KeyNotFoundException", Exception);
             NullReferenceException = DeclareObject("NullReferenceException", Exception);
@@ -241,8 +279,10 @@ namespace Surtr.Runtime.BuiltIns
             InvalidCastException = DeclareObject("InvalidCastException", Exception);
             StackOverflowException = DeclareObject("StackOverflowException", Exception);
             InvalidOperationException = DeclareObject("InvalidOperationException", Exception);
-            Math = DeclareObject("Math", isAbstract: true);
             Attribute = DeclareObject("Attribute", isAbstract: true);
+            Type = DeclareObject("Type");
+            Member = DeclareObject("Member");
+            ModuleType = DeclareObject("Module");
             Iterator = DeclareObject("iterator");
 
             Erased = Declare("erased", SurtrValueTypeCode.Erased, SurtrClassReference.Erased, isAbstract: true);
@@ -285,6 +325,7 @@ namespace Surtr.Runtime.BuiltIns
 
             SurtrStandardLibrary.DeclareException(BuilderFor(Exception, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(ArgumentException, handles));
+            SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(FormatException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(IndexOutOfRangeException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(KeyNotFoundException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(NullReferenceException, handles));
@@ -292,8 +333,15 @@ namespace Surtr.Runtime.BuiltIns
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(InvalidCastException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(StackOverflowException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(InvalidOperationException, handles));
-            SurtrStandardLibrary.DeclareMath(BuilderFor(Math, handles));
             SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
+
+            // After Attribute, since Type.attributes()/Member.attributes() both name it, and
+            // after each other, since Type.members() names Member and Member.declaringType names
+            // Type - all three classes already exist by this point, only their members are added
+            // here.
+            SurtrReflectionBuiltIns.DeclareType(BuilderFor(Type, handles));
+            SurtrReflectionBuiltIns.DeclareMember(BuilderFor(Member, handles));
+            SurtrModuleReflectionBuiltIns.DeclareModule(BuilderFor(ModuleType, handles));
 
             // Kept as fields because a compiler has to name them to lower `for-in` and `<=>`: those
             // lowerings are calls through a contract's own slots, and looking one up by a mangled
@@ -449,6 +497,7 @@ namespace Surtr.Runtime.BuiltIns
                 System.NullReferenceException => NullReferenceException,
                 System.DivideByZeroException => DivideByZeroException,
                 System.InvalidCastException => InvalidCastException,
+                System.FormatException => FormatException,
                 System.ArgumentException => ArgumentException,
                 System.InvalidOperationException => InvalidOperationException,
                 _ => null,

@@ -189,22 +189,6 @@ namespace Surtr.Tests.Runtime.Classes
                 new SurtrParameterInfo("rest", HandleFor(module, SurtrClassReference.String), SurtrConstant.None, isVarargs: true)));
         }
 
-        [Fact]
-        public void ANativeGlobalFunction_IsHeldToTheSameRules()
-        {
-            var module = NewModule();
-
-            Assert.Throws<ArgumentException>(() => new SurtrNativeGlobalFunction(
-                "bad",
-                HandleFor(module, SurtrClassReference.Void),
-                new[]
-                {
-                    new SurtrParameterInfo("a", HandleFor(module, SurtrClassReference.Integer), SurtrConstant.Integer(1)),
-                    new SurtrParameterInfo("b", HandleFor(module, SurtrClassReference.Integer)),
-                },
-                Stub()));
-        }
-
         #endregion
 
         #region Constants

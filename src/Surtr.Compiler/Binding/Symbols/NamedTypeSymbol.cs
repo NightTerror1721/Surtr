@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using Surtr.Compiler.Syntax.Ast;
 
 namespace Surtr.Compiler.Binding.Symbols
 {
@@ -206,6 +207,41 @@ namespace Surtr.Compiler.Binding.Symbols
         }
 
         private bool _isAbstract;
+
+        /// <summary>
+        /// The declaration kinds this type may be applied to when it is used as an attribute (§11),
+        /// or <see cref="SurtrAttributeTargets.None"/> for no restriction. Meaningless unless
+        /// <see cref="IsAttribute"/>.
+        /// </summary>
+        public SurtrAttributeTargets AllowedAttributeTargets
+        {
+            get => Definition._allowedAttributeTargets;
+            internal set => Definition._allowedAttributeTargets = value;
+        }
+
+        private SurtrAttributeTargets _allowedAttributeTargets;
+
+        /// <summary>Whether this type was declared with the <c>attribute</c> keyword (§11).</summary>
+        public bool IsAttribute
+        {
+            get => Definition._isAttribute;
+            internal set => Definition._isAttribute = value;
+        }
+
+        private bool _isAttribute;
+
+        /// <summary>
+        /// Whether an <c>attribute</c> type's retention is <c>CompileTimeOnly</c> — checked and then
+        /// discarded, never emitted into the compiled image. Meaningless unless
+        /// <see cref="IsAttribute"/>; false (the default) means <c>Runtime</c>.
+        /// </summary>
+        public bool IsCompileTimeOnlyAttribute
+        {
+            get => Definition._isCompileTimeOnlyAttribute;
+            internal set => Definition._isCompileTimeOnlyAttribute = value;
+        }
+
+        private bool _isCompileTimeOnlyAttribute;
 
         /// <summary>
         /// The members as declared. On a construction these are still written in terms of the

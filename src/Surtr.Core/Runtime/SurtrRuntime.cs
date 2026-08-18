@@ -6,6 +6,7 @@ using Surtr.Runtime.Objects;
 using Surtr.Runtime.Utilities;
 using Surtr.VM;
 using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
 namespace Surtr.Runtime
@@ -153,13 +154,6 @@ namespace Surtr.Runtime
                 if (_virtualMachine is not null)
                     _virtualMachine.StepBudget = _pendingInstructionBudget;
             }
-        }
-
-        /// <summary>The host's global variables and functions.</summary>
-        public SurtrNativeGlobalTable Globals
-        {
-            [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => _context.Globals;
         }
 
         /// <summary>How many objects the heap currently holds room for.</summary>
@@ -322,6 +316,61 @@ namespace Surtr.Runtime
                 throw new ArgumentException("A dictionary iterator walks a snapshot of its keys, which must be supplied.", nameof(keys));
 
             var value = new SurtrIterator(kind, source, keys);
+            _context.EntityRegistry.Register(value);
+            return value;
+        }
+
+        /// <summary>
+        /// Returns the one shared <c>Type</c> value for a class or interface within this runtime,
+        /// as <c>typeof</c> and <c>Type.of</c>/<c>Type.members</c>/<c>Type.baseType</c> all do.
+        /// </summary>
+        /// <remarks>
+        /// Creates and permanently roots it the first time this runtime is asked about
+        /// <paramref name="wrapped"/>, and returns the cached object on every call after that -
+        /// see <see cref="SurtrContext.TypeValueCache"/>. Rooted the same way an interned string
+        /// is: the cache dictionary itself is never traced, so an entry the collector could
+        /// otherwise reclaim would leave a stale id behind. The cache is bounded by how many
+        /// distinct classes and interfaces a program actually asks about, not by how many times it
+        /// asks, so rooting every entry for the runtime's lifetime is cheap rather than a leak.
+        /// </remarks>
+        public SurtrTypeValue GetOrCreateTypeValue(SurtrTypeInfo wrapped)
+        {
+            if (_context.TypeValueCache.TryGetValue(wrapped, out var existing))
+                return existing;
+
+            var value = new SurtrTypeValue(wrapped);
+            SurtrRef reference = _context.EntityRegistry.Register(value);
+            _context.TypeValueCache.Add(wrapped, value);
+            _context.AddRoot(SurtrValue.CreateReference(reference).Raw);
+            return value;
+        }
+
+        /// <summary>
+        /// Wraps a <see cref="SurtrModule"/> as a first-class <c>Module</c> value, as <c>moduleof</c>
+        /// and <c>Module.get</c>/<c>Module.tryGet</c> do.
+        /// </summary>
+        /// <remarks>
+        /// Same caching and rooting as <see cref="GetOrCreateTypeValue"/>: created and permanently
+        /// rooted the first time this runtime is asked about <paramref name="wrapped"/>, and the
+        /// cached object returned on every call after that - see
+        /// <see cref="SurtrContext.ModuleValueCache"/>.
+        /// </remarks>
+        public SurtrModuleValue GetOrCreateModuleValue(SurtrModule wrapped)
+        {
+            if (_context.ModuleValueCache.TryGetValue(wrapped, out var existing))
+                return existing;
+
+            var value = new SurtrModuleValue(wrapped);
+            SurtrRef reference = _context.EntityRegistry.Register(value);
+            _context.ModuleValueCache.Add(wrapped, value);
+            _context.AddRoot(SurtrValue.CreateReference(reference).Raw);
+            return value;
+        }
+
+        /// <summary>Wraps a declaration as a first-class <c>Member</c> value, as <c>Type.members</c> does.</summary>
+        public SurtrMemberValue NewMemberValue(SurtrMemberInfo wrapped)
+        {
+            var value = new SurtrMemberValue(wrapped);
             _context.EntityRegistry.Register(value);
             return value;
         }
@@ -514,7 +563,25 @@ namespace Surtr.Runtime
             if (handle.IsResolved)
                 return true;
 
-            var reference = handle.Reference;
+            if (!TryResolveReference(handle.Reference, out var resolved))
+                return false;
+
+            handle.Resolve(resolved!);
+            return true;
+        }
+
+        /// <summary>
+        /// Resolves a descriptor to the metadata it names, against this runtime's loaded modules,
+        /// the built-in module, and any host-declared native classes.
+        /// </summary>
+        /// <remarks>
+        /// The same resolution every type handle in a loading module goes through, factored out so
+        /// it can also run from a raw descriptor string with no handle behind it -
+        /// <c>Type.get</c>/<c>Type.tryGet</c> are the other caller.
+        /// </remarks>
+        internal bool TryResolveReference(SurtrClassReference reference, out SurtrTypeInfo? resolved)
+        {
+            resolved = null;
             var typeCode = reference.TypeCode;
 
             // Every built-in family collapses onto one shared class, whatever it is parameterised
@@ -522,7 +589,7 @@ namespace Surtr.Runtime
             // fact the compiler enforces, not something the object carries.
             if (typeCode.IsPrimitive || typeCode.IsBuiltIn || typeCode.IsVoid || typeCode.IsErased)
             {
-                handle.Resolve(SurtrBuiltIns.ForTypeCode(typeCode));
+                resolved = SurtrBuiltIns.ForTypeCode(typeCode);
                 return true;
             }
 
@@ -534,7 +601,7 @@ namespace Surtr.Runtime
                 if (!_context.NativeClasses.TryGetValue(fullName, out var nativeClass))
                     return false;
 
-                handle.Resolve(nativeClass);
+                resolved = nativeClass;
                 return true;
             }
 
@@ -557,7 +624,7 @@ namespace Surtr.Runtime
             var declared = module.FindClass(typePath);
             if (declared is not null)
             {
-                handle.Resolve(declared);
+                resolved = declared;
                 return true;
             }
 
@@ -566,7 +633,7 @@ namespace Surtr.Runtime
             // tried as one before giving up.
             if (module.TryGetInterface(typePath, out var contract))
             {
-                handle.Resolve(contract);
+                resolved = contract;
                 return true;
             }
 
@@ -619,7 +686,6 @@ namespace Surtr.Runtime
 
                 SurtrTypeLinker.LinkModule(module, ref _context.NextInterfaceId);
 
-                BindNativeImports(module);
                 MaterializeStringConstants(module);
                 MaterializeAttributes(module);
                 RegisterStaticBlocks(module);
@@ -932,56 +998,6 @@ namespace Surtr.Runtime
         }
 
         /// <summary>
-        /// Binds every <c>native</c> the module declares to the host global of that name.
-        /// </summary>
-        /// <remarks>
-        /// A module that names a host global nobody registered fails here, the same way an
-        /// unresolved <see cref="SurtrTypeHandle"/> does, rather than at whichever instruction
-        /// eventually reaches it. Binding by name is also what unties a compiled module from the
-        /// order a particular host happened to register its globals in.
-        /// </remarks>
-        private void BindNativeImports(SurtrModule module)
-        {
-            var chunk = module.Chunk;
-            var globals = _context.Globals;
-
-            var variableNames = chunk.NativeVariableImports;
-            if (variableNames.Length != 0)
-            {
-                var slots = new SurtrNativeArray<int>(variableNames.Length);
-                for (int i = 0; i < variableNames.Length; i++)
-                {
-                    if (!globals.TryGetVariable(variableNames[i], out var variable))
-                    {
-                        slots.Dispose();
-                        throw new InvalidOperationException(
-                            $"Module '{module.Path}' declares native variable '{variableNames[i]}', which this runtime has no host global for.");
-                    }
-
-                    slots[i] = variable.Index;
-                }
-
-                chunk.NativeVariableSlots = slots;
-            }
-
-            var functionNames = chunk.NativeFunctionImports;
-            if (functionNames.Length != 0)
-            {
-                var functions = new SurtrNativeGlobalFunction[functionNames.Length];
-                for (int i = 0; i < functionNames.Length; i++)
-                {
-                    if (!globals.TryGetFunction(functionNames[i], out var function))
-                        throw new InvalidOperationException(
-                            $"Module '{module.Path}' declares native function '{functionNames[i]}', which this runtime has no host global for.");
-
-                    functions[i] = function;
-                }
-
-                chunk.NativeFunctionTable = functions;
-            }
-        }
-
-        /// <summary>
         /// Turns the chunk's CLR string literals into real string objects and patches their
         /// references into the constant pool.
         /// </summary>
@@ -1072,6 +1088,14 @@ namespace Surtr.Runtime
         public bool TryGetModule(string path, out SurtrModule module)
             => _context.Modules.TryGetValue(path, out module!);
 
+        /// <summary>Every module loaded into this runtime, for <c>Module.submodules()</c> to scan by path prefix.</summary>
+        /// <remarks>
+        /// The built-in module (<see cref="SurtrBuiltIns.ModulePath"/>) is deliberately absent - it
+        /// is process-wide and never registered in this runtime's own table, the same reason
+        /// <see cref="TryResolveHandle"/> reaches it as a special case rather than through here.
+        /// </remarks>
+        public IReadOnlyCollection<SurtrModule> LoadedModules => _context.Modules.Values;
+
         private void RetryHostHandles()
         {
             foreach (var handle in _context.HostTypeHandles.Handles)
@@ -1132,14 +1156,6 @@ namespace Surtr.Runtime
         public bool TryGetNativeClass(string fullName, out SurtrClass nativeClass)
             => _context.NativeClasses.TryGetValue(fullName, out nativeClass!);
 
-        /// <summary>Publishes a host global variable and freezes its table index.</summary>
-        public SurtrNativeGlobalVariable DefineGlobal(string name, SurtrClassReference variableType, bool isReadOnly = false)
-        {
-            var variable = new SurtrNativeGlobalVariable(name, TypeHandle(variableType), isReadOnly);
-            _context.Globals.Register(variable);
-            return variable;
-        }
-
         /// <summary>
         /// Publishes the body of a native member, under the name its declaration links against.
         /// </summary>
@@ -1149,7 +1165,7 @@ namespace Surtr.Runtime
         /// from an image: the image holds the name and the signature, and the address can only come
         /// from the process doing the loading. Register every body a module needs <em>before</em>
         /// loading it - a name nothing was published under fails the load, next to where an
-        /// unresolved type or an unregistered host global fails it, and for the same reason.
+        /// unresolved type does, and for the same reason.
         /// </para>
         /// <para>
         /// Publishing the same name twice replaces the body, which is what makes re-registering
@@ -1172,18 +1188,6 @@ namespace Surtr.Runtime
         /// <summary>Looks up a native member body this runtime has been given.</summary>
         public bool TryGetNativeBody(string linkName, out SurtrNativeEntryPoint entryPoint)
             => _context.NativeBodies.TryGetValue(linkName, out entryPoint);
-
-        /// <summary>Publishes a host global function and freezes its table index.</summary>
-        public SurtrNativeGlobalFunction DefineGlobalFunction(
-            string name,
-            SurtrClassReference returnType,
-            SurtrParameterInfo[] parameters,
-            SurtrNativeEntryPoint entryPoint)
-        {
-            var function = new SurtrNativeGlobalFunction(name, TypeHandle(returnType), parameters, entryPoint);
-            _context.Globals.Register(function);
-            return function;
-        }
         #endregion
 
         #region Execution
@@ -1289,8 +1293,6 @@ namespace Surtr.Runtime
             ReadOnlySpan<SurtrRawValue> extraRoots,
             bool fullCollection)
         {
-            var globals = _context.Globals;
-
             // The runtime's own roots (interned strings, anything the host pinned) and the
             // caller's transient ones have to reach the collector as one span. Staging the
             // transients in the root buffer's slack past RootCount keeps that free of an
@@ -1308,9 +1310,6 @@ namespace Surtr.Runtime
             return _context.EntityRegistry.CollectGarbage(
                 stackStart,
                 stackTop,
-                globals.VariableTable.Pointer,
-                globals.ReferenceVariableSlots.Pointer,
-                globals.ReferenceVariableSlots.Length,
                 _context.LiveStaticBlocks,
                 new ReadOnlySpan<SurtrRawValue>(_context.Roots, 0, rootCount + extraCount),
                 fullCollection);

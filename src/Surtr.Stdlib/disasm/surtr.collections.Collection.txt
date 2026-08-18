@@ -1,0 +1,95 @@
+module surtr.collections.Collection
+  constants: 0   types: 0   fields: 0   methods: 16   modules: 0
+
+  method table:
+    #0  surtr.collections.Collection:IReadOnlyCollection<.get_length() -> int
+    #1  surtr.collections.Collection:IReadOnlyCollection<.get(int) -> T0
+    #2  surtr.collections.Collection:IReadOnlyCollection<.contains(T0) -> bool
+    #3  surtr.collections.Collection:IReadOnlyCollection<.copyTo(T0[], int) -> void
+    #4  surtr.collections.Collection:ICollection<.get_isReadOnly() -> bool
+    #5  surtr.collections.Collection:ICollection<.add(T0) -> void
+    #6  surtr.collections.Collection:ICollection<.remove(T0) -> void
+    #7  surtr.collections.Collection:ICollection<.clear() -> void
+    #8  surtr.collections.Collection:ReadOnlyCollection<.ctor(surtr.collections.Collection:IReadOnlyCollection<T0>) -> void
+    #9  surtr.collections.Collection:ReadOnlyCollection<.ctor(surtr.collections.Collection:ICollection<T0>) -> void
+    #10  surtr.collections.Collection:ReadOnlyCollection<.get_length() -> int
+    #11  surtr.collections.Collection:ReadOnlyCollection<.get(int) -> T0
+    #12  surtr.collections.Collection:ReadOnlyCollection<.contains(T0) -> bool
+    #13  surtr.collections.Collection:ReadOnlyCollection<.copyTo(T0[], int) -> void
+    #14  surtr.collections.Collection:ReadOnlyCollection<.iterate() -> surtr:IIterator<T0>
+    #15  surtr:IIterable<T0>.iterate() -> surtr:IIterator<T0>
+
+interface ICollection`1<T> : surtr.collections.Collection:IReadOnlyCollection<T0>  [public]
+
+  [public] property isReadOnly: bool { get; }
+    get:
+      ; abstract
+
+  [public] abstract add(item: T0): void
+
+  [public] abstract clear(): void
+
+  [public] abstract remove(item: T0): void
+
+interface IReadOnlyCollection`1<T> : surtr:IIterable<T0>  [public]
+
+  [public] property length: int { get; }
+    get:
+      ; abstract
+
+  [public] abstract contains(item: T0): bool
+
+  [public] abstract copyTo(array: T0[], arrayIndex: int): void
+
+  [public] abstract get(index: int): T0
+
+sealed class ReadOnlyCollection`1<T> : surtr.collections.Collection:IReadOnlyCollection<T0>  [private]
+  [private] readonly field _col: surtr.collections.Collection:IReadOnlyCollection<T0>
+
+  [public] property length: int { get; }
+    get:
+      ; entry 2, locals 1, stack 1, code 0002..000A
+        0002  Ldl0
+        0003  Unbox
+        0004  InvokeInterface 0 (get_length) args=1 ret=1
+        0009  ReturnValue
+
+  [public] virtual contains(item: T0): bool
+    ; entry 4, locals 2, stack 2, code 0013..001C
+      0013  Ldl0
+      0014  Unbox
+      0015  Ldl1
+      0016  InvokeInterface 2 (contains) args=2 ret=1
+      001B  ReturnValue
+
+  [public] virtual copyTo(array: T0[], arrayIndex: int): void
+    ; entry 5, locals 3, stack 3, code 001C..0026
+      001C  Ldl0
+      001D  Unbox
+      001E  Ldl1
+      001F  Ldl2
+      0020  InvokeInterface 3 (copyTo) args=3 ret=0
+      0025  ReturnVoid
+
+  [public] ctor (collection: surtr.collections.Collection:IReadOnlyCollection<T0>): void
+    ; entry 0, locals 2, stack 0, code 0000..0001
+      0000  ReturnVoid
+
+  [public] ctor (collection: surtr.collections.Collection:ICollection<T0>): void
+    ; entry 1, locals 2, stack 0, code 0001..0002
+      0001  ReturnVoid
+
+  [public] virtual get(index: int): T0
+    ; entry 3, locals 2, stack 2, code 000A..0013
+      000A  Ldl0
+      000B  Unbox
+      000C  Ldl1
+      000D  InvokeInterface 1 (get) args=2 ret=1
+      0012  ReturnValue
+
+  [public] virtual iterate(): surtr:IIterator<T0>
+    ; entry 6, locals 1, stack 1, code 0026..002E
+      0026  Ldl0
+      0027  Unbox
+      0028  InvokeInterface 15 (iterate) args=1 ret=1
+      002D  ReturnValue

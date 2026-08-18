@@ -1,0 +1,16 @@
+surtr.math.Math.acos
+surtr.math.Math.asin
+surtr.math.Math.atan
+surtr.math.Math.atan2
+surtr.math.Math.ceil
+surtr.math.Math.cos
+surtr.math.Math.exp
+surtr.math.Math.floor
+surtr.math.Math.hypot
+surtr.math.Math.log
+surtr.math.Math.log10
+surtr.math.Math.pow
+surtr.math.Math.round
+surtr.math.Math.sin
+surtr.math.Math.sqrt
+surtr.math.Math.tan

@@ -1,0 +1,19 @@
+module surtr.math.Angle
+  constants: 0   types: 0   fields: 0   methods: 2   modules: 0
+
+  method table:
+    #0  surtr.math.Angle:Angle.ctor(float) -> void
+    #1  surtr.math.Angle:Angle.get_radians() -> float
+
+sealed class Angle  [public]
+  [private] readonly field _radians: float
+
+  [public] property radians: float { get; }
+    get:
+      ; entry 1, locals 1, stack 1, code 0001..0003
+        0001  Ldl0
+        0002  ReturnValue
+
+  [public] ctor (radians: float): void
+    ; entry 0, locals 2, stack 0, code 0000..0001
+      0000  ReturnVoid

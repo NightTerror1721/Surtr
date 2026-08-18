@@ -101,7 +101,29 @@ namespace Surtr.Compiler.Compilation
         /// The source modules in load order — each after everything it depends on. Empty when the
         /// dependency graph has a cycle, which is reported rather than resolved.
         /// </summary>
+        /// <remarks>
+        /// Computed from <see cref="Dependencies"/> as it stands at the time it is read.
+        /// <see cref="Create"/> computes it once from the import-derived edges alone, which is
+        /// already right for anything that only reaches another module through an <c>import</c>. A
+        /// fully qualified reference with no <c>import</c> (§2.6 allows one) adds its edge lazily,
+        /// once the binder actually resolves it — see <see cref="TypeResolver"/>'s constructor — so
+        /// <see cref="RefreshLoadOrder"/> exists for whoever needs the order to reflect binding that
+        /// has run since.
+        /// </remarks>
         public IReadOnlyList<SurtrSourceModule> LoadOrder => _ordered;
+
+        /// <summary>
+        /// Recomputes <see cref="LoadOrder"/> from <see cref="Dependencies"/> as it stands right now.
+        /// </summary>
+        /// <remarks>
+        /// <c>CodeGen.ModuleEmitter</c> is the one caller that needs this: it emits in
+        /// <see cref="LoadOrder"/>, and a call reaching another module by a fully qualified name with
+        /// no <c>import</c> only adds that module's dependency edge once binding actually resolves
+        /// the name (<see cref="TypeResolver"/>) — which, by the time it runs, it always has. Calling
+        /// this before binding has run would just reproduce <see cref="Create"/>'s import-only order,
+        /// since nothing else would have added to the graph yet.
+        /// </remarks>
+        internal void RefreshLoadOrder() => Order();
 
         /// <summary>Whether anything reported an error.</summary>
         public bool HasErrors => Diagnostics.HasErrors;
@@ -195,6 +217,68 @@ namespace Surtr.Compiler.Compilation
                 {
                     foreach (var import in unit.Syntax.Imports)
                     {
+                        if (import.IsWildcard)
+                        {
+                            // A directory wildcard (§2.1, Fase 9) may resolve to the exact module,
+                            // to one or more submodules nested under it, or both at once - so it
+                            // gets its own resolution instead of `TryResolveImport`'s one-target
+                            // shape, and one dependency edge per module it actually matched.
+                            string prefix = Prefix(import.Path, import.Path.Count);
+                            bool matchedAny = false;
+
+                            if (KnowsModule(prefix))
+                            {
+                                Dependencies.AddDependency(module.Path, prefix);
+                                matchedAny = true;
+                            }
+
+                            foreach (string nested in ModulesUnderPrefix(prefix))
+                            {
+                                Dependencies.AddDependency(module.Path, nested);
+                                matchedAny = true;
+                            }
+
+                            if (!matchedAny)
+                            {
+                                Diagnostics.ReportError(
+                                    SurtrDiagnosticCode.UnresolvedImport,
+                                    $"No module provides '{string.Join(".", import.Path)}'.",
+                                    unit.File.Path,
+                                    import.Span);
+                            }
+
+                            continue;
+                        }
+
+                        if (import.Alias is null && import.Members is null)
+                        {
+                            // A path that resolves entirely as a module - or has submodules
+                            // nested under it, even without a module of its own - is the longest
+                            // possible module prefix, so it wins over any shorter prefix + type
+                            // name `TryResolveImport` would try (§2.1: `import ModulePath;` is
+                            // then equivalent to `import ModulePath.*;`), and may match several
+                            // modules at once exactly like a wildcard does - so it gets the same
+                            // multi-edge resolution instead of `TryResolveImport`'s one-target
+                            // shape.
+                            string wholePath = Prefix(import.Path, import.Path.Count);
+                            bool matchedWhole = false;
+
+                            if (KnowsModule(wholePath))
+                            {
+                                Dependencies.AddDependency(module.Path, wholePath);
+                                matchedWhole = true;
+                            }
+
+                            foreach (string nested in ModulesUnderPrefix(wholePath))
+                            {
+                                Dependencies.AddDependency(module.Path, nested);
+                                matchedWhole = true;
+                            }
+
+                            if (matchedWhole)
+                                continue;
+                        }
+
                         if (!TryResolveImport(import, out string target))
                         {
                             Diagnostics.ReportError(
@@ -213,19 +297,40 @@ namespace Surtr.Compiler.Compilation
         }
 
         /// <summary>
-        /// Works out which module an import names.
+        /// Every module in this compilation whose path sits strictly under <paramref name="prefix"/>
+        /// - what makes a directory wildcard (§2.1, Fase 9) reach a submodule a plain exact-match
+        /// lookup never would, since a module is a directory (`ModulePath.cs`) and `a.b` is a
+        /// different directory from `a`, not a member of it.
+        /// </summary>
+        private IEnumerable<string> ModulesUnderPrefix(string prefix)
+        {
+            string dotted = prefix + ModulePath.Separator;
+            foreach (string path in _modules.Keys)
+            {
+                if (path.StartsWith(dotted, StringComparison.Ordinal))
+                    yield return path;
+            }
+        }
+
+        /// <summary>
+        /// Works out which module a non-wildcard import names.
         /// </summary>
         /// <remarks>
-        /// A wildcard import names a module outright. A named one names a type, and only the
-        /// modules that exist say where the module path ends and the type name begins — so the
-        /// longest known prefix wins, which is also what makes a nested type importable.
+        /// A wildcard import gets its own resolution in <see cref="BuildDependencyGraph"/> (it may
+        /// match several modules at once, §2.1's Fase 9) and never reaches this method. An aliased
+        /// or selective-list import names a module outright by its whole path. A plain named one
+        /// names a type, and only the modules that exist say where the module path ends and the
+        /// type name begins — so the longest known prefix wins, which is also what makes a nested
+        /// type importable.
         /// </remarks>
         private bool TryResolveImport(ImportSyntax import, out string modulePath)
         {
             var segments = import.Path;
 
-            if (import.IsWildcard)
+            if (import.Alias is not null || import.Members is not null)
             {
+                // An aliased import and a selective list both name a module outright - unlike a
+                // plain named import, there is no trailing type name to peel off the end.
                 modulePath = Prefix(segments, segments.Count);
                 return KnowsModule(modulePath);
             }
@@ -263,6 +368,11 @@ namespace Surtr.Compiler.Compilation
 
         private void Order()
         {
+            // Re-runnable: RefreshLoadOrder calls this again once binding may have added edges
+            // Create()'s own call never saw, and an append-only rebuild would just duplicate every
+            // module already placed the first time.
+            _ordered.Clear();
+
             if (!Dependencies.TryGetLoadOrder(out var order, out var cycle))
             {
                 Diagnostics.ReportError(

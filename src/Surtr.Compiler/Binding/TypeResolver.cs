@@ -1,6 +1,7 @@
 #nullable enable
 
 using Surtr.Compiler.Binding.Symbols;
+using Surtr.Compiler.Compilation;
 using Surtr.Compiler.Diagnostics;
 using Surtr.Compiler.Syntax;
 using Surtr.Compiler.Syntax.Ast;
@@ -30,6 +31,7 @@ namespace Surtr.Compiler.Binding
         private readonly TypeSymbolFactory _factory;
         private readonly MetadataImporter _importer;
         private readonly SurtrDiagnosticBag _diagnostics;
+        private readonly ModuleDependencyGraph _dependencies;
 
         private readonly Dictionary<string, ModuleSymbol> _modules =
             new Dictionary<string, ModuleSymbol>(StringComparer.Ordinal);
@@ -98,16 +100,28 @@ namespace Surtr.Compiler.Binding
             internal string SourceName { get; }
         }
 
-        /// <summary>Creates a resolver over one compilation's factory, imports and diagnostics.</summary>
-        public TypeResolver(TypeSymbolFactory factory, MetadataImporter importer, SurtrDiagnosticBag diagnostics)
+        /// <summary>Creates a resolver over one compilation's factory, imports, dependency graph and diagnostics.</summary>
+        public TypeResolver(
+            TypeSymbolFactory factory,
+            MetadataImporter importer,
+            SurtrDiagnosticBag diagnostics,
+            ModuleDependencyGraph dependencies)
         {
             _factory = factory;
             _importer = importer;
             _diagnostics = diagnostics;
+            _dependencies = dependencies;
         }
 
         /// <summary>Makes a module's types reachable by fully qualified name.</summary>
         public void AddModule(ModuleSymbol module) => _modules[module.Path] = module;
+
+        /// <summary>
+        /// The metadata importer this resolver reads the built-in module through — exposed so a
+        /// caller can recognize <c>array</c>/<c>dict</c>/<c>tuple</c> by the same reference identity
+        /// <see cref="Apply"/> uses internally, without importing the built-in module a second time.
+        /// </summary>
+        internal MetadataImporter Importer => _importer;
 
         /// <summary>
         /// Records where an alias's target is written, so it can be resolved the first time the
@@ -199,6 +213,9 @@ namespace Surtr.Compiler.Binding
             if (TryResolveThroughScope(syntax, arguments, scope, sourceName, out var nested))
                 return nested;
 
+            if (TryResolveThroughAlias(syntax, arguments, scope, sourceName, out var aliased))
+                return aliased;
+
             if (TryResolveQualified(syntax, arguments, sourceName, out var qualified))
                 return qualified;
 
@@ -279,53 +296,140 @@ namespace Surtr.Compiler.Binding
             {
                 string modulePath = Join(syntax.Path, split);
 
-                if (!TryGetModule(modulePath, out var module))
+                if (!TryGetModule(modulePath, out var module) || !TryResolveFromModule(syntax, module, split, arguments, sourceName, out resolved))
                     continue;
 
-                var candidates = module.FindTypes(syntax.Path[split]);
-                if (candidates.Count == 0)
-                    continue;
+                // The one edge `SurtrCompilation.BuildDependencyGraph` cannot see at parse time: a
+                // name reached with no `import` (§2.6 allows one) is only known to cross a module
+                // boundary once this resolves it. Recorded regardless of `_suppressed` — a call site
+                // asking "is this a type" through `TryResolveTypeName` still means it, if the answer
+                // is yes; suppression only silences the diagnostic on a *no*, and a *no* never
+                // reaches this line at all. `AddDependency` no-ops a module referencing itself, and
+                // `ModuleDependencyGraph.AddModule` already tolerates a path with no source behind
+                // it, so this needs no guard beyond knowing which module the reference is *from*.
+                if (CurrentModule is ModuleSymbol current)
+                    _dependencies.AddDependency(current.Path, modulePath);
 
-                NamedTypeSymbol? container = null;
-                bool last = split == syntax.Path.Count - 1;
-                int wanted = last ? arguments.Length : 0;
-
-                for (int c = 0; c < candidates.Count; c++)
-                {
-                    if (candidates[c].Arity == wanted)
-                    {
-                        container = candidates[c];
-                        break;
-                    }
-                }
-
-                if (container is null)
-                    continue;
-
-                for (int i = split + 1; i < syntax.Path.Count && container is not null; i++)
-                {
-                    var nested = container.FindNestedTypes(syntax.Path[i]);
-                    int nestedWanted = i == syntax.Path.Count - 1 ? arguments.Length : 0;
-
-                    container = null;
-                    for (int c = 0; c < nested.Count; c++)
-                    {
-                        if (nested[c].Arity == nestedWanted)
-                        {
-                            container = nested[c];
-                            break;
-                        }
-                    }
-                }
-
-                if (container is null)
-                    continue;
-
-                resolved = Apply(syntax, container, arguments, sourceName);
                 return true;
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// <c>Alias.Entity</c> or <c>Alias.Outer.Inner</c>, where <c>Alias</c> resolves through
+        /// <c>import X as Alias;</c> (§2.1) rather than through a scope-visible type or a written-
+        /// out module path.
+        /// </summary>
+        private bool TryResolveThroughAlias(
+            NamedTypeSyntax syntax,
+            TypeSymbol[] arguments,
+            Scope scope,
+            string sourceName,
+            out TypeSymbol resolved)
+        {
+            resolved = _factory.ErrorType;
+
+            var module = scope.LookupModuleAlias(syntax.Path[0]);
+            if (module is null || !TryResolveFromModule(syntax, module, 1, arguments, sourceName, out resolved))
+                return false;
+
+            // The alias itself already crossed the module boundary at its own `import` line; a use
+            // of it is a second, independent reference to that same dependency.
+            if (CurrentModule is ModuleSymbol current)
+                _dependencies.AddDependency(current.Path, module.Path);
+
+            return true;
+        }
+
+        /// <summary>
+        /// Reads <c>syntax.Path[startIndex]</c> as a top-level type declared in <paramref name="module"/>,
+        /// then walks any further segments as nested types - the shared tail of both a fully
+        /// qualified name (where <paramref name="startIndex"/> is where the module path ended) and
+        /// a name reached through a module alias (where it is always <c>1</c>).
+        /// </summary>
+        private bool TryResolveFromModule(
+            NamedTypeSyntax syntax,
+            ModuleSymbol module,
+            int startIndex,
+            TypeSymbol[] arguments,
+            string sourceName,
+            out TypeSymbol resolved)
+        {
+            resolved = _factory.ErrorType;
+
+            var candidates = module.FindTypes(syntax.Path[startIndex]);
+            if (candidates.Count == 0)
+                return false;
+
+            NamedTypeSymbol? container = null;
+            bool last = startIndex == syntax.Path.Count - 1;
+            int wanted = last ? arguments.Length : 0;
+
+            for (int c = 0; c < candidates.Count; c++)
+            {
+                if (candidates[c].Arity == wanted)
+                {
+                    container = candidates[c];
+                    break;
+                }
+            }
+
+            if (container is null)
+                return false;
+
+            for (int i = startIndex + 1; i < syntax.Path.Count && container is not null; i++)
+            {
+                var nested = container.FindNestedTypes(syntax.Path[i]);
+                int nestedWanted = i == syntax.Path.Count - 1 ? arguments.Length : 0;
+
+                container = null;
+                for (int c = 0; c < nested.Count; c++)
+                {
+                    if (nested[c].Arity == nestedWanted)
+                    {
+                        container = nested[c];
+                        break;
+                    }
+                }
+            }
+
+            if (container is null)
+                return false;
+
+            resolved = Apply(syntax, container, arguments, sourceName);
+            return true;
+        }
+
+        /// <summary>
+        /// Resolves a <c>moduleof</c> path (§2.1) to the module it names as a whole. Unlike a type
+        /// reference there is no trailing type name to peel off the end, and unlike an import there
+        /// is no wildcard union to take: the whole path — or, when its one segment is a declared
+        /// alias, the alias's target — has to name exactly one module.
+        /// </summary>
+        public bool TryResolveModulePath(IReadOnlyList<string> path, Scope scope, string sourceName, out ModuleSymbol module)
+        {
+            module = null!;
+
+            if (path.Count == 0)
+                return false;
+
+            // `moduleof(Alias)` reads exactly as `moduleof(<the alias's target>)` would (§2.1) - the
+            // same compile-time qualifier rewrite an alias already is everywhere else a module may
+            // be named.
+            if (path.Count == 1 && scope.LookupModuleAlias(path[0]) is ModuleSymbol aliased)
+            {
+                module = aliased;
+            }
+            else if (!TryGetModule(Join(path, path.Count), out module))
+            {
+                return false;
+            }
+
+            if (CurrentModule is ModuleSymbol current)
+                _dependencies.AddDependency(current.Path, module.Path);
+
+            return true;
         }
 
         private bool TryGetModule(string modulePath, out ModuleSymbol module)
@@ -403,12 +507,48 @@ namespace Surtr.Compiler.Binding
                 syntax.Span);
         }
 
+        /// <summary>
+        /// The arity cap a tuple's own allocation opcode (<c>TupPack</c>) imposes, which the
+        /// nameable <c>tuple&lt;...&gt;</c> form (below) has to diagnose at the type reference
+        /// rather than let surface only once emission fails.
+        /// </summary>
+        private const int MaxTupleArity = byte.MaxValue;
+
         private TypeSymbol Apply(NamedTypeSyntax syntax, Symbol symbol, TypeSymbol[] arguments, string sourceName)
         {
             switch (symbol)
             {
                 case NamedTypeSymbol named:
                 {
+                    // array<T>, dict<K,V> and tuple<T1,...,Tn> are nameable, callable identifiers
+                    // for exactly the types T[], {K:V} and (T1,...,Tn) already name — not a
+                    // separate type, so this redirects the built-in class's own construction onto
+                    // the identical, structurally-interned composite TypeSymbol the symbolic form
+                    // produces, rather than a constructed NamedTypeSymbol of the class. Unqualified
+                    // `array`/`dict`/`tuple` name lookup (and MemberLookup.BackingType, which never
+                    // reaches this method at all) is untouched — this only fires once a full type
+                    // application has resolved to one of these three built-ins specifically, via
+                    // reference identity so a user's own shadowing declaration is never affected.
+                    //
+                    // tuple's imported Arity is 0 - its arity varies per value, not per declaration,
+                    // per docs/VM-Plan.md §4.6 - so its check has to run before the ordinary arity
+                    // test below rejects every non-empty argument list out of hand.
+                    if (ReferenceEquals(named, _importer.TupleType))
+                    {
+                        if (arguments.Length > MaxTupleArity)
+                        {
+                            ReportError(
+                                SurtrDiagnosticCode.WrongTypeArgumentCount,
+                                $"A tuple can have at most {MaxTupleArity} elements, not {arguments.Length}.",
+                                sourceName,
+                                syntax.Span);
+
+                            return _factory.ErrorType;
+                        }
+
+                        return _factory.Tuple(arguments);
+                    }
+
                     if (named.Arity != arguments.Length)
                     {
                         ReportError(
@@ -424,6 +564,12 @@ namespace Surtr.Compiler.Binding
                     // qualified one, and each step of a nested one — so accessibility is asked once,
                     // where the type is finally settled on.
                     RequireAccessible(named, syntax, sourceName);
+
+                    if (ReferenceEquals(named, _importer.ArrayType))
+                        return _factory.Array(arguments[0]);
+
+                    if (ReferenceEquals(named, _importer.DictionaryType))
+                        return _factory.Dictionary(arguments[0], arguments[1]);
 
                     if (arguments.Length == 0)
                         return named;

@@ -27,7 +27,7 @@ namespace Surtr.Compiler.Binding
             {
                 case LiteralExpressionSyntax literal: return BindLiteral(literal, expected);
                 case InterpolatedStringExpressionSyntax interpolated: return BindInterpolatedString(interpolated);
-                case IdentifierExpressionSyntax identifier: return BindIdentifier(identifier);
+                case IdentifierExpressionSyntax identifier: return BindIdentifier(identifier, expected);
                 case ThisExpressionSyntax @this: return BindThis(@this, isSuper: false);
                 case SuperExpressionSyntax super: return BindThis(super, isSuper: true);
                 case BinaryExpressionSyntax binary: return BindBinary(binary, expected);
@@ -38,9 +38,11 @@ namespace Surtr.Compiler.Binding
                 // (§6): `let b: Box<int> = Box();` has nothing else to infer them from.
                 case CallExpressionSyntax call: return BindCall(call, expected);
                 case IndexExpressionSyntax index: return BindIndex(index);
-                case MemberAccessExpressionSyntax member: return BindMemberAccess(member);
+                case MemberAccessExpressionSyntax member: return BindMemberAccess(member, expected);
                 case CastExpressionSyntax cast: return BindCast(cast);
                 case TypeTestExpressionSyntax test: return BindTypeTest(test);
+                case TypeOfExpressionSyntax typeOf: return BindTypeOf(typeOf);
+                case ModuleOfExpressionSyntax moduleOf: return BindModuleOf(moduleOf);
                 case LambdaExpressionSyntax lambda: return BindLambda(lambda, expected);
                 case ArrayLiteralExpressionSyntax array: return BindArrayLiteral(array, expected);
                 case DictLiteralExpressionSyntax dictionary: return BindDictLiteral(dictionary, expected);
@@ -121,12 +123,17 @@ namespace Surtr.Compiler.Binding
         #endregion
 
         #region Names
-        private BoundExpression BindIdentifier(IdentifierExpressionSyntax syntax)
+        private BoundExpression BindIdentifier(IdentifierExpressionSyntax syntax, TypeSymbol? expected = null)
         {
             var found = _values.Lookup(syntax.Name);
 
             if (found.Symbol is LocalSymbol local)
             {
+                // A const local carries no slot at all (§7.1) and is not a capturable value either
+                // — folding it here is what keeps it out of both.
+                if (_localConstants.TryGetValue(local, out object? constant))
+                    return new BoundLiteralExpression(syntax, local.Type, constant);
+
                 NoteCapture(local, syntax.Span);
                 var read = new BoundLocalExpression(syntax, local);
                 return Narrow(read, local, local.Type, syntax);
@@ -152,7 +159,153 @@ namespace Surtr.Compiler.Binding
             if (BindModuleMember(syntax, syntax.Name) is BoundExpression moduleMember)
                 return moduleMember;
 
+            // §8: a bare name that names a method, where a closure is expected, is sugar for a
+            // lambda that calls it — nothing else here resolved the name, so a method group is the
+            // last thing tried rather than something that could shadow a field or a property.
+            if (TryBindMethodGroup(syntax, expected, MethodCandidatesForBareName(syntax.Name), receiverSyntax: null) is BoundExpression group)
+                return group;
+
             return Error(syntax, SurtrDiagnosticCode.UnresolvedName, $"'{syntax.Name}' does not name anything in scope.");
+        }
+
+        /// <summary>
+        /// Every method a bare name could name: the containing type's (instance ones only where
+        /// <c>this</c> is actually available), then this module's own, then each wildcard import's —
+        /// the same order <see cref="BindModuleMember"/> already resolves a field or property in.
+        /// </summary>
+        private List<MethodSymbol> MethodCandidatesForBareName(string name)
+        {
+            var candidates = new List<MethodSymbol>();
+
+            if (_containingType is not null)
+            {
+                foreach (var candidate in _lookup.FindMethods(_containingType, name))
+                {
+                    if (candidate.IsStatic || !_method.IsStatic)
+                        candidates.Add(candidate);
+                }
+            }
+
+            AddModuleMethods(_module, name, candidates);
+            foreach (var imported in _imported)
+                AddModuleMethods(imported, name, candidates);
+
+            return candidates;
+        }
+
+        private static void AddModuleMethods(ModuleSymbol module, string name, List<MethodSymbol> candidates)
+        {
+            foreach (var method in module.Methods)
+            {
+                if (string.Equals(method.Name, name, StringComparison.Ordinal))
+                    candidates.Add(method);
+            }
+        }
+
+        /// <summary>
+        /// §8's method-group-to-closure conversion: when the context expects a closure and one of
+        /// <paramref name="candidates"/> matches its shape, this is sugar for a lambda that calls it
+        /// — capture tracking, dispatch and emission are then exactly a lambda's, for free.
+        /// </summary>
+        /// <param name="syntax">The name or member access naming the method group.</param>
+        /// <param name="expected">The type the surrounding context expects, or <see langword="null"/>.</param>
+        /// <param name="candidates">Every method the name could resolve to, in priority order.</param>
+        /// <param name="receiverSyntax">
+        /// The receiver's own syntax for an instance method reached through one (<c>obj.method</c>),
+        /// bound fresh inside the synthesized lambda so an outer local it names is captured the same
+        /// way any other lambda capture is — never <see langword="null"/> together with a static
+        /// candidate reading it, since a static candidate never does. <see langword="null"/> for a
+        /// bare name, where an instance candidate reads the implicit <c>this</c> instead.
+        /// </param>
+        private BoundExpression? TryBindMethodGroup(
+            SyntaxNode syntax, TypeSymbol? expected, IReadOnlyList<MethodSymbol> candidates, ExpressionSyntax? receiverSyntax)
+        {
+            if (expected?.NonNullable is not ClosureTypeSymbol closure)
+                return null;
+
+            foreach (var candidate in candidates)
+            {
+                if (MatchesClosureShape(candidate, closure))
+                    return BindMethodGroupLambda(syntax, closure, candidate, receiverSyntax);
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Whether a method could stand in for a closure of this shape: same arity, every parameter
+        /// accepts what the closure's would carry, and the returns agree on voidness (a void closure
+        /// never reads a result, so wrapping a value-returning method into one would leave the
+        /// runtime's own return-count expectation mismatched against what the method actually
+        /// pushes) and, when both carry a value, the method's is assignable to the closure's.
+        /// </summary>
+        private bool MatchesClosureShape(MethodSymbol method, ClosureTypeSymbol closure)
+        {
+            if (method.Parameters.Count != closure.ParameterTypes.Count)
+                return false;
+
+            if (closure.ReturnType.IsVoid != method.ReturnType.IsVoid)
+                return false;
+
+            for (int i = 0; i < method.Parameters.Count; i++)
+            {
+                if (!_conversions.IsAssignable(closure.ParameterTypes[i], method.Parameters[i].Type))
+                    return false;
+            }
+
+            return closure.ReturnType.IsVoid || _conversions.IsAssignable(method.ReturnType, closure.ReturnType);
+        }
+
+        /// <summary>
+        /// Builds the lambda a method-group conversion is sugar for: <c>(p0, p1, ...) =&gt;
+        /// method(p0, p1, ...)</c>, receiver included where there is one. Goes through the exact
+        /// scaffolding <see cref="BindLambda"/> does — a fresh scope pushed onto <see cref="_lambdas"/>
+        /// before anything in the body binds — so a captured local or the enclosing instance is
+        /// noted exactly as it would be for a lambda a caller wrote by hand.
+        /// </summary>
+        private BoundExpression BindMethodGroupLambda(
+            SyntaxNode syntax, ClosureTypeSymbol closure, MethodSymbol method, ExpressionSyntax? receiverSyntax)
+        {
+            var parameters = new ParameterSymbol[closure.ParameterTypes.Count];
+            for (int i = 0; i < parameters.Length; i++)
+                parameters[i] = new ParameterSymbol("$" + i, closure.ParameterTypes[i], i);
+
+            var outerValues = _values;
+            _values = _values.CreateChild();
+            var frame = new LambdaFrame(_values);
+            _lambdas.Add(frame);
+
+            for (int i = 0; i < parameters.Length; i++)
+                _values.TryDeclare(parameters[i].Name, parameters[i]);
+
+            BoundExpression? receiver = method.IsStatic
+                ? null
+                : receiverSyntax is not null
+                    ? BindExpression(receiverSyntax)
+                    : ImplicitThis(syntax, (NamedTypeSymbol)method.ContainingSymbol!);
+
+            var arguments = new BoundExpression[parameters.Length];
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                arguments[i] = Convert(new BoundParameterExpression(syntax, parameters[i]), method.Parameters[i].Type, syntax.Span);
+            }
+
+            bool isVirtual = !method.IsStatic && method.ContainingType is not null && method.Dispatch != MethodDispatch.Direct;
+            var call = new BoundCallExpression(syntax, receiver, method, arguments, isVirtual);
+
+            BoundStatement body = closure.ReturnType.IsVoid
+                ? new BoundExpressionStatement(syntax, call)
+                : new BoundReturnStatement(syntax, Convert(call, closure.ReturnType, syntax.Span));
+
+            _lambdas.RemoveAt(_lambdas.Count - 1);
+            _values = outerValues;
+
+            var parameterTypes = new TypeSymbol[parameters.Length];
+            for (int i = 0; i < parameters.Length; i++)
+                parameterTypes[i] = parameters[i].Type;
+
+            return new BoundLambdaExpression(
+                syntax, _factory.Closure(parameterTypes, closure.ReturnType), parameters, body, frame.Captures, frame.CapturesReceiver);
         }
 
         /// <summary>
@@ -173,12 +326,32 @@ namespace Surtr.Compiler.Binding
                 syntax, read, narrowed, Conversion.Of(ConversionKind.ExplicitReference), isExplicit: false);
         }
 
+        /// <summary>
+        /// Reads a field, folding a <c>const</c> one straight into the literal it evaluates to
+        /// (§7.1) rather than a read of a slot — a <c>const</c> field never reaches
+        /// <c>ModuleEmitter</c> as a real one, so every read of it has to be resolved here instead.
+        /// </summary>
+        /// <param name="syntax">The access expression's own syntax, for the bound node's span.</param>
+        /// <param name="receiver">
+        /// Already resolved by the caller exactly as it would be for an ordinary field — typically
+        /// <c>field.IsStatic ? null : ...</c> — so a static field's receiver expression is never
+        /// evaluated just to be discarded here.
+        /// </param>
+        /// <param name="field">The field being read.</param>
+        private BoundExpression ResolveField(SyntaxNode syntax, BoundExpression? receiver, FieldSymbol field)
+        {
+            if (field.IsConst && _constants.TryGetValue(field.Name, out object? value))
+                return new BoundLiteralExpression(syntax, field.Type, value);
+
+            return new BoundFieldExpression(syntax, receiver, field);
+        }
+
         private BoundExpression? BindImplicitMember(SyntaxNode syntax, NamedTypeSymbol type, string name)
         {
             if (_lookup.FindField(type, name) is FieldSymbol field)
             {
                 RequireAccessible(field, field.Accessibility, field.Name, syntax);
-                return new BoundFieldExpression(syntax, field.IsStatic ? null : ImplicitThis(syntax, type), field);
+                return ResolveField(syntax, field.IsStatic ? null : ImplicitThis(syntax, type), field);
             }
 
             if (_lookup.FindProperty(type, name) is PropertySymbol property)
@@ -253,7 +426,7 @@ namespace Surtr.Compiler.Binding
                 if (string.Equals(field.Name, name, StringComparison.Ordinal))
                 {
                     RequireAccessible(field, field.Accessibility, field.Name, syntax);
-                    return new BoundFieldExpression(syntax, null, field);
+                    return ResolveField(syntax, null, field);
                 }
             }
 
@@ -333,15 +506,15 @@ namespace Surtr.Compiler.Binding
                 ? new BoundFieldExpression(syntax, null, instance)
                 : null;
 
-        private BoundExpression BindMemberAccess(MemberAccessExpressionSyntax syntax)
+        private BoundExpression BindMemberAccess(MemberAccessExpressionSyntax syntax, TypeSymbol? expected = null)
         {
             // `Suit.Hearts` is a static member, not a field on a value called Suit.
             if (TryBindAsType(syntax.Target, out var staticType))
             {
                 if (Singleton(syntax.Target, staticType) is BoundExpression instance)
-                    return BindInstanceMember(syntax, instance);
+                    return BindInstanceMember(syntax, instance, expected);
 
-                return BindStaticMember(syntax, staticType);
+                return BindStaticMember(syntax, staticType, expected);
             }
 
             var receiver = BindExpression(syntax.Target);
@@ -351,7 +524,7 @@ namespace Surtr.Compiler.Binding
             if (syntax.IsNullConditional)
                 RequireNullable(receiver, syntax);
 
-            return BindInstanceMember(syntax, receiver);
+            return BindInstanceMember(syntax, receiver, expected);
         }
 
         /// <summary>
@@ -400,7 +573,7 @@ namespace Surtr.Compiler.Binding
                 $"'{receiver.Type.ToDisplayString()}' cannot be null, so '?.' has nothing to guard against.");
         }
 
-        private BoundExpression BindInstanceMember(MemberAccessExpressionSyntax syntax, BoundExpression receiver)
+        private BoundExpression BindInstanceMember(MemberAccessExpressionSyntax syntax, BoundExpression receiver, TypeSymbol? expected = null)
         {
             var lookupType = receiver.Type.NonNullable;
 
@@ -413,13 +586,22 @@ namespace Surtr.Compiler.Binding
             if (_lookup.FindField(lookupType, syntax.Name) is FieldSymbol field)
             {
                 RequireAccessible(field, field.Accessibility, field.Name, syntax);
-                return Guard(new BoundFieldExpression(syntax, field.IsStatic ? null : accessed, field), syntax);
+                return Guard(ResolveField(syntax, field.IsStatic ? null : accessed, field), syntax);
             }
 
             if (_lookup.FindProperty(lookupType, syntax.Name) is PropertySymbol property)
             {
                 RequireAccessible(property, property.Accessibility, property.Name, syntax);
                 return Guard(new BoundPropertyExpression(syntax, property.IsStatic ? null : accessed, property), syntax);
+            }
+
+            // §8: `obj.method` where a closure is expected is sugar for a lambda calling it — never
+            // tried under `?.`, since a closure built from a short-circuited receiver has nothing
+            // sound to close over.
+            if (!syntax.IsNullConditional
+                && TryBindMethodGroup(syntax, expected, _lookup.FindMethods(lookupType, syntax.Name), syntax.Target) is BoundExpression group)
+            {
+                return group;
             }
 
             return Error(
@@ -447,14 +629,14 @@ namespace Surtr.Compiler.Binding
                 access,
                 access.Type.IsVoid || access.Type.IsError ? access.Type : access.Type.Nullable);
 
-        private BoundExpression BindStaticMember(MemberAccessExpressionSyntax syntax, NamedTypeSymbol type)
+        private BoundExpression BindStaticMember(MemberAccessExpressionSyntax syntax, NamedTypeSymbol type, TypeSymbol? expected = null)
         {
             RequireAccessibleType(type, syntax);
 
             if (_lookup.FindField(type, syntax.Name) is FieldSymbol field && field.IsStatic)
             {
                 RequireAccessible(field, field.Accessibility, field.Name, syntax);
-                return new BoundFieldExpression(syntax, null, field);
+                return ResolveField(syntax, null, field);
             }
 
             if (_lookup.FindProperty(type, syntax.Name) is PropertySymbol property && property.IsStatic)
@@ -463,10 +645,28 @@ namespace Surtr.Compiler.Binding
                 return new BoundPropertyExpression(syntax, null, property);
             }
 
+            // §8: `Type.method` where a closure is expected is sugar for a lambda calling it —
+            // static candidates only, since accessing a member through a type name never has a
+            // receiver for an instance one to read.
+            if (TryBindMethodGroup(syntax, expected, StaticMethodsOf(type, syntax.Name), receiverSyntax: null) is BoundExpression group)
+                return group;
+
             return Error(
                 syntax,
                 SurtrDiagnosticCode.UnresolvedMember,
                 $"'{type.ToDisplayString()}' has no static member called '{syntax.Name}'.");
+        }
+
+        private List<MethodSymbol> StaticMethodsOf(NamedTypeSymbol type, string name)
+        {
+            var candidates = new List<MethodSymbol>();
+            foreach (var candidate in _lookup.FindMethods(type, name))
+            {
+                if (candidate.IsStatic)
+                    candidates.Add(candidate);
+            }
+
+            return candidates;
         }
         #endregion
 
@@ -486,6 +686,18 @@ namespace Surtr.Compiler.Binding
 
             if (left.Type.IsError || right.Type.IsError)
                 return Error(syntax);
+
+            // A declared `operator==` has to be tried before the built-in fallback: two operands of
+            // the same class type are always "assignable to each other" (identity), which would
+            // otherwise make ResolveBinary succeed first and the overload unreachable. `!=` reuses
+            // the same lookup (both map to `op_==`, per TokenFor) and negates the result.
+            if (syntax.Operator is BinaryOperator.Equal or BinaryOperator.NotEqual
+                && TryBindUserOperator(syntax, syntax.Operator, left, right) is BoundExpression userEquality)
+            {
+                return syntax.Operator == BinaryOperator.NotEqual
+                    ? new BoundUnaryExpression(syntax, UnaryOperator.Not, userEquality, _factory.Bool)
+                    : userEquality;
+            }
 
             var result = ResolveBinary(syntax, syntax.Operator, ref left, ref right);
             if (result is null)
@@ -664,16 +876,60 @@ namespace Surtr.Compiler.Binding
                 return null;
 
             var method = result.Method!;
-            return new BoundCallExpression(
-                syntax,
-                null,
-                method,
-                new[]
-                {
-                    Convert(left, method.Parameters[0].Type, syntax.Span),
-                    Convert(right, method.Parameters[1].Type, syntax.Span),
-                },
-                isVirtual: false);
+            BoundExpression call = BindOperatorCall(syntax, left, new[] { right }, method);
+
+            // `<`, `<=`, `>` and `>=` are all declared through `operator<=>` alone (§5.6) — the user
+            // writes only the three-way form, so the relational ones compare its `int` result
+            // against zero here. `TokenFor` maps all five to the same lookup, so `call` above is
+            // already the `compareTo`-shaped result for every one of them; `Compare` itself (`<=>`)
+            // is the one case that is already the answer and needs no further wrapping.
+            return @operator switch
+            {
+                BinaryOperator.Less or BinaryOperator.LessEqual
+                    or BinaryOperator.Greater or BinaryOperator.GreaterEqual =>
+                        new BoundBinaryExpression(
+                            syntax, @operator, call, new BoundLiteralExpression(syntax, _factory.Int, 0L), _factory.Bool),
+                _ => call,
+            };
+        }
+
+        /// <summary>
+        /// Builds the call an operator expression lowers to. A plain operator is a static method
+        /// taking every operand; one declared <c>virtual</c>/<c>override</c>/<c>abstract</c>, or in
+        /// an interface, is an instance method whose receiver is the first parameter (§5.6) — so
+        /// the call goes through the receiver instead of naming a static, which is what lets the
+        /// dispatch reach a vtable slot or an interface's method slots like any other method call.
+        /// </summary>
+        private BoundExpression BindOperatorCall(
+            SyntaxNode syntax,
+            BoundExpression receiver,
+            IReadOnlyList<BoundExpression> operands,
+            MethodSymbol method)
+        {
+            if (method.IsStatic)
+            {
+                // Static: the receiver is argument zero like every other operand, and the call
+                // names the method directly.
+                var arguments = new BoundExpression[operands.Count + 1];
+                arguments[0] = Convert(receiver, method.Parameters[0].Type, syntax.Span);
+                for (int i = 0; i < operands.Count; i++)
+                    arguments[i + 1] = Convert(operands[i], method.Parameters[i + 1].Type, syntax.Span);
+
+                return new BoundCallExpression(syntax, null, method, arguments, isVirtual: false);
+            }
+
+            // Instance: parameter zero is the receiver and the call is dispatched through it —
+            // virtually when the operator dispatches and the receiver could be overridden.
+            var boundReceiver = Convert(receiver, method.Parameters[0].Type, syntax.Span);
+
+            var callArguments = new BoundExpression[operands.Count];
+            for (int i = 0; i < operands.Count; i++)
+                callArguments[i] = Convert(operands[i], method.Parameters[i + 1].Type, syntax.Span);
+
+            bool virtualCall = method.Dispatch != MethodDispatch.Direct
+                && !(boundReceiver.Type.NonNullable is NamedTypeSymbol { IsSealed: true });
+
+            return new BoundCallExpression(syntax, boundReceiver, method, callArguments, virtualCall);
         }
 
         private static TokenType TokenFor(BinaryOperator @operator) => @operator switch
@@ -810,7 +1066,7 @@ namespace Surtr.Compiler.Binding
             var result = _overloads.Resolve(candidates, new[] { new ArgumentInfo(operand.Type) });
 
             return result.IsResolved
-                ? new BoundCallExpression(syntax, null, result.Method!, new[] { operand }, isVirtual: false)
+                ? BindOperatorCall(syntax, operand, Array.Empty<BoundExpression>(), result.Method!)
                 : null;
         }
         #endregion
@@ -848,6 +1104,15 @@ namespace Surtr.Compiler.Binding
                     target is BoundLocalExpression { Local.IsReadOnly: true } local
                         ? $"'{local.Local.Name}' is declared 'let', which is assign-once; declare it 'var' to reassign it."
                         : "This cannot be assigned to; it is a value, a 'let', or a property with no setter.");
+            }
+
+            // The property was already found reachable at resolution time (`RequireAccessible`
+            // above `target` was bound), using the property's own — widest — accessibility. A
+            // setter narrower than that (§3.4's per-accessor visibility) needs its own, stricter
+            // check here, at the one place every write actually goes through.
+            if (target is BoundPropertyExpression { Property.Setter: MethodSymbol setter } propertyTarget)
+            {
+                RequireAccessible(setter, setter.Accessibility, propertyTarget.Property.Name, syntax.Target);
             }
 
             if (syntax.Operator == AssignmentOperator.Assign)
@@ -921,6 +1186,15 @@ namespace Surtr.Compiler.Binding
         #region Calls
         private BoundExpression BindCall(CallExpressionSyntax syntax, TypeSymbol? expected = null)
         {
+            // `array<T>(...)`/`dict<K,V>(...)`/`tuple<...>(...)` construct too, but never through
+            // ordinary object creation — array/dict/tuple resolve to ArrayTypeSymbol/
+            // DictionaryTypeSymbol/TupleTypeSymbol (TypeResolver.Apply), never a NamedTypeSymbol, so
+            // neither TryBindAsType nor TryBindAsGenericDefinition below would ever recognize them.
+            // This has to run first and unconditionally intercept the three names, or a shadowing
+            // user declaration under the same name would never get a chance to fall through to them.
+            if (TryBindBuiltInCollectionCall(syntax, expected, out var collection))
+                return collection;
+
             // `Vec2(1.0, 2.0)` constructs; there is no `new`.
             if (TryBindAsType(syntax.Callee, out var constructed))
                 return BindObjectCreation(syntax, constructed);
@@ -1257,6 +1531,25 @@ namespace Surtr.Compiler.Binding
             arguments = new BoundExpression?[written.Count];
             infos = new ArgumentInfo[written.Count];
 
+            // §3.5: once naming starts it continues to the end of the call - a positional argument
+            // after a named one has no position left to mean, since every later parameter is only
+            // reachable by name from here on.
+            bool sawNamed = false;
+            for (int i = 0; i < written.Count; i++)
+            {
+                if (written[i].Name is not null)
+                {
+                    sawNamed = true;
+                }
+                else if (sawNamed)
+                {
+                    Report(
+                        SurtrDiagnosticCode.PositionalArgumentAfterNamed,
+                        written[i].Span,
+                        "A positional argument cannot follow a named one.");
+                }
+            }
+
             for (int i = 0; i < arguments.Length; i++)
             {
                 if (NeedsTargetType(written[i].Value) is LambdaExpressionSyntax lambda)
@@ -1577,6 +1870,522 @@ namespace Surtr.Compiler.Binding
             return new BoundLiteralExpression(syntax, parameter.Type, parameter.DefaultValue);
         }
 
+        #region Nameable collection constructors
+        /// <summary>
+        /// Recognizes a call to <c>array&lt;T&gt;</c>/<c>dict&lt;K,V&gt;</c>/<c>tuple&lt;...&gt;</c>
+        /// through their nameable generic form (§5.3) and binds the shape it names — empty,
+        /// capacity, or a cast between array and tuple.
+        /// </summary>
+        /// <remarks>
+        /// Guarded by reference identity against the same three built-in symbols
+        /// <see cref="TypeResolver"/>'s own redirect checks against, so a user's own shadowing
+        /// declaration under one of these names is never touched — it is not reference-equal to the
+        /// built-in and so falls straight through to <see cref="TryBindAsType"/>/
+        /// <see cref="TryBindAsGenericDefinition"/> unchanged. Has to run before both of those: array/
+        /// dict/tuple resolve to <c>ArrayTypeSymbol</c>/<c>DictionaryTypeSymbol</c>/<c>TupleTypeSymbol</c>
+        /// (<see cref="TypeResolver.Apply"/>'s redirect), never a <c>NamedTypeSymbol</c>, so neither of
+        /// those two would ever recognize them as constructible on their own.
+        /// </remarks>
+        private bool TryBindBuiltInCollectionCall(CallExpressionSyntax syntax, TypeSymbol? expected, out BoundExpression result)
+        {
+            result = null!;
+
+            var path = new List<string>();
+            if (!TryFlatten(syntax.Callee, path) || path.Count != 1)
+                return false;
+
+            if (_typeScope.Lookup(path[0]).Symbol is not NamedTypeSymbol named)
+                return false;
+
+            if (ReferenceEquals(named, _resolver.Importer.ArrayType))
+            {
+                result = BindArrayCreation(syntax, expected);
+                return true;
+            }
+
+            if (ReferenceEquals(named, _resolver.Importer.DictionaryType))
+            {
+                result = BindDictCreation(syntax, expected);
+                return true;
+            }
+
+            if (ReferenceEquals(named, _resolver.Importer.TupleType))
+            {
+                result = BindTupleCreation(syntax, expected);
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Binds <c>array&lt;T&gt;()</c>, <c>array&lt;T&gt;(n)</c> and <c>array&lt;T&gt;(aTuple)</c>.</summary>
+        private BoundExpression BindArrayCreation(CallExpressionSyntax syntax, TypeSymbol? expected)
+        {
+            TypeSymbol elementType;
+
+            if (ResolveWrittenTypeArguments(syntax) is IReadOnlyList<TypeSymbol> written)
+            {
+                if (written.Count != 1)
+                {
+                    return Error(
+                        syntax,
+                        SurtrDiagnosticCode.WrongTypeArgumentCount,
+                        $"'array' takes 1 type argument, not {written.Count}.");
+                }
+
+                elementType = written[0];
+            }
+            else if (expected?.NonNullable is ArrayTypeSymbol targetArray)
+            {
+                elementType = targetArray.ElementType;
+            }
+            else
+            {
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.CannotInferTypeArgument,
+                    "Nothing says what 'array<T>' holds; write its type argument, or the type it goes into.");
+            }
+
+            var arrayType = _factory.Array(elementType);
+            var arguments = syntax.Arguments;
+
+            if (arguments.Count == 0)
+                return new BoundCollectionCreationExpression(syntax, arrayType, CollectionCreationKind.ArrayEmpty);
+
+            if (arguments.Count == 1 && arguments[0].Name is null)
+            {
+                var argument = BindExpression(arguments[0].Value);
+
+                if (!argument.Type.IsNullable && argument.Type.SpecialType == SpecialType.Int)
+                {
+                    return new BoundCollectionCreationExpression(
+                        syntax, arrayType, CollectionCreationKind.ArrayCapacity, capacity: argument);
+                }
+
+                if (argument.Type.NonNullable is TupleTypeSymbol sourceTuple)
+                {
+                    if (!TryClassifyElementwise(syntax, sourceTuple.ElementTypes, elementType, out var conversions))
+                        return Error(syntax);
+
+                    return new BoundCollectionCreationExpression(
+                        syntax, arrayType, CollectionCreationKind.ArrayFromTuple, source: argument, elementConversions: conversions);
+                }
+
+                // The copy constructor, array<T>(anotherArray) — checked before the generic iterable
+                // fallback below, since an array is itself IIterable<T> and this path is the faster
+                // one: no interface dispatch, just ArrLen/ArrGet/ArrSet.
+                if (argument.Type.NonNullable is ArrayTypeSymbol sourceArray)
+                {
+                    var elementConversion = _conversions.Classify(sourceArray.ElementType, elementType);
+                    if (elementConversion.IsImplicit)
+                    {
+                        return new BoundCollectionCreationExpression(
+                            syntax, arrayType, CollectionCreationKind.ArrayCopy,
+                            source: argument, elementConversions: new[] { elementConversion });
+                    }
+
+                    return Error(
+                        syntax,
+                        SurtrDiagnosticCode.CollectionElementConversionMissing,
+                        $"'{sourceArray.ElementType.ToDisplayString()}' has no implicit conversion to '{elementType.ToDisplayString()}'.");
+                }
+
+                // The lowest-priority shape: anything reaching here is not already an array or a
+                // tuple, so this is where a range, a dict (as (K,V) pairs), a string (as char) or a
+                // user IIterable<T> gets its chance — the exact same "what does iterating this yield"
+                // question for-in already answers, reused rather than redefined.
+                if (TryFindIterableElementType(argument.Type.NonNullable, out var iterableElementType))
+                {
+                    var elementConversion = _conversions.Classify(iterableElementType, elementType);
+                    if (elementConversion.IsImplicit)
+                    {
+                        return new BoundCollectionCreationExpression(
+                            syntax, arrayType, CollectionCreationKind.ArrayFromIterable,
+                            source: argument, elementConversions: new[] { elementConversion }, sourceElementType: iterableElementType);
+                    }
+
+                    return Error(
+                        syntax,
+                        SurtrDiagnosticCode.CollectionElementConversionMissing,
+                        $"'{iterableElementType.ToDisplayString()}' has no implicit conversion to '{elementType.ToDisplayString()}'.");
+                }
+
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.CollectionCastNotSupported,
+                    $"'array<{elementType.ToDisplayString()}>' cannot be built from '{argument.Type.ToDisplayString()}'; write a capacity ('int'), a matching tuple, another 'array<T>', or something implementing 'IIterable<T>'.");
+            }
+
+            if (arguments.Count == 2 && arguments[0].Name is null && arguments[1].Name is null)
+            {
+                var size = BindExpression(arguments[0].Value);
+
+                if (!size.Type.IsNullable && size.Type.SpecialType == SpecialType.Int)
+                {
+                    var defaultValue = Convert(BindExpression(arguments[1].Value, elementType), elementType, arguments[1].Span);
+
+                    // The zero-value fast path: array<T>(n, T's own zero) is exactly the already-
+                    // existing ArrayCapacity shape, which already zero-fills via ArrNewX/ArrNew — reused
+                    // unchanged rather than looping to write zeros by hand. Deliberately narrow: only a
+                    // literal already typed as the element family's own zero qualifies, not anything
+                    // reaching zero through an inserted conversion, which stays on the general loop.
+                    if (IsElementFamilyZeroLiteral(defaultValue, elementType))
+                    {
+                        return new BoundCollectionCreationExpression(
+                            syntax, arrayType, CollectionCreationKind.ArrayCapacity, capacity: size);
+                    }
+
+                    return new BoundCollectionCreationExpression(
+                        syntax, arrayType, CollectionCreationKind.ArraySizeDefault, capacity: size, defaultValue: defaultValue);
+                }
+            }
+
+            return Error(
+                syntax,
+                SurtrDiagnosticCode.UnresolvedCall,
+                $"'array<{elementType.ToDisplayString()}>' takes no arguments, one 'int' capacity, one matching tuple/array/iterable, or ('int' size, '{elementType.ToDisplayString()}' default).");
+        }
+
+        private static bool IsElementFamilyZeroLiteral(BoundExpression expression, TypeSymbol elementType)
+        {
+            if (expression is not BoundLiteralExpression literal)
+                return false;
+
+            return elementType.NonNullable.SpecialType switch
+            {
+                SpecialType.Int => literal.Value is 0L,
+                SpecialType.Float => literal.Value is 0.0,
+                SpecialType.Bool => literal.Value is false,
+                SpecialType.Char => literal.Value is '\0',
+                _ => elementType.IsReferenceType && literal.Value is null,
+            };
+        }
+
+        /// <summary>
+        /// Binds <c>dict&lt;K,V&gt;()</c> and <c>dict&lt;K,V&gt;(n)</c>. Casting into or out of a
+        /// dict is explicitly out of scope (§5.3) — it has no natural single source collection the
+        /// way array and tuple have each other.
+        /// </summary>
+        private BoundExpression BindDictCreation(CallExpressionSyntax syntax, TypeSymbol? expected)
+        {
+            TypeSymbol keyType;
+            TypeSymbol valueType;
+
+            if (ResolveWrittenTypeArguments(syntax) is IReadOnlyList<TypeSymbol> written)
+            {
+                if (written.Count != 2)
+                {
+                    return Error(
+                        syntax,
+                        SurtrDiagnosticCode.WrongTypeArgumentCount,
+                        $"'dict' takes 2 type arguments, not {written.Count}.");
+                }
+
+                keyType = written[0];
+                valueType = written[1];
+            }
+            else if (expected?.NonNullable is DictionaryTypeSymbol targetDict)
+            {
+                keyType = targetDict.KeyType;
+                valueType = targetDict.ValueType;
+            }
+            else
+            {
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.CannotInferTypeArgument,
+                    "Nothing says what 'dict<K,V>' holds; write its type arguments, or the type it goes into.");
+            }
+
+            var dictType = _factory.Dictionary(keyType, valueType);
+            var arguments = syntax.Arguments;
+
+            if (arguments.Count == 0)
+                return new BoundCollectionCreationExpression(syntax, dictType, CollectionCreationKind.DictEmpty);
+
+            if (arguments.Count == 1 && arguments[0].Name is null)
+            {
+                var argument = BindExpression(arguments[0].Value);
+
+                if (!argument.Type.IsNullable && argument.Type.SpecialType == SpecialType.Int)
+                {
+                    // dict<K,V>(n) is the one shape that does not fold to a single opcode: DictNew
+                    // takes no capacity operand, so this reuses dict's own existing `reserve` native
+                    // method — the same one `someDict.reserve(n)` written by hand would call.
+                    var reserve = _lookup.FindMethods(dictType, "reserve");
+                    if (reserve.Count == 0)
+                    {
+                        return Error(
+                            syntax,
+                            SurtrDiagnosticCode.CollectionCastNotSupported,
+                            "'dict' declares no 'reserve' method for the compiler to call; a capacity constructor has nothing to fold to.");
+                    }
+
+                    return new BoundCollectionCreationExpression(
+                        syntax, dictType, CollectionCreationKind.DictCapacity, capacity: argument, reserveMethod: reserve[0]);
+                }
+
+                if (argument.Type.NonNullable is ArrayTypeSymbol pairsArray
+                    && pairsArray.ElementType.NonNullable is TupleTypeSymbol pairType
+                    && pairType.ElementTypes.Count == 2)
+                {
+                    var keyConversion = _conversions.Classify(pairType.ElementTypes[0], keyType);
+                    var valueConversion = _conversions.Classify(pairType.ElementTypes[1], valueType);
+
+                    if (keyConversion.IsImplicit && valueConversion.IsImplicit)
+                    {
+                        return new BoundCollectionCreationExpression(
+                            syntax, dictType, CollectionCreationKind.DictFromPairs,
+                            source: argument, elementConversions: new[] { keyConversion, valueConversion });
+                    }
+
+                    return Error(
+                        syntax,
+                        SurtrDiagnosticCode.CollectionElementConversionMissing,
+                        $"'{pairType.ToDisplayString()}' pairs don't convert to a ('{keyType.ToDisplayString()}', '{valueType.ToDisplayString()}') entry.");
+                }
+
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.CollectionCastNotSupported,
+                    $"'dict<{keyType.ToDisplayString()}, {valueType.ToDisplayString()}>' cannot be built from '{argument.Type.ToDisplayString()}'; write a capacity ('int') or an array of ('{keyType.ToDisplayString()}', '{valueType.ToDisplayString()}') pairs.");
+            }
+
+            if (arguments.Count == 2 && arguments[0].Name is null && arguments[1].Name is null)
+            {
+                var keys = BindExpression(arguments[0].Value);
+                var values = BindExpression(arguments[1].Value);
+
+                // Arrays are invariant (§6), so this is exact-match only — a K[] argument for a
+                // dict<K,V> key array, never something merely convertible to K.
+                if (keys.Type.NonNullable is ArrayTypeSymbol keyArray && ReferenceEquals(keyArray.ElementType, keyType)
+                    && values.Type.NonNullable is ArrayTypeSymbol valueArray && ReferenceEquals(valueArray.ElementType, valueType))
+                {
+                    var thrown = BuildLibraryException(
+                        syntax,
+                        "ArgumentException",
+                        $"'keys' and 'values' must have the same length to build a '{dictType.ToDisplayString()}'.");
+
+                    return new BoundCollectionCreationExpression(
+                        syntax, dictType, CollectionCreationKind.DictFromParallelArrays,
+                        source: keys, source2: values, thrown: thrown);
+                }
+
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.CollectionCastNotSupported,
+                    $"'dict<{keyType.ToDisplayString()}, {valueType.ToDisplayString()}>' needs a '{keyType.ToDisplayString()}[]' and a '{valueType.ToDisplayString()}[]', not '{keys.Type.ToDisplayString()}' and '{values.Type.ToDisplayString()}'.");
+            }
+
+            return Error(
+                syntax,
+                SurtrDiagnosticCode.UnresolvedCall,
+                $"'dict<{keyType.ToDisplayString()}, {valueType.ToDisplayString()}>' takes no arguments, one 'int' capacity, one array of pairs, or a (keys, values) array pair.");
+        }
+
+        /// <summary>
+        /// Binds <c>tuple&lt;&gt;()</c> and <c>tuple&lt;...&gt;(anArray)</c>. There is no capacity
+        /// constructor: a tuple's arity is part of its type, not requested at construction (§5.3).
+        /// </summary>
+        private BoundExpression BindTupleCreation(CallExpressionSyntax syntax, TypeSymbol? expected)
+        {
+            IReadOnlyList<TypeSymbol> elementTypes;
+
+            if (ResolveWrittenTypeArguments(syntax) is IReadOnlyList<TypeSymbol> written)
+            {
+                elementTypes = written;
+            }
+            else if (syntax.Arguments.Count == 0)
+            {
+                // The 0-argument shape needs no inference at all: it can only ever mean the unit
+                // tuple, the same way writing `tuple<>()` explicitly does.
+                elementTypes = System.Array.Empty<TypeSymbol>();
+            }
+            else if (expected?.NonNullable is TupleTypeSymbol targetTuple)
+            {
+                elementTypes = targetTuple.ElementTypes;
+            }
+            else
+            {
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.CannotInferTypeArgument,
+                    "Nothing says what 'tuple<...>' holds; a tuple's arity can't be read off a runtime array's length, so write its type arguments, or the type it goes into.");
+            }
+
+            var tupleType = _factory.Tuple(elementTypes);
+            var arguments = syntax.Arguments;
+
+            if (arguments.Count == 0)
+            {
+                if (elementTypes.Count == 0)
+                    return new BoundCollectionCreationExpression(syntax, tupleType, CollectionCreationKind.TupleEmpty);
+
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.TupleArityFixed,
+                    $"'{tupleType.ToDisplayString()}' has no no-arg constructor; every element is part of the type. Cast it from an 'array<T>' of length {elementTypes.Count}, or write all {elementTypes.Count} elements as a literal.");
+            }
+
+            if (arguments.Count == 1 && arguments[0].Name is null)
+            {
+                var argument = BindExpression(arguments[0].Value);
+
+                // The copy constructor, (T1,T2)(pair: (T1,T2)): tuples are immutable and
+                // TypeSymbolFactory interns structurally, so "the same tuple type" is reference
+                // identity, not mere convertibility — when it holds, the source value already IS the
+                // value this construction would build, and returning it unwrapped is exact, not an
+                // approximation. A source that would need widening (e.g. (int,int) into (float,float))
+                // is NOT reference-equal and falls through to the positional path below, which builds
+                // a genuine new tuple with real per-element conversions.
+                if (ReferenceEquals(argument.Type.NonNullable, tupleType))
+                    return argument;
+
+                if (!argument.Type.IsNullable && argument.Type.SpecialType == SpecialType.Int)
+                {
+                    return Error(
+                        syntax,
+                        SurtrDiagnosticCode.TupleArityFixed,
+                        $"'{tupleType.ToDisplayString()}' has no capacity constructor; a tuple's arity is fixed by its type, not requested at construction.");
+                }
+
+                if (argument.Type.NonNullable is ArrayTypeSymbol sourceArray)
+                {
+                    if (!TryClassifyElementwise(syntax, sourceArray.ElementType, elementTypes, out var conversions))
+                        return Error(syntax);
+
+                    var thrown = BuildLibraryException(
+                        syntax,
+                        "InvalidCastException",
+                        $"An array cast to '{tupleType.ToDisplayString()}' must have exactly {elementTypes.Count} element(s).");
+
+                    return new BoundCollectionCreationExpression(
+                        syntax, tupleType, CollectionCreationKind.TupleFromArray, source: argument, elementConversions: conversions, thrown: thrown);
+                }
+
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.CollectionCastNotSupported,
+                    $"'{tupleType.ToDisplayString()}' cannot be built from '{argument.Type.ToDisplayString()}'; write an 'array<T>' whose elements all convert to the tuple's slots.");
+            }
+
+            // The explicit positional constructor, (T1,...,Tn)(v1,...,vn): exactly the arity the
+            // tuple's own type declares, every argument positional (a tuple has no parameter names to
+            // write against). Arity 1 is deliberately excluded — it stays inside the branch above,
+            // shared with the capacity-rejection and array-cast checks, since a single-element tuple
+            // type is vanishingly rare and not worth a second dispatch path for.
+            if (arguments.Count == elementTypes.Count && arguments.Count >= 2 && AllPositional(arguments))
+                return BindTupleExplicitPositional(syntax, arguments, tupleType, elementTypes);
+
+            return Error(
+                syntax,
+                SurtrDiagnosticCode.UnresolvedCall,
+                $"'{tupleType.ToDisplayString()}' takes no arguments (only when its arity is 0), one matching array or same-typed tuple, or exactly {elementTypes.Count} positional element(s).");
+        }
+
+        private static bool AllPositional(IReadOnlyList<ArgumentSyntax> arguments)
+        {
+            for (int i = 0; i < arguments.Count; i++)
+            {
+                if (arguments[i].Name is not null)
+                    return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Binds <c>(T1,...,Tn)(v1,...,vn)</c> exactly as the tuple literal <c>(v1,...,vn)</c> would
+        /// bind — same per-element hint-then-<see cref="Convert"/> logic, same
+        /// <see cref="BoundTupleLiteralExpression"/> node — reached from a second syntactic path
+        /// rather than duplicated, since a written constructor call and a literal mean the same thing
+        /// once the arity and element types line up.
+        /// </summary>
+        private BoundExpression BindTupleExplicitPositional(
+            SyntaxNode syntax,
+            IReadOnlyList<ArgumentSyntax> arguments,
+            TupleTypeSymbol tupleType,
+            IReadOnlyList<TypeSymbol> elementTypes)
+        {
+            var elements = new BoundExpression[arguments.Count];
+
+            for (int i = 0; i < arguments.Count; i++)
+            {
+                var hint = elementTypes[i];
+                var element = BindExpression(arguments[i].Value, hint);
+                elements[i] = Convert(element, hint, arguments[i].Span);
+            }
+
+            return new BoundTupleLiteralExpression(syntax, tupleType, elements);
+        }
+
+        /// <summary>
+        /// Checks that every element of a homogeneous array/tuple cast has an implicit conversion to
+        /// its target slot, collecting one <see cref="Conversion"/> per element for the emitter to
+        /// apply after it reads that element off the stack — never a user-defined <c>operator as</c>,
+        /// which §5.6 makes explicit-only, so only <see cref="Conversion.IsImplicit"/> ever passes.
+        /// </summary>
+        private bool TryClassifyElementwise(
+            SyntaxNode syntax,
+            IReadOnlyList<TypeSymbol> sourceTypes,
+            TypeSymbol targetType,
+            out IReadOnlyList<Conversion> conversions)
+        {
+            var built = new Conversion[sourceTypes.Count];
+            bool ok = true;
+
+            for (int i = 0; i < sourceTypes.Count; i++)
+            {
+                var conversion = _conversions.Classify(sourceTypes[i], targetType);
+                if (!conversion.IsImplicit)
+                {
+                    Report(
+                        SurtrDiagnosticCode.CollectionElementConversionMissing,
+                        syntax.Span,
+                        $"Element {i}'s type '{sourceTypes[i].ToDisplayString()}' has no implicit conversion to '{targetType.ToDisplayString()}'.");
+                    ok = false;
+                    continue;
+                }
+
+                built[i] = conversion;
+            }
+
+            conversions = built;
+            return ok;
+        }
+
+        /// <summary>The one-source-type-to-many-slots direction of <see cref="TryClassifyElementwise(SyntaxNode, IReadOnlyList{TypeSymbol}, TypeSymbol, out IReadOnlyList{Conversion})"/>.</summary>
+        private bool TryClassifyElementwise(
+            SyntaxNode syntax,
+            TypeSymbol sourceType,
+            IReadOnlyList<TypeSymbol> targetTypes,
+            out IReadOnlyList<Conversion> conversions)
+        {
+            var built = new Conversion[targetTypes.Count];
+            bool ok = true;
+
+            for (int i = 0; i < targetTypes.Count; i++)
+            {
+                var conversion = _conversions.Classify(sourceType, targetTypes[i]);
+                if (!conversion.IsImplicit)
+                {
+                    Report(
+                        SurtrDiagnosticCode.CollectionElementConversionMissing,
+                        syntax.Span,
+                        $"Slot {i}'s type '{targetTypes[i].ToDisplayString()}' has no implicit conversion from '{sourceType.ToDisplayString()}'.");
+                    ok = false;
+                    continue;
+                }
+
+                built[i] = conversion;
+            }
+
+            conversions = built;
+            return ok;
+        }
+        #endregion
+
         private BoundExpression BindObjectCreation(CallExpressionSyntax syntax, NamedTypeSymbol type)
             => BindObjectCreation(syntax, syntax.Arguments, type);
 
@@ -1747,6 +2556,32 @@ namespace Surtr.Compiler.Binding
             IReadOnlyList<ArgumentSyntax> written,
             NamedTypeSymbol type)
         {
+            // A primitive, `string` or `range` has no instance layout for `ObjNew` to allocate — a
+            // primitive and a string are never a `SurtrInstance` at all, and a `range` is the two
+            // operands `RangeNew` builds. Left unhandled, `int()`/`string()`/`range()` used to bind
+            // and emit anyway (declaring no constructors and taking no arguments satisfies
+            // TryResolveConstructor below), silently reading back the entity reference `ObjNew`
+            // allocated as raw NaN-boxed bits. A parameterless construction is also exactly the
+            // type's own default value, so giving it that meaning costs nothing and is what the
+            // parens would otherwise promise and fail to deliver.
+            if (written.Count == 0 && TryBuiltInDefaultValue(syntax, type) is BoundExpression defaultValue)
+                return defaultValue;
+
+            // Every other shape a primitive/string/range constructor can take (§5.3.2) — a
+            // conversion from another primitive, a parse from string, or one of string's/range's own
+            // composing shapes — none of which TryResolveConstructor below could ever satisfy, since
+            // none of these six types declares a real SurtrMethodRole.Constructor.
+            if (written.Count > 0 && TryBindBuiltInScalarCreation(syntax, written, type, out var scalarCreation))
+                return scalarCreation;
+
+            if (type.SpecialType is SpecialType.Void or SpecialType.Unknown)
+            {
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.NotSupportedOnType,
+                    $"'{type.Name}' names no real value, so nothing can be constructed as one.");
+            }
+
             if (type.IsAbstract)
             {
                 return Error(
@@ -1765,6 +2600,318 @@ namespace Surtr.Compiler.Binding
 
             return new BoundObjectCreationExpression(syntax, type, constructor, arguments);
         }
+
+        /// <summary>
+        /// The zero-cost default a <em>parameterless</em> construction of a primitive, <c>string</c>
+        /// or <c>range</c> means — the same value a fresh, uninitialized slot of that type already
+        /// reads as, made explicit and constant-folded away entirely (no <c>ObjNew</c>, no
+        /// allocation). <see langword="null"/> for anything else, which falls through to ordinary
+        /// constructor resolution — and, for <c>void</c>/<c>unknown</c>, to the explicit rejection
+        /// just below this call.
+        /// </summary>
+        private BoundExpression? TryBuiltInDefaultValue(SyntaxNode syntax, NamedTypeSymbol type)
+        {
+            switch (type.SpecialType)
+            {
+                case SpecialType.Int: return new BoundLiteralExpression(syntax, _factory.Int, 0L);
+                case SpecialType.Float: return new BoundLiteralExpression(syntax, _factory.Float, 0.0);
+                case SpecialType.Bool: return new BoundLiteralExpression(syntax, _factory.Bool, false);
+                case SpecialType.Char: return new BoundLiteralExpression(syntax, _factory.Char, '\0');
+                case SpecialType.String: return new BoundLiteralExpression(syntax, _factory.String, "");
+
+                // `range()` has no written bounds to mean anything else, so its default is the same
+                // shape `0..0` binds to: an empty range, the "nothing" a fresh range-typed slot
+                // would be closest to.
+                case SpecialType.Range:
+                    return new BoundBinaryExpression(
+                        syntax,
+                        BinaryOperator.Range,
+                        new BoundLiteralExpression(syntax, _factory.Int, 0L),
+                        new BoundLiteralExpression(syntax, _factory.Int, 0L),
+                        _factory.Range);
+
+                default:
+                    return null;
+            }
+        }
+
+        #region Nameable primitive/string/range constructors (§5.3.2)
+        /// <summary>
+        /// Dispatches a construction of one of the six scalar built-ins with at least one argument —
+        /// the parameterless case is <see cref="TryBuiltInDefaultValue"/>'s. Every one of these binds
+        /// to something that already exists: a conversion identical to the equivalent <c>as</c> cast,
+        /// or an ordinary call to a native method the type already declares (or, for the handful of
+        /// shapes nothing composes in one step — string parsing, <c>string(char,count)</c>,
+        /// <c>string(char[])</c>, <c>range.toString()</c> — a small native this pass adds).
+        /// </summary>
+        private bool TryBindBuiltInScalarCreation(
+            SyntaxNode syntax,
+            IReadOnlyList<ArgumentSyntax> written,
+            NamedTypeSymbol type,
+            out BoundExpression result)
+        {
+            switch (type.SpecialType)
+            {
+                case SpecialType.Int: result = BindIntCreation(syntax, written); return true;
+                case SpecialType.Float: result = BindFloatCreation(syntax, written); return true;
+                case SpecialType.Bool: result = BindBoolCreation(syntax, written); return true;
+                case SpecialType.Char: result = BindCharCreation(syntax, written); return true;
+                case SpecialType.String: result = BindStringCreation(syntax, written); return true;
+                case SpecialType.Range: result = BindRangeCreation(syntax, written); return true;
+                default:
+                    result = null!;
+                    return false;
+            }
+        }
+
+        private BoundExpression BindIntCreation(SyntaxNode syntax, IReadOnlyList<ArgumentSyntax> written)
+        {
+            if (written.Count == 1 && written[0].Name is null)
+            {
+                var argument = BindExpression(written[0].Value);
+
+                if (TryBindPrimitiveConversion(syntax, argument, _factory.Int, out var conversion))
+                    return conversion;
+
+                if (argument.Type.NonNullable.SpecialType == SpecialType.String
+                    && TryBindNativeSugarCall(syntax, null, _factory.Int, "parseStrict", new[] { argument }) is BoundExpression parsed)
+                {
+                    return parsed;
+                }
+            }
+            else if (written.Count == 2 && written[0].Name is null && written[1].Name is null)
+            {
+                var text = BindExpression(written[0].Value);
+                var radix = BindExpression(written[1].Value);
+
+                if (text.Type.NonNullable.SpecialType == SpecialType.String
+                    && !radix.Type.IsNullable && radix.Type.SpecialType == SpecialType.Int
+                    && TryBindNativeSugarCall(syntax, null, _factory.Int, "parseStrict", new[] { text, radix }) is BoundExpression parsedRadix)
+                {
+                    return parsedRadix;
+                }
+            }
+
+            return Error(
+                syntax,
+                SurtrDiagnosticCode.NoBuiltInConstructorMatch,
+                "'int' takes no arguments, one 'float'/'char'/'bool'/'int'/'string' argument, or a ('string', 'int' radix) pair.");
+        }
+
+        private BoundExpression BindFloatCreation(SyntaxNode syntax, IReadOnlyList<ArgumentSyntax> written)
+        {
+            if (written.Count == 1 && written[0].Name is null)
+            {
+                var argument = BindExpression(written[0].Value);
+
+                if (TryBindPrimitiveConversion(syntax, argument, _factory.Float, out var conversion))
+                    return conversion;
+
+                if (argument.Type.NonNullable.SpecialType == SpecialType.String
+                    && TryBindNativeSugarCall(syntax, null, _factory.Float, "parseStrict", new[] { argument }) is BoundExpression parsed)
+                {
+                    return parsed;
+                }
+            }
+
+            return Error(
+                syntax,
+                SurtrDiagnosticCode.NoBuiltInConstructorMatch,
+                "'float' takes no arguments, or one 'int'/'char'/'bool'/'float'/'string' argument.");
+        }
+
+        private BoundExpression BindBoolCreation(SyntaxNode syntax, IReadOnlyList<ArgumentSyntax> written)
+        {
+            if (written.Count == 1 && written[0].Name is null)
+            {
+                var argument = BindExpression(written[0].Value);
+
+                if (TryBindPrimitiveConversion(syntax, argument, _factory.Bool, out var conversion))
+                    return conversion;
+
+                if (argument.Type.NonNullable.SpecialType == SpecialType.String
+                    && TryBindNativeSugarCall(syntax, null, _factory.Bool, "parseStrict", new[] { argument }) is BoundExpression parsed)
+                {
+                    return parsed;
+                }
+            }
+
+            return Error(
+                syntax,
+                SurtrDiagnosticCode.NoBuiltInConstructorMatch,
+                "'bool' takes no arguments, or one 'int'/'float'/'char'/'bool'/'string' argument.");
+        }
+
+        private BoundExpression BindCharCreation(SyntaxNode syntax, IReadOnlyList<ArgumentSyntax> written)
+        {
+            if (written.Count == 1 && written[0].Name is null)
+            {
+                var argument = BindExpression(written[0].Value);
+
+                // int(v: char)'s reverse: no validation, exactly like `code as char` — the code unit
+                // is truncated to 16 bits, never checked, since decision #4 keeps this constructor
+                // and the cast it is sugar for behaving identically.
+                if (TryBindPrimitiveConversion(syntax, argument, _factory.Char, out var conversion))
+                    return conversion;
+
+                if (argument.Type.NonNullable.SpecialType == SpecialType.String
+                    && TryBindNativeSugarCall(syntax, null, _factory.Char, "parseStrict", new[] { argument }) is BoundExpression parsed)
+                {
+                    return parsed;
+                }
+            }
+
+            return Error(
+                syntax,
+                SurtrDiagnosticCode.NoBuiltInConstructorMatch,
+                "'char' takes no arguments, or one 'int'/'float'/'bool'/'char'/'string' argument.");
+        }
+
+        private BoundExpression BindStringCreation(SyntaxNode syntax, IReadOnlyList<ArgumentSyntax> written)
+        {
+            if (written.Count == 1 && written[0].Name is null)
+            {
+                var argument = BindExpression(written[0].Value);
+                var argumentType = argument.Type.NonNullable;
+
+                if (argumentType.SpecialType is SpecialType.Int or SpecialType.Float or SpecialType.Bool or SpecialType.Char or SpecialType.Range)
+                {
+                    // Sugar over the toString() every one of these already declares — string(v) means
+                    // exactly what v.toString() means, for any of the five.
+                    if (TryBindNativeSugarCall(syntax, argument, argumentType, "toString", System.Array.Empty<BoundExpression>()) is BoundExpression sugared)
+                        return sugared;
+                }
+                else if (argumentType is ArrayTypeSymbol arrayArgument && arrayArgument.ElementType.NonNullable.SpecialType == SpecialType.Char)
+                {
+                    if (TryBindNativeSugarCall(syntax, null, _factory.String, "fromCharArray", new[] { argument }) is BoundExpression fromChars)
+                        return fromChars;
+                }
+            }
+            else if (written.Count == 2 && written[0].Name is null && written[1].Name is null)
+            {
+                var value = BindExpression(written[0].Value);
+                var count = BindExpression(written[1].Value);
+
+                if (!value.Type.IsNullable && value.Type.SpecialType == SpecialType.Char
+                    && !count.Type.IsNullable && count.Type.SpecialType == SpecialType.Int
+                    && TryBindNativeSugarCall(syntax, null, _factory.String, "fromCharRepeated", new[] { value, count }) is BoundExpression repeated)
+                {
+                    return repeated;
+                }
+            }
+            else if (written.Count == 3 && written[0].Name is null && written[1].Name is null && written[2].Name is null)
+            {
+                var chars = BindExpression(written[0].Value);
+                var offset = BindExpression(written[1].Value);
+                var length = BindExpression(written[2].Value);
+
+                if (chars.Type.NonNullable is ArrayTypeSymbol charSliceArray && charSliceArray.ElementType.NonNullable.SpecialType == SpecialType.Char
+                    && !offset.Type.IsNullable && offset.Type.SpecialType == SpecialType.Int
+                    && !length.Type.IsNullable && length.Type.SpecialType == SpecialType.Int
+                    && TryBindNativeSugarCall(syntax, null, _factory.String, "fromCharArraySlice", new[] { chars, offset, length }) is BoundExpression sliced)
+                {
+                    return sliced;
+                }
+            }
+
+            return Error(
+                syntax,
+                SurtrDiagnosticCode.NoBuiltInConstructorMatch,
+                "'string' takes no arguments, one 'int'/'float'/'bool'/'char'/'range'/'char[]' argument, a ('char', 'int' count) pair, or a ('char[]', 'int' offset, 'int' length) slice.");
+        }
+
+        private BoundExpression BindRangeCreation(SyntaxNode syntax, IReadOnlyList<ArgumentSyntax> written)
+        {
+            if (written.Count == 2 && written[0].Name is null && written[1].Name is null)
+            {
+                var start = Convert(BindExpression(written[0].Value), _factory.Int, written[0].Span);
+                var end = Convert(BindExpression(written[1].Value), _factory.Int, written[1].Span);
+
+                return new BoundBinaryExpression(syntax, BinaryOperator.Range, start, end, _factory.Range);
+            }
+
+            if (written.Count == 3 && written[0].Name is null && written[1].Name is null && written[2].Name is null)
+            {
+                var isInclusive = BindExpression(written[2].Value);
+
+                if (!isInclusive.Type.IsNullable && isInclusive.Type.SpecialType == SpecialType.Bool)
+                {
+                    var start = Convert(BindExpression(written[0].Value), _factory.Int, written[0].Span);
+                    var end = Convert(BindExpression(written[1].Value), _factory.Int, written[1].Span);
+
+                    // A written true/false settles which opcode at bind time, zero runtime cost - the
+                    // same fold `range(start,end)` gets, just picking between Range/RangeInclusive.
+                    // A genuine runtime bool falls back to an ordinary ternary between the two forms,
+                    // ordinary because BoundConditionalExpression already exists and needs nothing new.
+                    if (isInclusive is BoundLiteralExpression { Value: bool constant })
+                    {
+                        return new BoundBinaryExpression(
+                            syntax,
+                            constant ? BinaryOperator.RangeInclusive : BinaryOperator.Range,
+                            start,
+                            end,
+                            _factory.Range);
+                    }
+
+                    var inclusiveRange = new BoundBinaryExpression(syntax, BinaryOperator.RangeInclusive, start, end, _factory.Range);
+                    var exclusiveRange = new BoundBinaryExpression(syntax, BinaryOperator.Range, start, end, _factory.Range);
+
+                    return new BoundConditionalExpression(syntax, isInclusive, inclusiveRange, exclusiveRange, _factory.Range);
+                }
+            }
+
+            return Error(
+                syntax,
+                SurtrDiagnosticCode.NoBuiltInConstructorMatch,
+                "'range' takes ('int', 'int') bounds, or ('int', 'int', 'bool' isInclusive).");
+        }
+
+        /// <summary>
+        /// Binds a primitive-construction argument as the same conversion <c>argument as target</c>
+        /// would produce, if one exists — a nameable primitive constructor is sugar for the
+        /// equivalent explicit cast (§5.3.2), never a separate rule with its own semantics. Returns
+        /// <see langword="false"/>, binding nothing, when no such conversion exists, so the caller is
+        /// free to try a different shape (a string parse) before giving up.
+        /// </summary>
+        private bool TryBindPrimitiveConversion(SyntaxNode syntax, BoundExpression argument, TypeSymbol target, out BoundExpression result)
+        {
+            var conversion = _conversions.Classify(argument.Type, target);
+
+            if (!conversion.Exists)
+            {
+                result = null!;
+                return false;
+            }
+
+            result = new BoundConversionExpression(syntax, argument, target, conversion, isExplicit: true);
+            return true;
+        }
+
+        /// <summary>
+        /// Builds an ordinary call to an already-declared native method, found by name and arity —
+        /// the shared mechanism every "constructor is sugar for a call" shape in §5.3.2 goes through.
+        /// Arity-only matching is enough: every native this reaches is declared exactly once per
+        /// arity, so there is no real overload set for <see cref="OverloadResolution"/> to pick
+        /// between the way a user-written call site might need.
+        /// </summary>
+        private BoundExpression? TryBindNativeSugarCall(
+            SyntaxNode syntax,
+            BoundExpression? receiver,
+            TypeSymbol owner,
+            string name,
+            IReadOnlyList<BoundExpression> arguments)
+        {
+            foreach (var method in _lookup.FindMethods(owner, name))
+            {
+                if (method.Parameters.Count != arguments.Count)
+                    continue;
+
+                return new BoundCallExpression(syntax, method.IsStatic ? null : receiver, method, arguments, isVirtual: false);
+            }
+
+            return null;
+        }
+        #endregion
 
         /// <summary>
         /// Binds a <c>: super(...)</c> or <c>: this(...)</c> chain against the constructors of the
@@ -1992,20 +3139,10 @@ namespace Surtr.Compiler.Binding
 
             var method = result.Method!;
             var bound = value is null
-                ? new[]
-                {
-                    Convert(target, method.Parameters[0].Type, syntax.Span),
-                    Convert(index, method.Parameters[1].Type, syntax.Span),
-                }
-                : new[]
-                {
-                    Convert(target, method.Parameters[0].Type, syntax.Span),
-                    Convert(index, method.Parameters[1].Type, syntax.Span),
-                    Convert(value, method.Parameters[2].Type, syntax.Span),
-                };
+                ? new[] { index }
+                : new[] { index, value };
 
-            // Static, so there is no receiver: the target is argument zero like every other operand.
-            return new BoundCallExpression(syntax, null, method, bound, isVirtual: false);
+            return BindOperatorCall(syntax, target, bound, method);
         }
 
         /// <summary>
@@ -2112,6 +3249,72 @@ namespace Surtr.Compiler.Binding
 
             return new BoundTypeTestExpression(syntax, operand, tested, _factory.Bool);
         }
+
+        /// <summary>
+        /// <c>typeof(X)</c>. The parser already settled the one shape that could never also be an
+        /// expression (a generic argument list, see <c>Parser.ParseTypeOf</c>) - what is left here
+        /// is <see cref="TypeOfExpressionSyntax.Operand"/>, an ordinary expression that might
+        /// nonetheless be a bare or dotted type name, since §1.1 keeps type names and value names in
+        /// separate namespaces. Resolved type-first through <see cref="TryBindAsType"/>, the same
+        /// order and for the same reason it already settles the identical ambiguity everywhere else
+        /// in this binder (singletons, construction, static member access): a name that resolves to
+        /// a type is never also the value this call site would otherwise have bound, so this is a
+        /// decidable question, not a coin flip. Anything that is not a plain name/member-access
+        /// chain - a call, a literal, an arithmetic expression - can never resolve this way at all,
+        /// since <see cref="TryBindAsType"/> only ever looks at one.
+        /// </summary>
+        private BoundExpression BindTypeOf(TypeOfExpressionSyntax syntax)
+        {
+            var resultType = ResolveBuiltInType("Type", syntax.Span);
+
+            if (syntax.TypeOperand is TypeSyntax typeOperand)
+            {
+                var target = _resolver.Resolve(typeOperand, _typeScope, _sourceName);
+                return new BoundTypeOfExpression(syntax, target, null, resultType);
+            }
+
+            var operandSyntax = syntax.Operand!;
+
+            if (TryBindAsType(operandSyntax, out var asType))
+                return new BoundTypeOfExpression(syntax, asType, null, resultType);
+
+            var operand = BindExpression(operandSyntax);
+
+            // A primitive's runtime class can never differ from its static one, so there is
+            // nothing to read at run time - leaving it unconverted is what lets the emitter
+            // recognise the case and skip both the box and the runtime class read that Type.of's
+            // own `unknown` parameter always pays for. Everything else erases to `unknown`, the
+            // same conversion an ordinary argument of that type goes through - a reference already
+            // needs none of it, and only a nullable primitive or a value class actually costs a box.
+            if (!operand.Type.IsPrimitive || operand.Type.IsNullable)
+                operand = Convert(operand, _factory.Unknown, operandSyntax.Span);
+
+            return new BoundTypeOfExpression(syntax, null, operand, resultType);
+        }
+
+        /// <summary>
+        /// <c>moduleof(ModulePath)</c>. Always static (§2.1): unlike <c>typeof</c> there is no
+        /// instance form, so <see cref="ModuleOfExpressionSyntax.Path"/> is the only thing to
+        /// resolve - against the same "known modules, honoring a declared alias" set an import
+        /// already resolves against (<see cref="TypeResolver.TryResolveModulePath"/>).
+        /// </summary>
+        private BoundExpression BindModuleOf(ModuleOfExpressionSyntax syntax)
+        {
+            if (!_resolver.TryResolveModulePath(syntax.Path, _typeScope, _sourceName, out var module))
+            {
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.UnresolvedModuleOf,
+                    $"'{string.Join(".", syntax.Path)}' does not name a known module.");
+            }
+
+            var resultType = ResolveBuiltInType("Module", syntax.Span);
+            return new BoundModuleOfExpression(syntax, module, resultType);
+        }
+
+        /// <summary>Resolves a built-in type by name, the same way <c>attribute class</c> resolves <c>Attribute</c> with no explicit base.</summary>
+        private TypeSymbol ResolveBuiltInType(string name, SourceSpan span)
+            => _resolver.Resolve(new NamedTypeSyntax(span, new[] { name }, System.Array.Empty<TypeSyntax>()), _typeScope, _sourceName);
         #endregion
 
         #region Conditionals and literals

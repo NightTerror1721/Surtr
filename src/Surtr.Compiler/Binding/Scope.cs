@@ -63,6 +63,7 @@ namespace Surtr.Compiler.Binding
     public sealed class Scope
     {
         private readonly Dictionary<string, object> _symbols = new Dictionary<string, object>(StringComparer.Ordinal);
+        private Dictionary<string, ModuleSymbol>? _moduleAliases;
 
         /// <summary>Creates a scope nested inside <paramref name="parent"/>.</summary>
         public Scope(Scope? parent = null) => Parent = parent;
@@ -142,5 +143,40 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>Every name declared directly in this scope.</summary>
         public IEnumerable<string> Names => _symbols.Keys;
+
+        /// <summary>
+        /// Declares a module alias (<c>import X as Y;</c>, §2.1) in this scope.
+        /// </summary>
+        /// <remarks>
+        /// Kept in a dictionary of its own rather than alongside <see cref="Lookup"/>'s types and
+        /// members: a <see cref="ModuleSymbol"/> answering to a name there would reach every
+        /// existing caller that assumes what it finds is a type or a member, for the sake of a
+        /// name that only <see cref="TypeResolver"/>'s qualified-name lookup ever wants. Two
+        /// aliases sharing a name is a duplicate declaration, not a shadow - an alias has no
+        /// import of its own to be nearer than, unlike a type name reached from two wildcards.
+        /// </remarks>
+        /// <returns><see langword="false"/> if the name is already an alias <em>in this scope</em>.</returns>
+        public bool TryDeclareModuleAlias(string name, ModuleSymbol module)
+        {
+            _moduleAliases ??= new Dictionary<string, ModuleSymbol>(StringComparer.Ordinal);
+
+            if (_moduleAliases.ContainsKey(name))
+                return false;
+
+            _moduleAliases.Add(name, module);
+            return true;
+        }
+
+        /// <summary>What the chain says a module alias named <paramref name="name"/> points at, innermost scope first.</summary>
+        public ModuleSymbol? LookupModuleAlias(string name)
+        {
+            for (Scope? scope = this; scope is not null; scope = scope.Parent)
+            {
+                if (scope._moduleAliases is not null && scope._moduleAliases.TryGetValue(name, out var module))
+                    return module;
+            }
+
+            return null;
+        }
     }
 }

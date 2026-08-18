@@ -241,6 +241,18 @@ namespace Surtr.Compiler.Binding.Symbols
         /// </remarks>
         public object? DefaultValue { get; internal set; }
 
+        /// <summary>
+        /// Whether <see cref="DefaultValue"/> is the result of a successful fold, as opposed to
+        /// having never folded.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="DefaultValue"/> alone cannot tell the two apart: a default that folds to the
+        /// Surtr literal <c>null</c> leaves the field at C#'s own default for <c>object?</c>, the
+        /// same value it starts at before anything has tried to fold it. This flag is what
+        /// <c>Binder.FoldDefaults</c>/<c>ReportUnfoldedDefaults</c> check instead.
+        /// </remarks>
+        public bool DefaultValueFolded { get; internal set; }
+
         /// <summary>Whether it collects the remaining arguments (§3.4).</summary>
         public bool IsVararg { get; internal set; }
 
@@ -273,6 +285,17 @@ namespace Surtr.Compiler.Binding.Symbols
 
         /// <summary>Whether the field has no receiver.</summary>
         public bool IsStatic { get; internal set; }
+
+        /// <summary>
+        /// Whether this is a <c>const</c> (§7.1) rather than an ordinary field.
+        /// </summary>
+        /// <remarks>
+        /// A <c>const</c> carries no storage at all: it never reaches <c>ModuleEmitter</c> as a
+        /// declared field, and every read of it is folded straight to a literal
+        /// (<c>BodyBinder.ResolveField</c>) instead of becoming an ordinary field read. This flag is
+        /// what tells the two apart from an ordinary <c>static let</c>.
+        /// </remarks>
+        public bool IsConst { get; internal set; }
 
         /// <summary>Whether it was declared <c>let</c> rather than <c>var</c>.</summary>
         public bool IsReadOnly { get; internal set; }

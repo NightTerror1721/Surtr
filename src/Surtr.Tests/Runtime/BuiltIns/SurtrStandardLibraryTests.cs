@@ -11,7 +11,7 @@ namespace Surtr.Tests.Runtime.BuiltIns
 {
     /// <summary>
     /// Covers the library half of the <c>surtr</c> module: the exception hierarchy §9 needs a legal
-    /// throwable from, the core interfaces, <c>Math</c>, and attributes as real classes.
+    /// throwable from, the core interfaces, and attributes as real classes.
     /// </summary>
     public class SurtrStandardLibraryTests
     {
@@ -71,7 +71,7 @@ namespace Surtr.Tests.Runtime.BuiltIns
         {
             using var runtime = new SurtrRuntime();
 
-            Assert.Throws<ArgumentException>(() => runtime.NewException(SurtrBuiltIns.Math, "nope"));
+            Assert.Throws<ArgumentException>(() => runtime.NewException(SurtrBuiltIns.Attribute, "nope"));
         }
 
         [Fact]
@@ -183,48 +183,6 @@ namespace Surtr.Tests.Runtime.BuiltIns
 
         #endregion
 
-        #region Math
-
-        [Fact]
-        public void Math_IsStaticOnlyAndCannotBeInstantiated()
-        {
-            SurtrBuiltIns.EnsureBuilt();
-
-            Assert.True(SurtrBuiltIns.Math.IsAbstract);
-
-            foreach (var overloads in SurtrBuiltIns.Math.Methods)
-            {
-                for (int i = 0; i < overloads.Length; i++)
-                    Assert.True(overloads[i].IsStatic, $"Math.{overloads[i].Name} is not static.");
-            }
-        }
-
-        [Theory]
-        [InlineData("abs")]
-        [InlineData("min")]
-        [InlineData("max")]
-        [InlineData("clamp")]
-        [InlineData("sqrt")]
-        [InlineData("pow")]
-        [InlineData("sin")]
-        [InlineData("cos")]
-        public void Math_DeclaresTheMembersOrdinaryCodeReachesFor(string name)
-        {
-            SurtrBuiltIns.EnsureBuilt();
-            Assert.True(SurtrBuiltIns.Math.TryGetMethods(name, out _));
-        }
-
-        [Fact]
-        public void MathPow_ExistsBecauseTheOperatorTableHasNoExponentiation()
-        {
-            SurtrBuiltIns.EnsureBuilt();
-
-            Assert.True(SurtrBuiltIns.Math.TryGetMethods("pow", out var pow));
-            Assert.Equal("pow(FF)", pow[0].SignatureKey());
-        }
-
-        #endregion
-
         #region Attributes
 
         private static SurtrModule ModuleWithAttribute(out SurtrClassBuilder attributeClass, out SurtrMethodBuilder target)
@@ -329,7 +287,7 @@ namespace Surtr.Tests.Runtime.BuiltIns
 
             Assert.True(target.Built!.TryGetAttribute(attributeClass.Class, out var found));
             Assert.Equal(2, found.Arguments.Length);
-            Assert.False(target.Built!.TryGetAttribute(SurtrBuiltIns.Math, out _));
+            Assert.False(target.Built!.TryGetAttribute(SurtrBuiltIns.Iterator, out _));
         }
 
         #endregion

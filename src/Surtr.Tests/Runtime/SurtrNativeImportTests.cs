@@ -9,9 +9,12 @@ using System;
 namespace Surtr.Tests.Runtime
 {
     /// <summary>
-    /// Covers the per-module native import table: a <c>native</c> declaration binds to a host
-    /// global <em>by name when the module loads</em>, rather than by an index baked into the
-    /// bytecode when it was compiled.
+    /// Covers a module-level <c>native</c> member: it binds to a host body <em>by link name when
+    /// the module loads</em>, rather than by an address baked into the bytecode when it was
+    /// compiled - the same binding a class's own native member gets (§10). There is no separate
+    /// host-global table anymore; a module-level native function is an ordinary method in the
+    /// module's own method table, reached with <c>CallLocalModule</c>, whose body is supplied by
+    /// <see cref="SurtrRuntime.DefineNativeBody"/> instead of a function pointer at declaration time.
     /// </summary>
     public class SurtrNativeImportTests
     {
@@ -19,25 +22,17 @@ namespace Surtr.Tests.Runtime
 
         private static SurtrNativeEntryPoint Seven() => SurtrNativeEntryPoint.FromDelegate(ReturnSeven);
 
-        /// <summary>A module whose one function reads a native variable and returns it.</summary>
-        private static SurtrModule ModuleReading(string globalName, string path = "test")
+        /// <summary>
+        /// A module declaring one module-level native function under <paramref name="linkName"/>,
+        /// callable through its own function "call".
+        /// </summary>
+        private static SurtrModule ModuleCalling(string linkName, string path = "test")
         {
             var builder = new SurtrModuleBuilder(path);
-            var method = builder.DefineFunction("read", SurtrClassReference.Integer);
+            var native = builder.DeclareNativeFunction(linkName, SurtrClassReference.Integer, linkName);
 
-            method.Code.LoadGlobal(globalName);
-            method.Code.ReturnValue();
-
-            return builder.Build();
-        }
-
-        /// <summary>A module whose one function calls a native function and returns its result.</summary>
-        private static SurtrModule ModuleCalling(string functionName, string path = "test")
-        {
-            var builder = new SurtrModuleBuilder(path);
             var method = builder.DefineFunction("call", SurtrClassReference.Integer);
-
-            method.Code.CallGlobal(functionName, 0, 1);
+            method.Code.Call(native);
             method.Code.ReturnValue();
 
             return builder.Build();
@@ -46,25 +41,10 @@ namespace Surtr.Tests.Runtime
         #region Binding by name
 
         [Fact]
-        public void ANativeVariable_BindsToTheHostGlobalOfThatName()
+        public void ANativeFunction_BindsToTheHostBodyOfThatLinkName()
         {
             using var runtime = new SurtrRuntime();
-            var global = runtime.DefineGlobal("counter", SurtrClassReference.Integer);
-            runtime.Globals.SetValue(global, SurtrValue.CreateInt(11));
-
-            var module = ModuleReading("counter");
-            runtime.LoadModule(module);
-
-            Assert.True(module.TryGetMethods("read", out var overloads));
-            Assert.Equal(11, runtime.Invoke(overloads[0]).AsInt);
-        }
-
-        [Fact]
-        public void ANativeFunction_BindsToTheHostFunctionOfThatName()
-        {
-            using var runtime = new SurtrRuntime();
-            runtime.DefineGlobalFunction(
-                "seven", SurtrClassReference.Integer, Array.Empty<SurtrParameterInfo>(), Seven());
+            runtime.DefineNativeBody("seven", Seven());
 
             var module = ModuleCalling("seven");
             runtime.LoadModule(module);
@@ -73,29 +53,9 @@ namespace Surtr.Tests.Runtime
             Assert.Equal(7, runtime.Invoke(overloads[0]).AsInt);
         }
 
-        [Fact]
-        public void TheSameImportDeclaredTwice_IsOneSlot()
-        {
-            var builder = new SurtrModuleBuilder("test");
-
-            Assert.Equal(builder.NativeVariable("shared").Index, builder.NativeVariable("shared").Index);
-            Assert.NotEqual(builder.NativeVariable("shared").Index, builder.NativeVariable("other").Index);
-        }
-
         #endregion
 
         #region Failing at load rather than at the instruction
-
-        [Fact]
-        public void AVariableTheHostNeverRegistered_FailsTheLoad()
-        {
-            using var runtime = new SurtrRuntime();
-
-            var error = Assert.Throws<InvalidOperationException>(() => runtime.LoadModule(ModuleReading("missing")));
-
-            Assert.Contains("missing", error.Message, StringComparison.Ordinal);
-            Assert.Contains("native variable", error.Message, StringComparison.OrdinalIgnoreCase);
-        }
 
         [Fact]
         public void AFunctionTheHostNeverRegistered_FailsTheLoad()
@@ -105,19 +65,19 @@ namespace Surtr.Tests.Runtime
             var error = Assert.Throws<InvalidOperationException>(() => runtime.LoadModule(ModuleCalling("missing")));
 
             Assert.Contains("missing", error.Message, StringComparison.Ordinal);
-            Assert.Contains("native function", error.Message, StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]
         public void AFailedLoad_LeavesTheModuleUnregistered()
         {
             using var runtime = new SurtrRuntime();
+            var module = ModuleCalling("missing");
 
-            Assert.Throws<InvalidOperationException>(() => runtime.LoadModule(ModuleReading("missing")));
+            Assert.Throws<InvalidOperationException>(() => runtime.LoadModule(module));
 
             // The rollback matters: the path has to stay free for a corrected module to take.
-            runtime.DefineGlobal("missing", SurtrClassReference.Integer);
-            runtime.LoadModule(ModuleReading("missing"));
+            runtime.DefineNativeBody("missing", Seven());
+            runtime.LoadModule(module);
         }
 
         #endregion
@@ -130,48 +90,45 @@ namespace Surtr.Tests.Runtime
             using var first = new SurtrRuntime();
             using var second = new SurtrRuntime();
 
-            first.DefineGlobal("counter", SurtrClassReference.Integer);
-            second.DefineGlobal("counter", SurtrClassReference.Integer);
+            first.DefineNativeBody("seven", Seven());
+            second.DefineNativeBody("seven", Seven());
 
-            var module = ModuleReading("counter");
+            var module = ModuleCalling("seven");
             first.LoadModule(module);
 
-            // Its string literals carry references from the first runtime's heap and its imports
-            // are bound to that runtime's globals, so the second would be reading someone else's
-            // ids. Rejecting it turns a silent corruption into a clear failure.
+            // Its string literals carry references from the first runtime's heap and its native
+            // member is bound to that runtime's registration, so the second would be reading
+            // someone else's ids. Rejecting it turns a silent corruption into a clear failure.
             var error = Assert.Throws<InvalidOperationException>(() => second.LoadModule(module));
             Assert.Contains("already loaded", error.Message, StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]
-        public void TwoRuntimesThatNumberTheirGlobalsDifferently_BothRunTheSameSource()
+        public void TwoRuntimesPublishingDifferentBodies_BothRunTheirOwnSource()
         {
             using var first = new SurtrRuntime();
             using var second = new SurtrRuntime();
 
-            // Registration order differs, so "counter" is index 0 in one runtime and 1 in the
-            // other. Binding by name is what makes the compiled module indifferent to that.
-            var firstCounter = first.DefineGlobal("counter", SurtrClassReference.Integer);
-            first.Globals.SetValue(firstCounter, SurtrValue.CreateInt(1));
+            // Binding is by link name, not by an index baked into the bytecode, so the very same
+            // compiled module can resolve to a different body per runtime.
+            first.DefineNativeBody("value", SurtrNativeEntryPoint.FromDelegate(ReturnOne));
+            second.DefineNativeBody("value", SurtrNativeEntryPoint.FromDelegate(ReturnTwo));
 
-            second.DefineGlobal("padding", SurtrClassReference.Integer);
-            var secondCounter = second.DefineGlobal("counter", SurtrClassReference.Integer);
-            second.Globals.SetValue(secondCounter, SurtrValue.CreateInt(2));
-
-            Assert.NotEqual(firstCounter.Index, secondCounter.Index);
-
-            var firstModule = ModuleReading("counter");
-            var secondModule = ModuleReading("counter");
+            var firstModule = ModuleCalling("value");
+            var secondModule = ModuleCalling("value");
 
             first.LoadModule(firstModule);
             second.LoadModule(secondModule);
 
-            Assert.True(firstModule.TryGetMethods("read", out var firstRead));
-            Assert.True(secondModule.TryGetMethods("read", out var secondRead));
+            Assert.True(firstModule.TryGetMethods("call", out var firstCall));
+            Assert.True(secondModule.TryGetMethods("call", out var secondCall));
 
-            Assert.Equal(1, first.Invoke(firstRead[0]).AsInt);
-            Assert.Equal(2, second.Invoke(secondRead[0]).AsInt);
+            Assert.Equal(1, first.Invoke(firstCall[0]).AsInt);
+            Assert.Equal(2, second.Invoke(secondCall[0]).AsInt);
         }
+
+        private static SurtrValue ReturnOne(SurtrCallArguments arguments) => SurtrValue.CreateInt(1);
+        private static SurtrValue ReturnTwo(SurtrCallArguments arguments) => SurtrValue.CreateInt(2);
 
         #endregion
     }

@@ -17,10 +17,7 @@ namespace Surtr.Tests.VM
         // non-null Target and trips SurtrNativeEntryPoint.FromDelegate's "must be static" check.
         // A method group conversion carries no such ambiguity (see SurtrTypeLinkerTests for where
         // this was first found).
-        private static SurtrValue Return321(SurtrCallArguments arguments) => SurtrValue.CreateInt(321);
-        private static SurtrValue Return654(SurtrCallArguments arguments) => SurtrValue.CreateInt(654);
         private static SurtrValue Return999(SurtrCallArguments arguments) => SurtrValue.CreateInt(999);
-        private static SurtrValue ReturnNull(SurtrCallArguments arguments) => SurtrValue.Null;
 
         private static SurtrNativeMethodInfo NativeMethod(
             SurtrModule module,
@@ -159,71 +156,6 @@ namespace Surtr.Tests.VM
 
             var caller = builder.Build(callerModule, localCount: 0, maxStackSize: 4);
             Assert.Equal(66, runtime.Invoke(caller).AsInt);
-        }
-
-        #endregion
-
-        #region CallGlobalNative - host globals live in a different table entirely
-
-        [Fact]
-        public void CallGlobalNative_InvokesAHostFunction()
-        {
-            using var runtime = new SurtrRuntime();
-            var function = runtime.DefineGlobalFunction(
-                "hostFn",
-                SurtrClassReference.Integer,
-                Array.Empty<SurtrParameterInfo>(),
-                SurtrNativeEntryPoint.FromDelegate(Return321));
-
-            var module = new SurtrModule("test");
-            // The instruction indexes the module's import table, which is bound to the host's
-            // globals by name when the module loads.
-            var builder = new BytecodeBuilder();
-            builder
-                .Op(OpCode.CallGlobalNative).I16(builder.AddNativeFunction(function)).U8(0).U8(1)
-                .Op(OpCode.ReturnValue);
-
-            var method = builder.Build(module, localCount: 0, maxStackSize: 4);
-            Assert.Equal(321, runtime.Invoke(method).AsInt);
-        }
-
-        [Fact]
-        public void CallGlobalNativeX_UsesAFourByteIndex()
-        {
-            using var runtime = new SurtrRuntime();
-            var function = runtime.DefineGlobalFunction(
-                "hostFn",
-                SurtrClassReference.Integer,
-                Array.Empty<SurtrParameterInfo>(),
-                SurtrNativeEntryPoint.FromDelegate(Return654));
-
-            var module = new SurtrModule("test");
-            var builder = new BytecodeBuilder();
-            builder
-                .Op(OpCode.CallGlobalNativeX).I32(builder.AddNativeFunction(function)).U8(0).U8(1)
-                .Op(OpCode.ReturnValue);
-
-            var method = builder.Build(module, localCount: 0, maxStackSize: 4);
-            Assert.Equal(654, runtime.Invoke(method).AsInt);
-        }
-
-        [Fact]
-        public void CallGlobalNative_WithNoResult_LeavesTheStackUntouched()
-        {
-            using var runtime = new SurtrRuntime();
-            var function = runtime.DefineGlobalFunction(
-                "hostFn", SurtrClassReference.Void, Array.Empty<SurtrParameterInfo>(),
-                SurtrNativeEntryPoint.FromDelegate(ReturnNull));
-
-            var module = new SurtrModule("test");
-            var builder = new BytecodeBuilder();
-            builder
-                .Op(OpCode.PushI32).I32(42)
-                .Op(OpCode.CallGlobalNative).I16(builder.AddNativeFunction(function)).U8(0).U8(0) // resultCount = 0
-                .Op(OpCode.ReturnValue);
-
-            var method = builder.Build(module, localCount: 0, maxStackSize: 4);
-            Assert.Equal(42, runtime.Invoke(method).AsInt);
         }
 
         #endregion

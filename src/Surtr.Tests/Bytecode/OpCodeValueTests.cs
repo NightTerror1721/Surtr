@@ -34,7 +34,7 @@ namespace Surtr.Tests.Bytecode
             (OpCode.Ldl5, 0x20), (OpCode.LdlS, 0x21), (OpCode.Ldl, 0x22), (OpCode.Stl0, 0x23),
             (OpCode.Stl1, 0x24), (OpCode.Stl2, 0x25), (OpCode.Stl3, 0x26), (OpCode.Stl4, 0x27),
             (OpCode.Stl5, 0x28), (OpCode.StlS, 0x29), (OpCode.Stl, 0x2A), (OpCode.IncLocal, 0x2B),
-            (OpCode.Ldg, 0x2C), (OpCode.LdgX, 0x2D), (OpCode.Stg, 0x2E), (OpCode.StgX, 0x2F),
+            // 0x2C-0x2F (Ldg/LdgX/Stg/StgX) are retired - see RetiredValues below.
             (OpCode.FieldGet, 0x30), (OpCode.FieldSet, 0x31), (OpCode.StaticFieldGet, 0x32), (OpCode.StaticFieldGetX, 0x33),
             (OpCode.StaticFieldSet, 0x34), (OpCode.StaticFieldSetX, 0x35), (OpCode.UpValueGet, 0x36), (OpCode.Add, 0x37),
             (OpCode.FAdd, 0x38), (OpCode.Sub, 0x39), (OpCode.FSub, 0x3A), (OpCode.Mul, 0x3B),
@@ -65,7 +65,8 @@ namespace Surtr.Tests.Bytecode
             (OpCode.JPRNE, 0x9C), (OpCode.JPRNEX, 0x9D), (OpCode.JPStrEQ, 0x9E), (OpCode.JPStrEQX, 0x9F),
             (OpCode.JPStrNE, 0xA0), (OpCode.JPStrNEX, 0xA1), (OpCode.JPInstanceOf, 0xA2), (OpCode.JPInstanceOfX, 0xA3),
             (OpCode.Switch, 0xA4), (OpCode.SwitchLookup, 0xA5), (OpCode.CallLocalModule, 0xA6), (OpCode.CallLocalModuleX, 0xA7),
-            (OpCode.CallModule, 0xA8), (OpCode.CallModuleX, 0xA9), (OpCode.CallGlobalNative, 0xAA), (OpCode.CallGlobalNativeX, 0xAB),
+            (OpCode.CallModule, 0xA8), (OpCode.CallModuleX, 0xA9),
+            // 0xAA-0xAB (CallGlobalNative/CallGlobalNativeX) are retired - see RetiredValues below.
             (OpCode.InvokeVirtual, 0xAC), (OpCode.InvokeSpecial, 0xAD), (OpCode.InvokeStatic, 0xAE), (OpCode.InvokeStaticX, 0xAF),
             (OpCode.InvokeInterface, 0xB0), (OpCode.InvokeClosure, 0xB1), (OpCode.NewClosure, 0xB2), (OpCode.NewClosureX, 0xB3),
             (OpCode.ReturnVoid, 0xB4), (OpCode.ReturnValue, 0xB5), (OpCode.Throw, 0xB6), (OpCode.ObjNew, 0xB7),
@@ -78,7 +79,9 @@ namespace Surtr.Tests.Bytecode
             (OpCode.DictNew, 0xD0), (OpCode.DictPack, 0xD1), (OpCode.DictLen, 0xD2), (OpCode.DictGet, 0xD3),
             (OpCode.DictSet, 0xD4), (OpCode.DictDel, 0xD5), (OpCode.DictClear, 0xD6), (OpCode.DictKeys, 0xD7),
             (OpCode.DictValues, 0xD8), (OpCode.DictIn, 0xD9), (OpCode.DictNIn, 0xDA), (OpCode.RangeNew, 0xDB),
-            (OpCode.RangeNewInclusive, 0xDC)
+            (OpCode.RangeNewInclusive, 0xDC), (OpCode.LoadType, 0xDD), (OpCode.LoadTypeX, 0xDE),
+            (OpCode.GetTypeOfValue, 0xDF), (OpCode.LoadModule, 0xE0), (OpCode.LoadModuleX, 0xE1),
+            (OpCode.LoadCurrentModule, 0xE2)
         };
 
         [Fact]
@@ -106,14 +109,43 @@ namespace Surtr.Tests.Bytecode
         }
 
         /// <summary>
-        /// The values run from zero with no gap, which is what lets the interpreter's switch compile
-        /// to a jump table rather than a chain of compares.
+        /// A retired opcode's old byte value, never reused - reusing one would make an old module
+        /// silently execute a different instruction. See the note at the top of <c>OpCode.cs</c>.
+        /// </summary>
+        private static readonly byte[] RetiredValues = { 0x2C, 0x2D, 0x2E, 0x2F, 0xAA, 0xAB };
+
+        /// <summary>
+        /// The values run from zero with no gap except at a retired opcode's old slot, which is
+        /// what lets the interpreter's switch stay close to a jump table while still keeping a
+        /// retired value permanently unassigned rather than reused by whatever is filed next.
         /// </summary>
         [Fact]
-        public void TheAssignedValuesAreContiguousFromZero()
+        public void TheAssignedValuesAreContiguousExceptAtRetiredSlots()
         {
-            for (int i = 0; i < Assigned.Length; i++)
-                Assert.Equal(i, Assigned[i].Value);
+            var ordered = new List<(OpCode Op, byte Value)>(Assigned);
+            ordered.Sort((a, b) => a.Value.CompareTo(b.Value));
+
+            int expected = 0;
+            foreach (var (_, value) in ordered)
+            {
+                while (Array.IndexOf(RetiredValues, (byte)expected) >= 0)
+                    expected++;
+
+                Assert.Equal(expected, value);
+                expected++;
+            }
+        }
+
+        /// <summary>Nothing was renumbered into a retired opcode's old slot.</summary>
+        [Fact]
+        public void RetiredValuesAreNotAssignedToAnything()
+        {
+            var assignedValues = new HashSet<byte>();
+            foreach (var (_, value) in Assigned)
+                assignedValues.Add(value);
+
+            foreach (byte retired in RetiredValues)
+                Assert.DoesNotContain(retired, assignedValues);
         }
 
         /// <summary>

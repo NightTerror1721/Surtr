@@ -92,8 +92,61 @@ namespace Surtr.Compiler.Binding
                 type = _factory.ErrorType;
             }
 
+            if (syntax.IsConst)
+                return BindConstLocal(syntax, type, initializer);
+
             var local = DeclareLocal(syntax.Name, type, !syntax.IsMutable, syntax.Span);
             return new BoundLocalDeclarationStatement(syntax, local, initializer);
+        }
+
+        /// <summary>
+        /// Binds a <c>const</c> local (§7.1): folded once here and substituted at every read
+        /// thereafter, so it carries no local slot at all — the same "no slot" promise a module or
+        /// class <c>const</c> makes, kept the same way (<c>BodyBinder.ResolveField</c> is the field
+        /// counterpart of what <see cref="BodyBinder.BindIdentifier"/> does for one of these).
+        /// </summary>
+        /// <remarks>
+        /// Folded over the initializer's own <em>syntax</em> via <see cref="_constants"/>, not
+        /// registered into it: <see cref="ConstantEvaluator"/> is one flat, module-wide name table,
+        /// which is correct for a module or class <c>const</c> (there is exactly one of each name in
+        /// scope at a time) but would be wrong for a local — two different functions each declaring
+        /// their own <c>const x</c> would otherwise collide. Reading the initializer's syntax
+        /// directly still lets it reference an already-registered module or class <c>const</c>, or
+        /// call a <c>const fun</c>; what it cannot do is reference an <em>earlier local</em> const in
+        /// the same body, which is a real but narrow gap against the module/class case.
+        /// </remarks>
+        private BoundStatement BindConstLocal(LocalDeclarationStatementSyntax syntax, TypeSymbol type, BoundExpression? initializer)
+        {
+            // Checked independently of whether the initializer folds — a `const Vec2` initialized
+            // from a call is wrong on its type alone, and would otherwise only ever be reported as
+            // "did not fold" (nothing `TryEvaluate` produces is ever a composite value in the first
+            // place, so a type mismatch here would otherwise hide behind that diagnostic instead of
+            // naming the actual rule).
+            var nonNullable = type.NonNullable;
+            if (!nonNullable.IsPrimitive && nonNullable.SpecialType != SpecialType.String)
+            {
+                Report(
+                    SurtrDiagnosticCode.InvalidConstType,
+                    syntax.Span,
+                    $"'{syntax.Name}' is const, so its type has to be a primitive or 'string' (§7.1), not '{type.ToDisplayString()}'.");
+            }
+
+            if (syntax.Initializer is null || !_constants.TryEvaluate(syntax.Initializer, out object? value))
+            {
+                Report(
+                    SurtrDiagnosticCode.NotAConstant,
+                    syntax.Span,
+                    $"'{syntax.Name}' is const, so its initializer has to fold at compile time.");
+
+                // A local still declared, so a later reference reports once here rather than a
+                // second, unrelated "does not name anything in scope".
+                var broken = DeclareLocal(syntax.Name, type, isReadOnly: true, syntax.Span);
+                return new BoundLocalDeclarationStatement(syntax, broken, initializer);
+            }
+
+            var local = DeclareLocal(syntax.Name, type, isReadOnly: true, syntax.Span);
+            _localConstants.Add(local, value);
+            return new BoundNopStatement(syntax);
         }
 
         private BoundStatement BindIf(IfStatementSyntax syntax)
@@ -149,6 +202,16 @@ namespace Surtr.Compiler.Binding
             // nowhere after - so the whole loop gets one scope of its own.
             var previous = PushScope();
 
+            // §4.2: the header takes `var`, never `let` - the step clause reassigns the binding on
+            // every iteration, which is exactly what `let` (§1.1) forbids.
+            if (syntax.Initializer is LocalDeclarationStatementSyntax { IsMutable: false } notMutable)
+            {
+                Report(
+                    SurtrDiagnosticCode.InvalidForLoopBinding,
+                    notMutable.Span,
+                    $"'{notMutable.Name}' must be declared 'var' in a three-clause 'for' header, not 'let' - the step clause reassigns it on every iteration.");
+            }
+
             var initializer = syntax.Initializer is null ? null : BindStatement(syntax.Initializer);
             var condition = syntax.Condition is null ? null : BindConverted(syntax.Condition, _factory.Bool);
             var step = syntax.Step is null ? null : BindExpression(syntax.Step);
@@ -203,38 +266,11 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         private TypeSymbol ElementTypeOf(BoundExpression sequence, ForInStatementSyntax syntax)
         {
-            var type = sequence.Type.NonNullable;
+            if (TryFindIterableElementType(sequence.Type.NonNullable, out var element))
+                return element;
 
-            switch (type)
-            {
-                case ArrayTypeSymbol array:
-                    return array.ElementType;
-
-                case DictionaryTypeSymbol dictionary:
-                    // A dict yields (K, V) pairs, matching what the runtime's iterator hands back.
-                    return _factory.Tuple(new[] { dictionary.KeyType, dictionary.ValueType });
-
-                case NamedTypeSymbol named when named.SpecialType == SpecialType.String:
-                    return _factory.Char;
-
-                case NamedTypeSymbol named when named.SpecialType == SpecialType.Range:
-                    return _factory.Int;
-            }
-
-            if (type.IsError)
+            if (sequence.Type.NonNullable.IsError)
                 return _factory.ErrorType;
-
-            foreach (var member in _lookup.Reachable(type))
-            {
-                if (member is MethodSymbol { Name: "iterate", Parameters.Count: 0 } iterate)
-                {
-                    foreach (var inner in _lookup.Reachable(iterate.ReturnType))
-                    {
-                        if (inner is PropertySymbol { Name: "current" } current)
-                            return current.Type;
-                    }
-                }
-            }
 
             Report(
                 SurtrDiagnosticCode.NotSupportedOnType,
@@ -242,6 +278,62 @@ namespace Surtr.Compiler.Binding
                 $"'{sequence.Type.ToDisplayString()}' cannot be iterated; it is not a built-in collection and does not satisfy IIterable.");
 
             return _factory.ErrorType;
+        }
+
+        /// <summary>
+        /// What one step of iterating <paramref name="type"/> would yield, without reporting when it
+        /// cannot be iterated at all — <see cref="ElementTypeOf"/> is this plus the diagnostic
+        /// <c>for-in</c> wants on failure; <c>array&lt;T&gt;(iterable)</c>'s constructor dispatch
+        /// (§5.3.3) uses this directly and falls through to its own diagnostic instead, so "what
+        /// counts as iterable" has exactly one definition rather than two that could drift apart.
+        /// </summary>
+        private bool TryFindIterableElementType(TypeSymbol type, out TypeSymbol elementType)
+        {
+            var nonNullable = type.NonNullable;
+
+            switch (nonNullable)
+            {
+                case ArrayTypeSymbol array:
+                    elementType = array.ElementType;
+                    return true;
+
+                case DictionaryTypeSymbol dictionary:
+                    // A dict yields (K, V) pairs, matching what the runtime's iterator hands back.
+                    elementType = _factory.Tuple(new[] { dictionary.KeyType, dictionary.ValueType });
+                    return true;
+
+                case NamedTypeSymbol named when named.SpecialType == SpecialType.String:
+                    elementType = _factory.Char;
+                    return true;
+
+                case NamedTypeSymbol named when named.SpecialType == SpecialType.Range:
+                    elementType = _factory.Int;
+                    return true;
+            }
+
+            if (nonNullable.IsError)
+            {
+                elementType = _factory.ErrorType;
+                return false;
+            }
+
+            foreach (var member in _lookup.Reachable(nonNullable))
+            {
+                if (member is MethodSymbol { Name: "iterate", Parameters.Count: 0 } iterate)
+                {
+                    foreach (var inner in _lookup.Reachable(iterate.ReturnType))
+                    {
+                        if (inner is PropertySymbol { Name: "current" } current)
+                        {
+                            elementType = current.Type;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            elementType = _factory.ErrorType;
+            return false;
         }
 
         private BoundStatement BindSwitch(SwitchStatementSyntax syntax)
@@ -276,12 +368,23 @@ namespace Surtr.Compiler.Binding
         private BoundStatement BindTry(TryStatementSyntax syntax)
         {
             var body = BindStatement(syntax.Body);
+            var exceptionBase = ResolveBuiltInType("Exception", syntax.Span);
 
             var catches = new BoundCatchClause[syntax.Catches.Count];
             for (int i = 0; i < catches.Length; i++)
             {
                 var clause = syntax.Catches[i];
                 var exceptionType = _resolver.Resolve(clause.ExceptionType, _typeScope, _sourceName);
+
+                // §9: every catch clause names a real link in the Exception hierarchy, so matching
+                // one against what the runtime raises is always a walk up a genuine chain.
+                if (!exceptionType.IsError && !_conversions.IsAssignable(exceptionType, exceptionBase))
+                {
+                    Report(
+                        SurtrDiagnosticCode.InvalidThrowableType,
+                        clause.Span,
+                        $"'{exceptionType.ToDisplayString()}' does not extend 'Exception', so a catch cannot name it.");
+                }
 
                 var previous = PushScope();
                 var local = DeclareLocal(clause.VariableName, exceptionType, isReadOnly: true, clause.Span);
@@ -296,7 +399,22 @@ namespace Surtr.Compiler.Binding
         }
 
         private BoundStatement BindThrow(ThrowStatementSyntax syntax)
-            => new BoundThrowStatement(syntax, BindExpression(syntax.Value));
+        {
+            var value = BindExpression(syntax.Value);
+            var exceptionBase = ResolveBuiltInType("Exception", syntax.Span);
+
+            // §9: `throw` only ever type-checks against an Exception-typed expression, so a
+            // `catch (e: T)` anywhere is always matching against a real hierarchy.
+            if (!value.Type.IsError && !_conversions.IsAssignable(value.Type, exceptionBase))
+            {
+                Report(
+                    SurtrDiagnosticCode.InvalidThrowableType,
+                    syntax.Span,
+                    $"'{value.Type.ToDisplayString()}' does not extend 'Exception', so it cannot be thrown.");
+            }
+
+            return new BoundThrowStatement(syntax, value);
+        }
 
         private BoundStatement BindReturn(ReturnStatementSyntax syntax)
         {

@@ -64,17 +64,20 @@ SurtrModule
 └── StaticFields / StaticStorage / Functions / StaticInitializer     the runtime's view, by index
 ```
 
-**There are no true globals.** A module-level variable *is* a static of its module, and reaches its
-storage through the same `StaticFieldGet`/`StaticFieldSet` a class static does — the module simply
-carries the same static tables a class does. The only genuinely global names are host-declared
-native variables and functions, which can never be written in Surtr source and live in the runtime's
-`SurtrNativeGlobalTable` instead.
+**There are no true globals — not even a host-declared one.** A module-level variable *is* a static
+of its module, and reaches its storage through the same `StaticFieldGet`/`StaticFieldSet` a class
+static does — the module simply carries the same static tables a class does. A module-level
+`native fun`/`native let`/`native var` is likewise an ordinary member, module-level or on a class,
+carrying a **link name** the host publishes a body under with `SurtrRuntime.DefineNativeBody` — the
+same mechanism a class's own native member uses. There used to be a genuinely separate global
+namespace, host-declared native variables and functions that could never be written in Surtr
+source, living in the runtime's own global table; that mechanism is retired, along with the table.
 
 **A module belongs to one runtime.** Loading patches its string literals with references from that
-runtime's heap, binds its native imports to that runtime's global table, and hands its classes
-static storage the collector traces through that runtime's registry. `LoadModule` rejects a second
-attempt. The shareable artefact is the *image* (`docs/Module-Format.md`), which instantiates a fresh
-module per runtime.
+runtime's heap, binds every native member's body against that runtime's registrations (by link
+name), and hands its classes static storage the collector traces through that runtime's registry.
+`LoadModule` rejects a second attempt. The shareable artefact is the *image*
+(`docs/Module-Format.md`), which instantiates a fresh module per runtime.
 
 ---
 
@@ -548,7 +551,6 @@ internal struct, reached by `ref` so nothing copies it — holding:
 
 ```
 EntityRegistry     the object heap, addressed by SurtrRef
-Globals            host variables and functions, the only true globals
 NativeBodies       host bodies for native members, by link name
 Modules            loaded modules, by path
 NativeClasses      host-declared native classes, by full name
@@ -578,9 +580,8 @@ LoadModule(module)
  ├─ register it              (its own types must be findable while resolving)
  ├─ resolve every type handle    ── the handle table is the dependency list
  ├─ bind pending access tables   ── images only: names -> objects
- ├─ bind native bodies           ── by link name, from NativeBodies
+ ├─ bind native bodies           ── every native member, module-level or on a class, by link name
  ├─ LINK every type              ── SurtrTypeLinker, depth-first
- ├─ bind native imports          ── host globals, by name
  ├─ materialise string literals  ── intern, patch into the constant pool
  ├─ materialise attributes       ── one instance per usage, rooted permanently
  ├─ register static blocks       ── so the collector can trace them
@@ -619,3 +620,36 @@ Things the runtime assumes and will not check:
 * **Lower a range written inline in a loop header to two ints**, allocating nothing.
 
 `docs/VM-Plan.md` §4.8 is the authoritative list.
+
+---
+
+## 16. The Surtr-written standard library (`SurtrStdlib`)
+
+`Surtr.Stdlib/src/surtr/` holds the half of the standard library written in Surtr itself rather
+than C# (`Language-Syntax.md` §13.1's rule: native only where a member needs `unsafe`, a raw
+pointer or a VM service). `Surtr.Stdlib.Tool` compiles each `.surtr` file to its own `.surtrc`
+image, one module per file, committed under `Surtr.Stdlib/build/` — the images are checked into
+the repository, not produced on demand at `Surtr.Core`'s own build time. That is a deliberate
+consequence of what compiling them needs: a working `Surtr.Compiler`, which itself needs a
+built `Surtr.Core` — so a single build cannot both compile the stdlib and embed the result into
+the very `Surtr.Core.dll` that compiling it depends on. Regenerate the committed images with
+`dotnet build src/Surtr.Stdlib/Surtr.Stdlib.csproj` whenever the `.surtr` sources change.
+
+`SurtrStdlib.LoadInto` (`Surtr.Core/Runtime/SurtrStdlib.cs`) is the loader: given the images
+(however a host obtained them — files on disk, its own embedded resources, wherever), it
+publishes every `native` link name they declare and loads them with a fixed-point retry, since
+an image carries no dependency list until it is instantiated.
+
+**Selective loading** (`StdlibModules`, a `[Flags]` enum: `Core`, `Math`, `Collections`, `Text`,
+`All`) lets a sandboxed host load only some of it — `LoadInto(runtime, images, selection)`
+filters by each image's own module path (`surtr.math.Math`'s second segment, `math`, against
+`StdlibModules.Math`) before delegating to the unfiltered overload. Coarse-grained by design:
+today no stdlib module imports another, so a top-level category is exactly the unit a selection
+needs: `Surtr.Stdlib/src/surtr/<category>/*.surtr` maps directly onto one flag.
+
+**Drift detection**: `Surtr.Stdlib.Tool` also writes `native-link-names.txt` next to the
+images — the flat, sorted list of every native link name it actually compiled. A test in
+`Surtr.Tests` (`SurtrStdlibTests.EveryNativeLinkNameTheStdlibBuildCompiledIsRegistered`) compares
+that list against what `SurtrStdlib.RegisterNativeBodies` publishes, so a `native fun` added to
+the stdlib source without a matching C# body registered there fails the test suite instead of
+only failing once a host loads a runtime and hits the missing link.

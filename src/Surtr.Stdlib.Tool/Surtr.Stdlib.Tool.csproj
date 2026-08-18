@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+
+    <!-- A build-time driver: compiles the Surtr stdlib sources to .surtrc images on disk. It
+         exists so the Surtr.Stdlib build can run the Surtr compiler via MSBuild and produce the
+         on-disk artefacts Surtr.Core consumes. It references only Surtr.Compiler (reading the
+         .surtr sources from disk), never Surtr.Stdlib - that would be a circular dependency,
+         since Surtr.Stdlib builds this tool. It is not shipped or loaded by Unity; only the
+         .surtrc images it writes travel. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Surtr.Stdlib.Tool</RootNamespace>
+    <AssemblyName>Surtr.Stdlib.Tool</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!-- A command-line program is never consumed as a library, so CS1591 would only be noise. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Surtr.Compiler\Surtr.Compiler.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -11,6 +11,7 @@
     { "include": "#type-use" },
     { "include": "#keywords" },
     { "include": "#builtin-types" },
+    { "include": "#nameable-composite-types" },
     { "include": "#language-variables" },
     { "include": "#property-type" },
     { "include": "#operators" },
@@ -90,6 +91,7 @@
         { "include": "#keywords" },
         { "include": "#type-use" },
         { "include": "#builtin-types" },
+        { "include": "#nameable-composite-types" },
         { "include": "#language-variables" },
         { "include": "#operators" },
         { "include": "#punctuation" },
@@ -346,6 +348,11 @@
     "builtin-types": {
       "match": "\\b(?:int|float|bool|char|string|void|range|unknown)\\b",
       "name": "storage.type.primitive.surtr"
+    },
+    "nameable-composite-types": {
+      "comment": "array<T>, dict<K,V> and tuple<...> name the same types T[], {K:V} and (T1,...,Tn) already do, but only these three have an identifier form at all, which is what lets a constructor be called on them (there's no `new`). Recognized only when followed by '<' so a variable that happens to be named array/dict/tuple still highlights as an ordinary identifier.",
+      "match": "\\b(?:array|dict|tuple)\\b(?=\\s*<)",
+      "name": "support.type.surtr"
     },
     "language-variables": {
       "match": "\\b(?:this|super)\\b",

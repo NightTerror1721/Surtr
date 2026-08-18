@@ -53,6 +53,14 @@ namespace Surtr.Runtime.BuiltIns
 
             builder.Method("fromChar", text, SurtrNativeEntryPoint.FromFunctionPointer(&FromChar), builder.Params(("value", character)), isStatic: true);
             builder.Method("join", text, SurtrNativeEntryPoint.FromFunctionPointer(&Join), builder.Params(("separator", text), ("parts", textArray)), isStatic: true);
+            builder.Method("fromCharRepeated", text, SurtrNativeEntryPoint.FromFunctionPointer(&FromCharRepeated), builder.Params(("value", character), ("count", integer)), isStatic: true);
+            builder.Method("fromCharArray", text, SurtrNativeEntryPoint.FromFunctionPointer(&FromCharArray), builder.Params(("chars", SurtrClassReference.Array(character))), isStatic: true);
+            builder.Method(
+                "fromCharArraySlice",
+                text,
+                SurtrNativeEntryPoint.FromFunctionPointer(&FromCharArraySlice),
+                builder.Params(("chars", SurtrClassReference.Array(character)), ("offset", integer), ("length", integer)),
+                isStatic: true);
 
             // Takes strings, not a heterogeneous argument list. A statically typed language knows
             // what every argument is, so converting at the call site with `.toString()` is one
@@ -242,6 +250,61 @@ namespace Surtr.Runtime.BuiltIns
             }
 
             return runtime.NewStringValue(builder.ToString());
+        }
+
+        /// <summary>Backs <c>string(aChar, count)</c> — <c>aChar</c> repeated <c>count</c> times, in one allocation.</summary>
+        private static SurtrValue FromCharRepeated(SurtrCallArguments arguments)
+        {
+            char value = arguments.GetChar(0);
+            int count = arguments.GetInt(1);
+
+            if (count < 0)
+                throw new System.ArgumentException($"count must be 0 or more, not {count}.", "count");
+
+            return arguments.Runtime.NewStringValue(new string(value, count));
+        }
+
+        /// <summary>
+        /// Backs <c>string(aCharArray)</c> — every character joined, read straight off the array's
+        /// own slots rather than through an intermediate <c>string[]</c> the way composing
+        /// <see cref="FromChar"/> per element and <see cref="Join"/> would.
+        /// </summary>
+        private static SurtrValue FromCharArray(SurtrCallArguments arguments)
+        {
+            var chars = arguments.GetUnchecked<SurtrArray>(0);
+            var buffer = new char[chars.Length];
+
+            for (int i = 0; i < chars.Length; i++)
+                buffer[i] = chars[i].AsChar;
+
+            return arguments.Runtime.NewStringValue(new string(buffer));
+        }
+
+        /// <summary>
+        /// Backs <c>string(aCharArray, offset, length)</c> — <see cref="FromCharArray"/> over a
+        /// slice instead of the whole array, so building a string out of part of a larger buffer
+        /// needs no separate array just to hold the slice first.
+        /// </summary>
+        private static SurtrValue FromCharArraySlice(SurtrCallArguments arguments)
+        {
+            var chars = arguments.GetUnchecked<SurtrArray>(0);
+            int offset = arguments.GetInt(1);
+            int length = arguments.GetInt(2);
+
+            // Widened to long before adding: offset/length are arbitrary caller-supplied ints, and
+            // int addition wrapping past int.MaxValue would otherwise let an out-of-range pair slip
+            // past this check instead of being caught by it.
+            if (offset < 0 || length < 0 || (long)offset + length > chars.Length)
+            {
+                throw new System.IndexOutOfRangeException(
+                    $"offset {offset} and length {length} are out of range for a {chars.Length}-element array.");
+            }
+
+            var buffer = new char[length];
+            for (int i = 0; i < length; i++)
+                buffer[i] = chars[offset + i].AsChar;
+
+            return arguments.Runtime.NewStringValue(new string(buffer));
         }
 
         /// <summary>

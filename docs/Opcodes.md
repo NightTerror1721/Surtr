@@ -8,7 +8,14 @@ documentation on each member; this file is that content laid out for reading, pl
 only make sense across the whole set. `docs/VM-Plan.md` has the *why* behind the interpreter's
 shape, and `docs/Module-Format.md` describes the file these bytes live in.
 
-**221 opcodes are defined, `0x00` through `0xDC`. The 35 values `0xDD`–`0xFF` are free.**
+**221 opcodes are defined, spanning `0x00` through `0xE2`.** Six values inside that span —
+`0x2C`–`0x2F` (the old `Ldg`/`LdgX`/`Stg`/`StgX`) and `0xAA`–`0xAB` (the old
+`CallGlobalNative`/`CallGlobalNativeX`) — are **retired**: they used to cover the host-globals
+mechanism, which is gone now that a `native` member (module-level or on a class) is an ordinary
+member reached through the same tables and call opcodes as any other. A retired value is never
+reused — reusing one would make an old module silently execute a different instruction — so those
+six numbers simply have no opcode and never will. The 29 values `0xE3`–`0xFF`, plus the six retired
+ones, are what is free.
 
 ---
 
@@ -99,11 +106,14 @@ Six opcodes take `argsCount` and `retCount` immediates, and both mean the same t
   stack-overflow check in the interpreter, which is why the emitter computes `MaxStackSize` rather
   than accepting it.
 
-**There is no separate opcode for calling host code.** Where a call lands is a property of the
-method the call site names, not of the call site, and the interpreter reads it anyway because a
-virtual call can resolve onto a native override. Every `Invoke` and `Call` reaches bytecode and host
-bodies alike. `CallGlobalNative` is the exception, and only because host globals live in a different
-*table*, not because they are native.
+**There is no separate opcode for calling host code, without exception.** Where a call lands is a
+property of the method the call site names, not of the call site, and the interpreter reads it
+anyway because a virtual call can resolve onto a native override. Every `Invoke` and `Call` reaches
+bytecode and host bodies alike — a `native` member, module-level or on a class, lands in the same
+method table as any other and is reached through `CallLocalModule`/`CallModule` like any other
+module-level function. There used to be a `CallGlobalNative` exception for a host-defined global
+function living in a table of its own; that mechanism (and the global-variable one behind
+`Ldg`/`Stg`) is retired — see the note on retired values at the top of this document.
 
 ---
 
@@ -238,17 +248,6 @@ The frame's own slots, and the densest family in the set — local access is the
 | `0x2A` | `Stl` | `opcode(1) localIdx(2)` · 3 bytes | `..., value -> ...` | Pops a value and stores it into the local at `localIdx`. |
 | `0x2B` | `IncLocal` | `opcode(1) localIdx(1) delta(1)` · 3 bytes | `... -> ...` | Adds a signed 8-bit constant to an integer local, in place. The whole of `i += 1` in one instruction. Written out it is `Ldl`, `PushI8`, `Add`, `Stl` - four dispatches, up to eight bytes, and two round trips through the operand stack - for an update that never needs to leave the frame. The delta is signed, so a decrement is the same instruction. The local is read and written as an integer and comes back tagged as one; a slot holding anything else has no defined result, and the compiler is what guarantees it does not. Locals past 255, and deltas outside a signed byte, fall back to the long form - `SurtrCodeEmitter.IncrementLocal` decides which. |
 
-## Host Globals
-
-The only genuinely global namespace in Surtr: variables the embedding host registered, which Surtr source can never declare. The immediate indexes the *module's* import table rather than the runtime's global table, so a name the host never registered fails at load rather than reading whatever that slot happens to hold.
-
-| Value | Opcode | Encoding | Stack | What it does |
-|---|---|---|---|---|
-| `0x2C` | `Ldg` | `opcode(1) globalIdx(2)` · 3 bytes | `... -> ..., value` | Reads a host-defined global variable. Indexes the native global table, the only truly global namespace in Surtr. A direct indexed load off that table's value storage - the host reaches the same slot through an accessor, but bytecode does not. |
-| `0x2D` | `LdgX` | `opcode(1) globalIdx(4)` · 5 bytes | `... -> ..., value` | Reads a host-defined global variable using a 4-byte index. |
-| `0x2E` | `Stg` | `opcode(1) globalIdx(2)` · 3 bytes | `..., value -> ...` | Pops a value and writes it into a host-defined global variable. The compiler must reject this against a global the host registered as read-only. |
-| `0x2F` | `StgX` | `opcode(1) globalIdx(4)` · 5 bytes | `..., value -> ...` | Pops a value into a host-defined global variable using a 4-byte index. |
-
 ## Field Operations
 
 Instance fields reach their storage through a slot index resolved when the declaring type was linked, so a read is an offset into the instance rather than a name lookup. Statics are a separate pair rather than a flag on the same opcode, because folding them together would put a static/instance test on one of the hottest instructions in the set — and a module-level variable is a static of its module, reaching its storage the same way.
@@ -347,7 +346,7 @@ The primitive conversions, all between `int` and one other family — anything e
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
 | `0x61` | `I2F` | `opcode(1)` · 1 byte | `..., a -> ..., float` | Widens an integer to a float. |
-| `0x62` | `F2I` | `opcode(1)` · 1 byte | `..., a -> ..., int` | Narrows a float to an integer. Lossy. The rounding mode, and what happens for NaN or out-of-range values, still need to be pinned down. |
+| `0x62` | `F2I` | `opcode(1)` · 1 byte | `..., a -> ..., int` | Narrows a float to an integer. Lossy, and pinned down rather than an unchecked C# cast, whose behaviour for an out-of-range double is platform-defined and would differ between x64 and ARM (§1.9). Truncates toward zero in range; saturates to `int.MinValue`/`int.MaxValue` outside it; `NaN` converts to `0`. |
 | `0x63` | `I2C` | `opcode(1)` · 1 byte | `..., a -> ..., char` | Retags an integer as a character. Int, bool and char share one representation, so this changes only the value's tag and truncates the payload to 16 bits. The tag still matters: it is what decides which class the value reports and which box `BoxChar` versus `BoxInt` produces. |
 | `0x64` | `C2I` | `opcode(1)` · 1 byte | `..., a -> ..., int` | Retags a character as an integer. Always exact - every character fits an integer. |
 | `0x65` | `I2B` | `opcode(1)` · 1 byte | `..., a -> ..., bool` | Converts an integer to a boolean. Normalises as well as retags - any non-zero integer becomes `true`, so the payload is always 0 or 1 afterwards. That normalisation is what lets every boolean opcode treat the payload as a bit. |
@@ -379,6 +378,19 @@ One question asked three ways, because what the call site wants done on a mismat
 | `0x71` | `CastX` | `opcode(1) typeIdx(4)` · 5 bytes | `..., a -> ..., a` | Casts using a 4-byte type index. |
 | `0x72` | `CastOrNull` | `opcode(1) typeIdx(2)` · 3 bytes | `..., a -> ..., a \| null` | Keeps the top value if it is an instance of the type at `typeIdx`, and replaces it with null otherwise. What `as?` lowers to. `Cast` traps on a mismatch and `InstanceOf` discards the value to answer about it, so a non-throwing cast written from those two costs a spill to a local, two type tests and a branch. This costs one type test. A null subject stays null, which is the same answer either way, and matching resolves through the ancestor chain for a class and the interface table for a contract, exactly as `Cast` does. |
 | `0x73` | `CastOrNullX` | `opcode(1) typeIdx(4)` · 5 bytes | `..., a -> ..., a \| null` | Casts or yields null, with a 4-byte type index. |
+| `0xDD` | `LoadType` | `opcode(1) typeIdx(2)` · 3 bytes | `... -> ..., type` | Pushes the `Type` value for the compile-time-known type at `typeIdx`. What the static form of `typeof` lowers to - `typeof(SomeClass)` or `typeof(ISomeInterface)`, neither of which reads any value off the stack. The type is an immediate, resolved once at module load through `typeTable[typeIdx]` exactly as `InstanceOf` resolves its own. Allocates only the first time a given type is asked for on this runtime - the runtime caches one `Type` object per class or interface, so a repeated `typeof` on the same type is a cache hit, not a fresh entity every call. |
+| `0xDE` | `LoadTypeX` | `opcode(1) typeIdx(4)` · 5 bytes | `... -> ..., type` | Loads the compile-time-known type's `Type` value, with a 4-byte type index. |
+| `0xDF` | `GetTypeOfValue` | `opcode(1)` · 1 byte | `..., ref -> ..., type` | Reads the class of the value on top of the stack and pushes its `Type`. What the instance form of `typeof` lowers to when the operand's static type cannot say the answer by itself - reads `.Class` off the reference exactly as `InstanceOf`'s reference half does. The subject is never checked for null, matching `FieldGet` and the native `Type.of` this replaces. A primitive operand never reaches this at all - the compiler lowers `typeof` straight to `LoadType` against that type instead, skipping both the box and this read. |
+
+## Module Access
+
+What `moduleof(ModulePath)` lowers to - always the static form, since `moduleof` has no instance form over an arbitrary value (§2.1). `LoadModule`/`LoadModuleX` name another module through the chunk's module access table, the same `moduleTable` `CallModule`/`CallModuleX` already read - naming a module through `moduleof` and calling into it share one interned entry, so this table now holds "modules named, not only modules called." `LoadCurrentModule` exists because a module does not reach itself through that table - the same rule `CallLocalModule` already follows for a call - so `moduleof` on the module's own path reads the owning module straight off the executing chunk instead.
+
+| Value | Opcode | Encoding | Stack | What it does |
+|---|---|---|---|---|
+| `0xE0` | `LoadModule` | `opcode(1) moduleIdx(2)` · 3 bytes | `... -> ..., module` | Pushes the `Module` value for another module, named by its slot in the module table. The target must already be loaded and linked. Allocates only the first time a given module is asked for on this runtime - the runtime caches one `Module` object per `SurtrModule`, the same as `LoadType` does for `Type`. |
+| `0xE1` | `LoadModuleX` | `opcode(1) moduleIdx(4)` · 5 bytes | `... -> ..., module` | Loads another module's `Module` value, with a 4-byte module index. |
+| `0xE2` | `LoadCurrentModule` | `opcode(1)` · 1 byte | `... -> ..., module` | Pushes the `Module` value for the module this frame's chunk belongs to - what `moduleof` lowers to when the path names the same module emitting it. |
 
 ## Control Flow Operations
 
@@ -439,7 +451,7 @@ Every branch offset is signed and relative to the instruction *following* the br
 
 ## Call Operations
 
-Every form shares one calling convention: `argsCount` counts every incoming slot with the receiver included, `retCount` is 0 or 1, and the callee's frame starts underneath its arguments so entering a call copies nothing. There is deliberately no opcode for calling host code — where a call lands is a property of the method it names, which the interpreter reads anyway because a virtual call can resolve onto a native override. `CallGlobalNative` is the exception, and only because host globals live in a different table.
+Every form shares one calling convention: `argsCount` counts every incoming slot with the receiver included, `retCount` is 0 or 1, and the callee's frame starts underneath its arguments so entering a call copies nothing. There is no opcode for calling host code, without exception — where a call lands is a property of the method it names, which the interpreter reads anyway because a virtual call can resolve onto a native override. A `native fun` declared at module scope is called with `CallLocalModule`/`CallModule` exactly like a compiled one; `0xAA`/`0xAB` used to be a `CallGlobalNative`/`CallGlobalNativeX` exception for a host-defined global function living in a table of its own, and are retired along with the rest of that mechanism.
 
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
@@ -447,8 +459,6 @@ Every form shares one calling convention: `argsCount` counts every incoming slot
 | `0xA7` | `CallLocalModuleX` | `opcode(1) functionIdx(4) argsCount(1) retCount(1)` · 7 bytes | `..., a1, ..., aN -> ..., result?` | Calls a function in the current module, with a 4-byte function index. |
 | `0xA8` | `CallModule` | `opcode(1) moduleIdx(2) functionIdx(2) argsCount(1) retCount(1)` · 7 bytes | `..., a1, ..., aN -> ..., result?` | Calls a module-level function in another module. The target module must already be loaded and linked. |
 | `0xA9` | `CallModuleX` | `opcode(1) moduleIdx(4) functionIdx(4) argsCount(1) retCount(1)` · 11 bytes | `..., a1, ..., aN -> ..., result?` | Calls a function in another module, with 4-byte module and function indices. The longest instruction in the set. |
-| `0xAA` | `CallGlobalNative` | `opcode(1) functionIdx(2) argsCount(1) retCount(1)` · 5 bytes | `..., a1, ..., aN -> ..., result?` | Calls a host-defined global function. Dispatches through the native entry point, a managed function pointer, so the call costs no marshalling transition. |
-| `0xAB` | `CallGlobalNativeX` | `opcode(1) functionIdx(4) argsCount(1) retCount(1)` · 7 bytes | `..., a1, ..., aN -> ..., result?` | Calls a host-defined global function, with a 4-byte function index. |
 | `0xAC` | `InvokeVirtual` | `opcode(1) methodIdx(2) argsCount(1) retCount(1)` · 5 bytes | `..., obj, a1, ..., aN -> ..., result?` | Invokes an instance method through the receiver's virtual method table. The method table entry supplies a vtable slot, so dispatch is one load plus an indirect call - the receiver's runtime class decides which override runs. A null receiver hits the CLR null check and surfaces as `NullReferenceException`. |
 | `0xAD` | `InvokeSpecial` | `opcode(1) methodIdx(2) argsCount(1) retCount(1)` · 5 bytes | `..., obj, a1, ..., aN -> ..., result?` | Invokes an instance method without virtual dispatch. Binds exactly the method named in the table, ignoring any override. This is how constructors and explicit base calls are issued. |
 | `0xAE` | `InvokeStatic` | `opcode(1) methodIdx(2) argsCount(1) retCount(1)` · 5 bytes | `..., a1, ..., aN -> ..., result?` | Invokes a static method. No receiver is popped. It carries no type index: the method entry already knows its declaring class, and static initializers run when their module is loaded rather than on first touch, so there is nothing for the interpreter to trigger here. |

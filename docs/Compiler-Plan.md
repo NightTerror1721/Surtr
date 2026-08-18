@@ -472,11 +472,17 @@ Three of those took a decision worth recording:
   and `SignatureSet` never sees it as a duplicate. `SurtrClassReference.Erase` is new and shared with
   `SurtrMethodInfo.SignatureKey`, because the compiler has to produce exactly the descriptor the
   linker compares and two copies of that rule would agree until one was edited.
-* **A call on a `value class`.** The receiver boxes with `BoxAs`, and `this` inside the callee
-  unwraps. One rule — *inside a value class's own method the receiver is boxed, everywhere else a
-  value class is its field* — which is what keeps `this.raw` free at every other site. §6.3's "a
-  direct call does not box" is now a missed optimisation rather than a correctness gap, and boxing
-  more than needed is safe where boxing less is a type confusion.
+* **A call on a `value class`.** The receiver boxes with `BoxAs` only where the callee might be
+  reached through its class — a method whose own dispatch is not `Direct` — and `this` inside such
+  a callee unwraps to match; a `Direct` method (the common case: nothing but interface satisfaction
+  ever makes a value class method non-`Direct`, since it cannot be extended) needs neither, on
+  either side of the call. `BoxReceiverForCall` and `LoadReceiver` share the one test that decides
+  this, so a method's body and every caller of it can never disagree about which convention it was
+  compiled against. What remains a missed optimisation rather than a correctness gap is a call to a
+  method that satisfies an interface but is reached without going through it — closing that would
+  need two entry points per such method (a boxing bridge occupying the vtable slot, forwarding to
+  an unboxed body), which is more surface than the untested combination has earned so far; boxing
+  more than needed is safe there where boxing less is a type confusion.
 * **Nested lambda captures.** `NoteCapture` walks a *stack* of lambda frames outwards and stops at
   the first one the symbol is inside. An inner lambda's upvalue has to come from the outer body, so
   the outer lambda has to have captured it too; stopping at the innermost boundary is exactly what
@@ -555,8 +561,19 @@ knowing every site. A missed one is a type confusion, not a slow path.
 * a local, parameter, field or return declared as the value class itself;
 * an element of `EntityId[]`, which is an `int[]` — the element type is statically known, so the
   array's descriptor is `AI` and there is no per-element decision to make;
-* a **direct** call to one of its own methods, or a call to a method it declares that satisfies an
-  interface but is reached without going through that interface.
+* a call to one of its own methods whose dispatch is `Direct` — including a computed property's
+  `get`/`set`, which are calls too. `BoxReceiverForCall` (`MethodBodyEmitter.cs`) is the single test
+  this and every other boxing site below it agree with.
+
+**Still boxes, as a known missed optimisation** — a call to a method it declares that satisfies an
+interface but is reached without going through that interface. That method's own dispatch is not
+`Direct` (interface satisfaction is written `override` in source, same as a base-class override, so
+it is never `Direct`), so a devirtualised call on it — a value class is sealed by §2.9, so this is
+every direct-typed call to such a method — still boxes today, the same as a call reached through the
+interface does. Closing it needs two entry points per such method: a thin boxing bridge occupying
+the vtable slot, unboxing and forwarding via a direct call to the real, unboxed-receiver body. Left
+alone because nothing exercises a value class implementing an interface yet, so there is no
+regression risk to weigh against the extra surface.
 
 Reading one back out of an erased slot is the mirror obligation: a `Cast` to the value class, then
 unwrap. That is the same pair §7 already lists for primitives, applied to one more type.
@@ -682,6 +699,172 @@ no open form to write: a name promising one argument and supplying none is malfo
 
 ---
 
+## 8b. Decided: array/dict/tuple get a nameable, callable identifier too
+
+`array`, `dict` and `tuple` were writable only through `T[]`, `{K: V}` and `(T1, ..., Tn)` — §5.3's
+symbolic forms, which read as the value they accept but aren't identifiers, so nothing could ever be
+*called* `int[]`. §5.5 has no `new`; a construction is an ordinary call on a name. A type with no
+name is a type that can never be constructed. `dict`'s own `reserve` doc comment already named this
+gap directly, calling itself "the utility 'constructor' a dict cannot spell as one." `array<T>`,
+`dict<K, V>` and `tuple<T1, ..., Tn>` (§5.3.1) close it: real, callable identifiers for the exact
+same types the symbolic forms already name.
+
+### Not a literal `alias`
+
+The obvious first instinct — declare `alias array<T> = T[];` and get `array<T>` for free from §2.7's
+existing machinery — doesn't work, and it's worth recording why so it isn't tried again. `array` and
+`dict` are *already* real generic `NamedTypeSymbol`s reachable by name in the global scope
+(`Binder.SeedGlobalScope`), and that identity is load-bearing: `MemberLookup.BackingType` constructs
+`array` with a composite's element type to find `push`/`pop`/`get`/`set` at all — `int[].push(3)`
+being a type error against metadata alone depends on `array` staying exactly what it is today. A
+transparent alias declared under the same name would mean two different things by "`array`" at the
+same scope depth — the built-in class *and* a stand-in for `T[]` — which is a collision, not a
+convenience.
+
+The fix keeps the two questions separate. Ordinary name lookup (`scope.Lookup("array")`) is
+completely untouched, and so is `MemberLookup.BackingType`, which never goes through `TypeResolver`
+at all. The redirect happens one step later, only once a full type *application* has resolved
+(`TypeResolver.Apply`, after `array`'s arity check against its one written argument already passed):
+at that point, and only then, the constructed `NamedTypeSymbol` `array` would otherwise produce is
+swapped for the identical, structurally-interned `ArrayTypeSymbol` the symbolic form `T[]` already
+produces — reference-equal, not merely convertible. `tuple` needs the same swap but earlier, before
+its arity check: its imported declaration has Arity 0 (§4.6 of `docs/VM-Plan.md` — a tuple is
+parameterised by a per-value list, not a per-declaration parameter), so without a bypass every
+non-empty `tuple<...>` would be rejected as a type nothing else declares before ever reaching the
+interesting code.
+
+### Constructor shapes and their folds
+
+Three shapes, chosen to need no VM/opcode work at all — everything below reuses an opcode
+`docs/Opcodes.md` already documents:
+
+| Shape | `array<T>` | `dict<K, V>` | `tuple<...>` |
+|---|---|---|---|
+| Empty | `ArrPack(type, 0)` — same as `[]` | `DictNew(type)` | `TupPack(type, 0)` — arity 0 only |
+| Capacity | `ArrNewX(type, n)` when `n` is a written constant, else runtime `ArrNew(type)` | `DictNew(type)` + a call to `reserve` | not supported — arity is fixed by the type |
+| Cast | from `tuple<T,...>`: N × `TupGetC(i)` + `ArrPack` | not supported | from `array<T>`: `ArrLen` check + trap, then N × `ArrGet` + `TupPack` |
+
+Two things worth being explicit about, since a symmetric API easily suggests a symmetry the
+implementation doesn't have. **Capacity means something different per collection.** `array<T>(n)` is
+`new T[n]`-style — a real length-`n` array, zero-filled — because that is exactly what the existing,
+previously-unused `ArrNewX` opcode already means ("for arrays of statically known size" per its own
+doc comment), and folding onto an opcode that already says exactly this is a better fit than
+inventing a reserve-style meaning that would need a second opcode nothing calls today. `dict<K, V>(n)`
+*is* reserve-style — length 0, capacity hint — because `DictNew` allocates only ever an empty dict;
+there is no `DictNewX`, and one was deliberately not added for this. The two-step fold (`DictNew`
+plus a call to `dict`'s own already-declared `reserve`) is the one shape here that isn't a single
+instruction, and that's an accepted asymmetry, not an oversight — the alternative was a new opcode
+whose only reason to exist was matching `array`'s shape, at the cost of touching the interpreter, the
+disassembler and `docs/Opcodes.md` for it.
+
+**Casting is array↔tuple only.** Of the composite pairs, it's the one with a total, natural
+correspondence in both directions without inventing a pairing convention: a tuple's arity is always
+a compile-time fact, so array→tuple only needs one runtime check (the array's actual length) and
+tuple→array needs none at all. Casting into or out of `dict<K, V>` was left out rather than guessed
+at — the closest natural source, an array of key/value pairs, still needs a real compiled loop
+(the array's length isn't known until run time, so it can't unroll into a fixed instruction sequence
+the way the tuple direction does), and nothing asked for it.
+
+### Implementation
+
+`Binding/TypeResolver.cs`'s `Apply` carries the redirect, guarded by `ReferenceEquals` against
+`MetadataImporter.ArrayType`/`DictionaryType`/`TupleType` so a user's own shadowing declaration is
+never affected. `Binding/BodyBinder.Expressions.cs` adds a dispatch seam ahead of
+`TryBindAsType`/`TryBindAsGenericDefinition` in `BindCall`, since neither of those recognizes an
+`ArrayTypeSymbol`/`DictionaryTypeSymbol`/`TupleTypeSymbol` callee at all — both are written against
+`NamedTypeSymbol`. Binding produces a dedicated `BoundCollectionCreationExpression`
+(`Binding/BoundTree/BoundExpressions.cs`) rather than reusing `BoundObjectCreationExpression`, whose
+emission is unconditionally `ObjNew` — flatly wrong for a type that is never a `SurtrInstance`.
+`CodeGen/MethodBodyEmitter.cs`'s `EmitCollectionCreation` is the fold, one branch per shape, sharing
+`EmitConversionTail` (split out of `EmitConversion` for exactly this) with the per-element cast
+loops, and reusing the same "skip the check if the library doesn't declare the exception" idiom
+`EmitNullAssert` already established for `!!`.
+
+---
+
+## 8c. Decided: constructors for every primitive, `string` and `range`, and the array/dict shapes with a runtime length
+
+§8b gave `array`/`dict`/`tuple` a nameable, callable identifier. This closes the rest of the user's
+constructor list (`docs/Language-Syntax.md` §5.3.2, §5.3.3, and the tuple addendum in §5.3.1): every
+ordered conversion among `int`/`float`/`char`/`bool`, parsing any of them from `string`, `string`
+built from any of the five other scalars, `range`'s two non-stepped forms, and five array/dict shapes
+whose source has a runtime rather than compile-time length.
+
+### Almost none of it is new mechanism
+
+The load-bearing realization, worth stating plainly because it is what kept this from being a much
+larger change: most of these "constructors" are not new machinery at all, they are new *names* for
+conversions and calls the compiler already had.
+
+| Shape | Reuses |
+|---|---|
+| `int(aFloat)`, and every other primitive↔primitive pair | The exact `BoundConversionExpression` `Conversions.ClassifyExplicit`'s existing `ExplicitNumeric` rule already builds for `as` — same node, same opcode, same edge cases, reached from a second syntax. |
+| `string(anInt)`, `string(aFloat)`, `string(aBool)`, `string(aChar)`, `string(aRange)` | An ordinary call to the `toString()` each already declares (`range`'s is the one new native method this needed). |
+| `range(a, b)`, `range(a, b, true\|false)` | The same `BoundBinaryExpression` `a..b`/`a..=b` already produces; a runtime third argument is an ordinary `BoundConditionalExpression` between the two, needing no new emission at all. |
+| `tuple<T1,...>(v1,...,vn)` | The tuple literal's own binding logic, reached from a second syntax path. |
+| `(T1,T2)(pair: (T1,T2))` | Nothing — reference-equality on the interned tuple type makes this a pure identity fold; the argument already *is* the value. |
+
+What's genuinely new is small by comparison: five throwing `parseStrict`/`fromChar*` native methods
+(`Runtime/BuiltIns/SurtrPrimitiveBuiltIns.cs`, `SurtrStringBuiltIn.cs`), one new exception class, and
+five `CollectionCreationKind` variants whose source has a length only known at run time and so need a
+genuine emitted loop rather than the compile-time-unrolled shapes §8b's own kinds use.
+
+### Two decisions worth recording, since each fills a gap nothing had settled before
+
+**`float`→`int` truncates toward zero, saturates outside `int`'s range, and reads `NaN` as `0`.**
+This was not a new rule to invent: `SurtrVirtualMachine.cs`'s `F2I` handler already did exactly this,
+determinism across x64/ARM being the reason it exists (an unchecked C# cast of an out-of-range double
+is platform-defined). Only the opcode's own doc comment and its mirror in `docs/Opcodes.md` were
+stale, still saying "still needs to be pinned down" when `docs/VM-Plan.md` §1.9 already described the
+real, already-shipped behavior — a self-contradiction between the project's own docs that this
+closes, not a VM change.
+
+**A new `FormatException`, kept separate from `ArgumentException`.** Parsing throws on malformed
+text; nothing before this needed a class for "the argument was the right *shape* but the wrong
+*content*." `ArgumentException` stays for "the argument itself is wrong" — a `radix` outside
+`[2, 36]`, or `keys`/`values` of different lengths in `dict<K,V>(keys, values)` — a distinction
+`docs/Language-Syntax.md` §5.3.2 states directly rather than leaving to be inferred per call site.
+Declared exactly like the other eight exception classes: natively in `SurtrBuiltIns.cs` via the
+existing `DeclareExceptionSubclass`, mirrored one-for-one in `Exceptions.surtr`, with one new arm in
+`SurtrBuiltIns.ExceptionClassFor` mapping `System.FormatException` onto it — the same mapping every
+native method that throws a CLR exception already relies on to surface as a catchable Surtr object.
+
+### Why the five array/dict shapes need a real loop
+
+`array<T>(size, defaultValue)`, `array<T>(anotherArray)`, `array<T>(anIterable)`,
+`dict<K,V>(pairs)` and `dict<K,V>(keys, values)` all read from something whose length is a runtime
+value, unlike §8b's tuple-cast shapes, whose arity is always a compile-time fact and so unroll into a
+straight-line instruction sequence. Each new `CollectionCreationKind` therefore emits a genuine
+counted loop (`Code.NewLabel`/`MarkLabel`/`JumpIfCompare`/`IncrementLocal`) — the same hand-rolled
+idiom `EmitForInIndexed`/`EmitForInRange`/`EmitForInIterable` already use, since no shared
+"emit a counted loop" helper exists anywhere in this emitter and none of these synthesized loops has
+a user-visible body to give `break`/`continue` targets to. `array<T>(anotherArray)` and
+`array<T>(anIterable)` are dispatched in priority order in the binder — an array argument takes the
+faster indexed-copy path (`ArrLen`/`ArrGet`/`ArrSet`, no interface dispatch) and only something that
+isn't already an array, a tuple or an `int` falls to the general `IIterable<T>` walk, which reuses
+`TryFindIterableElementType` — a non-reporting extraction of the same "what does iterating this
+yield" question `for-in` binding already answers, factored out so the two never have a chance to
+disagree about what counts as iterable.
+
+### Implementation
+
+`Runtime/BuiltIns/SurtrPrimitiveBuiltIns.cs` gains `parseStrict` on `int` (two overloads, one with a
+hand-written radix parser — `Convert.ToInt32(string,int)` only covers bases 2/8/10/16), `float`,
+`bool` and `char`; `SurtrStringBuiltIn.cs` gains `fromCharRepeated`/`fromCharArray`/`fromCharArraySlice`;
+`SurtrCompositeBuiltIns.cs` gains `range.toString()`. `Binding/BodyBinder.Expressions.cs` adds one
+dispatch method per scalar type plus two shared helpers — `TryBindPrimitiveConversion` (wraps
+`Conversions.Classify` in a `BoundConversionExpression` exactly as `BindCast` does) and
+`TryBindNativeSugarCall` (finds an already-declared native by name and arity and builds the
+`BoundCallExpression` by hand, since a constructor's own argument list doesn't always line up 1:1
+with the native's parameter list once a receiver is involved) — hooked into `BindObjectCreation`
+right after the existing parameterless-default case. `BoundCollectionCreationExpression` gains
+`Source2` (the values array, for `DictFromParallelArrays`), `DefaultValue` and `SourceElementType`
+(what walking a generic `IIterable<T>` yields, since unlike an array or a pair tuple this can't be
+read off the source's own static type). `CodeGen/MethodBodyEmitter.cs`'s `EmitCollectionCreation`
+gains the five loop-emitting branches described above.
+
+---
+
 ## 9. Order
 
 1. ~~Step 1 — symbols~~ **done**, together with §8's decision, which is what its emit gate produces.
@@ -729,7 +912,7 @@ construct whose *absence* nobody checked.
 | a class from another module | Its synthesised constructor lived in the emitting module's `EmitContext`, so a creation site elsewhere allocated and ran nothing. | Carried across modules as metadata. It has no symbol, so it cannot travel the way every other member does. |
 | `?.` | Typed as nullable and emitted as a plain access: a null receiver faulted. | Lowered through `BoundNullConditionalExpression`, whose receiver is evaluated once into a slot and read through a placeholder. |
 | `!!` | Emitted the operand and nothing else. | Raises the library's `NullReferenceException`, resolved in the binder because the emitter cannot resolve a name. |
-| `native let` / `native var` / module-level `native fun` (§10) | Compiled to ordinary module statics — the module loaded with no host at all and read zeroes. | Declared into the module's native import table and reached with `Ldg`/`Stg`/`CallGlobalNative`, so a name the host never registered fails the load. |
+| `native let` / `native var` / module-level `native fun` (§10) | Compiled to ordinary module statics — the module loaded with no host at all and read zeroes. | Declared as an ordinary member (a property or a method) carrying a link name, the same shape a class's own native member has; a name nothing published fails the load. (This itself first landed on a since-retired per-module native import table reached with `Ldg`/`Stg`/`CallGlobalNative` — see `docs/VM-Plan.md` §4.14 — before being folded into the general native-member mechanism.) |
 | a varargs parameter | Typed as its *element* type in the binder, so applicability never absorbed a surplus and an empty varargs packed an array typed `string`. | Typed as the array §3.5 says the body sees. `MetadataImporter` rebuilds it, since metadata carries the element type. |
 | a base with no parameterless constructor | An omitted chain silently reached nothing, so the base went unconstructed. | Reported at the constructor that omits it, or at the class when it declares none — `Binder.CheckBaseConstructorIsReachable`. |
 

@@ -46,24 +46,31 @@ namespace Surtr.Compiler.Binding
     {
         private readonly TypeSymbolFactory _factory;
         private readonly SurtrDiagnosticBag _diagnostics;
-        private readonly string _sourceName;
 
         private readonly Dictionary<Signature, MethodSymbol> _seen =
             new Dictionary<Signature, MethodSymbol>(SignatureComparer.Instance);
 
-        internal SignatureSet(TypeSymbolFactory factory, SurtrDiagnosticBag diagnostics, string sourceName)
+        internal SignatureSet(TypeSymbolFactory factory, SurtrDiagnosticBag diagnostics)
         {
             _factory = factory;
             _diagnostics = diagnostics;
-            _sourceName = sourceName;
         }
 
         /// <summary>Records a method, reporting it if something already occupies its signature.</summary>
-        internal void Add(MethodSymbol method, SourceSpan span)
+        /// <param name="method">The method to record.</param>
+        /// <param name="sourceName">Which source it was declared in — a module's members span several files.</param>
+        /// <param name="span">The range of source the method was declared over.</param>
+        internal void Add(MethodSymbol method, string sourceName, SourceSpan span)
         {
-            var parameters = new TypeSymbol[method.Parameters.Count];
-            for (int i = 0; i < parameters.Length; i++)
-                parameters[i] = Erase(method.Parameters[i].Type);
+            // An instance operator's first parameter is its receiver (§5.6), which the runtime
+            // keeps implicit — so its signature key excludes it, exactly as a method's does, and
+            // two operators differing only in the receiver would collide in the real method table
+            // with nothing here to catch it.
+            int first = method.Role == MethodRole.Operator && !method.IsStatic ? 1 : 0;
+
+            var parameters = new TypeSymbol[method.Parameters.Count - first];
+            for (int i = first; i < method.Parameters.Count; i++)
+                parameters[i - first] = Erase(method.Parameters[i].Type);
 
             var signature = new Signature(
                 method.Name,
@@ -75,13 +82,47 @@ namespace Surtr.Compiler.Binding
                 _diagnostics.ReportError(
                     SurtrDiagnosticCode.DuplicateOverload,
                     $"'{method.ToDisplayString()}' has the same signature as an overload already declared here.",
-                    _sourceName,
+                    sourceName,
                     span);
 
                 return;
             }
 
             _seen.Add(signature, method);
+        }
+
+        /// <summary>
+        /// Whether <paramref name="candidate"/> and <paramref name="required"/> occupy the same
+        /// vtable slot: same name, same erased parameter types (an instance operator's receiver
+        /// excluded, since the runtime keeps it implicit), and — unlike the runtime's own key, which
+        /// excludes it — the same erased return type.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The runtime's <c>SignatureKey</c> is deliberately return-blind (<c>docs/VM-Plan.md</c>
+        /// §4.1), and it erases <c>G&lt;n&gt;</c>, so an override whose parameter <em>shape</em>
+        /// matches but whose types differ — <c>get(int): T</c> where the contract, read as the
+        /// construction the class declares, is <c>get(int): int</c> — links cleanly with nothing
+        /// downstream to notice. That is the check this adds: the same <see cref="Erase"/> view
+        /// <see cref="Add"/> compares overloads with, plus the return type the linker cannot see.
+        /// </para>
+        /// </remarks>
+        internal bool Matches(MethodSymbol candidate, MethodSymbol required)
+        {
+            if (!string.Equals(candidate.Name, required.Name, StringComparison.Ordinal)
+                || candidate.Parameters.Count != required.Parameters.Count)
+            {
+                return false;
+            }
+
+            int first = candidate.Role == MethodRole.Operator && !candidate.IsStatic ? 1 : 0;
+            for (int i = first; i < candidate.Parameters.Count; i++)
+            {
+                if (!ReferenceEquals(Erase(candidate.Parameters[i].Type), Erase(required.Parameters[i].Type)))
+                    return false;
+            }
+
+            return ReferenceEquals(Erase(candidate.ReturnType), Erase(required.ReturnType));
         }
 
         private TypeSymbol Erase(TypeSymbol type)

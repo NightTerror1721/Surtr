@@ -80,6 +80,15 @@ namespace Surtr.Compiler.Syntax
                     return ParseField(start, docComment, attributes, modifiers);
 
                 default:
+                    // `attribute class Foo` / `attribute(Targets) class Foo` (§11) is contextual the
+                    // same way `value class` is: `attribute` is an ordinary identifier everywhere
+                    // except right before a class declaration (with or without a target list).
+                    if (CheckContextual("attribute")
+                        && (reader.CheckAt(1, TokenType.KeywordClass) || reader.CheckAt(1, TokenType.LeftParen)))
+                    {
+                        return ParseAttributeClassDeclaration(start, docComment, attributes, modifiers);
+                    }
+
                     // `value class` is contextual: `value` is an ordinary identifier and the
                     // `class` after it is what makes the declaration (§2.9).
                     if (CheckContextual("value") && reader.CheckAt(1, TokenType.KeywordClass))
@@ -121,6 +130,27 @@ namespace Surtr.Compiler.Syntax
         {
             Modifiers modifiers = default;
 
+            // §3.2's fixed left-to-right order, as ranks: visibility, static, sealed, dispatch
+            // (virtual/override/abstract), inline/forceinline, const, native — native sits last
+            // because every example places it immediately before the introducer keyword, the one
+            // slot the grammar in §3.2 leaves unlabelled. A modifier whose rank is lower than the
+            // highest rank already consumed is out of order; equal rank without a distinct token
+            // (the same keyword, or a second one from the same mutually-exclusive group) is a
+            // repeat instead, and each case below already reports that specifically.
+            int highestRank = -1;
+
+            void RequireOrder(int rank, string what)
+            {
+                if (rank < highestRank)
+                {
+                    throw reader.Error(
+                        SurtrDiagnosticCode.InvalidModifier,
+                        $"'{what}' is out of order — §3.2 fixes visibility, static, sealed, virtual/override/abstract, inline/forceinline, const, native, in that order.");
+                }
+
+                highestRank = rank;
+            }
+
             while (true)
             {
                 switch (reader.CurrentType)
@@ -134,31 +164,177 @@ namespace Surtr.Compiler.Syntax
                             throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one visibility.");
                         }
 
+                        RequireOrder(0, "visibility");
                         modifiers.Visibility = ToVisibility(reader.Advance().Type);
                         continue;
 
                     case TokenType.KeywordStatic:
+                        if (modifiers.IsStatic)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "'static' is already written.");
+                        }
+
+                        RequireOrder(1, "static");
                         modifiers.IsStatic = true;
                         reader.Advance();
                         continue;
 
                     case TokenType.KeywordSealed:
+                        if (modifiers.IsSealed)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "'sealed' is already written.");
+                        }
+
+                        RequireOrder(2, "sealed");
                         modifiers.IsSealed = true;
                         reader.Advance();
                         continue;
 
                     case TokenType.KeywordAbstract:
+                        if (modifiers.Dispatch != DispatchModifier.None)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'virtual'/'override'/'abstract'.");
+                        }
+
+                        RequireOrder(3, "abstract");
                         modifiers.IsAbstract = true;
                         modifiers.Dispatch = DispatchModifier.Abstract;
                         reader.Advance();
                         continue;
 
                     case TokenType.KeywordVirtual:
+                        if (modifiers.Dispatch != DispatchModifier.None)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'virtual'/'override'/'abstract'.");
+                        }
+
+                        RequireOrder(3, "virtual");
                         modifiers.Dispatch = DispatchModifier.Virtual;
                         reader.Advance();
                         continue;
 
                     case TokenType.KeywordOverride:
+                        if (modifiers.Dispatch != DispatchModifier.None)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'virtual'/'override'/'abstract'.");
+                        }
+
+                        RequireOrder(3, "override");
+                        modifiers.Dispatch = DispatchModifier.Override;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordInline:
+                        if (modifiers.Inline != InlineModifier.None)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'inline'/'forceinline'.");
+                        }
+
+                        RequireOrder(4, "inline");
+                        modifiers.Inline = InlineModifier.Inline;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordForceInline:
+                        if (modifiers.Inline != InlineModifier.None)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'inline'/'forceinline'.");
+                        }
+
+                        RequireOrder(4, "forceinline");
+                        modifiers.Inline = InlineModifier.ForceInline;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordConst:
+                        // A `const if` is a branch, not a modified declaration.
+                        if (reader.CheckAt(1, TokenType.KeywordIf))
+                        {
+                            return modifiers;
+                        }
+
+                        if (modifiers.IsConst)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "'const' is already written.");
+                        }
+
+                        RequireOrder(5, "const");
+                        modifiers.IsConst = true;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordNative:
+                        if (modifiers.IsNative)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "'native' is already written.");
+                        }
+
+                        RequireOrder(6, "native");
+                        modifiers.IsNative = true;
+                        reader.Advance();
+                        continue;
+
+                    default:
+                        return modifiers;
+                }
+            }
+        }
+
+        /// <summary>
+        /// The modifiers an accessor may carry on top of its property's (§3.2, §3.4). Unlike
+        /// <see cref="Modifiers"/>, static/const/native have no per-accessor meaning, so they are not
+        /// part of this run at all.
+        /// </summary>
+        private struct AccessorModifiers
+        {
+            internal Visibility Visibility;
+            internal bool HasDispatch;
+            internal DispatchModifier Dispatch;
+            internal bool IsSealed;
+            internal InlineModifier Inline;
+        }
+
+        /// <summary>Reads the modifier run an accessor may carry before its `get`/`set` keyword.</summary>
+        private AccessorModifiers ParseAccessorModifiers()
+        {
+            AccessorModifiers modifiers = default;
+
+            while (true)
+            {
+                switch (reader.CurrentType)
+                {
+                    case TokenType.KeywordPublic:
+                    case TokenType.KeywordPrivate:
+                    case TokenType.KeywordProtected:
+                    case TokenType.KeywordInternal:
+                        if (modifiers.Visibility != Visibility.Default)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "An accessor can only carry one visibility.");
+                        }
+
+                        modifiers.Visibility = ToVisibility(reader.Advance().Type);
+                        continue;
+
+                    case TokenType.KeywordSealed:
+                        modifiers.HasDispatch = true;
+                        modifiers.IsSealed = true;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordAbstract:
+                        modifiers.HasDispatch = true;
+                        modifiers.Dispatch = DispatchModifier.Abstract;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordVirtual:
+                        modifiers.HasDispatch = true;
+                        modifiers.Dispatch = DispatchModifier.Virtual;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordOverride:
+                        modifiers.HasDispatch = true;
                         modifiers.Dispatch = DispatchModifier.Override;
                         reader.Advance();
                         continue;
@@ -170,22 +346,6 @@ namespace Surtr.Compiler.Syntax
 
                     case TokenType.KeywordForceInline:
                         modifiers.Inline = InlineModifier.ForceInline;
-                        reader.Advance();
-                        continue;
-
-                    case TokenType.KeywordNative:
-                        modifiers.IsNative = true;
-                        reader.Advance();
-                        continue;
-
-                    case TokenType.KeywordConst:
-                        // A `const if` is a branch, not a modified declaration.
-                        if (reader.CheckAt(1, TokenType.KeywordIf))
-                        {
-                            return modifiers;
-                        }
-
-                        modifiers.IsConst = true;
                         reader.Advance();
                         continue;
 
@@ -208,7 +368,8 @@ namespace Surtr.Compiler.Syntax
 
         /// <summary>Parses a class, value class, interface, enum or singleton (§2.2–§2.4, §2.8, §2.9).</summary>
         private DeclarationSyntax ParseTypeDeclaration(SourceLocation start, IReadOnlyList<string> docComment,
-            IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers, TypeDeclarationKind kind)
+            IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers, TypeDeclarationKind kind,
+            bool isAttribute = false, SurtrAttributeTargets attributeTargets = SurtrAttributeTargets.None, bool isCompileTimeOnlyAttribute = false)
         {
             reader.Advance();
 
@@ -242,12 +403,83 @@ namespace Surtr.Compiler.Syntax
             reader.Expect(TokenType.RightBrace, "'}' to close the type body");
 
             return new TypeDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, kind, name,
-                typeParameters, baseTypes, cases, members, modifiers.IsAbstract, modifiers.IsSealed, modifiers.IsStatic);
+                typeParameters, baseTypes, cases, members, modifiers.IsAbstract, modifiers.IsSealed, modifiers.IsStatic,
+                isAttribute, attributeTargets, isCompileTimeOnlyAttribute);
         }
 
         /// <summary>
-        /// Parses an enum's case list. Per §2.4 the trailing <c>;</c> is only needed when members
-        /// follow, so a bare <c>{ Red, Green }</c> ends at the closing brace instead.
+        /// Parses <c>attribute</c>'s optional <c>(Targets, ...)</c> list, then the class declaration
+        /// itself (§11) — an <c>attribute</c> class is a class in every other respect.
+        /// </summary>
+        private DeclarationSyntax ParseAttributeClassDeclaration(SourceLocation start, IReadOnlyList<string> docComment,
+            IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers)
+        {
+            reader.Advance(); // 'attribute'
+
+            SurtrAttributeTargets targets = SurtrAttributeTargets.None;
+            bool isCompileTimeOnly = false;
+
+            if (reader.Check(TokenType.LeftParen))
+            {
+                reader.Advance();
+
+                if (reader.Check(TokenType.RightParen))
+                {
+                    throw reader.Error(SurtrDiagnosticCode.UnexpectedToken,
+                        "An attribute's target list cannot be empty; omit the parentheses entirely for no restriction.");
+                }
+
+                do
+                {
+                    string name = reader.ExpectIdentifier("a target ('Class', 'Interface', 'Enum', 'Field', 'Property', 'Method') or 'CompileTimeOnly'");
+
+                    if (name == "CompileTimeOnly")
+                    {
+                        if (isCompileTimeOnly)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "An attribute's retention can only be written once.");
+                        }
+
+                        isCompileTimeOnly = true;
+                        continue;
+                    }
+
+                    SurtrAttributeTargets target = ToAttributeTarget(name);
+                    if (target == SurtrAttributeTargets.None)
+                    {
+                        throw reader.Error(SurtrDiagnosticCode.UnexpectedToken, $"'{name}' is not a target an attribute can carry.");
+                    }
+
+                    if ((targets & target) != 0)
+                    {
+                        throw reader.Error(SurtrDiagnosticCode.InvalidModifier, $"'{name}' is already in this attribute's target list.");
+                    }
+
+                    targets |= target;
+                }
+                while (reader.Match(TokenType.Comma));
+
+                reader.Expect(TokenType.RightParen, "')' to close the attribute's target list");
+            }
+
+            return ParseTypeDeclaration(start, docComment, attributes, modifiers, TypeDeclarationKind.Class,
+                isAttribute: true, attributeTargets: targets, isCompileTimeOnlyAttribute: isCompileTimeOnly);
+        }
+
+        private static SurtrAttributeTargets ToAttributeTarget(string name) => name switch
+        {
+            "Class" => SurtrAttributeTargets.Class,
+            "Interface" => SurtrAttributeTargets.Interface,
+            "Enum" => SurtrAttributeTargets.Enum,
+            "Field" => SurtrAttributeTargets.Field,
+            "Property" => SurtrAttributeTargets.Property,
+            "Method" => SurtrAttributeTargets.Method,
+            _ => SurtrAttributeTargets.None,
+        };
+
+        /// <summary>
+        /// Parses an enum's case list. Per §2.4 the trailing <c>;</c> is required exactly when
+        /// members follow, so a bare <c>{ Red, Green }</c> ends at the closing brace instead.
         /// </summary>
         private List<EnumCaseSyntax> ParseEnumCases()
         {
@@ -257,7 +489,13 @@ namespace Surtr.Compiler.Syntax
             {
                 IReadOnlyList<string> caseDoc = ParseDocComment();
 
-                if (!reader.Check(TokenType.Identifier))
+                // A case name and a no-modifier property's name are both a bare identifier - §3.2
+                // makes "no introducer at all" a property, which is exactly the same shape a case
+                // starts with. Only a case is ever followed by `:`-less punctuation (`(`, `,`, `;`
+                // or `}`); a property's name is always followed by `:`. Peeking one token past the
+                // identifier is what tells a member the case list ends without swallowing its name
+                // as one more bogus case.
+                if (!reader.Check(TokenType.Identifier) || reader.CheckAt(1, TokenType.Colon))
                 {
                     break;
                 }
@@ -277,7 +515,17 @@ namespace Surtr.Compiler.Syntax
                 }
             }
 
-            reader.Match(TokenType.Semicolon);
+            // The `;` is only required when a member declaration follows - a bare `{ Red, Green }`
+            // needs none, since `}` alone already closes the case list unambiguously.
+            if (!reader.Check(TokenType.RightBrace))
+            {
+                reader.Expect(TokenType.Semicolon, "';' after the case list, since a member declaration follows");
+            }
+            else
+            {
+                reader.Match(TokenType.Semicolon);
+            }
+
             return cases;
         }
 
@@ -319,6 +567,31 @@ namespace Surtr.Compiler.Syntax
                 initializer, isMutable, modifiers.IsConst, modifiers.IsStatic, modifiers.IsNative);
         }
 
+        /// <summary>
+        /// Lowers an arrow-bodied member (§3.3, §3.4) to a one-statement block, so nothing
+        /// downstream of the parser needs to know the sugar was used. A <c>void</c>-returning
+        /// method and a property setter wrap the expression as a statement rather than a
+        /// <c>return</c> — a literal <c>return &lt;value&gt;</c> there is rejected by
+        /// <c>BodyBinder.BindReturn</c>, the same reason C# treats an expression-bodied member as
+        /// a statement rather than sugar for a written <c>return</c>.
+        /// </summary>
+        private BlockStatementSyntax ParseArrowBody(bool returnsVoid)
+        {
+            SourceLocation arrowStart = reader.CurrentLocation;
+            reader.Advance(); // '=>'
+
+            SourceLocation expressionStart = reader.CurrentLocation;
+            ExpressionSyntax expression = ParseExpression();
+            reader.Expect(TokenType.Semicolon, "';' after the expression body");
+
+            SourceSpan statementSpan = SpanFrom(expressionStart);
+            StatementSyntax statement = returnsVoid
+                ? new ExpressionStatementSyntax(statementSpan, expression)
+                : new ReturnStatementSyntax(statementSpan, expression);
+
+            return new BlockStatementSyntax(SpanFrom(arrowStart), new StatementSyntax[] { statement });
+        }
+
         /// <summary>Parses a property, auto or with explicit accessors (§3.4).</summary>
         private DeclarationSyntax ParseProperty(SourceLocation start, IReadOnlyList<string> docComment,
             IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers)
@@ -326,6 +599,17 @@ namespace Surtr.Compiler.Syntax
             string name = reader.Advance().ToString();
             reader.Expect(TokenType.Colon, "':' before the property type");
             TypeSyntax type = ParseType();
+
+            // The short form of a read-only property (§3.4): `x: int => field;` is sugar for a
+            // single `get => field;` accessor, skipping the braces entirely.
+            if (reader.Check(TokenType.FatArrow))
+            {
+                BlockStatementSyntax getterBody = ParseArrowBody(returnsVoid: false);
+                var getter = new AccessorSyntax(getterBody.Span, isGetter: true, getterBody);
+
+                return new PropertyDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, name, type,
+                    new[] { getter }, modifiers.IsStatic, modifiers.Dispatch, modifiers.IsSealed, modifiers.Inline, modifiers.IsNative);
+            }
 
             // An interface's property is signature-only (§2.3), so the accessor block may be
             // followed by nothing at all.
@@ -335,6 +619,12 @@ namespace Surtr.Compiler.Syntax
             while (!reader.Check(TokenType.RightBrace) && !reader.Check(TokenType.EndOfFile))
             {
                 SourceLocation accessorStart = reader.CurrentLocation;
+
+                // An accessor may carry its own modifier run before `get`/`set` (§3.2, §3.4) —
+                // visibility, `virtual`/`override`/`abstract`/`sealed`, and `inline`/`forceinline` —
+                // independently of the property's own. Whatever it does not write inherits the
+                // property's.
+                AccessorModifiers accessorModifiers = ParseAccessorModifiers();
 
                 if (!reader.Check(TokenType.Identifier))
                 {
@@ -349,9 +639,15 @@ namespace Surtr.Compiler.Syntax
 
                 reader.Advance();
 
-                // A bare accessor is the auto-generated form; a braced one has a real body (§3.4).
+                // A bare accessor is the auto-generated form; a braced one has a real body; an
+                // arrow one (§3.4) is sugar for the braced form — a getter returns its expression,
+                // a setter evaluates it for effect, the same rule ParseArrowBody applies to a method.
                 BlockStatementSyntax? body = null;
-                if (reader.Check(TokenType.LeftBrace))
+                if (reader.Check(TokenType.FatArrow))
+                {
+                    body = ParseArrowBody(returnsVoid: !isGetter);
+                }
+                else if (reader.Check(TokenType.LeftBrace))
                 {
                     body = ParseBlock();
                 }
@@ -360,13 +656,16 @@ namespace Surtr.Compiler.Syntax
                     reader.Expect(TokenType.Semicolon, "';' after the accessor");
                 }
 
-                accessors.Add(new AccessorSyntax(SpanFrom(accessorStart), isGetter, body));
+                accessors.Add(new AccessorSyntax(
+                    SpanFrom(accessorStart), isGetter, body,
+                    accessorModifiers.Visibility, accessorModifiers.HasDispatch, accessorModifiers.Dispatch,
+                    accessorModifiers.IsSealed, accessorModifiers.Inline));
             }
 
             reader.Expect(TokenType.RightBrace, "'}' to close the property accessors");
 
             return new PropertyDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, name, type,
-                accessors, modifiers.IsStatic, modifiers.Dispatch, modifiers.IsSealed);
+                accessors, modifiers.IsStatic, modifiers.Dispatch, modifiers.IsSealed, modifiers.Inline, modifiers.IsNative);
         }
 
         /// <summary>Parses a method, or a module-level function (§3.2, §2.5).</summary>
@@ -383,8 +682,17 @@ namespace Surtr.Compiler.Syntax
             TypeSyntax returnType = ParseType();
 
             // No body means abstract, native, or an interface member — all signature-only (§2.3).
+            // An arrow body (§3.3) is sugar for a block holding one statement — a `return` for a
+            // value-returning method, an expression statement for a `void` one.
             BlockStatementSyntax? body = null;
-            if (!reader.Match(TokenType.Semicolon))
+            if (reader.Check(TokenType.FatArrow))
+            {
+                bool returnsVoid = returnType is NamedTypeSyntax namedReturnType
+                    && namedReturnType.Path.Count == 1
+                    && namedReturnType.Path[0] == "void";
+                body = ParseArrowBody(returnsVoid);
+            }
+            else if (!reader.Match(TokenType.Semicolon))
             {
                 body = ParseBlock();
             }
@@ -424,13 +732,17 @@ namespace Surtr.Compiler.Syntax
                 parameters, chainArguments, chainsToThis, body);
         }
 
-        /// <summary>Parses an operator overload (§5.6). Public and static are implied, so neither is written.</summary>
+        /// <summary>
+        /// Parses an operator overload (§5.6). Public is implied and never written; <c>static</c> is
+        /// the default, and a dispatch modifier (<c>virtual</c>, <c>override</c>, <c>abstract</c>) or
+        /// <c>sealed</c> makes the operator an instance method whose receiver is its first parameter.
+        /// </summary>
         private DeclarationSyntax ParseOperator(SourceLocation start, IReadOnlyList<string> docComment,
             IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers)
         {
             if (modifiers.Visibility != Visibility.Default || modifiers.IsStatic)
             {
-                throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "An operator overload is always public and static; neither is written.", start);
+                throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "An operator overload is always public; 'static' is never written.", start);
             }
 
             reader.Advance();
@@ -480,8 +792,16 @@ namespace Surtr.Compiler.Syntax
                 returnType = conversionTarget;
             }
 
-            BlockStatementSyntax operatorBody = ParseBlock();
-            return new OperatorDeclarationSyntax(SpanFrom(start), attributes, docComment, op, parameters, returnType, operatorBody);
+            // No body means an abstract operator, declared for a subclass to override — signature-only,
+            // exactly as a method's (§3.2). An interface's operators are always written this way.
+            BlockStatementSyntax? operatorBody = null;
+            if (!reader.Match(TokenType.Semicolon))
+            {
+                operatorBody = ParseBlock();
+            }
+
+            return new OperatorDeclarationSyntax(SpanFrom(start), attributes, docComment, op, parameters, returnType,
+                modifiers.Dispatch, modifiers.IsSealed, operatorBody);
         }
 
         /// <summary>
@@ -533,6 +853,32 @@ namespace Surtr.Compiler.Syntax
 
                 bool isVarargs = reader.Match(TokenType.Ellipsis);
                 ExpressionSyntax? defaultValue = reader.Match(TokenType.Assign) ? ParseExpression() : null;
+
+                if (isVarargs && defaultValue is not null)
+                {
+                    throw reader.Error(SurtrDiagnosticCode.InvalidParameterList,
+                        $"'{name}...' is a varargs parameter and cannot also carry a default value.");
+                }
+
+                // §3.5: once a parameter has a default, every parameter after it must too (short of
+                // a trailing varargs, which is never defaulted but absorbs zero-or-more on its own)
+                // — and a varargs parameter, once seen, must already have been the last one.
+                if (parameters.Count > 0)
+                {
+                    var last = parameters[parameters.Count - 1];
+
+                    if (last.IsVarargs)
+                    {
+                        throw reader.Error(SurtrDiagnosticCode.InvalidParameterList,
+                            $"'{last.Name}...' must be the last parameter.");
+                    }
+
+                    if (last.DefaultValue is not null && defaultValue is null && !isVarargs)
+                    {
+                        throw reader.Error(SurtrDiagnosticCode.InvalidParameterList,
+                            $"'{name}' has no default, but '{last.Name}' before it does — once a parameter has a default, every parameter after it must too.");
+                    }
+                }
 
                 parameters.Add(new ParameterSyntax(SpanFrom(start), name, type, defaultValue, isVarargs));
 

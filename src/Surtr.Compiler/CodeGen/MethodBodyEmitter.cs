@@ -338,8 +338,7 @@ namespace Surtr.Compiler.CodeGen
         {
             var otherwise = Code.NewLabel();
 
-            Expression(conditional.Condition);
-            Code.JumpIfFalse(otherwise);
+            EmitConditionalJump(conditional.Condition, otherwise);
             Statement(conditional.Then);
 
             if (conditional.Else is null)
@@ -369,10 +368,7 @@ namespace Surtr.Compiler.CodeGen
             // leaves, and emitting the test anyway would put a load and a branch on every iteration
             // to ask a question with one answer.
             if (!IsAlwaysTrue(loop.Condition))
-            {
-                Expression(loop.Condition);
-                Code.JumpIfFalse(end);
-            }
+                EmitConditionalJump(loop.Condition, end);
 
             // `continue` re-tests the condition, so it targets the top rather than the body.
             PushLoop(top, end);
@@ -397,10 +393,7 @@ namespace Surtr.Compiler.CodeGen
             Code.MarkLabel(top);
 
             if (loop.Condition is not null && !IsAlwaysTrue(loop.Condition))
-            {
-                Expression(loop.Condition);
-                Code.JumpIfFalse(end);
-            }
+                EmitConditionalJump(loop.Condition, end);
 
             // `continue` runs the step clause before re-testing, which is the whole reason the loop
             // needs a target distinct from its top.
@@ -426,6 +419,154 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private static bool IsAlwaysTrue(BoundExpression condition)
             => condition is BoundLiteralExpression { Value: bool value } && value;
+
+        /// <summary>
+        /// Emits a condition as a branch to <paramref name="target"/>, taken when the condition is
+        /// false — jumping over an <c>if</c>'s body, or out of a <c>while</c>/<c>for</c>.
+        /// </summary>
+        /// <remarks>
+        /// Fuses a plain built-in comparison straight into the matching <c>JP&lt;cmp&gt;</c> opcode
+        /// (§Opcodes — the family that "fuses a comparison and a branch, so the boolean never
+        /// reaches the stack") instead of the naive `Compare` + `JumpIfFalse` pair. Anything else —
+        /// a compound condition (`&amp;&amp;`, `||`), a user operator's call (already a
+        /// <see cref="BoundCallExpression"/> by the time it reaches here, per Fix 1/Fix 5), or a
+        /// condition that already special-cases inside <see cref="EmitBinary"/> (an absence test, or
+        /// string ordering, which lowers to <c>compareTo</c>) — falls back to evaluating it as an
+        /// ordinary boolean and testing the result, unchanged from before.
+        /// </remarks>
+        private void EmitConditionalJump(BoundExpression condition, SurtrLabel target)
+        {
+            // Each of these recognises a shape that plain `Expression(condition)` would otherwise
+            // turn into a boolean on the stack, immediately tested by the `JumpIfFalse` below - and
+            // fuses the test and the branch into one dispatch instead, the same idea
+            // `TryFusedComparison` already applies to an ordinary comparison.
+            if (condition is BoundBinaryExpression binary)
+            {
+                if (TryEmitAbsenceBranch(binary, target))
+                    return;
+
+                if (TryGetNullCheckOperand(binary, out var nullOperand, out bool checksForNull))
+                {
+                    Expression(nullOperand);
+
+                    // `JumpIfNull`/`JumpIfNotNull` say "jump when true"; a false condition is what
+                    // sends control to `target` here, so `x == null` (true means null) takes the
+                    // not-null branch and `x != null` takes the null one - the mirror of the
+                    // negation every other fused comparison below applies.
+                    if (checksForNull)
+                        Code.JumpIfNotNull(target);
+                    else
+                        Code.JumpIfNull(target);
+
+                    return;
+                }
+            }
+
+            // `x is T` has no negated fused opcode to jump on directly - only `JPInstanceOf` exists,
+            // which jumps when the test is true - so the false path is an explicit fall-through
+            // past an unconditional jump instead of the single dispatch a negated form would give.
+            if (condition is BoundTypeTestExpression test)
+            {
+                Expression(test.Operand);
+
+                var isInstance = Code.NewLabel();
+                Code.JumpIfInstanceOf(Descriptors.Emit(test.TestedType.NonNullable), isInstance);
+                Code.Jump(target);
+                Code.MarkLabel(isInstance);
+                return;
+            }
+
+            if (TryFusedComparison(condition, out var comparison, out var operandType, out var left, out var right))
+            {
+                Expression(left);
+                Expression(right);
+
+                // The opcode says "jump when true"; a false condition is what sends control to
+                // `target` here, so the branch tests the negation of what was written.
+                Code.JumpIfCompare(Negate(comparison), operandType, target);
+                return;
+            }
+
+            Expression(condition);
+            Code.JumpIfFalse(target);
+        }
+
+        /// <summary>
+        /// Recognises a condition that <see cref="EmitBinary"/>'s ordinary comparison path would
+        /// turn into a single `Compare` opcode, and reports the operands and comparison a fused
+        /// branch would need instead. See <see cref="EmitConditionalJump"/> for what falls back.
+        /// </summary>
+        private bool TryFusedComparison(
+            BoundExpression condition,
+            out SurtrComparison comparison,
+            out SurtrValueTypeCode operandType,
+            out BoundExpression left,
+            out BoundExpression right)
+        {
+            comparison = default;
+            operandType = default;
+            left = null!;
+            right = null!;
+
+            if (condition is not BoundBinaryExpression binary)
+                return false;
+
+            bool isOrdering;
+
+            switch (binary.Operator)
+            {
+                case BinaryOperator.Equal: comparison = SurtrComparison.Equal; isOrdering = false; break;
+                case BinaryOperator.NotEqual: comparison = SurtrComparison.NotEqual; isOrdering = false; break;
+                case BinaryOperator.Less: comparison = SurtrComparison.Less; isOrdering = true; break;
+                case BinaryOperator.LessEqual: comparison = SurtrComparison.LessOrEqual; isOrdering = true; break;
+                case BinaryOperator.Greater: comparison = SurtrComparison.Greater; isOrdering = true; break;
+                case BinaryOperator.GreaterEqual: comparison = SurtrComparison.GreaterOrEqual; isOrdering = true; break;
+
+                case BinaryOperator.ReferenceEqual:
+                case BinaryOperator.ReferenceNotEqual:
+                    comparison = binary.Operator == BinaryOperator.ReferenceEqual
+                        ? SurtrComparison.Equal
+                        : SurtrComparison.NotEqual;
+                    operandType = SurtrValueTypeCode.Object;
+                    left = binary.Left;
+                    right = binary.Right;
+                    return true;
+
+                default:
+                    return false;
+            }
+
+            // TryEmitAbsenceTest intercepts exactly this shape before EmitBinary's ordinary path
+            // ever runs — a fused branch has to defer to it the same way.
+            if (binary.Operator is BinaryOperator.Equal or BinaryOperator.NotEqual
+                && ((IsNullLiteral(binary.Right) && IsNullablePrimitive(binary.Left.Type))
+                    || (IsNullLiteral(binary.Left) && IsNullablePrimitive(binary.Right.Type))))
+            {
+                return false;
+            }
+
+            operandType = TypeCodeOf(binary.Left.Type);
+
+            // String equality has a fused opcode (JPStrEQ/JPStrNE); string ordering does not — it
+            // lowers to compareTo (EmitStringOrdering), so only equality fuses here.
+            if (operandType == SurtrValueTypeCode.String && isOrdering)
+                return false;
+
+            left = binary.Left;
+            right = binary.Right;
+            return true;
+        }
+
+        private static SurtrComparison Negate(SurtrComparison comparison) => comparison switch
+        {
+            SurtrComparison.Equal => SurtrComparison.NotEqual,
+            SurtrComparison.NotEqual => SurtrComparison.Equal,
+            SurtrComparison.Less => SurtrComparison.GreaterOrEqual,
+            SurtrComparison.LessOrEqual => SurtrComparison.Greater,
+            SurtrComparison.Greater => SurtrComparison.LessOrEqual,
+            SurtrComparison.GreaterOrEqual => SurtrComparison.Less,
+            _ => throw new ArgumentOutOfRangeException(nameof(comparison)),
+        };
 
         /// <summary>
         /// Lowers a <c>for-in</c>, by index wherever that is possible.
@@ -1224,6 +1365,10 @@ namespace Surtr.Compiler.CodeGen
                     EmitDictLiteral(dictionary);
                     return;
 
+                case BoundCollectionCreationExpression collection:
+                    EmitCollectionCreation(collection);
+                    return;
+
                 case BoundInterpolatedStringExpression interpolated:
                     EmitInterpolatedString(interpolated);
                     return;
@@ -1231,6 +1376,14 @@ namespace Surtr.Compiler.CodeGen
                 case BoundTypeTestExpression test:
                     Expression(test.Operand);
                     Code.TestInstanceOf(Descriptors.Emit(test.TestedType.NonNullable));
+                    return;
+
+                case BoundTypeOfExpression typeOf:
+                    EmitTypeOf(typeOf);
+                    return;
+
+                case BoundModuleOfExpression moduleOf:
+                    EmitModuleOf(moduleOf);
                     return;
 
                 case BoundSwitchExpression @switch:
@@ -1294,6 +1447,51 @@ namespace Surtr.Compiler.CodeGen
             }
         }
 
+        /// <summary>
+        /// <c>typeof(X)</c>. The static form needs no operand at all - <see cref="Code"/>.<c>LoadTypeOf</c>
+        /// resolves entirely from the pool. The instance form's operand is either already a
+        /// non-nullable primitive (the binder leaves it unconverted exactly when it is) or already
+        /// converted to <c>unknown</c>, boxing where boxing is actually needed - a primitive here
+        /// can only mean its class is statically known and can never differ at run time, so the
+        /// value is evaluated for its side effects and discarded rather than read by
+        /// <c>GetTypeOfValue</c>, which is what lets <c>typeof(5)</c> skip the box
+        /// <c>Type.of(5)</c> always pays for through its <c>unknown</c> parameter.
+        /// </summary>
+        private void EmitTypeOf(BoundTypeOfExpression typeOf)
+        {
+            if (typeOf.TargetType is TypeSymbol staticTarget)
+            {
+                Code.LoadTypeOf(Descriptors.Emit(staticTarget.NonNullable));
+                return;
+            }
+
+            var operand = typeOf.Operand!;
+            Expression(operand);
+
+            if (operand.Type.IsPrimitive)
+            {
+                Code.Pop();
+                Code.LoadTypeOf(Descriptors.Emit(operand.Type.NonNullable));
+                return;
+            }
+
+            Code.GetTypeOfValue();
+        }
+
+        /// <summary>
+        /// <c>moduleof(ModulePath)</c>. Always static: the binder already resolved the path to a
+        /// <see cref="ModuleSymbol"/>, so there is nothing left to evaluate -
+        /// <see cref="SurtrCodeEmitter.LoadModuleOf(SurtrModule)"/> picks between the current
+        /// module and the module table entirely from the target's own identity.
+        /// </summary>
+        private void EmitModuleOf(BoundModuleOfExpression moduleOf)
+        {
+            if (!_context.TryGetModule(moduleOf.Module.Path, out var target))
+                throw Unsupported($"moduleof('{moduleOf.Module.Path}'), which is neither being emitted here nor already built");
+
+            Code.LoadModuleOf(target);
+        }
+
         private void EmitConversion(BoundConversionExpression conversion)
         {
             var from = conversion.Operand.Type;
@@ -1328,8 +1526,25 @@ namespace Surtr.Compiler.CodeGen
             }
 
             Expression(conversion.Operand);
+            EmitConversionTail(conversion.Conversion, from, to);
+        }
 
-            switch (conversion.Conversion.Kind)
+        /// <summary>
+        /// The part of a conversion that runs once the value it applies to is already on the stack.
+        /// </summary>
+        /// <remarks>
+        /// Split out of <see cref="EmitConversion"/> so a collection cast constructor's per-element
+        /// loop (<see cref="EmitCollectionCreation"/>) can apply the same conversion to a value it
+        /// just read with <c>TupGetC</c>/<c>ArrGet</c> — there is no <see cref="BoundConversionExpression"/>
+        /// node mid-loop for it to be the operand of, only the classified <see cref="Conversion"/>
+        /// the binder already worked out. Every caller from that loop is restricted to
+        /// <see cref="Conversion.IsImplicit"/> (§5.6 makes a user-defined <c>operator as</c>
+        /// explicit-only), so only the identity/nullable/reference/numeric/erasure branches below are
+        /// ever reached from there.
+        /// </remarks>
+        private void EmitConversionTail(Conversion conversion, TypeSymbol from, TypeSymbol to)
+        {
+            switch (conversion.Kind)
             {
                 case ConversionKind.Identity:
                 case ConversionKind.ImplicitNullable:
@@ -1372,7 +1587,7 @@ namespace Surtr.Compiler.CodeGen
                 }
 
                 default:
-                    throw Unsupported($"a {conversion.Conversion.Kind} conversion");
+                    throw Unsupported($"a {conversion.Kind} conversion");
             }
         }
 
@@ -1416,6 +1631,26 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
+        /// Boxes a call's receiver only where the callee might be reached through a vtable slot.
+        /// </summary>
+        /// <remarks>
+        /// §6.3: a direct dispatch calls the exact method body regardless of the receiver's runtime
+        /// type, so there is nothing for a box to be looked up on — the erased field reaches the
+        /// callee unboxed. A method whose own <see cref="MethodSymbol.Dispatch"/> is not
+        /// <see cref="MethodDispatch.Direct"/> may still be reached that way (a devirtualised call
+        /// on a sealed value class already goes through <c>CallSpecial</c>, which does not consult
+        /// the receiver's class either), so this boxes a little more than the strict minimum there —
+        /// safe, per §6.3, where boxing less would not be. What matters is that this is the exact
+        /// same test <see cref="LoadReceiver"/> makes to decide whether to unbox, so the two can
+        /// never disagree about which convention a given method's body was compiled against.
+        /// </remarks>
+        private void BoxReceiverForCall(MethodSymbol method, TypeSymbol receiverType)
+        {
+            if (method.Dispatch != MethodDispatch.Direct)
+                BoxIfValueClass(receiverType);
+        }
+
+        /// <summary>
         /// Emits <c>as?</c>: one <c>CastOrNull</c> to a reference type, and a tested unbox to a
         /// primitive.
         /// </summary>
@@ -1438,21 +1673,30 @@ namespace Surtr.Compiler.CodeGen
             }
 
             var value = _method.DeclareLocal("$candidate");
-            var failed = Code.NewLabel();
+            var isInstance = Code.NewLabel();
             var end = Code.NewLabel();
 
+            // JPInstanceOf jumps on true, so - unlike TestInstanceOf + JumpIfFalse, which always
+            // materializes the bool - the "is an instance" arm is the jump target and the "is not"
+            // arm is the fall-through, saving the intermediate boolean on the common (successful) path.
             Expression(conversion.Operand);
             Code.StoreLocal(value);
             Code.LoadLocal(value);
-            Code.TestInstanceOf(Descriptors.Emit(target));
-            Code.JumpIfFalse(failed);
+            Code.JumpIfInstanceOf(Descriptors.Emit(target), isInstance);
 
+            // This branch is only reached for a primitive `target`, so the result type is always a
+            // nullable primitive - its "no value" is the absent tag (§5.1), never a null reference.
+            // A caller testing the result with `??`/`== null` reads the *static* type to pick
+            // JPA/IsAbsent over JumpIfNull/IsNull (EmitNullCoalesce, TryEmitAbsenceTest/Branch), so
+            // pushing a null reference here would go unrecognised as absence and read back its
+            // all-zero payload as a present `0` instead.
+            Code.PushAbsent(TypeCodeOf(target));
+            Code.Jump(end);
+
+            Code.MarkLabel(isInstance);
             Code.LoadLocal(value);
             Code.Unbox();
 
-            Code.Jump(end);
-            Code.MarkLabel(failed);
-            Code.LoadNull();
             Code.MarkLabel(end);
         }
 
@@ -1479,6 +1723,24 @@ namespace Surtr.Compiler.CodeGen
             // absent-float is a NaN and FEQ answers false however it is asked.
             if (TryEmitAbsenceTest(binary))
                 return;
+
+            // `x == null`/`x != null`/`x === null`/`x !== null` against a reference (a class, an
+            // array, a string, ...) needs neither the null literal on the stack nor a two-operand
+            // comparison: a reference's nullness is its own tag (§5.1), which `IsNull`/`IsNotNull`
+            // read off the one operand directly. Left to the general path below this would push
+            // `PushNull` and run `REQ`/`RNE` - or, for a string, `StrEQ`/`StrNE`'s text comparison,
+            // which happens to be null-safe (§Opcodes) but still does more work than asking the tag.
+            if (TryGetNullCheckOperand(binary, out var nullCheckOperand, out bool checksForNull))
+            {
+                Expression(nullCheckOperand);
+
+                if (checksForNull)
+                    Code.IsNull();
+                else
+                    Code.IsNotNull();
+
+                return;
+            }
 
             var operands = TypeCodeOf(binary.Left.Type);
 
@@ -1799,6 +2061,40 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
+        /// The branch-fusing twin of <see cref="TryEmitAbsenceTest"/>: <c>x == null</c>/<c>x != null</c>
+        /// against a nullable primitive, used as a branch condition, fuses straight into
+        /// <c>JPA</c>/<c>JPNA</c> instead of pushing the absence test's boolean and testing it with a
+        /// separate <c>JumpIfFalse</c>.
+        /// </summary>
+        private bool TryEmitAbsenceBranch(BoundBinaryExpression binary, SurtrLabel target)
+        {
+            if (binary.Operator is not (BinaryOperator.Equal or BinaryOperator.NotEqual))
+                return false;
+
+            BoundExpression? value = null;
+            if (IsNullLiteral(binary.Right) && IsNullablePrimitive(binary.Left.Type))
+                value = binary.Left;
+            else if (IsNullLiteral(binary.Left) && IsNullablePrimitive(binary.Right.Type))
+                value = binary.Right;
+
+            if (value is null)
+                return false;
+
+            Expression(value);
+
+            // JPA/JPNA say "jump when true"; a false condition is what sends control to `target`
+            // here, so `== null` (true means absent) takes the present branch (JPNA) and `!= null`
+            // takes the absent one (JPA) - the mirror of TryEmitAbsenceTest's IsAbsent/IsPresent
+            // choice above.
+            if (binary.Operator == BinaryOperator.Equal)
+                Code.JPNA(target);
+            else
+                Code.JPA(target);
+
+            return true;
+        }
+
+        /// <summary>
         /// Whether an expression is the <c>null</c> literal, looking through the conversion the
         /// binder wraps it in to give it the other operand's type.
         /// </summary>
@@ -1808,6 +2104,42 @@ namespace Surtr.Compiler.CodeGen
             BoundConversionExpression conversion => IsNullLiteral(conversion.Operand),
             _ => false,
         };
+
+        /// <summary>
+        /// Recognises <c>x == null</c>/<c>x != null</c>/<c>x === null</c>/<c>x !== null</c> (either
+        /// operand order) against a reference-typed <paramref name="binary"/>, and reports which
+        /// operand to test and which sense to test it in - the shared detection
+        /// <see cref="EmitBinary"/>'s value-producing <c>IsNull</c>/<c>IsNotNull</c> lowering and
+        /// <see cref="EmitConditionalJump"/>'s <c>JPN</c>/<c>JPNN</c> branch fusion both need.
+        /// </summary>
+        /// <remarks>
+        /// A nullable primitive is deliberately excluded: its "no value" is the absent tag, not a
+        /// null reference (§5.1), so it takes <see cref="TryEmitAbsenceTest"/>/
+        /// <see cref="TryEmitAbsenceBranch"/> instead - the two are never both applicable to the
+        /// same comparison, since one requires the non-literal operand to be nullable-primitive and
+        /// the other requires it not to be.
+        /// </remarks>
+        private static bool TryGetNullCheckOperand(BoundBinaryExpression binary, out BoundExpression operand, out bool checksForNull)
+        {
+            operand = null!;
+            checksForNull = false;
+
+            bool isEquality = binary.Operator is BinaryOperator.Equal or BinaryOperator.ReferenceEqual;
+            bool isInequality = binary.Operator is BinaryOperator.NotEqual or BinaryOperator.ReferenceNotEqual;
+
+            if (!isEquality && !isInequality)
+                return false;
+
+            if (IsNullLiteral(binary.Right) && !IsNullablePrimitive(binary.Left.Type))
+                operand = binary.Left;
+            else if (IsNullLiteral(binary.Left) && !IsNullablePrimitive(binary.Right.Type))
+                operand = binary.Right;
+            else
+                return false;
+
+            checksForNull = isEquality;
+            return true;
+        }
 
         // A stack, because `a?.b?.c` nests one guarded access inside another and each has its own
         // receiver slot; the innermost is the one a placeholder reads.
@@ -2071,17 +2403,8 @@ namespace Surtr.Compiler.CodeGen
                     Code.StoreLocal(ParameterSlot(parameter.Parameter));
                     return;
 
-                case BoundFieldExpression field:
+case BoundFieldExpression field:
                 {
-                    // §10: a `native var` is the host's storage, reached through this module's import
-                    // table rather than through a static slot it does not have.
-                    if (field.Field.IsNative)
-                    {
-                        value();
-                        Code.StoreGlobal(field.Field.Name);
-                        return;
-                    }
-
                     var info = Field(field.Field);
 
                     if (field.Field.IsStatic)
@@ -2091,7 +2414,8 @@ namespace Surtr.Compiler.CodeGen
                         return;
                     }
 
-                    Expression(field.Receiver ?? throw Unsupported($"a write to '{field.Field.Name}' with no receiver"));
+                    var receiver = field.Receiver ?? throw Unsupported($"a write to '{field.Field.Name}' with no receiver");
+                    Expression(receiver);
                     value();
                     Code.StoreField(info);
                     return;
@@ -2102,8 +2426,18 @@ namespace Surtr.Compiler.CodeGen
                     var setter = property.Property.Setter
                         ?? throw Unsupported($"a write to '{property.Property.Name}', which has no setter");
 
+                    if (TryInlineAutoAccessorSet(property.Property, property.Receiver, value))
+                        return;
+
+                    if (TryInlinePropertySetter(property.Property, property.Receiver, value))
+                        return;
+
                     if (!property.Property.IsStatic)
-                        Expression(property.Receiver ?? throw Unsupported($"a write to '{property.Property.Name}' with no receiver"));
+                    {
+                        var receiver = property.Receiver ?? throw Unsupported($"a write to '{property.Property.Name}' with no receiver");
+                        Expression(receiver);
+                        BoxReceiverForCall(setter, receiver.Type);
+                    }
 
                     value();
                     EmitResolvedCall(setter, virtualCall: setter.Dispatch != MethodDispatch.Direct, discardResult: true);
@@ -2148,14 +2482,6 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitFieldRead(BoundFieldExpression field)
         {
-            // §10: a host global has no field slot to read — it lives in the runtime's global table
-            // and the module names it by an import bound when the module loads.
-            if (field.Field.IsNative)
-            {
-                Code.LoadGlobal(field.Field.Name);
-                return;
-            }
-
             var info = Field(field.Field);
 
             if (field.Field.IsStatic)
@@ -2182,11 +2508,11 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitPropertyRead(BoundPropertyExpression property)
         {
-            // `dict.length` is a native getter, but `DictLen` reads the count in one dispatch with
-            // no frame — the same thing, matched by the getter's identity so a user `length` on
-            // another type is untouched. The array's `length` is intentionally left to its native
-            // getter: it shares the opcode's shape only here, in a property read, and the array's
-            // `ArrLen` is reserved for the `for-in` lowering that actually walks by it.
+            // Every built-in collection's `length` is a native getter, but each has a dedicated
+            // opcode that reads the count in one dispatch with no frame — the same thing, matched by
+            // the getter's identity so a user `length` on another type is untouched. `ArrLen`/
+            // `TupLen` are also what the `for-in` lowering over an array/tuple already reads the
+            // count with; this is the same opcode reaching the same answer from a property read.
             if (IsDictionaryLength(property.Property))
             {
                 if (property.Property.IsStatic)
@@ -2197,11 +2523,42 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
+            if (IsArrayLength(property.Property))
+            {
+                Expression(property.Receiver!);
+                Code.ArrLen();
+                return;
+            }
+
+            if (IsStringLength(property.Property))
+            {
+                Expression(property.Receiver!);
+                Code.StrLen();
+                return;
+            }
+
+            if (IsTupleLength(property.Property))
+            {
+                Expression(property.Receiver!);
+                Code.TupLen();
+                return;
+            }
+
+            if (TryInlineAutoAccessorGet(property.Property, property.Receiver, discardResult: false))
+                return;
+
+            if (TryInlinePropertyGetter(property))
+                return;
+
             var getter = property.Property.Getter
                 ?? throw Unsupported($"a read of '{property.Property.Name}', which has no getter");
 
             if (!property.Property.IsStatic)
-                Expression(property.Receiver ?? throw Unsupported($"a read of '{property.Property.Name}' with no receiver"));
+            {
+                var receiver = property.Receiver ?? throw Unsupported($"a read of '{property.Property.Name}' with no receiver");
+                Expression(receiver);
+                BoxReceiverForCall(getter, receiver.Type);
+            }
 
             EmitResolvedCall(getter, virtualCall: getter.Dispatch != MethodDispatch.Direct, discardResult: false);
         }
@@ -2209,6 +2566,242 @@ namespace Surtr.Compiler.CodeGen
         /// <summary>Whether <paramref name="property"/> is, by identity, the built-in dictionary's <c>length</c>.</summary>
         private static bool IsDictionaryLength(PropertySymbol property)
             => property.Getter is { } getter && IsDictionaryMember(getter, MemberNames.Getter("length"));
+
+        /// <summary>Whether <paramref name="property"/> is, by identity, the built-in array's <c>length</c>.</summary>
+        private static bool IsArrayLength(PropertySymbol property)
+            => property.Getter is { } getter && IsArrayMember(getter, MemberNames.Getter("length"));
+
+        /// <summary>Whether <paramref name="property"/> is, by identity, the built-in string's <c>length</c>.</summary>
+        private static bool IsStringLength(PropertySymbol property)
+            => property.Getter is { } getter && IsStringMember(getter, MemberNames.Getter("length"));
+
+        /// <summary>Whether <paramref name="property"/> is, by identity, the built-in tuple's <c>length</c>.</summary>
+        private static bool IsTupleLength(PropertySymbol property)
+            => property.Getter is { } getter && IsTupleMember(getter, MemberNames.Getter("length"));
+
+        /// <summary>
+        /// Replaces a read of an auto-property by the field load that is its whole body (§3.4, §3.6).
+        /// </summary>
+        /// <remarks>
+        /// An auto-accessor has no bound body for <see cref="TryInline"/> to splice, so the read is
+        /// lowered here, in the shape <see cref="ModuleEmitter.EmitAutoAccessor"/> would have given
+        /// the body: a static one is the backing field, an instance one is the field off the
+        /// receiver. Only a non-virtual accessor can be replaced — a virtual one has to dispatch so
+        /// an override runs — and a value class's receiver is the wrapped field, not an instance to
+        /// read a field from (§2.9).
+        /// </remarks>
+        private bool TryInlineAutoAccessorGet(PropertySymbol property, BoundExpression? receiver, bool discardResult)
+        {
+            var getter = property.Getter;
+            if (getter is null || getter.Dispatch != MethodDispatch.Direct || !IsAutoAccessor(property, getter))
+                return false;
+
+            if (property.IsStatic)
+            {
+                Code.LoadStaticField(Field(property.BackingField!));
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            if (receiver is null || receiver.Type.NonNullable.TypeKind == TypeSymbolKind.ValueClass)
+                return false;
+
+            Expression(receiver);
+            Code.LoadField(Field(property.BackingField!));
+            if (discardResult)
+                Code.Pop();
+            return true;
+        }
+
+        /// <summary>
+        /// Replaces a write to an auto-property by the field store that is its whole body (§3.4, §3.6).
+        /// </summary>
+        /// <remarks>
+        /// The inverse of <see cref="TryInlineAutoAccessorGet"/>: a static one stores the backing
+        /// field, an instance one stores the field off the receiver. The value is still emitted by
+        /// the caller's <paramref name="value"/> callback, between the receiver and the store, which
+        /// is the order every other write target uses.
+        /// </remarks>
+        private bool TryInlineAutoAccessorSet(PropertySymbol property, BoundExpression? receiver, Action value)
+        {
+            var setter = property.Setter;
+            if (setter is null || setter.Dispatch != MethodDispatch.Direct || !IsAutoAccessor(property, setter))
+                return false;
+
+            if (property.IsStatic)
+            {
+                value();
+                Code.StoreStaticField(Field(property.BackingField!));
+                return true;
+            }
+
+            if (receiver is null || receiver.Type.NonNullable.TypeKind == TypeSymbolKind.ValueClass)
+                return false;
+
+            Expression(receiver);
+            value();
+            Code.StoreField(Field(property.BackingField!));
+            return true;
+        }
+
+        /// <summary>Whether an accessor is one the emitter supplies against a backing field, rather than one a body was bound for.</summary>
+        private bool IsAutoAccessor(PropertySymbol property, MethodSymbol accessor)
+            => property.BackingField is not null
+                && !accessor.IsNative
+                && (_context.Bodies is null || !_context.Bodies.ContainsKey(accessor));
+
+        /// <summary>
+        /// Splices an explicit getter at its read site (§3.6), by the hint written on the property or
+        /// by the cost heuristic, whichever lets it in.
+        /// </summary>
+        /// <remarks>
+        /// A property read reaches the getter through <see cref="EmitPropertyRead"/>, not through
+        /// <see cref="EmitCall"/> — so without this the <c>inline</c> a property declares would never
+        /// be honoured. The getter is shaped as the zero-argument call it is, and the rest is the
+        /// ordinary splice. Only a non-virtual getter can be replaced: the read dispatches a virtual
+        /// one so an override runs, exactly as the auto-accessor path requires.
+        /// </remarks>
+        private bool TryInlinePropertyGetter(BoundPropertyExpression property)
+        {
+            var getter = property.Property.Getter;
+            if (getter is null)
+                return false;
+
+            // A virtual or native getter can never be spliced - the synthetic zero-argument call
+            // built below always claims non-virtual, so TryInline's own dispatch guard cannot catch
+            // it and this check has to stand in for it. forceinline still has to fail loudly here
+            // rather than silently fall through to an ordinary (possibly virtual) call the way the
+            // `inline` hint is allowed to.
+            if (getter.Dispatch != MethodDispatch.Direct || getter.IsNative)
+            {
+                if (getter.IsForceInline)
+                    throw Unsupported($"'forceinline {getter.Name}', whose body is not available to splice");
+
+                return false;
+            }
+
+            if (!getter.IsInline && !getter.IsForceInline)
+            {
+                if (_context.Bodies is null || !_context.Bodies.TryGetValue(getter, out var body))
+                    return false;
+
+                if (!InlineCost.WorthInline(body, declaredInline: false))
+                    return false;
+            }
+
+            var call = new BoundCallExpression(property.Syntax, property.Receiver, getter, Array.Empty<BoundExpression>(), isVirtual: false);
+            if (TryInline(call, discardResult: false))
+                return true;
+
+            if (getter.IsForceInline)
+                throw Unsupported($"'forceinline {getter.Name}', whose body is not available to splice");
+
+            return false;
+        }
+
+        /// <summary>
+        /// Splices an explicit setter at its write site (§3.6), by the hint written on the property
+        /// or by the cost heuristic, whichever lets it in — the write-side twin of
+        /// <see cref="TryInlinePropertyGetter"/>.
+        /// </summary>
+        /// <remarks>
+        /// A property write reaches the setter through <see cref="Store"/>, which does not always
+        /// have a <see cref="BoundExpression"/> for the value to hand <see cref="TryInline"/> — a
+        /// compound assignment or an increment/decrement has already lowered it into a plain local
+        /// by the time <see cref="Store"/> runs, and only hands over an <c>Action</c> that emits
+        /// whatever the value turned out to be. <see cref="TryInlineSetterBody"/> below is that same
+        /// splice, built directly against <paramref name="value"/> instead of a bound argument list.
+        /// Only a non-virtual setter can be replaced: a write dispatches a virtual one so an override
+        /// runs, exactly as the getter and the auto-accessor paths require.
+        /// </remarks>
+        private bool TryInlinePropertySetter(PropertySymbol property, BoundExpression? receiver, Action value)
+        {
+            var setter = property.Setter;
+            if (setter is null)
+                return false;
+
+            // Mirrors the same guard on TryInlinePropertyGetter, for the same reason: a virtual or
+            // native setter can never be spliced, but forceinline still has to fail loudly here
+            // instead of silently falling through to an ordinary (possibly virtual) call.
+            if (setter.Dispatch != MethodDispatch.Direct || setter.IsNative)
+            {
+                if (setter.IsForceInline)
+                    throw Unsupported($"'forceinline {setter.Name}', whose body is not available to splice");
+
+                return false;
+            }
+
+            if (!setter.IsInline && !setter.IsForceInline)
+            {
+                if (_context.Bodies is null || !_context.Bodies.TryGetValue(setter, out var costBody))
+                    return false;
+
+                if (!InlineCost.WorthInline(costBody, declaredInline: false))
+                    return false;
+            }
+
+            if (TryInlineSetterBody(setter, receiver, value))
+                return true;
+
+            if (setter.IsForceInline)
+                throw Unsupported($"'forceinline {setter.Name}', whose body is not available to splice");
+
+            return false;
+        }
+
+        /// <summary>
+        /// The actual splice for <see cref="TryInlinePropertySetter"/>, once the hint or the
+        /// heuristic has already let the setter in. Mirrors <see cref="TryInline"/>'s guards and
+        /// receiver handling, but feeds the setter's one parameter from <paramref name="value"/>
+        /// rather than a bound argument, and never carries a result — a setter always returns void,
+        /// so there is nothing here that plays <see cref="TryInline"/>'s tail-return or result-local
+        /// role.
+        /// </summary>
+        private bool TryInlineSetterBody(MethodSymbol setter, BoundExpression? receiver, Action value)
+        {
+            if (_context.Bodies is null || !_context.Bodies.TryGetValue(setter, out var body))
+                return false;
+
+            if (_inlines.Count >= MaxInlineDepth)
+                return false;
+
+            // Guards against a setter splicing itself, directly or through another inline function -
+            // see TryInline's identical checks for why.
+            if (ReferenceEquals(setter, _symbol))
+                return false;
+
+            foreach (var frame in _inlines)
+            {
+                if (ReferenceEquals(frame.Method, setter))
+                    return false;
+            }
+
+            SurtrLocal? receiverSlot = null;
+            if (receiver is not null)
+            {
+                var slot = _method.DeclareLocal("$inlineThis");
+                Expression(receiver);
+                Code.StoreLocal(slot);
+                receiverSlot = slot;
+            }
+
+            var valueSlot = _method.DeclareLocal("$inline$" + setter.Parameters[0].Name);
+            value();
+            Code.StoreLocal(valueSlot);
+            _splicedParameters[setter.Parameters[0]] = valueSlot;
+
+            var exit = Code.NewLabel();
+            _inlines.Add(new InlineFrame(setter, exit, default, false, receiverSlot, _finallies.Count));
+            Statement(body);
+            _inlines.RemoveAt(_inlines.Count - 1);
+
+            if (Code.IsReachable)
+                Code.Jump(exit);
+
+            Code.MarkLabel(exit);
+            return true;
+        }
 
         private void EmitObjectCreation(BoundObjectCreationExpression creation)
         {
@@ -2335,21 +2928,34 @@ namespace Surtr.Compiler.CodeGen
             if (TryFoldConstCall(call, discardResult))
                 return;
 
-            // A method on the built-in `dict` is a native body the compiler could emit a call to,
+            // A method on a built-in collection is a native body the compiler could emit a call to,
             // but each of these operations also has a dedicated opcode that does the same thing in
             // one dispatch and no frame. Where the callee is one of them, this call site takes the
             // opcode — the member is matched by identity so a user type that happens to declare its
-            // own `remove` is not confused with the dictionary's.
+            // own `remove` is not confused with the built-in's.
             if (TryEmitDictionaryOperation(call, discardResult))
                 return;
 
-            if (call.Method.IsInline || call.Method.IsForceInline)
+            if (TryEmitArrayOperation(call, discardResult))
+                return;
+
+            if (TryEmitStringOperation(call, discardResult))
+                return;
+
+            if (call.Method.IsForceInline)
             {
                 if (TryInline(call, discardResult))
                     return;
 
-                if (call.Method.IsForceInline)
-                    throw Unsupported($"'forceinline fun {call.Method.Name}', whose body is not available to splice");
+                throw Unsupported($"'forceinline fun {call.Method.Name}', whose body is not available to splice");
+            }
+
+            // `inline` is a hint and the heuristic a guess: a body either of them names that cannot
+            // be spliced falls through to a real call rather than failing the whole module.
+            if (call.Method.IsInline || ShouldInlineByCost(call))
+            {
+                if (TryInline(call, discardResult))
+                    return;
             }
 
             if (call.Receiver is not null)
@@ -2357,8 +2963,9 @@ namespace Surtr.Compiler.CodeGen
                 Expression(call.Receiver);
 
                 // §6.3: a value class is the field it wraps, and a field is not something to
-                // dispatch on — so a call on one boxes first, and `this` inside the callee unwraps.
-                BoxIfValueClass(call.Receiver.Type);
+                // dispatch on — so a call that might resolve through the receiver's class boxes
+                // first, and `this` inside the callee unwraps. A direct dispatch needs neither.
+                BoxReceiverForCall(call.Method, call.Receiver.Type);
             }
 
             foreach (var argument in call.Arguments)
@@ -2379,19 +2986,6 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private void EmitResolvedCall(MethodSymbol method, bool virtualCall, bool discardResult)
         {
-            // §10's one genuinely global category. `CallGlobalNative` is not about the body being
-            // native — a native class member is called like anything else — but about the target
-            // living in the host's table rather than in a module's, which is a different namespace.
-            if (method.IsNative && method.ContainingType is null)
-            {
-                Code.CallGlobal(
-                    method.Name,
-                    method.Parameters.Count,
-                    discardResult || method.ReturnType.IsVoid ? 0 : 1);
-
-                return;
-            }
-
             if (_context.TryGetBuilder(method, out var local))
             {
                 // The one case where the call site rather than the callee decides: a `super` call,
@@ -2444,10 +3038,10 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         /// <remarks>
         /// The members lowered here are the ones with a dedicated opcode of identical semantics:
-        /// <c>clear</c>, <c>containsKey</c>, <c>remove</c>, <c>keys</c> and <c>values</c>.
-        /// <c>get</c>/<c>set</c> are deliberately left alone — the index form <c>m[i]</c> already
-        /// reaches the same <c>DictGet</c>/<c>DictSet</c>, so lowering the method spelling would
-        /// duplicate a path that exists. <c>length</c> is handled separately, in
+        /// <c>clear</c>, <c>get</c>, <c>set</c>, <c>containsKey</c>, <c>remove</c>, <c>keys</c> and
+        /// <c>values</c>. <c>get</c>/<c>set</c> reach the same <c>DictGet</c>/<c>DictSet</c> the
+        /// index form <c>m[k]</c> already does — lowered here too, rather than left to duplicate a
+        /// native call the index form already avoids. <c>length</c> is handled separately, in
         /// <see cref="EmitPropertyRead"/>.
         /// </remarks>
         private bool TryEmitDictionaryOperation(BoundCallExpression call, bool discardResult)
@@ -2459,6 +3053,25 @@ namespace Surtr.Compiler.CodeGen
             {
                 Expression(call.Receiver);
                 Code.DictClear();
+                return true;
+            }
+
+            if (IsDictionaryMember(call.Method, "get"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.DictGet();
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            if (IsDictionaryMember(call.Method, "set"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Expression(call.Arguments[1]);
+                Code.DictSet();
                 return true;
             }
 
@@ -2504,6 +3117,126 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
+        /// The array twin of <see cref="TryEmitDictionaryOperation"/>: replaces a call to a member
+        /// of the built-in <c>array</c> that has a dedicated opcode of identical semantics —
+        /// <c>get</c>, <c>set</c>, <c>push</c>, <c>pop</c>, <c>insert</c>, <c>removeAt</c>,
+        /// <c>clear</c>, <c>indexOf</c> and <c>contains</c>. <c>length</c> is handled separately, in
+        /// <see cref="EmitPropertyRead"/>; <c>reverse</c>, <c>reserve</c>, <c>truncate</c>,
+        /// <c>remove(value)</c> and <c>sort</c> have no opcode of their own and stay real calls.
+        /// </summary>
+        private bool TryEmitArrayOperation(BoundCallExpression call, bool discardResult)
+        {
+            if (call.Receiver is null)
+                return false;
+
+            if (IsArrayMember(call.Method, "get"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.ArrGet();
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "set"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Expression(call.Arguments[1]);
+                Code.ArrSet();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "push"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.ArrPush();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "pop"))
+            {
+                Expression(call.Receiver);
+                Code.ArrPop();
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "insert"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Expression(call.Arguments[1]);
+                Code.ArrInsert();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "removeAt"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.ArrRemoveAt();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "clear"))
+            {
+                Expression(call.Receiver);
+                Code.ArrClear();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "indexOf"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.ArrIndexOf();
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            if (IsArrayMember(call.Method, "contains"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.ArrIn();
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The string twin of <see cref="TryEmitDictionaryOperation"/>: <c>charAt</c> is exactly the
+        /// index form <c>s[i]</c> under another name, so it reaches the same <c>StrGet</c>.
+        /// <c>length</c> is handled separately, in <see cref="EmitPropertyRead"/>; every other
+        /// string method (<c>substring</c>, <c>repeat</c>, …) has no opcode of its own.
+        /// </summary>
+        private bool TryEmitStringOperation(BoundCallExpression call, bool discardResult)
+        {
+            if (call.Receiver is null)
+                return false;
+
+            if (IsStringMember(call.Method, "charAt"))
+            {
+                Expression(call.Receiver);
+                Expression(call.Arguments[0]);
+                Code.StrGet();
+                if (discardResult)
+                    Code.Pop();
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Whether <paramref name="method"/> is, by identity, the built-in dictionary's member of
         /// the given <paramref name="name"/>.
         /// </summary>
@@ -2521,6 +3254,39 @@ namespace Surtr.Compiler.CodeGen
         /// <summary>The single overload of a named built-in dictionary method, or <see langword="null"/>.</summary>
         private static SurtrMethodInfo? DictionaryMethod(string name)
             => SurtrBuiltIns.Dictionary.TryGetMethods(name, out var overloads) && overloads.Length == 1
+                ? overloads[0]
+                : null;
+
+        /// <summary>The array twin of <see cref="IsDictionaryMember"/> — same identity reasoning.</summary>
+        private static bool IsArrayMember(MethodSymbol method, string name)
+            => method.ImportedFrom is { } imported
+               && ReferenceEquals(imported, ArrayMethod(name));
+
+        /// <summary>The single overload of a named built-in array method, or <see langword="null"/>.</summary>
+        private static SurtrMethodInfo? ArrayMethod(string name)
+            => SurtrBuiltIns.Array.TryGetMethods(name, out var overloads) && overloads.Length == 1
+                ? overloads[0]
+                : null;
+
+        /// <summary>The string twin of <see cref="IsDictionaryMember"/> — same identity reasoning.</summary>
+        private static bool IsStringMember(MethodSymbol method, string name)
+            => method.ImportedFrom is { } imported
+               && ReferenceEquals(imported, StringMethod(name));
+
+        /// <summary>The single overload of a named built-in string method, or <see langword="null"/>.</summary>
+        private static SurtrMethodInfo? StringMethod(string name)
+            => SurtrBuiltIns.String.TryGetMethods(name, out var overloads) && overloads.Length == 1
+                ? overloads[0]
+                : null;
+
+        /// <summary>The tuple twin of <see cref="IsDictionaryMember"/> — same identity reasoning.</summary>
+        private static bool IsTupleMember(MethodSymbol method, string name)
+            => method.ImportedFrom is { } imported
+               && ReferenceEquals(imported, TupleMethod(name));
+
+        /// <summary>The single overload of a named built-in tuple member, or <see langword="null"/>.</summary>
+        private static SurtrMethodInfo? TupleMethod(string name)
+            => SurtrBuiltIns.Tuple.TryGetMethods(name, out var overloads) && overloads.Length == 1
                 ? overloads[0]
                 : null;
 
@@ -2565,6 +3331,35 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
+        /// Whether the default heuristic — no <c>inline</c> written — still wants this body spliced
+        /// (§3.6).
+        /// </summary>
+        /// <remarks>
+        /// The cheap guards <see cref="TryInline"/> would apply are checked here too, so a body the
+        /// splice could not reach is not walked for nothing; the guards stay authoritative and are
+        /// re-checked there, since the cost walk can never be wrong in the permissive direction.
+        /// </remarks>
+        private bool ShouldInlineByCost(BoundCallExpression call)
+        {
+            if (call.IsVirtual || call.Method.IsNative || call.Method.Role == MethodRole.Constructor)
+                return false;
+
+            if (_context.Bodies is null || !_context.Bodies.TryGetValue(call.Method, out var body))
+                return false;
+
+            if (ReferenceEquals(call.Method, _symbol))
+                return false;
+
+            foreach (var frame in _inlines)
+            {
+                if (ReferenceEquals(frame.Method, call.Method))
+                    return false;
+            }
+
+            return InlineCost.WorthInline(body, declaredInline: false);
+        }
+
+        /// <summary>
         /// Splices an <c>inline</c> call site (§3.6), if the body is available and it is safe to.
         /// </summary>
         /// <remarks>
@@ -2579,6 +3374,12 @@ namespace Surtr.Compiler.CodeGen
                 return false;
 
             if (_inlines.Count >= MaxInlineDepth || call.IsVirtual)
+                return false;
+
+            // A constructor is never spliced: what runs is not its body alone but the chain and the
+            // initializers the emitter prepends to it, so the splice would silently skip the base's
+            // construction. A `super(...)` call names exactly such a body.
+            if (call.Method.Role == MethodRole.Constructor)
                 return false;
 
             // A body that splices itself, directly or through another inline function, would expand
@@ -2612,6 +3413,30 @@ namespace Surtr.Compiler.CodeGen
             }
 
             bool hasResult = !call.Method.ReturnType.IsVoid && !discardResult;
+
+            // A body whose only statement is a single `return` never needs the exit-label/result-
+            // local machinery below at all: there is no earlier `return` for a jump to skip past, so
+            // the value can stay on the evaluation stack exactly as an ordinary expression's would,
+            // instead of paying a store immediately followed by its own reload. The frame is still
+            // pushed — with an unused exit/result, since nothing here ever reaches EmitReturn to read
+            // them — purely so a call nested inside the value expression still sees this method as
+            // "already being spliced" and refuses to splice it again (the cycle guard above).
+            if (body is BoundBlockStatement { Statements: [BoundReturnStatement tailReturn] })
+            {
+                _inlines.Add(new InlineFrame(call.Method, default, default, false, receiver, _finallies.Count));
+
+                if (tailReturn.Value is not null)
+                {
+                    if (hasResult)
+                        Expression(tailReturn.Value);
+                    else
+                        EffectOnly(tailReturn.Value);
+                }
+
+                _inlines.RemoveAt(_inlines.Count - 1);
+                return true;
+            }
+
             var result = hasResult ? _method.DeclareLocal("$inlineResult") : default;
             var exit = Code.NewLabel();
 
@@ -2789,6 +3614,424 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
+        /// Emits a construction of <c>array</c>, <c>dict</c> or <c>tuple</c> through their nameable
+        /// generic form (§5.3). Every shape folds to the same allocation opcodes the equivalent
+        /// literal already uses — never <c>ObjNew</c> — plus at most one native call
+        /// (<see cref="BoundCollectionCreationExpression.ReserveMethod"/>, the one shape that has no
+        /// single-opcode fold available).
+        /// </summary>
+        private void EmitCollectionCreation(BoundCollectionCreationExpression creation)
+        {
+            var type = Descriptors.Emit(creation.Type.NonNullable);
+
+            switch (creation.Kind)
+            {
+                case CollectionCreationKind.ArrayEmpty:
+                    // Identical to what an empty `[]` literal already emits (EmitArrayLiteral) —
+                    // routed through the same ArrPack rather than re-derived.
+                    Code.PackArray(type, 0);
+                    return;
+
+                case CollectionCreationKind.TupleEmpty:
+                    Code.PackTuple(type, 0);
+                    return;
+
+                case CollectionCreationKind.DictEmpty:
+                    Code.NewDictionary(type);
+                    return;
+
+                case CollectionCreationKind.ArrayCapacity:
+                    EmitArrayCapacity(creation, type);
+                    return;
+
+                case CollectionCreationKind.DictCapacity:
+                    // DictNew has no capacity operand, so this is the one shape that does not fold
+                    // to a single opcode: allocate empty, then dup + call dict's own existing
+                    // `reserve` — the same "dup, call a void-returning instance method, keep one
+                    // copy" idiom EmitObjectCreation already uses for a synthesized default
+                    // constructor.
+                    Code.NewDictionary(type);
+                    Code.Dup();
+                    Expression(creation.Capacity!);
+                    EmitResolvedCall(creation.ReserveMethod!, virtualCall: false, discardResult: true);
+                    return;
+
+                case CollectionCreationKind.ArrayFromTuple:
+                    EmitArrayFromTuple(creation, type);
+                    return;
+
+                case CollectionCreationKind.TupleFromArray:
+                    EmitTupleFromArray(creation, type);
+                    return;
+
+                case CollectionCreationKind.ArraySizeDefault:
+                    EmitArraySizeDefault(creation, type);
+                    return;
+
+                case CollectionCreationKind.ArrayCopy:
+                    EmitArrayCopy(creation, type);
+                    return;
+
+                case CollectionCreationKind.ArrayFromIterable:
+                    EmitArrayFromIterable(creation, type);
+                    return;
+
+                case CollectionCreationKind.DictFromPairs:
+                    EmitDictFromPairs(creation, type);
+                    return;
+
+                case CollectionCreationKind.DictFromParallelArrays:
+                    EmitDictFromParallelArrays(creation, type);
+                    return;
+
+                default:
+                    throw Unsupported($"a {creation.Kind} collection construction");
+            }
+        }
+
+        private void EmitArrayCapacity(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            // A written literal folds straight to ArrNewX — the addressing mode Opcodes.md already
+            // documents for exactly this, "for arrays of statically known size" — with zero runtime
+            // work; anything else pushes the runtime value and falls back to the stack-popping ArrNew.
+            if (creation.Capacity is BoundLiteralExpression { Value: long constant }
+                && constant >= 0
+                && constant <= int.MaxValue)
+            {
+                Code.NewArray(type, (int)constant);
+                return;
+            }
+
+            Expression(creation.Capacity!);
+            Code.NewArray(type);
+        }
+
+        private void EmitArrayFromTuple(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            var tupleType = (TupleTypeSymbol)creation.Source!.Type.NonNullable;
+            var elementType = ((ArrayTypeSymbol)creation.Type.NonNullable).ElementType;
+            var conversions = creation.ElementConversions!;
+
+            var slot = _method.DeclareLocal("$collect");
+            Expression(creation.Source);
+            Code.StoreLocal(slot);
+
+            // Element 0 first, ..., element N-1 last: ArrPack pops in the same order EmitArrayLiteral
+            // already pushes for a written literal, "the deepest popped value becomes element 0."
+            for (int i = 0; i < conversions.Count; i++)
+            {
+                Code.LoadLocal(slot);
+                Code.TupleElement(i);
+                EmitConversionTail(conversions[i], tupleType.ElementTypes[i], elementType);
+            }
+
+            Code.PackArray(type, conversions.Count);
+        }
+
+        private void EmitTupleFromArray(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            var tupleType = (TupleTypeSymbol)creation.Type.NonNullable;
+            var conversions = creation.ElementConversions!;
+
+            var slot = _method.DeclareLocal("$collect");
+            Expression(creation.Source!);
+            Code.StoreLocal(slot);
+
+            // The library not declaring InvalidCastException is treated the same way EmitNullAssert
+            // treats a missing NullReferenceException: the check is skipped rather than left with
+            // nothing to throw, so a mismatched length falls through unchecked instead of failing to
+            // compile.
+            if (creation.Thrown is not null)
+            {
+                var ok = Code.NewLabel();
+
+                Code.LoadLocal(slot);
+                Code.ArrLen();
+                Code.LoadInt(conversions.Count);
+                Code.JumpIfCompare(SurtrComparison.Equal, SurtrValueTypeCode.Integer, ok);
+
+                Expression(creation.Thrown);
+                Code.Throw();
+                Code.MarkLabel(ok);
+            }
+
+            for (int i = 0; i < conversions.Count; i++)
+            {
+                Code.LoadLocal(slot);
+                Code.LoadInt(i);
+                Code.ArrGet();
+                EmitConversionTail(conversions[i], ((ArrayTypeSymbol)creation.Source!.Type.NonNullable).ElementType, tupleType.ElementTypes[i]);
+            }
+
+            Code.PackTuple(type, conversions.Count);
+        }
+
+        /// <summary>
+        /// <c>array&lt;T&gt;(size, defaultValue)</c> for a non-zero (or non-constant) default — the
+        /// zero-value case never reaches here, folded onto <see cref="EmitArrayCapacity"/> instead
+        /// (which already zero-fills) back in the binder. Every loop method below follows the same
+        /// hand-rolled counted-loop idiom <c>EmitForInIndexed</c>/<c>EmitForInRange</c> already use —
+        /// no shared "emit a counted loop" helper exists anywhere in this emitter, and none of these
+        /// synthesized loops has a user-visible body to give <c>break</c>/<c>continue</c> targets to,
+        /// so none of them call <c>PushLoop</c>/<c>PopTargets</c> either.
+        /// </summary>
+        private void EmitArraySizeDefault(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            var arraySlot = _method.DeclareLocal("$collect");
+            var defaultSlot = _method.DeclareLocal("$default");
+            var indexSlot = _method.DeclareLocal("$index");
+
+            // Zero-filled by ArrNew/ArrNewX already; the loop below overwrites every slot with the
+            // real default, evaluated once up front rather than once per index.
+            EmitArrayCapacity(creation, type);
+            Code.StoreLocal(arraySlot);
+
+            Expression(creation.DefaultValue!);
+            Code.StoreLocal(defaultSlot);
+
+            Code.LoadInt(0);
+            Code.StoreLocal(indexSlot);
+
+            var top = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.MarkLabel(top);
+            Code.LoadLocal(indexSlot);
+            Code.LoadLocal(arraySlot);
+            Code.ArrLen();
+            Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
+
+            Code.LoadLocal(arraySlot);
+            Code.LoadLocal(indexSlot);
+            Code.LoadLocal(defaultSlot);
+            Code.ArrSet();
+
+            Code.IncrementLocal(indexSlot, 1);
+            Code.Jump(top);
+            Code.MarkLabel(end);
+            Code.LoadLocal(arraySlot);
+        }
+
+        /// <summary>
+        /// <c>array&lt;T&gt;(anotherArray)</c> — checked ahead of <see cref="EmitArrayFromIterable"/>
+        /// in the binder precisely so this faster, non-interface-dispatch path is what an array
+        /// argument actually takes: one <c>ArrLen</c>, one runtime <c>ArrNew</c>, then indexed
+        /// <c>ArrGet</c>/<c>ArrSet</c> — never <c>CallInterface</c>.
+        /// </summary>
+        private void EmitArrayCopy(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            var elementType = ((ArrayTypeSymbol)creation.Type.NonNullable).ElementType;
+            var sourceElementType = ((ArrayTypeSymbol)creation.Source!.Type.NonNullable).ElementType;
+            var conversion = creation.ElementConversions![0];
+
+            var sourceSlot = _method.DeclareLocal("$collect");
+            var destSlot = _method.DeclareLocal("$collectDest");
+            var indexSlot = _method.DeclareLocal("$index");
+
+            Expression(creation.Source);
+            Code.StoreLocal(sourceSlot);
+
+            Code.LoadLocal(sourceSlot);
+            Code.ArrLen();
+            Code.NewArray(type);
+            Code.StoreLocal(destSlot);
+
+            Code.LoadInt(0);
+            Code.StoreLocal(indexSlot);
+
+            var top = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.MarkLabel(top);
+            Code.LoadLocal(indexSlot);
+            Code.LoadLocal(sourceSlot);
+            Code.ArrLen();
+            Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
+
+            Code.LoadLocal(destSlot);
+            Code.LoadLocal(indexSlot);
+            Code.LoadLocal(sourceSlot);
+            Code.LoadLocal(indexSlot);
+            Code.ArrGet();
+            EmitConversionTail(conversion, sourceElementType, elementType);
+            Code.ArrSet();
+
+            Code.IncrementLocal(indexSlot, 1);
+            Code.Jump(top);
+            Code.MarkLabel(end);
+            Code.LoadLocal(destSlot);
+        }
+
+        /// <summary>
+        /// <c>array&lt;T&gt;(anIterable)</c> — the lowest-priority, general-purpose shape, walking
+        /// the source through <c>IIterable&lt;T&gt;</c> exactly as <c>EmitForInIterable</c> already
+        /// does (interface dispatch on <c>iterate</c>/<c>moveNext</c>/<c>current</c>, the same
+        /// <c>Unerase</c> rule for a reference element), pushing each result rather than storing to a
+        /// loop variable. The destination starts empty and growable since the source's length is not
+        /// known ahead of time for a general iterable.
+        /// </summary>
+        private void EmitArrayFromIterable(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            var elementType = ((ArrayTypeSymbol)creation.Type.NonNullable).ElementType;
+            var sourceElementType = creation.SourceElementType!;
+            var conversion = creation.ElementConversions![0];
+
+            var iterate = ContractMethod(SurtrBuiltIns.IIterable, "iterate");
+            var moveNext = ContractMethod(SurtrBuiltIns.IIterator, "moveNext");
+            var current = ContractMethod(SurtrBuiltIns.IIterator, MemberNames.Getter("current"));
+
+            var destSlot = _method.DeclareLocal("$collectDest");
+            var cursorSlot = _method.DeclareLocal("$iterator");
+
+            Code.PackArray(type, 0);
+            Code.StoreLocal(destSlot);
+
+            Expression(creation.Source!);
+            Code.CallInterface(iterate);
+            Code.StoreLocal(cursorSlot);
+
+            var top = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.MarkLabel(top);
+            Code.LoadLocal(cursorSlot);
+            Code.CallInterface(moveNext);
+            Code.JumpIfFalse(end);
+
+            Code.LoadLocal(destSlot);
+            Code.LoadLocal(cursorSlot);
+            Code.CallInterface(current);
+
+            if (sourceElementType.IsReferenceType && !sourceElementType.IsVoid)
+                Unerase(sourceElementType);
+
+            EmitConversionTail(conversion, sourceElementType, elementType);
+            Code.ArrPush();
+
+            Code.Jump(top);
+            Code.MarkLabel(end);
+            Code.LoadLocal(destSlot);
+        }
+
+        /// <summary>
+        /// <c>{K:V}(pairs)</c> — the pair read twice (once per slot) through a temp local, the same
+        /// "evaluate once, use more than once" idiom every other cast/copy shape here already uses,
+        /// rather than juggling a duplicate mid-stack.
+        /// </summary>
+        private void EmitDictFromPairs(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            var dictType = (DictionaryTypeSymbol)creation.Type.NonNullable;
+            var pairType = (TupleTypeSymbol)((ArrayTypeSymbol)creation.Source!.Type.NonNullable).ElementType;
+            var conversions = creation.ElementConversions!;
+
+            var sourceSlot = _method.DeclareLocal("$collect");
+            var dictSlot = _method.DeclareLocal("$collectDict");
+            var indexSlot = _method.DeclareLocal("$index");
+            var pairSlot = _method.DeclareLocal("$pair");
+
+            Expression(creation.Source);
+            Code.StoreLocal(sourceSlot);
+
+            Code.NewDictionary(type);
+            Code.StoreLocal(dictSlot);
+
+            Code.LoadInt(0);
+            Code.StoreLocal(indexSlot);
+
+            var top = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.MarkLabel(top);
+            Code.LoadLocal(indexSlot);
+            Code.LoadLocal(sourceSlot);
+            Code.ArrLen();
+            Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
+
+            Code.LoadLocal(sourceSlot);
+            Code.LoadLocal(indexSlot);
+            Code.ArrGet();
+            Code.StoreLocal(pairSlot);
+
+            Code.LoadLocal(dictSlot);
+            Code.LoadLocal(pairSlot);
+            Code.TupleElement(0);
+            EmitConversionTail(conversions[0], pairType.ElementTypes[0], dictType.KeyType);
+            Code.LoadLocal(pairSlot);
+            Code.TupleElement(1);
+            EmitConversionTail(conversions[1], pairType.ElementTypes[1], dictType.ValueType);
+            Code.DictSet();
+
+            Code.IncrementLocal(indexSlot, 1);
+            Code.Jump(top);
+            Code.MarkLabel(end);
+            Code.LoadLocal(dictSlot);
+        }
+
+        /// <summary>
+        /// <c>{K:V}(keys, values)</c> — no element conversions: the binder only takes this path on an
+        /// exact element-type match (arrays are invariant, §6), so nothing here needs
+        /// <see cref="EmitConversionTail"/> the way every other cast/copy/pairs shape does.
+        /// </summary>
+        private void EmitDictFromParallelArrays(BoundCollectionCreationExpression creation, SurtrClassReference type)
+        {
+            var keysSlot = _method.DeclareLocal("$collect");
+            var valuesSlot = _method.DeclareLocal("$collect2");
+            var dictSlot = _method.DeclareLocal("$collectDict");
+            var indexSlot = _method.DeclareLocal("$index");
+
+            Expression(creation.Source!);
+            Code.StoreLocal(keysSlot);
+            Expression(creation.Source2!);
+            Code.StoreLocal(valuesSlot);
+
+            // Same "skip the check if the library doesn't declare the exception" idiom EmitNullAssert
+            // and EmitTupleFromArray already established.
+            if (creation.Thrown is not null)
+            {
+                var ok = Code.NewLabel();
+
+                Code.LoadLocal(keysSlot);
+                Code.ArrLen();
+                Code.LoadLocal(valuesSlot);
+                Code.ArrLen();
+                Code.JumpIfCompare(SurtrComparison.Equal, SurtrValueTypeCode.Integer, ok);
+
+                Expression(creation.Thrown);
+                Code.Throw();
+                Code.MarkLabel(ok);
+            }
+
+            Code.NewDictionary(type);
+            Code.StoreLocal(dictSlot);
+
+            Code.LoadInt(0);
+            Code.StoreLocal(indexSlot);
+
+            var top = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.MarkLabel(top);
+            Code.LoadLocal(indexSlot);
+            Code.LoadLocal(keysSlot);
+            Code.ArrLen();
+            Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
+
+            Code.LoadLocal(dictSlot);
+            Code.LoadLocal(keysSlot);
+            Code.LoadLocal(indexSlot);
+            Code.ArrGet();
+            Code.LoadLocal(valuesSlot);
+            Code.LoadLocal(indexSlot);
+            Code.ArrGet();
+            Code.DictSet();
+
+            Code.IncrementLocal(indexSlot, 1);
+            Code.Jump(top);
+            Code.MarkLabel(end);
+            Code.LoadLocal(dictSlot);
+        }
+
+        /// <summary>
         /// Emits an interpolated string as one concatenation over all of its parts.
         /// </summary>
         /// <remarks>
@@ -2933,6 +4176,12 @@ namespace Surtr.Compiler.CodeGen
             if (!ReferenceEquals(parameter.ContainingSymbol, _symbol) && parameter.ContainingSymbol is not null)
                 throw Unsupported($"a read of '{parameter.Name}', which belongs to another method");
 
+            // An instance operator's first parameter is its receiver (§5.6), and the runtime keeps
+            // the receiver as an implicit slot rather than a declared parameter — so parameter 0 is
+            // local 0, and every later parameter shifts down by one to match.
+            if (_symbol.Role == MethodRole.Operator && !_symbol.IsStatic)
+                return parameter.Ordinal == 0 ? _method.Receiver : _method.Parameter(parameter.Ordinal - 1);
+
             return _method.Parameter(parameter.Ordinal);
         }
 
@@ -2971,10 +4220,13 @@ namespace Surtr.Compiler.CodeGen
 
             Code.LoadLocal(_method.Receiver);
 
-            // Inside a value class's own method the receiver arrived boxed, because that is the
-            // only shape a call could dispatch on. Unwrapping it here is what makes `this` mean the
-            // wrapped value everywhere in the language, so no other rule has to know about the box.
-            if (_symbol.ContainingType is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass })
+            // Inside a value class's own method the receiver arrived boxed exactly when this
+            // method's own dispatch might have been resolved through its class — the same test
+            // BoxReceiverForCall makes at every call site, so the two can never disagree about
+            // which convention this body was compiled against. A direct dispatch never boxes on
+            // the way in, so there is nothing here to unwrap.
+            if (_symbol.ContainingType is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass }
+                && _symbol.Dispatch != MethodDispatch.Direct)
                 Code.Unbox();
         }
 
@@ -2987,16 +4239,85 @@ namespace Surtr.Compiler.CodeGen
         /// const-fun argument.
         /// </summary>
         /// <remarks>
-        /// Deliberately only literals and the conversions the binder wrapped them in. Anything
-        /// wider belongs to <c>ConstantEvaluator</c>, which folds over syntax and is the layer that
-        /// already answers this question for the language.
+        /// A literal, a conversion the binder wrapped one in, or a unary/binary expression built out
+        /// of more of the same — so a <c>const fun</c> argument like <c>2 + 3</c> folds here too, not
+        /// only a literal written directly. This works over the <em>bound</em> tree rather than
+        /// syntax on purpose: a bound operand has already gone through the binder's own name
+        /// resolution (locals, parameters, and — since a <c>const</c> field folds to a literal at
+        /// bind time already — even a module or class constant), so nothing here can answer a
+        /// local's name from an unrelated same-named constant the way a second, syntax-based lookup
+        /// against <c>ConstantEvaluator</c>'s flat, module-wide name table could. It still does not
+        /// duplicate that evaluator's full reach — no calls, no conditionals — only the arithmetic a
+        /// `const fun` argument realistically needs one instruction lower than its declaration.
         /// </remarks>
         private static object? ConstantOf(BoundExpression expression) => expression switch
         {
             BoundLiteralExpression literal => literal.Value,
-            BoundConversionExpression { Conversion.Kind: ConversionKind.Identity } conversion => ConstantOf(conversion.Operand),
+            BoundConversionExpression { Conversion.Kind: ConversionKind.Identity } identity => ConstantOf(identity.Operand),
+            BoundConversionExpression { Conversion.Kind: ConversionKind.ImplicitNumeric } widened =>
+                ConstantOf(widened.Operand) is long widenedInt ? (double)widenedInt : null,
+            BoundBinaryExpression binary => ConstantBinary(binary),
+            BoundUnaryExpression unary => ConstantUnary(unary),
             _ => null,
         };
+
+        /// <summary>Folds a binary expression once both its operands already fold. See <see cref="ConstantOf"/>.</summary>
+        private static object? ConstantBinary(BoundBinaryExpression binary)
+        {
+            if (ConstantOf(binary.Left) is not object left || ConstantOf(binary.Right) is not object right)
+                return null;
+
+            if (left is long li && right is long ri)
+            {
+                return binary.Operator switch
+                {
+                    BinaryOperator.Add => li + ri,
+                    BinaryOperator.Subtract => li - ri,
+                    BinaryOperator.Multiply => li * ri,
+                    BinaryOperator.Divide => ri != 0 ? li / ri : (object?)null,
+                    BinaryOperator.Modulo => ri != 0 ? li % ri : (object?)null,
+                    BinaryOperator.BitAnd => li & ri,
+                    BinaryOperator.BitOr => li | ri,
+                    BinaryOperator.BitXor => li ^ ri,
+                    BinaryOperator.ShiftLeft => li << (int)(ri & 31),
+                    BinaryOperator.ShiftRight => li >> (int)(ri & 31),
+                    _ => null,
+                };
+            }
+
+            if (left is double || right is double)
+            {
+                double ld = left is double ldd ? ldd : (long)left;
+                double rd = right is double rdd ? rdd : (long)right;
+
+                return binary.Operator switch
+                {
+                    BinaryOperator.Add => ld + rd,
+                    BinaryOperator.Subtract => ld - rd,
+                    BinaryOperator.Multiply => ld * rd,
+                    BinaryOperator.Divide => ld / rd,
+                    _ => null,
+                };
+            }
+
+            return null;
+        }
+
+        /// <summary>Folds a unary expression once its operand already folds. See <see cref="ConstantOf"/>.</summary>
+        private static object? ConstantUnary(BoundUnaryExpression unary)
+        {
+            if (ConstantOf(unary.Operand) is not object operand)
+                return null;
+
+            return (unary.Operator, operand) switch
+            {
+                (UnaryOperator.Not, bool b) => !b,
+                (UnaryOperator.Negate, long i) => -i,
+                (UnaryOperator.Negate, double d) => -d,
+                (UnaryOperator.Complement, long c) => ~c,
+                _ => null,
+            };
+        }
 
         /// <summary>
         /// The operand family a type belongs to, which is what every arithmetic, comparison and

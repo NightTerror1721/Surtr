@@ -1,0 +1,127 @@
+public interface IReadOnlyList<T>
+{
+    length: int { get; }
+
+    fun get(index: int): T;
+}
+
+public interface IList<T> : IReadOnlyList<T>
+{
+    fun set(index: int, value: T): void;
+    fun add(value: T): void;
+    fun removeAt(index: int): void;
+    fun clear(): void;
+}
+
+
+public class LinkedList<T> : IList<T>
+{
+    private sealed class Node<T>
+    {
+        public var value: T;
+        public var next: Node<T>? = null;
+        public var prev: Node<T>? = null;
+
+        public constructor(value: T)
+        {
+            this.value = value;
+        }
+    }
+
+    private var _head: Node<T>?;
+    private var _tail: Node<T>?;
+    private var _length: int;
+
+    public constructor()
+    {
+        this._head = null;
+        this._tail = null;
+        this._length = 0;
+    }
+
+    public override length: int { get { return this._length; } }
+
+    public front: T
+    {
+        get
+        {
+            if (this._head === null) throw IndexOutOfRangeException("LinkedList is empty");
+            return this._head.value;
+        }
+    }
+
+    public back: T
+    {
+        get
+        {
+            if (this._tail === null) throw IndexOutOfRangeException("LinkedList is empty");
+            return this._tail.value;
+        }
+    }
+
+    public override fun add(value: T): void
+    {
+        var newNode = Node<T>(value);
+        if (_tail === null)
+        {
+            _head = newNode;
+            _tail = newNode;
+        }
+        else
+        {
+            _tail.next = newNode;
+            newNode.prev = _tail;
+            _tail = newNode;
+        }
+        _length++;
+    }
+
+    public override fun get(index: int): T
+    {
+        if (index < 0 || index >= this._length) throw IndexOutOfRangeException("Index out of range");
+        var current = _head;
+        for (var i = 0; i < index; i++)
+            current = current.next!!;
+        return current.value;
+    }
+
+    public override fun set(index: int, value: T): void
+    {
+        if (index < 0 || index >= this._length) throw IndexOutOfRangeException("Index out of range");
+        var current = _head;
+        for (var i = 0; i < index; i++)
+            current = current.next!!;
+        current.value = value;
+    }
+
+    public override fun removeAt(index: int): void
+    {
+        if (index < 0 || index >= this._length) throw IndexOutOfRangeException("Index out of range");
+        var current = _head;
+        for (var i = 0; i < index; i++)
+            current = current.next!!;
+
+        if (current.prev == null)
+            _head = current.next;
+        else
+            current.prev!!.next = current.next;
+
+        if (current.next == null)
+            _tail = current.prev;
+        else
+            current.next!!.prev = current.prev;
+
+        _length--;
+    }
+
+    public override fun clear(): void
+    {
+        _head = null;
+        _tail = null;
+        _length = 0;
+    }
+
+
+    inline operator [](self: LinkedList<T>, index: int): T { return self.get(index); }
+    inline operator [](self: LinkedList<T>, index: int, value: T): void { self.set(index, value); }
+}

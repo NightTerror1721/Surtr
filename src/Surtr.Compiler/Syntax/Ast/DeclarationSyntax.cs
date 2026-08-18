@@ -207,14 +207,32 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>True when written with a trailing <c>.*</c>.</summary>
         public bool IsWildcard { get; }
 
+        /// <summary>The name after <c>as</c>, or <see langword="null"/> when the import is unaliased.</summary>
+        public string? Alias { get; }
+
+        /// <summary>
+        /// The names inside a trailing <c>.{A, B}</c>, or <see langword="null"/> for every other
+        /// form (single name, wildcard, or aliased module).
+        /// </summary>
+        public IReadOnlyList<string>? Members { get; }
+
         /// <summary>Initializes an import.</summary>
         /// <param name="span">The source the import covers.</param>
         /// <param name="path">The dotted path's segments.</param>
         /// <param name="isWildcard">True when written with a trailing <c>.*</c>.</param>
-        public ImportSyntax(SourceSpan span, IReadOnlyList<string> path, bool isWildcard) : base(span)
+        /// <param name="alias">The name after <c>as</c>, if any.</param>
+        /// <param name="members">The names inside a trailing <c>.{A, B}</c>, if any.</param>
+        public ImportSyntax(
+            SourceSpan span,
+            IReadOnlyList<string> path,
+            bool isWildcard,
+            string? alias = null,
+            IReadOnlyList<string>? members = null) : base(span)
         {
             Path = path;
             IsWildcard = isWildcard;
+            Alias = alias;
+            Members = members;
         }
     }
 
@@ -281,6 +299,27 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>True when declared <c>static</c> — legal only on a nested type.</summary>
         public bool IsStatic { get; }
 
+        /// <summary>
+        /// True when declared with the <c>attribute</c> keyword (§11) instead of a bare <c>class</c>
+        /// — implicitly extends <c>Attribute</c>, so an explicit <c>: Attribute</c> is not needed
+        /// (though extending it, or something that does, explicitly is still accepted).
+        /// </summary>
+        public bool IsAttribute { get; }
+
+        /// <summary>
+        /// The declaration kinds an <c>attribute</c> class may be written on, or
+        /// <see cref="Ast.SurtrAttributeTargets.None"/> for no restriction — either because nothing was
+        /// written in parentheses, or because the parenthesized list named a retention only.
+        /// </summary>
+        public SurtrAttributeTargets SurtrAttributeTargets { get; }
+
+        /// <summary>
+        /// True when the parenthesized list after <c>attribute</c> named <c>CompileTimeOnly</c> —
+        /// the attribute is checked and then discarded, never reaching the compiled image. False
+        /// (the default) means <c>Runtime</c>: it is emitted and readable through host reflection.
+        /// </summary>
+        public bool IsCompileTimeOnlyAttribute { get; }
+
         /// <summary>Initializes a type declaration.</summary>
         /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">Attributes attached to it.</param>
@@ -295,9 +334,13 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="isAbstract">True when declared <c>abstract</c>.</param>
         /// <param name="isSealed">True when declared <c>sealed</c>.</param>
         /// <param name="isStatic">True when declared <c>static</c>.</param>
+        /// <param name="isAttribute">True when declared with the <c>attribute</c> keyword.</param>
+        /// <param name="attributeTargets">The declaration kinds it may be written on, or none for unrestricted.</param>
+        /// <param name="isCompileTimeOnlyAttribute">True when its retention is <c>CompileTimeOnly</c>.</param>
         public TypeDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
             TypeDeclarationKind kind, string name, IReadOnlyList<TypeParameterSyntax> typeParameters, IReadOnlyList<TypeSyntax> baseTypes,
-            IReadOnlyList<EnumCaseSyntax> enumCases, IReadOnlyList<DeclarationSyntax> members, bool isAbstract, bool isSealed, bool isStatic)
+            IReadOnlyList<EnumCaseSyntax> enumCases, IReadOnlyList<DeclarationSyntax> members, bool isAbstract, bool isSealed, bool isStatic,
+            bool isAttribute = false, SurtrAttributeTargets attributeTargets = SurtrAttributeTargets.None, bool isCompileTimeOnlyAttribute = false)
             : base(span, attributes, docComment, visibility)
         {
             Kind = kind;
@@ -309,7 +352,40 @@ namespace Surtr.Compiler.Syntax.Ast
             IsAbstract = isAbstract;
             IsSealed = isSealed;
             IsStatic = isStatic;
+            IsAttribute = isAttribute;
+            SurtrAttributeTargets = attributeTargets;
+            IsCompileTimeOnlyAttribute = isCompileTimeOnlyAttribute;
         }
+    }
+
+    /// <summary>
+    /// The declaration kinds an <c>attribute</c> class (§11) may be written on. <see cref="None"/>
+    /// means no restriction was declared, not "nothing is allowed" — an attribute with no target
+    /// list may be written anywhere any attribute could be written before this existed.
+    /// </summary>
+    [System.Flags]
+    public enum SurtrAttributeTargets
+    {
+        /// <summary>No restriction declared.</summary>
+        None = 0,
+
+        /// <summary><c>class</c>, <c>value class</c> or <c>singleton</c>.</summary>
+        Class = 1 << 0,
+
+        /// <summary><c>interface</c>.</summary>
+        Interface = 1 << 1,
+
+        /// <summary><c>enum</c>.</summary>
+        Enum = 1 << 2,
+
+        /// <summary>A field (<c>let</c>/<c>var</c>), instance or module-level.</summary>
+        Field = 1 << 3,
+
+        /// <summary>A property, instance or module-level.</summary>
+        Property = 1 << 4,
+
+        /// <summary>A method, constructor, or module-level function.</summary>
+        Method = 1 << 5,
     }
 
     /// <summary>One case of an enum: a name plus the arguments to the enum's constructor (§2.4).</summary>
@@ -397,14 +473,60 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>The accessor's body, or <c>null</c> when it was written bare and the compiler generates it.</summary>
         public BlockStatementSyntax? Body { get; }
 
+        /// <summary>
+        /// Its own visibility, written directly on this accessor (e.g. <c>private set</c>) rather than
+        /// on the property. <see cref="Visibility.Default"/> means none was written, so it inherits
+        /// the property's (§3.2, §3.4) — an accessor's own visibility, when written, must be strictly
+        /// narrower than the property's.
+        /// </summary>
+        public Visibility Visibility { get; }
+
+        /// <summary>
+        /// Whether this accessor wrote any of its own <c>virtual</c>/<c>override</c>/<c>abstract</c>/
+        /// <c>sealed</c> — when false, <see cref="Dispatch"/> and <see cref="IsSealed"/> are
+        /// meaningless and the accessor inherits the property's dispatch and sealed-ness as a pair.
+        /// </summary>
+        public bool HasOwnDispatch { get; }
+
+        /// <summary>This accessor's own dispatch, meaningful only when <see cref="HasOwnDispatch"/>.</summary>
+        public DispatchModifier Dispatch { get; }
+
+        /// <summary>Whether this accessor's own <c>override</c> was also <c>sealed</c>.</summary>
+        public bool IsSealed { get; }
+
+        /// <summary>
+        /// Its own <c>inline</c>/<c>forceinline</c> hint. <see cref="InlineModifier.None"/> means none
+        /// was written, so it inherits the property's (§3.6).
+        /// </summary>
+        public InlineModifier Inline { get; }
+
         /// <summary>Initializes an accessor.</summary>
         /// <param name="span">The source the accessor covers.</param>
         /// <param name="isGetter">True for <c>get</c>.</param>
         /// <param name="body">Its body, or <c>null</c>.</param>
-        public AccessorSyntax(SourceSpan span, bool isGetter, BlockStatementSyntax? body) : base(span)
+        /// <param name="visibility">Its own visibility, or <see cref="Visibility.Default"/> to inherit the property's.</param>
+        /// <param name="hasOwnDispatch">Whether this accessor wrote its own dispatch/sealed modifiers.</param>
+        /// <param name="dispatch">Its own dispatch, meaningful only when <paramref name="hasOwnDispatch"/>.</param>
+        /// <param name="isSealed">Whether its own <c>override</c> was also <c>sealed</c>.</param>
+        /// <param name="inline">Its own inline hint, or <see cref="InlineModifier.None"/> to inherit the property's.</param>
+        public AccessorSyntax(
+            SourceSpan span,
+            bool isGetter,
+            BlockStatementSyntax? body,
+            Visibility visibility = Visibility.Default,
+            bool hasOwnDispatch = false,
+            DispatchModifier dispatch = DispatchModifier.None,
+            bool isSealed = false,
+            InlineModifier inline = InlineModifier.None)
+            : base(span)
         {
             IsGetter = isGetter;
             Body = body;
+            Visibility = visibility;
+            HasOwnDispatch = hasOwnDispatch;
+            Dispatch = dispatch;
+            IsSealed = isSealed;
+            Inline = inline;
         }
     }
 
@@ -429,6 +551,12 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>True when an <c>override</c> was also declared <c>sealed</c> (§3.3).</summary>
         public bool IsSealed { get; }
 
+        /// <summary>The <c>inline</c>/<c>forceinline</c> hint (§3.6), applied to its accessors.</summary>
+        public InlineModifier Inline { get; }
+
+        /// <summary>True when declared <c>native</c> — an accessor published by link name, not a body.</summary>
+        public bool IsNative { get; }
+
         /// <summary>Initializes a property declaration.</summary>
         /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">Attributes attached to it.</param>
@@ -440,8 +568,11 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="isStatic">True when declared <c>static</c>.</param>
         /// <param name="dispatch">How it dispatches.</param>
         /// <param name="isSealed">True when the override was also declared <c>sealed</c>.</param>
+        /// <param name="inline">The inline hint to apply to its accessors.</param>
+        /// <param name="isNative">True when its accessors are published by link name.</param>
         public PropertyDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
-            string name, TypeSyntax type, IReadOnlyList<AccessorSyntax> accessors, bool isStatic, DispatchModifier dispatch, bool isSealed)
+            string name, TypeSyntax type, IReadOnlyList<AccessorSyntax> accessors, bool isStatic, DispatchModifier dispatch, bool isSealed,
+            InlineModifier inline, bool isNative)
             : base(span, attributes, docComment, visibility)
         {
             Name = name;
@@ -450,6 +581,8 @@ namespace Surtr.Compiler.Syntax.Ast
             IsStatic = isStatic;
             Dispatch = dispatch;
             IsSealed = isSealed;
+            Inline = inline;
+            IsNative = isNative;
         }
     }
 
@@ -559,7 +692,11 @@ namespace Surtr.Compiler.Syntax.Ast
         }
     }
 
-    /// <summary>An operator overload (§5.6). Always public and static, so neither is written.</summary>
+    /// <summary>
+    /// An operator overload (§5.6). Always public; <c>static</c> is the default, and a dispatch
+    /// modifier or an interface declaration makes it an instance method whose receiver is the first
+    /// parameter.
+    /// </summary>
     public sealed class OperatorDeclarationSyntax : DeclarationSyntax
     {
         /// <summary>
@@ -582,8 +719,14 @@ namespace Surtr.Compiler.Syntax.Ast
         /// </remarks>
         public TypeSyntax ReturnType { get; }
 
-        /// <summary>Its body.</summary>
-        public BlockStatementSyntax Body { get; }
+        /// <summary>How the operator dispatches (§3.3): <c>virtual</c>, <c>override</c> or <c>abstract</c> make it an instance method.</summary>
+        public DispatchModifier Dispatch { get; }
+
+        /// <summary>Whether <c>sealed</c> was written, which closes a virtual operator's branch.</summary>
+        public bool IsSealed { get; }
+
+        /// <summary>Its body, or <see langword="null"/> when the declaration ends at <c>;</c> — an abstract operator.</summary>
+        public BlockStatementSyntax? Body { get; }
 
         /// <summary>Initializes an operator declaration.</summary>
         /// <param name="span">The source the declaration covers.</param>
@@ -592,14 +735,19 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="op">The overloaded operator's token type.</param>
         /// <param name="parameters">Its parameters.</param>
         /// <param name="returnType">Its return type.</param>
-        /// <param name="body">Its body.</param>
+        /// <param name="dispatch">Its dispatch modifier, if one was written.</param>
+        /// <param name="isSealed">Whether <c>sealed</c> was written.</param>
+        /// <param name="body">Its body, or <see langword="null"/> for an abstract operator.</param>
         public OperatorDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment,
-            TokenType op, IReadOnlyList<ParameterSyntax> parameters, TypeSyntax returnType, BlockStatementSyntax body)
+            TokenType op, IReadOnlyList<ParameterSyntax> parameters, TypeSyntax returnType,
+            DispatchModifier dispatch, bool isSealed, BlockStatementSyntax? body)
             : base(span, attributes, docComment, Visibility.Public)
         {
             Operator = op;
             Parameters = parameters;
             ReturnType = returnType;
+            Dispatch = dispatch;
+            IsSealed = isSealed;
             Body = body;
         }
     }

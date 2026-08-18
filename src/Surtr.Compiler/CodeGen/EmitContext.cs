@@ -213,6 +213,34 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         public Binding.MetadataImporter? Importer { get; set; }
 
+        /// <summary>Every module this compilation has already built, keyed by path, in load order.</summary>
+        /// <remarks>Populated by <see cref="ModuleEmitter"/> right before it starts a new module.</remarks>
+        public IReadOnlyDictionary<string, SurtrModule>? BuiltModules { get; set; }
+
+        /// <summary>
+        /// The module a <c>moduleof</c> path names - this module, one built earlier in this
+        /// compilation, or one referenced as an already-compiled image.
+        /// </summary>
+        /// <remarks>
+        /// A <c>moduleof</c> reference is not a call, so unlike <see cref="TryGetForeignModule"/> it
+        /// has no <see cref="MethodSymbol"/> to key on - it names the module directly, by the path
+        /// the binder already resolved (<c>Binding.TypeResolver.TryResolveModulePath</c>).
+        /// </remarks>
+        public bool TryGetModule(string path, out SurtrModule module)
+        {
+            if (string.Equals(path, Module.Path, StringComparison.Ordinal))
+            {
+                module = Module.Module;
+                return true;
+            }
+
+            if (BuiltModules is not null && BuiltModules.TryGetValue(path, out module!))
+                return true;
+
+            module = null!;
+            return Importer is not null && Importer.TryGetBuiltModule(path, out module!);
+        }
+
         /// <summary>The metadata a field resolves to, declared here or imported.</summary>
         public SurtrFieldInfo? Resolve(FieldSymbol symbol)
         {

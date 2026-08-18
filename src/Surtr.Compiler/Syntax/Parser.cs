@@ -317,6 +317,7 @@ namespace Surtr.Compiler.Syntax
 
             List<string> path = new List<string> { reader.ExpectIdentifier("a module or type name") };
             bool wildcard = false;
+            List<string>? members = null;
 
             while (reader.Match(TokenType.Dot))
             {
@@ -326,11 +327,34 @@ namespace Surtr.Compiler.Syntax
                     break;
                 }
 
+                if (reader.Check(TokenType.LeftBrace))
+                {
+                    members = ParseImportMemberList();
+                    break;
+                }
+
                 path.Add(reader.ExpectIdentifier("a name after '.'"));
             }
 
+            string? alias = null;
+            if (!wildcard && members is null && reader.Match(TokenType.KeywordAs))
+                alias = reader.ExpectIdentifier("a name after 'as'");
+
             reader.Expect(TokenType.Semicolon, "';' after the import");
-            return new ImportSyntax(SpanFrom(start), path, wildcard);
+            return new ImportSyntax(SpanFrom(start), path, wildcard, alias, members);
+        }
+
+        /// <summary>The comma-separated names inside <c>import Module.{A, B};</c>'s trailing braces.</summary>
+        private List<string> ParseImportMemberList()
+        {
+            reader.Expect(TokenType.LeftBrace, "'{'");
+            List<string> members = new List<string> { reader.ExpectIdentifier("a name inside '{ }'") };
+
+            while (reader.Match(TokenType.Comma))
+                members.Add(reader.ExpectIdentifier("a name after ','"));
+
+            reader.Expect(TokenType.RightBrace, "'}' to close the import list");
+            return members;
         }
 
         /// <summary>Collects the <c>///</c> doc comment lines sitting immediately before a declaration.</summary>

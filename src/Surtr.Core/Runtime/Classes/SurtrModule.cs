@@ -66,6 +66,7 @@ namespace Surtr.Runtime.Classes
             _path = path;
             _typeHandles = new SurtrTypeHandleTable();
             _chunk = new SurtrChunk();
+            _chunk.OwningModule = this;
 
             _fields = new Dictionary<string, SurtrFieldInfo>(StringComparer.Ordinal);
             _properties = new Dictionary<string, SurtrPropertyInfo>(StringComparer.Ordinal);

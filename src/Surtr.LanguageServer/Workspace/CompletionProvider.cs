@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using Surtr.Compiler.Binding;
 using Surtr.Compiler.Binding.BoundTree;
@@ -123,6 +124,20 @@ namespace Surtr.LanguageServer.Workspace
                 }
             }
 
+            // A module alias (§2.1, Fase 7): its own types, the same way a fully qualified module
+            // path's would be if the receiver had been written out in full.
+            string? aliasedModulePath = ResolveModuleAlias(snapshot, filePath, receiverText);
+            if (aliasedModulePath is not null && binder.Modules.TryGetValue(aliasedModulePath, out ModuleSymbol? aliasedModule))
+            {
+                foreach (var aliasedType in aliasedModule.Types)
+                {
+                    if (MemberItem(aliasedType, includeStatics: true) is CompletionItem item)
+                        items.Add(item);
+                }
+
+                return new CompletionList { IsIncomplete = false, Items = items };
+            }
+
             // A type name: its statics, its nested types, a singleton's instance surface, and an
             // enum's cases.
             NamedTypeSymbol? type = module is null ? null : FindType(binder, snapshot, filePath, module, receiverText);
@@ -212,6 +227,39 @@ namespace Surtr.LanguageServer.Workspace
                 }
             }
 
+            // A module alias (§2.1, Fase 7) is not reachable by its own name as a value or a type -
+            // only qualified, `Alias.Something` - but the name itself belongs in the list so typing
+            // it is discoverable at all. A selective import (`import X.{A, B}`, Fase 8) is the
+            // opposite: exactly the listed names, unqualified, the same as a repeated named import.
+            var unitForImportSyntax = snapshot.UnitFor(filePath);
+            if (unitForImportSyntax is not null)
+            {
+                foreach (var import in unitForImportSyntax.Syntax.Imports)
+                {
+                    if (import.Alias is string alias)
+                    {
+                        Add(new CompletionItem { Label = alias, Kind = CompletionItemKinds.Module, SortText = "3" + alias });
+                        continue;
+                    }
+
+                    if (import.Members is null)
+                        continue;
+
+                    string listedModulePath = string.Join(".", import.Path);
+                    if (!binder.Modules.TryGetValue(listedModulePath, out ModuleSymbol? listedModule))
+                        continue;
+
+                    foreach (string memberName in import.Members)
+                    {
+                        foreach (var type in listedModule.FindTypes(memberName))
+                        {
+                            if (MemberItem(type, includeStatics: true) is CompletionItem item)
+                                Add(item);
+                        }
+                    }
+                }
+            }
+
             foreach (var name in binder.GlobalScope.Names)
                 Add(new CompletionItem { Label = name, Kind = CompletionItemKinds.Class, SortText = "3" + name });
 
@@ -224,12 +272,12 @@ namespace Surtr.LanguageServer.Workspace
         /// <summary>The identifiers reserved by the language, offered where an expression goes.</summary>
         private static readonly string[] Keywords =
         {
-            "abstract", "alias", "as", "break", "case", "catch", "class", "const", "continue",
-            "default", "else", "enum", "false", "finally", "for", "forceinline", "fun", "if",
-            "import", "in", "inline", "interface", "internal", "is", "let", "native", "new",
-            "not", "null", "operator", "or", "override", "private", "protected", "public",
-            "range", "return", "sealed", "singleton", "static", "super", "switch", "this",
-            "throw", "true", "try", "unknown", "value", "var", "virtual", "while",
+            "abstract", "alias", "as", "break", "case", "catch", "class", "const", "constructor",
+            "continue", "default", "else", "enum", "false", "finally", "for", "forceinline", "fun",
+            "if", "import", "in", "inline", "interface", "internal", "is", "let", "moduleof", "native", "null",
+            "operator", "override", "private", "protected", "public", "range", "return", "sealed",
+            "singleton", "static", "super", "switch", "this", "throw", "true", "try", "typeof",
+            "unknown", "value", "var", "virtual", "while",
         };
 
         // ------------------------------------------------------------------------------------
@@ -419,9 +467,14 @@ namespace Surtr.LanguageServer.Workspace
 
             if (prefix.Length > 0)
             {
-                // A qualified name: a foreign module, or a member of a type in this one.
+                // A qualified name: a foreign module, that module reached through an alias, or a
+                // member of a type in this one.
                 if (binder.Modules.TryGetValue(prefix, out ModuleSymbol? foreign))
                     return MethodsNamed(foreign, name);
+
+                string? aliasedModulePath = ResolveModuleAlias(snapshot, filePath, prefix);
+                if (aliasedModulePath is not null && binder.Modules.TryGetValue(aliasedModulePath, out ModuleSymbol? aliasedForeign))
+                    return MethodsNamed(aliasedForeign, name);
 
                 NamedTypeSymbol? type = FindType(binder, snapshot, filePath, module, prefix);
                 if (type is not null)
@@ -915,6 +968,19 @@ namespace Surtr.LanguageServer.Workspace
                         yield return argument;
                     break;
 
+                case BoundCollectionCreationExpression collection:
+                    if (collection.Capacity is not null)
+                        yield return collection.Capacity;
+                    if (collection.Source is not null)
+                        yield return collection.Source;
+                    if (collection.Source2 is not null)
+                        yield return collection.Source2;
+                    if (collection.DefaultValue is not null)
+                        yield return collection.DefaultValue;
+                    if (collection.Thrown is not null)
+                        yield return collection.Thrown;
+                    break;
+
                 case BoundBinaryExpression binary:
                     yield return binary.Left;
                     yield return binary.Right;
@@ -952,6 +1018,11 @@ namespace Surtr.LanguageServer.Workspace
 
                 case BoundTypeTestExpression typeTest:
                     yield return typeTest.Operand;
+                    break;
+
+                case BoundTypeOfExpression typeOf:
+                    if (typeOf.Operand is not null)
+                        yield return typeOf.Operand;
                     break;
 
                 case BoundArrayLiteralExpression array:
@@ -1269,6 +1340,68 @@ namespace Surtr.LanguageServer.Workspace
                     return types[0];
             }
 
+            // A single-name import (`import X.Y;`) or a selective list (`import X.{Y, Z}`, Fase 8)
+            // brings its own name(s) into unqualified scope too, the same way a wildcard's types
+            // do above - neither is stored as a `Symbol` anywhere this pass could ask a module for
+            // it back, so the file's own import syntax is read directly, same as an alias is.
+            var unit = snapshot.UnitFor(filePath);
+            if (unit is not null)
+            {
+                foreach (var import in unit.Syntax.Imports)
+                {
+                    if (import.IsWildcard || import.Alias is not null)
+                        continue;
+
+                    if (import.Members is not null)
+                    {
+                        if (!import.Members.Contains(name) || !binder.Modules.TryGetValue(string.Join(".", import.Path), out ModuleSymbol? listedModule))
+                            continue;
+
+                        types = listedModule.FindTypes(name);
+                        if (types.Count > 0)
+                            return types[0];
+
+                        continue;
+                    }
+
+                    if (import.Path.Count == 0 || import.Path[import.Path.Count - 1] != name)
+                        continue;
+
+                    string namedModulePath = string.Join(".", import.Path.Take(import.Path.Count - 1));
+                    if (!binder.Modules.TryGetValue(namedModulePath, out ModuleSymbol? namedModule))
+                        continue;
+
+                    types = namedModule.FindTypes(name);
+                    if (types.Count > 0)
+                        return types[0];
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// The module path an <c>import X as Name;</c> line in this file names, or
+        /// <see langword="null"/> if <paramref name="name"/> is not an alias here.
+        /// </summary>
+        /// <remarks>
+        /// Reads the file's own <see cref="ImportSyntax"/> rather than the binder's compiled
+        /// symbols: a module alias (§2.1, Fase 7) resolves through <c>Scope</c> at bind time and
+        /// is not itself stored as a <see cref="Symbol"/> anywhere a completion pass could ask a
+        /// module for it back.
+        /// </remarks>
+        private static string? ResolveModuleAlias(CompilationSnapshot snapshot, string filePath, string name)
+        {
+            var unit = snapshot.UnitFor(filePath);
+            if (unit is null)
+                return null;
+
+            foreach (var import in unit.Syntax.Imports)
+            {
+                if (import.Alias == name)
+                    return string.Join(".", import.Path);
+            }
+
             return null;
         }
 
@@ -1280,14 +1413,25 @@ namespace Surtr.LanguageServer.Workspace
             if (unit is null)
                 return result;
 
+            var binder = snapshot.Binder!;
+
             foreach (var import in unit.Syntax.Imports)
             {
                 if (!import.IsWildcard)
                     continue;
 
                 string path = string.Join(".", import.Path);
-                if (path != current.Path && snapshot.Binder!.Modules.ContainsKey(path))
+                if (path != current.Path && binder.Modules.ContainsKey(path))
                     result.Add(path);
+
+                // A directory wildcard (§2.1, Fase 9) also reaches every submodule nested under
+                // it - the exact module may not even exist on its own, only its submodules do.
+                string dotted = path + ".";
+                foreach (string candidate in binder.Modules.Keys)
+                {
+                    if (candidate != current.Path && candidate.StartsWith(dotted, StringComparison.Ordinal))
+                        result.Add(candidate);
+                }
             }
 
             return result;

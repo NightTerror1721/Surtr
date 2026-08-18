@@ -1,7 +1,6 @@
 .vscode/**
 src/**
 tsconfig.json
-node_modules/**
 .git/**
 **/*.vsix
 *.log

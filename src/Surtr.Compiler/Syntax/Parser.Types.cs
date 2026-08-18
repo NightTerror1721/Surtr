@@ -75,10 +75,20 @@ namespace Surtr.Compiler.Syntax
             return new NamedTypeSyntax(SpanFrom(start), path, typeArguments);
         }
 
-        /// <summary>Parses <c>&lt;A, B&gt;</c>, closing through <see cref="TokenReader.ConsumeTypeArgumentClose"/>.</summary>
+        /// <summary>
+        /// Parses <c>&lt;A, B&gt;</c>, closing through <see cref="TokenReader.ConsumeTypeArgumentClose"/>.
+        /// An empty <c>&lt;&gt;</c> is legal — it's how <c>tuple</c>'s 0-arity/unit form is spelled
+        /// explicitly (§5.3) — so the close is checked before the first element is parsed.
+        /// </summary>
         private IReadOnlyList<TypeSyntax> ParseTypeArgumentList()
         {
             reader.Expect(TokenType.Less, "'<' to open the type arguments");
+
+            if (reader.CheckTypeArgumentClose())
+            {
+                reader.ConsumeTypeArgumentClose();
+                return EmptyTypes;
+            }
 
             List<TypeSyntax> arguments = new List<TypeSyntax>();
             while (true)

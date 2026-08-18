@@ -55,9 +55,16 @@ surface syntax just gives each descriptor symbol a spelling:
 | `range` | *(new — see §5.4)* | a half-open or closed interval of `int`s; the only built-in type here that the descriptor grammar does **not** already have a symbol for |
 | `unknown` | `E` | holds any value; must be cast before use (§5.10) |
 
-Composite built-ins (array, dictionary, tuple, closure) have no bare name — they're always written
-in the parameterised forms in §5.3. There is no root `object` type; `unknown` is *not* one, and
-§5.10 explains why the distinction matters.
+Composite built-ins are written in the parameterised forms of §5.3 — `T[]`, `{K: V}`, `(T, T, ...)`,
+`(T, ...) -> R` — and that stays the idiomatic spelling everywhere a type is written. Three of the
+four also have a nameable, callable identifier alongside it: `array<T>`, `dict<K, V>` and
+`tuple<T1, ..., Tn>` name exactly the same types `T[]`, `{K: V}` and `(T1, ..., Tn)` already do —
+not a distinct type, not a conversion target, just another spelling that happens to be an
+identifier — and exist specifically so a constructor can be called on them (§5.5 has no `new`, so a
+form with no identifier can never be callable). §5.3.1 covers the identifier form and the
+constructors it enables; `closure` stays purely symbolic, since a closure is never directly
+constructed from source — it is always a lambda or a value already holding one. There is no root
+`object` type; `unknown` is *not* one, and §5.10 explains why the distinction matters.
 
 A method returning nothing must still write `: void` explicitly; the return-type annotation is
 never omitted, so a declaration's shape doesn't change based on what it returns.
@@ -74,16 +81,17 @@ Hard-reserved, never usable as an identifier:
 abstract   alias     as        break     case      catch       class     const
 constructor          continue  default   else      enum        false     finally
 for        forceinline         fun       if        import      in        inline
-interface  internal  is        let       native    null        operator  override
-private    protected public    return    sealed    singleton   static    switch
-throw      true      try       var       virtual   while
+interface  internal  is        let       moduleof  native      null      operator
+override   private   protected public    return    sealed      singleton static
+switch     throw     true      try       typeof    var         virtual   while
 ```
 
-Three words are **contextual**, not reserved (§3.2): `this`, `super` and `value` mean something
-specific only where they are legal, and remain usable as ordinary identifiers everywhere else.
-`value` carries two such roles — the incoming value in a property's `set` accessor, and the
-`value class` declaration of §2.9 — and neither costs it its identifier status, because the second
-is recognised by the `class` that has to follow it.
+Four words are **contextual**, not reserved (§3.2): `this`, `super`, `value` and `attribute` mean
+something specific only where they are legal, and remain usable as ordinary identifiers everywhere
+else. `this` and `super` are recognized by position, inside a member body; `value` and `attribute`
+are recognized by what follows them — `value` by the `class` that makes it a `value class`
+declaration (§2.9) rather than the incoming value in a property's `set` accessor, and `attribute`
+by the `class` that makes it an `attribute class` declaration (§11) rather than a plain identifier.
 
 The list is deliberately short — it holds only what the grammar actually branches on. Notable
 absences, each for a reason already decided above: no `new` (§5.5), no `object` (there is no root
@@ -155,6 +163,9 @@ file, above any declarations:
 ```
 import Ogame.core.Entity;
 import Ogame.core.*;
+import Ogame.core as Core;
+import Ogame.core.{Entity, Vec2};
+import Ogame.core;
 ```
 
 A named import brings exactly that one type into unqualified scope; a wildcard import
@@ -162,6 +173,52 @@ A named import brings exactly that one type into unqualified scope; a wildcard i
 a name can still be written fully qualified (`Ogame.core.Entity`) even without importing it — the
 import is convenience, not a requirement to reference something. A colliding name pulled in from
 two imports is a compile error at the point of use, not at the `import` line itself.
+
+**A wildcard import also reaches every submodule nested under that path, recursively.** A module is
+a directory (this section's opening), so `Ogame.core` and `Ogame.core.geometry` are two different
+modules, not one containing the other — without this, `import Ogame.core.*;` would silently miss
+anything declared one directory deeper. `Ogame.core.*` brings in `Ogame.core`'s own declarations
+if it has any, *and* every declaration from `Ogame.core.geometry`, `Ogame.core.geometry.solid`, and
+so on at any depth, unified into the same scope a same-level wildcard would populate — a directory
+that holds only subdirectories and no `.surtr` files of its own works exactly the same way, since
+there is nothing special about the exact path matching a real module versus only its descendants
+doing so. A name collision between two submodules, or between a submodule and the directory's own
+declarations, is diagnosed the same way as any other wildcard collision: at the point of use.
+
+**`import ModulePath;` with nothing after it — no type, no `*`, no `as`, no `{}` — is equivalent to
+`import ModulePath.*;` when `ModulePath` is itself a real module.** A named import and this form
+share one syntax (`import` followed by a dotted path and nothing else); which one a given line is
+comes down to whether anything is left over to be a type name. Resolution tries the longest
+possible module prefix first: if the whole path already names a module — directly, or only through
+submodules nested under it, exactly as a wildcard's own resolution does — that wins outright and
+the line behaves as the wildcard form over that path, submodules and module-level functions/
+variables included. Only when the whole path does *not* resolve as a module does the shorter
+prefix-plus-trailing-type reading get a chance, exactly as `import Ogame.core.Entity;` already
+works. This also settles the one case where both readings could apply — a module `Ogame.core` and
+a type named `core` declared directly in module `Ogame`, say: the longest prefix, `Ogame.core` as
+a module, wins, the same way a longer module prefix always wins over a shorter one plus a trailing
+type name.
+
+**`import ModulePath as Name;` aliases a whole module** rather than bringing anything into
+unqualified scope — `Name` itself resolves nowhere on its own, only qualified: `Core.Entity` reads
+exactly as `Ogame.core.Entity` would, everywhere a type may be named (an annotation, a base class
+or interface list, `is`/`as`, or a construction like `Core.Entity(1, 2)`). This is deliberately
+narrower than a value import: an alias is not itself a value — `moduleof` (§11) is the one way to
+turn a module path into a real, first-class `Module` value, and an alias is not that either, only a
+compile-time rewrite of a qualifier, not a reference to anything a program holds — it cannot be
+passed around, stored, or reach a module-level function or variable the way `Core.Entity` reaches a
+type. `as` needs no new keyword;
+it is already reserved by `operator as` (§5.6). Two `import` lines claiming the same alias in one
+module is a compile error at the `import` line itself, unlike a colliding named/wildcard import —
+an alias has no import of its own to shadow, so there is nothing for the second one to lose to.
+
+**`import ModulePath.{A, B};` is a named import repeated**, written once instead of once per name —
+`import Ogame.core.{Entity, Vec2};` brings exactly `Entity` and `Vec2` into unqualified scope, the
+same two declarations `import Ogame.core.Entity; import Ogame.core.Vec2;` would. It reaches the
+same surface a single named import already does (a module's top-level types) and no more: a name
+left off the list is not reachable unqualified, and — like a plain named import — it does not
+reach a module-level function or variable, only a type. The braced form exists purely to avoid
+repeating `import ModulePath.` once per name; nothing about what a name resolves to changes.
 
 ### 2.2 Classes
 
@@ -188,6 +245,9 @@ Two modifiers apply to the class itself, and they are mutually exclusive:
   member on one can be called directly instead of through its vtable slot — the kind of
   devirtualisation `CLAUDE.md`'s performance rules care about, available here as a static fact
   rather than a guess.
+
+The binder rejects `abstract sealed class Foo` with a diagnostic naming both conflicting
+modifiers, on top of `SurtrClass`'s own constructor refusing to build one either way.
 
 ### 2.3 Interfaces
 
@@ -241,15 +301,22 @@ enum Suit : ICardSuit {
 An enum is a sealed class with a fixed set of named static instances. Each case list entry is a
 constructor call against the enum's own constructor; a case with no arguments (`enum Color { Red,
 Green, Blue }`) just calls the implicit parameterless constructor. The `;` after the case list is
-only required when member declarations follow it (same rule as Java), so the simple all-constant
+required exactly when member declarations follow it (same rule as Java), so the simple all-constant
 form needs no trailing punctuation:
 
 ```
 enum Color { Red, Green, Blue }
 ```
 
+A member's own leading identifier (a no-modifier property's name) and a bare case name are the same
+shape, so the parser tells the case list's end from a following member by looking one token past the
+identifier: only a case is ever followed by `(`, `,`, `;` or `}`; a property name is always followed
+by `:`. Missing the `;` before a member is therefore still an error rather than a silent
+misparse — the case list ends at the property either way.
+
 Enums can implement interfaces (`: ICardSuit` above) since each case is a genuine instance, but
-cannot declare a base class — the enum class itself occupies that slot.
+cannot declare a base class — the enum class itself already occupies that slot, and naming one there
+is rejected.
 
 **Per-case method bodies (Java's anonymous-constant pattern) are not supported.** Behavior always
 lives on the enum class itself, shared by every case — branch inside a method on `this` (or on a
@@ -501,8 +568,13 @@ accidentally exposed outside a type without saying so.
 A consistent left-to-right order for every member:
 
 ```
-<visibility>? <static>? <sealed>? <virtual|override|abstract>? <inline|forceinline>? <const>? <let|var|constructor|fun|alias|operator>? <name> ...
+<visibility>? <static>? <sealed>? <virtual|override|abstract>? <inline|forceinline>? <const>? <native>? <let|var|constructor|fun|alias|operator>? <name> ...
 ```
+
+The parser enforces this order — a modifier written out of turn (`static public fun f(): void { }`,
+visibility after `static`) is rejected, naming which modifier is out of place, and a repeated or
+mutually-exclusive modifier (`static static`, `virtual override`) is rejected the same way. `native`
+(§10) sits last, immediately before the introducer, since every example places it there.
 
 The introducer keyword is what tells the member kinds apart: `let`/`var` a field, `fun` a method,
 `constructor` a constructor, `alias` a type alias (§2.7), `operator` an operator overload (§5.6),
@@ -554,8 +626,10 @@ class Dog : Animal {
   constructor on the same class instead. `super.speak()` calls a base implementation explicitly
   from inside an override.
 - **`override` is mandatory** when replacing a virtual member (no implicit override — see §3.3);
-  the compiler rejects a method that matches a base signature without either `override` or a
-  visibly different signature, so accidental shadowing can't happen silently.
+  the compiler rejects a method matching an inherited `virtual`/`abstract` member's full signature
+  (parameters and return both, the same comparison an interface obligation is checked against)
+  unless it is marked `override`, so accidental shadowing can't happen silently. Only a `Direct`
+  (non-virtual) base member is exempt, since there is no vtable slot to silently miss there.
 - **Static field initializers run in declaration order**, exactly as `CLAUDE.md` describes for the
   runtime's eager static initializers — a `static var count: int = 0;` compiles into that class's
   static initializer body, alongside every other static field initializer in the class, in source
@@ -571,6 +645,9 @@ class Dog : Animal {
   base-class receiver described above, and `value` is the incoming value inside a property's `set`
   accessor. All three are contextual — they mean this only in the positions where they're legal,
   and are ordinary identifiers elsewhere.
+- **A property's `get`/`set` may each carry this same modifier run of their own** (§3.4) —
+  independently of the property and of each other, and of anything an accessor does not write, it
+  inherits from the property.
 
 ### 3.3 Method dispatch
 
@@ -604,6 +681,14 @@ subclass can skip the vtable and, per §3.6, becomes a candidate for inlining. `
 legal together with `override`; on a `virtual` or `abstract` member it would contradict itself, and
 on a non-virtual one it would say nothing.
 
+**A method body may be written `=> expr;` instead of `{ return expr; }`.** This is pure sugar,
+resolved by the parser alone — `fun add(a: int, b: int): int => a + b;` parses to exactly the
+same block a written `{ return a + b; }` would, so nothing downstream of parsing (binder,
+emitter, inlining) treats the two forms differently. A `void`-returning method's arrow body
+evaluates its expression for effect instead of wrapping it in a `return`, because `void` rejects
+a `return` carrying a value: `fun log(): void => print("go");` is sugar for
+`{ print("go"); }`, not `{ return print("go"); }`.
+
 ### 3.4 Properties
 
 `name: string { get; set; }` is an auto-property: the compiler synthesizes a private backing field
@@ -613,6 +698,65 @@ switches that accessor to custom logic while leaving the other one auto-generate
 `set`) has no setter at all, not a private one — assigning to it outside a constructor is a compile
 error. This is exactly the `get_x`/`set_x` accessor-method shape `SurtrPropertyBuilder` already
 wires for built-ins, applied to user-declared classes too.
+
+An `inline`/`forceinline` on the property applies to its accessors (§3.6) — unless the accessor
+writes its own, per the rule below.
+
+**An accessor may carry its own modifier run**, independently of the other and of the property:
+visibility, `virtual`/`override`/`abstract`, `sealed`, and `inline`/`forceinline`, written directly
+before `get`/`set` in the same left-to-right order §3.2 fixes for a member. Whatever an accessor
+does *not* write, it inherits from the property — visibility and the inline hint independently of
+each other, and dispatch (`virtual`/`override`/`abstract`) together with `sealed` as one pair, since
+`sealed` only qualifies an `override`. This is why writing just `private` on a setter changes
+nothing else about it: the setter still inherits the property's own dispatch and inline hint, only
+its visibility narrowed.
+
+```
+public value: int {
+    get => _x;
+    private set { _x = value; }        // narrower than the property, not wider
+}
+
+class Animal {
+    public name: string { virtual get => "Animal"; }   // only the getter is virtual
+}
+
+class Dog : Animal {
+    public name: string { sealed override get => "Dog"; }   // only the getter overrides, and seals
+}
+
+abstract class Shape {
+    public value: int { abstract get; set { } }   // getter is abstract, setter is concrete
+}
+```
+
+**An accessor's own visibility must be strictly narrower than the property's**, never equal (the
+accessor could have written nothing) and never wider (a caller could then reach, through that one
+accessor, something the property itself already hides from them) — checked at the declaration, not
+left to surface only where the accessor is used. A write through a narrowed setter, or (were a
+getter ever the narrower one) a read through a narrowed getter, is checked against that accessor's
+own visibility at every call site, on top of the property's own — which is why `public get; private
+set;` genuinely restricts assignment from outside the setter's reach, not just documents an
+intention. `virtual`/`override`/`abstract`/`sealed` carry no such narrowing rule: since a getter and
+a setter are two independent methods to the runtime (`get_x`/`set_x`, per `CLAUDE.md`), each already
+gets its own vtable slot and its own obligation to satisfy, whether that dispatch was written on the
+accessor or inherited from the property — the same override/obligation checking a plain method
+already gets, applied per accessor rather than assumed uniform across both.
+
+**Each accessor may use the same `=>` sugar §3.3 gives a method**, independently of the other:
+`get => _x;` is sugar for `get { return _x; }`, and `set => _x = value;` is sugar for
+`set { _x = value; }` — a setter's expression is always evaluated for effect, the same rule a
+`void` method's arrow body follows, since a setter has nothing to return. The two forms may be
+mixed with a braced accessor or with the auto-generated bare form:
+
+```
+public value: int { get => _x; set { _x = value; } }
+```
+
+**A read-only property with a single expression may skip the accessor block entirely**:
+`x: int => _x;` is sugar for `x: int { get => _x; }` — a `get`-only property with an arrow
+getter, written with no braces at all. It is exactly as read-only as the equivalent
+`{ get { return _x; } }` form: assigning to it outside a constructor is still a compile error.
 
 ### 3.5 Signatures: overloading and parameter lists
 
@@ -666,6 +810,11 @@ Parameter list rules:
 - **`override` matches on the full signature**, so an overload set is inherited and overridden
   member by member; each overload occupies its own vtable slot.
 
+All three shape rules above are enforced: a non-trailing default, a non-trailing or duplicated
+varargs parameter, or a varargs parameter carrying its own default are rejected where the
+parameter list is declared, and a positional argument written after a named one — the exact
+`spawn(x: 1.0, 2.0)` shown as invalid above — is rejected at the call site.
+
 **Two costs this section knowingly accepts.** First, member tables can no longer be keyed by name
 alone — `CLAUDE.md` describes `SurtrClass`'s name-keyed dictionaries as "the compiler's view", and
 overloading means those keys must carry the signature. That is a real metadata change, tracked in
@@ -698,6 +847,25 @@ that machinery dwarfs the work.
   if inlining is *impossible* rather than merely unattractive, it is a **compile error naming the
   reason**, never a silent fallback to a normal call. A `forceinline` that quietly did nothing
   would fail exactly when you most wanted to know.
+
+**There is also a default, written nothing.** A call site with no modifier consults a cost heuristic
+(`CodeGen/InlineCost.cs`) that walks the callee's bound body and splices it when the body is cheap
+enough — the allowance is deliberately small, tuned to the shapes that make the machine's own
+overhead look silly: a field read, a constant, a single arithmetic step, an auto-property's
+`get`/`set`. `inline` raises the allowance to admit bodies of moderate size; `forceinline` admits
+everything the impossibility guards below let through. The heuristic never overrides those guards,
+and a body it declines is an ordinary call, so it can only make code smaller or leave it alone.
+
+Two decisions the heuristic makes that are worth spelling out:
+
+- **A constructor is never spliced.** What runs on construction is not its body alone but the chain
+  and the initializers the emitter prepends to it, so a splice would silently skip the base's
+  construction. A `super(...)` call names exactly such a body, and the cost heuristic or a stray
+  `inline` must not get it there.
+- **A property read honours `inline` and the heuristic on its getter.** Auto-properties go further:
+  both accessors are one instruction — a field load and a field store — so both always lower to the
+  backing field at the call site, virtual ones excepted (they have to dispatch for an override). The
+  setter side of a *computed* property is left as a direct call; the hint may be declined there.
 
 Four things make inlining genuinely impossible, and they are limits rather than policy, so
 `forceinline` rejects them at the declaration:
@@ -811,6 +979,11 @@ exactly one thing, and one place where it silently meant `var` would make it a s
 a guarantee — the reader would have to check where a binding was declared before trusting it.
 Assigning to a `let` says so and names the fix.
 
+`let` in the three-clause header is rejected at the header itself, naming the binding. The
+`for-in` form separately still recognizes and silently discards an optional `let`/`var` written
+before its variable — harmlessly, since the variable is unconditionally read-only regardless of
+what (if anything) precedes it, but tolerated syntax nobody should rely on.
+
 **What `for-in` can iterate is defined by an interface, `IIterable<T>`** (§13.2), so a user class can
 be iterated exactly like a built-in by implementing it. The alternative — hard-coding `for-in` to
 the built-in collections — would have been faster in the narrow sense but would leave every
@@ -822,11 +995,17 @@ iteration would be unacceptable. So **the compiler special-cases the shapes it c
 emits a direct indexed loop with no interface call and no iterator object for:
 
 - an inline range (`for (i in 0..n)`, per §5.4),
-- an `array`, `tuple` or `dict` whose static type is known at the loop,
-- any `sealed` type (§2.2) whose implementation it can therefore resolve exactly.
+- an `array`, `tuple`, `dict` or `string` whose static type is known at the loop.
 
-Everything else goes through `IIterable<T>`. The general path exists so the language is uniform;
-the special cases exist so the common path costs nothing.
+Everything else goes through `IIterable<T>` — **including, today, a `sealed` type.** Resolving a
+`sealed` receiver's implementation exactly is what devirtualises an ordinary call elsewhere in the
+compiler (§2.2), but the `for-in` lowering does not yet apply that same reasoning to `iterate`/
+`moveNext`/`current`; every non-special-cased source, sealed or not, still goes through interface
+dispatch. Closing that gap is additive — it changes nothing observable, only what a `sealed`
+source costs.
+
+The general path exists so the language is uniform; the special cases that do exist keep the
+common path cheap.
 
 **The built-in collections really do implement it**, rather than being iterable by compiler
 privilege alone — `array`, `string`, `tuple`, `dict` and `range` each declare `IIterable<T>` and
@@ -997,11 +1176,12 @@ Boxing a nullable primitive is still exactly what happens if it needs to flow in
 generic slot — same as a non-nullable primitive does today — so `?` doesn't create a second boxing
 path, it just means "no value" is representable before boxing ever enters the picture.
 
-**This is a runtime/value-representation decision, not only a syntax one** — the actual VM change
-(reserving the tag, updating `IsFloat`, wiring the null-check/coalesce opcodes, `SurtrClassReference`
-plumbing for the new value-type family) is out of scope for this document and isn't implemented
-yet. It belongs in `docs/VM-Plan.md`'s gap list once work on it starts; what's settled here is only
-the source-level contract: `?` means the same thing, uniformly, whether the type after it is a
+**This was a runtime/value-representation decision, not only a syntax one, and it is built.** The
+reserved "absent" tag, `SurtrValue.IsAbsent`/`CreateAbsent`, and the opcodes it needed
+(`PushAbsent`, `IsAbsent`, `IsPresent`, and the `JPA`/`JPNA` family) all exist and are what the
+compiler emits for a nullable-primitive test or coalesce — see `CLAUDE.md` and `docs/Opcodes.md`
+for the value representation and instruction set this rests on. What this section settles is the
+source-level contract: `?` means the same thing, uniformly, whether the type after it is a
 primitive or a reference.
 
 ### 5.2 String interpolation
@@ -1055,7 +1235,9 @@ Tuple and closure types reuse their literal/lambda shape outright rather than a 
 `(1, "a")` is a tuple value, and `(int, int) -> float` is a closure type because
 `(x: int, y: int) => ...` is how you write one. `->` (not `=>`) in the type keeps "the type of a
 function" visually distinct from "a function value" even though they're always used in matching
-positions.
+positions. That's a rejection of a generic name as the *idiomatic type-syntax spelling* — §5.3.1
+gives `array`, `dict` and `tuple` a generic name anyway, but only so they can be called as
+constructors; nothing about how a type is written changes.
 
 **A tuple element is read by position, and the position has to be a compile-time constant:**
 
@@ -1089,6 +1271,220 @@ for (entry in scores) {
     print(entry[1]);        // the value
 }
 ```
+
+### 5.3.1 Naming a composite so it can be constructed
+
+`array<T>`, `dict<K, V>` and `tuple<T1, ..., Tn>` name exactly the types `T[]`, `{K: V}` and
+`(T1, ..., Tn)` already name — the same descriptor, the same `SurtrClass`, the same everything.
+Nothing distinguishes them at the type level:
+
+```
+let a: array<int> = [1, 2, 3];   // a is int[]; array<int> and int[] are the same type
+let b: int[] = a;                // no cast, no conversion — there was never a second type
+```
+
+They exist for one reason: §5.5 has no `new`, so a construction is an ordinary call on an
+identifier, and `int[]`, `{K: V}` and `(T1, ..., Tn)` aren't identifiers — nothing can be *called*
+`int[]`. Giving the three types a nameable form is what makes them callable at all, and the form is
+usable anywhere a type is legal, exactly like the symbolic one — the pair above is a genuine choice,
+not a special case carved out only for constructor position. `closure` gets no such form, since a
+closure is never directly constructed; it only ever arrives as a lambda or a value that already
+holds one.
+
+Three shapes are supported, and each folds to the allocation opcodes `docs/Opcodes.md` already
+documents — never the general object-allocation path a `class` construction goes through, since none
+of these three are ever a `SurtrInstance`:
+
+**Empty**, no arguments — the same value the equivalent empty literal already produces:
+
+```
+let a = array<int>();     // int[], length 0 — same as ([] as int[])
+let d = dict<int, string>();  // {int: string}, length 0 — same as ({} as {int: string})
+let u = tuple<>();        // the 0-arity/unit tuple — the only tuple with a no-arg form at all
+```
+
+**Capacity**, one `int` argument — and the two collections mean it differently, which is worth
+being explicit about rather than papering over. `array<T>(n)` is `new T[n]`-style: a real array of
+length `n`, every element the zero of its family, folding to the single existing `ArrNewX`
+instruction — "for arrays of statically known size" is precisely what that opcode was for, and
+nothing in the compiler emitted it before this. `dict<K, V>(n)` stays a reserve-style capacity hint
+— length 0, a pre-sized backing store — because `DictNew` allocates only ever an *empty* dict; there
+is no `DictNewX`. It folds to `DictNew` plus a call to `dict`'s own existing `reserve` method, the
+one shape here that isn't a single opcode:
+
+```
+let padded = array<int>(5);       // [0, 0, 0, 0, 0]
+let scores = dict<string, int>(32); // {}, but the backing store is pre-sized for 32 entries
+```
+
+`tuple<...>` has **no** capacity constructor at all — a tuple's arity is part of its type, not a
+number requested at construction, so there's nothing for one to mean; writing one is a compile
+error naming that rule.
+
+**Casting, between `array` and `tuple` only** — the one pair with a natural, total correspondence in
+both directions, everything else is left alone rather than forced:
+
+```
+let t = (1, 2, 3);
+let a = array<int>(t);         // [1, 2, 3] — N is the tuple's own declared arity, known at compile time
+
+let xs = [10, 20, 30];
+let back = tuple<int, int, int>(xs);  // (10, 20, 30)
+```
+
+`array<T>` from a tuple reads every element by its constant index and packs them, so it costs one
+instruction per element plus the pack — nothing runtime-conditional, since a tuple's arity is always
+a compile-time fact. `tuple<...>` from an array runs the other way: the tuple's arity is still known
+at compile time, but the array's actual length is a runtime value, so a length check comes first —
+a mismatch raises `InvalidCastException` (§13.3), the same class a failed `as` already raises, before
+any element is read. Either direction accepts an element-wise implicit conversion (§5.6 excludes
+`operator as`, since that's never implicit) — `array<float>(anIntTuple)` widens each element on the
+way in, the same conversion an ordinary assignment would insert.
+
+Casting `dict<K, V>` from or to a single value the way array/tuple cast between each other is not
+supported — there's no single source shape as natural for a dict as a tuple is for an array. §5.3.3
+gives it two constructors of its own instead, built from a *pair* of sources rather than a cast.
+
+**`tuple<...>` also takes its elements directly, and copies itself for free.** Besides the empty and
+array-cast forms above:
+
+```
+let t = tuple<int, string>(1, "a");   // (1, "a") — identical to the literal, reached by a second path
+let u = tuple<int, int>(t2);          // t2 must already be a (int, int) — see below
+```
+
+`tuple<T1,...,Tn>(v1,...,vn)` written with one value per declared element is exactly the tuple
+literal `(v1,...,vn)`, bound and emitted the same way — the constructor call is a second spelling of
+the same thing, not a second mechanism. `(T1,T2)(pair: (T1,T2))` — a tuple built from *another value
+of the same tuple type* — is the one constructor in this whole section that folds to nothing at all:
+tuples are immutable and `(T1,T2)` names one interned type, so "the same type on both sides" is
+reference identity, not mere convertibility, and the argument already *is* the value this
+construction would build. Passing a tuple that would need widening (say, `(int,int)` into
+`(float,float)`) is a different, non-identical type, and has no constructor to reach it — write the
+individual elements instead.
+
+### 5.3.2 Constructing a primitive, `string` or `range`
+
+`int`, `float`, `char`, `bool`, `string` and `range` were always nameable — §1.1 already makes every
+one of them an ordinary identifier — so unlike §5.3.1's composites, nothing new had to be added just
+to make them callable. What's new is what they can be called *with*: besides the parameterless
+default each already had, every one of these six now accepts arguments, and every shape folds onto
+something that already existed before this section did.
+
+**A primitive built from another primitive is exactly the equivalent `as` cast** — not a new
+conversion with its own rules, the same one:
+
+```
+let n = int(3.9);      // 3 — identical to `3.9 as int`
+let big = float(3);    // 3.0 — the one implicit widening the language already had
+let c = char(65);      // 'A' — identical to `65 as char`, no validation (see below)
+let b = bool(1);       // true
+```
+
+Every ordered pair among the four (excluding identity, which is a no-op either way) already
+classified as an explicit numeric conversion before this section existed — `Conversions.ClassifyExplicit`
+never had a rule specific to primitives elsewhere, so a constructor call and an `as` cast between the
+same two types share the exact same conversion, the exact same opcode, and the exact same edge cases.
+That includes `float` → `int`, which this section is what finally pins down: it **truncates toward
+zero**, saturates to the nearest `int` bound outside `int`'s range, and reads `NaN` as `0` — matching
+C#/Java/Kotlin's own explicit narrowing rather than rounding, and matching the truncation §5.7
+already gives `/` between two `int`s. `char(code: int)` deliberately validates nothing, for the same
+reason `code as char` doesn't: a `char` is a 16-bit code unit, not a full Unicode scalar value, so
+"validate the codepoint" has no representation-accurate meaning to give it — it retags and truncates
+to 16 bits, silently, exactly like the cast it's sugar for.
+
+**A primitive parsed from `string` throws on bad input** — the one place this section adds real
+behavior rather than reusing an existing conversion, since nothing previously in the language could
+fail this way from a bare cast:
+
+```
+let n = int("42");          // 42
+let r = int("2a", 16);      // 42 — radix parse, base 2..36
+let f = float("3.14");      // 3.14
+let b = bool("TRUE");       // true — "true"/"1" and "false"/"0", case-insensitive on the words
+let c = char("hi");         // 'h' — the first character; the rest is ignored, not an error
+```
+
+A `radix` outside `[2, 36]` — the range every digit-and-letter alphabet can name — is an
+`ArgumentException`, since the *argument* is what's wrong, not the text. Everything else that keeps
+a string from parsing — an empty string for `char`, a malformed number, a digit outside its radix's
+alphabet — is a `FormatException` (§13.3): the argument was the right *shape* (a `string`), so the
+problem is its *content*. `int(aString)`/`float(aString)` deliberately do not reuse the existing
+`int.parse`/`float.parse` static methods, which silently answer `0`/`NaN` on bad input instead of
+throwing — those are unchanged; the constructor form is a separate, throwing native method.
+
+**`string` composes the other direction**, plus two shapes nothing before this section could build in
+one step:
+
+```
+let s1 = string(42);            // "42" — sugar for 42.toString()
+let s2 = string(3.14);          // "3.14"
+let s3 = string(true);          // "true"
+let s4 = string('x');           // "x"
+let s5 = string(0..10);         // "0..10" — range now declares its own toString()
+let s6 = string('*', 5);        // "*****"
+let s7 = string(['h', 'i']);    // "hi"
+let s8 = string(['h', 'e', 'l', 'l', 'o'], 1, 3);  // "ell" — a slice, offset then length
+```
+
+`string(v)` for any of `int`/`float`/`bool`/`char`/`range` is sugar for `v.toString()` — every one of
+those already existed except `range`'s, which this section adds. `string(c, count)`, `string(chars)`
+and `string(chars, offset, length)` are genuinely new: nothing composed a repeated character, a
+joined `char[]`, or a slice of one in one pass before, so each gets its own native method rather than
+building through an intermediate `string[]` (or a copied sub-array, for the slice) the way composing
+`string.fromChar` per element and `string.join` would. The slice form checks `offset`/`length` against
+the array's own bounds and raises `IndexOutOfRangeException` (§13.3) — the same class any other
+array/string index trap already raises — rather than reading past either end.
+
+**`range` gains two constructors, folding onto the same `RangeNew`/`RangeNewInclusive` the `..`/`..=`
+operators already emit** — no opcode work, no VM change:
+
+```
+let a = range(0, 10);              // 0..10 — the same node `0..10` itself binds to
+let b = range(0, 10, true);        // 0..=10 — a written constant picks the opcode at bind time
+let c = range(0, 10, flag);        // a runtime bool: an ordinary ternary between the two forms
+```
+
+When the third argument is a written `true`/`false`, this is zero-cost — the same fold as writing
+`..`/`..=` directly, decided at compile time. A genuine runtime `bool` falls back to an ordinary
+conditional expression between the two forms, which is already how every other ternary in the
+language works — nothing new needed there either. `range(start, end, step)` — a stepped range — is
+not part of this: `RangeNew` has room for exactly two operands and `SurtrRange` for exactly two
+bounds, so a step needs either a changed or an additional opcode, a VM change, and a
+`SurtrRange` field this section deliberately leaves alone.
+
+### 5.3.3 The array/dict shapes a single value can't cover
+
+§5.3.1 covers `array<T>`/`dict<K,V>`'s empty, capacity and (for array) tuple-cast constructors. Four
+more shapes build from a *source with its own runtime length* rather than a compile-time-constant
+one, so unlike everything in §5.3.1 these fold to a compiled loop, not a straight-line unrolled
+sequence — still only opcodes already documented in `docs/Opcodes.md`, just run more than once:
+
+```
+let padded = array<int>(5, -1);         // [-1, -1, -1, -1, -1]
+let copy = array<int>(existingArray);    // an independent element-by-element copy
+let fromRange = array<int>(0..5);        // [0, 1, 2, 3, 4] — anything implementing IIterable<T>
+let pairs = [("a", 1), ("b", 2)];
+let d1 = dict<string, int>(pairs);       // {"a": 1, "b": 2}
+let d2 = dict<string, int>(["a", "b"], [1, 2]);  // the same dict, from two parallel arrays
+```
+
+`array<T>(size, defaultValue)` zero-fills exactly like `array<T>(size)` when `defaultValue` is
+written as a literal equal to `T`'s own zero — the same single-opcode fold, nothing new. Any other
+default value evaluates once, then a loop fills each slot. `array<T>(anotherArray)` and
+`array<T>(anIterable)` are two different shapes, deliberately: an argument that's already an
+`array<T>` (or convertible element-wise) takes the fast path — one length read, one allocation, an
+indexed copy loop, no interface dispatch — and only something that isn't an array at all (a `range`,
+a `dict` read as `(K,V)` pairs, a `string` read as `char`, or a user type implementing
+`IIterable<T>`) falls to the general path, which walks it exactly the way a `for-in` loop already
+would (`iterate`/`moveNext`/`current`), since its length isn't known ahead of time. A tuple argument
+is not either of these — it still takes §5.3.1's own unrolled `array<T>(aTuple)` path, since a
+tuple's arity is always a compile-time fact and never needs a loop at all.
+
+`dict<K,V>(pairs)` needs each pair's two slots convert to `K`/`V`; `dict<K,V>(keys, values)` needs
+the two arrays' element types to match `K`/`V` exactly, with no conversion — arrays are invariant
+(§6), so this is the same rule as any other array-typed parameter, not a new one — and raises
+`ArgumentException` if the two arrays' lengths differ, checked once before either is read.
 
 ### 5.4 Collection and range literals
 
@@ -1197,11 +1593,31 @@ class Vec2 {
 
 An overload is declared with `operator` followed by the token it overloads, taking the operator's
 operands as ordinary parameters. `operator` is an introducer keyword in its own right (§3.2) —
-there is no `fun`, no `static` and no `public`, because **an overload is always public and always
-static and can be nothing else**, so writing either would be three tokens that carry no
-information. A use site resolves through it: `a + b` becomes `Vec2.operator+(a, b)` when both
-operands are `Vec2`. This is aimed squarely at game-math types (`Vec2`/`Vec3`/`Quaternion` and
-friends), where writing `a.add(b)` everywhere would cost real readability for no benefit.
+there is no `fun`, no `static` and no `public`, because **an overload is always public and `static`
+is its default**, so writing either would be three tokens that carry no information. A use site
+resolves through it: `a + b` becomes `Vec2.operator+(a, b)` when both operands are `Vec2`. This is
+aimed squarely at game-math types (`Vec2`/`Vec3`/`Quaternion` and friends), where writing
+`a.add(b)` everywhere would cost real readability for no benefit.
+
+**A dispatch modifier makes an operator an instance method.** `virtual`, `override`, `abstract` or
+`sealed` — or declaring the operator on an *interface* — turns it from a static method taking every
+operand into an instance method whose receiver is the first parameter, written as an ordinary
+parameter like any other:
+
+```
+virtual operator+(self: Vec2, other: Vec2): Vec2   // `this` is `self`
+abstract operator+(self: IAddable, other: IAddable): IAddable;   // a contract
+```
+
+The call still reads `a + b`, but it dispatches through `a` like any virtual or interface call:
+a `virtual operator` reaches a vtable slot, an interface's operator is reached through the
+interface's method slots, and an `override` in a class implements a base's or an interface's
+operator the same way it implements a method — an interface implementation may use the interface
+as the receiver, since the receiver never enters the method table's signature. The receiver of an
+instance operator has to be the declaring type, or an ancestor when overriding one; a plain
+(static) operator has to take the declaring type among its operands. `operator as` is the
+exception and stays static always: its single parameter is the source and its target is the
+return, and nothing about a conversion ever dispatches.
 
 **What may be overloaded**, and what each declaration gives you for free:
 
@@ -1267,7 +1683,9 @@ Four of these need their behaviour pinned down, because the declaration alone do
   site check for a user-defined operator.
 
 At least one operand must be the declaring type: a type cannot define how two types that are both
-foreign to it interact.
+foreign to it interact. An instance operator is stricter — its receiver is its first parameter, so
+that parameter must be the declaring type or an ancestor, since the receiver is what the operator
+operates on.
 
 ### 5.7 Operators and precedence
 
@@ -1731,11 +2149,49 @@ visible outside, exactly as in C#/Java. What's specifically not possible is a cl
 later *reassignment* of the outer `var` it closed over, because that would require the closure to
 hold the slot, not a snapshot of what was in it.
 
-To keep that from being a silent surprise, **a `var` a closure has captured must be effectively
-final from the closure's point of view**: reassigning it anywhere after the closure literal that
-captured it is a compile error, the same restriction Java places on captured locals, for the same
-reason. This is the syntax layer being honest about a constraint the object model already imposes,
-not a new restriction invented for its own sake.
+To keep that from being a silent surprise, **a closure may not capture a `var` local at all** —
+only a `let` local, a parameter, or a field/property/module-level member may be captured. This is
+the syntax layer being honest about a constraint the object model already imposes, not a new
+restriction invented for its own sake, but it lands stricter than Java's "effectively final"
+rule: Java allows capturing a local that happens to never be reassigned after the point of
+capture, while Surtr rejects the capture itself the moment the local was declared `var`, whether
+or not it is ever actually reassigned anywhere. A `var` that a closure needs to read has to be
+copied into a `let` first, immediately before the closure literal.
+
+**A method name converts to a closure wherever a closure is expected, with no lambda written at
+all**, the same target-typing §5.9 already gives an untyped lambda parameter — a bare name, or one
+reached through a receiver, is tried as a method group only after every other reading of it (a
+local, a field, a property, an implicit or module member) has already failed to name anything:
+
+```
+fun add(a: int, b: int): int { return a + b; }
+let f: (int, int) -> int = add;               // sugar for (a, b) => add(a, b)
+
+class Counter {
+    private var _value: int;
+    public fun get(): int { return _value; }
+}
+let c = Counter();
+let read: () -> int = c.get;                  // sugar for () => c.get()
+```
+
+This is sugar in the exact sense §3.6's `inline` is not: `let f: (int, int) -> int = add;` binds to
+precisely the lambda `(a, b) => add(a, b)` would, so capture rules, dispatch and the closure's own
+emission are a lambda's throughout — the receiver, when there is one, is captured **by value at the
+conversion**, the same moment a lambda would capture it, not re-read on every call. Reached through
+an instance method, that receiver is `this` when the name is bare (usable anywhere `this` itself is,
+so never inside a `static` method — §3.2) or whatever expression precedes the `.` when it is not,
+evaluated once, right there. A method that dispatches virtually still does: `f()` above calls
+whatever override the captured receiver's actual class has, exactly as `c.get()` written directly
+would, because the desugared call is an ordinary virtual call like any other.
+
+Only an overload whose shape the target closure type actually accepts is considered: the same
+arity, every parameter able to receive what the closure's declares, and the returns agreeing on
+`void`-ness (a closure returning `void` never reads a result, so it cannot wrap a method that
+returns one — there is nowhere for that value to go). Where more than one overload fits, the first
+one found wins; this is deliberately not full overload resolution the way a call site gets (§3.5) —
+converting an *overloaded* name to a closure is expected to be rare enough that determinism beats
+specificity here.
 
 ---
 
@@ -1760,10 +2216,11 @@ throw OutOfRangeException("index 5 out of range");
 ```
 
 Every thrown value's type must extend the built-in `Exception` class — `throw` only type-checks
-against an `Exception`-typed expression, so a `catch (e: T)` is always matching against a real
-hierarchy rather than an arbitrary object. Multiple `catch` clauses stack and are tried top to
-bottom, first assignable match wins (a walk up `Ancestors`, same mechanism as any other subtype
-test) — same as C#/Java, no union-typed catch.
+against an `Exception`-typed expression, and a `catch (e: T)` clause is rejected the same way if
+`T` does not, so a `catch` is always matching against a real hierarchy rather than an arbitrary
+object. Multiple `catch` clauses stack and are tried top to bottom, first assignable match wins (a
+walk up `Ancestors`, same mechanism as any other subtype test) — same as C#/Java, no union-typed
+catch.
 
 `try`/`catch`/`finally` here is purely the *source* form; how it lowers is already decided by
 `CLAUDE.md` and isn't repeated as a new decision: a protected region becomes an entry in
@@ -1784,26 +2241,50 @@ fun report(): void {
     log("width is $ScreenWidth");
     TimeScale = 0.5;
 }
+
+class Sprite {
+    public let handle: int;
+    constructor(handle: int) { this.handle = handle; }
+
+    // A hybrid Surtr/host class: `move` is compiled Surtr, `setPosition` is a member whose body
+    // is host code — both live in the same method table, and nothing about a call site tells
+    // them apart.
+    public fun move(dx: float, dy: float): void { this.setPosition(dx, dy); }
+    public native fun setPosition(dx: float, dy: float): void;
+}
 ```
 
-A `native` declaration is a signature with no body, in the same "just the shape, no
-implementation" spirit as an interface member (§2.3) — it cannot legally be given one; the body
-lives on the host side, wired through `SurtrNativeFunction`/`FromFunctionPointer`. What it gives
-the compiler is a name and a type to check call sites against, and a slot in the module's native
-import table — distinct from the module's regular call table, matching `CLAUDE.md`'s note that
-`CallGlobalNative` is the one opcode split out by *which table* the target lives in, not by
-`ImplKind`. A module that declares a `native` the host never registers under that exact name fails
-to load, the same way an unresolved `SurtrTypeHandle` does.
+`native` is a modifier on an ordinary member — a method, or a property's accessor(s) — not a
+declaration form of its own. It says *where the body lives*, exactly the way `SurtrMethodImplKind`
+distinguishes bytecode from host code at the runtime level (`CLAUDE.md`): a `native` member is a
+signature with no Surtr body, the same "just the shape" spirit as an interface member (§2.3), and
+the body lives on the host side instead, published under the member's **link name** — derived from
+the owning type and the signature (`game:Sprite.setPosition(FF)`) unless declared explicitly, or
+from the module path and the member name for a module-level one (`surtr.math.Math.sin`), since the
+module is its owning scope. That prefix is what keeps two modules' same-named `native` members from
+binding against the same body: `surtr.math.Math.log` and `host.util.log` are distinct link names
+even though both are declared `log`. A
+module naming a `native` member the host never publishes a body for under that exact link name
+fails to load, the same way an unresolved `SurtrTypeHandle` does — `SurtrRuntime.DefineNativeBody`
+is what a host calls to satisfy one, before `LoadModule`.
 
-`native` declarations live at module scope only — host globals are genuinely global per
-`CLAUDE.md` ("the single exception is host-defined native variables and functions"), not
-per-class, so there's no `native` member inside a `class`/`interface` body.
+There is **no separate table for a `native` member** — module-level or inside a class, it lands in
+the same method table every other member does, and a call to it is an ordinary `CallLocalModule`,
+`CallModule` or dispatch opcode like any other. Only `ImplKind` (Bytecode vs. Native) says how the
+body is reached; nothing about where the *declaration* lives changes that shape. This is what makes
+a hybrid class possible: `Sprite` above compiles `move`'s body and links `setPosition`'s, and a
+caller of either sees one method table with no seam between them.
+
+`native` is legal on a module-level member or a member inside a `class` — never inside an
+`interface`, which cannot carry a body of any kind (§2.3), native or otherwise.
 
 **`native let` is read-only, `native var` is writable** from Surtr, mirroring the same distinction
-everywhere else in the language. The host chooses which it registers, so a value it needs to keep
-authority over (a frame counter, a screen dimension) is exposed as `let` and can only change on the
-host's own terms, while genuinely shared state (`TimeScale`) can be exposed as `var`. There is no
-third form — a host global that Surtr should never see simply isn't registered.
+everywhere else in the language — a `native let` compiles to a property with a native getter only,
+a `native var` to one with both accessors, exactly as `let`/`var` do for an ordinary field. The host
+chooses which it registers, so a value it needs to keep authority over (a frame counter, a screen
+dimension) is exposed as `let` and can only change on the host's own terms, while genuinely shared
+state (`TimeScale`) can be exposed as `var`. There is no third form — state a host does not want
+Surtr to see simply is not declared.
 
 ---
 
@@ -1829,9 +2310,181 @@ meaning exactly one thing (array indexing/type, §5.3/§5.4). An attribute can d
 declaration — class, interface, enum, field, property, method, parameter — the same set `///` doc
 comments attach to. Concretely, this is aimed at two audiences: compiler/tooling directives
 (`@Obsolete`, `@Deprecated`-style warnings) and future Unity interop, where a host embedding Surtr
-will want to reflect on attributes to do things like expose a field to the inspector. Exactly which
-attributes exist and how the host reads them back is a separate, later design question — this
-section only fixes the source-level syntax for attaching one.
+will want to reflect on attributes to do things like expose a field to the inspector.
+
+**`@Name(args)` names a class extending `Attribute`** — its constructor arguments fill its fields
+positionally, folded to constants at compile time (the instance is built when the declaring module
+loads, alongside every other static, so an argument that isn't a constant has nothing to be built
+from). Any class that extends `Attribute`, however it is declared, qualifies to be written after
+`@`. The `attribute` keyword below is the *recommended* way to declare one — it gets the extension
+for free and lets a target list and a retention be declared alongside it — but writing
+`class Foo : Attribute { ... }` by hand still works exactly as it always did, with no restriction
+on where `@Foo` may be written and `Runtime` retention.
+
+```
+attribute class Obsolete {
+    public let reason: string = "";
+}
+
+attribute(Method, Property) class Range {
+    public let lo: int = 0;
+    public let hi: int = 0;
+}
+
+attribute(CompileTimeOnly, Method) class Todo { }
+```
+
+**`attribute class Name { ... }` implicitly extends `Attribute`** — no `: Attribute` needed, though
+writing it (or extending something that already does) is still accepted. `attribute` is contextual,
+recognized only immediately before a class declaration, the same way `value` is recognized only
+before one (§2.9); everywhere else it is an ordinary identifier.
+
+**A parenthesized list right after `attribute` restricts where the attribute may be written and
+how long it lives**, mixing two kinds of item in any order:
+
+- **A target** — `Class` (also matches `value class` and `singleton`), `Interface`, `Enum`,
+  `Field`, `Property` or `Method` (also matches a constructor and a module-level function). Any
+  number may be listed; `@Range` above is legal on a property or a method, nowhere else. No target
+  in the list — including no parenthesized list at all — means no restriction, matching how any
+  attribute behaved before `attribute` existed.
+- **`CompileTimeOnly`**, at most once — the attribute is checked and folded exactly like any other,
+  but the compiled image never carries it: no `SurtrAttributeUsage`, nothing for host reflection to
+  read back. `@Todo` above exists purely to be caught by a lint pass over the source or a compiler
+  warning, never a promise about what ships. Leaving it out (the default) means `Runtime`: the usage
+  survives into the image and is readable through `SurtrMemberInfo.TryGetAttribute` like any
+  attribute always was.
+
+A target list is checked only against attribute uses in the **same compilation** as the attribute's
+own declaration — an attribute imported from an already-compiled module image is not (yet) checked
+against its target list at the use site, only at its own declaration. Declaring an attribute in the
+same project as everything that uses it, which is by far the common case, is unaffected.
+
+**Reading an attribute back from Surtr itself, not just from a host, goes through `Type` and
+`Member`** — two more built-ins, always in scope like `Attribute`:
+
+```
+let t = Type.of(someValue);   // the runtime class behind any value, primitives included
+t.name;                       // "Player"
+t.baseType;                   // the Type one level up, or null at the root
+t.members();                  // Member[] - this type's own declared fields, properties,
+                               // methods and nested types, one entry each
+t.attributes();                // Attribute[] written directly on the type
+
+for (m in t.members()) {
+    m.name;                   // "health"
+    m.kind;                   // "field" | "property" | "method" | "class" | "enum" | "interface"
+    m.isStatic;
+    m.declaringType;          // the Type that declared it
+    m.attributes();           // Attribute[] written on this member, `Runtime`-retention only
+}
+```
+
+`Type.of` is the only way to get one — declaring a bare `Type()`/`Member()` is rejected, the same
+way `iterator()` is: neither declares a constructor. `members()` reports each declaration once,
+under the shape a reader of the source would recognize: an auto-property's synthesized backing
+field and its `get_x`/`set_x` accessors fold into the one `property` entry, and a name the compiler
+made up (leading `$` — bridges, lambdas, backing fields the source never wrote) is left out
+entirely. A constructor appears once, named `ctor`. An attribute an attribute usage names is
+already the real, constructed instance §11 describes above — `m.attributes()[0] as Range` reads its
+fields directly, no separate value-reading API needed. Only `Runtime`-retention attributes are ever
+reachable this way, and there is nothing to filter for it at read time: `CompileTimeOnly` never
+reaches a member's attribute list in the first place (`ModuleEmitter` never emits it), so `Type`
+and `Member` only ever see what was already there.
+
+This is deliberately read-only: `Type`/`Member` enumerate declarations and their attributes, and
+stop there. Reading or calling the member itself — `field.get(instance)`, `method.invoke(instance,
+args)` — is a different and considerably larger feature and is not part of this surface.
+
+**`typeof(X)` is the keyword form of the same `Type`**, and covers both directions `Type.of`
+cannot reach on its own:
+
+```
+typeof(SomeClass)      // the Type for a class name, no instance needed
+typeof(ISomeInterface)  // a Type can name an interface too - baseType is always null on one
+typeof(someValue)      // the same answer Type.of(someValue) gives, for an ordinary expression
+```
+
+Unlike `is`/`as`, `X` cannot always be parsed as a type — `typeof` has to reach an arbitrary value
+too, and a call or an arithmetic expression is not type syntax. Only a name followed by a generic
+argument list can never also be an expression (a bare call has no `<...>` of its own outside
+`pick<int>(...)`, which needs a `(` after the close rather than the `)` that ends `typeof`), so
+that is the one shape parsed as a type outright; everything else — a bare or qualified name
+included — parses as an ordinary expression. A bare or qualified name is then the one shape that
+could still be either, since §1.1 keeps type names and value names in separate namespaces; it
+resolves as a type first, and only falls back to reading it as a value when no type of that name
+is in scope — the same order every other place this exact ambiguity comes up (a singleton's own
+name, a construction, a static member access) already resolves it in. In practice this only
+matters when a local variable or field shadows a visible class name, which is unusual enough that
+either reading would surprise someone; `typeof` picks the type. An array, nullable, dictionary,
+tuple or closure *type* directly as a static operand (`typeof(int[])`) is not reachable this way —
+neither is valid expression syntax either, so there is nothing to fall back to — but a value of
+any such type still reflects fine through the instance form.
+
+Nothing about what `typeof` returns differs from `Type.of` — same `Type` object, same identity
+for the same class or interface within one running program — but a primitive operand skips the
+box `Type.of`'s `unknown` parameter always pays for, since a primitive's class can never differ
+from its own static type: `typeof(5)` never allocates a boxed `int` the way `Type.of(5)` does.
+
+`typeof` is a reserved word, unlike `value`/`attribute`/`this`/`super`: it never needs to double
+as an ordinary identifier the way those four do, so reserving it outright avoids the ambiguity
+instead of relocating it into the parser.
+
+**`moduleof(ModulePath)` is the reflective counterpart for modules**, and the first genuine
+first-class module value the language has — §2.1's note that Surtr has none is no longer quite
+true of what `moduleof` hands back, though a module *alias* (`import X as Y;`) still is not one; an
+alias stays a compile-time qualifier rewrite, never a value:
+
+```
+moduleof(Ogame.core)          // the Module for a module by its full path
+moduleof(Core)                 // Core resolved through `import Ogame.core as Core;` first
+```
+
+Unlike `typeof`, `moduleof` has **no instance form** — there is no value in the language a module
+could be read off, the way a value's runtime class always answers `typeof`. The operand is always a
+dotted module path, resolved entirely at compile time, and the parenthesised call shape mirrors
+`typeof(X)` rather than `import`'s bare trailing path, for consistency with the language's other
+reflection operator. When the path's first segment is a declared module alias, it resolves through
+the alias first, exactly as a qualified type name already does — `moduleof(Core)` reads exactly as
+`moduleof(Ogame.core)` would. Resolving a path that names no known module is a compile error.
+
+`Module` is the value `moduleof` returns, alongside `Type` and `Member`:
+
+- `path: string` — the module's full dotted path.
+- `classes(): Type[]` / `interfaces(): Type[]` — the classes, enums and interfaces declared
+  directly in the module, each wrapped exactly as `typeof`/`Type.of` would wrap it — the same
+  `Type` object either way, same identity.
+- `members(): Member[]` — the module's own fields and functions (§2.5 makes what look like globals
+  module-level members), under the same rules `Type.members()` already follows: a name the
+  compiler made up (leading `$`) is left out, and a synthesised module initializer — needed
+  whenever the module declares a variable with an initializer — appears once, named `cinit`, the
+  same way a synthesised constructor appears as `ctor` on `Type.members()`. Deliberately separate
+  from `classes()`/`interfaces()`, which already cover the module's types on their own.
+- `submodules(): Module[]` — every module loaded in the running program whose path sits strictly
+  under this one's, since a module is a directory (§2.1): `Ogame.core` and `Ogame.core.geometry`
+  are different modules, not one nested in the other, and this is `submodules()`'s way of walking
+  from a parent to what is nested under it at runtime, the same relationship a directory wildcard
+  import already walks at compile time.
+- `Module.get(path: string): Module` / `Module.tryGet(path: string): Module?` — finds an already
+  loaded module by its full path, dynamically, from a `string` computed at run time rather than a
+  path written in source. `get` throws `KeyNotFoundException` if no module is loaded under that
+  path; `tryGet` answers `null` instead. The built-in module (`surtr`) resolves under that literal
+  path even though it is process-wide rather than registered per runtime, the same special case
+  `typeof`'s own resolution already needs for it.
+
+**`Type` gained the same dynamic counterpart**: `Type.get(name: string): Type` and
+`Type.tryGet(name: string): Type?`, the runtime-string analogue of `typeof`/`Type.of` the same way
+`Module.get`/`tryGet` are of `moduleof`. `name` is a **descriptor** (§"Type references are
+descriptor strings" — `Ogame.core:Entity;`, `AI` for `int[]`, a mangled generic construction like
+`` Obox:Box`1;I ``), not a display name: the canonical, unambiguous form the runtime already
+resolves every type reference against, reused here with no new parsing rather than a second,
+friendlier grammar this API would have to parse and maintain on its own — the tradeoff is that
+`Type.get` is a cruder surface than the rest of this API, closer to the compiler's own internal
+encoding than to something meant to be typed by hand. `get` throws `KeyNotFoundException` for a
+descriptor naming nothing known; `tryGet` answers `null`.
+
+Neither `get` nor `tryGet`, on either class, appears in a `try`/`catch` by itself — an uncaught
+`KeyNotFoundException` from either escapes a running program exactly as any other uncaught native
+exception does.
 
 ---
 
@@ -1874,14 +2527,29 @@ Everything here is imported implicitly. `surtr` is in scope in every file withou
 line, which is what lets §5.1's `string` and §9's `Exception` be written unqualified everywhere in
 this document.
 
+Not every library type lives at that one path, though. `Exception`, the four core interfaces and
+the primitive/collection members sit in the built-in `surtr` module proper (`Surtr.Core`, always
+present, no loading step). `Math` and the rest of the *expressible* library sit one level down, at
+their own module path (`surtr.math.Math`, `surtr.collections.List`, …) inside `Surtr.Stdlib` — an
+optional, separately-referenced project a host loads into a `SurtrRuntime` after constructing it
+(`SurtrStdlib.LoadAll`, reading every module straight out of `Surtr.Stdlib.dll`'s own embedded
+resources — no file path or asset system required, which is what makes it a two-DLL Unity drop-in).
+A program that wants `Math.clamp(x, 0, 1)` unqualified needs both the
+module loaded into the runtime *and* an `import surtr.math.Math` naming it; `Surtr.Core` itself
+carries no knowledge that `Math` exists at all.
+
 ### 13.1 What goes in C# and what goes in Surtr
 
 The library is written in both, and the dividing line is not taste:
 
 - **C# (native, via `SurtrNativeFunction`)** for anything that touches VM internals, allocates, or
-  sits on a hot path — the primitive and collection members, `Math`, string manipulation. These are
-  the members `SurtrBuiltInTypeBuilder` already links by function pointer, and `CLAUDE.md`'s rule
-  that built-in members are always `Direct` dispatch applies to all of them.
+  sits on a hot path — the primitive and collection members, string manipulation, and `Math`'s
+  trig/float operations. The primitive and collection members are linked by function pointer
+  through `SurtrBuiltInTypeBuilder`, inside the built-in module; `Math`'s are `native fun`
+  declarations in `surtr.math.Math` bound by link name instead (§10), because `Math` is a real,
+  separately-loaded module rather than a member of the built-in one. `CLAUDE.md`'s rule that
+  built-in members are always `Direct` dispatch applies to the former; the latter are ordinary
+  module-level functions with no dispatch to speak of.
 - **Surtr source** for everything expressible in the language itself — the exception hierarchy
   below the root, helper types, anything whose body is ordinary logic over other library calls.
   Writing these in Surtr is also the first real test of the compiler, which is a second reason to
@@ -1925,11 +2593,13 @@ raises rather than only what Surtr code threw:
 ```
 Exception
 ├── ArgumentException
+├── FormatException               ← a string that parsed to the wrong shape (§5.3.2)
 ├── IndexOutOfRangeException      ← array/string index traps
 ├── KeyNotFoundException          ← dict lookup
 ├── NullReferenceException        ← null receiver
 ├── DivideByZeroException
 ├── InvalidCastException          ← a failed `as` (§5.7)
+├── InvalidOperationException
 └── StackOverflowException        ← the interpreter's per-call stack check
 ```
 
@@ -1993,8 +2663,9 @@ In summary, the syntax obliged the runtime to grow:
   attributes (§11);
 - **natively-tagged nullable primitives** (§5.1);
 - **a `range` type** (§5.4) and the `for-in` lowering that keeps it from allocating (§4.2);
-- **a per-module native import table**, so a `native` declaration binds by name at load and a
-  missing one fails there rather than at the instruction that reaches it (§10);
+- **binding by name at load**, so a `native` declaration — module-level or on a class — resolves
+  against the host's published bodies when its module loads, and a missing one fails there rather
+  than at the instruction that reaches it (§10);
 - **a boxing path that can name a class**, for `value class` (§2.9);
 - **a descriptor form for a built-in's own type parameter** (§13.4);
 - **an instruction budget on a run**, so a `const fun` cannot hang the compiler (§7.2).
@@ -2006,20 +2677,24 @@ pieces that remain.
 
 ### 14.2 Compiler architecture this syntax commits to
 
-Unlike §14.1 these need no VM change, but they are not small, and two of them constrain the
-compiler's overall shape rather than living inside one pass.
+> **All four items below are now built.** This section is kept as a record of what each one asked
+> of the compiler's overall shape, not as an outstanding list — read it as a map of where each
+> piece lives.
 
-- **The const-evaluation pass** (§7.2). Const folding runs the emitted bytecode on the real VM, so
-  the compiler needs a pipeline stage that builds and evaluates the const-evaluable subset of a
+- ~~**The const-evaluation pass**~~ **Built** (§7.2). Const folding runs the emitted bytecode on
+  the real VM, over a pipeline stage that builds and evaluates the const-evaluable subset of a
   module *before* the rest of it is emitted — because `const if` (§7.3) decides what gets emitted
-  at all. `CLAUDE.md`'s declare → emit → `Build()` → `LoadModule` order describes one pass; this
-  needs that order run twice, over different subsets. It also needs the instruction budget and a
-  clean `ResetExecution` between evaluations.
-- **Discarding an untaken `const if` branch before binding** (§7.3), including at declaration
-  level, where the branch's members must never reach a member table or a field layout.
-- **Bytecode inlining** (§3.6) — the splice itself, remapping a callee's `SurtrExceptionHandler`
-  ranges into the caller's chunk-absolute table, and diagnosing an impossible `forceinline` with
-  the reason.
+  at all. `CodeGen/ConstFolder.cs` is that stage: `CLAUDE.md`'s declare → emit → `Build()` →
+  `LoadModule` order runs twice, over different subsets, with the instruction budget and a clean
+  `ResetExecution` between evaluations, exactly as this item specified.
+- ~~**Discarding an untaken `const if` branch before binding**~~ **Built** (§7.3), including at
+  declaration level, where the branch's members never reach a member table or a field layout —
+  `Binder.Flatten` resolves and discards the untaken branch before the declaration list it
+  contributes to is walked, so nothing inside it is ever bound.
+- ~~**Bytecode inlining**~~ **Built** (§3.6) — the splice itself, remapping a callee's
+  `SurtrExceptionHandler` ranges into the caller's chunk-absolute table, and diagnosing an
+  impossible `forceinline`, all live in `CodeGen/MethodBodyEmitter.cs`'s `TryInline` and
+  `CodeGen/InlineCost.cs`'s size-and-cost heuristic.
 - ~~**The build model.**~~ **Built.** A project file (`root`, `module`, `output`, `define`,
   `reference`), a directory walk, and `.surtrc` images out — `Compilation/SurtrProjectFile.cs`,
   `Compilation/SurtrBuild.cs` and the `surtrc` command over them. §7.4's constants come from the

@@ -743,6 +743,7 @@ namespace Surtr.Compiler.Syntax
                     if (Is(text, "sealed")) return TokenType.KeywordSealed;
                     if (Is(text, "static")) return TokenType.KeywordStatic;
                     if (Is(text, "switch")) return TokenType.KeywordSwitch;
+                    if (Is(text, "typeof")) return TokenType.KeywordTypeOf;
                     break;
 
                 case 7:
@@ -756,6 +757,7 @@ namespace Surtr.Compiler.Syntax
                     if (Is(text, "abstract")) return TokenType.KeywordAbstract;
                     if (Is(text, "continue")) return TokenType.KeywordContinue;
                     if (Is(text, "internal")) return TokenType.KeywordInternal;
+                    if (Is(text, "moduleof")) return TokenType.KeywordModuleOf;
                     if (Is(text, "operator")) return TokenType.KeywordOperator;
                     if (Is(text, "override")) return TokenType.KeywordOverride;
                     break;

@@ -1,0 +1,4 @@
+public interface IDisposable<T>
+{
+    fun dispose(): void;
+}

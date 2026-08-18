@@ -465,6 +465,12 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordSwitch:
                     return ParseSwitchExpression();
 
+                case TokenType.KeywordTypeOf:
+                    return ParseTypeOf();
+
+                case TokenType.KeywordModuleOf:
+                    return ParseModuleOf();
+
                 case TokenType.LeftBracket:
                     return ParseArrayLiteral();
 
@@ -496,6 +502,132 @@ namespace Surtr.Compiler.Syntax
                 default:
                     throw reader.Error(SurtrDiagnosticCode.ExpectedExpression, $"Expected an expression, found {reader.CurrentType}.");
             }
+        }
+
+        /// <summary>
+        /// Parses <c>typeof(X)</c>. Unlike <c>is</c>/<c>as</c>, <c>X</c> cannot always be parsed as
+        /// a <see cref="TypeSyntax"/> - <c>typeof</c> has to reach an arbitrary value too
+        /// (<c>typeof(Box())</c>, <c>typeof(5)</c>), and a call, a literal or an arithmetic
+        /// expression are not type syntax at all. Only one shape can never also be an expression:
+        /// a name followed by a generic argument list, since a bare Surtr call has no <c>&lt;...&gt;</c>
+        /// of its own outside <c>pick&lt;int&gt;(...)</c> (which needs a <c>(</c> after the close,
+        /// not the <c>)</c> that ends <c>typeof</c>). That one shape is parsed as a type here, via
+        /// <see cref="LooksLikeGenericTypeOnlyAhead"/>'s lookahead; everything else, bare or dotted
+        /// name included, parses as an ordinary expression and is left for the binder to decide
+        /// between a type and a value (<c>BodyBinder.BindTypeOf</c>).
+        /// </summary>
+        private ExpressionSyntax ParseTypeOf()
+        {
+            SourceLocation start = reader.CurrentLocation;
+            reader.Advance();
+
+            reader.Expect(TokenType.LeftParen, "'(' after 'typeof'");
+
+            if (LooksLikeGenericTypeOnlyAhead())
+            {
+                TypeSyntax typeOperand = ParseType();
+                reader.Expect(TokenType.RightParen, "')' to close 'typeof'");
+                return new TypeOfExpressionSyntax(SpanFrom(start), typeOperand);
+            }
+
+            ExpressionSyntax operand = ParseExpression();
+            reader.Expect(TokenType.RightParen, "')' to close 'typeof'");
+            return new TypeOfExpressionSyntax(SpanFrom(start), operand);
+        }
+
+        /// <summary>
+        /// Parses <c>moduleof(ModulePath)</c>. Always static, unlike <c>typeof</c>: there is no
+        /// instance form over an arbitrary value (§2.1), so the operand is always a dotted module
+        /// path - never an expression - and there is no type-vs-value ambiguity to resolve here.
+        /// The parenthesised shape mirrors <c>typeof(X)</c>'s rather than <c>import</c>'s
+        /// unparenthesised path, for consistency with the language's one other reflection operator.
+        /// </summary>
+        private ExpressionSyntax ParseModuleOf()
+        {
+            SourceLocation start = reader.CurrentLocation;
+            reader.Advance();
+
+            reader.Expect(TokenType.LeftParen, "'(' after 'moduleof'");
+
+            List<string> path = new List<string> { reader.ExpectIdentifier("a module path") };
+            while (reader.Match(TokenType.Dot))
+                path.Add(reader.ExpectIdentifier("a name after '.'"));
+
+            reader.Expect(TokenType.RightParen, "')' to close 'moduleof'");
+            return new ModuleOfExpressionSyntax(SpanFrom(start), path);
+        }
+
+        /// <summary>
+        /// Whether <c>typeof</c>'s argument, starting at the current token, is a name followed by a
+        /// type argument list that closes right before <c>)</c> - the one shape a bare Surtr
+        /// expression can never take. Scans exactly like <see cref="LooksLikeTypeArgumentList"/>
+        /// (same allowed tokens, same <c>&gt;</c>/<c>&gt;&gt;</c>/<c>&gt;&gt;&gt;</c> splitting),
+        /// differing only in what has to follow the close - <c>)</c> here, since a generic call
+        /// still needs its own trailing argument list and that is not what <c>typeof</c> is
+        /// parsing. Nothing is consumed and nothing is reported; a scan that fails leaves the reader
+        /// exactly where it found it, matching <see cref="LooksLikeTypeArgumentList"/>'s own
+        /// contract.
+        /// </summary>
+        private bool LooksLikeGenericTypeOnlyAhead()
+        {
+            if (!reader.Check(TokenType.Identifier))
+                return false;
+
+            int offset = 1;
+            while (reader.Peek(offset).Type == TokenType.Dot && reader.Peek(offset + 1).Type == TokenType.Identifier)
+                offset += 2;
+
+            if (reader.Peek(offset).Type != TokenType.Less)
+                return false;
+
+            const int Limit = 256;
+            int depth = 0;
+
+            for (; offset < Limit; offset++)
+            {
+                switch (reader.Peek(offset).Type)
+                {
+                    case TokenType.Less:
+                        depth++;
+                        break;
+
+                    case TokenType.Greater:
+                    case TokenType.ShiftRight:
+                    case TokenType.UnsignedShiftRight:
+                    {
+                        depth -= reader.Peek(offset).Type switch
+                        {
+                            TokenType.Greater => 1,
+                            TokenType.ShiftRight => 2,
+                            _ => 3,
+                        };
+
+                        if (depth > 0)
+                            break;
+
+                        return depth == 0 && reader.Peek(offset + 1).Type == TokenType.RightParen;
+                    }
+
+                    case TokenType.Identifier:
+                    case TokenType.Dot:
+                    case TokenType.Comma:
+                    case TokenType.Question:
+                    case TokenType.LeftBracket:
+                    case TokenType.RightBracket:
+                    case TokenType.LeftBrace:
+                    case TokenType.RightBrace:
+                    case TokenType.Colon:
+                    case TokenType.LeftParen:
+                    case TokenType.RightParen:
+                    case TokenType.Arrow:
+                        break;
+
+                    default:
+                        return false;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>

@@ -245,14 +245,6 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Emits <see cref="OpCode.LdlS"/>.</summary>
         public SurtrCodeEmitter LdlS(int localIndex) => WithU8(OpCode.LdlS, localIndex, 0, 1, "localIdx");
 
-        /// <summary>Emits <see cref="OpCode.Ldg"/>.</summary>
-        /// <param name="import">A module-local import from <see cref="SurtrModuleBuilder.NativeVariable"/>.</param>
-        public SurtrCodeEmitter Ldg(SurtrNativeVariableToken import) => WithU16(OpCode.Ldg, import.Index, 0, 1, nameof(import));
-
-        /// <summary>Emits <see cref="OpCode.LdgX"/>.</summary>
-        /// <param name="import">A module-local import from <see cref="SurtrModuleBuilder.NativeVariable"/>.</param>
-        public SurtrCodeEmitter LdgX(SurtrNativeVariableToken import) => WithI32(OpCode.LdgX, import.Index, 0, 1);
-
         /// <summary>Emits <see cref="OpCode.Stl"/>.</summary>
         public SurtrCodeEmitter Stl(int localIndex) => WithU16(OpCode.Stl, localIndex, 1, 0, "localIdx");
 
@@ -276,14 +268,6 @@ namespace Surtr.Bytecode.Emit
 
         /// <summary>Emits <see cref="OpCode.StlS"/>.</summary>
         public SurtrCodeEmitter StlS(int localIndex) => WithU8(OpCode.StlS, localIndex, 1, 0, "localIdx");
-
-        /// <summary>Emits <see cref="OpCode.Stg"/>.</summary>
-        /// <param name="import">A module-local import from <see cref="SurtrModuleBuilder.NativeVariable"/>.</param>
-        public SurtrCodeEmitter Stg(SurtrNativeVariableToken import) => WithU16(OpCode.Stg, import.Index, 1, 0, nameof(import));
-
-        /// <summary>Emits <see cref="OpCode.StgX"/>.</summary>
-        /// <param name="import">A module-local import from <see cref="SurtrModuleBuilder.NativeVariable"/>.</param>
-        public SurtrCodeEmitter StgX(SurtrNativeVariableToken import) => WithI32(OpCode.StgX, import.Index, 1, 0);
 
         /// <summary>Emits <see cref="OpCode.IncLocal"/>.</summary>
         /// <param name="localIndex">The slot to update, which must be within the first 256.</param>
@@ -517,6 +501,28 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Emits <see cref="OpCode.CastOrNullX"/>.</summary>
         public SurtrCodeEmitter CastOrNullX(SurtrTypeToken type)
             => WithI32(OpCode.CastOrNullX, TypeIndex(type), 1, 1);
+
+        /// <summary>Emits <see cref="OpCode.LoadType"/>.</summary>
+        public SurtrCodeEmitter LoadType(SurtrTypeToken type)
+            => WithU16(OpCode.LoadType, TypeIndex(type), 0, 1, "typeIdx");
+
+        /// <summary>Emits <see cref="OpCode.LoadTypeX"/>.</summary>
+        public SurtrCodeEmitter LoadTypeX(SurtrTypeToken type)
+            => WithI32(OpCode.LoadTypeX, TypeIndex(type), 0, 1);
+
+        /// <summary>Emits <see cref="OpCode.GetTypeOfValue"/>.</summary>
+        public SurtrCodeEmitter GetTypeOfValue() => Simple(OpCode.GetTypeOfValue, 1, 1);
+
+        /// <summary>Emits <see cref="OpCode.LoadModule"/>.</summary>
+        public SurtrCodeEmitter LoadModule(SurtrModuleToken module)
+            => WithU16(OpCode.LoadModule, ModuleIndex(module), 0, 1, "moduleIdx");
+
+        /// <summary>Emits <see cref="OpCode.LoadModuleX"/>.</summary>
+        public SurtrCodeEmitter LoadModuleX(SurtrModuleToken module)
+            => WithI32(OpCode.LoadModuleX, ModuleIndex(module), 0, 1);
+
+        /// <summary>Emits <see cref="OpCode.LoadCurrentModule"/>.</summary>
+        public SurtrCodeEmitter LoadCurrentModule() => Simple(OpCode.LoadCurrentModule, 0, 1);
 
         #endregion
 
@@ -1027,20 +1033,6 @@ namespace Surtr.Bytecode.Emit
             _code.Add((byte)resultCount);
             return this;
         }
-
-        /// <summary>Emits <see cref="OpCode.CallGlobalNative"/>.</summary>
-        /// <param name="import">A module-local import from <see cref="SurtrModuleBuilder.NativeFunction"/>.</param>
-        /// <param name="argumentCount">How many arguments the call leaves on the stack.</param>
-        /// <param name="resultCount">0 or 1: the frame protocol writes back at most one value.</param>
-        public SurtrCodeEmitter CallGlobalNative(SurtrNativeFunctionToken import, int argumentCount, int resultCount)
-            => WithCall(OpCode.CallGlobalNative, import.Index, 2, argumentCount, resultCount);
-
-        /// <summary>Emits <see cref="OpCode.CallGlobalNativeX"/>.</summary>
-        /// <param name="import">A module-local import from <see cref="SurtrModuleBuilder.NativeFunction"/>.</param>
-        /// <param name="argumentCount">How many arguments the call leaves on the stack.</param>
-        /// <param name="resultCount">0 or 1: the frame protocol writes back at most one value.</param>
-        public SurtrCodeEmitter CallGlobalNativeX(SurtrNativeFunctionToken import, int argumentCount, int resultCount)
-            => WithCall(OpCode.CallGlobalNativeX, import.Index, 4, argumentCount, resultCount);
 
         #endregion
 

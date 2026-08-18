@@ -12,9 +12,9 @@ sections rebuild.
 ## 1. What an image is for
 
 A `SurtrModule` is a live object: loading one patches its string literals with references from the
-loading runtime's heap, binds its native imports to that runtime's global table, and hands its
-classes static storage the collector traces through that runtime's registry. It belongs to exactly
-one runtime, and `LoadModule` rejects a second attempt.
+loading runtime's heap, binds every native member's body against that runtime's registrations (by
+link name — §5), and hands its classes static storage the collector traces through that runtime's
+registry. It belongs to exactly one runtime, and `LoadModule` rejects a second attempt.
 
 **The image is the shareable form.** It answers two needs with one mechanism:
 
@@ -117,10 +117,8 @@ Then the chunk (§3.3), then the declarations (§3.4).
 | `constants` | `u64[]` | The inline constant pool, as raw NaN-boxed values. |
 | `methodOffsets` | `i32[]` | Where each method's body starts in `code`, indexed by entry index. |
 | `stringLiterals` | `{ text: str, slot: i32 }[]` | The text, and the constant-pool slot a reference to it is patched into at load. |
-| `nativeVariableImports` | `str[]` | Host globals this module reads or writes, by name. |
-| `nativeFunctionImports` | `str[]` | Host functions this module calls, by name. |
 | `typeTable` | `str[]` | Type descriptors the bytecode names by index. |
-| `moduleTable` | `str[]` | Other modules this one calls into, **by path**. |
+| `moduleTable` | `str[]` | Other modules this one names, **by path** — every one it calls into (`CallModule`/`CallModuleX`), plus every one it names through `moduleof` (`LoadModule`/`LoadModuleX`) without necessarily calling anything in it. A module naming itself through `moduleof` never adds an entry here — see `LoadCurrentModule` in `docs/Opcodes.md`. |
 | `fieldTable` | `MemberRef[]` | Fields the bytecode names by index. |
 | `methodTable` | `SignedMemberRef[]` | Call targets the bytecode names by index. |
 
@@ -319,14 +317,15 @@ class and its bodies mean the same thing wherever they are loaded.
    list, so anything still unresolved afterwards is a load failure rather than a surprise mid-run.
 2. **Access tables** — `moduleTable` by path, `fieldTable` and `methodTable` by owner, name and
    signature key. Held until now as `SurtrPendingMember`.
-3. **Native bodies** — every native member, by link name (§5).
+3. **Native bodies** — every native member, module-level or on a class, by link name (§5). This is
+   the one and only place a `native` declaration binds to a host body; there is no second, module-
+   level-only mechanism beside it.
 4. **Linking** — the type linker flattens every table: ancestors, interface closures and dispatch,
    field layout, vtables.
-5. **Native imports** — host globals, by name, into the runtime's global table.
-6. **String literals** — interned into the runtime's heap and patched into the constant pool.
-7. **Attributes** — one instance per usage, rooted permanently.
-8. **Static storage** — registered with the collector.
-9. **Static initializers** — each class's, then the module's.
+5. **String literals** — interned into the runtime's heap and patched into the constant pool.
+6. **Attributes** — one instance per usage, rooted permanently.
+7. **Static storage** — registered with the collector.
+8. **Static initializers** — each class's, then the module's.
 
 Steps 1–3 are all the same idea: **an image names things, and a load turns names into objects.**
 
@@ -349,18 +348,24 @@ runtime.DefineNativeBody("host:Facade.answer()", SurtrNativeEntryPoint.FromFunct
   declaration does not give one, so a host that never ships an image pays nothing for it. A host
   that does ship one should give the name explicitly, because a derived name changes if the class
   is renamed.
-* A name nothing was published under **fails the load**, beside an unresolved type and an
-  unregistered host global.
+* A module-level native derives `<modulePath>.<name>` (`surtr.math.Math.sin`) rather than the bare
+  name, so two modules declaring a same-named `native fun` bind against distinct link names instead
+  of silently sharing one body. The module path is the module-level member's owning scope, the same
+  way the full type name is a class member's.
+* A name nothing was published under **fails the load**, beside an unresolved type.
 * **Native properties need no separate mechanism.** A property is already a pair of `get_x`/`set_x`
   methods, so making them native is making two methods native.
 * An unbound method points at a body that **reports the mistake**, not at null. That costs nothing —
   the interpreter makes the same indirect call — and the difference is between an exception naming
   the problem and an access violation taking the process with it.
 
-This is the same arrangement a `native` declaration already had for host globals, applied to a
-member. Note that a `native` in *Surtr source* is always a host global and never a native method:
-§10 of the syntax spec puts `native` at module scope only, so **the compiler's own output never
-contains a native member**.
+**A `native` declaration in Surtr source is a member, module-level or on a class, never a
+standalone "host global" form** (`Language-Syntax.md` §10) — a `native fun`/`native let`/`native
+var` at module scope compiles to exactly the shape described above, a `SurtrNativeMethodInfo` (or
+a property pair of them) with a link name. There used to be a second, module-level-only mechanism
+— a per-module native import table, bound to a separate runtime-wide global table — that the
+compiler's own output never went through; that mechanism is retired, and the compiler's output
+does now contain native members, the same shape a host writing a module by hand already had.
 
 ---
 

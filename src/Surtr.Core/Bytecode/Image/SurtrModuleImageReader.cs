@@ -194,9 +194,6 @@ namespace Surtr.Bytecode.Image
                 chunk.StringConstantSlots[i] = reader.ReadInt32();
             }
 
-            chunk.NativeVariableImports = ReadNameList(state);
-            chunk.NativeFunctionImports = ReadNameList(state);
-
             int typeCount = state.Count();
             chunk.TypeTable = new SurtrTypeHandle[typeCount];
             for (int i = 0; i < typeCount; i++)

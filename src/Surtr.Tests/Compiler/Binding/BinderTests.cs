@@ -243,6 +243,80 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertReports(compilation, SurtrDiagnosticCode.WrongTypeArgumentCount);
         }
+
+        /// <summary>
+        /// §5.3.1: <c>array&lt;T&gt;</c>/<c>dict&lt;K,V&gt;</c>/<c>tuple&lt;...&gt;</c> are a pure
+        /// alias for the symbolic forms — the literal same interned <see cref="TypeSymbol"/>, not
+        /// merely a convertible one, so a field declared through either spelling is the same field.
+        /// </summary>
+        [Fact]
+        public void TheNameableFormOfACompositeIsTheSameTypeAsItsSymbolicForm()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Holder {\n"
+                    + "  public var a1: array<int>;\n"
+                    + "  public var a2: int[];\n"
+                    + "  public var d1: dict<int, string>;\n"
+                    + "  public var d2: {int: string};\n"
+                    + "  public var t1: tuple<int, string>;\n"
+                    + "  public var t2: (int, string);\n"
+                    + "}"));
+
+            AssertNoErrors(compilation);
+
+            var fields = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().ToList();
+
+            Assert.Same(fields[0].Type, fields[1].Type);
+            Assert.Same(fields[2].Type, fields[3].Type);
+            Assert.Same(fields[4].Type, fields[5].Type);
+        }
+
+        /// <summary>An explicit <c>tuple&lt;&gt;</c> names the same 0-arity/unit tuple a bare <c>()</c> element list would.</summary>
+        [Fact]
+        public void AnExplicitEmptyDiamondNamesTheUnitTuple()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Holder { public var u: tuple<>; }"));
+
+            AssertNoErrors(compilation);
+
+            var factory = compilation.TypeFactory;
+            var field = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single();
+
+            Assert.Same(factory.Tuple(System.Array.Empty<TypeSymbol>()), field.Type);
+        }
+
+        /// <summary>
+        /// The redirect is keyed on the built-in's own identity, not the name "array" in the
+        /// abstract — a module that shadows it with its own declaration keeps meaning that
+        /// declaration, exactly as §1.1 already promises for any other built-in name.
+        /// </summary>
+        [Fact]
+        public void AUserDeclarationShadowingArrayIsNotRedirectedToTheBuiltIn()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class array<T> { public let tag: T; }\nclass Holder { public var a: array<int>; }"));
+
+            AssertNoErrors(compilation);
+
+            var userArray = Type(binder, "game.core", "array");
+            var field = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single();
+
+            Assert.Same(userArray, ((NamedTypeSymbol)field.Type).Definition);
+            Assert.NotSame(compilation.TypeFactory.Array(compilation.TypeFactory.Int), field.Type);
+        }
+
+        /// <summary>Matches <c>TupPack</c>'s 255-element arity cap (§5.3.1), diagnosed here rather than left to fail only at emission.</summary>
+        [Fact]
+        public void ATupleWithMoreThan255ElementsIsReported()
+        {
+            var elements = string.Join(", ", System.Linq.Enumerable.Repeat("int", 256));
+
+            Bind(out var compilation, ("game/core/Test.surtr",
+                $"class Holder {{ public var t: tuple<{elements}>; }}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.WrongTypeArgumentCount);
+        }
         #endregion
 
         #region Imports
@@ -520,6 +594,71 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
+        public void APropertyAccessorCollidesWithAMethodOfTheSameName()
+        {
+            // The runtime only ever sees get_x/set_x, so a declared get_x is the same table entry
+            // a property's synthesized getter occupies - a collision no name check can catch.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Entity {\n"
+                + "  public health: int { get; set; }\n"
+                + "  public fun get_health(): int { return 0; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
+        }
+
+        [Fact]
+        public void APropertySetterCollidesWithAMethodOfTheSameName()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Entity {\n"
+                + "  public health: int { get; set; }\n"
+                + "  public fun set_health(value: int): void { }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
+        }
+
+        [Fact]
+        public void AModulePropertyAccessorCollidesWithAModuleMethod()
+        {
+            // A module property synthesizes static get_x/set_x methods just like a class one does.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "public health: int { get; set; }\n"
+                + "public fun get_health(): int { return 0; }\n"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
+        }
+
+        [Fact]
+        public void TwoUnitsOfOneModuleCollideOnASharedSignature()
+        {
+            // A module's method table is one table no matter how many files declared it, so a
+            // duplicate must be found across units, not just within one.
+            Bind(out var compilation,
+                ("game/core/A.surtr", "public fun f(): int { return 1; }\n"),
+                ("game/core/B.surtr", "public fun f(): int { return 2; }\n"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
+        }
+
+        [Fact]
+        public void AModuleFunctionAndAClassMethodOfTheSameNameDoNotCollide()
+        {
+            // A class's SignatureSet and its containing module's are separate instances (one per
+            // type, one per module), so a class method never contends for the same table slot as
+            // a module-level function of the same name - unlike an accessor and a written method,
+            // which really do share one.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "public fun greet(): int { return 1; }\n"
+                + "class Greeter {\n"
+                + "  public fun greet(): int { return 2; }\n"
+                + "}"));
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
         public void AMethodKeepsItsModifiers()
         {
             var binder = Bind(out var compilation, ("game/core/Test.surtr",
@@ -620,6 +759,18 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
+        public void ANativeLetCannotBeTheFieldAValueClassWraps()
+        {
+            // A native `let` has no backing storage - it is a property in disguise - so it cannot
+            // be the one field §2.9 needs a value class to erase to. Excluded from BindMembers's
+            // `letFields` count on purpose, this reports zero instance fields rather than one.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "value class EntityId { public native let raw: int; }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidValueClass);
+        }
+
+        [Fact]
         public void AValueClassCannotExtend()
         {
             Bind(out var compilation, ("game/core/Test.surtr",
@@ -650,6 +801,27 @@ namespace Surtr.Tests.Compiler.Binding
         {
             Bind(out var compilation, ("game/core/Test.surtr",
                 "interface IThing { fun doThing(): void { } }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
+        }
+
+        [Fact]
+        public void AnInterfaceCannotDeclareANativeMethod()
+        {
+            // A native method has a real body - the host's - so it is exactly as much a default
+            // implementation as one written in Surtr, and §2.3 allows neither. Body is null for a
+            // native declaration, so the check just above (no body) does not catch this on its own.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { native fun doThing(): void; }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
+        }
+
+        [Fact]
+        public void AnInterfaceCannotDeclareANativeProperty()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { native x: int { get; } }"));
 
             AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
         }
@@ -776,6 +948,209 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
         }
+
+        [Fact]
+        public void AnOperatorMustTakeTheDeclaringTypeAmongItsOperands()
+        {
+            // §5.6: a type cannot define how two types foreign to it interact.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Foo {\n"
+                + "  operator+(a: int, b: int): int { return a + b; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AStaticOperatorInASubclassMustTakeTheSubclassItselfAmongItsOperands()
+        {
+            // §5.6: a *static* operator has no override to preserve a slot for, so a subclass
+            // cannot satisfy the rule merely because its own ancestor happens to be one of the
+            // operand types - the ancestor-walking leniency belongs to an instance operator's
+            // receiver alone, never to a static operator's operands.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Base { }\n"
+                + "class Foo : Base {\n"
+                + "  operator+(a: Base, b: Base): Base { return a; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AnIndexerMustTakeTheDeclaringTypeAsItsReceiver()
+        {
+            // The index and value operate on the receiver, so only the receiver has to be the
+            // declaring type — a foreign receiver is an indexer that belongs to nobody.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Foo {\n"
+                + "  operator[](a: int, i: int): int { return i; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AConversionMustTakeTheDeclaringTypeAsItsSource()
+        {
+            // operator as names its target as the return, so its single parameter is the only
+            // operand — and it has to be the type declaring the conversion.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Vec2 { }\n"
+                + "class Foo {\n"
+                + "  operator as string(a: Vec2) { return \"vec\"; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AGenericClasssOwnConstructionIsItsDeclaringType()
+        {
+            // Inside class Matrix<T>, the operands are Matrix<T> itself — a construction of the
+            // declaring definition, which still counts as the declaring type.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Matrix<T> {\n"
+                + "  operator+(a: Matrix<T>, b: Matrix<T>): Matrix<T> { return a; }\n"
+                + "}"));
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void ANullableOperandStillCountsAsTheDeclaringType()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Foo {\n"
+                + "  operator==(a: Foo?, b: Foo): bool { return true; }\n"
+                + "}"));
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void AVirtualOperatorBecomesAnInstanceMethod()
+        {
+            // §5.6: a dispatch modifier makes the operator an instance method whose receiver is its
+            // first parameter — the one spelling that can reach a vtable slot.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Base {\n"
+                + "  virtual operator==(self: Base, other: Base): bool { return true; }\n"
+                + "}\n"
+                + "class Foo : Base {\n"
+                + "  virtual operator+(self: Foo, other: Foo): Foo { return self; }\n"
+                + "  override operator==(self: Base, other: Base): bool { return true; }\n"
+                + "}"));
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void AStaticOperatorWithADispatchModifierIsRejected()
+        {
+            // `static virtual` is contradictory: instance is what a dispatch modifier *means*.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Foo {\n"
+                + "  static virtual operator+(self: Foo, other: Foo): Foo { return self; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidModifier);
+        }
+
+        [Fact]
+        public void AConversionCannotBeInstance()
+        {
+            // `operator as` names its source as its only parameter; its target lives in the return,
+            // and nothing about a conversion ever dispatches — so a dispatch modifier is rejected.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Foo {\n"
+                + "  virtual operator as string(self: Foo) { return \"foo\"; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AnAbstractOperatorCannotHaveABody()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Foo {\n"
+                + "  abstract operator+(self: Foo, other: Foo): Foo { return self; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AConcreteInstanceOperatorNeedsABody()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Foo {\n"
+                + "  virtual operator+(self: Foo, other: Foo): Foo;\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void AnInterfaceOperatorIsAbstractAndInstance()
+        {
+            // An interface operator is a promise, exactly like an interface method: no body, and
+            // the runtime reaches it through the interface's method slots.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IAddable {\n"
+                + "  operator+(self: IAddable, other: IAddable): IAddable;\n"
+                + "}\n"
+                + "class Vec2 : IAddable {\n"
+                + "  override operator+(self: IAddable, other: IAddable): IAddable { return self; }\n"
+                + "}"));
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void AnInterfaceOperatorCannotHaveABody()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IAddable {\n"
+                + "  operator+(self: IAddable, other: IAddable): IAddable { return self; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
+        }
+
+        [Fact]
+        public void AnInstanceOperatorsReceiverMustBeTheClassOrAnAncestor()
+        {
+            // The receiver of an instance operator is its first parameter, and it has to be the
+            // declaring type — or, for an override implementing a base or interface, that ancestor,
+            // since the receiver never enters the method table's signature and an interface slot
+            // routes onto a vtable entry without it.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IAddable {\n"
+                + "  operator+(self: IAddable, other: IAddable): IAddable;\n"
+                + "}\n"
+                + "class Bar : IAddable {\n"
+                + "  override operator+(self: string, other: IAddable): IAddable { return self; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOperatorSignature);
+        }
+
+        [Fact]
+        public void TwoInstanceOperatorsDifferingOnlyByReceiverAreADuplicate()
+        {
+            // The receiver is implicit in the method table, so both would land on the same key and
+            // a module that compiled clean would fail to load.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Base { }\n"
+                + "class Foo : Base {\n"
+                + "  virtual operator+(self: Foo, other: int): Foo { return self; }\n"
+                + "  virtual operator+(self: Base, other: int): Foo { return self; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
+        }
         #endregion
 
         #region Build constants
@@ -805,6 +1180,346 @@ namespace Surtr.Tests.Compiler.Binding
             compilation.Bind();
 
             AssertNoErrors(compilation);
+        }
+        #endregion
+
+        #region Inherited members through a construction
+        [Fact]
+        public void AnInheritedMemberIsReadThroughTheReceiversConstruction()
+        {
+            // The stdlib Collection.surtr shape: `iterate()` is not declared on IReadOnlyCollection<T>
+            // itself, so reaching it walks the inherited IIterable<T> — and that walk must apply the
+            // receiver's own type argument, not leak the interface's parameter.
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IReadOnlyCollection<T> : IIterable<T>\n"
+                + "{\n"
+                + "    fun get(index: int): T;\n"
+                + "}\n"
+                + "private value class ReadOnlyCollection<T> : IReadOnlyCollection<T>\n"
+                + "{\n"
+                + "    private let _col: IReadOnlyCollection<T>;\n"
+                + "    public inline constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
+                + "    public override fun get(index: int): T { return _col.get(index); }\n"
+                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+        }
+        #endregion
+
+        #region Override signature compatibility
+        [Fact]
+        public void AMemberImplementingTheWrongConstructionIsRejected()
+        {
+            // The runtime cannot see this: it matches by name plus erased parameter types and
+            // excludes the return, so `ReadOnlyCollection<T>` implementing `IReadOnlyCollection<int>`
+            // with members typed on its own `T` links cleanly and misbehaves at a call site compiled
+            // against the contract. The compiler has to reject it.
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IReadOnlyCollection<T> : IIterable<T>\n"
+                + "{\n"
+                + "    fun get(index: int): T;\n"
+                + "}\n"
+                + "private value class ReadOnlyCollection<T> : IReadOnlyCollection<int>\n"
+                + "{\n"
+                + "    private let _col: IReadOnlyCollection<T>;\n"
+                + "    public inline constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
+                + "    public override fun get(index: int): T { return _col.get(index); }\n"
+                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.OverrideSignatureMismatch);
+        }
+
+        [Fact]
+        public void TheSubstitutionSurvivesAnInterfaceChain()
+        {
+            // `ICollection<int>` extends `IReadOnlyCollection<T>` in terms of *its own* parameter,
+            // so the `int` must follow the walk into the inherited contract or the members reached
+            // through it would be checked against `IReadOnlyCollection<ICollection.T>` instead.
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IReadOnlyCollection<T> : IIterable<T>\n"
+                + "{\n"
+                + "    fun get(index: int): T;\n"
+                + "}\n"
+                + "interface ICollection<T> : IReadOnlyCollection<T>\n"
+                + "{\n"
+                + "    fun add(item: T): void;\n"
+                + "}\n"
+                + "private value class ReadOnlyCollection<T> : ICollection<int>\n"
+                + "{\n"
+                + "    private let _col: IReadOnlyCollection<T>;\n"
+                + "    public inline constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
+                + "    public override fun get(index: int): T { return _col.get(index); }\n"
+                + "    public override fun add(item: int): void { }\n"
+                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.OverrideSignatureMismatch);
+        }
+
+        [Fact]
+        public void AMemberImplementingTheMatchingConstructionIsAccepted()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IReadOnlyCollection<T> : IIterable<T>\n"
+                + "{\n"
+                + "    fun get(index: int): T;\n"
+                + "}\n"
+                + "private value class ReadOnlyCollection<T> : IReadOnlyCollection<T>\n"
+                + "{\n"
+                + "    private let _col: IReadOnlyCollection<T>;\n"
+                + "    public inline constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
+                + "    public override fun get(index: int): T { return _col.get(index); }\n"
+                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+        }
+        #endregion
+
+        #region Built-in generic interfaces (regression net for the substitution fixes in 5cca11a/0bef8a2)
+        // These are deliberately independent of the "Inherited members through a construction" and
+        // "Override signature compatibility" regions above: those cover a *chain* of user-declared
+        // interfaces walking into a built-in one, and a *generic* class implementing a built-in
+        // generic interface in terms of its own parameter. The scenarios below are the simpler ones
+        // reported as broken — implementing, extending or using a built-in generic interface with no
+        // chain and no substitution involved at all — which the investigation could not reproduce on
+        // this branch, but which had no test of their own naming them explicitly.
+
+        [Fact]
+        public void AClassMayImplementABuiltInGenericInterfaceWithAConcreteArgumentDirectly()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Counter : IIterable<int>\n"
+                + "{\n"
+                + "    public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void AnInterfaceMayExtendABuiltInGenericInterfaceWithoutAddingMembersOfItsOwn()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface INumbers : IIterable<int> { }"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void AClassImplementingAPassThroughInterfaceMustStillProvideTheInheritedBuiltInMember()
+        {
+            // INumbers itself declares nothing - the obligation it owes to Counter comes entirely
+            // from the built-in IIterable<int> it extends, so this fails only if that walk sees it.
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface INumbers : IIterable<int> { }\n"
+                + "class Counter : INumbers { }"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.MissingImplementation);
+        }
+
+        [Fact]
+        public void AClassImplementingAPassThroughInterfaceSatisfiesItByImplementingTheInheritedBuiltInMember()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface INumbers : IIterable<int> { }\n"
+                + "class Counter : INumbers\n"
+                + "{\n"
+                + "    public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+        }
+        #endregion
+
+        #region Per-accessor modifiers (§3.2, §3.4)
+        [Fact]
+        public void AnAccessorMayNarrowItsOwnVisibilityBelowTheProperty()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Box\n"
+                + "{\n"
+                + "    private var _value: int;\n"
+                + "    public value: int { get => _value; private set { _value = value; } }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+
+            var box = Type(binder, "game.core", "Box");
+            var property = box.Members.OfType<PropertySymbol>().Single(p => p.Name == "value");
+            Assert.Equal(Accessibility.Public, property.Getter!.Accessibility);
+            Assert.Equal(Accessibility.Private, property.Setter!.Accessibility);
+        }
+
+        [Fact]
+        public void AnAccessorWiderThanThePropertyIsRejected()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Box\n"
+                + "{\n"
+                + "    private var _value: int;\n"
+                + "    private value: int { get => _value; public set { _value = value; } }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.AccessorVisibilityNotNarrower);
+        }
+
+        [Fact]
+        public void AnAccessorRepeatingThePropertysOwnVisibilityIsRejected()
+        {
+            // Equal is not narrower - the accessor could have written nothing and inherited it.
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Box\n"
+                + "{\n"
+                + "    private var _value: int;\n"
+                + "    public value: int { get => _value; public set { _value = value; } }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.AccessorVisibilityNotNarrower);
+        }
+
+        [Fact]
+        public void AWriteThroughANarrowerSetterIsRejectedFromOutsideItsReach()
+        {
+            var binder = Bind(out var compilation, (
+                "game/core/Box.surtr",
+                "public class Box\n"
+                + "{\n"
+                + "    private var _value: int;\n"
+                + "    public value: int { get => _value; private set { _value = value; } }\n"
+                + "}"),
+                ("game/core/Other.surtr",
+                "class Other { public fun run(): void { let b = Box(); b.value = 1; } }"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.Inaccessible);
+        }
+
+        [Fact]
+        public void AnAccessorMayDeclareItsOwnDispatchIndependentlyOfTheOtherAccessor()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Box\n"
+                + "{\n"
+                + "    private var _value: int;\n"
+                + "    public value: int { virtual get => _value; set { _value = value; } }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+
+            var box = Type(binder, "game.core", "Box");
+            var property = box.Members.OfType<PropertySymbol>().Single(p => p.Name == "value");
+            Assert.Equal(MethodDispatch.Virtual, property.Getter!.Dispatch);
+            Assert.Equal(MethodDispatch.Direct, property.Setter!.Dispatch);
+        }
+
+        [Fact]
+        public void AnAccessorMayBeAbstractWhileItsSiblingIsConcrete()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "abstract class Shape\n"
+                + "{\n"
+                + "    public value: int { abstract get; set { } }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+
+            var shape = Type(binder, "game.core", "Shape");
+            var property = shape.Members.OfType<PropertySymbol>().Single(p => p.Name == "value");
+            Assert.Equal(MethodDispatch.Abstract, property.Getter!.Dispatch);
+            Assert.Equal(MethodDispatch.Direct, property.Setter!.Dispatch);
+        }
+
+        [Fact]
+        public void AConcreteClassMaySatisfyAnAbstractAccessorDeclaredOnAnAbstractBase()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "abstract class Shape\n"
+                + "{\n"
+                + "    public value: int { abstract get; set { } }\n"
+                + "}\n"
+                + "class Square : Shape\n"
+                + "{\n"
+                + "    public override value: int { get => 4; }\n"
+                + "}"));
+
+            binder.BindBodies();
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void ALeftoverAbstractAccessorIsReportedOnAConcreteSubclass()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "abstract class Shape\n"
+                + "{\n"
+                + "    public value: int { abstract get; set { } }\n"
+                + "}\n"
+                + "class Square : Shape { }"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.MissingImplementation);
+        }
+
+        [Fact]
+        public void APropertyLevelSealedOverrideActuallySealsItsAccessors()
+        {
+            // Regression: WireAccessors used to drop `sealed` on the floor entirely - a property's
+            // `sealed override` looked accepted but never reached the accessor MethodSymbols, so
+            // nothing downstream ever rejected a further override. This is the same shape
+            // CheckSealedOverrides already tests for an ordinary method.
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Animal { public virtual name: string { get => \"Animal\"; } }\n"
+                + "class Dog : Animal { public sealed override name: string { get => \"Dog\"; } }\n"
+                + "class Puppy : Dog { public override name: string { get => \"Puppy\"; } }"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidBaseType);
+        }
+
+        [Fact]
+        public void AnAccessorMaySealItsOwnOverrideIndependentlyOfTheProperty()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Animal { public virtual name: string { get => \"Animal\"; } }\n"
+                + "class Dog : Animal { public name: string { sealed override get => \"Dog\"; } }\n"
+                + "class Puppy : Dog { public override name: string { get => \"Puppy\"; } }"));
+
+            binder.BindBodies();
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidBaseType);
         }
         #endregion
     }

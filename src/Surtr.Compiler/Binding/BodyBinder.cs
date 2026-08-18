@@ -55,6 +55,15 @@ namespace Surtr.Compiler.Binding
 
         private readonly HashSet<Symbol> _narrowed = new HashSet<Symbol>();
 
+        /// <summary>
+        /// A local declared <c>const</c> (§7.1), by the folded value it reads as everywhere it is
+        /// used. Keyed by the symbol itself rather than by name, so shadowing across nested blocks —
+        /// already handled correctly by <see cref="Scope"/> for an ordinary local — needs no second
+        /// mechanism here: two different <see cref="LocalSymbol"/> instances named the same never
+        /// collide, unlike the module-wide <see cref="ConstantEvaluator"/>'s flat name table.
+        /// </summary>
+        private readonly Dictionary<LocalSymbol, object?> _localConstants = new Dictionary<LocalSymbol, object?>();
+
         private Scope _values;
         private int _loopDepth;
         private readonly List<string> _loopLabels = new List<string>();
@@ -449,9 +458,15 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         private BoundExpression Convert(BoundExpression expression, TypeSymbol destination, SourceSpan span)
         {
-            if (ReferenceEquals(expression.Type, destination) || destination.IsError || expression.Type.IsError)
+            if (destination.IsError)
                 return expression;
 
+            // A `null` literal bound with no expected type (as every argument is, before overload
+            // resolution has picked a parameter to convert it against - see BindArguments) carries
+            // ErrorType as a placeholder for "not yet contextualized", not a genuine binding
+            // failure. That has to be told apart from a real error *before* the general IsError
+            // bail-out below, or this case would return the still-untyped literal unconverted
+            // instead of ever reaching the null-specific handling that exists for exactly this.
             if (expression is BoundLiteralExpression { IsNull: true })
             {
                 if (!_conversions.AcceptsNull(destination))
@@ -466,6 +481,9 @@ namespace Surtr.Compiler.Binding
 
                 return new BoundLiteralExpression(expression.Syntax, destination, null);
             }
+
+            if (ReferenceEquals(expression.Type, destination) || expression.Type.IsError)
+                return expression;
 
             var conversion = _conversions.Classify(expression.Type, destination);
 

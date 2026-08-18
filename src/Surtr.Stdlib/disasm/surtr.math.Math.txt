@@ -1,0 +1,388 @@
+module surtr.math.Math
+  constants: 7   types: 0   fields: 0   methods: 35   modules: 0
+
+  method table:
+    #0  sin(float) -> float
+    #1  cos(float) -> float
+    #2  tan(float) -> float
+    #3  asin(float) -> float
+    #4  acos(float) -> float
+    #5  atan(float) -> float
+    #6  atan2(float, float) -> float
+    #7  sqrt(float) -> float
+    #8  pow(float, float) -> float
+    #9  exp(float) -> float
+    #10  log(float) -> float
+    #11  log10(float) -> float
+    #12  floor(float) -> float
+    #13  ceil(float) -> float
+    #14  round(float) -> float
+    #15  hypot(float, float) -> float
+    #16  isNaN(float) -> bool
+    #17  isInfinity(float) -> bool
+    #18  degreesToRadians(float) -> float
+    #19  radiansToDegrees(float) -> float
+    #20  abs(int) -> int
+    #21  abs(float) -> float
+    #22  min(int, int) -> int
+    #23  max(int, int) -> int
+    #24  min(float, float) -> float
+    #25  max(float, float) -> float
+    #26  clamp(int, int, int) -> int
+    #27  clamp(float, float, float) -> float
+    #28  clamp01(float) -> float
+    #29  lerp(float, float, float) -> float
+    #30  lerpUnclamped(float, float, float) -> float
+    #31  approximately(float, float) -> bool
+    #32  sign(float) -> int
+    #33  sign(int) -> int
+    #34  repeat(float, float) -> float
+
+[public] static abs(n: int): int
+  ; entry 4, locals 1, stack 2, code 001B..0029
+    001B  Ldl0
+    001C  PushI8 0
+    001E  LT
+    001F  JPZ +5 -> L0 (0027)
+    0022  Ldl0
+    0023  Neg
+    0024  JP +1 -> L1 (0028)
+  L0:
+    0027  Ldl0
+  L1:
+    0028  ReturnValue
+
+[public] static abs(n: float): float
+  ; entry 5, locals 1, stack 2, code 0029..0036
+    0029  Ldl0
+    002A  Ldc4
+    002B  FLT
+    002C  JPZ +5 -> L0 (0034)
+    002F  Ldl0
+    0030  FNeg
+    0031  JP +1 -> L1 (0035)
+  L0:
+    0034  Ldl0
+  L1:
+    0035  ReturnValue
+
+[public] static native acos(x: float): float
+  ; native link="surtr.math.Math.acos" unbound declared
+
+[public] static approximately(a: float, b: float): bool
+  ; entry 15, locals 3, stack 2, code 00C1..00D4
+    00C1  Ldl0
+    00C2  Ldl1
+    00C3  FSub
+    00C4  Stl2
+    00C5  Ldl2
+    00C6  Ldc4
+    00C7  FLT
+    00C8  JPZ +5 -> L0 (00D0)
+    00CB  Ldl2
+    00CC  FNeg
+    00CD  JP +1 -> L1 (00D1)
+  L0:
+    00D0  Ldl2
+  L1:
+    00D1  Ldc6
+    00D2  FLT
+    00D3  ReturnValue
+
+[public] static native asin(x: float): float
+  ; native link="surtr.math.Math.asin" unbound declared
+
+[public] static native atan(x: float): float
+  ; native link="surtr.math.Math.atan" unbound declared
+
+[public] static native atan2(y: float, x: float): float
+  ; native link="surtr.math.Math.atan2" unbound declared
+
+[public] static native ceil(x: float): float
+  ; native link="surtr.math.Math.ceil" unbound declared
+
+[public] static clamp(value: int, low: int, high: int): int
+  ; entry 10, locals 3, stack 2, code 0066..0076
+    0066  Ldl0
+    0067  Ldl1
+    0068  JPGE +2 -> L0 (006D)
+    006B  Ldl1
+    006C  ReturnValue
+  L0:
+    006D  Ldl0
+    006E  Ldl2
+    006F  JPLE +2 -> L1 (0074)
+    0072  Ldl2
+    0073  ReturnValue
+  L1:
+    0074  Ldl0
+    0075  ReturnValue
+
+[public] static clamp(value: float, low: float, high: float): float
+  ; entry 11, locals 3, stack 2, code 0076..0086
+    0076  Ldl0
+    0077  Ldl1
+    0078  JPFGE +2 -> L0 (007D)
+    007B  Ldl1
+    007C  ReturnValue
+  L0:
+    007D  Ldl0
+    007E  Ldl2
+    007F  JPFLE +2 -> L1 (0084)
+    0082  Ldl2
+    0083  ReturnValue
+  L1:
+    0084  Ldl0
+    0085  ReturnValue
+
+[public] static clamp01(value: float): float
+  ; entry 12, locals 1, stack 2, code 0086..0096
+    0086  Ldl0
+    0087  Ldc4
+    0088  JPFGE +2 -> L0 (008D)
+    008B  Ldc4
+    008C  ReturnValue
+  L0:
+    008D  Ldl0
+    008E  Ldc5
+    008F  JPFLE +2 -> L1 (0094)
+    0092  Ldc5
+    0093  ReturnValue
+  L1:
+    0094  Ldl0
+    0095  ReturnValue
+
+[public] static native cos(x: float): float
+  ; native link="surtr.math.Math.cos" unbound declared
+
+[public] static degreesToRadians(degrees: float): float
+  ; entry 2, locals 1, stack 2, code 0013..0017
+    0013  Ldl0
+    0014  Ldc2
+    0015  FMul
+    0016  ReturnValue
+
+[public] static native exp(x: float): float
+  ; native link="surtr.math.Math.exp" unbound declared
+
+[public] static native floor(x: float): float
+  ; native link="surtr.math.Math.floor" unbound declared
+
+[public] static native hypot(x: float, y: float): float
+  ; native link="surtr.math.Math.hypot" unbound declared
+
+[public] static isInfinity(value: float): bool
+  ; entry 1, locals 1, stack 2, code 0004..0013
+    0004  Ldl0
+    0005  Ldc0
+    0006  FEQ
+    0007  Dup
+    0008  JPNZ +7 -> L0 (0012)
+    000B  Pop
+    000C  Ldl0
+    000D  Ldc1
+    000E  FEQ
+    000F  JP +0 -> L0 (0012)
+  L0:
+    0012  ReturnValue
+
+[public] static isNaN(value: float): bool
+  ; entry 0, locals 1, stack 2, code 0000..0004
+    0000  Ldl0
+    0001  Ldl0
+    0002  FNE
+    0003  ReturnValue
+
+[public] static lerp(a: float, b: float, t: float): float
+  ; entry 13, locals 5, stack 4, code 0096..00B9
+    0096  Ldl0
+    0097  Ldl1
+    0098  Ldl0
+    0099  FSub
+    009A  Ldl2
+    009B  Stl3
+    009C  Ldl3
+    009D  Ldc4
+    009E  JPFGE +5 -> L0 (00A6)
+    00A1  Ldc4
+    00A2  Stl4
+    00A3  JP +15 -> L2 (00B5)
+  L0:
+    00A6  Ldl3
+    00A7  Ldc5
+    00A8  JPFLE +5 -> L1 (00B0)
+    00AB  Ldc5
+    00AC  Stl4
+    00AD  JP +5 -> L2 (00B5)
+  L1:
+    00B0  Ldl3
+    00B1  Stl4
+    00B2  JP +0 -> L2 (00B5)
+  L2:
+    00B5  Ldl4
+    00B6  FMul
+    00B7  FAdd
+    00B8  ReturnValue
+
+[public] static lerpUnclamped(a: float, b: float, t: float): float
+  ; entry 14, locals 3, stack 3, code 00B9..00C1
+    00B9  Ldl0
+    00BA  Ldl1
+    00BB  Ldl0
+    00BC  FSub
+    00BD  Ldl2
+    00BE  FMul
+    00BF  FAdd
+    00C0  ReturnValue
+
+[public] static native log(x: float): float
+  ; native link="surtr.math.Math.log" unbound declared
+
+[public] static native log10(x: float): float
+  ; native link="surtr.math.Math.log10" unbound declared
+
+[public] static max(a: int, b: int): int
+  ; entry 7, locals 2, stack 2, code 0042..004E
+    0042  Ldl0
+    0043  Ldl1
+    0044  GT
+    0045  JPZ +4 -> L0 (004C)
+    0048  Ldl0
+    0049  JP +1 -> L1 (004D)
+  L0:
+    004C  Ldl1
+  L1:
+    004D  ReturnValue
+
+[public] static max(a: float, b: float): float
+  ; entry 9, locals 2, stack 2, code 005A..0066
+    005A  Ldl0
+    005B  Ldl1
+    005C  FGT
+    005D  JPZ +4 -> L0 (0064)
+    0060  Ldl0
+    0061  JP +1 -> L1 (0065)
+  L0:
+    0064  Ldl1
+  L1:
+    0065  ReturnValue
+
+[public] static min(a: int, b: int): int
+  ; entry 6, locals 2, stack 2, code 0036..0042
+    0036  Ldl0
+    0037  Ldl1
+    0038  LT
+    0039  JPZ +4 -> L0 (0040)
+    003C  Ldl0
+    003D  JP +1 -> L1 (0041)
+  L0:
+    0040  Ldl1
+  L1:
+    0041  ReturnValue
+
+[public] static min(a: float, b: float): float
+  ; entry 8, locals 2, stack 2, code 004E..005A
+    004E  Ldl0
+    004F  Ldl1
+    0050  FLT
+    0051  JPZ +4 -> L0 (0058)
+    0054  Ldl0
+    0055  JP +1 -> L1 (0059)
+  L0:
+    0058  Ldl1
+  L1:
+    0059  ReturnValue
+
+[public] static native pow(x: float, y: float): float
+  ; native link="surtr.math.Math.pow" unbound declared
+
+[public] static radiansToDegrees(radians: float): float
+  ; entry 3, locals 1, stack 2, code 0017..001B
+    0017  Ldl0
+    0018  Ldc3
+    0019  FMul
+    001A  ReturnValue
+
+[public] static repeat(value: float, length: float): float
+  ; entry 18, locals 6, stack 3, code 00FE..012A
+    00FE  Ldl0
+    00FF  Ldl0
+    0100  Ldl1
+    0101  FDiv
+    0102  CallLocalModule 12 (floor) args=1 ret=1
+    0107  Ldl1
+    0108  FMul
+    0109  FSub
+    010A  Stl2
+    010B  Ldc4
+    010C  Stl3
+    010D  Ldl1
+    010E  Stl4
+    010F  Ldl2
+    0110  Ldl3
+    0111  JPFGE +5 -> L0 (0119)
+    0114  Ldl3
+    0115  Stl5
+    0116  JP +15 -> L2 (0128)
+  L0:
+    0119  Ldl2
+    011A  Ldl4
+    011B  JPFLE +5 -> L1 (0123)
+    011E  Ldl4
+    011F  Stl5
+    0120  JP +5 -> L2 (0128)
+  L1:
+    0123  Ldl2
+    0124  Stl5
+    0125  JP +0 -> L2 (0128)
+  L2:
+    0128  Ldl5
+    0129  ReturnValue
+
+[public] static native round(x: float): float
+  ; native link="surtr.math.Math.round" unbound declared
+
+[public] static sign(n: float): int
+  ; entry 16, locals 1, stack 2, code 00D4..00E8
+    00D4  Ldl0
+    00D5  Ldc4
+    00D6  JPFLE +3 -> L0 (00DC)
+    00D9  PushI8 1
+    00DB  ReturnValue
+  L0:
+    00DC  Ldl0
+    00DD  Ldc4
+    00DE  JPFGE +4 -> L1 (00E5)
+    00E1  PushI8 1
+    00E3  Neg
+    00E4  ReturnValue
+  L1:
+    00E5  PushI8 0
+    00E7  ReturnValue
+
+[public] static sign(n: int): int
+  ; entry 17, locals 1, stack 2, code 00E8..00FE
+    00E8  Ldl0
+    00E9  PushI8 0
+    00EB  JPLE +3 -> L0 (00F1)
+    00EE  PushI8 1
+    00F0  ReturnValue
+  L0:
+    00F1  Ldl0
+    00F2  PushI8 0
+    00F4  JPGE +4 -> L1 (00FB)
+    00F7  PushI8 1
+    00F9  Neg
+    00FA  ReturnValue
+  L1:
+    00FB  PushI8 0
+    00FD  ReturnValue
+
+[public] static native sin(x: float): float
+  ; native link="surtr.math.Math.sin" unbound declared
+
+[public] static native sqrt(x: float): float
+  ; native link="surtr.math.Math.sqrt" unbound declared
+
+[public] static native tan(x: float): float
+  ; native link="surtr.math.Math.tan" unbound declared

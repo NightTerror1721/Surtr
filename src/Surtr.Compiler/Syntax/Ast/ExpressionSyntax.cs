@@ -326,6 +326,67 @@ namespace Surtr.Compiler.Syntax.Ast
         }
     }
 
+    /// <summary>
+    /// <c>typeof(X)</c>: the compile-time-known type <c>X</c> names, or - when <c>X</c> is not a
+    /// type name at all - the runtime type of the value it evaluates to. Exactly one of
+    /// <see cref="TypeOperand"/> and <see cref="Operand"/> is set.
+    /// </summary>
+    /// <remarks>
+    /// The parser only ever routes to <see cref="TypeOperand"/> for a shape that could never also
+    /// be an expression - a generic argument list, since arbitrary Surtr expressions do not have
+    /// one. Everything else, including a bare or dotted name that could equally be a value, parses
+    /// as <see cref="Operand"/> through the ordinary expression grammar - a call, an arithmetic
+    /// expression or a literal all need that grammar and none of it is valid type syntax, so unlike
+    /// <c>is</c>/<c>as</c> (which only ever take a type on their right), <c>typeof</c> cannot parse
+    /// its argument as a <see cref="TypeSyntax"/> unconditionally. Which of the two a bare name in
+    /// <see cref="Operand"/> actually means is a scope question the parser has no way to answer, so
+    /// it is left to the binder (see <c>BodyBinder.BindTypeOf</c>, which tries
+    /// <c>TryBindAsType</c> first).
+    /// </remarks>
+    public sealed class TypeOfExpressionSyntax : ExpressionSyntax
+    {
+        /// <summary>The type as written, when the shape could never also be a value (has generic arguments). <see langword="null"/> otherwise.</summary>
+        public TypeSyntax? TypeOperand { get; }
+
+        /// <summary>The operand as an expression, when the shape might also be a type name. <see langword="null"/> when <see cref="TypeOperand"/> is set.</summary>
+        public ExpressionSyntax? Operand { get; }
+
+        /// <summary>Initializes a <c>typeof</c> expression over an unambiguous type shape.</summary>
+        /// <param name="span">The source the expression covers.</param>
+        /// <param name="typeOperand">The type as written.</param>
+        public TypeOfExpressionSyntax(SourceSpan span, TypeSyntax typeOperand) : base(span)
+        {
+            TypeOperand = typeOperand;
+        }
+
+        /// <summary>Initializes a <c>typeof</c> expression over an expression that might also name a type.</summary>
+        /// <param name="span">The source the expression covers.</param>
+        /// <param name="operand">The operand as an expression.</param>
+        public TypeOfExpressionSyntax(SourceSpan span, ExpressionSyntax operand) : base(span)
+        {
+            Operand = operand;
+        }
+    }
+
+    /// <summary>
+    /// <c>moduleof ModulePath</c> - the module a compile-time-known dotted path names (§2.1).
+    /// Always static: unlike <c>typeof</c>, there is no instance form over an arbitrary value, so
+    /// the path is the only shape this node ever carries.
+    /// </summary>
+    public sealed class ModuleOfExpressionSyntax : ExpressionSyntax
+    {
+        /// <summary>The dotted module path as written, one entry per segment.</summary>
+        public IReadOnlyList<string> Path { get; }
+
+        /// <summary>Initializes a <c>moduleof</c> expression.</summary>
+        /// <param name="span">The source the expression covers.</param>
+        /// <param name="path">The dotted module path as written.</param>
+        public ModuleOfExpressionSyntax(SourceSpan span, IReadOnlyList<string> path) : base(span)
+        {
+            Path = path;
+        }
+    }
+
     /// <summary>A lambda, <c>(x) =&gt; expr</c> or <c>(x) =&gt; { ... }</c>.</summary>
     public sealed class LambdaExpressionSyntax : ExpressionSyntax
     {

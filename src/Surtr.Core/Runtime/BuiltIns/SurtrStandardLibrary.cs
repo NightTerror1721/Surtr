@@ -8,7 +8,7 @@ namespace Surtr.Runtime.BuiltIns
 {
     /// <summary>
     /// The part of the <c>surtr</c> module that is a library rather than a value representation:
-    /// the exception hierarchy, the core interfaces, and <c>Math</c>.
+    /// the exception hierarchy and the core interfaces.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -218,111 +218,6 @@ namespace Surtr.Runtime.BuiltIns
                 SurtrVisibility.Public,
                 selfHandle));
         }
-        #endregion
-
-        #region Math
-        /// <summary>
-        /// Declares <c>Math</c>: the free functions that have nowhere else to live.
-        /// </summary>
-        /// <remarks>
-        /// Every member is static, which is why this is a class with no instances rather than a
-        /// module - a module would have been the natural container, but the built-in module is
-        /// already taken by the type family it is named for, and nesting these under a name is what
-        /// makes <c>Math.clamp</c> read the way the syntax document writes it.
-        /// </remarks>
-        internal static void DeclareMath(SurtrBuiltInTypeBuilder builder)
-        {
-            SurtrClassReference real = SurtrClassReference.Float;
-            SurtrClassReference integer = SurtrClassReference.Integer;
-
-            builder.Method("abs", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathAbs), builder.Params(("value", real)), isStatic: true);
-            builder.Method("sign", integer, SurtrNativeEntryPoint.FromFunctionPointer(&MathSign), builder.Params(("value", real)), isStatic: true);
-            builder.Method("min", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathMin), builder.Params(("a", real), ("b", real)), isStatic: true);
-            builder.Method("max", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathMax), builder.Params(("a", real), ("b", real)), isStatic: true);
-            builder.Method("clamp", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathClamp), builder.Params(("value", real), ("low", real), ("high", real)), isStatic: true);
-            builder.Method("floor", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathFloor), builder.Params(("value", real)), isStatic: true);
-            builder.Method("ceil", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathCeil), builder.Params(("value", real)), isStatic: true);
-            builder.Method("round", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathRound), builder.Params(("value", real)), isStatic: true);
-            builder.Method("sqrt", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathSqrt), builder.Params(("value", real)), isStatic: true);
-
-            // `pow` rather than a `**` operator: the syntax leaves exponentiation out of the
-            // operator table precisely so nothing in it needs right-associativity.
-            builder.Method("pow", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathPow), builder.Params(("value", real), ("exponent", real)), isStatic: true);
-
-            builder.Method("sin", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathSin), builder.Params(("radians", real)), isStatic: true);
-            builder.Method("cos", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathCos), builder.Params(("radians", real)), isStatic: true);
-            builder.Method("tan", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathTan), builder.Params(("radians", real)), isStatic: true);
-            builder.Method("atan2", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathAtan2), builder.Params(("y", real), ("x", real)), isStatic: true);
-            builder.Method("log", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathLog), builder.Params(("value", real)), isStatic: true);
-            builder.Method("exp", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathExp), builder.Params(("value", real)), isStatic: true);
-
-            builder.Property("pi", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathPi), isStatic: true);
-            builder.Property("tau", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathTau), isStatic: true);
-            builder.Property("epsilon", real, SurtrNativeEntryPoint.FromFunctionPointer(&MathEpsilon), isStatic: true);
-        }
-
-        // A static member has no receiver, so its first declared parameter is argument 0.
-        private static SurtrValue MathAbs(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Abs(arguments.GetValueUnchecked(0).AsFloat));
-
-        private static SurtrValue MathSign(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(Math.Sign(arguments.GetValueUnchecked(0).AsFloat));
-
-        private static SurtrValue MathMin(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Min(arguments.GetValueUnchecked(0).AsFloat, arguments.GetValueUnchecked(1).AsFloat));
-
-        private static SurtrValue MathMax(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Max(arguments.GetValueUnchecked(0).AsFloat, arguments.GetValueUnchecked(1).AsFloat));
-
-        private static SurtrValue MathClamp(SurtrCallArguments arguments)
-        {
-            double value = arguments.GetValueUnchecked(0).AsFloat;
-            double low = arguments.GetValueUnchecked(1).AsFloat;
-            double high = arguments.GetValueUnchecked(2).AsFloat;
-
-            if (value < low) value = low;
-            if (value > high) value = high;
-            return SurtrValue.CreateFloat(value);
-        }
-
-        private static SurtrValue MathFloor(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Floor(arguments.GetValueUnchecked(0).AsFloat));
-
-        private static SurtrValue MathCeil(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Ceiling(arguments.GetValueUnchecked(0).AsFloat));
-
-        private static SurtrValue MathRound(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Round(arguments.GetValueUnchecked(0).AsFloat, MidpointRounding.AwayFromZero));
-
-        private static SurtrValue MathSqrt(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Sqrt(arguments.GetValueUnchecked(0).AsFloat));
-
-        private static SurtrValue MathPow(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Pow(arguments.GetValueUnchecked(0).AsFloat, arguments.GetValueUnchecked(1).AsFloat));
-
-        private static SurtrValue MathSin(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Sin(arguments.GetValueUnchecked(0).AsFloat));
-
-        private static SurtrValue MathCos(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Cos(arguments.GetValueUnchecked(0).AsFloat));
-
-        private static SurtrValue MathTan(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Tan(arguments.GetValueUnchecked(0).AsFloat));
-
-        private static SurtrValue MathAtan2(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Atan2(arguments.GetValueUnchecked(0).AsFloat, arguments.GetValueUnchecked(1).AsFloat));
-
-        private static SurtrValue MathLog(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Log(arguments.GetValueUnchecked(0).AsFloat));
-
-        private static SurtrValue MathExp(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Exp(arguments.GetValueUnchecked(0).AsFloat));
-
-        private static SurtrValue MathPi(SurtrCallArguments arguments) => SurtrValue.CreateFloat(Math.PI);
-
-        private static SurtrValue MathTau(SurtrCallArguments arguments) => SurtrValue.CreateFloat(Math.PI * 2.0);
-
-        private static SurtrValue MathEpsilon(SurtrCallArguments arguments) => SurtrValue.CreateFloat(double.Epsilon);
         #endregion
     }
 }
