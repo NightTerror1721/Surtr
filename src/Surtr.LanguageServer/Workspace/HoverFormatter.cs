@@ -161,8 +161,73 @@ namespace Surtr.LanguageServer.Workspace
             if (modifiers is not null)
                 builder.Append(Break).Append(modifiers);
 
+            string? implements = ImplementsLine(method);
+            if (implements is not null)
+                builder.Append(Break).Append(implements);
+
             builder.Append(Break).Append(ContainingLabel(method.ContainingSymbol, "method", "function"));
             return builder.ToString();
+        }
+
+        /// <summary>
+        /// "implements `IFoo.bar`" for every interface a method satisfies without necessarily saying
+        /// so at the declaration — §3.3: satisfying an interface never requires <c>override</c>, so a
+        /// plain <c>Direct</c> member can fulfil a contract with nothing in its own signature marking
+        /// it. Without this line that fact is invisible on hover; with it, the interface an implicit
+        /// bridge routes through is named the same way an explicit `override` already is.
+        /// </summary>
+        /// <remarks>
+        /// Matches by name and parameter count only, the same coarse test <c>FindMember</c> uses in
+        /// <c>Binder</c> before checking the full signature — good enough for a hover label, which
+        /// names the contract rather than gating compilation on it. An <c>abstract</c> method
+        /// declares an obligation rather than fulfilling one, so it is excluded.
+        /// </remarks>
+        private static string? ImplementsLine(MethodSymbol method)
+        {
+            if (method.Role != MethodRole.Normal || method.Dispatch == MethodDispatch.Abstract)
+                return null;
+
+            if (method.ContainingType is not NamedTypeSymbol containing)
+                return null;
+
+            var names = new List<string>();
+            var visited = new HashSet<NamedTypeSymbol>();
+
+            void Walk(NamedTypeSymbol type)
+            {
+                foreach (var contract in type.Interfaces)
+                {
+                    if (!visited.Add(contract))
+                        continue;
+
+                    foreach (var member in contract.Members)
+                    {
+                        if (member is MethodSymbol candidate
+                            && candidate.Role == MethodRole.Normal
+                            && candidate.Name == method.Name
+                            && candidate.Parameters.Count == method.Parameters.Count)
+                        {
+                            names.Add(contract.ToDisplayString() + "." + method.Name);
+                        }
+                    }
+
+                    Walk(contract);
+                }
+
+                if (type.BaseType is NamedTypeSymbol baseType)
+                    Walk(baseType);
+            }
+
+            Walk(containing);
+
+            if (names.Count == 0)
+                return null;
+
+            var quoted = new List<string>();
+            foreach (string name in names)
+                quoted.Add("`" + name + "`");
+
+            return "implements " + string.Join(", ", quoted);
         }
 
         /// <summary>A method's one-line signature, as <c>fun name(x: int): int</c>.</summary>

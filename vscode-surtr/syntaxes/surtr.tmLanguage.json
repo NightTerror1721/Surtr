@@ -342,7 +342,17 @@
         { "match": "\\balias\\b", "name": "keyword.declaration.alias.surtr" },
         { "match": "\\b(?:let|var)\\b", "name": "storage.type.variable.surtr" },
         { "match": "\\bvalue(?=\\s+class\\b)", "name": "keyword.declaration.type.surtr" },
-        { "match": "\\bimport\\b", "name": "keyword.control.import.surtr" }
+        {
+          "comment": "attribute is contextual (§1.2), recognized only immediately before the 'class' that makes it an attribute class declaration (§11) - with or without a parenthesized target/retention list (attribute(Method, Property) class X). Anywhere else the word is an ordinary identifier, same as 'value' above.",
+          "match": "\\battribute\\b(?=\\s*(?:\\([^()]*\\))?\\s*class\\b)",
+          "name": "keyword.declaration.type.surtr"
+        },
+        { "match": "\\bimport\\b", "name": "keyword.control.import.surtr" },
+        {
+          "comment": "get/set are not reserved at all - the parser recognizes them purely by position inside a property's accessor list (§3.4). A regex grammar cannot see that position the way the real parser does, so this only fires for the accessor shapes that can never be a call: 'get'/'set' immediately followed by '=>', '{' or a bare ';' - a call like dict.get(k) always has '(' right after and never matches. The narrow false positive this still admits is a variable literally named get/set read bare before a ';' (e.g. 'return get;'); textDocument/semanticTokens is the robust fix for full position-accuracy, this is the regex-only approximation.",
+          "match": "\\b(?:get|set)\\b(?=\\s*(?:=>|\\{|;))",
+          "name": "keyword.other.accessor.surtr"
+        }
       ]
     },
     "builtin-types": {

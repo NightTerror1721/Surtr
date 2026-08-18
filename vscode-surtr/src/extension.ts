@@ -24,6 +24,12 @@ export function activate(): void {
         documentSelector: [{ language: 'surtr' }],
         synchronize: {
             configurationSection: 'surtr',
+            // Without this, a .surtr file created, edited or deleted outside any open editor
+            // buffer (a git checkout, another tool, a rename) never reaches the server at all -
+            // it only sees disk state again on the next didOpen/didChange/didSave. This is what
+            // makes workspace/didChangeWatchedFiles notifications happen; the server's own handler
+            // just triggers the same whole-workspace rebuild a save already does.
+            fileEvents: workspace.createFileSystemWatcher('**/*.surtr'),
         },
         outputChannelName: 'Surtr Language Server',
     };

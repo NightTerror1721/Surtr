@@ -923,6 +923,70 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
+        /// Every abstract obligation <paramref name="type"/> does not yet answer — an interface
+        /// member (its own, inherited, or reached through an interface-to-interface extension) or an
+        /// inherited <c>abstract</c> class member with no matching member anywhere in its own
+        /// hierarchy. Read-only, and exposed for tooling: the language server's "implement missing
+        /// members" code action needs exactly this answer, and re-deriving the substitution-aware
+        /// interface walk itself in <c>Surtr.LanguageServer</c> would risk repeating the two real
+        /// bugs <c>5cca11a</c>/<c>0bef8a2</c> already found and fixed here — a member reached through
+        /// a constructed built-in interface reading its own unsubstituted type parameter instead of
+        /// the receiver's. This method answers by calling the exact same private helpers
+        /// <see cref="CheckMembersImplemented"/> does (<see cref="CollectInterfaces"/>,
+        /// <see cref="FindMember"/>, <see cref="SubstitutedBase"/>), so the two can never drift apart
+        /// on what counts as "missing".
+        /// </summary>
+        /// <remarks>
+        /// Deliberately narrower than every failure <see cref="CheckObligation"/> reports: a member
+        /// that exists but has the wrong signature (<see cref="SurtrDiagnosticCode.OverrideSignatureMismatch"/>)
+        /// is a correction, not something a stub can fill in, so it is left out here on purpose.
+        /// </remarks>
+        public IReadOnlyList<MissingMember> MissingAbstractMembers(NamedTypeSymbol type)
+        {
+            var result = new List<MissingMember>();
+
+            // Same exemption CheckMembersImplemented uses: an interface owes nothing to itself, and
+            // a construction reports through its own declaration instead.
+            if (type.TypeKind == TypeSymbolKind.Interface || !type.IsDefinition)
+                return result;
+
+            void Consider(NamedTypeSymbol contract, MethodSymbol required, bool fromInterface)
+            {
+                var found = FindMember(type, required.Name, required.Parameters.Count);
+                bool missing = found is null || (!type.IsAbstract && found.Dispatch == MethodDispatch.Abstract);
+                if (!missing)
+                    return;
+
+                var substituted = MemberLookup.SubstituteMethod(required, contract.SubstitutionFromArguments(_factory));
+                result.Add(new MissingMember(contract, substituted, fromInterface));
+            }
+
+            var visited = new HashSet<NamedTypeSymbol>();
+            var contracts = new List<NamedTypeSymbol>();
+            CollectInterfaces(type, visited, contracts);
+
+            foreach (var contract in contracts)
+            {
+                foreach (var member in contract.Members)
+                {
+                    if (member is MethodSymbol { Dispatch: MethodDispatch.Abstract } required)
+                        Consider(contract, required, fromInterface: true);
+                }
+            }
+
+            for (var ancestor = type.BaseType; ancestor is not null; ancestor = SubstitutedBase(ancestor))
+            {
+                foreach (var member in ancestor.Members)
+                {
+                    if (member is MethodSymbol { Dispatch: MethodDispatch.Abstract } required)
+                        Consider(ancestor, required, fromInterface: false);
+                }
+            }
+
+            return result;
+        }
+
+        /// <summary>
         /// Every interface a type owes an implementation to: its own declared interfaces, its base
         /// chain's, and each interface's own <c>interface : interface</c> extensions.
         /// </summary>
@@ -3261,5 +3325,34 @@ namespace Surtr.Compiler.Binding
             public string SourceName { get; }
         }
         #endregion
+
+        /// <summary>One unmet abstract obligation, as <see cref="MissingAbstractMembers"/> reports it.</summary>
+        public sealed class MissingMember
+        {
+            /// <summary>Creates one unmet abstract obligation.</summary>
+            public MissingMember(NamedTypeSymbol contract, MethodSymbol required, bool fromInterface)
+            {
+                Contract = contract;
+                Required = required;
+                FromInterface = fromInterface;
+            }
+
+            /// <summary>The interface or abstract base class that declares the obligation.</summary>
+            public NamedTypeSymbol Contract { get; }
+
+            /// <summary>
+            /// The member to implement, already substituted through <see cref="Contract"/>'s
+            /// construction — a stub built from this reads the receiver's own type arguments, not
+            /// the open declaration's.
+            /// </summary>
+            public MethodSymbol Required { get; }
+
+            /// <summary>
+            /// Whether <see cref="Contract"/> is an interface — a stub for it never writes
+            /// <c>override</c> (§3.3: satisfying an interface never requires it) — or an abstract
+            /// base class, where <c>override</c> is mandatory.
+            /// </summary>
+            public bool FromInterface { get; }
+        }
     }
 }

@@ -92,6 +92,10 @@ namespace Surtr.LanguageServer
                     OnDidClose(message);
                     break;
 
+                case "workspace/didChangeWatchedFiles":
+                    OnDidChangeWatchedFiles(message);
+                    break;
+
                 case "textDocument/hover":
                     OnHover(message);
                     break;
@@ -108,6 +112,14 @@ namespace Surtr.LanguageServer
                     OnSignatureHelp(message);
                     break;
 
+                case "textDocument/codeAction":
+                    OnCodeAction(message);
+                    break;
+
+                case "textDocument/semanticTokens/full":
+                    OnSemanticTokensFull(message);
+                    break;
+
                 default:
                     if (message.IsRequest)
                         Fail(message, RpcErrorCodes.MethodNotFound, "Method not implemented: " + message.Method);
@@ -118,7 +130,17 @@ namespace Surtr.LanguageServer
         private void OnInitialize(RpcMessage message)
         {
             var parameters = Params<InitializeParams>(message);
-            string root = FirstNonNull(parameters?.RootUri, parameters?.RootPath);
+
+            // rootUri/rootPath are the pre-3.6 shape; a client that only speaks the current
+            // workspaceFolders form (multi-root support, no single "root" concept) may leave both
+            // unset per spec, so that case falls through to the first folder here rather than to
+            // "no workspace at all". Only the first folder is ever used - Workspace itself is
+            // single-root, a documented limit rather than a silent one.
+            string root = FirstNonNull(
+                parameters?.RootUri,
+                parameters?.RootPath,
+                parameters?.WorkspaceFolders is { Count: > 0 } folders ? folders[0].Uri : null);
+
             if (root.Length > 0)
             {
                 root = Workspace.Workspace.PathFromUri(root);
@@ -142,6 +164,16 @@ namespace Surtr.LanguageServer
                     TextDocumentSync = new TextDocumentSyncOptions(),
                     CompletionProvider = new CompletionOptions(),
                     SignatureHelpProvider = new SignatureHelpOptions(),
+                    CodeActionProvider = true,
+                    SemanticTokensProvider = new SemanticTokensOptions
+                    {
+                        Legend = new SemanticTokensLegend
+                        {
+                            TokenTypes = new List<string>(SemanticTokensProvider.TokenTypes),
+                            TokenModifiers = new List<string>(SemanticTokensProvider.TokenModifiers),
+                        },
+                        Full = true,
+                    },
                 },
                 ServerInfo = new ServerInfo(),
             };
@@ -170,6 +202,19 @@ namespace Surtr.LanguageServer
             PublishAll(_workspace.Rebuild());
         }
 
+        /// <summary>
+        /// Rebuilds on every keystroke, with no debounce - investigated and deliberately left this
+        /// way rather than half-implemented. A real debounce means delaying the rebuild until the
+        /// stream goes quiet, which needs either a background timer or non-blocking peeking at the
+        /// pipe, and either one hands a second thread a live reference to <see cref="_workspace"/>
+        /// while <see cref="Run"/> keeps reading on the first - <see cref="Workspace.Rebuild"/>
+        /// disposes the previous <see cref="CompilationSnapshot"/> the moment the new one is in
+        /// place, so a handler on the main thread still resolving a request against the snapshot a
+        /// debounce timer just swapped out would be reading disposed state. <see cref="Workspace"/>'s
+        /// own whole-workspace-rebuild choice already accepts this cost once per change; adding a
+        /// second thread to reduce how often multiplies the risk for the same problem rather than
+        /// fixing it, and was out of scope to retrofit safely here.
+        /// </summary>
         private void OnDidChange(RpcMessage message)
         {
             var parameters = Params<DidChangeTextDocumentParams>(message);
@@ -205,6 +250,23 @@ namespace Surtr.LanguageServer
                 return;
 
             _workspace.CloseDocument(parameters.TextDocument.Uri);
+            PublishAll(_workspace.Rebuild());
+        }
+
+        /// <summary>
+        /// A file the client's own watcher saw change on disk - created, edited or deleted outside
+        /// any open editor buffer (a git checkout, another tool, a rename). Requires
+        /// <c>synchronize.fileEvents</c> to be configured on the client (<c>vscode-surtr</c>'s
+        /// <c>extension.ts</c> does); without it, this notification never arrives and such a change
+        /// only reaches the workspace on the next <c>didOpen</c>/<c>didChange</c>/<c>didSave</c>.
+        /// </summary>
+        private void OnDidChangeWatchedFiles(RpcMessage message)
+        {
+            if (_workspace is null)
+                return;
+
+            // The open buffers already reflect what the editor has; a rebuild alone picks up
+            // whatever changed on disk outside them (FindSourceFiles re-enumerates every time).
             PublishAll(_workspace.Rebuild());
         }
 
@@ -305,6 +367,38 @@ namespace Surtr.LanguageServer
             int position = lines.OffsetAt(parameters.Position.Line, parameters.Position.Character);
 
             Reply(message, CompletionProvider.SignatureHelp(_workspace.Snapshot, path, text, position));
+        }
+
+        private void OnCodeAction(RpcMessage message)
+        {
+            var parameters = Params<CodeActionParams>(message);
+            if (parameters?.TextDocument is null || _workspace is null)
+            {
+                Reply(message, null);
+                return;
+            }
+
+            string path = Workspace.Workspace.PathFromUri(parameters.TextDocument.Uri);
+            string text = _workspace.CurrentText(path);
+            var lines = TextLines.Index(text);
+            int position = lines.OffsetAt(parameters.Range.Start.Line, parameters.Range.Start.Character);
+
+            Reply(message, CodeActionProvider.Complete(_workspace.Snapshot, path, text, position));
+        }
+
+        private void OnSemanticTokensFull(RpcMessage message)
+        {
+            var parameters = Params<SemanticTokensParams>(message);
+            if (parameters?.TextDocument is null || _workspace is null)
+            {
+                Reply(message, null);
+                return;
+            }
+
+            string path = Workspace.Workspace.PathFromUri(parameters.TextDocument.Uri);
+            string text = _workspace.CurrentText(path);
+
+            Reply(message, SemanticTokensProvider.Compute(_workspace.Snapshot, path, text));
         }
 
         /// <summary>Publishes diagnostics for every file with some, and clears the ones that went quiet.</summary>

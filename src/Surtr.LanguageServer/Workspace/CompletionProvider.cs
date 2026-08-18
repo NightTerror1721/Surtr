@@ -272,7 +272,7 @@ namespace Surtr.LanguageServer.Workspace
         /// <summary>The identifiers reserved by the language, offered where an expression goes.</summary>
         private static readonly string[] Keywords =
         {
-            "abstract", "alias", "as", "break", "case", "catch", "class", "const", "constructor",
+            "abstract", "alias", "as", "attribute", "break", "case", "catch", "class", "const", "constructor",
             "continue", "default", "else", "enum", "false", "finally", "for", "forceinline", "fun",
             "if", "import", "in", "inline", "interface", "internal", "is", "let", "moduleof", "native", "null",
             "operator", "override", "private", "protected", "public", "range", "return", "sealed",

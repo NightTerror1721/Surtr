@@ -113,6 +113,42 @@ namespace Surtr.LanguageServer.Protocol
         public CompletionOptions? CompletionProvider { get; set; }
 
         public SignatureHelpOptions? SignatureHelpProvider { get; set; }
+
+        public object? CodeActionProvider { get; set; }
+
+        public SemanticTokensOptions? SemanticTokensProvider { get; set; }
+    }
+
+    /// <summary>What the server offers for <c>textDocument/semanticTokens</c>.</summary>
+    public sealed class SemanticTokensOptions
+    {
+        public SemanticTokensLegend Legend { get; set; } = new SemanticTokensLegend();
+
+        public bool Full { get; set; } = true;
+    }
+
+    /// <summary>The fixed vocabulary <c>textDocument/semanticTokens</c> data indexes into.</summary>
+    public sealed class SemanticTokensLegend
+    {
+        public List<string> TokenTypes { get; set; } = new List<string>();
+
+        public List<string> TokenModifiers { get; set; } = new List<string>();
+    }
+
+    /// <summary>Parameters of <c>textDocument/semanticTokens/full</c>.</summary>
+    public sealed class SemanticTokensParams
+    {
+        public TextDocumentIdentifier TextDocument { get; set; } = new TextDocumentIdentifier();
+    }
+
+    /// <summary>
+    /// The answer to <c>textDocument/semanticTokens/full</c>: tokens encoded five integers at a time
+    /// — line delta, start-character delta (from the previous token's start on the same line,
+    /// otherwise from column 0), length, token type index, and a token modifier bitmask.
+    /// </summary>
+    public sealed class SemanticTokens
+    {
+        public List<int> Data { get; set; } = new List<int>();
     }
 
     /// <summary>What the server offers for <c>textDocument/completion</c>.</summary>
@@ -243,6 +279,39 @@ namespace Surtr.LanguageServer.Protocol
         public string? RootUri { get; set; }
 
         public string? RootPath { get; set; }
+
+        /// <summary>
+        /// The modern replacement for <see cref="RootUri"/>/<see cref="RootPath"/> — a client that
+        /// supports multi-root workspaces sends this instead, and per the spec may leave the two
+        /// above unset entirely rather than only pointing at the first folder. This server still
+        /// only ever binds to one root (<see cref="Workspace.Workspace"/> is single-root by design),
+        /// so on a genuine multi-root workspace only the first folder here is used — a documented
+        /// limit, not a silent one.
+        /// </summary>
+        public List<WorkspaceFolder>? WorkspaceFolders { get; set; }
+    }
+
+    /// <summary>One folder of a (possibly multi-root) workspace, as <c>initialize</c> reports it.</summary>
+    public sealed class WorkspaceFolder
+    {
+        public string Uri { get; set; } = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
+    }
+
+    /// <summary>Parameters of <c>workspace/didChangeWatchedFiles</c>.</summary>
+    public sealed class DidChangeWatchedFilesParams
+    {
+        public List<FileEvent> Changes { get; set; } = new List<FileEvent>();
+    }
+
+    /// <summary>One watched file's change, as reported by the client's own file-system watcher.</summary>
+    public sealed class FileEvent
+    {
+        public string Uri { get; set; } = string.Empty;
+
+        /// <summary>1 = created, 2 = changed, 3 = deleted.</summary>
+        public int Type { get; set; }
     }
 
     /// <summary>Parameters of a request or notification about a text document.</summary>
@@ -321,5 +390,57 @@ namespace Surtr.LanguageServer.Protocol
         public string Uri { get; set; } = string.Empty;
 
         public List<LspDiagnostic> Diagnostics { get; set; } = new List<LspDiagnostic>();
+    }
+
+    /// <summary>Parameters of <c>textDocument/codeAction</c>.</summary>
+    public sealed class CodeActionParams
+    {
+        public TextDocumentIdentifier TextDocument { get; set; } = new TextDocumentIdentifier();
+
+        public Range Range { get; set; }
+
+        public CodeActionContext Context { get; set; } = new CodeActionContext();
+    }
+
+    /// <summary>What the client already knows about the requested range — which diagnostics sit in it.</summary>
+    public sealed class CodeActionContext
+    {
+        public List<LspDiagnostic> Diagnostics { get; set; } = new List<LspDiagnostic>();
+    }
+
+    /// <summary>The standard code action kinds a client groups its UI by.</summary>
+    public static class CodeActionKinds
+    {
+        public const string QuickFix = "quickfix";
+    }
+
+    /// <summary>One offered fix: a title plus the edit that applies it.</summary>
+    public sealed class CodeAction
+    {
+        public string Title { get; set; } = string.Empty;
+
+        public string Kind { get; set; } = CodeActionKinds.QuickFix;
+
+        public WorkspaceEdit? Edit { get; set; }
+    }
+
+    /// <summary>A set of text edits, grouped by the document URI each applies to.</summary>
+    public sealed class WorkspaceEdit
+    {
+        public Dictionary<string, List<TextEdit>> Changes { get; set; } = new Dictionary<string, List<TextEdit>>();
+    }
+
+    /// <summary>One replacement: the range it replaces (empty for a pure insertion) and the text.</summary>
+    public sealed class TextEdit
+    {
+        public TextEdit(Range range, string newText)
+        {
+            Range = range;
+            NewText = newText;
+        }
+
+        public Range Range { get; }
+
+        public string NewText { get; }
     }
 }
