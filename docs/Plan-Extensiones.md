@@ -484,14 +484,81 @@ actualizó con este modelo (ejemplos y §15.1/§15.4 reescritos).
 
 **Commit sugerido**: `Feature: extension methods estaticos (Fase 3 de §15)`
 
-### Fase 4 — Extension properties
+### Fase 4 — Extension properties — **Hecha**
 
-- Propiedades dentro de `extension { }`: solo computadas, cuerpo explícito `get`/`set` o `=>` —
-  diagnóstico nuevo si se declara como auto-property (sin cuerpo) dentro de un bloque
-  `extension`, ya que no hay backing field posible.
-- Mismos puntos de inserción que la Fase 1 pero para `FindProperty` en `BindInstanceMember`/
-  `BindStaticMember`.
-- Tests: propiedad de extensión de solo lectura (`=>`), con `get`/`set` explícitos, estática.
+**Hallazgo de diseño real, análogo al de la Fase 1**: una propiedad no tiene lista de
+parámetros donde escribir el receptor explícito que un método de extensión sí puede escribir
+(`fun length(self: Vec2): float`) — no hay sitio en `x: float { get; set; }` para nombrar nada.
+Investigado a fondo antes de implementar: la solución NO es dar a las propiedades su propia
+sintaxis de parámetro (habría exigido tocar `PropertyDeclarationSyntax`/`ParseProperty`, un
+cambio de gramática real). En su lugar, el receptor de una propiedad de extensión de instancia
+es un parámetro **sintetizado** (`SyntheticNames.ExtensionReceiver`), alcanzable desde el
+cuerpo del accessor solo a través de `this` — y ese mismo mecanismo (`BodyBinder.ExtensionReceiver`,
+derivado de `_method.ExtensionTargetType`/`ExtensionIsStatic`, no de un parámetro nuevo del
+constructor de `BodyBinder`) resulta que **también sirve para los métodos de extensión de la
+Fase 1**: `this` dentro de un método de extensión ahora resuelve al mismo parámetro que el
+usuario nombró explícitamente, como alias añadido sin coste — la Fase 1 sigue exigiendo el
+parámetro explícito, `this` es una forma adicional de leerlo, no un reemplazo.
+
+**Segundo hallazgo real, en el emisor**: `SurtrModuleBuilder.DefineProperty`/`DefineGetter`/
+`DefineSetter` (usado para toda propiedad ordinaria, de módulo o de clase) asume siempre que un
+getter no declara parámetros y un setter exactamente uno (`value`) — el receptor, cuando existe,
+es siempre implícito. Una propiedad de extensión rompe esa asunción a propósito (su getter
+declara el receptor como parámetro real), así que sus accessors **no pasan por esa API en
+absoluto** — se declaran/emiten como funciones de módulo corrientes, exactamente igual que un
+método de extensión (`ModuleEmitter.DeclareExtensionFunction`, extraído como el mismo helper que
+ya usaba `module.ExtensionMethods`, reutilizado también para cada accessor de
+`module.ExtensionProperties`). Confirmado además que la inserción del receptor en la pila
+(`EmitPropertyRead`/`Store` en `MethodBodyEmitter.cs`) ya hace exactamente lo necesario **sin
+ningún cambio**, siempre que `PropertySymbol.IsStatic` reflete la verdad de la fuente (no,
+como en `MethodSymbol.IsStatic`, forzado siempre a `true`) — la única pieza nueva ahí fueron dos
+guardas (`TryInlinePropertyGetter`/`TryInlinePropertySetter`) para que la optimización de
+splicing existente nunca intente hacer inline de un accessor de extensión, cuyo receptor no
+encaja en la forma que esa optimización asume.
+
+**Cambios**:
+- `MethodSymbol.IsStatic` se mantiene siempre `true` en los accessors de extensión (igual que en
+  un método de extensión, para no romper el invariante de `BindThis`), pero
+  `PropertySymbol.IsStatic` guarda la verdad de la sintaxis — son dos campos independientes que
+  para una propiedad ordinaria siempre coincidían y aquí se desincronizan a propósito.
+  `PropertySymbol` gana `ExtensionTargetType`/`ExtensionDeclaringContainer` (igual que
+  `MethodSymbol`, para el emparejamiento estático por identidad y la visibilidad anidada).
+- `Binder.BindExtensionProperty`/`BindExtensionAccessor`: solo computadas (`get`/`set` con
+  cuerpo o `=>`), nunca auto-property (diagnóstico nuevo si no hay accessors o si alguno no
+  tiene cuerpo); estática o de instancia, con la misma regla de visibilidad
+  bloque-miembro que un método; el receptor de una de instancia es
+  `SyntheticNames.ExtensionReceiver` como `Parameters[0]` del getter (y del setter, antes de
+  `value`), ausente por completo en una estática.
+- `BodyBinder.ExtensionReceiver` (nuevo, computado desde `_method` sin ningún parámetro nuevo en
+  el constructor) + `BindThis` actualizado: `this` dentro de un método o accessor de extensión de
+  instancia resuelve a ese parámetro; `super` se rechaza (una extensión no tiene base).
+- `BodyBinder.Expressions.cs`: `InstanceExtensionProperty`/`StaticExtensionProperty` (candidatos
+  desde `_module` + `_imported`, emparejamiento por conversión para la de instancia —
+  polimórfico igual que el receptor de un método — y por identidad de referencia para la
+  estática, igual que `StaticExtensionCandidates`); `PickExtensionProperty` reporta ambigüedad
+  si hay más de un candidato (las propiedades no tienen argumentos con los que
+  `OverloadResolution` pudiera desempatar). Enganchado en `BindInstanceMember`/`BindStaticMember`
+  justo antes del `Error` final, tras fallar campo/propiedad/method-group real — misma prioridad
+  silenciosa que un método. La escritura (`obj.prop = valor`) no necesitó ningún cambio en
+  `BindAssignment`: como la lectura ya produce un `BoundPropertyExpression` corriente, toda su
+  maquinaria de asignación (accesibilidad del setter, `IsAssignable`) funciona sin tocarla.
+- `ModuleEmitter.cs`: `DeclareExtensionFunction` extraído del cuerpo del bucle de
+  `module.ExtensionMethods` y reutilizado para cada accessor de `module.ExtensionProperties`;
+  mismo añadido en `EmitModuleBodies` y `Record` que ya hizo falta para los métodos en las Fases
+  1-2, esta vez para los accessors.
+- `MethodBodyEmitter.cs`: guarda nueva en `TryInlinePropertyGetter`/`TryInlinePropertySetter`
+  (`if (accessor.ExtensionTargetType is not null) return false;`) para que el splicing de
+  `inline`/`forceinline` nunca se intente sobre un accessor de extensión.
+- Tests: `ModuleEmitterTests.cs`, región "Extension methods (§15) — Fase 4" (11 tests) —
+  propiedad de solo lectura (`=>`) contra la VM real, `get`/`set` explícitos con escritura real
+  sobre un campo mutable del receptor, colisión con propiedad real (la real gana en silencio),
+  propiedad estática, `this` dentro de un método de extensión (confirma que sigue exigiendo el
+  parámetro explícito y que `this` es solo un alias), propiedad anidada en clase alcanzable
+  desde sus propios miembros, propiedad traída por import wildcard, ambigüedad real entre dos
+  imports, auto-property sin accessors rechazada, accessor sin cuerpo rechazado.
+- Suite completa verificada: 2246/2246 en verde.
+
+**Commit sugerido**: `Feature: extension properties (Fase 4 de §15)`
 
 ### Fase 5 — Extensiones sobre tipos compuestos y built-ins
 

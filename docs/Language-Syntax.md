@@ -2827,15 +2827,17 @@ language needs it as an ordinary identifier.
 
 - `fun`, instance or `static`, following §3.2/§3.3 like any method — an **instance** one names its
   receiver as an ordinary, explicitly-written first parameter (`self` above is just a name; any
-  identifier works), whose declared type must be exactly the block's target type. **There is no
-  implicit `this` inside an extension body**: the block adds no real member to the target type's
-  own declaration, so nothing gives its methods the receiver-in-slot-zero treatment a real instance
-  method gets (§3.3). The receiver is read like any other parameter, and one of its own members is
-  reached by writing it out (`self.x`, never a bare `x`).
+  identifier works), whose declared type must be exactly the block's target type. The block adds
+  no real member to the target type's own declaration, so nothing gives its methods the
+  receiver-in-slot-zero treatment a real instance method gets (§3.3) — the parameter has to be
+  written out, and one of its own members is reached through it explicitly (`self.x`, never a
+  bare `x`). `this` also reaches that same parameter, as an additional spelling — never a
+  replacement for writing it, since without it there would be nothing for `this` to name.
 - Properties, but only **computed** ones — an explicit `get`/`set` body, or the `=>` short form
-  (§3.3/§3.4), each taking the same explicit receiver parameter a method would. An auto-property is
-  rejected: there is nowhere to put a backing field, because the extended type's instance layout is
-  already fixed by the time its `extension` blocks are bound.
+  (§3.3/§3.4). A property has no parameter list to write a receiver in at all, so an instance one
+  reaches it only through `this` — there is no second name for it the way a method's parameter
+  has one. An auto-property is rejected: there is nowhere to put a backing field, because the
+  extended type's instance layout is already fixed by the time its `extension` blocks are bound.
 - Nothing else. `constructor`, `static { }` and fields (`let`/`var`) are all rejected — none of
   them has an identity or a storage position to run in on a type this block does not own.
 

@@ -497,8 +497,41 @@ namespace Surtr.Compiler.Binding
             return new BoundThisExpression(syntax, type, isSuper);
         }
 
+        /// <summary>
+        /// The synthesized receiver an extension method or property accessor (§15) reads <c>this</c>
+        /// as, or <see langword="null"/> for an ordinary body or a <c>static</c> extension member.
+        /// </summary>
+        /// <remarks>
+        /// Derived from <see cref="_method"/> alone — never a constructor parameter threaded through
+        /// <see cref="BodyBinder"/> — because it is exactly the same fact <c>Binder.BindExtension</c>
+        /// already recorded on the method symbol: an instance extension's receiver is always its
+        /// first parameter, whether the user wrote it out (a method) or the binder synthesized it
+        /// under <see cref="SyntheticNames.ExtensionReceiver"/> (a property accessor, which has no
+        /// parameter list of its own to write one in). This is also why an extension *method* can use
+        /// `this` too, even though §15.1 has the user name that same parameter explicitly — both
+        /// spellings reach the identical <see cref="ParameterSymbol"/>.
+        /// </remarks>
+        private ParameterSymbol? ExtensionReceiver
+            => _method.ExtensionTargetType is not null && !_method.ExtensionIsStatic && _method.Parameters.Count > 0
+                ? _method.Parameters[0]
+                : null;
+
         private BoundExpression BindThis(ExpressionSyntax syntax, bool isSuper)
         {
+            if (ExtensionReceiver is ParameterSymbol receiver)
+            {
+                if (isSuper)
+                {
+                    return Error(
+                        syntax,
+                        SurtrDiagnosticCode.NoInstanceInScope,
+                        "An extension has no base class (§15), so 'super' names nothing.");
+                }
+
+                NoteCapture(receiver, syntax.Span);
+                return new BoundParameterExpression(syntax, receiver);
+            }
+
             if (_containingType is null || _method.IsStatic)
             {
                 return Error(
@@ -632,6 +665,11 @@ namespace Surtr.Compiler.Binding
                 return group;
             }
 
+            // §15.3: tried last, only once field, property, and method-group have all failed —
+            // the same silent priority a real member already has over an extension method's call.
+            if (InstanceExtensionProperty(lookupType, syntax.Name, syntax) is PropertySymbol extensionProperty)
+                return Guard(ResolveProperty(syntax, accessed, extensionProperty), syntax);
+
             return Error(
                 syntax,
                 SurtrDiagnosticCode.UnresolvedMember,
@@ -678,6 +716,10 @@ namespace Surtr.Compiler.Binding
             // receiver for an instance one to read.
             if (TryBindMethodGroup(syntax, expected, StaticMethodsOf(type, syntax.Name), receiverSyntax: null) is BoundExpression group)
                 return group;
+
+            // §15.3: same silent priority as the instance case, tried last.
+            if (StaticExtensionProperty(type, syntax.Name, syntax) is PropertySymbol extensionProperty)
+                return ResolveProperty(syntax, null, extensionProperty);
 
             return Error(
                 syntax,
@@ -1545,6 +1587,111 @@ namespace Surtr.Compiler.Binding
                     candidates.Add(method);
                 }
             }
+        }
+
+        /// <summary>
+        /// Whether an extension property is reachable from here — the property counterpart of
+        /// <see cref="IsExtensionAccessible"/>, checked against <see cref="PropertySymbol"/>'s own
+        /// <c>ExtensionDeclaringContainer</c> rather than a method's.
+        /// </summary>
+        private bool IsExtensionPropertyAccessible(PropertySymbol property)
+        {
+            return property.ExtensionDeclaringContainer is NamedTypeSymbol container
+                ? AccessCheck.IsAccessibleWithin(property.Accessibility, container, _containingType, _module)
+                : AccessCheck.IsAccessible(property, property.Accessibility, _containingType, _module);
+        }
+
+        /// <summary>
+        /// The extension property (§15.1) named <paramref name="name"/> reachable on a receiver of
+        /// type <paramref name="receiverType"/>, or <see langword="null"/> if none applies.
+        /// </summary>
+        /// <remarks>
+        /// Matched by assignability against <see cref="PropertySymbol.ExtensionTargetType"/> rather
+        /// than reference identity — the same polymorphism an instance extension method's receiver
+        /// already gets through ordinary argument conversion (§15.3), so an extension declared for an
+        /// interface reaches every type that implements it.
+        /// </remarks>
+        private PropertySymbol? InstanceExtensionProperty(TypeSymbol receiverType, string name, SyntaxNode syntax)
+        {
+            var candidates = new List<PropertySymbol>();
+            AddInstanceExtensionPropertyCandidates(_module, receiverType, name, candidates);
+
+            foreach (var imported in _imported)
+                AddInstanceExtensionPropertyCandidates(imported, receiverType, name, candidates);
+
+            return PickExtensionProperty(candidates, name, syntax);
+        }
+
+        private void AddInstanceExtensionPropertyCandidates(ModuleSymbol module, TypeSymbol receiverType, string name, List<PropertySymbol> candidates)
+        {
+            foreach (var property in module.ExtensionProperties)
+            {
+                if (property.IsStatic
+                    || property.ExtensionTargetType is null
+                    || !string.Equals(property.Name, name, StringComparison.Ordinal)
+                    || !_conversions.IsAssignable(receiverType, property.ExtensionTargetType)
+                    || !IsExtensionPropertyAccessible(property))
+                {
+                    continue;
+                }
+
+                candidates.Add(property);
+            }
+        }
+
+        /// <summary>
+        /// The static extension property (§15.3) named <paramref name="name"/> declared for exactly
+        /// <paramref name="type"/>, or <see langword="null"/> if none applies — matched by reference
+        /// identity for the same reason a static extension method is (§3.1: a static member is never
+        /// reached polymorphically through a type name).
+        /// </summary>
+        private PropertySymbol? StaticExtensionProperty(NamedTypeSymbol type, string name, SyntaxNode syntax)
+        {
+            var candidates = new List<PropertySymbol>();
+            AddStaticExtensionPropertyCandidates(_module, type, name, candidates);
+
+            foreach (var imported in _imported)
+                AddStaticExtensionPropertyCandidates(imported, type, name, candidates);
+
+            return PickExtensionProperty(candidates, name, syntax);
+        }
+
+        private void AddStaticExtensionPropertyCandidates(ModuleSymbol module, NamedTypeSymbol type, string name, List<PropertySymbol> candidates)
+        {
+            foreach (var property in module.ExtensionProperties)
+            {
+                if (!property.IsStatic
+                    || !ReferenceEquals(property.ExtensionTargetType, type)
+                    || !string.Equals(property.Name, name, StringComparison.Ordinal)
+                    || !IsExtensionPropertyAccessible(property))
+                {
+                    continue;
+                }
+
+                candidates.Add(property);
+            }
+        }
+
+        /// <summary>
+        /// Picks the one extension property a name means, reporting an ambiguity (§15.3) exactly as
+        /// two equally applicable extension methods from different imports already would — properties
+        /// take no arguments for an overload-resolution-style tie-break to apply to, so two visible
+        /// candidates of the same name are always ambiguous outright.
+        /// </summary>
+        private PropertySymbol? PickExtensionProperty(List<PropertySymbol> candidates, string name, SyntaxNode syntax)
+        {
+            if (candidates.Count == 0)
+                return null;
+
+            if (candidates.Count > 1)
+            {
+                Report(
+                    SurtrDiagnosticCode.UnresolvedCall,
+                    syntax.Span,
+                    $"'{name}' matches {candidates.Count} extension properties equally well; there is no way to disambiguate one.");
+            }
+
+            return candidates[0];
         }
 
         /// <summary>

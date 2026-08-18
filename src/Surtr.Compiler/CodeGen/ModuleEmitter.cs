@@ -903,36 +903,54 @@ namespace Surtr.Compiler.CodeGen
             // its emission differs from `module.Methods` above. It stays a separate list only so
             // bare-name resolution in the binder never finds one (`ModuleSymbol.ExtensionMethods`).
             foreach (var method in module.ExtensionMethods)
+                DeclareExtensionFunction(context, builder, method);
+
+            // An extension property's accessors (§15.1) are declared the same way, one at a time —
+            // never through `builder.DefineProperty`/`DefineGetter`/`DefineSetter`, which assume a
+            // getter takes zero declared parameters and a setter exactly one (`value`), the receiver
+            // always implicit. An extension accessor's receiver is instead its own first declared
+            // parameter (or, for a `static` one, absent entirely) — the same shape an extension
+            // method's is, which is exactly what `DeclareExtensionFunction` already emits correctly.
+            foreach (var property in module.ExtensionProperties)
             {
-                if (method.IsNative)
-                {
-                    var native = builder.DeclareNativeFunction(
-                        _descriptors.EmitMethodName(method),
-                        _descriptors.Emit(method.ReturnType),
-                        LinkName(method),
-                        Parameters(context, method),
-                        Visibility(method.Accessibility));
+                if (property.Getter is MethodSymbol getter)
+                    DeclareExtensionFunction(context, builder, getter);
 
-                    context.Bind(method, native);
-                    continue;
-                }
+                if (property.Setter is MethodSymbol setter)
+                    DeclareExtensionFunction(context, builder, setter);
+            }
+        }
 
-                var extensionFunction = builder.DefineFunction(
+        private void DeclareExtensionFunction(EmitContext context, SurtrModuleBuilder builder, MethodSymbol method)
+        {
+            if (method.IsNative)
+            {
+                var native = builder.DeclareNativeFunction(
                     _descriptors.EmitMethodName(method),
                     _descriptors.Emit(method.ReturnType),
+                    LinkName(method),
                     Parameters(context, method),
                     Visibility(method.Accessibility));
 
-                foreach (var use in method.Attributes)
-                {
-                    if (use.Type.IsCompileTimeOnlyAttribute)
-                        continue;
-
-                    extensionFunction.AddAttribute(Usage(context, use));
-                }
-
-                context.Declare(method, extensionFunction);
+                context.Bind(method, native);
+                return;
             }
+
+            var function = builder.DefineFunction(
+                _descriptors.EmitMethodName(method),
+                _descriptors.Emit(method.ReturnType),
+                Parameters(context, method),
+                Visibility(method.Accessibility));
+
+            foreach (var use in method.Attributes)
+            {
+                if (use.Type.IsCompileTimeOnlyAttribute)
+                    continue;
+
+                function.AddAttribute(Usage(context, use));
+            }
+
+            context.Declare(method, function);
         }
 
         private SurtrParameterInfo[] Parameters(EmitContext context, MethodSymbol method)
@@ -1331,6 +1349,15 @@ namespace Surtr.Compiler.CodeGen
                     Guarded(setter, () => EmitBody(context, setter, write, allowMissing: false));
             }
 
+            foreach (var property in module.ExtensionProperties)
+            {
+                if (property.Getter is MethodSymbol getter && context.TryGetBuilder(getter, out var read))
+                    Guarded(getter, () => EmitBody(context, getter, read, allowMissing: false));
+
+                if (property.Setter is MethodSymbol setter && context.TryGetBuilder(setter, out var write))
+                    Guarded(setter, () => EmitBody(context, setter, write, allowMissing: false));
+            }
+
             var initializers = new List<BoundFieldInitializer>();
             foreach (var initializer in _binder.FieldInitializers)
             {
@@ -1613,6 +1640,12 @@ namespace Surtr.Compiler.CodeGen
             }
 
             foreach (var property in symbol.Properties)
+            {
+                RecordAccessor(context, property.Getter, built, moduleLevel: true);
+                RecordAccessor(context, property.Setter, built, moduleLevel: true);
+            }
+
+            foreach (var property in symbol.ExtensionProperties)
             {
                 RecordAccessor(context, property.Getter, built, moduleLevel: true);
                 RecordAccessor(context, property.Setter, built, moduleLevel: true);

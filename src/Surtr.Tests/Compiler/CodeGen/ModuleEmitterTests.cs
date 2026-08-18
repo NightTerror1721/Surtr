@@ -6134,5 +6134,140 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.True(compilation.HasErrors, "A static extension with no visibility written defaults to internal (§3.1) and should not reach another module.");
         }
         #endregion
+
+        #region Extension methods (§15) — Fase 4: extension properties
+        [Fact]
+        public void AReadOnlyExtensionPropertyIsReadableOnItsTargetType()
+        {
+            var runtime = Run(
+                Vec2 + "extension Vec2 { lengthSquared: float => this.x * this.x + this.y * this.y; }\n"
+                    + "fun run(): float { return Vec2(3.0, 4.0).lengthSquared; }");
+
+            Assert.Equal(25.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AnExtensionPropertyWithExplicitGetAndSetWorks()
+        {
+            var runtime = Run(
+                "class Vec2 {\n"
+                    + "  public var x: float;\n"
+                    + "  public constructor(x: float) { this.x = x; }\n"
+                    + "}\n"
+                    + "extension Vec2 {\n"
+                    + "  doubled: float {\n"
+                    + "    get { return this.x * 2.0; }\n"
+                    + "    set { this.x = value / 2.0; }\n"
+                    + "  }\n"
+                    + "}\n"
+                    + "fun run(): float { let v = Vec2(3.0); v.doubled = 10.0; return v.x; }");
+
+            Assert.Equal(5.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void ARealPropertyWinsSilentlyOverAnExtensionPropertyWithTheSameName()
+        {
+            var runtime = Run(
+                "class Vec2 {\n"
+                    + "  public let x: float;\n"
+                    + "  public constructor(x: float) { this.x = x; }\n"
+                    + "  public doubled: float => x * 2.0;\n"
+                    + "}\n"
+                    + "extension Vec2 { doubled: float => -1.0; }\n"
+                    + "fun run(): float { return Vec2(5.0).doubled; }");
+
+            Assert.Equal(10.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AStaticExtensionPropertyIsReadableOnItsTargetType()
+        {
+            var runtime = Run(
+                Vec2 + "extension Vec2 { static zero: Vec2 => Vec2(0.0, 0.0); }\n"
+                    + "fun run(): float { return Vec2.zero.x; }");
+
+            Assert.Equal(0.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AnExtensionMethodCanReferenceItsReceiverAsThisToo()
+        {
+            // §15.1's own explicit-parameter model still requires the parameter to be written out
+            // (`self` here) - `this` is an additional way to reach the very same parameter, not a
+            // replacement for writing it.
+            var runtime = Run(
+                Vec2 + "extension Vec2 { fun lengthSquared(self: Vec2): float => this.x * this.x + this.y * this.y; }\n"
+                    + "fun run(): float { return Vec2(3.0, 4.0).lengthSquared(); }");
+
+            Assert.Equal(25.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AnExtensionPropertyNestedInAClassIsReachableFromThatClasssOwnMembers()
+        {
+            var runtime = Run(
+                Vec2
+                    + "class Registry {\n"
+                    + "  public constructor() { }\n"
+                    + "  private extension Vec2 { secret: float => this.x + this.y; }\n"
+                    + "  public fun readSecret(v: Vec2): float => v.secret;\n"
+                    + "}\n"
+                    + "fun run(): float { return Registry().readSecret(Vec2(1.0, 2.0)); }");
+
+            Assert.Equal(3.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AnExtensionPropertyBroughtByAWildcardImportIsReadable()
+        {
+            var runtime = Run(
+                "import game.util.*;\nfun run(): float { return Vec2(3.0, 4.0).lengthSquared; }",
+                ("/game/util/M.surtr",
+                    "public class Vec2 {\n"
+                        + "  public let x: float;\n"
+                        + "  public let y: float;\n"
+                        + "  public constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                        + "}\n"
+                        + "public extension Vec2 { lengthSquared: float => this.x * this.x + this.y * this.y; }"));
+
+            Assert.Equal(25.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void TwoEquallyApplicableExtensionPropertiesFromDifferentImportsAreAmbiguous()
+        {
+            using var compilation = Reject(
+                "import game.shapes.*;\nimport game.util.a.*;\nimport game.util.b.*;\n"
+                    + "fun run(): float { return Vec2(1.0, 2.0).lengthSquared; }",
+                ("/game/shapes/S.surtr",
+                    "public class Vec2 {\n  public let x: float;\n  public let y: float;\n"
+                        + "  public constructor(x: float, y: float) { this.x = x; this.y = y; }\n}"),
+                ("/game/util/a/A.surtr",
+                    "import game.shapes.*;\npublic extension Vec2 { lengthSquared: float => this.x; }"),
+                ("/game/util/b/B.surtr",
+                    "import game.shapes.*;\npublic extension Vec2 { lengthSquared: float => this.y; }"));
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedCall);
+        }
+
+        [Fact]
+        public void AnExtensionAutoPropertyWithNoAccessorsIsRejected()
+        {
+            using var compilation = Reject(
+                Vec2 + "extension Vec2 { cached: float { } }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidExtensionMember);
+        }
+
+        [Fact]
+        public void AnExtensionPropertyAccessorWithNoBodyIsRejected()
+        {
+            using var compilation = Reject(
+                Vec2 + "extension Vec2 { cached: float { get; } }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidExtensionMember);
+        }
+        #endregion
     }
 }

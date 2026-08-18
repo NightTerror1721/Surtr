@@ -417,6 +417,19 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>Who may see it.</summary>
         public Accessibility Accessibility { get; internal set; } = Accessibility.Private;
 
+        /// <summary>
+        /// The type this property extends (§15), or <see langword="null"/> for an ordinary property.
+        /// </summary>
+        /// <remarks>The property counterpart of <see cref="MethodSymbol.ExtensionTargetType"/>.</remarks>
+        public NamedTypeSymbol? ExtensionTargetType { get; internal set; }
+
+        /// <summary>
+        /// The type an <c>extension</c> block was nested inside, or <see langword="null"/> when it
+        /// was declared at module level.
+        /// </summary>
+        /// <remarks>The property counterpart of <see cref="MethodSymbol.ExtensionDeclaringContainer"/>.</remarks>
+        public NamedTypeSymbol? ExtensionDeclaringContainer { get; internal set; }
+
         /// <inheritdoc/>
         public override string ToDisplayString() => Name + ": " + Type.ToDisplayString();
     }

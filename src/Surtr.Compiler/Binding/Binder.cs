@@ -55,6 +55,9 @@ namespace Surtr.Compiler.Binding
         private readonly Dictionary<string, List<MethodSymbol>> _extensionMethodsByModule =
             new Dictionary<string, List<MethodSymbol>>(StringComparer.Ordinal);
 
+        private readonly Dictionary<string, List<PropertySymbol>> _extensionPropertiesByModule =
+            new Dictionary<string, List<PropertySymbol>>(StringComparer.Ordinal);
+
         private readonly List<BodyBinding> _bodies = new List<BodyBinding>();
         private readonly List<InitializerBinding> _initializers = new List<InitializerBinding>();
         private readonly List<DefaultBinding> _defaults = new List<DefaultBinding>();
@@ -722,6 +725,10 @@ namespace Surtr.Compiler.Binding
                 module.ExtensionMethods = _extensionMethodsByModule.TryGetValue(module.Path, out var extensions)
                     ? extensions
                     : Array.Empty<MethodSymbol>();
+
+                module.ExtensionProperties = _extensionPropertiesByModule.TryGetValue(module.Path, out var extensionProperties)
+                    ? extensionProperties
+                    : Array.Empty<PropertySymbol>();
             }
 
             // Again, for the type parameters a method's own signature declared: those did not exist
@@ -1730,14 +1737,28 @@ namespace Surtr.Compiler.Binding
                 _extensionMethodsByModule.Add(module.Path, extensions);
             }
 
+            if (!_extensionPropertiesByModule.TryGetValue(module.Path, out var extensionProperties))
+            {
+                extensionProperties = new List<PropertySymbol>();
+                _extensionPropertiesByModule.Add(module.Path, extensionProperties);
+            }
+
             var signatures = new SignatureSet(_factory, _diagnostics);
 
             foreach (var member in syntax.Members)
             {
+                if (member is PropertyDeclarationSyntax property)
+                {
+                    if (BindExtensionProperty(property, module, target, containingType, blockAccessibility, scope, sourceName) is PropertySymbol bound)
+                        extensionProperties.Add(bound);
+
+                    continue;
+                }
+
                 if (member is not MethodDeclarationSyntax method)
                 {
                     ReportAt(sourceName, member.Span, SurtrDiagnosticCode.InvalidExtensionMember,
-                        "An extension block may only declare instance methods (§15) — fields, constructors, static blocks, properties and static methods are not supported yet.");
+                        "An extension block may only declare methods and computed properties (§15) — fields, constructors and static blocks are not supported.");
                     continue;
                 }
 
@@ -1765,12 +1786,15 @@ namespace Surtr.Compiler.Binding
                 extMethod.Parameters = BindParameters(method.Parameters, extMethod, methodScope, sourceName);
 
                 // An instance extension's receiver — `obj.method()` is bound against it — is an
-                // ordinary, explicitly-named first parameter rather than an implicit `this`:
-                // extension methods are module-level functions (`ContainingSymbol` is `module`, not
-                // `target`), and `this`/implicit member access both require a non-static method whose
-                // container is a real type (BodyBinder.BindThis), which this deliberately is not. A
-                // `static fun` (§15.3) takes no receiver at all — it is reached as `Type.method()`,
-                // resolved by matching the type named at the call site, never an argument.
+                // ordinary, explicitly-named first parameter, not the implicit `this` a real instance
+                // method reads off slot zero (BodyBinder.BindThis): extension methods are
+                // module-level functions (`ContainingSymbol` is `module`, not `target`), with no
+                // implicit receiver slot to give it. `this` still works inside the body — it resolves
+                // to this same parameter (`BodyBinder.ExtensionReceiver`) rather than through
+                // `_containingType` — but the parameter itself has to be written out, since there is
+                // nothing else here to bind `this` to. A `static fun` (§15.3) takes no receiver at
+                // all — it is reached as `Type.method()`, resolved by matching the type named at the
+                // call site, never an argument.
                 if (!method.IsStatic
                     && (extMethod.Parameters.Count == 0 || !ReferenceEquals(extMethod.Parameters[0].Type, target)))
                 {
@@ -1784,6 +1808,131 @@ namespace Surtr.Compiler.Binding
                 signatures.Add(extMethod, sourceName, method.Span);
                 extensions.Add(extMethod);
             }
+        }
+
+        /// <summary>
+        /// Binds one property inside an <c>extension</c> block (§15.1) — always computed, since
+        /// there is no backing field an already-built type could offer it. The receiver an instance
+        /// accessor's body reaches through <c>this</c> (<c>BodyBinder.ExtensionReceiver</c>) is a
+        /// synthesized first parameter, exactly like an extension method's except the user never
+        /// writes it out — there is nowhere in a property's own declaration to name it.
+        /// </summary>
+        private PropertySymbol? BindExtensionProperty(
+            PropertyDeclarationSyntax syntax,
+            ModuleSymbol module,
+            NamedTypeSymbol target,
+            NamedTypeSymbol? containingType,
+            Accessibility blockAccessibility,
+            Scope scope,
+            string sourceName)
+        {
+            if (syntax.IsNative)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidExtensionMember,
+                    $"'{syntax.Name}' cannot be native — an extension block does not support that (§15).");
+                return null;
+            }
+
+            var propertyScope = scope.CreateChild();
+            var type = _resolver.Resolve(syntax.Type, propertyScope, sourceName);
+            var accessibility = ResolveExtensionMemberAccessibility(syntax.Visibility, blockAccessibility, sourceName, syntax.Span);
+
+            var property = new PropertySymbol(syntax.Name, module, type)
+            {
+                // Unlike every extension method's `MethodSymbol.IsStatic` (always true, §15's whole
+                // module-level-function trick), this one stays the source truth: `ResolveProperty`/
+                // `EmitPropertyRead`/`Store` read `PropertySymbol.IsStatic` alone to decide whether to
+                // push a receiver before the accessor call, and an instance extension property needs
+                // exactly that push — its accessors take the receiver as an ordinary parameter, which
+                // is what ends up filled from it.
+                IsStatic = syntax.IsStatic,
+                Accessibility = accessibility,
+                ExtensionTargetType = target,
+                ExtensionDeclaringContainer = containingType,
+            };
+
+            AccessorSyntax? getter = null;
+            AccessorSyntax? setter = null;
+            foreach (var accessor in syntax.Accessors)
+            {
+                if (accessor.IsGetter)
+                    getter = accessor;
+                else
+                    setter = accessor;
+            }
+
+            if (getter is null && setter is null)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidExtensionMember,
+                    $"'{syntax.Name}' must declare at least one accessor with a body — an extension property is always computed (§15.1).");
+                return null;
+            }
+
+            if (getter is AccessorSyntax boundGetter)
+                property.Getter = BindExtensionAccessor(boundGetter, MemberNames.Getter(syntax.Name), module, target, containingType, syntax.IsStatic, type, accessibility, propertyScope, sourceName);
+
+            if (setter is AccessorSyntax boundSetter)
+                property.Setter = BindExtensionAccessor(boundSetter, MemberNames.Setter(syntax.Name), module, target, containingType, syntax.IsStatic, _factory.Void, accessibility, propertyScope, sourceName, valueParameterType: type);
+
+            RecordAttributes(property, syntax.Attributes, propertyScope, sourceName);
+            return property;
+        }
+
+        /// <summary>
+        /// Binds one accessor of an extension property — the shared shape between <c>get</c> and
+        /// <c>set</c>, which differ only in their return type and whether a trailing <c>value</c>
+        /// parameter follows the receiver.
+        /// </summary>
+        private MethodSymbol BindExtensionAccessor(
+            AccessorSyntax syntax,
+            string name,
+            ModuleSymbol module,
+            NamedTypeSymbol target,
+            NamedTypeSymbol? containingType,
+            bool isStatic,
+            TypeSymbol returnType,
+            Accessibility propertyAccessibility,
+            Scope scope,
+            string sourceName,
+            TypeSymbol? valueParameterType = null)
+        {
+            var accessorScope = scope.CreateChild();
+            var accessor = new MethodSymbol(name, module, returnType)
+            {
+                IsStatic = true,
+                Accessibility = ResolveAccessorAccessibility(syntax, propertyAccessibility, sourceName),
+                Role = valueParameterType is null ? MethodRole.PropertyGetter : MethodRole.PropertySetter,
+                ExtensionTargetType = target,
+                ExtensionDeclaringContainer = containingType,
+                ExtensionIsStatic = isStatic,
+            };
+
+            if (syntax.HasOwnDispatch || syntax.IsSealed)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidExtensionMember,
+                    $"'{name}' cannot be virtual/override/abstract or sealed — an extension block does not support that (§15).");
+            }
+
+            var parameters = new List<ParameterSymbol>();
+            if (!isStatic)
+                parameters.Add(new ParameterSymbol(SyntheticNames.ExtensionReceiver, target, parameters.Count, accessor));
+
+            if (valueParameterType is not null)
+                parameters.Add(new ParameterSymbol("value", valueParameterType, parameters.Count, accessor));
+
+            accessor.Parameters = parameters;
+
+            if (syntax.Body is null)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidExtensionMember,
+                    $"'{name}' must have a body — an extension property is always computed, never an auto-property (§15.1).");
+            }
+            else
+            {
+                RecordBody(accessor, syntax.Body, accessorScope, module, containingType: null, sourceName);
+            }
+
+            return accessor;
         }
 
         /// <summary>

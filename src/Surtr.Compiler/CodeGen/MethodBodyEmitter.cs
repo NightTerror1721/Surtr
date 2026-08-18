@@ -2672,6 +2672,15 @@ case BoundFieldExpression field:
             if (getter is null)
                 return false;
 
+            // An extension property's getter (§15) takes its receiver as an ordinary declared
+            // parameter, not out-of-band the way `property.Receiver` is here — the synthetic
+            // zero-argument call below assumes the opposite (`Arguments` empty, receiver carried
+            // separately), so splicing it in would bind that empty list against a getter that
+            // actually declares one parameter. `EmitPropertyRead`'s general path already knows how
+            // to push the receiver as that parameter; only the splice is unsafe.
+            if (getter.ExtensionTargetType is not null)
+                return false;
+
             // A still-virtual or native getter can never be spliced - the synthetic zero-argument
             // call built below always claims non-virtual, so TryInline's own dispatch guard cannot
             // catch it and this check has to stand in for it. forceinline still has to fail loudly
@@ -2723,6 +2732,12 @@ case BoundFieldExpression field:
         {
             var setter = property.Setter;
             if (setter is null)
+                return false;
+
+            // Same reason as the matching guard in TryInlinePropertyGetter: an extension property's
+            // setter (§15) declares the receiver as an ordinary parameter ahead of `value`, which
+            // TryInlineSetterBody's splice does not know to supply.
+            if (setter.ExtensionTargetType is not null)
                 return false;
 
             // Mirrors the same guard on TryInlinePropertyGetter, for the same reason: a still-
