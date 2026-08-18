@@ -92,6 +92,13 @@ namespace Surtr.Compiler.Diagnostics
         /// <summary>A malformed <c>$name</c> or <c>${ ... }</c> inside an interpolated string.</summary>
         InvalidInterpolation = 2011,
 
+        /// <summary>
+        /// A declared parameter list violates one of §3.5's shape rules: a default followed by a
+        /// parameter with none, more than one varargs parameter, or a varargs parameter that is
+        /// not last or carries a default of its own.
+        /// </summary>
+        InvalidParameterList = 2012,
+
         #endregion
 
         #region Binding — 3xxx
@@ -370,6 +377,45 @@ namespace Surtr.Compiler.Diagnostics
         /// compilation - neither directly nor through a declared alias.
         /// </summary>
         UnresolvedModuleOf = 3054,
+
+        /// <summary>
+        /// A class is declared both <c>abstract</c> and <c>sealed</c> (§2.2) - the two are
+        /// mutually exclusive, since one promises a subclass will provide a body and the other
+        /// forbids a subclass existing at all.
+        /// </summary>
+        InvalidClassModifiers = 3055,
+
+        /// <summary>
+        /// An <c>enum</c>'s base-type list (§2.4) names a class rather than only interfaces - the
+        /// enum class itself already occupies the base-class slot, so nothing else may.
+        /// </summary>
+        InvalidEnumBase = 3056,
+
+        /// <summary>
+        /// A <c>throw</c> or <c>catch (e: T)</c> (§9) names a type that does not extend the
+        /// built-in <c>Exception</c>.
+        /// </summary>
+        InvalidThrowableType = 3057,
+
+        /// <summary>
+        /// A member's signature matches an inherited <c>virtual</c>/<c>abstract</c> member's, but
+        /// the member omits <c>override</c> (§3.2) - it would otherwise silently hide the base
+        /// member instead of replacing it.
+        /// </summary>
+        MissingOverride = 3058,
+
+        /// <summary>
+        /// The three-clause <c>for</c> loop's initializer (§4.2) declares its binding with
+        /// <c>let</c> (or <c>const</c>) rather than <c>var</c> - the step clause reassigns it on
+        /// every iteration, which only <c>var</c> allows.
+        /// </summary>
+        InvalidForLoopBinding = 3059,
+
+        /// <summary>
+        /// A call's argument list (§3.5) writes a positional argument after a named one - once
+        /// naming starts, it continues to the end of the call.
+        /// </summary>
+        PositionalArgumentAfterNamed = 3060,
 
         #endregion
 

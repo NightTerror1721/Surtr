@@ -1531,6 +1531,25 @@ namespace Surtr.Compiler.Binding
             arguments = new BoundExpression?[written.Count];
             infos = new ArgumentInfo[written.Count];
 
+            // §3.5: once naming starts it continues to the end of the call - a positional argument
+            // after a named one has no position left to mean, since every later parameter is only
+            // reachable by name from here on.
+            bool sawNamed = false;
+            for (int i = 0; i < written.Count; i++)
+            {
+                if (written[i].Name is not null)
+                {
+                    sawNamed = true;
+                }
+                else if (sawNamed)
+                {
+                    Report(
+                        SurtrDiagnosticCode.PositionalArgumentAfterNamed,
+                        written[i].Span,
+                        "A positional argument cannot follow a named one.");
+                }
+            }
+
             for (int i = 0; i < arguments.Length; i++)
             {
                 if (NeedsTargetType(written[i].Value) is LambdaExpressionSyntax lambda)

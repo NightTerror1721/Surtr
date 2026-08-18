@@ -202,6 +202,16 @@ namespace Surtr.Compiler.Binding
             // nowhere after - so the whole loop gets one scope of its own.
             var previous = PushScope();
 
+            // §4.2: the header takes `var`, never `let` - the step clause reassigns the binding on
+            // every iteration, which is exactly what `let` (§1.1) forbids.
+            if (syntax.Initializer is LocalDeclarationStatementSyntax { IsMutable: false } notMutable)
+            {
+                Report(
+                    SurtrDiagnosticCode.InvalidForLoopBinding,
+                    notMutable.Span,
+                    $"'{notMutable.Name}' must be declared 'var' in a three-clause 'for' header, not 'let' - the step clause reassigns it on every iteration.");
+            }
+
             var initializer = syntax.Initializer is null ? null : BindStatement(syntax.Initializer);
             var condition = syntax.Condition is null ? null : BindConverted(syntax.Condition, _factory.Bool);
             var step = syntax.Step is null ? null : BindExpression(syntax.Step);
@@ -358,12 +368,23 @@ namespace Surtr.Compiler.Binding
         private BoundStatement BindTry(TryStatementSyntax syntax)
         {
             var body = BindStatement(syntax.Body);
+            var exceptionBase = ResolveBuiltInType("Exception", syntax.Span);
 
             var catches = new BoundCatchClause[syntax.Catches.Count];
             for (int i = 0; i < catches.Length; i++)
             {
                 var clause = syntax.Catches[i];
                 var exceptionType = _resolver.Resolve(clause.ExceptionType, _typeScope, _sourceName);
+
+                // §9: every catch clause names a real link in the Exception hierarchy, so matching
+                // one against what the runtime raises is always a walk up a genuine chain.
+                if (!exceptionType.IsError && !_conversions.IsAssignable(exceptionType, exceptionBase))
+                {
+                    Report(
+                        SurtrDiagnosticCode.InvalidThrowableType,
+                        clause.Span,
+                        $"'{exceptionType.ToDisplayString()}' does not extend 'Exception', so a catch cannot name it.");
+                }
 
                 var previous = PushScope();
                 var local = DeclareLocal(clause.VariableName, exceptionType, isReadOnly: true, clause.Span);
@@ -378,7 +399,22 @@ namespace Surtr.Compiler.Binding
         }
 
         private BoundStatement BindThrow(ThrowStatementSyntax syntax)
-            => new BoundThrowStatement(syntax, BindExpression(syntax.Value));
+        {
+            var value = BindExpression(syntax.Value);
+            var exceptionBase = ResolveBuiltInType("Exception", syntax.Span);
+
+            // §9: `throw` only ever type-checks against an Exception-typed expression, so a
+            // `catch (e: T)` anywhere is always matching against a real hierarchy.
+            if (!value.Type.IsError && !_conversions.IsAssignable(value.Type, exceptionBase))
+            {
+                Report(
+                    SurtrDiagnosticCode.InvalidThrowableType,
+                    syntax.Span,
+                    $"'{value.Type.ToDisplayString()}' does not extend 'Exception', so it cannot be thrown.");
+            }
+
+            return new BoundThrowStatement(syntax, value);
+        }
 
         private BoundStatement BindReturn(ReturnStatementSyntax syntax)
         {

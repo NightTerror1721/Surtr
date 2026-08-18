@@ -231,7 +231,7 @@ namespace Surtr.Tests.Compiler.CodeGen
         public void AConstFunctionCannotBeVirtual()
         {
             Bind(out var compilation,
-                "class Shape {\n  public const virtual fun area(): int { return 0; }\n}").Dispose();
+                "class Shape {\n  public virtual const fun area(): int { return 0; }\n}").Dispose();
 
             AssertReports(compilation, SurtrDiagnosticCode.InvalidConstFunction);
         }

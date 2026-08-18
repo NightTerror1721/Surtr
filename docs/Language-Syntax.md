@@ -246,6 +246,9 @@ Two modifiers apply to the class itself, and they are mutually exclusive:
   devirtualisation `CLAUDE.md`'s performance rules care about, available here as a static fact
   rather than a guess.
 
+The binder rejects `abstract sealed class Foo` with a diagnostic naming both conflicting
+modifiers, on top of `SurtrClass`'s own constructor refusing to build one either way.
+
 ### 2.3 Interfaces
 
 ```
@@ -298,15 +301,22 @@ enum Suit : ICardSuit {
 An enum is a sealed class with a fixed set of named static instances. Each case list entry is a
 constructor call against the enum's own constructor; a case with no arguments (`enum Color { Red,
 Green, Blue }`) just calls the implicit parameterless constructor. The `;` after the case list is
-only required when member declarations follow it (same rule as Java), so the simple all-constant
+required exactly when member declarations follow it (same rule as Java), so the simple all-constant
 form needs no trailing punctuation:
 
 ```
 enum Color { Red, Green, Blue }
 ```
 
+A member's own leading identifier (a no-modifier property's name) and a bare case name are the same
+shape, so the parser tells the case list's end from a following member by looking one token past the
+identifier: only a case is ever followed by `(`, `,`, `;` or `}`; a property name is always followed
+by `:`. Missing the `;` before a member is therefore still an error rather than a silent
+misparse — the case list ends at the property either way.
+
 Enums can implement interfaces (`: ICardSuit` above) since each case is a genuine instance, but
-cannot declare a base class — the enum class itself occupies that slot.
+cannot declare a base class — the enum class itself already occupies that slot, and naming one there
+is rejected.
 
 **Per-case method bodies (Java's anonymous-constant pattern) are not supported.** Behavior always
 lives on the enum class itself, shared by every case — branch inside a method on `this` (or on a
@@ -558,8 +568,13 @@ accidentally exposed outside a type without saying so.
 A consistent left-to-right order for every member:
 
 ```
-<visibility>? <static>? <sealed>? <virtual|override|abstract>? <inline|forceinline>? <const>? <let|var|constructor|fun|alias|operator>? <name> ...
+<visibility>? <static>? <sealed>? <virtual|override|abstract>? <inline|forceinline>? <const>? <native>? <let|var|constructor|fun|alias|operator>? <name> ...
 ```
+
+The parser enforces this order — a modifier written out of turn (`static public fun f(): void { }`,
+visibility after `static`) is rejected, naming which modifier is out of place, and a repeated or
+mutually-exclusive modifier (`static static`, `virtual override`) is rejected the same way. `native`
+(§10) sits last, immediately before the introducer, since every example places it there.
 
 The introducer keyword is what tells the member kinds apart: `let`/`var` a field, `fun` a method,
 `constructor` a constructor, `alias` a type alias (§2.7), `operator` an operator overload (§5.6),
@@ -611,8 +626,10 @@ class Dog : Animal {
   constructor on the same class instead. `super.speak()` calls a base implementation explicitly
   from inside an override.
 - **`override` is mandatory** when replacing a virtual member (no implicit override — see §3.3);
-  the compiler rejects a method that matches a base signature without either `override` or a
-  visibly different signature, so accidental shadowing can't happen silently.
+  the compiler rejects a method matching an inherited `virtual`/`abstract` member's full signature
+  (parameters and return both, the same comparison an interface obligation is checked against)
+  unless it is marked `override`, so accidental shadowing can't happen silently. Only a `Direct`
+  (non-virtual) base member is exempt, since there is no vtable slot to silently miss there.
 - **Static field initializers run in declaration order**, exactly as `CLAUDE.md` describes for the
   runtime's eager static initializers — a `static var count: int = 0;` compiles into that class's
   static initializer body, alongside every other static field initializer in the class, in source
@@ -793,6 +810,11 @@ Parameter list rules:
 - **`override` matches on the full signature**, so an overload set is inherited and overridden
   member by member; each overload occupies its own vtable slot.
 
+All three shape rules above are enforced: a non-trailing default, a non-trailing or duplicated
+varargs parameter, or a varargs parameter carrying its own default are rejected where the
+parameter list is declared, and a positional argument written after a named one — the exact
+`spawn(x: 1.0, 2.0)` shown as invalid above — is rejected at the call site.
+
 **Two costs this section knowingly accepts.** First, member tables can no longer be keyed by name
 alone — `CLAUDE.md` describes `SurtrClass`'s name-keyed dictionaries as "the compiler's view", and
 overloading means those keys must carry the signature. That is a real metadata change, tracked in
@@ -957,6 +979,11 @@ exactly one thing, and one place where it silently meant `var` would make it a s
 a guarantee — the reader would have to check where a binding was declared before trusting it.
 Assigning to a `let` says so and names the fix.
 
+`let` in the three-clause header is rejected at the header itself, naming the binding. The
+`for-in` form separately still recognizes and silently discards an optional `let`/`var` written
+before its variable — harmlessly, since the variable is unconditionally read-only regardless of
+what (if anything) precedes it, but tolerated syntax nobody should rely on.
+
 **What `for-in` can iterate is defined by an interface, `IIterable<T>`** (§13.2), so a user class can
 be iterated exactly like a built-in by implementing it. The alternative — hard-coding `for-in` to
 the built-in collections — would have been faster in the narrow sense but would leave every
@@ -968,11 +995,17 @@ iteration would be unacceptable. So **the compiler special-cases the shapes it c
 emits a direct indexed loop with no interface call and no iterator object for:
 
 - an inline range (`for (i in 0..n)`, per §5.4),
-- an `array`, `tuple` or `dict` whose static type is known at the loop,
-- any `sealed` type (§2.2) whose implementation it can therefore resolve exactly.
+- an `array`, `tuple`, `dict` or `string` whose static type is known at the loop.
 
-Everything else goes through `IIterable<T>`. The general path exists so the language is uniform;
-the special cases exist so the common path costs nothing.
+Everything else goes through `IIterable<T>` — **including, today, a `sealed` type.** Resolving a
+`sealed` receiver's implementation exactly is what devirtualises an ordinary call elsewhere in the
+compiler (§2.2), but the `for-in` lowering does not yet apply that same reasoning to `iterate`/
+`moveNext`/`current`; every non-special-cased source, sealed or not, still goes through interface
+dispatch. Closing that gap is additive — it changes nothing observable, only what a `sealed`
+source costs.
+
+The general path exists so the language is uniform; the special cases that do exist keep the
+common path cheap.
 
 **The built-in collections really do implement it**, rather than being iterable by compiler
 privilege alone — `array`, `string`, `tuple`, `dict` and `range` each declare `IIterable<T>` and
@@ -1143,11 +1176,12 @@ Boxing a nullable primitive is still exactly what happens if it needs to flow in
 generic slot — same as a non-nullable primitive does today — so `?` doesn't create a second boxing
 path, it just means "no value" is representable before boxing ever enters the picture.
 
-**This is a runtime/value-representation decision, not only a syntax one** — the actual VM change
-(reserving the tag, updating `IsFloat`, wiring the null-check/coalesce opcodes, `SurtrClassReference`
-plumbing for the new value-type family) is out of scope for this document and isn't implemented
-yet. It belongs in `docs/VM-Plan.md`'s gap list once work on it starts; what's settled here is only
-the source-level contract: `?` means the same thing, uniformly, whether the type after it is a
+**This was a runtime/value-representation decision, not only a syntax one, and it is built.** The
+reserved "absent" tag, `SurtrValue.IsAbsent`/`CreateAbsent`, and the opcodes it needed
+(`PushAbsent`, `IsAbsent`, `IsPresent`, and the `JPA`/`JPNA` family) all exist and are what the
+compiler emits for a nullable-primitive test or coalesce — see `CLAUDE.md` and `docs/Opcodes.md`
+for the value representation and instruction set this rests on. What this section settles is the
+source-level contract: `?` means the same thing, uniformly, whether the type after it is a
 primitive or a reference.
 
 ### 5.2 String interpolation
@@ -2115,11 +2149,14 @@ visible outside, exactly as in C#/Java. What's specifically not possible is a cl
 later *reassignment* of the outer `var` it closed over, because that would require the closure to
 hold the slot, not a snapshot of what was in it.
 
-To keep that from being a silent surprise, **a `var` a closure has captured must be effectively
-final from the closure's point of view**: reassigning it anywhere after the closure literal that
-captured it is a compile error, the same restriction Java places on captured locals, for the same
-reason. This is the syntax layer being honest about a constraint the object model already imposes,
-not a new restriction invented for its own sake.
+To keep that from being a silent surprise, **a closure may not capture a `var` local at all** —
+only a `let` local, a parameter, or a field/property/module-level member may be captured. This is
+the syntax layer being honest about a constraint the object model already imposes, not a new
+restriction invented for its own sake, but it lands stricter than Java's "effectively final"
+rule: Java allows capturing a local that happens to never be reassigned after the point of
+capture, while Surtr rejects the capture itself the moment the local was declared `var`, whether
+or not it is ever actually reassigned anywhere. A `var` that a closure needs to read has to be
+copied into a `let` first, immediately before the closure literal.
 
 **A method name converts to a closure wherever a closure is expected, with no lambda written at
 all**, the same target-typing §5.9 already gives an untyped lambda parameter — a bare name, or one
@@ -2179,10 +2216,11 @@ throw OutOfRangeException("index 5 out of range");
 ```
 
 Every thrown value's type must extend the built-in `Exception` class — `throw` only type-checks
-against an `Exception`-typed expression, so a `catch (e: T)` is always matching against a real
-hierarchy rather than an arbitrary object. Multiple `catch` clauses stack and are tried top to
-bottom, first assignable match wins (a walk up `Ancestors`, same mechanism as any other subtype
-test) — same as C#/Java, no union-typed catch.
+against an `Exception`-typed expression, and a `catch (e: T)` clause is rejected the same way if
+`T` does not, so a `catch` is always matching against a real hierarchy rather than an arbitrary
+object. Multiple `catch` clauses stack and are tried top to bottom, first assignable match wins (a
+walk up `Ancestors`, same mechanism as any other subtype test) — same as C#/Java, no union-typed
+catch.
 
 `try`/`catch`/`finally` here is purely the *source* form; how it lowers is already decided by
 `CLAUDE.md` and isn't repeated as a new decision: a protected region becomes an entry in
@@ -2555,11 +2593,13 @@ raises rather than only what Surtr code threw:
 ```
 Exception
 ├── ArgumentException
+├── FormatException               ← a string that parsed to the wrong shape (§5.3.2)
 ├── IndexOutOfRangeException      ← array/string index traps
 ├── KeyNotFoundException          ← dict lookup
 ├── NullReferenceException        ← null receiver
 ├── DivideByZeroException
 ├── InvalidCastException          ← a failed `as` (§5.7)
+├── InvalidOperationException
 └── StackOverflowException        ← the interpreter's per-call stack check
 ```
 
@@ -2637,20 +2677,24 @@ pieces that remain.
 
 ### 14.2 Compiler architecture this syntax commits to
 
-Unlike §14.1 these need no VM change, but they are not small, and two of them constrain the
-compiler's overall shape rather than living inside one pass.
+> **All four items below are now built.** This section is kept as a record of what each one asked
+> of the compiler's overall shape, not as an outstanding list — read it as a map of where each
+> piece lives.
 
-- **The const-evaluation pass** (§7.2). Const folding runs the emitted bytecode on the real VM, so
-  the compiler needs a pipeline stage that builds and evaluates the const-evaluable subset of a
+- ~~**The const-evaluation pass**~~ **Built** (§7.2). Const folding runs the emitted bytecode on
+  the real VM, over a pipeline stage that builds and evaluates the const-evaluable subset of a
   module *before* the rest of it is emitted — because `const if` (§7.3) decides what gets emitted
-  at all. `CLAUDE.md`'s declare → emit → `Build()` → `LoadModule` order describes one pass; this
-  needs that order run twice, over different subsets. It also needs the instruction budget and a
-  clean `ResetExecution` between evaluations.
-- **Discarding an untaken `const if` branch before binding** (§7.3), including at declaration
-  level, where the branch's members must never reach a member table or a field layout.
-- **Bytecode inlining** (§3.6) — the splice itself, remapping a callee's `SurtrExceptionHandler`
-  ranges into the caller's chunk-absolute table, and diagnosing an impossible `forceinline` with
-  the reason.
+  at all. `CodeGen/ConstFolder.cs` is that stage: `CLAUDE.md`'s declare → emit → `Build()` →
+  `LoadModule` order runs twice, over different subsets, with the instruction budget and a clean
+  `ResetExecution` between evaluations, exactly as this item specified.
+- ~~**Discarding an untaken `const if` branch before binding**~~ **Built** (§7.3), including at
+  declaration level, where the branch's members never reach a member table or a field layout —
+  `Binder.Flatten` resolves and discards the untaken branch before the declaration list it
+  contributes to is walked, so nothing inside it is ever bound.
+- ~~**Bytecode inlining**~~ **Built** (§3.6) — the splice itself, remapping a callee's
+  `SurtrExceptionHandler` ranges into the caller's chunk-absolute table, and diagnosing an
+  impossible `forceinline`, all live in `CodeGen/MethodBodyEmitter.cs`'s `TryInline` and
+  `CodeGen/InlineCost.cs`'s size-and-cost heuristic.
 - ~~**The build model.**~~ **Built.** A project file (`root`, `module`, `output`, `define`,
   `reference`), a directory walk, and `.surtrc` images out — `Compilation/SurtrProjectFile.cs`,
   `Compilation/SurtrBuild.cs` and the `surtrc` command over them. §7.4's constants come from the

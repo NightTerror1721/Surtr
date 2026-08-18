@@ -456,8 +456,12 @@ namespace Surtr.Compiler.Binding
 
             foreach (var member in members)
             {
+                // §6: a nested type is declared against `scope`, not `typeScope` - the
+                // static-nested rule, not the inner-class one. `typeScope` already carries
+                // `symbol`'s own type parameters (just above), and a nested type's declaration
+                // must not see them; only the members bound directly on `symbol` itself do.
                 if (member is TypeDeclarationSyntax or AliasDeclarationSyntax)
-                    DeclareMember(member, module, symbol, typeScope, nested, nestedNames, sourceName);
+                    DeclareMember(member, module, symbol, scope, nested, nestedNames, sourceName);
             }
 
             symbol.NestedTypes = nested;
@@ -705,6 +709,7 @@ namespace Surtr.Compiler.Binding
             foreach (var binding in _declared)
             {
                 CheckSealedOverrides(binding);
+                CheckOverrideRequired(binding);
                 CheckBaseConstructorIsReachable(binding);
                 CheckMembersImplemented(binding);
             }
@@ -743,6 +748,56 @@ namespace Surtr.Compiler.Binding
                             $"'{overridden.ContainingType?.Name}.{method.Name}' is sealed, so '{binding.Symbol.Name}' cannot override it.");
                     }
 
+                    break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Rejects a member that matches an inherited <c>virtual</c>/<c>abstract</c> member's full
+        /// signature without declaring <c>override</c> (§3.2) - no implicit override, so a name and
+        /// parameter list that happen to collide with a base's vtable slot must say so explicitly
+        /// instead of silently hiding it.
+        /// </summary>
+        /// <remarks>
+        /// Matched on the same full, return-included signature <see cref="CheckObligation"/> already
+        /// uses for an interface obligation (<see cref="SignatureSet.Matches"/>) rather than the
+        /// looser name-plus-count <see cref="Overridden"/> uses for the sealed check above, so two
+        /// overloads that merely share a name and arity are not mistaken for one hiding the other.
+        /// Only a <c>Direct</c>-dispatch base member is exempt - it has no vtable slot to begin with,
+        /// so nothing is silently lost by not overriding it.
+        /// </remarks>
+        private void CheckOverrideRequired(TypeBinding binding)
+        {
+            var symbol = binding.Symbol;
+
+            foreach (var member in symbol.Members)
+            {
+                if (member is not MethodSymbol { IsOverride: false, IsStatic: false, Role: MethodRole.Normal } method)
+                    continue;
+
+                for (var walk = symbol.BaseType; walk is not null; walk = walk.BaseType)
+                {
+                    MethodSymbol? hidden = null;
+
+                    foreach (var candidate in walk.Members)
+                    {
+                        if (candidate is MethodSymbol { Dispatch: MethodDispatch.Virtual or MethodDispatch.Abstract } virtualCandidate
+                            && _signatures.Matches(method, virtualCandidate))
+                        {
+                            hidden = virtualCandidate;
+                            break;
+                        }
+                    }
+
+                    if (hidden is null)
+                        continue;
+
+                    Report(
+                        SurtrDiagnosticCode.MissingOverride,
+                        binding,
+                        binding.Syntax.Span,
+                        $"'{symbol.Name}.{method.Name}' matches '{hidden.ContainingType?.Name}.{hidden.Name}', which is virtual - mark it 'override' or give it a visibly different signature.");
                     break;
                 }
             }
@@ -1034,6 +1089,16 @@ namespace Surtr.Compiler.Binding
                 || syntax.Kind == TypeDeclarationKind.ValueClass
                 || syntax.Kind == TypeDeclarationKind.Singleton;
 
+            // §2.2: the two class-level modifiers are mutually exclusive - `abstract` promises a
+            // subclass will provide a body, `sealed` forbids one existing at all. Checked against
+            // what was actually written, not the computed IsSealed above, since an enum/value
+            // class/singleton is sealed for a reason that has nothing to do with this rule.
+            if (syntax.IsAbstract && syntax.IsSealed)
+            {
+                Report(SurtrDiagnosticCode.InvalidClassModifiers, binding, syntax.Span,
+                    $"'{symbol.Name}' cannot be both 'abstract' and 'sealed' — 'abstract' requires a subclass to provide a body, and 'sealed' forbids one.");
+            }
+
             var interfaces = new List<NamedTypeSymbol>();
             NamedTypeSymbol? baseClass = null;
 
@@ -1061,6 +1126,15 @@ namespace Surtr.Compiler.Binding
                 {
                     Report(SurtrDiagnosticCode.InvalidBaseType, binding, baseSyntax.Span,
                         $"An interface may only extend interfaces, and '{named.Name}' is a class.");
+                    continue;
+                }
+
+                // §2.4: an enum can implement interfaces (each case is a genuine instance) but
+                // never declares a base class - the enum class itself already occupies that slot.
+                if (syntax.Kind == TypeDeclarationKind.Enum)
+                {
+                    Report(SurtrDiagnosticCode.InvalidEnumBase, binding, baseSyntax.Span,
+                        $"An enum may only implement interfaces, and '{named.Name}' is a class - the enum class itself already occupies the base-class slot.");
                     continue;
                 }
 

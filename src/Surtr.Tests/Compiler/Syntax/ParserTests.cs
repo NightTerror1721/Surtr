@@ -312,7 +312,7 @@ namespace Surtr.Tests.Compiler.Syntax
         public void SealedOnAnOperatorParses()
         {
             OperatorDeclarationSyntax declared = ParseSingle<TypeDeclarationSyntax>(
-                "class V { override sealed operator+(a: V, b: V): V { } }").Members
+                "class V { sealed override operator+(a: V, b: V): V { } }").Members
                 .Cast<OperatorDeclarationSyntax>()
                 .Single();
 

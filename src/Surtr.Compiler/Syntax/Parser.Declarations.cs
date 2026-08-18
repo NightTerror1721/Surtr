@@ -130,6 +130,27 @@ namespace Surtr.Compiler.Syntax
         {
             Modifiers modifiers = default;
 
+            // §3.2's fixed left-to-right order, as ranks: visibility, static, sealed, dispatch
+            // (virtual/override/abstract), inline/forceinline, const, native — native sits last
+            // because every example places it immediately before the introducer keyword, the one
+            // slot the grammar in §3.2 leaves unlabelled. A modifier whose rank is lower than the
+            // highest rank already consumed is out of order; equal rank without a distinct token
+            // (the same keyword, or a second one from the same mutually-exclusive group) is a
+            // repeat instead, and each case below already reports that specifically.
+            int highestRank = -1;
+
+            void RequireOrder(int rank, string what)
+            {
+                if (rank < highestRank)
+                {
+                    throw reader.Error(
+                        SurtrDiagnosticCode.InvalidModifier,
+                        $"'{what}' is out of order — §3.2 fixes visibility, static, sealed, virtual/override/abstract, inline/forceinline, const, native, in that order.");
+                }
+
+                highestRank = rank;
+            }
+
             while (true)
             {
                 switch (reader.CurrentType)
@@ -143,47 +164,85 @@ namespace Surtr.Compiler.Syntax
                             throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one visibility.");
                         }
 
+                        RequireOrder(0, "visibility");
                         modifiers.Visibility = ToVisibility(reader.Advance().Type);
                         continue;
 
                     case TokenType.KeywordStatic:
+                        if (modifiers.IsStatic)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "'static' is already written.");
+                        }
+
+                        RequireOrder(1, "static");
                         modifiers.IsStatic = true;
                         reader.Advance();
                         continue;
 
                     case TokenType.KeywordSealed:
+                        if (modifiers.IsSealed)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "'sealed' is already written.");
+                        }
+
+                        RequireOrder(2, "sealed");
                         modifiers.IsSealed = true;
                         reader.Advance();
                         continue;
 
                     case TokenType.KeywordAbstract:
+                        if (modifiers.Dispatch != DispatchModifier.None)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'virtual'/'override'/'abstract'.");
+                        }
+
+                        RequireOrder(3, "abstract");
                         modifiers.IsAbstract = true;
                         modifiers.Dispatch = DispatchModifier.Abstract;
                         reader.Advance();
                         continue;
 
                     case TokenType.KeywordVirtual:
+                        if (modifiers.Dispatch != DispatchModifier.None)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'virtual'/'override'/'abstract'.");
+                        }
+
+                        RequireOrder(3, "virtual");
                         modifiers.Dispatch = DispatchModifier.Virtual;
                         reader.Advance();
                         continue;
 
                     case TokenType.KeywordOverride:
+                        if (modifiers.Dispatch != DispatchModifier.None)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'virtual'/'override'/'abstract'.");
+                        }
+
+                        RequireOrder(3, "override");
                         modifiers.Dispatch = DispatchModifier.Override;
                         reader.Advance();
                         continue;
 
                     case TokenType.KeywordInline:
+                        if (modifiers.Inline != InlineModifier.None)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'inline'/'forceinline'.");
+                        }
+
+                        RequireOrder(4, "inline");
                         modifiers.Inline = InlineModifier.Inline;
                         reader.Advance();
                         continue;
 
                     case TokenType.KeywordForceInline:
-                        modifiers.Inline = InlineModifier.ForceInline;
-                        reader.Advance();
-                        continue;
+                        if (modifiers.Inline != InlineModifier.None)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'inline'/'forceinline'.");
+                        }
 
-                    case TokenType.KeywordNative:
-                        modifiers.IsNative = true;
+                        RequireOrder(4, "forceinline");
+                        modifiers.Inline = InlineModifier.ForceInline;
                         reader.Advance();
                         continue;
 
@@ -194,7 +253,24 @@ namespace Surtr.Compiler.Syntax
                             return modifiers;
                         }
 
+                        if (modifiers.IsConst)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "'const' is already written.");
+                        }
+
+                        RequireOrder(5, "const");
                         modifiers.IsConst = true;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordNative:
+                        if (modifiers.IsNative)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "'native' is already written.");
+                        }
+
+                        RequireOrder(6, "native");
+                        modifiers.IsNative = true;
                         reader.Advance();
                         continue;
 
@@ -402,8 +478,8 @@ namespace Surtr.Compiler.Syntax
         };
 
         /// <summary>
-        /// Parses an enum's case list. Per §2.4 the trailing <c>;</c> is only needed when members
-        /// follow, so a bare <c>{ Red, Green }</c> ends at the closing brace instead.
+        /// Parses an enum's case list. Per §2.4 the trailing <c>;</c> is required exactly when
+        /// members follow, so a bare <c>{ Red, Green }</c> ends at the closing brace instead.
         /// </summary>
         private List<EnumCaseSyntax> ParseEnumCases()
         {
@@ -413,7 +489,13 @@ namespace Surtr.Compiler.Syntax
             {
                 IReadOnlyList<string> caseDoc = ParseDocComment();
 
-                if (!reader.Check(TokenType.Identifier))
+                // A case name and a no-modifier property's name are both a bare identifier - §3.2
+                // makes "no introducer at all" a property, which is exactly the same shape a case
+                // starts with. Only a case is ever followed by `:`-less punctuation (`(`, `,`, `;`
+                // or `}`); a property's name is always followed by `:`. Peeking one token past the
+                // identifier is what tells a member the case list ends without swallowing its name
+                // as one more bogus case.
+                if (!reader.Check(TokenType.Identifier) || reader.CheckAt(1, TokenType.Colon))
                 {
                     break;
                 }
@@ -433,7 +515,17 @@ namespace Surtr.Compiler.Syntax
                 }
             }
 
-            reader.Match(TokenType.Semicolon);
+            // The `;` is only required when a member declaration follows - a bare `{ Red, Green }`
+            // needs none, since `}` alone already closes the case list unambiguously.
+            if (!reader.Check(TokenType.RightBrace))
+            {
+                reader.Expect(TokenType.Semicolon, "';' after the case list, since a member declaration follows");
+            }
+            else
+            {
+                reader.Match(TokenType.Semicolon);
+            }
+
             return cases;
         }
 
@@ -761,6 +853,32 @@ namespace Surtr.Compiler.Syntax
 
                 bool isVarargs = reader.Match(TokenType.Ellipsis);
                 ExpressionSyntax? defaultValue = reader.Match(TokenType.Assign) ? ParseExpression() : null;
+
+                if (isVarargs && defaultValue is not null)
+                {
+                    throw reader.Error(SurtrDiagnosticCode.InvalidParameterList,
+                        $"'{name}...' is a varargs parameter and cannot also carry a default value.");
+                }
+
+                // §3.5: once a parameter has a default, every parameter after it must too (short of
+                // a trailing varargs, which is never defaulted but absorbs zero-or-more on its own)
+                // — and a varargs parameter, once seen, must already have been the last one.
+                if (parameters.Count > 0)
+                {
+                    var last = parameters[parameters.Count - 1];
+
+                    if (last.IsVarargs)
+                    {
+                        throw reader.Error(SurtrDiagnosticCode.InvalidParameterList,
+                            $"'{last.Name}...' must be the last parameter.");
+                    }
+
+                    if (last.DefaultValue is not null && defaultValue is null && !isVarargs)
+                    {
+                        throw reader.Error(SurtrDiagnosticCode.InvalidParameterList,
+                            $"'{name}' has no default, but '{last.Name}' before it does — once a parameter has a default, every parameter after it must too.");
+                    }
+                }
 
                 parameters.Add(new ParameterSyntax(SpanFrom(start), name, type, defaultValue, isVarargs));
 

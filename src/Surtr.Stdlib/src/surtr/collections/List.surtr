@@ -16,11 +16,11 @@ public interface IList<T> : IReadOnlyList<T>
 
 public class LinkedList<T> : IList<T>
 {
-    private sealed class Node
+    private sealed class Node<T>
     {
         public var value: T;
-        public var next: Node? = null;
-        public var prev: Node? = null;
+        public var next: Node<T>? = null;
+        public var prev: Node<T>? = null;
 
         public constructor(value: T)
         {
@@ -28,8 +28,8 @@ public class LinkedList<T> : IList<T>
         }
     }
 
-    private var _head: Node?;
-    private var _tail: Node?;
+    private var _head: Node<T>?;
+    private var _tail: Node<T>?;
     private var _length: int;
 
     public constructor()
@@ -61,7 +61,7 @@ public class LinkedList<T> : IList<T>
 
     public override fun add(value: T): void
     {
-        var newNode = Node(value);
+        var newNode = Node<T>(value);
         if (_tail === null)
         {
             _head = newNode;

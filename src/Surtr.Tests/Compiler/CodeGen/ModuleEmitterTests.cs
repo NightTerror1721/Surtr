@@ -553,6 +553,256 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Gaps closed after the Language-Syntax.md audit (§2.2, §2.4, §3.2, §4.2, §9)
+        [Fact]
+        public void AbstractAndSealedTogetherOnAClassIsRejected()
+        {
+            // 'sealed' before 'abstract', matching §3.2's canonical order - so this reaches the
+            // semantic abstract+sealed check rather than the (separate, also real) order check.
+            using var compilation = Reject("sealed abstract class Foo { }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidClassModifiers);
+        }
+
+        [Fact]
+        public void AnEnumDeclaringAClassBaseIsRejected()
+        {
+            using var compilation = Reject(
+                "class NotAnInterface { }\nenum Suit : NotAnInterface { Hearts, Spades }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidEnumBase);
+        }
+
+        /// <summary>Regression: an enum with no members after its cases still needs no ';'.</summary>
+        [Fact]
+        public void AnEnumWithNoMembersStillNeedsNoSemicolon()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades }\nfun run(): int { return 1; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnEnumMissingTheSemicolonBeforeItsMembersIsRejected()
+        {
+            using var compilation = Reject(
+                "enum Suit { Hearts, Spades\n  public fun describe(): string { return \"x\"; }\n}\nfun run(): int { return 1; }");
+
+            Assert.True(compilation.HasErrors, "A member after an enum's case list with no ';' should be rejected, not silently misparsed as another case.");
+        }
+
+        [Fact]
+        public void AnEnumWithASemicolonBeforeItsMembersCompiles()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades;\n  public fun describe(): string { return \"x\"; }\n}\n"
+                    + "fun run(): string { return Suit.Hearts.describe(); }");
+
+            Assert.Equal("x", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void LetInTheClassicForHeaderIsRejected()
+        {
+            using var compilation = Reject(
+                "fun run(): int { for (let i = 0; i < 3; i += 1) { } return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidForLoopBinding);
+        }
+
+        [Fact]
+        public void VarInTheClassicForHeaderStillCompiles()
+        {
+            var runtime = Run(
+                "fun run(): int { var total = 0; for (var i = 0; i < 3; i += 1) { total += i; } return total; }");
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ThrowingSomethingThatDoesNotExtendExceptionIsRejected()
+        {
+            using var compilation = Reject(
+                "class NotAnException { }\nfun run(): int { throw NotAnException(); }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidThrowableType);
+        }
+
+        [Fact]
+        public void CatchingSomethingThatDoesNotExtendExceptionIsRejected()
+        {
+            using var compilation = Reject(
+                "class NotAnException { }\n"
+                    + "fun run(): int { try { } catch (e: NotAnException) { } return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidThrowableType);
+        }
+
+        [Fact]
+        public void ThrowingARealExceptionSubclassStillCompiles()
+        {
+            var runtime = Run(
+                "class MyException : Exception {\n"
+                    + "  public constructor(message: string) : super(message) { }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "  try { throw MyException(\"boom\"); } catch (e: MyException) { return 1; }\n"
+                    + "  return 0;\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ModifiersOutOfOrderAreRejected()
+        {
+            using var compilation = Reject("class Foo { static public fun bar(): int { return 1; } }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidModifier);
+        }
+
+        [Fact]
+        public void ModifiersInCanonicalOrderStillCompile()
+        {
+            var runtime = Run(
+                "class Foo { public static fun bar(): int { return 1; } }\n"
+                    + "fun run(): int { return Foo.bar(); }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void HidingAVirtualMemberWithoutOverrideIsRejected()
+        {
+            using var compilation = Reject(
+                "class Animal { public virtual fun speak(): string { return \"...\"; } }\n"
+                    + "class Dog : Animal { public fun speak(): string { return \"Woof\"; } }\n"
+                    + "fun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.MissingOverride);
+        }
+
+        [Fact]
+        public void OverridingAVirtualMemberWithOverrideStillCompiles()
+        {
+            var runtime = Run(
+                "class Animal { public virtual fun speak(): string { return \"...\"; } }\n"
+                    + "class Dog : Animal { public override fun speak(): string { return \"Woof\"; } }\n"
+                    + "fun run(): string { let a: Animal = Dog(); return a.speak(); }");
+
+            Assert.Equal("Woof", Text(runtime, "run"));
+        }
+
+        /// <summary>A different signature is not hiding anything, so no 'override' is owed.</summary>
+        [Fact]
+        public void ADifferentSignatureIsAnOverloadNotAHiddenOverride()
+        {
+            var runtime = Run(
+                "class Animal { public virtual fun speak(): string { return \"...\"; } }\n"
+                    + "class Dog : Animal { public fun speak(loudly: bool): string { return \"Woof\"; } }\n"
+                    + "fun run(): string { return Dog().speak(true); }");
+
+            Assert.Equal("Woof", Text(runtime, "run"));
+        }
+
+        /// <summary>Hiding a non-virtual (Direct) base member needs no 'override' - there is no vtable slot to silently miss.</summary>
+        [Fact]
+        public void HidingADirectBaseMemberNeedsNoOverride()
+        {
+            var runtime = Run(
+                "class Animal { public fun speak(): string { return \"...\"; } }\n"
+                    + "class Dog : Animal { public fun speak(): string { return \"Woof\"; } }\n"
+                    + "fun run(): string { return Dog().speak(); }");
+
+            Assert.Equal("Woof", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void ANonTrailingDefaultParameterIsRejected()
+        {
+            using var compilation = Reject("fun f(a: int = 1, b: string): void { }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidParameterList);
+        }
+
+        [Fact]
+        public void ANonTrailingVarargsParameterIsRejected()
+        {
+            using var compilation = Reject("fun f(a: int..., b: string): void { }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidParameterList);
+        }
+
+        [Fact]
+        public void TwoVarargsParametersAreRejected()
+        {
+            using var compilation = Reject("fun f(a: int..., b: string...): void { }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidParameterList);
+        }
+
+        [Fact]
+        public void AVarargsParameterWithADefaultIsRejected()
+        {
+            using var compilation = Reject("fun f(a: int... = 1): void { }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidParameterList);
+        }
+
+        [Fact]
+        public void APositionalArgumentAfterANamedOneIsRejected()
+        {
+            using var compilation = Reject(
+                "fun spawn(x: float, y: float): int { return 1; }\nfun run(): int { return spawn(x: 1.0, 2.0); }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.PositionalArgumentAfterNamed);
+        }
+
+        [Fact]
+        public void TrailingDefaultsAndACallMixingPositionalThenNamedStillCompile()
+        {
+            var runtime = Run(
+                "fun spawn(x: float, y: float, hp: int = 100): int { return hp; }\n"
+                    + "fun run(): int { return spawn(1.0, y: 2.0); }");
+
+            Assert.Equal(100, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ANestedTypeCannotNameItsContainersTypeParameter()
+        {
+            using var compilation = Reject(
+                "class Box<T> {\n  class Entry { public let x: T; }\n}\nfun run(): int { return 1; }");
+
+            Assert.True(compilation.HasErrors, "'T' belongs to Box, not Box.Entry - the static-nested rule (§6) says Entry cannot name it.");
+        }
+
+        [Fact]
+        public void ANestedTypeWithItsOwnTypeParameterOfTheSameNameStillCompiles()
+        {
+            var runtime = Run(
+                "class Box<T> {\n"
+                    + "  class Entry<T> { public let x: T; public constructor(x: T) { this.x = x; } }\n"
+                    + "  public fun wrap(value: T): Entry<T> { return Entry<T>(value); }\n"
+                    + "}\n"
+                    + "fun run(): int { return Box<int>().wrap(7).x; }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void SealedThenOverrideIsTheOnlyAcceptedOrderForBoth()
+        {
+            var runtime = Run(
+                "class Animal { public virtual fun speak(): string { return \"...\"; } }\n"
+                    + "class Dog : Animal { public sealed override fun speak(): string { return \"Woof\"; } }\n"
+                    + "fun run(): string { let a: Animal = Dog(); return a.speak(); }");
+
+            Assert.Equal("Woof", Text(runtime, "run"));
+        }
+        #endregion
+
         #region Classes
         [Fact]
         public void AClassIsConstructedAndItsFieldsRead()

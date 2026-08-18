@@ -2,20 +2,20 @@ module surtr.collections.List
   constants: 3   types: 3   fields: 6   methods: 20   modules: 0
   string #0 = "LinkedList is empty"
   string #1 = "Index out of range"
-  string #2 = "'Node?' was null where '!!' asserted it was not."
+  string #2 = "'Node<T>?' was null where '!!' asserted it was not."
 
   type table:
     #0  surtr:IndexOutOfRangeException
-    #1  surtr.collections.List:LinkedList.Node
+    #1  surtr.collections.List:LinkedList.Node<T0>
     #2  surtr:NullReferenceException
 
   field table:
-    #0  surtr.collections.List:LinkedList<._head: surtr.collections.List:LinkedList.Node
-    #1  surtr.collections.List:LinkedList<._tail: surtr.collections.List:LinkedList.Node
+    #0  surtr.collections.List:LinkedList<._head: surtr.collections.List:LinkedList.Node<T0>
+    #1  surtr.collections.List:LinkedList<._tail: surtr.collections.List:LinkedList.Node<T0>
     #2  surtr.collections.List:LinkedList<._length: int
-    #3  surtr.collections.List:LinkedList.Node.value: T0
-    #4  surtr.collections.List:LinkedList.Node.next: surtr.collections.List:LinkedList.Node
-    #5  surtr.collections.List:LinkedList.Node.prev: surtr.collections.List:LinkedList.Node
+    #3  surtr.collections.List:LinkedList.Node<.value: T0
+    #4  surtr.collections.List:LinkedList.Node<.next: surtr.collections.List:LinkedList.Node<T0>
+    #5  surtr.collections.List:LinkedList.Node<.prev: surtr.collections.List:LinkedList.Node<T0>
 
   method table:
     #0  surtr.collections.List:IReadOnlyList<.get_length() -> int
@@ -35,7 +35,7 @@ module surtr.collections.List
     #14  surtr.collections.List:LinkedList<.clear() -> void
     #15  surtr.collections.List:LinkedList<.op_[](surtr.collections.List:LinkedList<T0>, int) -> T0
     #16  surtr.collections.List:LinkedList<.op_[](surtr.collections.List:LinkedList<T0>, int, T0) -> void
-    #17  surtr.collections.List:LinkedList.Node.ctor(T0) -> void
+    #17  surtr.collections.List:LinkedList.Node<.ctor(T0) -> void
     #18  surtr:IndexOutOfRangeException.ctor(string) -> void
     #19  surtr:NullReferenceException.ctor(string) -> void
 
@@ -58,9 +58,9 @@ interface IReadOnlyList`1<T>  [public]
   [public] abstract get(index: int): T0
 
 class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
-  [private] field _head: surtr.collections.List:LinkedList.Node
+  [private] field _head: surtr.collections.List:LinkedList.Node<T0>
   [private] field _length: int
-  [private] field _tail: surtr.collections.List:LinkedList.Node
+  [private] field _tail: surtr.collections.List:LinkedList.Node<T0>
 
   [public] property back: T0 { get; }
     get:
@@ -105,7 +105,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
 
   [public] virtual add(value: T0): void
     ; entry 4, locals 5, stack 3, code 004A..0090
-      004A  ObjNew 1 (surtr.collections.List:LinkedList.Node)
+      004A  ObjNew 1 (surtr.collections.List:LinkedList.Node<T0>)
       004D  Dup
       004E  Ldl1
       004F  InvokeSpecial 17 (ctor) args=2 ret=0
@@ -394,9 +394,9 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       0127  FieldSet 3 (value)
       012A  ReturnVoid
 
-  sealed class Node  [private]
-    [public] field next: surtr.collections.List:LinkedList.Node
-    [public] field prev: surtr.collections.List:LinkedList.Node
+  sealed class Node`1<T>  [private]
+    [public] field next: surtr.collections.List:LinkedList.Node<T0>
+    [public] field prev: surtr.collections.List:LinkedList.Node<T0>
     [public] field value: T0
 
     [public] ctor (value: T0): void
