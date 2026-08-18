@@ -1,5 +1,4 @@
 import surtr.collections.Collection;
-import surtr.core.Exception;
 
 public interface IStack<T>
 {
@@ -19,9 +18,9 @@ public class Stack<T> : IStack<T>, ICollection<T>
         this._items = [];
     }
 
-    public sealed override inline length: int => _items.length;
-    public sealed override inline isReadOnly: bool => false;
-    public sealed override inline isEmpty: bool => _items.length == 0;
+    public override inline length: int => _items.length;
+    public override inline isReadOnly: bool => false;
+    public override inline isEmpty: bool => _items.length == 0;
 
     public override fun push(item: T): void => _items.push(item);
 
@@ -62,9 +61,9 @@ public class Stack<T> : IStack<T>, ICollection<T>
 
         public constructor(items: T[], length: int, index: int = -1)
         {
-            this._items = items;
-            this._length = length;
-            this._index = index;
+            _items = items;
+            _length = length;
+            _index = index;
         }
 
         public override current: T
