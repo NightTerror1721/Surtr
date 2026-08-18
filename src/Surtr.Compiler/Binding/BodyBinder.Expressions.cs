@@ -1457,20 +1457,38 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
-        /// Every extension method (§15) named <paramref name="name"/> visible from here and reachable
-        /// from this context — this body's own module only, for now; an import joins this search in a
-        /// later phase.
+        /// Every extension method (§15) named <paramref name="name"/> visible from here: declared in
+        /// this body's own module, or in one it wildcard-imports (§2.1) — the same reach a bare
+        /// module-level function already has (<see cref="AddModuleMethods"/>). A named or selective
+        /// import never contributes here, exactly as neither ever contributes a module function
+        /// either — both bring in types only.
         /// </summary>
+        /// <remarks>
+        /// Every source is folded into one list rather than tried in <see cref="_module"/>-then-
+        /// <see cref="_imported"/> sequence, unlike <see cref="BindCall"/>'s own module-function
+        /// fallback: two extensions equally applicable from two different imports are a genuine
+        /// ambiguity (§15.3), not a "first import wins" pick, and <see cref="CompleteExtension"/>
+        /// only sees that by handing every candidate to one <see cref="OverloadResolution.Resolve"/>
+        /// call together.
+        /// </remarks>
         private List<MethodSymbol> ExtensionCandidates(string name)
         {
             var candidates = new List<MethodSymbol>();
-            foreach (var method in _module.ExtensionMethods)
+            AddExtensionCandidates(_module, name, candidates);
+
+            foreach (var imported in _imported)
+                AddExtensionCandidates(imported, name, candidates);
+
+            return candidates;
+        }
+
+        private void AddExtensionCandidates(ModuleSymbol module, string name, List<MethodSymbol> candidates)
+        {
+            foreach (var method in module.ExtensionMethods)
             {
                 if (string.Equals(method.Name, name, StringComparison.Ordinal) && IsExtensionAccessible(method))
                     candidates.Add(method);
             }
-
-            return candidates;
         }
 
         /// <summary>

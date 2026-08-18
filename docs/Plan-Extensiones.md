@@ -398,19 +398,47 @@ actualizó con este modelo (ejemplos y §15.1/§15.4 reescritos).
 
 **Commit sugerido**: `Feature: extension methods de instancia (Fase 1 de §15) — parser, binder y codegen`
 
-### Fase 2 — Imports y visibilidad de scope
+### Fase 2 — Imports y visibilidad de scope — **Hecha**
 
-- Construcción del conjunto de candidatos de extensión a partir de `_module` (propio) +
-  `_imported` (imports nombrados/selectivos/wildcard del módulo del punto de uso) — mismo
-  mecanismo que ya usa `BindCall` para funciones de módulo sueltas (líneas 1323-1330).
-- Regla de ambigüedad: candidatos de **todos** los bloques `extension` visibles se combinan en
-  una sola llamada a `Resolve` (no secuencial entre sí, solo secuencial frente a miembros
-  reales) — dos extensiones igualmente específicas desde dos imports distintos producen el
-  diagnóstico de ambigüedad ya existente en `OverloadResolution`, sin tocar `Candidate`/
+**Cambios**:
+- `BodyBinder.ExtensionCandidates` (`BodyBinder.Expressions.cs`) ahora recorre `_module` +
+  cada `_imported` — la misma lista de módulos wildcard-importados que ya usa
+  `MethodCandidatesForBareName`/`AddModuleMethods` para funciones de módulo sueltas — a través
+  de un nuevo helper compartido `AddExtensionCandidates`. Confirmado en la investigación de esta
+  fase que `_imported` solo contiene módulos importados por **wildcard** (`import X.*`), nunca
+  por nombre único ni por lista selectiva (`import X.{Y, Z}`) — igual que ya pasa con las
+  funciones de módulo, que tampoco llegan por esas dos formas — así que no hizo falta ninguna
+  lógica nueva de resolución de imports: un método de extensión hereda exactamente el mismo
+  alcance que ya tenía una función de módulo.
+- Todos los candidatos (propios + de cada import) se pasan en **una sola** llamada a
+  `OverloadResolution.Resolve` (no secuencial entre sí, como sí lo es el paso "miembro real
+  primero, extensión como fallback") — dos extensiones igualmente aplicables desde dos imports
+  distintos producen `Ambiguous` con el diagnóstico ya existente, sin tocar `Candidate`/
   `IsBetter`.
-- Tests: extensión traída por import nombrado, por wildcard, por import selectivo; ambigüedad
-  real entre dos imports; una extensión no importada no es candidata (con el mismo nombre y
-  aplicable, pero fuera de scope).
+- `AccessCheck.IsAccessible`/`IsAccessibleWithin` (reusados sin cambios) ya distinguen
+  correctamente declarante vs. punto de uso cuando ambos están en módulos distintos — un
+  `internal` (el default) sigue sin cruzar el import, solo un `public` explícito lo hace.
+- **Hallazgo real, no anticipado en la Fase 0/1**: `ModuleEmitter.Record` (`ModuleEmitter.cs`,
+  la función que registra los métodos ya construidos de un módulo en `_builtMethods` para que
+  módulos compilados **después** puedan referenciarlos) solo recorría `symbol.Methods` — un
+  método de extensión llamado desde un módulo distinto al que lo declara fallaba en emisión con
+  `SURTR4001` exactamente igual que había fallado en la Fase 1 antes de tocar
+  `DeclareModuleMembers`/`EmitModuleBodies`. Corregido con el mismo patrón: un `foreach` más
+  sobre `symbol.ExtensionMethods` junto al de `symbol.Methods`. Van ya **tres** sitios en
+  `ModuleEmitter` que necesitaban este espejo (declarar, emitir cuerpo, registrar lo construido)
+  — todos los demás, confirmados sin cambios.
+- Tests: `ModuleEmitterTests.cs`, región "Extension methods (§15) — Fase 2" (4 tests) —
+  extensión traída por wildcard import y ejecutada de punta a punta contra la VM real
+  (verificando también el fix de `Record`), extensión declarada pero nunca importada (no es
+  candidata), ambigüedad real entre dos imports que aportan la misma extensión (grafo de
+  módulos sin ciclos: un módulo `shapes` compartido, importado por los dos módulos de
+  extensión y por el que llama, para no disparar el error de ciclo de
+  `ModuleDependencyGraph`), y un bloque `extension` sin visibilidad escrita (`internal` por
+  defecto) no alcanzable desde el módulo que lo importa.
+- Suite completa verificada: 2228/2232 en verde (mismos 4 fallos preexistentes del WIP de
+  `Stack.surtr`, sin relación).
+
+**Commit sugerido**: `Feature: extension methods via imports wildcard (Fase 2 de §15)`
 
 ### Fase 3 — Extension methods estáticos
 

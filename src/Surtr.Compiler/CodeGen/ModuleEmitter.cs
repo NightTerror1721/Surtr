@@ -1600,6 +1600,18 @@ namespace Surtr.Compiler.CodeGen
                 }
             }
 
+            // Same recording as `symbol.Methods` above, for the same reason: a module built later
+            // resolves a call to one of these (§15) through `_builtMethods`, not through this
+            // module's own `EmitContext` — that only lives for the duration of building it.
+            foreach (var method in symbol.ExtensionMethods)
+            {
+                if (context.TryGetBuilder(method, out var builder) && builder.Built is SurtrMethodInfo info)
+                {
+                    _builtMethods[method] = info;
+                    _methodOwners[method] = built;
+                }
+            }
+
             foreach (var property in symbol.Properties)
             {
                 RecordAccessor(context, property.Getter, built, moduleLevel: true);

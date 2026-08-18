@@ -6017,5 +6017,58 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidModifier);
         }
         #endregion
+
+        #region Extension methods (§15) — Fase 2: imports and scope visibility
+        [Fact]
+        public void AnExtensionMethodBroughtByAWildcardImportIsCallable()
+        {
+            var runtime = Run(
+                "import game.util.*;\nfun run(): float { return Vec2(3.0, 4.0).lengthSquared(); }",
+                ("/game/util/M.surtr",
+                    "public class Vec2 {\n"
+                        + "  public let x: float;\n"
+                        + "  public let y: float;\n"
+                        + "  public constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                        + "}\n"
+                        + "public extension Vec2 { fun lengthSquared(v: Vec2): float => v.x * v.x + v.y * v.y; }"));
+
+            Assert.Equal(25.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AnExtensionMethodNotImportedIsNotACandidate()
+        {
+            using var compilation = Reject(
+                "class Vec2 { public let x: float; public constructor(x: float) { this.x = x; } }\n"
+                    + "fun run(): int { return Vec2(1.0).bonus(); }",
+                ("/game/util/M.surtr", "import game.core.*;\npublic extension Vec2 { fun bonus(v: Vec2): int => 1; }"));
+
+            Assert.True(compilation.HasErrors, "An extension declared in a module nobody imported should not be a candidate.");
+        }
+
+        [Fact]
+        public void TwoEquallyApplicableExtensionsFromDifferentImportsAreAmbiguous()
+        {
+            using var compilation = Reject(
+                "import game.shapes.*;\nimport game.util.a.*;\nimport game.util.b.*;\n"
+                    + "fun run(): string { return Vec2(1.0).describe(); }",
+                ("/game/shapes/S.surtr", "class Vec2 { public let x: float; public constructor(x: float) { this.x = x; } }"),
+                ("/game/util/a/A.surtr", "import game.shapes.*;\npublic extension Vec2 { fun describe(v: Vec2): string => \"a\"; }"),
+                ("/game/util/b/B.surtr", "import game.shapes.*;\npublic extension Vec2 { fun describe(v: Vec2): string => \"b\"; }"));
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedCall);
+        }
+
+        [Fact]
+        public void AnInternalExtensionIsNotReachableFromAnImportingModule()
+        {
+            using var compilation = Reject(
+                "import game.util.*;\nfun run(): float { return Vec2(1.0, 1.0).lengthSquared(); }",
+                ("/game/util/M.surtr",
+                    Vec2 + "extension Vec2 { fun lengthSquared(v: Vec2): float => v.x * v.x + v.y * v.y; }"));
+
+            Assert.True(compilation.HasErrors, "An extension block with no visibility written defaults to internal (§3.1) and should not reach another module.");
+        }
+        #endregion
     }
 }
