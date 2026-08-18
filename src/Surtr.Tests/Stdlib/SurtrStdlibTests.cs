@@ -212,6 +212,27 @@ namespace Surtr.Tests.Stdlib
         }
 
         /// <summary>
+        /// Selecting <see cref="StdlibModules.Collections"/> alone must still load
+        /// <c>surtr.collections.Stack</c> successfully — <c>Stack.pop()</c>/<c>peek()</c> throw
+        /// <c>InvalidOperationException</c> from <c>surtr.core.Exception</c> (a Surtr-written class,
+        /// not a runtime built-in), so <c>Collections</c> has a real dependency on <c>Core</c> that
+        /// <see cref="SurtrStdlib.LoadInto(SurtrRuntime, IReadOnlyList{SurtrModuleImage}, StdlibModules)"/>
+        /// must pull in on its own rather than leaving the caller to discover the omission as a load
+        /// failure. <c>Math</c> is still excluded - the expansion is specific to the one edge that
+        /// exists, not a blanket "always load Core".
+        /// </summary>
+        [Fact]
+        public void SelectingCollectionsPullsInCoreBecauseStackNeedsItsExceptions()
+        {
+            using var runtime = new SurtrRuntime();
+            SurtrStdlib.LoadInto(runtime, AllImages(), StdlibModules.Collections);
+
+            Assert.True(runtime.TryGetModule("surtr.collections.Stack", out _));
+            Assert.True(runtime.TryGetModule("surtr.core.Exception", out _));
+            Assert.False(runtime.TryGetModule("surtr.math.Math", out _));
+        }
+
+        /// <summary>
         /// The drift detector Fase 11 asks for: every native link name
         /// <c>Surtr.Stdlib.Tool</c> actually compiled into the committed build output is one
         /// <see cref="SurtrStdlib.RegisterNativeBodies"/> publishes. A <c>native fun</c> added to

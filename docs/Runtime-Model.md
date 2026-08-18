@@ -643,9 +643,14 @@ an image carries no dependency list until it is instantiated.
 **Selective loading** (`StdlibModules`, a `[Flags]` enum: `Core`, `Math`, `Collections`, `Text`,
 `All`) lets a sandboxed host load only some of it — `LoadInto(runtime, images, selection)`
 filters by each image's own module path (`surtr.math.Math`'s second segment, `math`, against
-`StdlibModules.Math`) before delegating to the unfiltered overload. Coarse-grained by design:
-today no stdlib module imports another, so a top-level category is exactly the unit a selection
-needs: `Surtr.Stdlib/src/surtr/<category>/*.surtr` maps directly onto one flag.
+`StdlibModules.Math`) before delegating to the unfiltered overload. Coarse-grained by design, and
+no longer assumed independent: `surtr.collections.Stack` throws `InvalidOperationException`, which
+is declared in the Surtr-written `surtr.core.Exception` module rather than built into the runtime
+(unlike `IndexOutOfRangeException` and the rest of `Language-Syntax.md` §13.3's VM-trap-mapped
+set), so `Collections` has a real, one-way dependency on `Core`. `ExpandDependencies` widens a
+selection for exactly that edge before filtering, rather than leaving a caller to discover the
+omission as a load failure; the fixed-point retry loop is still the backstop for any dependency
+this has not been told about.
 
 **Drift detection**: `Surtr.Stdlib.Tool` also writes `native-link-names.txt` next to the
 images — the flat, sorted list of every native link name it actually compiled. A test in
