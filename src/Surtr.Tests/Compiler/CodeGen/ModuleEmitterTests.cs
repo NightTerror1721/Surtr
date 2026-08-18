@@ -1105,6 +1105,37 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(4, Int(runtime, "run"));
         }
 
+        /// <summary>
+        /// The property-read twin of <see cref="ASuperCallReachesTheBaseImplementation"/>. Before
+        /// devirtualisation reached property accessors, <c>super.n</c> here still dispatched
+        /// virtually with a <c>Square</c> receiver — reaching <c>Square.n</c>'s own getter again
+        /// instead of <c>Shape.n</c>'s, which either answers 5 (self-recursion happening to read a
+        /// field first) or never returns, rather than the 4 a genuine base call gives.
+        /// </summary>
+        [Fact]
+        public void ASuperPropertyReadReachesTheBaseImplementation()
+        {
+            var runtime = Run(
+                "class Shape { public virtual n: int { get { return 3; } } }\n"
+                    + "class Square : Shape { public override n: int { get { return super.n + 1; } } }\n"
+                    + "fun run(): int { return Square().n; }");
+
+            Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        /// <summary>Value correctness for <see cref="LoweringChoiceTests.ASealedOverrideDevirtualizesOnAnUnsealedClass"/>.</summary>
+        [Fact]
+        public void ASealedOverrideDevirtualizesOnAnUnsealedClass()
+        {
+            var runtime = Run(
+                "class Animal { public virtual fun speak(): string { return \"...\"; } }\n"
+                    + "class Dog : Animal { public sealed override fun speak(): string { return \"Woof\"; } }\n"
+                    + "fun run(d: Dog): string { return d.speak(); }\n"
+                    + "fun call(): string { return run(Dog()); }");
+
+            Assert.Equal("Woof", Text(runtime, "call"));
+        }
+
         [Fact]
         public void AnInterfaceCallResolvesThroughTheDispatchTable()
         {
@@ -1991,6 +2022,57 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
+        #region Interface satisfaction without `override` (§3.3)
+        /// <summary>
+        /// A plain method — no `virtual`/`override` — satisfies an interface obligation as long as
+        /// its signature matches. It stays `Direct` (callable straight off the concrete type), and
+        /// a synthetic bridge occupies the interface's slot for calls that go through <c>IBar</c>.
+        /// </summary>
+        [Fact]
+        public void ADirectMethodSatisfiesAnInterfaceWithoutOverride()
+        {
+            var runtime = Run(
+                "interface IBar { fun doThing(): int; }\n"
+                    + "class Foo : IBar {\n"
+                    + "  public fun doThing(): int { return 42; }\n"
+                    + "}\n"
+                    + "fun viaInterface(b: IBar): int { return b.doThing(); }\n"
+                    + "fun run(): int { let f = Foo(); return f.doThing() + viaInterface(f); }");
+
+            Assert.Equal(84, Int(runtime, "run"));
+        }
+
+        /// <summary>The property twin of <see cref="ADirectMethodSatisfiesAnInterfaceWithoutOverride"/>: an auto-property with no `override` still fills a get/set contract.</summary>
+        [Fact]
+        public void ADirectAutoPropertySatisfiesAnInterfacePropertyWithoutOverride()
+        {
+            var runtime = Run(
+                "interface INamed { name: string { get; set; } }\n"
+                    + "class C : INamed { public name: string { get; set; } }\n"
+                    + "fun run(): string { let c = C(); c.name = \"x\"; let n: INamed = c; return n.name; }");
+
+            Assert.Equal("x", Text(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A class may still write `virtual`/`override` for a member it wants a subclass to be able
+        /// to replace further — that path is untouched, and the two forms interoperate: a bridge
+        /// forwards to whichever the class actually declared.
+        /// </summary>
+        [Fact]
+        public void AVirtualMethodStillSatisfiesAnInterfaceAndRemainsOverridable()
+        {
+            var runtime = Run(
+                "interface IBar { fun doThing(): int; }\n"
+                    + "class Foo : IBar { public virtual fun doThing(): int { return 1; } }\n"
+                    + "class Sub : Foo { public override fun doThing(): int { return 2; } }\n"
+                    + "fun viaInterface(b: IBar): int { return b.doThing(); }\n"
+                    + "fun run(): int { return viaInterface(Sub()); }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+        #endregion
+
         #region Value classes (§2.9)
         [Fact]
         public void AValueClassMethodIsCallableOnItsOwnType()
@@ -2046,6 +2128,27 @@ namespace Surtr.Tests.Compiler.CodeGen
                     + "fun run(): int { let u: unknown = EntityId(5); let back = u as EntityId; return back.raw; }");
 
             Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// Value correctness for <see cref="LoweringChoiceTests.AValueClassMethodSatisfyingAnInterfaceWithoutOverrideDoesNotBoxOnADirectCall"/>:
+        /// the same method has to answer correctly both directly and through the interface, since a
+        /// bridge now stands between the interface and the `Direct` body.
+        /// </summary>
+        [Fact]
+        public void AValueClassMethodSatisfyingAnInterfaceWithoutOverrideWorksBothWays()
+        {
+            var runtime = Run(
+                "interface IDoubling { fun doubled(): int; }\n"
+                    + "value class EntityId : IDoubling {\n"
+                    + "  public let raw: int;\n"
+                    + "  public constructor(raw: int) { this.raw = raw; }\n"
+                    + "  public fun doubled(): int { return this.raw * 2; }\n"
+                    + "}\n"
+                    + "fun viaInterface(d: IDoubling): int { return d.doubled(); }\n"
+                    + "fun run(): int { let id = EntityId(21); return id.doubled() + viaInterface(id); }");
+
+            Assert.Equal(84, Int(runtime, "run"));
         }
         #endregion
 

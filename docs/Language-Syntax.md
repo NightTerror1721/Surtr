@@ -652,10 +652,24 @@ class Dog : Animal {
 ### 3.3 Method dispatch
 
 No modifier = `Direct` (non-virtual) — the default per `CLAUDE.md`. `virtual` marks a method
-overridable and gives it a vtable slot; `override` is required on every member that replaces one;
-`abstract` declares a member with no body, legal only inside a class itself marked `abstract`.
-This maps directly onto the existing `SurtrMethodDispatch` triad (`Direct` / `Virtual` /
-`Abstract`) with no fourth case to invent.
+overridable and gives it a vtable slot; `override` is required on every member that **replaces** a
+base class's virtual/abstract member (no implicit override); `abstract` declares a member with no
+body, legal only inside a class itself marked `abstract`. This maps directly onto the existing
+`SurtrMethodDispatch` triad (`Direct` / `Virtual` / `Abstract`) with no fourth case to invent.
+
+**Satisfying an interface never requires `override`.** A contract is a promise, not an
+inheritance (§2.2), and a plain member with no dispatch modifier at all still counts as long as
+its signature matches: the compiler gives the interface's slot a synthetic, invisible bridge that
+forwards to it, the same mechanism §6's generic-erasure slots already use for a member whose typed
+signature differs from a contract's own erased shape. The member itself keeps whatever dispatch it
+was declared with — `Direct` by default — so it stays eligible for everything `Direct` dispatch
+buys: inlining (§3.6), the auto-property field-load fast path, and (for a `value class`, §2.9) a
+direct-typed call that never boxes the receiver. A call reached *through* the interface type still
+goes through the bridge's vtable slot, one hop more than a call on the concrete type pays — the
+same trade-off the generic-erasure bridge already makes. Writing `virtual` (or `override`, where
+there is a base slot to replace) remains fully supported and unchanged: it is the way to make an
+interface-satisfying member itself overridable by a further subclass, which a `Direct` member
+never is, having no vtable slot of its own to replace.
 
 `abstract` on the **class** is its own explicit, mandatory modifier — `abstract class Foo { ... }`
 — rather than something inferred from the class containing an abstract member. Requiring it
@@ -864,7 +878,10 @@ Two decisions the heuristic makes that are worth spelling out:
   `inline` must not get it there.
 - **A property read honours `inline` and the heuristic on its getter.** Auto-properties go further:
   both accessors are one instruction — a field load and a field store — so both always lower to the
-  backing field at the call site, virtual ones excepted (they have to dispatch for an override). The
+  backing field at the call site wherever the access is proven non-virtual — `Direct` dispatch,
+  or a still-`virtual`/`override` accessor devirtualised the same way an ordinary call is (a
+  sealed receiver, `super`, or `sealed override`, per §3.3). An access left genuinely virtual is
+  the only one excepted, since it has to dispatch for an override that might still exist. The
   setter side of a *computed* property is left as a direct call; the hint may be declined there.
 
 Four things make inlining genuinely impossible, and they are limits rather than policy, so

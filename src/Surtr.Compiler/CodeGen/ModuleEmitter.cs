@@ -1127,7 +1127,7 @@ namespace Surtr.Compiler.CodeGen
                     if (!NeedsBridge(owner, declared, wanted, out var target))
                         continue;
 
-                    EmitBridge(context, @class, declared, wanted, target);
+                    EmitBridge(context, @class, owner, declared, wanted, target);
                 }
             }
         }
@@ -1136,10 +1136,14 @@ namespace Surtr.Compiler.CodeGen
         /// Whether a contract slot needs a bridge, and which member it should forward to.
         /// </summary>
         /// <remarks>
-        /// Only when the class fills the slot with something more specific than the slot's own
-        /// erased shape. A member already declared against the erased type occupies the slot
-        /// directly and needs nothing, and a contract that mentions no type parameter has nothing
-        /// to erase in the first place.
+        /// Two independent reasons a slot can be unfilled by anything sitting directly in the
+        /// vtable, and a bridge closes both the same way: a member more specific than the slot's
+        /// own erased shape (generics — the class wrote <c>compareTo(Vec2)</c> against
+        /// <c>IComparable&lt;Vec2&gt;</c>'s erased <c>compareTo(E)</c>), or a member whose signature
+        /// already matches the slot exactly but whose dispatch is <c>Direct</c> (§3.3 — no
+        /// <c>override</c> written, so <c>SurtrTypeLinker</c> never placed it in
+        /// <c>VirtualMethods</c> to begin with). Either way the class's own member keeps whatever
+        /// dispatch it was declared with, and the bridge is what actually answers the interface.
         /// </remarks>
         private bool NeedsBridge(
             NamedTypeSymbol owner,
@@ -1150,18 +1154,21 @@ namespace Surtr.Compiler.CodeGen
             target = null!;
 
             string slot = SlotKey(declared);
-            if (string.Equals(slot, SlotKey(wanted), StringComparison.Ordinal))
-                return false;
+            string wantedKey = SlotKey(wanted);
 
             foreach (var candidate in _binder.MemberLookup.FindMethods(owner, wanted.Name))
             {
                 string key = SlotKey(candidate);
 
-                // Already erased: the class wrote the slot's own shape, so nothing is missing.
-                if (string.Equals(key, slot, StringComparison.Ordinal))
+                // Sits in the vtable at the slot's own erased position already - SurtrTypeLinker's
+                // SignatureKey match finds it directly, so nothing here has to.
+                if (string.Equals(key, slot, StringComparison.Ordinal) && candidate.Dispatch != MethodDispatch.Direct)
                     return false;
 
-                if (string.Equals(key, SlotKey(wanted), StringComparison.Ordinal))
+                // The member the class actually wrote to satisfy this obligation, by its own
+                // signature - possibly more specific than the slot's erased shape, and possibly
+                // `Direct` (never placed in the vtable at all).
+                if (string.Equals(key, wantedKey, StringComparison.Ordinal))
                     target = candidate;
             }
 
@@ -1182,6 +1189,7 @@ namespace Surtr.Compiler.CodeGen
         private void EmitBridge(
             EmitContext context,
             SurtrClassBuilder @class,
+            NamedTypeSymbol owner,
             MethodSymbol declared,
             MethodSymbol wanted,
             MethodSymbol target)
@@ -1205,6 +1213,14 @@ namespace Surtr.Compiler.CodeGen
 
             var code = bridge.Code;
             code.LoadLocal(bridge.Receiver);
+
+            // The bridge is Virtual, so a value class receiver arrives boxed at this slot exactly
+            // as it does for any other interface-dispatched call on one (§6.3) — the same test
+            // MethodBodyEmitter.LoadReceiver makes for a value class's own virtual-dispatch body,
+            // applied here since the bridge plays that same role. The `target` it forwards to keeps
+            // `Direct` dispatch and so expects the unboxed field, never the boxed form.
+            if (owner.TypeKind == TypeSymbolKind.ValueClass)
+                code.Unbox();
 
             for (int i = 0; i < parameters.Length; i++)
             {

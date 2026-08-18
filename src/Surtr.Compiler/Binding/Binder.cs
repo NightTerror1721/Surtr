@@ -868,11 +868,13 @@ namespace Surtr.Compiler.Binding
         /// </summary>
         /// <remarks>
         /// <para>
-        /// <c>BuildInterfaceDispatch</c> needs a vtable slot to exist for it at all — which only a
-        /// <c>virtual</c>/<c>override</c> or another <c>abstract</c> declaration creates, since a
-        /// plain, non-overriding method never enters the vtable and so can never satisfy one, even
-        /// where its name and parameters happen to match. <c>VerifyConcrete</c> then refuses to let
-        /// a concrete class leave the slot it found still abstract.
+        /// <c>BuildInterfaceDispatch</c> needs a vtable slot to exist for it at all. A
+        /// <c>virtual</c>/<c>override</c> or another <c>abstract</c> declaration occupies one
+        /// directly; a plain <c>Direct</c> member never enters the vtable itself, but
+        /// <see cref="CodeGen.ModuleEmitter.EmitBridges"/> gives it a synthetic forwarding bridge in
+        /// the slot instead, so it satisfies the obligation without giving up <c>Direct</c> dispatch
+        /// anywhere else it's called. <c>VerifyConcrete</c> then refuses to let a concrete class
+        /// leave the slot it found still abstract.
         /// </para>
         /// <para>
         /// The signature check is the half the runtime cannot see. <c>SurtrTypeLinker</c> matches by
@@ -893,8 +895,8 @@ namespace Surtr.Compiler.Binding
                     SurtrDiagnosticCode.MissingImplementation,
                     binding,
                     binding.Syntax.Span,
-                    $"'{symbol.Name}' does not implement '{contract.Name}.{required.Name}'; implement it with 'override', "
-                        + $"or declare it 'abstract' on '{symbol.Name}' to leave it for a subclass.");
+                    $"'{symbol.Name}' does not implement '{contract.Name}.{required.Name}'; declare a matching member, "
+                        + $"or mark it 'abstract' on '{symbol.Name}' to leave it for a subclass.");
                 return;
             }
 
@@ -972,19 +974,26 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
-        /// The nearest member of <paramref name="type"/> or of a class it extends occupying a
-        /// vtable slot (<c>Virtual</c> or <c>Abstract</c> dispatch — never <c>Direct</c>, which never
-        /// enters the vtable and so cannot answer for one) matching by name and parameter count.
-        /// Closest to <paramref name="type"/> wins, the same as the runtime's own vtable: an override
-        /// replaces the slot in place, so a derived class's answer is this walk's first match.
+        /// The nearest member of <paramref name="type"/> or of a class it extends that can answer
+        /// for an interface obligation, matching by name and parameter count. Closest to
+        /// <paramref name="type"/> wins, the same as the runtime's own vtable: an override replaces
+        /// the slot in place, so a derived class's answer is this walk's first match.
         /// </summary>
+        /// <remarks>
+        /// <c>Virtual</c>/<c>Abstract</c> candidates occupy a real vtable slot and answer directly.
+        /// A <c>Direct</c> candidate answers too — <see cref="CodeGen.ModuleEmitter.EmitBridges"/>
+        /// gives it a synthetic forwarding bridge in the contract's slot instead, the same mechanism
+        /// already used for a generic contract's erased slot (§8), so the member itself keeps
+        /// <c>Direct</c> dispatch (and every optimisation that comes with it) everywhere but through
+        /// the interface.
+        /// </remarks>
         private static MethodSymbol? FindMember(NamedTypeSymbol type, string name, int arity)
         {
             for (var walk = type; walk is not null; walk = walk.BaseType)
             {
                 foreach (var member in walk.Members)
                 {
-                    if (member is MethodSymbol { Dispatch: not MethodDispatch.Direct } candidate
+                    if (member is MethodSymbol candidate
                         && string.Equals(candidate.Name, name, StringComparison.Ordinal)
                         && candidate.Parameters.Count == arity)
                     {

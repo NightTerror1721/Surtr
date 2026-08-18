@@ -2426,10 +2426,10 @@ case BoundFieldExpression field:
                     var setter = property.Property.Setter
                         ?? throw Unsupported($"a write to '{property.Property.Name}', which has no setter");
 
-                    if (TryInlineAutoAccessorSet(property.Property, property.Receiver, value))
+                    if (TryInlineAutoAccessorSet(property.Property, property.Receiver, property.IsVirtualSet, value))
                         return;
 
-                    if (TryInlinePropertySetter(property.Property, property.Receiver, value))
+                    if (TryInlinePropertySetter(property.Property, property.Receiver, property.IsVirtualSet, value))
                         return;
 
                     if (!property.Property.IsStatic)
@@ -2440,7 +2440,7 @@ case BoundFieldExpression field:
                     }
 
                     value();
-                    EmitResolvedCall(setter, virtualCall: setter.Dispatch != MethodDispatch.Direct, discardResult: true);
+                    EmitResolvedCall(setter, virtualCall: property.IsVirtualSet, discardResult: true);
                     return;
                 }
 
@@ -2544,7 +2544,7 @@ case BoundFieldExpression field:
                 return;
             }
 
-            if (TryInlineAutoAccessorGet(property.Property, property.Receiver, discardResult: false))
+            if (TryInlineAutoAccessorGet(property.Property, property.Receiver, property.IsVirtualGet, discardResult: false))
                 return;
 
             if (TryInlinePropertyGetter(property))
@@ -2560,7 +2560,7 @@ case BoundFieldExpression field:
                 BoxReceiverForCall(getter, receiver.Type);
             }
 
-            EmitResolvedCall(getter, virtualCall: getter.Dispatch != MethodDispatch.Direct, discardResult: false);
+            EmitResolvedCall(getter, virtualCall: property.IsVirtualGet, discardResult: false);
         }
 
         /// <summary>Whether <paramref name="property"/> is, by identity, the built-in dictionary's <c>length</c>.</summary>
@@ -2586,14 +2586,17 @@ case BoundFieldExpression field:
         /// An auto-accessor has no bound body for <see cref="TryInline"/> to splice, so the read is
         /// lowered here, in the shape <see cref="ModuleEmitter.EmitAutoAccessor"/> would have given
         /// the body: a static one is the backing field, an instance one is the field off the
-        /// receiver. Only a non-virtual accessor can be replaced — a virtual one has to dispatch so
-        /// an override runs — and a value class's receiver is the wrapped field, not an instance to
-        /// read a field from (§2.9).
+        /// receiver. Only an accessor proven non-virtual at this access can be replaced — a
+        /// <c>Direct</c> one always qualifies, and a <c>virtual</c>/<c>override</c> one qualifies
+        /// exactly where <see cref="BoundPropertyExpression.IsVirtualGet"/> already devirtualised it
+        /// (a sealed receiver, <c>super</c>, or a <c>sealed override</c>) — either way nothing below
+        /// this access can change which body runs. A value class's receiver is the wrapped field,
+        /// not an instance to read a field from (§2.9).
         /// </remarks>
-        private bool TryInlineAutoAccessorGet(PropertySymbol property, BoundExpression? receiver, bool discardResult)
+        private bool TryInlineAutoAccessorGet(PropertySymbol property, BoundExpression? receiver, bool isVirtualGet, bool discardResult)
         {
             var getter = property.Getter;
-            if (getter is null || getter.Dispatch != MethodDispatch.Direct || !IsAutoAccessor(property, getter))
+            if (getter is null || isVirtualGet || !IsAutoAccessor(property, getter))
                 return false;
 
             if (property.IsStatic)
@@ -2623,10 +2626,10 @@ case BoundFieldExpression field:
         /// the caller's <paramref name="value"/> callback, between the receiver and the store, which
         /// is the order every other write target uses.
         /// </remarks>
-        private bool TryInlineAutoAccessorSet(PropertySymbol property, BoundExpression? receiver, Action value)
+        private bool TryInlineAutoAccessorSet(PropertySymbol property, BoundExpression? receiver, bool isVirtualSet, Action value)
         {
             var setter = property.Setter;
-            if (setter is null || setter.Dispatch != MethodDispatch.Direct || !IsAutoAccessor(property, setter))
+            if (setter is null || isVirtualSet || !IsAutoAccessor(property, setter))
                 return false;
 
             if (property.IsStatic)
@@ -2659,8 +2662,9 @@ case BoundFieldExpression field:
         /// A property read reaches the getter through <see cref="EmitPropertyRead"/>, not through
         /// <see cref="EmitCall"/> — so without this the <c>inline</c> a property declares would never
         /// be honoured. The getter is shaped as the zero-argument call it is, and the rest is the
-        /// ordinary splice. Only a non-virtual getter can be replaced: the read dispatches a virtual
-        /// one so an override runs, exactly as the auto-accessor path requires.
+        /// ordinary splice. Only a getter proven non-virtual at this access can be replaced — see
+        /// <see cref="BoundPropertyExpression.IsVirtualGet"/> — exactly as the auto-accessor path
+        /// requires.
         /// </remarks>
         private bool TryInlinePropertyGetter(BoundPropertyExpression property)
         {
@@ -2668,12 +2672,12 @@ case BoundFieldExpression field:
             if (getter is null)
                 return false;
 
-            // A virtual or native getter can never be spliced - the synthetic zero-argument call
-            // built below always claims non-virtual, so TryInline's own dispatch guard cannot catch
-            // it and this check has to stand in for it. forceinline still has to fail loudly here
-            // rather than silently fall through to an ordinary (possibly virtual) call the way the
-            // `inline` hint is allowed to.
-            if (getter.Dispatch != MethodDispatch.Direct || getter.IsNative)
+            // A still-virtual or native getter can never be spliced - the synthetic zero-argument
+            // call built below always claims non-virtual, so TryInline's own dispatch guard cannot
+            // catch it and this check has to stand in for it. forceinline still has to fail loudly
+            // here rather than silently fall through to an ordinary (possibly virtual) call the way
+            // the `inline` hint is allowed to.
+            if (property.IsVirtualGet || getter.IsNative)
             {
                 if (getter.IsForceInline)
                     throw Unsupported($"'forceinline {getter.Name}', whose body is not available to splice");
@@ -2712,19 +2716,20 @@ case BoundFieldExpression field:
         /// by the time <see cref="Store"/> runs, and only hands over an <c>Action</c> that emits
         /// whatever the value turned out to be. <see cref="TryInlineSetterBody"/> below is that same
         /// splice, built directly against <paramref name="value"/> instead of a bound argument list.
-        /// Only a non-virtual setter can be replaced: a write dispatches a virtual one so an override
-        /// runs, exactly as the getter and the auto-accessor paths require.
+        /// Only a setter proven non-virtual at this access can be replaced, exactly as the getter
+        /// and the auto-accessor paths require.
         /// </remarks>
-        private bool TryInlinePropertySetter(PropertySymbol property, BoundExpression? receiver, Action value)
+        private bool TryInlinePropertySetter(PropertySymbol property, BoundExpression? receiver, bool isVirtualSet, Action value)
         {
             var setter = property.Setter;
             if (setter is null)
                 return false;
 
-            // Mirrors the same guard on TryInlinePropertyGetter, for the same reason: a virtual or
-            // native setter can never be spliced, but forceinline still has to fail loudly here
-            // instead of silently falling through to an ordinary (possibly virtual) call.
-            if (setter.Dispatch != MethodDispatch.Direct || setter.IsNative)
+            // Mirrors the same guard on TryInlinePropertyGetter, for the same reason: a still-
+            // virtual or native setter can never be spliced, but forceinline still has to fail
+            // loudly here instead of silently falling through to an ordinary (possibly virtual)
+            // call.
+            if (isVirtualSet || setter.IsNative)
             {
                 if (setter.IsForceInline)
                     throw Unsupported($"'forceinline {setter.Name}', whose body is not available to splice");

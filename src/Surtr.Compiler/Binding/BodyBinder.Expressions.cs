@@ -290,7 +290,13 @@ namespace Surtr.Compiler.Binding
                 arguments[i] = Convert(new BoundParameterExpression(syntax, parameters[i]), method.Parameters[i].Type, syntax.Span);
             }
 
-            bool isVirtual = !method.IsStatic && method.ContainingType is not null && method.Dispatch != MethodDispatch.Direct;
+            // Same static devirtualisation §2.2/§3.3 give an ordinary call: a sealed receiver
+            // type or a `sealed override` target needs no vtable slot here either.
+            bool isVirtual = !method.IsStatic
+                && method.ContainingType is not null
+                && method.Dispatch != MethodDispatch.Direct
+                && !method.IsSealed
+                && !(receiver?.Type.NonNullable is NamedTypeSymbol { IsSealed: true });
             var call = new BoundCallExpression(syntax, receiver, method, arguments, isVirtual);
 
             BoundStatement body = closure.ReturnType.IsVoid
@@ -346,6 +352,28 @@ namespace Surtr.Compiler.Binding
             return new BoundFieldExpression(syntax, receiver, field);
         }
 
+        /// <summary>
+        /// Builds a property access, resolving each accessor's own devirtualisation the same way
+        /// an ordinary call does (§2.2/§3.3): false for a missing accessor, one dispatched
+        /// <c>Direct</c>, one reached through <c>super</c>, one declared <c>sealed override</c>,
+        /// or one on a receiver whose static type is <c>sealed</c>. Computed once here, mirroring
+        /// <see cref="BoundCallExpression.IsVirtual"/>, rather than re-derived at every accessor
+        /// call site.
+        /// </summary>
+        private BoundPropertyExpression ResolveProperty(SyntaxNode syntax, BoundExpression? receiver, PropertySymbol property)
+            => new(syntax, receiver, property, IsVirtualAccess(property.Getter, receiver), IsVirtualAccess(property.Setter, receiver));
+
+        private static bool IsVirtualAccess(MethodSymbol? accessor, BoundExpression? receiver)
+        {
+            if (accessor is null || accessor.Dispatch == MethodDispatch.Direct || accessor.IsSealed)
+                return false;
+
+            if (receiver is BoundThisExpression { IsSuper: true })
+                return false;
+
+            return receiver?.Type.NonNullable is not NamedTypeSymbol { IsSealed: true };
+        }
+
         private BoundExpression? BindImplicitMember(SyntaxNode syntax, NamedTypeSymbol type, string name)
         {
             if (_lookup.FindField(type, name) is FieldSymbol field)
@@ -357,7 +385,7 @@ namespace Surtr.Compiler.Binding
             if (_lookup.FindProperty(type, name) is PropertySymbol property)
             {
                 RequireAccessible(property, property.Accessibility, property.Name, syntax);
-                return new BoundPropertyExpression(syntax, property.IsStatic ? null : ImplicitThis(syntax, type), property);
+                return ResolveProperty(syntax, property.IsStatic ? null : ImplicitThis(syntax, type), property);
             }
 
             return null;
@@ -435,7 +463,7 @@ namespace Surtr.Compiler.Binding
                 if (string.Equals(property.Name, name, StringComparison.Ordinal))
                 {
                     RequireAccessible(property, property.Accessibility, property.Name, syntax);
-                    return new BoundPropertyExpression(syntax, null, property);
+                    return ResolveProperty(syntax, null, property);
                 }
             }
 
@@ -592,7 +620,7 @@ namespace Surtr.Compiler.Binding
             if (_lookup.FindProperty(lookupType, syntax.Name) is PropertySymbol property)
             {
                 RequireAccessible(property, property.Accessibility, property.Name, syntax);
-                return Guard(new BoundPropertyExpression(syntax, property.IsStatic ? null : accessed, property), syntax);
+                return Guard(ResolveProperty(syntax, property.IsStatic ? null : accessed, property), syntax);
             }
 
             // §8: `obj.method` where a closure is expected is sugar for a lambda calling it — never
@@ -642,7 +670,7 @@ namespace Surtr.Compiler.Binding
             if (_lookup.FindProperty(type, syntax.Name) is PropertySymbol property && property.IsStatic)
             {
                 RequireAccessible(property, property.Accessibility, property.Name, syntax);
-                return new BoundPropertyExpression(syntax, null, property);
+                return ResolveProperty(syntax, null, property);
             }
 
             // §8: `Type.method` where a closure is expected is sugar for a lambda calling it —
@@ -927,6 +955,7 @@ namespace Surtr.Compiler.Binding
                 callArguments[i] = Convert(operands[i], method.Parameters[i + 1].Type, syntax.Span);
 
             bool virtualCall = method.Dispatch != MethodDispatch.Direct
+                && !method.IsSealed
                 && !(boundReceiver.Type.NonNullable is NamedTypeSymbol { IsSealed: true });
 
             return new BoundCallExpression(syntax, boundReceiver, method, callArguments, virtualCall);
@@ -1356,7 +1385,7 @@ namespace Surtr.Compiler.Binding
                 && property.Type.NonNullable is ClosureTypeSymbol)
             {
                 RequireAccessible(property, property.Accessibility, property.Name, syntax);
-                return new BoundPropertyExpression(syntax, property.IsStatic ? null : receiver, property);
+                return ResolveProperty(syntax, property.IsStatic ? null : receiver, property);
             }
 
             return null;
@@ -1457,10 +1486,15 @@ namespace Surtr.Compiler.Binding
             var ordered = OrderArguments(
                 syntax, syntax.Arguments, method, BindDeferredLambdas(syntax.Arguments, arguments, method));
 
-            // A call on a sealed type or through `super` can be bound directly, which is the
-            // devirtualisation §2.2 calls out as a static fact rather than a guess.
+            // A call on a sealed type, through `super`, or on a member itself declared
+            // `sealed override` can be bound directly, which is the devirtualisation §2.2 and
+            // §3.3 call out as a static fact rather than a guess. `method` is already the most
+            // derived declaration visible from the receiver's static type (member lookup walks
+            // from that type toward its base), so a `sealed override` found here closes every
+            // type below that static type, not just the receiver's own exact type.
             bool virtualCall = isVirtual
                 && method.Dispatch != MethodDispatch.Direct
+                && !method.IsSealed
                 && !(receiver?.Type.NonNullable is NamedTypeSymbol { IsSealed: true });
 
             return new BoundCallExpression(syntax, method.IsStatic ? null : receiver, method, ordered, virtualCall);

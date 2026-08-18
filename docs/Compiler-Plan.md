@@ -471,18 +471,17 @@ Three of those took a decision worth recording:
   an override further down still wins. It is emitted, never bound, so nothing in source can name it
   and `SignatureSet` never sees it as a duplicate. `SurtrClassReference.Erase` is new and shared with
   `SurtrMethodInfo.SignatureKey`, because the compiler has to produce exactly the descriptor the
-  linker compares and two copies of that rule would agree until one was edited.
+  linker compares and two copies of that rule would agree until one was edited. **Generalised
+  later**: the same shape now also fires whenever a `Direct` member (no erasure involved at all)
+  fills a contract slot, which is what makes `override` optional for interface satisfaction
+  (`Language-Syntax.md` §3.3).
 * **A call on a `value class`.** The receiver boxes with `BoxAs` only where the callee might be
   reached through its class — a method whose own dispatch is not `Direct` — and `this` inside such
   a callee unwraps to match; a `Direct` method (the common case: nothing but interface satisfaction
   ever makes a value class method non-`Direct`, since it cannot be extended) needs neither, on
   either side of the call. `BoxReceiverForCall` and `LoadReceiver` share the one test that decides
   this, so a method's body and every caller of it can never disagree about which convention it was
-  compiled against. What remains a missed optimisation rather than a correctness gap is a call to a
-  method that satisfies an interface but is reached without going through it — closing that would
-  need two entry points per such method (a boxing bridge occupying the vtable slot, forwarding to
-  an unboxed body), which is more surface than the untested combination has earned so far; boxing
-  more than needed is safe there where boxing less is a type confusion.
+  compiled against. §6.3 records how the interface case closed.
 * **Nested lambda captures.** `NoteCapture` walks a *stack* of lambda frames outwards and stops at
   the first one the symbol is inside. An inner lambda's upvalue has to come from the outer body, so
   the outer lambda has to have captured it too; stopping at the innermost boundary is exactly what
@@ -565,15 +564,16 @@ knowing every site. A missed one is a type confusion, not a slow path.
   `get`/`set`, which are calls too. `BoxReceiverForCall` (`MethodBodyEmitter.cs`) is the single test
   this and every other boxing site below it agree with.
 
-**Still boxes, as a known missed optimisation** — a call to a method it declares that satisfies an
-interface but is reached without going through that interface. That method's own dispatch is not
-`Direct` (interface satisfaction is written `override` in source, same as a base-class override, so
-it is never `Direct`), so a devirtualised call on it — a value class is sealed by §2.9, so this is
-every direct-typed call to such a method — still boxes today, the same as a call reached through the
-interface does. Closing it needs two entry points per such method: a thin boxing bridge occupying
-the vtable slot, unboxing and forwarding via a direct call to the real, unboxed-receiver body. Left
-alone because nothing exercises a value class implementing an interface yet, so there is no
-regression risk to weigh against the extra surface.
+**Closed.** A method satisfying an interface no longer has to give up `Direct` dispatch to do it
+(`Language-Syntax.md` §3.3): `override` is optional there, and a plain `Direct` member is answered
+for by a synthetic bridge occupying the interface's slot instead. `EmitBridge` (`ModuleEmitter.cs`)
+is that same two-entry-point shape this section used to describe as owed — a thin bridge occupying
+the vtable slot, unboxing the receiver (a value class is sealed by §2.9, so every direct-typed call
+reaches the same `Direct` body either way) and forwarding via a direct call to the real, unboxed-
+receiver body — now built as the general mechanism for interface satisfaction rather than a
+value-class-only fix.
+`LoweringChoiceTests.AValueClassMethodSatisfyingAnInterfaceWithoutOverrideDoesNotBoxOnADirectCall`
+pins it.
 
 Reading one back out of an erased slot is the mirror obligation: a `Cast` to the value class, then
 unwrap. That is the same pair §7 already lists for primitives, applied to one more type.

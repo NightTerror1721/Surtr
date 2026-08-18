@@ -429,15 +429,36 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>
         /// Adds <paramref name="method"/> to an overload group, rejecting one that repeats a
-        /// signature already in it.
+        /// signature already in it — except a <c>Direct</c> member and a virtual/abstract one
+        /// sharing a signature, which is exactly the shape an interface bridge takes when it lets
+        /// <c>override</c> stay optional (§3.3).
         /// </summary>
         /// <remarks>
+        /// <para>
         /// Shared by class, interface and module declaration so all three enforce
         /// <c>Language-Syntax.md</c> §3.5's first rule identically. Declaration-time code, run once
         /// per member, so a linear scan over a group that is almost always one entry long is the
         /// right shape.
+        /// </para>
+        /// <para>
+        /// A <c>Direct</c> member and a virtual/abstract one never collide in a real table:
+        /// <c>SurtrTypeLinker.BuildMethodTables</c> sorts purely on <see cref="IsVirtualDispatch"/>,
+        /// so one lands in <c>DirectMethods</c> and the other becomes (or occupies) a vtable slot —
+        /// the only place a shared key could silently overwrite something, <c>PlaceInVTable</c>,
+        /// never even looks at a <c>Direct</c> method. This is precisely how a class satisfies an
+        /// interface without <c>override</c>: the member itself keeps its own signature and
+        /// <c>Direct</c> dispatch, and the compiler declares a synthetic bridge under the identical
+        /// name and parameters to occupy the interface's slot. Two members sharing a signature and
+        /// *the same* dispatch kind are still rejected — that pair really would collide, and is what
+        /// §3.5's rule 1 forbids. Source-level authoring never reaches this ambiguity in the other
+        /// direction either: <c>SignatureSet</c> already rejects two written members sharing a
+        /// signature regardless of dispatch, before a bridge is ever synthesized.
+        /// </para>
         /// </remarks>
-        /// <exception cref="ArgumentException">The group already holds that signature.</exception>
+        /// <exception cref="ArgumentException">
+        /// The group already holds that signature with the same dispatch kind (both <c>Direct</c>,
+        /// or both virtual/abstract).
+        /// </exception>
         internal static SurtrMethodInfo[] AppendOverload(SurtrMethodInfo[]? overloads, SurtrMethodInfo method, string ownerName)
         {
             if (overloads is null)
@@ -446,10 +467,15 @@ namespace Surtr.Runtime.Classes
             string key = method.SignatureKey();
             for (int i = 0; i < overloads.Length; i++)
             {
-                if (string.Equals(overloads[i].SignatureKey(), key, StringComparison.Ordinal))
-                    throw new ArgumentException(
-                        $"'{ownerName}' already declares a member with the signature '{key}'.",
-                        nameof(method));
+                if (!string.Equals(overloads[i].SignatureKey(), key, StringComparison.Ordinal))
+                    continue;
+
+                if (overloads[i].IsVirtualDispatch != method.IsVirtualDispatch)
+                    continue;
+
+                throw new ArgumentException(
+                    $"'{ownerName}' already declares a member with the signature '{key}'.",
+                    nameof(method));
             }
 
             var grown = new SurtrMethodInfo[overloads.Length + 1];
