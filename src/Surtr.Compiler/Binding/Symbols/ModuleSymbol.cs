@@ -20,6 +20,7 @@ namespace Surtr.Compiler.Binding.Symbols
         private IReadOnlyList<FieldSymbol> _fields = Array.Empty<FieldSymbol>();
         private IReadOnlyList<PropertySymbol> _properties = Array.Empty<PropertySymbol>();
         private IReadOnlyList<MethodSymbol> _methods = Array.Empty<MethodSymbol>();
+        private IReadOnlyList<MethodSymbol> _extensionMethods = Array.Empty<MethodSymbol>();
         private IReadOnlyList<AliasSymbol> _aliases = Array.Empty<AliasSymbol>();
 
         /// <summary>Creates a module symbol for a dotted module path.</summary>
@@ -99,6 +100,18 @@ namespace Surtr.Compiler.Binding.Symbols
         {
             get => _methods;
             internal set => _methods = value;
+        }
+
+        /// <summary>
+        /// Every method declared inside an <c>extension</c> block anywhere in this module (§15) —
+        /// at module level or nested inside a class, in declaration order. Kept apart from
+        /// <see cref="Methods"/> so ordinary bare-name resolution never sees one: an extension is only
+        /// ever tried as a fallback on an explicit receiver (§15.3), never as a plain module function.
+        /// </summary>
+        public IReadOnlyList<MethodSymbol> ExtensionMethods
+        {
+            get => _extensionMethods;
+            internal set => _extensionMethods = value;
         }
 
         /// <summary>The module-level type aliases, which are erased before anything is emitted.</summary>

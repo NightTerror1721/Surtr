@@ -128,6 +128,9 @@ namespace Surtr.Compiler.Syntax
         /// <summary><c>enum</c> (§2.4).</summary>
         KeywordEnum,
 
+        /// <summary><c>extension</c> - adds methods and properties to a type already declared, without editing it (§15).</summary>
+        KeywordExtension,
+
         /// <summary><c>false</c> - a boolean literal.</summary>
         KeywordFalse,
 

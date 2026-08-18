@@ -49,6 +49,12 @@ namespace Surtr.Compiler.Binding
         private readonly Dictionary<string, List<ModuleSymbol>> _importedModules =
             new Dictionary<string, List<ModuleSymbol>>(StringComparer.Ordinal);
 
+        // Accumulated across every `extension` block bound for a module — at module level and
+        // nested inside a class alike (§15) — then handed to `ModuleSymbol.ExtensionMethods` once,
+        // after both `BindMembers` and `BindModuleMembers` have run for every module.
+        private readonly Dictionary<string, List<MethodSymbol>> _extensionMethodsByModule =
+            new Dictionary<string, List<MethodSymbol>>(StringComparer.Ordinal);
+
         private readonly List<BodyBinding> _bodies = new List<BodyBinding>();
         private readonly List<InitializerBinding> _initializers = new List<InitializerBinding>();
         private readonly List<DefaultBinding> _defaults = new List<DefaultBinding>();
@@ -706,6 +712,16 @@ namespace Surtr.Compiler.Binding
             {
                 EnterContext(module, null);
                 BindModuleMembers(module);
+            }
+
+            // Every `extension` block for a module is bound by now, whether written at module level
+            // (BindModuleMembers, just above) or nested inside one of its classes (BindMembers, just
+            // above that) — this is the one place both contributions are combined.
+            foreach (var module in _modules.Values)
+            {
+                module.ExtensionMethods = _extensionMethodsByModule.TryGetValue(module.Path, out var extensions)
+                    ? extensions
+                    : Array.Empty<MethodSymbol>();
             }
 
             // Again, for the type parameters a method's own signature declared: those did not exist
@@ -1475,6 +1491,14 @@ namespace Surtr.Compiler.Binding
                         members.Add(bound);
                         continue;
                     }
+
+                    case ExtensionDeclarationSyntax extension:
+                    {
+                        // Nesting inside a class only narrows visibility (§15.2) - the block's
+                        // methods still belong to the declaring module, never to `symbol`.
+                        BindExtension(extension, binding.Module, symbol, binding.Scope, binding.SourceName);
+                        continue;
+                    }
                 }
             }
 
@@ -1650,6 +1674,10 @@ namespace Surtr.Compiler.Binding
                                 block, scope, module, null, unit.File.Path, _nextInitializerOrder++));
 
                             continue;
+
+                        case ExtensionDeclarationSyntax extension:
+                            BindExtension(extension, module, containingType: null, scope, unit.File.Path);
+                            continue;
                     }
                 }
             }
@@ -1657,6 +1685,121 @@ namespace Surtr.Compiler.Binding
             module.Fields = fields;
             module.Properties = properties;
             module.Methods = methods;
+        }
+
+        /// <summary>
+        /// Binds one <c>extension &lt;Type&gt; { ... }</c> block (§15) — at module level
+        /// (<paramref name="containingType"/> <see langword="null"/>) or nested inside a class.
+        /// Every method it declares is appended to <see cref="_extensionMethodsByModule"/>, keyed by
+        /// <paramref name="module"/>'s path; <see cref="MemberPhase"/> hands the accumulated list to
+        /// <c>ModuleSymbol.ExtensionMethods</c> once, after every block for every module has run.
+        /// </summary>
+        private void BindExtension(
+            ExtensionDeclarationSyntax syntax,
+            ModuleSymbol module,
+            NamedTypeSymbol? containingType,
+            Scope scope,
+            string sourceName)
+        {
+            var targetType = _resolver.Resolve(syntax.TargetType, scope, sourceName);
+            if (targetType.IsError)
+                return;
+
+            if (targetType is not NamedTypeSymbol target)
+            {
+                ReportAt(sourceName, syntax.TargetType.Span, SurtrDiagnosticCode.InvalidExtensionTarget,
+                    $"'{targetType.ToDisplayString()}' is a composite or built-in shape, which 'extension' does not support yet — only an ordinary named type.");
+                return;
+            }
+
+            // §3.1's two defaults, the same rule DeclareType applies to a type: a block written
+            // directly in a module is internal to it, and one nested inside a class is private to
+            // that class like any other member — except inside an interface, where §2.3 makes every
+            // member public.
+            Accessibility blockAccessibility = Translate(
+                syntax.Visibility,
+                containingType is null
+                    ? Accessibility.Internal
+                    : containingType.TypeKind == TypeSymbolKind.Interface
+                        ? Accessibility.Public
+                        : Accessibility.Private);
+
+            if (!_extensionMethodsByModule.TryGetValue(module.Path, out var extensions))
+            {
+                extensions = new List<MethodSymbol>();
+                _extensionMethodsByModule.Add(module.Path, extensions);
+            }
+
+            var signatures = new SignatureSet(_factory, _diagnostics);
+
+            foreach (var member in syntax.Members)
+            {
+                if (member is not MethodDeclarationSyntax method)
+                {
+                    ReportAt(sourceName, member.Span, SurtrDiagnosticCode.InvalidExtensionMember,
+                        "An extension block may only declare instance methods (§15) — fields, constructors, static blocks, properties and static methods are not supported yet.");
+                    continue;
+                }
+
+                if (method.IsStatic || method.TypeParameters.Count > 0 || method.IsNative || method.IsConst
+                    || method.Dispatch != DispatchModifier.None || method.IsSealed || method.Body is null)
+                {
+                    ReportAt(sourceName, method.Span, SurtrDiagnosticCode.InvalidExtensionMember,
+                        $"'{method.Name}' cannot be static, generic, native, const, abstract/virtual/override, sealed, or bodyless — an extension block only supports a plain instance method yet (§15).");
+                    continue;
+                }
+
+                var methodScope = scope.CreateChild();
+                var extMethod = new MethodSymbol(method.Name, module, _factory.ErrorType)
+                {
+                    IsStatic = true,
+                    Accessibility = ResolveExtensionMemberAccessibility(method.Visibility, blockAccessibility, sourceName, method.Span),
+                    IsInline = method.Inline == InlineModifier.Inline,
+                    IsForceInline = method.Inline == InlineModifier.ForceInline,
+                    ExtensionTargetType = target,
+                    ExtensionDeclaringContainer = containingType,
+                };
+
+                extMethod.ReturnType = _resolver.Resolve(method.ReturnType, methodScope, sourceName);
+                extMethod.Parameters = BindParameters(method.Parameters, extMethod, methodScope, sourceName);
+
+                // The receiver `obj.method()` is bound against: an ordinary, explicitly-named first
+                // parameter rather than an implicit `this` — extension methods are module-level
+                // functions (`ContainingSymbol` is `module`, not `target`), and `this`/implicit
+                // member access both require a non-static method whose container is a real type
+                // (BodyBinder.BindThis), which this deliberately is not.
+                if (extMethod.Parameters.Count == 0 || !ReferenceEquals(extMethod.Parameters[0].Type, target))
+                {
+                    ReportAt(sourceName, method.Span, SurtrDiagnosticCode.InvalidExtensionReceiver,
+                        $"'{method.Name}' must take '{target.Name}' as its first parameter — the receiver 'obj.{method.Name}(...)' is bound against.");
+                }
+
+                RecordBody(extMethod, method.Body, methodScope, module, containingType: null, sourceName);
+                RecordAttributes(extMethod, method.Attributes, methodScope, sourceName);
+
+                signatures.Add(extMethod, sourceName, method.Span);
+                extensions.Add(extMethod);
+            }
+        }
+
+        /// <summary>
+        /// A member's effective accessibility inside an <c>extension</c> block (§15.2): its own, when
+        /// written, narrowed to or left equal to the block's — never wider. Left unwritten, it
+        /// inherits the block's outright, the same default an ordinary member takes from its type.
+        /// </summary>
+        private Accessibility ResolveExtensionMemberAccessibility(Visibility written, Accessibility blockAccessibility, string sourceName, SourceSpan span)
+        {
+            if (written == Visibility.Default)
+                return blockAccessibility;
+
+            Accessibility resolved = Translate(written, blockAccessibility);
+            if (resolved > blockAccessibility)
+            {
+                ReportAt(sourceName, span, SurtrDiagnosticCode.ExtensionMemberVisibilityTooWide,
+                    $"A member's own visibility cannot be wider than its extension block's — '{Describe(resolved)}' is wider than '{Describe(blockAccessibility)}'.");
+            }
+
+            return resolved;
         }
 
         /// <summary>Records a <c>const</c>, both for folding and for the §7.1 check on its initializer.</summary>

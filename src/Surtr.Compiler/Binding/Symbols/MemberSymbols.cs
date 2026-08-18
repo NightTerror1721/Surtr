@@ -171,6 +171,31 @@ namespace Surtr.Compiler.Binding.Symbols
         /// </remarks>
         public MethodSymbol? OriginalDefinition { get; internal set; }
 
+        /// <summary>
+        /// The type this method extends (§15), or <see langword="null"/> for an ordinary method or
+        /// module-level function.
+        /// </summary>
+        /// <remarks>
+        /// Set only on a method declared inside an <c>extension</c> block. <see cref="ContainingSymbol"/>
+        /// still names the declaring <em>module</em> — an extension method is emitted as an ordinary
+        /// module-level function, never a member of this type — so this is metadata for call-site
+        /// resolution and diagnostics, not a second <see cref="ContainingType"/>. Its receiver is an
+        /// ordinary, explicitly-named first parameter of this type, not an implicit <c>this</c>.
+        /// </remarks>
+        public NamedTypeSymbol? ExtensionTargetType { get; internal set; }
+
+        /// <summary>
+        /// The type an <c>extension</c> block was nested inside, or <see langword="null"/> when it was
+        /// declared at module level.
+        /// </summary>
+        /// <remarks>
+        /// Nesting an <c>extension</c> block inside a class narrows its visibility to that class's own
+        /// members (§15.2) — it does not give the method a second receiver. This is read only by
+        /// <c>AccessCheck.IsAccessibleWithin</c>, since <see cref="Accessibility"/> alone cannot express
+        /// "private to this class" for a method whose real <see cref="ContainingSymbol"/> is a module.
+        /// </remarks>
+        public NamedTypeSymbol? ExtensionDeclaringContainer { get; internal set; }
+
         /// <inheritdoc/>
         public override string ToDisplayString()
         {

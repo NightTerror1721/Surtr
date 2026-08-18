@@ -79,11 +79,12 @@ Hard-reserved, never usable as an identifier:
 
 ```
 abstract   alias     as        break     case      catch       class     const
-constructor          continue  default   else      enum        false     finally
-for        forceinline         fun       if        import      in        inline
-interface  internal  is        let       moduleof  native      null      operator
-override   private   protected public    return    sealed      singleton static
-switch     throw     true      try       typeof    var         virtual   while
+constructor          continue  default   else      enum        extension false
+finally    for       forceinline         fun       if          import    in
+inline     interface internal  is        let       moduleof    native    null
+operator   override  private   protected public    return      sealed   singleton
+static     switch    throw     true      try       typeof      var      virtual
+while
 ```
 
 Four words are **contextual**, not reserved (§3.2): `this`, `super`, `value` and `attribute` mean
@@ -2791,3 +2792,111 @@ does not invalidate anything written against this document.
 - **Multidimensional indexing** (§5.6) — `a[i, j]`. Nothing in the type system expresses it today:
   an array is `A<elem>` and a dictionary `D<key><value>`, both single-key, so it would need a new
   composite type before an operator for it could mean anything.
+
+---
+
+## 15. Extensions
+
+```
+class Vec2 {
+    public let x: float;
+    public let y: float;
+    public constructor(x: float, y: float) { this.x = x; this.y = y; }
+}
+
+extension Vec2 {
+    fun lengthSquared(self: Vec2): float => self.x * self.x + self.y * self.y;
+
+    static fun zero(): Vec2 => Vec2(0.0, 0.0);
+}
+
+let v = Vec2(3.0, 4.0);
+v.lengthSquared();      // 25.0 — resolves to the module function above, receiver as its first argument
+Vec2.zero();
+```
+
+An `extension` block adds methods and properties — instance and static — to a type that is
+already declared, without editing that declaration. It closes the same kind of gap `singleton`
+(§2.8) closes for modules: there is no other way in Surtr to attach a member to a type you do not
+own, or to a built-in (`int`, `string`, `array`, ...) at all.
+
+`extension` is reserved (§1.2), not contextual — unlike `value`/`attribute`, nothing else in the
+language needs it as an ordinary identifier.
+
+### 15.1 What an extension block may declare
+
+- `fun`, instance or `static`, following §3.2/§3.3 like any method — an **instance** one names its
+  receiver as an ordinary, explicitly-written first parameter (`self` above is just a name; any
+  identifier works), whose declared type must be exactly the block's target type. **There is no
+  implicit `this` inside an extension body**: the block adds no real member to the target type's
+  own declaration, so nothing gives its methods the receiver-in-slot-zero treatment a real instance
+  method gets (§3.3). The receiver is read like any other parameter, and one of its own members is
+  reached by writing it out (`self.x`, never a bare `x`).
+- Properties, but only **computed** ones — an explicit `get`/`set` body, or the `=>` short form
+  (§3.3/§3.4), each taking the same explicit receiver parameter a method would. An auto-property is
+  rejected: there is nowhere to put a backing field, because the extended type's instance layout is
+  already fixed by the time its `extension` blocks are bound.
+- Nothing else. `constructor`, `static { }` and fields (`let`/`var`) are all rejected — none of
+  them has an identity or a storage position to run in on a type this block does not own.
+
+### 15.2 Where it may be declared, and visibility
+
+`extension` may be written at module level or nested inside a class, exactly like any other
+declaration (§2.6). Nesting is **purely a visibility restriction, not a second receiver**: a
+`private extension` nested inside a class is reachable only from that class's own members, the
+same way a private nested type already is — it never gains an implicit `this` to the containing
+class alongside the extended receiver.
+
+The block itself carries a `Visibility` (§3.1), defaulting to `internal` at module level and to
+the container's own default when nested. Each member inside may declare its own visibility, which
+must be **no wider than the block's** — if omitted, it inherits the block's. This is the same rule
+already governing a property accessor against its property (§3.4): narrower is always allowed,
+wider is never allowed, equal is the default.
+
+### 15.3 Resolution: an extension is a fallback, never a member
+
+`obj.foo()` is only tried against a visible `extension` after the receiver's own type — walked
+through its full base and interface hierarchy — has no applicable `foo` of its own. This is the
+same "every other reading first" order §8 already uses for converting a method name to a closure.
+
+When an extension applies, it resolves **silently** — there is no diagnostic for a name that
+happens to match a real member elsewhere, and there is none for a real member added later that
+starts shadowing a call a recompiled extension used to serve. That is a behavior change across a
+recompile, not an error, exactly like adding an overload can already change which candidate wins
+elsewhere in the language.
+
+An extension is a candidate at a use site only if the module declaring its block is the use
+site's own module, or one it imports (§2.1) — the same visibility rule already governing a
+module-level function. If more than one visible `extension` block offers an equally applicable
+candidate for the same call, that is ambiguous — the same diagnostic `OverloadResolution` already
+produces for any other resolution tie (§3.5), not a new "closest import wins" rule.
+
+A `static fun` declared inside `extension Type { }` is reached as `Type.foo()`, resolved by the
+same visibility rule — written exactly like an ordinary function, with **no receiver parameter at
+all**, since there is nothing to receive.
+
+### 15.4 Generic extensions
+
+An extension over a generic type declares its **own** type parameter list — it does not see the
+extended type's parameters, the same static-nested rule that already governs an ordinary nested
+type (§6):
+
+```
+extension Array<T> {
+    fun second(self: Array<T>): T => self[1];
+}
+```
+
+The `T` above is inferred from the receiver at the call site exactly as any other generic
+method's type parameter is (§6) — it is never the array built-in's own `G0`, because a method
+declared this way is not a member the built-in class knows about (§15.5).
+
+### 15.5 What it compiles to
+
+Purely a compile-time construct. `obj.foo(x)`, where `foo` comes from an `extension`, compiles as
+an ordinary call to a module-level function with the receiver as its first argument, converted
+into that parameter exactly as any other argument would be (§3.5) — no new opcode, no vtable
+entry, no change to the extended type's own metadata. `Type.of(receiver).members()` (§13.5) never
+lists an extension member, because it is not one; a receiver that is a `value class` or a
+primitive (§2.9) is passed exactly like any other argument, boxing only where the receiver
+parameter's own declared type would already force boxing on any caller.

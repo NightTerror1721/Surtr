@@ -897,6 +897,42 @@ namespace Surtr.Compiler.CodeGen
 
                 context.Declare(method, function);
             }
+
+            // An extension method (§15) is, by the time it reaches here, an ordinary module-level
+            // function — its receiver is already its first declared parameter, and nothing about
+            // its emission differs from `module.Methods` above. It stays a separate list only so
+            // bare-name resolution in the binder never finds one (`ModuleSymbol.ExtensionMethods`).
+            foreach (var method in module.ExtensionMethods)
+            {
+                if (method.IsNative)
+                {
+                    var native = builder.DeclareNativeFunction(
+                        _descriptors.EmitMethodName(method),
+                        _descriptors.Emit(method.ReturnType),
+                        LinkName(method),
+                        Parameters(context, method),
+                        Visibility(method.Accessibility));
+
+                    context.Bind(method, native);
+                    continue;
+                }
+
+                var extensionFunction = builder.DefineFunction(
+                    _descriptors.EmitMethodName(method),
+                    _descriptors.Emit(method.ReturnType),
+                    Parameters(context, method),
+                    Visibility(method.Accessibility));
+
+                foreach (var use in method.Attributes)
+                {
+                    if (use.Type.IsCompileTimeOnlyAttribute)
+                        continue;
+
+                    extensionFunction.AddAttribute(Usage(context, use));
+                }
+
+                context.Declare(method, extensionFunction);
+            }
         }
 
         private SurtrParameterInfo[] Parameters(EmitContext context, MethodSymbol method)
@@ -1275,6 +1311,12 @@ namespace Surtr.Compiler.CodeGen
         private void EmitModuleBodies(EmitContext context, SurtrModuleBuilder builder, ModuleSymbol module)
         {
             foreach (var method in module.Methods)
+            {
+                if (context.TryGetBuilder(method, out var function))
+                    Guarded(method, () => EmitBody(context, method, function, allowMissing: false));
+            }
+
+            foreach (var method in module.ExtensionMethods)
             {
                 if (context.TryGetBuilder(method, out var function))
                     Guarded(method, () => EmitBody(context, method, function, allowMissing: false));

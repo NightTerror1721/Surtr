@@ -763,6 +763,7 @@ namespace Surtr.Compiler.Syntax
                     break;
 
                 case 9:
+                    if (Is(text, "extension")) return TokenType.KeywordExtension;
                     if (Is(text, "interface")) return TokenType.KeywordInterface;
                     if (Is(text, "protected")) return TokenType.KeywordProtected;
                     if (Is(text, "singleton")) return TokenType.KeywordSingleton;

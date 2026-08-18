@@ -1320,6 +1320,18 @@ namespace Surtr.Compiler.Binding
             if (owner is not null && ClosureValue(owner, receiver, name, syntax.Callee) is BoundExpression held)
                 return BindClosureInvocation(syntax, held);
 
+            // §15.3: an extension is tried only once the receiver's own type — walked through its
+            // full hierarchy just above — has nothing of this name at all. Never for a call with no
+            // receiver at all (a bare module-level call), which is what `receiver is not null` rules
+            // out here — `this` bound implicitly for a bare name inside an instance method still
+            // counts as one.
+            if (receiver is not null)
+            {
+                var extensionCandidates = ExtensionCandidates(name);
+                if (extensionCandidates.Count > 0)
+                    return CompleteExtension(syntax, receiver, extensionCandidates, name);
+            }
+
             if (DeclaresMethod(_module, name))
                 return BindModuleCall(syntax, _module, name);
 
@@ -1442,6 +1454,100 @@ namespace Surtr.Compiler.Binding
             }
 
             return Complete(syntax, null, candidates, name, isVirtual: false);
+        }
+
+        /// <summary>
+        /// Every extension method (§15) named <paramref name="name"/> visible from here and reachable
+        /// from this context — this body's own module only, for now; an import joins this search in a
+        /// later phase.
+        /// </summary>
+        private List<MethodSymbol> ExtensionCandidates(string name)
+        {
+            var candidates = new List<MethodSymbol>();
+            foreach (var method in _module.ExtensionMethods)
+            {
+                if (string.Equals(method.Name, name, StringComparison.Ordinal) && IsExtensionAccessible(method))
+                    candidates.Add(method);
+            }
+
+            return candidates;
+        }
+
+        /// <summary>
+        /// Whether an extension method is reachable from here: its own accessibility (§3.1) against
+        /// this module, when it was declared at module level — or against the class it was nested
+        /// inside, when nesting narrowed it that way (§15.2).
+        /// </summary>
+        private bool IsExtensionAccessible(MethodSymbol method)
+        {
+            return method.ExtensionDeclaringContainer is NamedTypeSymbol container
+                ? AccessCheck.IsAccessibleWithin(method.Accessibility, container, _containingType, _module)
+                : AccessCheck.IsAccessible(method, method.Accessibility, _containingType, _module);
+        }
+
+        /// <summary>
+        /// Completes a call an extension method answers (§15): <c>obj.method(args)</c> resolves
+        /// exactly as a call to the module-level function it compiles to, <c>method(obj, args)</c> —
+        /// the receiver becomes the first argument, matched against the method's first parameter like
+        /// any other.
+        /// </summary>
+        /// <remarks>
+        /// A hand-rolled twin of <see cref="Complete"/> rather than a call into it: <see cref="Complete"/>
+        /// always re-binds <c>syntax.Arguments</c> from scratch through <see cref="BindArguments"/>,
+        /// and the receiver here is already bound — passing it through unmodified, instead of handing
+        /// its syntax back in for a second binding pass, is what keeps a receiver with a side effect
+        /// (a call, an increment) from running twice.
+        /// </remarks>
+        private BoundExpression CompleteExtension(
+            CallExpressionSyntax syntax,
+            BoundExpression receiver,
+            IReadOnlyList<MethodSymbol> candidates,
+            string name)
+        {
+            BindArguments(syntax.Arguments, out var arguments, out var infos);
+
+            var combinedInfos = new ArgumentInfo[infos.Length + 1];
+            combinedInfos[0] = new ArgumentInfo(receiver.Type);
+            Array.Copy(infos, 0, combinedInfos, 1, infos.Length);
+
+            var result = _overloads.Resolve(candidates, combinedInfos);
+
+            switch (result.Status)
+            {
+                case OverloadStatus.Resolved:
+                    break;
+
+                case OverloadStatus.NoCandidates:
+                    return Error(syntax, SurtrDiagnosticCode.UnresolvedName, $"'{name}' does not name a method in scope.");
+
+                case OverloadStatus.Ambiguous:
+                    return Error(
+                        syntax,
+                        SurtrDiagnosticCode.UnresolvedCall,
+                        $"The call to '{name}' matches {result.Candidates.Count} extension overloads equally well; a cast has to say which.");
+
+                default:
+                    return Error(syntax, SurtrDiagnosticCode.UnresolvedCall, $"No extension overload of '{name}' takes these arguments.");
+            }
+
+            var method = result.Method!;
+
+            // A synthetic leading entry standing for the receiver - `OrderArguments`/
+            // `BindDeferredLambdas` read only `.Name` and `.Span` off a written argument, never
+            // `.Value`, so this is never re-bound; the already-bound `receiver` below is what
+            // actually fills the slot.
+            var combinedWritten = new ArgumentSyntax[syntax.Arguments.Count + 1];
+            combinedWritten[0] = new ArgumentSyntax(syntax.Callee.Span, null, syntax.Callee);
+            for (int i = 0; i < syntax.Arguments.Count; i++)
+                combinedWritten[i + 1] = syntax.Arguments[i];
+
+            var combinedBound = new BoundExpression?[arguments.Length + 1];
+            combinedBound[0] = receiver;
+            Array.Copy(arguments, 0, combinedBound, 1, arguments.Length);
+
+            var ordered = OrderArguments(syntax, combinedWritten, method, BindDeferredLambdas(combinedWritten, combinedBound, method));
+
+            return new BoundCallExpression(syntax, null, method, ordered, isVirtual: false);
         }
 
         private BoundExpression Complete(

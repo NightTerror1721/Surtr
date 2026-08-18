@@ -5820,5 +5820,202 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         #endregion
+
+        #region Extension methods (§15) — Fase 1: instance methods, same module, non-generic
+        private const string Vec2 =
+            "class Vec2 {\n"
+                + "  public let x: float;\n"
+                + "  public let y: float;\n"
+                + "  public constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                + "}\n";
+
+        [Fact]
+        public void AnExtensionMethodIsCallableOnItsTargetType()
+        {
+            var runtime = Run(
+                Vec2
+                    + "extension Vec2 { fun lengthSquared(v: Vec2): float => v.x * v.x + v.y * v.y; }\n"
+                    + "fun run(): float { return Vec2(3.0, 4.0).lengthSquared(); }");
+
+            Assert.Equal(25.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AnExtensionMethodsExtraArgumentsFollowTheReceiver()
+        {
+            var runtime = Run(
+                Vec2
+                    + "extension Vec2 { fun scaled(v: Vec2, factor: float): float => (v.x + v.y) * factor; }\n"
+                    + "fun run(): float { return Vec2(1.0, 2.0).scaled(2.0); }");
+
+            Assert.Equal(6.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AnExtensionMethodOnANonReceiverExpressionEvaluatesTheReceiverOnce()
+        {
+            // The receiver here is a call with a side effect (a module counter) - if `CompleteExtension`
+            // ever re-bound it from syntax instead of reusing the already-bound expression, this would
+            // observe 2.
+            var runtime = Run(
+                Vec2
+                    + "var calls: int = 0;\n"
+                    + "fun makeVec(): Vec2 { calls += 1; return Vec2(1.0, 1.0); }\n"
+                    + "extension Vec2 { fun lengthSquared(v: Vec2): float => v.x * v.x + v.y * v.y; }\n"
+                    + "fun run(): int { let n = makeVec().lengthSquared(); calls += 0; return calls; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ARealMemberWinsSilentlyOverAnExtensionWithTheSameName()
+        {
+            var runtime = Run(
+                "class Vec2 {\n"
+                    + "  public let x: float;\n"
+                    + "  public constructor(x: float) { this.x = x; }\n"
+                    + "  public fun describe(): float => x;\n"
+                    + "}\n"
+                    + "extension Vec2 { fun describe(v: Vec2): float => -1.0; }\n"
+                    + "fun run(): float { return Vec2(9.0).describe(); }");
+
+            Assert.Equal(9.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void TwoExtensionMethodsOnDifferentTargetTypesResolveIndependently()
+        {
+            var runtime = Run(
+                Vec2
+                    + "extension Vec2 { fun describe(v: Vec2): string => \"vec2\"; }\n"
+                    + "extension int { fun describe(n: int): string => \"int\"; }\n"
+                    + "fun runVec(): string { return Vec2(1.0, 2.0).describe(); }\n"
+                    + "fun runInt(): string { let n = 5; return n.describe(); }");
+
+            Assert.Equal("vec2", Text(runtime, "runVec"));
+            Assert.Equal("int", Text(runtime, "runInt"));
+        }
+
+        [Fact]
+        public void AnExtensionNestedInAClassIsReachableFromThatClasssOwnMembers()
+        {
+            var runtime = Run(
+                Vec2
+                    + "class Registry {\n"
+                    + "  public constructor() { }\n"
+                    + "  private extension Vec2 { fun secret(v: Vec2): float => 42.0; }\n"
+                    + "  public fun useSecret(v: Vec2): float => v.secret();\n"
+                    + "}\n"
+                    + "fun run(): float { return Registry().useSecret(Vec2(1.0, 1.0)); }");
+
+            Assert.Equal(42.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AnExtensionNestedInAClassIsNotReachableFromOutsideIt()
+        {
+            using var compilation = Reject(
+                Vec2
+                    + "class Registry {\n"
+                    + "  public constructor() { }\n"
+                    + "  private extension Vec2 { fun secret(v: Vec2): float => 42.0; }\n"
+                    + "}\n"
+                    + "fun run(): float { return Vec2(1.0, 1.0).secret(); }");
+
+            Assert.True(compilation.HasErrors, "A private extension nested in another class should not be a candidate outside it.");
+        }
+
+        [Fact]
+        public void AnExtensionMemberWiderThanItsBlockIsRejected()
+        {
+            using var compilation = Reject(
+                Vec2
+                    + "class Registry {\n"
+                    + "  public constructor() { }\n"
+                    + "  private extension Vec2 { public fun open(v: Vec2): float => 1.0; }\n"
+                    + "}\n"
+                    + "fun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.ExtensionMemberVisibilityTooWide);
+        }
+
+        [Fact]
+        public void AnExtensionMemberNarrowerThanItsBlockIsAccepted()
+        {
+            var runtime = Run(
+                Vec2
+                    + "class Registry {\n"
+                    + "  public constructor() { }\n"
+                    + "  internal extension Vec2 { private fun secret(v: Vec2): float => 7.0; }\n"
+                    + "  public fun useSecret(v: Vec2): float => v.secret();\n"
+                    + "}\n"
+                    + "fun run(): float { return Registry().useSecret(Vec2(1.0, 1.0)); }");
+
+            Assert.Equal(7.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AnExtensionTargetingACompositeTypeIsRejectedForNow()
+        {
+            using var compilation = Reject(
+                "extension int[] { fun first(a: int[]): int => a[0]; }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidExtensionTarget);
+        }
+
+        [Fact]
+        public void AnExtensionMethodWhoseFirstParameterIsNotTheTargetTypeIsRejected()
+        {
+            using var compilation = Reject(
+                Vec2 + "extension Vec2 { fun broken(x: int): int => x; }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidExtensionReceiver);
+        }
+
+        [Fact]
+        public void AnExtensionMethodWithNoParametersAtAllIsRejected()
+        {
+            using var compilation = Reject(
+                Vec2 + "extension Vec2 { fun broken(): int => 1; }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidExtensionReceiver);
+        }
+
+        [Fact]
+        public void AFieldInsideAnExtensionBlockIsRejected()
+        {
+            using var compilation = Reject(
+                Vec2 + "extension Vec2 { let cached: int = 0; }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidExtensionMember);
+        }
+
+        [Fact]
+        public void AStaticMethodInsideAnExtensionBlockIsRejectedForNow()
+        {
+            using var compilation = Reject(
+                Vec2 + "extension Vec2 { static fun zero(): float => 0.0; }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidExtensionMember);
+        }
+
+        [Fact]
+        public void AConstructorInsideAnExtensionBlockIsRejected()
+        {
+            using var compilation = Reject(
+                Vec2 + "extension Vec2 { constructor() { } }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidExtensionMember);
+        }
+
+        [Fact]
+        public void AnExtensionBlockDeclaredStaticIsRejected()
+        {
+            using var compilation = Reject(
+                Vec2 + "static extension Vec2 { fun f(v: Vec2): int => 1; }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidModifier);
+        }
+        #endregion
     }
 }
