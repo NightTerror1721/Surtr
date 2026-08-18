@@ -1,5 +1,5 @@
 module surtr.collections.List
-  constants: 7   types: 7   fields: 14   methods: 46   modules: 0
+  constants: 7   types: 7   fields: 14   methods: 48   modules: 0
   string #0 = "Initial capacity must be non-negative"
   string #1 = "Index out of range"
   string #2 = "Array index must be non-negative"
@@ -15,7 +15,7 @@ module surtr.collections.List
     #3  surtr.collections.List:List.Iterator<T0>
     #4  surtr.collections.List:LinkedList.Node<T0>
     #5  surtr:NullReferenceException
-    #6  surtr.collections.List:LinkedList.ListIterator<T0>
+    #6  surtr.collections.List:LinkedList.Iterator<T0>
 
   field table:
     #0  surtr.collections.List:List<._capacity: int
@@ -30,56 +30,58 @@ module surtr.collections.List
     #9  surtr.collections.List:LinkedList.Node<.value: T0
     #10  surtr.collections.List:LinkedList.Node<.next: surtr.collections.List:LinkedList.Node<T0>
     #11  surtr.collections.List:LinkedList.Node<.prev: surtr.collections.List:LinkedList.Node<T0>
-    #12  surtr.collections.List:LinkedList.ListIterator<._node: surtr.collections.List:LinkedList.Node<T0>
-    #13  surtr.collections.List:LinkedList.ListIterator<._current: T0
+    #12  surtr.collections.List:LinkedList.Iterator<._node: surtr.collections.List:LinkedList.Node<T0>
+    #13  surtr.collections.List:LinkedList.Iterator<._current: T0
 
   method table:
-    #0  surtr.collections.List:IReadOnlyList<.indexOf(T0) -> int
-    #1  surtr.collections.List:IList<.insert(int, T0) -> void
-    #2  surtr.collections.List:IList<.removeAt(int) -> bool
-    #3  surtr.collections.List:List<.ctor(int) -> void
-    #4  surtr.collections.List:List<.get_length() -> int
-    #5  surtr.collections.List:List<.get_isReadOnly() -> bool
-    #6  surtr.collections.List:List<.get(int) -> T0
-    #7  surtr.collections.List:List<.set(int, T0) -> void
-    #8  surtr.collections.List:List<.add(T0) -> void
-    #9  surtr.collections.List:List<.insert(int, T0) -> void
-    #10  surtr.collections.List:List<.removeAt(int) -> bool
-    #11  surtr.collections.List:List<.remove(T0) -> bool
-    #12  surtr.collections.List:List<.clear() -> void
-    #13  surtr.collections.List:List<.indexOf(T0) -> int
-    #14  surtr.collections.List:List<.contains(T0) -> bool
-    #15  surtr.collections.List:List<.copyTo(T0[], int) -> void
-    #16  surtr.collections.List:List<.iterate() -> surtr:IIterator<T0>
-    #17  surtr.collections.List:List<.ensureCapacity(int) -> void
-    #18  surtr.collections.List:List.Iterator<.ctor(T0[], int, int) -> void
-    #19  surtr.collections.List:List.Iterator<.get_current() -> T0
-    #20  surtr.collections.List:List.Iterator<.moveNext() -> bool
-    #21  surtr.collections.List:LinkedList<.ctor() -> void
-    #22  surtr.collections.List:LinkedList<.get_length() -> int
-    #23  surtr.collections.List:LinkedList<.get_isReadOnly() -> bool
-    #24  surtr.collections.List:LinkedList<.get_front() -> T0
-    #25  surtr.collections.List:LinkedList<.get_back() -> T0
-    #26  surtr.collections.List:LinkedList<.add(T0) -> void
-    #27  surtr.collections.List:LinkedList<.insert(int, T0) -> void
-    #28  surtr.collections.List:LinkedList<.get(int) -> T0
-    #29  surtr.collections.List:LinkedList<.set(int, T0) -> void
-    #30  surtr.collections.List:LinkedList<.contains(T0) -> bool
-    #31  surtr.collections.List:LinkedList<.copyTo(T0[], int) -> void
-    #32  surtr.collections.List:LinkedList<.indexOf(T0) -> int
-    #33  surtr.collections.List:LinkedList<.iterate() -> surtr:IIterator<T0>
-    #34  surtr.collections.List:LinkedList<.removeAt(int) -> bool
-    #35  surtr.collections.List:LinkedList<.remove(T0) -> bool
-    #36  surtr.collections.List:LinkedList<.clear() -> void
-    #37  surtr.collections.List:LinkedList<.op_[](surtr.collections.List:LinkedList<T0>, int) -> T0
-    #38  surtr.collections.List:LinkedList<.op_[](surtr.collections.List:LinkedList<T0>, int, T0) -> void
-    #39  surtr.collections.List:LinkedList.Node<.ctor(T0) -> void
-    #40  surtr.collections.List:LinkedList.ListIterator<.ctor(surtr.collections.List:LinkedList.Node<T0>) -> void
-    #41  surtr.collections.List:LinkedList.ListIterator<.moveNext() -> bool
-    #42  surtr.collections.List:LinkedList.ListIterator<.get_current() -> T0
-    #43  surtr:IndexOutOfRangeException.ctor(string) -> void
-    #44  surtr:ArgumentException.ctor(string) -> void
-    #45  surtr:NullReferenceException.ctor(string) -> void
+    #0  surtr.collections.List:IReadOnlyList<.get(int) -> T0
+    #1  surtr.collections.List:IReadOnlyList<.indexOf(T0) -> int
+    #2  surtr.collections.List:IList<.set(int, T0) -> void
+    #3  surtr.collections.List:IList<.insert(int, T0) -> void
+    #4  surtr.collections.List:IList<.removeAt(int) -> bool
+    #5  surtr.collections.List:List<.ctor(int) -> void
+    #6  surtr.collections.List:List<.get_length() -> int
+    #7  surtr.collections.List:List<.get_isReadOnly() -> bool
+    #8  surtr.collections.List:List<.get(int) -> T0
+    #9  surtr.collections.List:List<.set(int, T0) -> void
+    #10  surtr.collections.List:List<.add(T0) -> void
+    #11  surtr.collections.List:List<.insert(int, T0) -> void
+    #12  surtr.collections.List:List<.removeAt(int) -> bool
+    #13  surtr.collections.List:List<.remove(T0) -> bool
+    #14  surtr.collections.List:List<.clear() -> void
+    #15  surtr.collections.List:List<.indexOf(T0) -> int
+    #16  surtr.collections.List:List<.contains(T0) -> bool
+    #17  surtr.collections.List:List<.copyTo(T0[], int) -> void
+    #18  surtr.collections.List:List<.iterate() -> surtr:IIterator<T0>
+    #19  surtr.collections.List:List<.ensureCapacity(int) -> void
+    #20  surtr.collections.List:List.Iterator<.ctor(T0[], int, int) -> void
+    #21  surtr.collections.List:List.Iterator<.get_current() -> T0
+    #22  surtr.collections.List:List.Iterator<.moveNext() -> bool
+    #23  surtr.collections.List:LinkedList<.ctor() -> void
+    #24  surtr.collections.List:LinkedList<.get_length() -> int
+    #25  surtr.collections.List:LinkedList<.get_isReadOnly() -> bool
+    #26  surtr.collections.List:LinkedList<.get_front() -> T0
+    #27  surtr.collections.List:LinkedList<.get_back() -> T0
+    #28  surtr.collections.List:LinkedList<.add(T0) -> void
+    #29  surtr.collections.List:LinkedList<.insert(int, T0) -> void
+    #30  surtr.collections.List:LinkedList<.get(int) -> T0
+    #31  surtr.collections.List:LinkedList<.set(int, T0) -> void
+    #32  surtr.collections.List:LinkedList<.contains(T0) -> bool
+    #33  surtr.collections.List:LinkedList<.copyTo(T0[], int) -> void
+    #34  surtr.collections.List:LinkedList<.indexOf(T0) -> int
+    #35  surtr.collections.List:LinkedList<.iterate() -> surtr:IIterator<T0>
+    #36  surtr.collections.List:LinkedList<.removeAt(int) -> bool
+    #37  surtr.collections.List:LinkedList<.remove(T0) -> bool
+    #38  surtr.collections.List:LinkedList<.clear() -> void
+    #39  surtr.collections.List:LinkedList<.op_[](surtr.collections.List:LinkedList<T0>, int) -> T0
+    #40  surtr.collections.List:LinkedList<.op_[](surtr.collections.List:LinkedList<T0>, int, T0) -> void
+    #41  surtr.collections.List:LinkedList.Node<.ctor(T0) -> void
+    #42  surtr.collections.List:LinkedList.Iterator<.ctor(surtr.collections.List:LinkedList.Node<T0>) -> void
+    #43  surtr.collections.List:LinkedList.Iterator<.moveNext() -> bool
+    #44  surtr.collections.List:LinkedList.Iterator<.get_current() -> T0
+    #45  surtr:IndexOutOfRangeException.ctor(string) -> void
+    #46  surtr:ArgumentException.ctor(string) -> void
+    #47  surtr:NullReferenceException.ctor(string) -> void
 
 interface IList`1<T> : surtr.collections.List:IReadOnlyList<T0>, surtr.collections.Collection:ICollection<T0>  [public]
 
@@ -87,7 +89,11 @@ interface IList`1<T> : surtr.collections.List:IReadOnlyList<T0>, surtr.collectio
 
   [public] abstract removeAt(index: int): bool
 
+  [public] abstract set(index: int, value: T0): void
+
 interface IReadOnlyList`1<T> : surtr.collections.Collection:IReadOnlyCollection<T0>  [public]
+
+  [public] abstract get(index: int): T0
 
   [public] abstract indexOf(item: T0): int
 
@@ -105,7 +111,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
         0307  ObjNew 0 (surtr:IndexOutOfRangeException)
         030A  Dup
         030B  Ldc5
-        030C  InvokeSpecial 43 (ctor) args=2 ret=0
+        030C  InvokeSpecial 45 (ctor) args=2 ret=0
         0311  Throw
       L0:
         0312  Ldl0
@@ -122,7 +128,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
         02ED  ObjNew 0 (surtr:IndexOutOfRangeException)
         02F0  Dup
         02F1  Ldc5
-        02F2  InvokeSpecial 43 (ctor) args=2 ret=0
+        02F2  InvokeSpecial 45 (ctor) args=2 ret=0
         02F7  Throw
       L0:
         02F8  Ldl0
@@ -148,7 +154,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       031A  ObjNew 4 (surtr.collections.List:LinkedList.Node<T0>)
       031D  Dup
       031E  Ldl1
-      031F  InvokeSpecial 39 (ctor) args=2 ret=0
+      031F  InvokeSpecial 41 (ctor) args=2 ret=0
       0324  Stl2
       0325  Ldl0
       0326  FieldGet 7 (_tail)
@@ -277,7 +283,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       0461  ObjNew 0 (surtr:IndexOutOfRangeException)
       0464  Dup
       0465  Ldc1
-      0466  InvokeSpecial 43 (ctor) args=2 ret=0
+      0466  InvokeSpecial 45 (ctor) args=2 ret=0
       046B  Throw
     L1:
       046C  Ldl0
@@ -297,7 +303,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       0482  ObjNew 5 (surtr:NullReferenceException)
       0485  Dup
       0486  Ldc6
-      0487  InvokeSpecial 45 (ctor) args=2 ret=0
+      0487  InvokeSpecial 47 (ctor) args=2 ret=0
       048C  Throw
     L3:
       048D  Stl2
@@ -353,13 +359,13 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       0375  ObjNew 0 (surtr:IndexOutOfRangeException)
       0378  Dup
       0379  Ldc1
-      037A  InvokeSpecial 43 (ctor) args=2 ret=0
+      037A  InvokeSpecial 45 (ctor) args=2 ret=0
       037F  Throw
     L1:
       0380  ObjNew 4 (surtr.collections.List:LinkedList.Node<T0>)
       0383  Dup
       0384  Ldl2
-      0385  InvokeSpecial 39 (ctor) args=2 ret=0
+      0385  InvokeSpecial 41 (ctor) args=2 ret=0
       038A  Stl3
       038B  Ldl1
       038C  PushI8 0
@@ -394,7 +400,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       03C1  JPNE +8 -> L5 (03CC)
       03C4  Ldl0
       03C5  Ldl2
-      03C6  InvokeVirtual 26 (add) args=2 ret=0
+      03C6  InvokeVirtual 28 (add) args=2 ret=0
       03CB  ReturnVoid
     L5:
       03CC  Ldl0
@@ -413,7 +419,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       03DF  ObjNew 5 (surtr:NullReferenceException)
       03E2  Dup
       03E3  Ldc6
-      03E4  InvokeSpecial 45 (ctor) args=2 ret=0
+      03E4  InvokeSpecial 47 (ctor) args=2 ret=0
       03E9  Throw
     L7:
       03EA  FieldGet 10 (next)
@@ -432,7 +438,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       0400  ObjNew 5 (surtr:NullReferenceException)
       0403  Dup
       0404  Ldc6
-      0405  InvokeSpecial 45 (ctor) args=2 ret=0
+      0405  InvokeSpecial 47 (ctor) args=2 ret=0
       040A  Throw
     L9:
       040B  FieldGet 11 (prev)
@@ -448,7 +454,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       0421  ObjNew 5 (surtr:NullReferenceException)
       0424  Dup
       0425  Ldc6
-      0426  InvokeSpecial 45 (ctor) args=2 ret=0
+      0426  InvokeSpecial 47 (ctor) args=2 ret=0
       042B  Throw
     L10:
       042C  Ldl3
@@ -474,18 +480,18 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
 
   [public] virtual iterate(): surtr:IIterator<T0>
     ; entry 30, locals 1, stack 3, code 0547..0555
-      0547  ObjNew 6 (surtr.collections.List:LinkedList.ListIterator<T0>)
+      0547  ObjNew 6 (surtr.collections.List:LinkedList.Iterator<T0>)
       054A  Dup
       054B  Ldl0
       054C  FieldGet 6 (_head)
-      054F  InvokeSpecial 40 (ctor) args=2 ret=0
+      054F  InvokeSpecial 42 (ctor) args=2 ret=0
       0554  ReturnValue
 
   [public] static op_[](self: surtr.collections.List:LinkedList<T0>, index: int): T0
     ; entry 34, locals 2, stack 2, code 06A3..06AB
       06A3  Ldl0
       06A4  Ldl1
-      06A5  InvokeVirtual 28 (get) args=2 ret=1
+      06A5  InvokeVirtual 30 (get) args=2 ret=1
       06AA  ReturnValue
 
   [public] static op_[](self: surtr.collections.List:LinkedList<T0>, index: int, value: T0): void
@@ -493,7 +499,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       06AB  Ldl0
       06AC  Ldl1
       06AD  Ldl2
-      06AE  InvokeVirtual 29 (set) args=3 ret=0
+      06AE  InvokeVirtual 31 (set) args=3 ret=0
       06B3  ReturnVoid
 
   [public] virtual remove(item: T0): bool
@@ -525,7 +531,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       0636  ObjNew 5 (surtr:NullReferenceException)
       0639  Dup
       063A  Ldc6
-      063B  InvokeSpecial 45 (ctor) args=2 ret=0
+      063B  InvokeSpecial 47 (ctor) args=2 ret=0
       0640  Throw
     L2:
       0641  Ldl2
@@ -549,7 +555,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       0663  ObjNew 5 (surtr:NullReferenceException)
       0666  Dup
       0667  Ldc6
-      0668  InvokeSpecial 45 (ctor) args=2 ret=0
+      0668  InvokeSpecial 47 (ctor) args=2 ret=0
       066D  Throw
     L5:
       066E  Ldl2
@@ -597,7 +603,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       056A  ObjNew 0 (surtr:IndexOutOfRangeException)
       056D  Dup
       056E  Ldc1
-      056F  InvokeSpecial 43 (ctor) args=2 ret=0
+      056F  InvokeSpecial 45 (ctor) args=2 ret=0
       0574  Throw
     L1:
       0575  Ldl0
@@ -617,7 +623,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       058B  ObjNew 5 (surtr:NullReferenceException)
       058E  Dup
       058F  Ldc6
-      0590  InvokeSpecial 45 (ctor) args=2 ret=0
+      0590  InvokeSpecial 47 (ctor) args=2 ret=0
       0595  Throw
     L3:
       0596  Stl2
@@ -641,7 +647,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       05B8  ObjNew 5 (surtr:NullReferenceException)
       05BB  Dup
       05BC  Ldc6
-      05BD  InvokeSpecial 45 (ctor) args=2 ret=0
+      05BD  InvokeSpecial 47 (ctor) args=2 ret=0
       05C2  Throw
     L6:
       05C3  Ldl2
@@ -665,7 +671,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       05E5  ObjNew 5 (surtr:NullReferenceException)
       05E8  Dup
       05E9  Ldc6
-      05EA  InvokeSpecial 45 (ctor) args=2 ret=0
+      05EA  InvokeSpecial 47 (ctor) args=2 ret=0
       05EF  Throw
     L9:
       05F0  Ldl2
@@ -705,7 +711,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       04AE  ObjNew 0 (surtr:IndexOutOfRangeException)
       04B1  Dup
       04B2  Ldc1
-      04B3  InvokeSpecial 43 (ctor) args=2 ret=0
+      04B3  InvokeSpecial 45 (ctor) args=2 ret=0
       04B8  Throw
     L1:
       04B9  Ldl0
@@ -725,7 +731,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       04CF  ObjNew 5 (surtr:NullReferenceException)
       04D2  Dup
       04D3  Ldc6
-      04D4  InvokeSpecial 45 (ctor) args=2 ret=0
+      04D4  InvokeSpecial 47 (ctor) args=2 ret=0
       04D9  Throw
     L3:
       04DA  Stl3
@@ -737,7 +743,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       04E3  FieldSet 9 (value)
       04E6  ReturnVoid
 
-  sealed class ListIterator`1<T> : surtr:IIterator<T0>  [private]
+  sealed class Iterator`1<T> : surtr:IIterator<T0>  [private]
     [private] field _current: T0
     [private] field _node: surtr.collections.List:LinkedList.Node<T0>
 
@@ -824,7 +830,7 @@ class List`1<T> : surtr.collections.List:IList<T0>  [public]
       008B  FieldGet 2 (_length)
       008E  PushI8 1
       0090  Add
-      0091  InvokeSpecial 17 (ensureCapacity) args=2 ret=0
+      0091  InvokeSpecial 19 (ensureCapacity) args=2 ret=0
     L0:
       0096  Ldl0
       0097  FieldGet 1 (_items)
@@ -857,7 +863,7 @@ class List`1<T> : surtr.collections.List:IList<T0>  [public]
     ; entry 11, locals 2, stack 2, code 01B8..01C3
       01B8  Ldl0
       01B9  Ldl1
-      01BA  InvokeVirtual 13 (indexOf) args=2 ret=1
+      01BA  InvokeVirtual 15 (indexOf) args=2 ret=1
       01BF  PushI8 0
       01C1  GE
       01C2  ReturnValue
@@ -870,7 +876,7 @@ class List`1<T> : surtr.collections.List:IList<T0>  [public]
       01C9  ObjNew 0 (surtr:IndexOutOfRangeException)
       01CC  Dup
       01CD  Ldc2
-      01CE  InvokeSpecial 43 (ctor) args=2 ret=0
+      01CE  InvokeSpecial 45 (ctor) args=2 ret=0
       01D3  Throw
     L0:
       01D4  Ldl1
@@ -883,7 +889,7 @@ class List`1<T> : surtr.collections.List:IList<T0>  [public]
       01DF  ObjNew 2 (surtr:ArgumentException)
       01E2  Dup
       01E3  Ldc3
-      01E4  InvokeSpecial 44 (ctor) args=2 ret=0
+      01E4  InvokeSpecial 46 (ctor) args=2 ret=0
       01E9  Throw
     L1:
       01EA  PushI8 0
@@ -915,7 +921,7 @@ class List`1<T> : surtr.collections.List:IList<T0>  [public]
       0006  ObjNew 0 (surtr:IndexOutOfRangeException)
       0009  Dup
       000A  Ldc0
-      000B  InvokeSpecial 43 (ctor) args=2 ret=0
+      000B  InvokeSpecial 45 (ctor) args=2 ret=0
       0010  Throw
     L0:
       0011  Ldl0
@@ -1004,7 +1010,7 @@ class List`1<T> : surtr.collections.List:IList<T0>  [public]
       0044  ObjNew 0 (surtr:IndexOutOfRangeException)
       0047  Dup
       0048  Ldc1
-      0049  InvokeSpecial 43 (ctor) args=2 ret=0
+      0049  InvokeSpecial 45 (ctor) args=2 ret=0
       004E  Throw
     L1:
       004F  Ldl0
@@ -1056,7 +1062,7 @@ class List`1<T> : surtr.collections.List:IList<T0>  [public]
       00C7  ObjNew 0 (surtr:IndexOutOfRangeException)
       00CA  Dup
       00CB  Ldc1
-      00CC  InvokeSpecial 43 (ctor) args=2 ret=0
+      00CC  InvokeSpecial 45 (ctor) args=2 ret=0
       00D1  Throw
     L1:
       00D2  Ldl0
@@ -1069,7 +1075,7 @@ class List`1<T> : surtr.collections.List:IList<T0>  [public]
       00DF  FieldGet 2 (_length)
       00E2  PushI8 1
       00E4  Add
-      00E5  InvokeSpecial 17 (ensureCapacity) args=2 ret=0
+      00E5  InvokeSpecial 19 (ensureCapacity) args=2 ret=0
     L2:
       00EA  Ldl0
       00EB  FieldGet 2 (_length)
@@ -1119,21 +1125,21 @@ class List`1<T> : surtr.collections.List:IList<T0>  [public]
       020F  Ldl0
       0210  FieldGet 2 (_length)
       0213  PushI8 -1
-      0215  InvokeSpecial 18 (ctor) args=4 ret=0
+      0215  InvokeSpecial 20 (ctor) args=4 ret=0
       021A  ReturnValue
 
   [public] virtual remove(item: T0): bool
     ; entry 8, locals 3, stack 2, code 0177..0190
       0177  Ldl0
       0178  Ldl1
-      0179  InvokeVirtual 13 (indexOf) args=2 ret=1
+      0179  InvokeVirtual 15 (indexOf) args=2 ret=1
       017E  Stl2
       017F  Ldl2
       0180  PushI8 0
       0182  JPLT +9 -> L0 (018E)
       0185  Ldl0
       0186  Ldl2
-      0187  InvokeVirtual 10 (removeAt) args=2 ret=0
+      0187  InvokeVirtual 12 (removeAt) args=2 ret=0
       018C  PushTrue
       018D  ReturnValue
     L0:
@@ -1158,7 +1164,7 @@ class List`1<T> : surtr.collections.List:IList<T0>  [public]
       0137  ObjNew 0 (surtr:IndexOutOfRangeException)
       013A  Dup
       013B  Ldc1
-      013C  InvokeSpecial 43 (ctor) args=2 ret=0
+      013C  InvokeSpecial 45 (ctor) args=2 ret=0
       0141  Throw
     L1:
       0142  Ldl1
@@ -1216,7 +1222,7 @@ class List`1<T> : surtr.collections.List:IList<T0>  [public]
       006B  ObjNew 0 (surtr:IndexOutOfRangeException)
       006E  Dup
       006F  Ldc1
-      0070  InvokeSpecial 43 (ctor) args=2 ret=0
+      0070  InvokeSpecial 45 (ctor) args=2 ret=0
       0075  Throw
     L1:
       0076  Ldl0
@@ -1252,7 +1258,7 @@ class List`1<T> : surtr.collections.List:IList<T0>  [public]
           0296  ObjNew 0 (surtr:IndexOutOfRangeException)
           0299  Dup
           029A  Ldc4
-          029B  InvokeSpecial 43 (ctor) args=2 ret=0
+          029B  InvokeSpecial 45 (ctor) args=2 ret=0
           02A0  Throw
         L1:
           02A1  Ldl0

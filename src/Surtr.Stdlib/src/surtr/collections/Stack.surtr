@@ -1,0 +1,89 @@
+import surtr.collections.Collection;
+import surtr.core.Exception;
+
+public interface IStack<T>
+{
+    isEmpty: bool { get; }
+
+    fun push(item: T): void;
+    fun pop(): T;
+    fun peek(): T;
+}
+
+public class Stack<T> : IStack<T>, ICollection<T>
+{
+    private let _items: T[];
+
+    public inline constructor()
+    {
+        this._items = [];
+    }
+
+    public sealed override inline length: int => _items.length;
+    public sealed override inline isReadOnly: bool => false;
+    public sealed override inline isEmpty: bool => _items.length == 0;
+
+    public override fun push(item: T): void => _items.push(item);
+
+    public override fun pop(): T
+    {
+        if (isEmpty)
+            throw InvalidOperationException("Stack is empty.");
+        return _items.pop();
+    }
+
+    public override fun peek(): T
+    {
+        if (isEmpty)
+            throw InvalidOperationException("Stack is empty.");
+
+        return _items.get(_items.length - 1);
+    }
+
+    public override inline fun add(item: T): void => push(item);
+    public override inline fun remove(item: T): bool { throw InvalidOperationException("Stack does not support removing arbitrary items."); }
+    public override inline fun clear(): void => _items.clear();
+
+    public override fun contains(item: T): bool => _items.contains(item);
+
+    public override fun copyTo(array: T[], arrayIndex: int): void
+    {
+        for (i in 0.._items.length - 1)
+            array[arrayIndex + i] = _items[i];
+    }
+
+    public override inline fun iterate(): IIterator<T> => Iterator<T>(_items, _items.length);
+
+    private sealed class Iterator<T> : IIterator<T>
+    {
+        private let _items: T[];
+        private let _length: int;
+        private var _index: int;
+
+        public constructor(items: T[], length: int, index: int = -1)
+        {
+            this._items = items;
+            this._length = length;
+            this._index = index;
+        }
+
+        public override current: T
+        {
+            get
+            {
+                if (_index < 0 || _index >= _length) throw IndexOutOfRangeException("Iterator is out of bounds");
+                return _items[_index];
+            }
+        }
+
+        public override fun moveNext(): bool
+        {
+            if (_index + 1 < _length)
+            {
+                _index++;
+                return true;
+            }
+            return false;
+        }
+    }
+}

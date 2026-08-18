@@ -432,8 +432,16 @@ namespace Surtr.Compiler.Binding
             scope.AddCandidate(syntax.Name, symbol);
             RecordAttributes(symbol, syntax.Attributes, scope, sourceName);
 
-            // A type's own parameters and its nested types are visible inside it and nowhere else.
-            var typeScope = scope.CreateChild();
+            // A type's own parameters and its nested types are visible inside it and nowhere else,
+            // but they cannot live in one scope: a nested type's declaration must not see its
+            // container's type parameters (§6, the static-nested rule), yet its body may still name
+            // its container's other nested types - a sibling. So the container gets two scopes:
+            // `nestedScope` holds its nested types' names, and `typeScope` (a child of it) holds its
+            // type parameters and is what its own members bind against. A nested type's declaration
+            // binds against `nestedScope`, which puts the sibling names on its chain and keeps the
+            // parameters off it.
+            var nestedScope = scope.CreateChild();
+            var typeScope = nestedScope.CreateChild();
             foreach (var parameter in symbol.TypeParameters)
                 typeScope.TryDeclare(parameter.Name, parameter);
 
@@ -456,12 +464,14 @@ namespace Surtr.Compiler.Binding
 
             foreach (var member in members)
             {
-                // §6: a nested type is declared against `scope`, not `typeScope` - the
-                // static-nested rule, not the inner-class one. `typeScope` already carries
-                // `symbol`'s own type parameters (just above), and a nested type's declaration
-                // must not see them; only the members bound directly on `symbol` itself do.
+                // A nested type's name is a member of its container (§2.6), so it is declared
+                // against `nestedScope` rather than `scope` - it must not be visible at the
+                // container's outside, or two containers' same-named nested types collide there.
+                // The static-nested rule is why it is not `typeScope` either: `typeScope` carries
+                // `symbol`'s own type parameters, and a nested type's declaration must not see
+                // them; only the members bound directly on `symbol` itself do.
                 if (member is TypeDeclarationSyntax or AliasDeclarationSyntax)
-                    DeclareMember(member, module, symbol, scope, nested, nestedNames, sourceName);
+                    DeclareMember(member, module, symbol, nestedScope, nested, nestedNames, sourceName);
             }
 
             symbol.NestedTypes = nested;

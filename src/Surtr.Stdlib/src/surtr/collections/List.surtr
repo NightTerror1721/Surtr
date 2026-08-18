@@ -2,11 +2,13 @@ import surtr.collections.Collection;
 
 public interface IReadOnlyList<T> : IReadOnlyCollection<T>
 {
+    fun get(index: int): T;
     fun indexOf(item: T): int;
 }
 
 public interface IList<T> : IReadOnlyList<T>, ICollection<T>
 {
+    fun set(index: int, value: T): void;
     fun insert(index: int, item: T): void;
     fun removeAt(index: int): bool;
 }
@@ -174,7 +176,7 @@ public class LinkedList<T> : IList<T>
         }
     }
 
-    private sealed class ListIterator<T> : IIterator<T>
+    private sealed class Iterator<T> : IIterator<T>
     {
         private var _node: Node<T>?;
         private var _current: T;
@@ -334,7 +336,7 @@ public class LinkedList<T> : IList<T>
 
     public override fun iterate(): IIterator<T>
     {
-        return ListIterator<T>(this._head);
+        return Iterator<T>(this._head);
     }
 
     public override fun removeAt(index: int): bool

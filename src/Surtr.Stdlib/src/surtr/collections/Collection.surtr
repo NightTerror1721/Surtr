@@ -1,8 +1,9 @@
+import surtr.core.Exception;
+
 public interface IReadOnlyCollection<T> : IIterable<T>
 {
     length: int { get; }
 
-    fun get(index: int): T;
     fun contains(item: T): bool;
     fun copyTo(array: T[], arrayIndex: int): void;
 }
@@ -11,7 +12,6 @@ public interface ICollection<T> : IReadOnlyCollection<T>
 {
     isReadOnly: bool { get; }
 
-    fun set(index: int, value: T): void;
     fun add(item: T): void;
     fun remove(item: T): bool;
     fun clear(): void;
@@ -32,11 +32,6 @@ private value class ReadOnlyCollection<T> : IReadOnlyCollection<T>
     }
 
     public override length: int { get { return this._col.length; } }
-
-    public override fun get(index: int): T
-    {
-        return _col.get(index);
-    }
 
     public override fun contains(item: T): bool
     {

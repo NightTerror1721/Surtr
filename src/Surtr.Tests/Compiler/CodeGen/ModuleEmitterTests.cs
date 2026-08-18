@@ -938,6 +938,67 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(7, Int(runtime, "run"));
         }
 
+        /// <summary>
+        /// Regression: nested type names used to be registered in the container's outside scope, so
+        /// two containers with a same-named nested type collided there - a body inside C could
+        /// resolve B to A's B (reported as private) or to an ambiguity. Each container's body must
+        /// find its own.
+        /// </summary>
+        [Fact]
+        public void TwoContainersWithASameNamedNestedTypeEachResolveTheirOwn()
+        {
+            var runtime = Run(
+                "class A\n"
+                    + "{\n"
+                    + "  private class B { public fun tag(): int { return 1; } }\n"
+                    + "  public fun run(): int { return B().tag(); }\n"
+                    + "}\n"
+                    + "class C\n"
+                    + "{\n"
+                    + "  private class B { public fun tag(): int { return 2; } }\n"
+                    + "  public fun run(): int { return B().tag(); }\n"
+                    + "}\n"
+                    + "fun runA(): int { return A().run(); }\n"
+                    + "fun runC(): int { return C().run(); }");
+
+            Assert.Equal(1, Int(runtime, "runA"));
+            Assert.Equal(2, Int(runtime, "runC"));
+        }
+
+        /// <summary>
+        /// §2.6: a nested type is named from outside through its container, so a bare nested name
+        /// must not answer at module level. The old registration flattened nested names into the
+        /// module scope, which made this compile.
+        /// </summary>
+        [Fact]
+        public void ANestedTypeNameIsNotVisibleOutsideItsContainer()
+        {
+            using var compilation = Reject(
+                "class Outer { class Inner { } }\nfun run(): int { let x: Inner? = null; return 1; }");
+
+            Assert.True(compilation.HasErrors, "Inner belongs to Outer and must not answer to a bare name at module level.");
+        }
+
+        /// <summary>
+        /// The static-nested rule (§6) keeps a container's type parameters out of a nested type's
+        /// body, but a nested type still sees its siblings - the two live in separate scopes, which
+        /// is exactly the split the same-named-nested-type fix depends on.
+        /// </summary>
+        [Fact]
+        public void ANestedTypeSeesItsSiblingsButNotItsContainersParameters()
+        {
+            var runtime = Run(
+                "class Outer<T>\n"
+                    + "{\n"
+                    + "  class Helper { public fun tag(): int { return 5; } }\n"
+                    + "  class User { public fun use(): int { return Helper().tag(); } }\n"
+                    + "  public fun run(): int { return User().use(); }\n"
+                    + "}\n"
+                    + "fun run(): int { return Outer<int>().run(); }");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
         [Fact]
         public void SealedThenOverrideIsTheOnlyAcceptedOrderForBoth()
         {
