@@ -8,13 +8,13 @@ documentation on each member; this file is that content laid out for reading, pl
 only make sense across the whole set. `docs/VM-Plan.md` has the *why* behind the interpreter's
 shape, and `docs/Module-Format.md` describes the file these bytes live in.
 
-**221 opcodes are defined, spanning `0x00` through `0xE2`.** Six values inside that span —
+**225 opcodes are defined, spanning `0x00` through `0xE6`.** Six values inside that span —
 `0x2C`–`0x2F` (the old `Ldg`/`LdgX`/`Stg`/`StgX`) and `0xAA`–`0xAB` (the old
 `CallGlobalNative`/`CallGlobalNativeX`) — are **retired**: they used to cover the host-globals
 mechanism, which is gone now that a `native` member (module-level or on a class) is an ordinary
 member reached through the same tables and call opcodes as any other. A retired value is never
 reused — reusing one would make an old module silently execute a different instruction — so those
-six numbers simply have no opcode and never will. The 29 values `0xE3`–`0xFF`, plus the six retired
+six numbers simply have no opcode and never will. The 25 values `0xE7`–`0xFF`, plus the six retired
 ones, are what is free.
 
 ---
@@ -79,7 +79,7 @@ together — a member inserted in the middle renumbered everything after it, sil
 the set used to grow at the tail regardless of family, and why its tail read as a pile of
 afterthoughts.
 
-**A new opcode takes a free value and is filed with its family.** `0xDD` through `0xFF` are
+**A new opcode takes a free value and is filed with its family.** `0xE7` through `0xFF` are
 unassigned. A retired value stays retired rather than being reused, because handing an old number
 to a new instruction would make an existing module execute something else entirely. There are
 golden-value tests over the whole table (`src/Surtr.Tests/Bytecode/OpCodeValueTests.cs`), so
@@ -307,7 +307,7 @@ The bit operations, plus the one boolean operator that is not a comparison. `Not
 
 ## Comparison Operations
 
-Four operand families, each with its own opcodes: integers (which also cover `bool` and `char`), floats under IEEE 754, references by identity, and strings by text. Strings and references carry equality only — ordering a string is a call to `string.compareTo`, which is what the language says the operators mean.
+Five operand families, each with its own opcodes: integers (which also cover `bool` and `char`), floats under IEEE 754, references by identity, strings by text, and a still-abstract generic type parameter by the runtime's own value comparer. Strings, references and the dynamic family carry equality only — ordering a string is a call to `string.compareTo`, which is what the language says the operators mean, and an unconstrained type parameter has no ordering to give.
 
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
@@ -327,6 +327,8 @@ Four operand families, each with its own opcodes: integers (which also cover `bo
 | `0x5A` | `RNE` | `opcode(1)` · 1 byte | `..., a, b -> ..., bool` | Reference non-identity. |
 | `0x5B` | `StrEQ` | `opcode(1)` · 1 byte | `..., a, b -> ..., bool` | String equality by text. The counterpart to `REQ` for the one reference type Surtr compares by value. Its own opcode rather than a call to `string.equals`, because `==` on strings is common enough that a call per comparison would show. Two null strings are equal; a null and a non-null are not. |
 | `0x5C` | `StrNE` | `opcode(1)` · 1 byte | `..., a, b -> ..., bool` | String inequality by text. |
+| `0xE4` | `DynEQ` | `opcode(1)` · 1 byte | `..., a, b -> ..., bool` | Value equality decided at runtime by each operand's own tag, for a generic type parameter's own slot. What `==` lowers to when neither operand's static type is a family with a dedicated form - a bare, still-abstract type parameter, most commonly. `==` is value equality everywhere in Surtr (§5.7 of Language-Syntax.md), which for a boxed primitive means a boxed `5` equals an unboxed `5` and two independently boxed `5`s equal each other - exactly what `REQ` gets wrong, since two different boxes are two different entities. Reaches the same `SurtrValueComparer` every dictionary and array search already uses. |
+| `0xE5` | `DynNE` | `opcode(1)` · 1 byte | `..., a, b -> ..., bool` | The negation of `DynEQ`. |
 
 ## Null and Absence Tests
 
@@ -365,6 +367,8 @@ Turning a primitive into a collectable reference and back. The `Box*` family car
 | `0x6B` | `BoxAs` | `opcode(1) typeIdx(2)` · 3 bytes | `..., a -> ..., ref` | Boxes the value on top of the stack as an instance of a named class. What a `value class` boxes through. The `Box*` family carries no type index because a boxed primitive takes the class the unboxed primitive already had; a value class is erased to the field it wraps, so where it has to become a reference the class it should present as is exactly the thing the value no longer says. Unboxing is still `Unbox`: the box's own value carries its tag. |
 | `0x6C` | `BoxAsX` | `opcode(1) typeIdx(4)` · 5 bytes | `..., a -> ..., ref` | Boxes as a named class, with a 4-byte type index. |
 | `0x6D` | `Unbox` | `opcode(1)` · 1 byte | `..., ref -> ..., value` | Unwraps a boxed value back to its inline representation. Recovers whichever primitive was boxed - the tag on the boxed value says which, so no per-type opcode is needed on the way back. |
+| `0xE3` | `BoxDynamic` | `opcode(1)` · 1 byte | `..., a -> ..., ref` | Boxes whatever primitive is on top of the stack, chosen by its own tag rather than the compiler's. A no-op when the subject is already a reference (including `null`). Exists for a generic type parameter's own erased slot: a value crossing one through a body compiled once for every substitution of `T` may already be boxed or may still be a built-in's own raw storage, and nothing at the call site can tell which - only the value's own tag can. `Unbox` already reads that tag on the way back out; this is its mirror on the way in. |
+| `0xE6` | `UnboxDynamic` | `opcode(1)` · 1 byte | `..., a -> ..., value` | The mirror of `BoxDynamic`: unboxes only a boxed primitive, leaving everything else (a raw primitive, or a reference that is not a box at all - an ordinary object, array, string) untouched. Exists for the write side of the same erased slot `BoxDynamic` reads from: a value statically typed by a bare generic parameter arrives already boxed, but the collection's own native storage it is written into was never boxed to begin with and must not become the one element that is. |
 
 ## Type Tests and Casts
 

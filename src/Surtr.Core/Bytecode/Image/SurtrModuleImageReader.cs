@@ -395,6 +395,7 @@ namespace Surtr.Bytecode.Image
             bool isStatic = reader.ReadBoolean();
             bool isOverride = reader.ReadBoolean();
             bool isSealed = reader.ReadBoolean();
+            bool isExtension = reader.ReadBoolean();
 
             int parameterCount = state.Count();
             var parameters = parameterCount == 0
@@ -435,7 +436,7 @@ namespace Surtr.Bytecode.Image
             {
                 var contractMethod = new SurtrAbstractMethodInfo(
                     name, returnType, parameters, visibility, declaringType,
-                    genericParameters, genericConstraints);
+                    genericParameters, genericConstraints, isExtension);
                 ReadAttributes(state, contractMethod);
                 return contractMethod;
             }
@@ -447,7 +448,7 @@ namespace Surtr.Bytecode.Image
                 var nativeMethod = new SurtrNativeMethodInfo(
                     name, dispatch, role, isOverride, returnType, parameters,
                     isStatic, visibility, declaringType, state.Text(), isSealed,
-                    genericParameters, genericConstraints);
+                    genericParameters, genericConstraints, isExtension);
 
                 ReadAttributes(state, nativeMethod);
                 return nativeMethod;
@@ -467,7 +468,7 @@ namespace Surtr.Bytecode.Image
                 name, dispatch, role, isOverride, returnType, parameters,
                 isStatic, visibility, declaringType,
                 chunk, entryIndex, localCount, maxStackSize, isSealed,
-                genericParameters, genericConstraints);
+                genericParameters, genericConstraints, isExtension);
 
             int handlerCount = state.Count();
             if (handlerCount != 0)

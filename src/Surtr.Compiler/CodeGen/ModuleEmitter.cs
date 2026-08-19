@@ -1022,7 +1022,8 @@ namespace Surtr.Compiler.CodeGen
                     Parameters(context, method),
                     Visibility(method.Accessibility),
                     names,
-                    constraints);
+                    constraints,
+                    isExtension: true);
 
                 context.Bind(method, native);
                 return;
@@ -1033,6 +1034,10 @@ namespace Surtr.Compiler.CodeGen
                 _descriptors.Emit(method.ReturnType),
                 Parameters(context, method),
                 Visibility(method.Accessibility));
+
+            // The mark travels in the image so a later compiler recognises the imported member as
+            // an extension again (SurtrMethodInfo.IsExtension); the runtime itself ignores it.
+            function.IsExtension = true;
 
             DeclareGenericParameters(function, method);
 

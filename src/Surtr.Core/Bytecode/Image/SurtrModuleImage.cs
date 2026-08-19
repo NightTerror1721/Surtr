@@ -109,7 +109,7 @@ namespace Surtr.Bytecode.Image
         /// like every other older format.
         /// </para>
         /// </remarks>
-        internal const ushort FormatVersion = 6;
+        internal const ushort FormatVersion = 7;
 
         private readonly byte[] _bytes;
         private readonly string _path;

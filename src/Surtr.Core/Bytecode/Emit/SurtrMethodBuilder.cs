@@ -73,6 +73,8 @@ namespace Surtr.Bytecode.Emit
         private readonly SurtrMethodRole _role;
         private readonly bool _override;
         private readonly bool _sealed;
+        private bool _extension;
+        private bool _bridge;
         private readonly int _argumentSlots;
         private readonly List<string?> _localNames = new List<string?>();
         private readonly List<PendingHandler> _handlers = new List<PendingHandler>();
@@ -179,6 +181,29 @@ namespace Surtr.Bytecode.Emit
 
         /// <summary>Whether this is a module-level function rather than a class member.</summary>
         public bool IsModuleLevel => _declaringClass is null;
+
+        /// <summary>
+        /// Marks the method as coming from an <c>extension</c> block (§15). The runtime does not
+        /// care, but the mark is written to an image and read back by the next compiler, which
+        /// needs it to resolve the imported method as an extension again.
+        /// </summary>
+        public bool IsExtension
+        {
+            get => _extension;
+            set => _extension = value;
+        }
+
+        /// <summary>
+        /// Marks the method as a synthetic <em>bridge</em>: the erased-signature member that fills
+        /// a generic interface's vtable slot and forwards to the method a class actually wrote.
+        /// Nothing in source can name it, so the mark is what keeps the next compiler from
+        /// importing it as an ordinary overload and making every call site ambiguous.
+        /// </summary>
+        public bool IsBridge
+        {
+            get => _bridge;
+            set => _bridge = value;
+        }
 
         /// <summary>Whether the method belongs to its type rather than to instances of it.</summary>
         public bool IsStatic => _static;
@@ -344,7 +369,9 @@ namespace Surtr.Bytecode.Emit
                 _code.MaxStackDepth,
                 _sealed,
                 _genericParameters,
-                _genericConstraints);
+                _genericConstraints,
+                _extension,
+                _bridge);
 
             for (int i = 0; i < _attributes.Count; i++)
                 _built.AddAttribute(_attributes[i]);

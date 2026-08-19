@@ -116,6 +116,13 @@ type-level `G<n>`, so a signature says which parameter it means without knowing 
 member. Both stay off every execution path; a version 5 reader would read the extra counts as the
 bytecode fields, so it is refused like every other older format.
 
+**Version 7** adds one `bool` to the `Method` section: `isExtension`, written after `isSealed`. It
+marks a method declared in an `extension` block (§15 of the syntax doc). The interpreter never reads
+it — an extension method is an ordinary method whose receiver is its first parameter — but without
+it a module compiled later would import the method as a plain function and `obj.member(...)` would
+stop resolving. A version 6 reader would read the flag as the first parameter count, so it is
+refused like every other older format.
+
 The string table is written in front of the body but is only complete once the body has been walked,
 so the writer builds the body into a buffer first and prepends the table.
 
@@ -219,6 +226,7 @@ same type's method section, and the signature key is how the reader finds them a
 | `isStatic` | `bool` |
 | `isOverride` | `bool` |
 | `isSealed` | `bool` |
+| `isExtension` | `bool` | Written after `isSealed` since format version 7. Whether the method was declared in an `extension` block (§15 of the syntax doc); the runtime ignores it, and the next compiler reads it back so an imported method resolves as an extension again. |
 | `parameters` | `Parameter[]` |
 | `genericParameters` | `str[]` | The method's own parameter names; empty for a non-generic method. |
 | `constraints` | per parameter: `i32` count + `str[]` | As on a class — the bounds each parameter declared, as descriptors (`H<n>` included, e.g. `Osurtr:IComparable`1;H0`). Written only when `genericParameters` is non-empty; one list per parameter, empty where the parameter is unconstrained. |

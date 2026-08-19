@@ -47,8 +47,14 @@ namespace Surtr.Runtime.BuiltIns
             builder.Method("toLower", text, SurtrNativeEntryPoint.FromFunctionPointer(&ToLower));
             builder.Method("trim", text, SurtrNativeEntryPoint.FromFunctionPointer(&Trim));
             builder.Method("reverse", text, SurtrNativeEntryPoint.FromFunctionPointer(&Reverse));
-            builder.Method("equals", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&EqualsText), builder.Params(("other", text)));
-            builder.Method("compareTo", integer, SurtrNativeEntryPoint.FromFunctionPointer(&CompareTo), builder.Params(("other", text)));
+            // The parameter is declared erased, not `text`: IComparable<T>/IEquatable<T> (§13.2)
+            // fix their own member at `compareTo(G0)`/`equals(G0)`, which erases to `E` regardless
+            // of what T was instantiated to - a concrete `text` parameter here would erase to `S`
+            // and miss the interface's vtable slot (SurtrTypeLinker.BuildInterfaceDispatch matches
+            // on SignatureKey, not on assignability). The bodies read the argument through
+            // GetUnchecked<SurtrString>, which does not care what the declared parameter type was.
+            builder.Method("equals", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&EqualsText), builder.Params(("other", SurtrClassReference.Erased)), dispatch: SurtrMethodDispatch.Virtual);
+            builder.Method("compareTo", integer, SurtrNativeEntryPoint.FromFunctionPointer(&CompareTo), builder.Params(("other", SurtrClassReference.Erased)), dispatch: SurtrMethodDispatch.Virtual);
             builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&ToStringSelf));
 
             builder.Method("fromChar", text, SurtrNativeEntryPoint.FromFunctionPointer(&FromChar), builder.Params(("value", character)), isStatic: true);

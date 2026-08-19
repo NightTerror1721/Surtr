@@ -209,6 +209,8 @@ namespace Surtr.Runtime.Classes
         private readonly SurtrMethodRole _role;
         private readonly bool _override;
         private readonly bool _sealed;
+        private readonly bool _extension;
+        private readonly bool _bridge;
         private readonly string[] _genericParameters;
         private readonly string[][] _genericConstraints;
         private SurtrClassReference _signature;
@@ -234,7 +236,9 @@ namespace Surtr.Runtime.Classes
             SurtrTypeHandle? declaringType,
             bool isSealed = false,
             string[]? genericParameters = null,
-            string[][]? genericConstraints = null)
+            string[][]? genericConstraints = null,
+            bool isExtension = false,
+            bool isBridge = false)
             : base(name, SurtrMemberKind.Method, isStatic, visibility, declaringType)
         {
             // Constructors are never inherited, so they can never be dispatched through a vtable.
@@ -270,6 +274,8 @@ namespace Surtr.Runtime.Classes
 
             _genericParameters = genericParameters ?? System.Array.Empty<string>();
             _genericConstraints = genericConstraints ?? System.Array.Empty<string[]>();
+            _extension = isExtension;
+            _bridge = isBridge;
 
             if (_genericConstraints.Length != 0 && _genericConstraints.Length != _genericParameters.Length)
             {
@@ -328,6 +334,36 @@ namespace Surtr.Runtime.Classes
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _sealed;
+        }
+
+        /// <summary>
+        /// Whether this method was declared in an <c>extension</c> block (§15) rather than written
+        /// as a bare member of its module or class. The interpreter does not care - an extension
+        /// method is an ordinary method whose receiver is its first parameter - but the image
+        /// carries the mark so a module compiled later can recognise the imported members as
+        /// extensions again instead of losing them to plain function resolution.
+        /// </summary>
+        public bool IsExtension
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _extension;
+        }
+
+        /// <summary>
+        /// Whether this method is a synthetic <em>bridge</em>: a second member, named after the
+        /// interface slot it fills and taking its erased parameters, that casts and forwards to the
+        /// member a class actually wrote. Bridges occupy the vtable slots a generic interface's
+        /// <c>compareTo(G0)</c>-shaped members need filled, so the loader treats one exactly like
+        /// any other virtual method — the flag exists for the compiler's
+        /// <c>MetadataImporter</c>, which must not surface the bridge as a member source can call:
+        /// it has no written signature of its own, and two visible <c>equals</c> overloads would
+        /// make every call site ambiguous. It travels in the image for the same reason
+        /// <see cref="IsExtension"/> does.
+        /// </summary>
+        public bool IsBridge
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _bridge;
         }
 
         /// <summary>Whether calls to this method go through the vtable rather than being bound directly.</summary>

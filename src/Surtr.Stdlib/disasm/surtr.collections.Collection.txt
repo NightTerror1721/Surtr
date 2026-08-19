@@ -51,21 +51,22 @@ sealed class ReadOnlyCollection`1<T> : surtr.collections.Collection:IReadOnlyCol
         0009  ReturnValue
 
   [public] virtual contains(item: T0): bool
-    ; entry 3, locals 2, stack 2, code 000A..0013
+    ; entry 3, locals 2, stack 2, code 000A..0014
       000A  Ldl0
       000B  Unbox
       000C  Ldl1
-      000D  InvokeInterface 1 (contains) args=2 ret=1
-      0012  ReturnValue
+      000D  BoxDynamic
+      000E  InvokeInterface 1 (contains) args=2 ret=1
+      0013  ReturnValue
 
   [public] virtual copyTo(array: T0[], arrayIndex: int): void
-    ; entry 4, locals 3, stack 3, code 0013..001D
-      0013  Ldl0
-      0014  Unbox
-      0015  Ldl1
-      0016  Ldl2
-      0017  InvokeInterface 2 (copyTo) args=3 ret=0
-      001C  ReturnVoid
+    ; entry 4, locals 3, stack 3, code 0014..001E
+      0014  Ldl0
+      0015  Unbox
+      0016  Ldl1
+      0017  Ldl2
+      0018  InvokeInterface 2 (copyTo) args=3 ret=0
+      001D  ReturnVoid
 
   [public] ctor (collection: surtr.collections.Collection:IReadOnlyCollection<T0>): void
     ; entry 0, locals 2, stack 0, code 0000..0001
@@ -76,8 +77,8 @@ sealed class ReadOnlyCollection`1<T> : surtr.collections.Collection:IReadOnlyCol
       0001  ReturnVoid
 
   [public] virtual iterate(): surtr:IIterator<T0>
-    ; entry 5, locals 1, stack 1, code 001D..0025
-      001D  Ldl0
-      001E  Unbox
-      001F  InvokeInterface 13 (iterate) args=1 ret=1
-      0024  ReturnValue
+    ; entry 5, locals 1, stack 1, code 001E..0026
+      001E  Ldl0
+      001F  Unbox
+      0020  InvokeInterface 13 (iterate) args=1 ret=1
+      0025  ReturnValue

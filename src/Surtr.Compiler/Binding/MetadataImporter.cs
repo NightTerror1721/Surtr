@@ -131,7 +131,21 @@ namespace Surtr.Compiler.Binding
             symbol.Types = types;
             symbol.Fields = ImportFields(module.Fields, containingSymbol: symbol, declaringType: null);
             symbol.Properties = ImportProperties(module.Properties, containingSymbol: symbol, declaringType: null);
-            symbol.Methods = ImportMethods(module.Methods, containingSymbol: symbol, declaringType: null);
+            var methods = ImportMethods(module.Methods, containingSymbol: symbol, declaringType: null);
+            symbol.Methods = methods;
+
+            // An extension member travels as an ordinary module function whose receiver is its
+            // first parameter; the image's `IsExtension` mark is what lets a later compiler tell
+            // it apart again, so the imported module resolves `obj.member(...)` through the
+            // extension path (§15) instead of treating it as a bare function.
+            var extensions = new List<MethodSymbol>();
+            for (int i = 0; i < methods.Count; i++)
+            {
+                if (methods[i].ImportedFrom is SurtrMethodInfo imported && imported.IsExtension)
+                    extensions.Add(methods[i]);
+            }
+
+            symbol.ExtensionMethods = extensions;
 
             return symbol;
         }
@@ -643,6 +657,11 @@ namespace Surtr.Compiler.Binding
                 IsSynthetic = SyntheticNames.IsSynthetic(method.Name),
                 ImportedFrom = method,
             };
+
+            // A class-nested extension (§15.2) carries its container so the accessibility check
+            // runs against the class it was private to, the way the source binder records it.
+            if (method.IsExtension && declaringType is not null)
+                symbol.ExtensionDeclaringContainer = declaringType;
 
             var declared = method.GenericParameters;
             if (declared.Count > 0)

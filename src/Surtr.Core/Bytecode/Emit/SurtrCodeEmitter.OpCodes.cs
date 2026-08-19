@@ -486,6 +486,12 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Emits <see cref="OpCode.Unbox"/>.</summary>
         public SurtrCodeEmitter Unbox() => Simple(OpCode.Unbox, 1, 1);
 
+        /// <summary>Emits <see cref="OpCode.BoxDynamic"/>.</summary>
+        public SurtrCodeEmitter BoxDynamic() => Simple(OpCode.BoxDynamic, 1, 1);
+
+        /// <summary>Emits <see cref="OpCode.UnboxDynamic"/>.</summary>
+        public SurtrCodeEmitter UnboxDynamic() => Simple(OpCode.UnboxDynamic, 1, 1);
+
         /// <summary>Emits <see cref="OpCode.Cast"/>.</summary>
         public SurtrCodeEmitter Cast(SurtrTypeToken type)
             => WithU16(OpCode.Cast, TypeIndex(type), 1, 1, "typeIdx");

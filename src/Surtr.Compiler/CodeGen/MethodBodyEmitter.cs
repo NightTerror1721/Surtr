@@ -552,6 +552,14 @@ namespace Surtr.Compiler.CodeGen
             if (operandType == SurtrValueTypeCode.String && isOrdering)
                 return false;
 
+            // Equality on a still-abstract type parameter needs the runtime's own value comparer
+            // (DynEQ/DynNE — see ComparisonOpCode), which has no fused branch form of its own. This
+            // is already the rare, allocating-adjacent path a generic body without an equality
+            // constraint takes, so falling back to the ordinary Compare-then-JumpIfFalse shape costs
+            // one extra dispatch on a path that was never going to be fast.
+            if (operandType == SurtrValueTypeCode.Erased)
+                return false;
+
             left = binary.Left;
             right = binary.Right;
             return true;
@@ -851,14 +859,17 @@ namespace Surtr.Compiler.CodeGen
             Code.LoadLocal(cursor);
             Code.CallInterface(current);
 
-            // `current` is typed by the contract's own parameter, so it comes back erased — but
+            // `current` is typed by the contract's own parameter, so it reads back erased — but
             // what it hands back is the collection's own storage, and a built-in collection stores
-            // a primitive raw: `an int pushed into an int[] is never boxed on the way`. So a
-            // reference element is checked and a primitive one is already what it should be. It
-            // cannot be both, and `Cast` reads its subject as a reference unconditionally, so
-            // casting a raw int would read whatever entity its value happens to number.
-            if (loop.Variable.Type.NonNullable.IsReferenceType && !loop.Variable.Type.NonNullable.IsVoid)
-                Unerase(loop.Variable.Type);
+            // a primitive raw (an int pushed into an int[] is never boxed on the way in), while a
+            // collection built from scratch inside a still-generic body stores primitives already
+            // boxed (§1.11). The receiver reached through `CallInterface` is only known to satisfy
+            // the contract, not which of the two it is, so `BoxDynamic` normalizes either into a
+            // definite reference — a no-op where `current` already handed one back — and `Unerase`
+            // can then run unconditionally rather than only where the loop variable's own
+            // substituted type happens to be a reference.
+            Code.BoxDynamic();
+            Unerase(loop.Variable.Type);
 
             Code.StoreLocal(variable);
 
@@ -1555,7 +1566,12 @@ namespace Surtr.Compiler.CodeGen
                 case ConversionKind.ImplicitReference:
                     // §6.3: a value class is erased to its field, so reaching a slot that holds a
                     // reference — an interface it implements — is where it becomes a real object.
-                    BoxIfValueClass(from);
+                    // A primitive reaching a contract it satisfies is the same story: the
+                    // interface dispatch goes through the receiver's vtable, which only an object
+                    // has, so the raw int becomes its boxed form first.
+                    if (!BoxIfValueClass(from))
+                        Code.Box(TypeCodeOf(from));
+
                     return;
 
                 case ConversionKind.ImplicitNumeric:
@@ -1634,6 +1650,7 @@ namespace Surtr.Compiler.CodeGen
         /// Boxes a call's receiver only where the callee might be reached through a vtable slot.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// §6.3: a direct dispatch calls the exact method body regardless of the receiver's runtime
         /// type, so there is nothing for a box to be looked up on — the erased field reaches the
         /// callee unboxed. A method whose own <see cref="MethodSymbol.Dispatch"/> is not
@@ -1641,13 +1658,26 @@ namespace Surtr.Compiler.CodeGen
         /// on a sealed value class already goes through <c>CallSpecial</c>, which does not consult
         /// the receiver's class either), so this boxes a little more than the strict minimum there —
         /// safe, per §6.3, where boxing less would not be. What matters is that this is the exact
-        /// same test <see cref="LoadReceiver"/> makes to decide whether to unbox, so the two can
-        /// never disagree about which convention a given method's body was compiled against.
+        /// same test <see cref="LoadReceiver"/> makes to decide whether to unbox a value class
+        /// receiver, so the two can never disagree about which convention a value class body was
+        /// compiled against.
+        /// </para>
+        /// <para>
+        /// A scalar primitive reaching one of its own <c>Virtual</c> members (§13.2's
+        /// <c>compareTo</c>/<c>equals</c>, the only ones a built-in ever declares that way) needs
+        /// the identical treatment for the identical reason: <c>InvokeVirtual</c>/<c>InvokeInterface</c>
+        /// resolve the receiver's class through the entity registry, which only a boxed value is in.
+        /// <see cref="BoxIfValueClass"/> only recognises a <c>value class</c>, so the fallback boxes
+        /// whatever is left with <see cref="Code"/>'s ordinary <c>Box</c>, which is already a no-op
+        /// for a receiver that is a reference already (a built-in class, or a generic parameter that
+        /// was boxed on its way into its erased slot) — nothing here has to tell those cases apart
+        /// from a primitive's own.
+        /// </para>
         /// </remarks>
         private void BoxReceiverForCall(MethodSymbol method, TypeSymbol receiverType)
         {
-            if (method.Dispatch != MethodDispatch.Direct)
-                BoxIfValueClass(receiverType);
+            if (method.Dispatch != MethodDispatch.Direct && !BoxIfValueClass(receiverType))
+                Code.Box(TypeCodeOf(receiverType.NonNullable));
         }
 
         /// <summary>
@@ -1847,6 +1877,9 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// The spine is walked in order, so operands are evaluated left to right exactly as the
         /// pairwise emission did — flattening changes what is allocated, not when anything runs.
+        /// A part that is not a string is converted through its <c>toString</c> first, the same
+        /// conversion an interpolation applies: §5.7 lets anything be appended to a string, and
+        /// <c>StrCat</c> takes strings only.
         /// </remarks>
         private void EmitStringConcat(BoundBinaryExpression binary)
         {
@@ -1857,7 +1890,7 @@ namespace Surtr.Compiler.CodeGen
 
             foreach (var part in parts)
             {
-                Expression(part);
+                EmitAsString(part);
 
                 if (++pending == MaxConcatOperands)
                 {
@@ -2449,6 +2482,7 @@ case BoundFieldExpression field:
                     Expression(index.Target);
                     Expression(index.Index);
                     value();
+                    UnboxIfStillErased(index.Type);
 
                     var owner = index.Target.Type.NonNullable;
                     if (owner.TypeKind == TypeSymbolKind.Array)
@@ -2489,6 +2523,7 @@ case BoundFieldExpression field:
                 // An enum case is exactly this: a static, read-only field of the enum's own type
                 // holding the one instance its static initializer built.
                 Code.LoadStaticField(info);
+                UnerasedFieldResult(field.Field);
                 return;
             }
 
@@ -2504,6 +2539,28 @@ case BoundFieldExpression field:
 
             Expression(receiver);
             Code.LoadField(info);
+            UnerasedFieldResult(field.Field);
+        }
+
+        /// <summary>
+        /// Reads a field declared against its own class's type parameter back out the same way
+        /// <see cref="UnerasedCallResult"/> does for a generic method's result (§1.11's second
+        /// obligation).
+        /// </summary>
+        /// <remarks>
+        /// A field typed <c>T</c> is a real erased slot — unlike an <c>array</c>/<c>dict</c> element,
+        /// it has no dedicated opcode bypassing the erasure convention, so a value reaching it was
+        /// boxed on the way in (<c>ConversionTarget</c>) and has to be cast-and-unboxed on the way
+        /// back out, exactly as a written <c>as</c> does. <c>field.Type</c> already reads the
+        /// substituted type (<c>int</c> for a <c>Box&lt;int&gt;</c> receiver); <c>original</c> is the
+        /// unsubstituted declaration, whose parameter is still bare <c>T</c> when this read needed
+        /// substituting at all.
+        /// </remarks>
+        private void UnerasedFieldResult(FieldSymbol field)
+        {
+            var original = field.OriginalDefinition ?? field;
+            if (original.Type.NonNullable is TypeParameterSymbol)
+                Unerase(field.Type);
         }
 
         private void EmitPropertyRead(BoundPropertyExpression property)
@@ -2992,6 +3049,31 @@ case BoundFieldExpression field:
                 Expression(argument);
 
             EmitResolvedCall(call.Method, call.IsVirtual, discardResult);
+
+            if (!discardResult)
+                UnerasedCallResult(call.Method);
+        }
+
+        /// <summary>
+        /// Reads a generic method's result back out the same way any other erased slot is read
+        /// (§1.11's second obligation), when the call left one on the stack.
+        /// </summary>
+        /// <remarks>
+        /// <c>SubstituteGenericCandidates</c> replaces a generic method with the concrete view its
+        /// arguments infer (§6) before binding ever sees it, so <c>call.Method.ReturnType</c> already
+        /// reads <c>int</c> where the declaration reads <c>T</c> - correct for type checking, since
+        /// that is genuinely what a caller gets back, but silent about the fact that the declaration
+        /// is compiled once, generically, and so its own return slot is erased regardless of what a
+        /// given call substituted <c>T</c> to. <see cref="Unerase"/> is the same cast-and-unbox
+        /// <c>ExplicitErasure</c> already performs for a written <c>as</c>; the only new part is
+        /// noticing a plain call needs it too, from <see cref="MethodSymbol.OriginalDefinition"/>
+        /// rather than from a conversion node nothing here asked the binder to write one for.
+        /// </remarks>
+        private void UnerasedCallResult(MethodSymbol method)
+        {
+            var original = method.OriginalDefinition ?? method;
+            if (original.ReturnType.NonNullable is TypeParameterSymbol)
+                Unerase(method.ReturnType);
         }
 
         /// <summary>
@@ -3053,6 +3135,51 @@ case BoundFieldExpression field:
             => EmitResolvedCall(method, virtualCall: false, discardResult);
 
         /// <summary>
+        /// Emits an argument bound for the built-in <c>array</c>/<c>dict</c>'s own <c>G0</c>/<c>K</c>/
+        /// <c>V</c>-typed member — a key, a value, an index target — the way
+        /// <see cref="TryEmitDictionaryOperation"/>/<see cref="TryEmitArrayOperation"/> need it.
+        /// </summary>
+        /// <remarks>
+        /// <c>ConversionTarget</c> (<c>BodyBinder.Expressions.cs</c>) converts an argument reaching a
+        /// bare type-parameter-typed parameter against <c>unknown</c> rather than the substituted
+        /// type, so a real generic method's own erased frame slot gets the box it needs. Array and
+        /// dict declare their element/key/value members the same way (<c>G0</c>/<c>K</c>/<c>V</c>,
+        /// per <c>docs/Runtime-Model.md</c>) for signature matching, but the opcodes these two
+        /// methods emit instead of a real call — <c>ArrSet</c>, <c>DictSet</c>, <c>ArrPush</c>, … —
+        /// read and write the collection's native <c>SurtrValue</c> storage directly and were never
+        /// erased to begin with (<c>docs/VM-Plan.md</c> §3.5's "no per-element type tags"), so the
+        /// box that conversion produces is not just unneeded here, it is actively wrong: it stores a
+        /// boxed reference where the opcode expects the raw value, and a later <c>DictGet</c>/
+        /// <c>ArrGet</c> hands that reference back as if it were the value itself. Stripping the
+        /// erasure box and emitting the boxed operand's own pre-erasure expression restores the raw
+        /// value these opcodes have always expected; nothing else about the conversion (an <c>int</c>
+        /// literal reaching a <c>float</c> element, say) runs through this branch, so any conversion
+        /// that is not the erasure artifact is left untouched.
+        /// <para>
+        /// A second, narrower case reaches the same problem from the other side: an argument whose
+        /// own static type is <em>already</em> the bare type parameter — <c>item: T</c> passed to
+        /// <c>_items.push(item)</c> from inside the generic body that declares <c>T</c> — converts
+        /// against it by <c>Identity</c>, since source and destination are the same unsubstituted
+        /// symbol, so there is no <c>ImplicitErasure</c> node here to strip. But <c>item</c> is still
+        /// boxed, the same way any <c>T</c>-typed value at rest inside a still-generic body is (an
+        /// argument or field write across the erasure boundary boxes on the way in). <see
+        /// cref="UnboxIfStillErased"/> is what unwinds that for the write, the mirror of
+        /// <see cref="BoxIfStillErased"/> on the read.
+        /// </para>
+        /// </remarks>
+        private void EmitCollectionOperand(BoundExpression argument)
+        {
+            if (argument is BoundConversionExpression { Conversion.Kind: ConversionKind.ImplicitErasure } conversion)
+            {
+                Expression(conversion.Operand);
+                return;
+            }
+
+            Expression(argument);
+            UnboxIfStillErased(argument.Type);
+        }
+
+        /// <summary>
         /// Replaces a call to a member of the built-in <c>dict</c> by the opcode that does the same
         /// thing, so a host of these operations need not pay for a native frame.
         /// </summary>
@@ -3079,18 +3206,20 @@ case BoundFieldExpression field:
             if (IsDictionaryMember(call.Method, "get"))
             {
                 Expression(call.Receiver);
-                Expression(call.Arguments[0]);
+                EmitCollectionOperand(call.Arguments[0]);
                 Code.DictGet();
                 if (discardResult)
                     Code.Pop();
+                else
+                    BoxIfStillErased(call.Method.ReturnType);
                 return true;
             }
 
             if (IsDictionaryMember(call.Method, "set"))
             {
                 Expression(call.Receiver);
-                Expression(call.Arguments[0]);
-                Expression(call.Arguments[1]);
+                EmitCollectionOperand(call.Arguments[0]);
+                EmitCollectionOperand(call.Arguments[1]);
                 Code.DictSet();
                 return true;
             }
@@ -3098,7 +3227,7 @@ case BoundFieldExpression field:
             if (IsDictionaryMember(call.Method, "containsKey"))
             {
                 Expression(call.Receiver);
-                Expression(call.Arguments[0]);
+                EmitCollectionOperand(call.Arguments[0]);
                 Code.DictIn();
                 if (discardResult)
                     Code.Pop();
@@ -3108,7 +3237,7 @@ case BoundFieldExpression field:
             if (IsDictionaryMember(call.Method, "remove"))
             {
                 Expression(call.Receiver);
-                Expression(call.Arguments[0]);
+                EmitCollectionOperand(call.Arguments[0]);
                 Code.DictDel();
                 if (discardResult)
                     Code.Pop();
@@ -3156,6 +3285,8 @@ case BoundFieldExpression field:
                 Code.ArrGet();
                 if (discardResult)
                     Code.Pop();
+                else
+                    BoxIfStillErased(call.Method.ReturnType);
                 return true;
             }
 
@@ -3163,7 +3294,7 @@ case BoundFieldExpression field:
             {
                 Expression(call.Receiver);
                 Expression(call.Arguments[0]);
-                Expression(call.Arguments[1]);
+                EmitCollectionOperand(call.Arguments[1]);
                 Code.ArrSet();
                 return true;
             }
@@ -3171,7 +3302,7 @@ case BoundFieldExpression field:
             if (IsArrayMember(call.Method, "push"))
             {
                 Expression(call.Receiver);
-                Expression(call.Arguments[0]);
+                EmitCollectionOperand(call.Arguments[0]);
                 Code.ArrPush();
                 return true;
             }
@@ -3189,7 +3320,7 @@ case BoundFieldExpression field:
             {
                 Expression(call.Receiver);
                 Expression(call.Arguments[0]);
-                Expression(call.Arguments[1]);
+                EmitCollectionOperand(call.Arguments[1]);
                 Code.ArrInsert();
                 return true;
             }
@@ -3212,7 +3343,7 @@ case BoundFieldExpression field:
             if (IsArrayMember(call.Method, "indexOf"))
             {
                 Expression(call.Receiver);
-                Expression(call.Arguments[0]);
+                EmitCollectionOperand(call.Arguments[0]);
                 Code.ArrIndexOf();
                 if (discardResult)
                     Code.Pop();
@@ -3222,7 +3353,7 @@ case BoundFieldExpression field:
             if (IsArrayMember(call.Method, "contains"))
             {
                 Expression(call.Receiver);
-                Expression(call.Arguments[0]);
+                EmitCollectionOperand(call.Arguments[0]);
                 Code.ArrIn();
                 if (discardResult)
                     Code.Pop();
@@ -3582,6 +3713,7 @@ case BoundFieldExpression field:
             {
                 Expression(index.Target);
                 Code.TupleElement((int)ordinal);
+                BoxIfStillErased(index.Type);
                 return;
             }
 
@@ -3590,9 +3722,9 @@ case BoundFieldExpression field:
 
             switch (target.TypeKind)
             {
-                case TypeSymbolKind.Array: Code.ArrGet(); return;
-                case TypeSymbolKind.Dictionary: Code.DictGet(); return;
-                case TypeSymbolKind.Tuple: Code.TupGet(); return;
+                case TypeSymbolKind.Array: Code.ArrGet(); BoxIfStillErased(index.Type); return;
+                case TypeSymbolKind.Dictionary: Code.DictGet(); BoxIfStillErased(index.Type); return;
+                case TypeSymbolKind.Tuple: Code.TupGet(); BoxIfStillErased(index.Type); return;
             }
 
             if (target.SpecialType == SpecialType.String)
@@ -3604,10 +3736,62 @@ case BoundFieldExpression field:
             throw Unsupported($"indexing '{index.Target.Type.ToDisplayString()}'");
         }
 
+        /// <summary>
+        /// Boxes a value read straight off a collection's native storage when it is still typed by
+        /// the declaring generic's own bare type parameter — <c>self[i]</c> off a <c>T[]</c> inside
+        /// the body that declares <c>T</c>, say.
+        /// </summary>
+        /// <remarks>
+        /// <c>ArrGet</c>/<c>DictGet</c>/<c>TupGet</c>/<c>TupleElement</c> read the collection's
+        /// storage directly (§3.5's "no per-element type tags"), which is the right raw value once
+        /// <c>T</c> is substituted to a concrete type — an <c>int[]</c>'s own indexer needs no box,
+        /// which is exactly what <see cref="EmitCollectionOperand"/> restores on the write side. But
+        /// while <c>T</c> is still the declaring generic's own bare parameter, this body is compiled
+        /// once for every <c>T</c>, so a value leaving through it has to become a reference the same
+        /// way one reaching a generic parameter does on the way in (<c>ConversionTarget</c> in
+        /// <c>BodyBinder.Expressions.cs</c>) — except the compiler has no concrete type to pick
+        /// <c>BoxInt</c> from <c>BoxFloat</c> with here, since the collection this <c>T[]</c> names
+        /// might be a concretely-typed one flowing in from a call site (raw storage) or one built
+        /// from scratch inside this very generic body (already-boxed storage, §1.11). <see
+        /// cref="Surtr.Bytecode.OpCode.BoxDynamic"/> is exactly the opcode for that: it reads the value's own tag
+        /// instead of a static type, and is a no-op when the value is already a reference. The read
+        /// and the later <c>Unerase</c> a caller applies (<see cref="UnerasedCallResult"/>, the loop
+        /// variable in <see cref="EmitForInIterable"/>) are the two ends of the same erased slot.
+        /// </remarks>
+        private void BoxIfStillErased(TypeSymbol type)
+        {
+            if (type.NonNullable is TypeParameterSymbol)
+                Code.BoxDynamic();
+        }
+
+        /// <summary>
+        /// Unboxes a value bound for a collection's native storage when it is still typed by the
+        /// declaring generic's own bare type parameter, the mirror of <see cref="BoxIfStillErased"/>.
+        /// </summary>
+        /// <remarks>
+        /// A <c>T</c>-typed value at rest inside a still-generic body is always boxed - it arrived
+        /// that way across an erasure boundary (an argument, a field read) and nothing along the way
+        /// had reason to undo it. But the array/dict/tuple storage it is about to be written into was
+        /// never boxed to begin with, regardless of whether the collection's own compile-time element
+        /// type is concrete or still abstract (§3.5's "no per-element type tags" is a property of the
+        /// storage, not of how erased the accessing body happens to be). <see
+        /// cref="Surtr.Bytecode.OpCode.UnboxDynamic"/> is a no-op for anything that is not a boxed primitive, so this
+        /// is safe to call whenever the static type says <c>T</c>, without knowing in advance whether
+        /// the value on the stack actually needs it.
+        /// </remarks>
+        private void UnboxIfStillErased(TypeSymbol type)
+        {
+            if (type.NonNullable is TypeParameterSymbol)
+                Code.UnboxDynamic();
+        }
+
         private void EmitArrayLiteral(BoundArrayLiteralExpression array)
         {
             foreach (var element in array.Elements)
+            {
                 Expression(element);
+                UnboxIfStillErased(element.Type);
+            }
 
             // One immediate carries both the descriptor the object keeps and the element family its
             // slots are initialised from, so an empty literal still knows what it is.
@@ -3617,7 +3801,10 @@ case BoundFieldExpression field:
         private void EmitTupleLiteral(BoundTupleLiteralExpression tuple)
         {
             foreach (var element in tuple.Elements)
+            {
                 Expression(element);
+                UnboxIfStillErased(element.Type);
+            }
 
             Code.PackTuple(Descriptors.Emit(tuple.Type.NonNullable), tuple.Elements.Count);
         }
@@ -3627,7 +3814,9 @@ case BoundFieldExpression field:
             foreach (var entry in dictionary.Entries)
             {
                 Expression(entry.Key);
+                UnboxIfStillErased(entry.Key.Type);
                 Expression(entry.Value);
+                UnboxIfStillErased(entry.Value.Type);
             }
 
             Code.PackDictionary(Descriptors.Emit(dictionary.Type.NonNullable), dictionary.Entries.Count);
@@ -3922,8 +4111,13 @@ case BoundFieldExpression field:
             Code.LoadLocal(cursorSlot);
             Code.CallInterface(current);
 
-            if (sourceElementType.IsReferenceType && !sourceElementType.IsVoid)
-                Unerase(sourceElementType);
+            // Same normalization `EmitForInIterable` needs: `current` reads back erased, but
+            // whether the receiver already boxed it or is a built-in handing back raw storage is
+            // not something the contract call site can tell — `BoxDynamic` decides from the value's
+            // own tag, a no-op if it was already a reference, and `Unerase` can then run
+            // unconditionally.
+            Code.BoxDynamic();
+            Unerase(sourceElementType);
 
             EmitConversionTail(conversion, sourceElementType, elementType);
             Code.ArrPush();

@@ -23,7 +23,9 @@ namespace Surtr.Runtime.Classes
             SurtrVisibility visibility,
             SurtrTypeHandle? declaringType,
             string[]? genericParameters = null,
-            string[][]? genericConstraints = null)
+            string[][]? genericConstraints = null,
+            bool isExtension = false,
+            bool isBridge = false)
             : base(
                 name,
                 SurtrMethodImplKind.Abstract,
@@ -38,7 +40,9 @@ namespace Surtr.Runtime.Classes
                 visibility,
                 declaringType,
                 genericParameters: genericParameters,
-                genericConstraints: genericConstraints)
+                genericConstraints: genericConstraints,
+                isExtension: isExtension,
+                isBridge: isBridge)
         {
         }
 

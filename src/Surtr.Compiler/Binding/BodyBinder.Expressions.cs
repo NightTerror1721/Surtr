@@ -2151,6 +2151,18 @@ namespace Surtr.Compiler.Binding
             if (parameters.Count == 0)
                 return NoArguments;
 
+            // `SubstituteGenericCandidates` replaces a generic method with the concrete view its
+            // arguments infer (§6) *before* this runs, which is what lets ordinary conversion rules
+            // decide applicability — but it means `parameters[i].Type` here already reads `int`
+            // where the declaration reads `T`, and converting an argument against that concrete
+            // type is an identity conversion with nothing left to box. The declaration's own frame
+            // slot is still erased, though (one compiled body per generic method, §6's "nothing is
+            // reified"), so a value reaching it still has to become a reference the same way one
+            // reaching `unknown` does. `original` is the unsubstituted declaration - itself when
+            // this call was never substituted at all - and a parameter still bare `T` there is
+            // exactly the case `array`/`dict`'s own `G0`/`G1` members are the built-in version of.
+            var original = method.OriginalDefinition ?? method;
+
             var ordered = new BoundExpression?[parameters.Count];
             var varargs = new List<BoundExpression>();
             int varargIndex = -1;
@@ -2172,7 +2184,7 @@ namespace Surtr.Compiler.Binding
                     {
                         if (string.Equals(parameters[p].Name, name, StringComparison.Ordinal))
                         {
-                            ordered[p] = Convert(arguments[i], parameters[p].Type, written[i].Span);
+                            ordered[p] = Convert(arguments[i], ConversionTarget(original, parameters, p), written[i].Span);
                             break;
                         }
                     }
@@ -2190,7 +2202,7 @@ namespace Surtr.Compiler.Binding
                         && arguments.Count - i == 1
                         && _conversions.IsAssignable(arguments[i].Type, vararg.Type))
                     {
-                        ordered[varargIndex] = Convert(arguments[i], vararg.Type, written[i].Span);
+                        ordered[varargIndex] = Convert(arguments[i], ConversionTarget(original, parameters, varargIndex), written[i].Span);
                         continue;
                     }
 
@@ -2200,7 +2212,7 @@ namespace Surtr.Compiler.Binding
                 }
 
                 if (target < parameters.Count)
-                    ordered[target] = Convert(arguments[i], parameters[target].Type, written[i].Span);
+                    ordered[target] = Convert(arguments[i], ConversionTarget(original, parameters, target), written[i].Span);
             }
 
             if (varargIndex >= 0 && ordered[varargIndex] is null)
@@ -2214,6 +2226,30 @@ namespace Surtr.Compiler.Binding
                 result[i] = ordered[i] ?? Omitted(syntax, parameters[i]);
 
             return result;
+        }
+
+        /// <summary>
+        /// The type an argument at <paramref name="index"/> converts against: the substituted
+        /// parameter's own type, unless the declaration's unsubstituted parameter there is a bare
+        /// type parameter of the method itself, in which case it is <c>unknown</c> instead.
+        /// </summary>
+        /// <remarks>
+        /// A value reaching a generic method's own erased frame slot has to become a reference the
+        /// same way one reaching a written <c>unknown</c> parameter does (§1.11) - the declaration
+        /// is compiled once, generically, so the slot is erased regardless of which concrete type a
+        /// given call substituted in. Converting against the substituted type instead would classify
+        /// <c>int</c> reaching a substituted <c>int</c> parameter as an identity conversion, which
+        /// leaves nothing for <c>MethodBodyEmitter</c> to box - exactly the gap that let a
+        /// raw <c>int</c> reach <c>InvokeInterface</c> unboxed and crash on the entity lookup only
+        /// a boxed value answers. Anything already a reference erases the same way for free (the
+        /// emitted <c>Box</c> is a no-op there), so this widens correctness without narrowing it.
+        /// </remarks>
+        private TypeSymbol ConversionTarget(MethodSymbol original, IReadOnlyList<ParameterSymbol> substitutedParameters, int index)
+        {
+            if (index < original.Parameters.Count && original.Parameters[index].Type.NonNullable is TypeParameterSymbol)
+                return _factory.Unknown;
+
+            return substitutedParameters[index].Type;
         }
 
         /// <summary>

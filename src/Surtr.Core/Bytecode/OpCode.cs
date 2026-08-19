@@ -46,7 +46,7 @@ namespace Surtr.Bytecode
     /// </para>
     /// <para>
     /// <b>New opcodes take a free value at the end and are never given one already in use.</b>
-    /// 0x00 through 0xDC are assigned; 0xDD through 0xFF are free. Reusing a retired
+    /// 0x00 through 0xE6 are assigned; 0xE7 through 0xFF are free. Reusing a retired
     /// value would make an old module silently execute a new instruction, so a retired value stays
     /// retired. Changing how a module is *framed*, rather than what runs inside it, is what
     /// <c>SurtrModuleImage.FormatVersion</c> is for.
@@ -774,6 +774,30 @@ namespace Surtr.Bytecode
         /// Stack: <c>..., a, b -&gt; ..., bool</c>
         /// </remarks>
         StrNE = 0x5C,
+
+        /// <summary>Value equality decided at runtime by each operand's own tag, for a generic type parameter's own slot.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., a, b -&gt; ..., bool</c><br/>
+        /// Notes: what <c>==</c> lowers to when neither operand's static type is a family this
+        /// opcode already has a dedicated form for - a bare, still-abstract type parameter, most
+        /// commonly. <c>==</c> is <em>value</em> equality everywhere in Surtr (Language-Syntax.md
+        /// §5.7), which for a boxed primitive means a boxed <c>5</c> equals an unboxed <c>5</c> and
+        /// two independently boxed <c>5</c>s equal each other - exactly what <c>REQ</c> gets wrong,
+        /// since two different boxes are two different entities. The one comparer already answers
+        /// this for every dictionary and array search (<c>SurtrValueComparer.ValuesEqual</c>); this
+        /// is that same comparer reached from a compiled <c>==</c>, for the receiver whose static
+        /// type is too erased to know in advance which of <see cref="EQ"/>/<see cref="FEQ"/>/
+        /// <see cref="REQ"/>/<see cref="StrEQ"/> it will turn out to need.
+        /// </remarks>
+        DynEQ = 0xE4,
+
+        /// <summary>The negation of <see cref="DynEQ"/>.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., a, b -&gt; ..., bool</c>
+        /// </remarks>
+        DynNE = 0xE5,
         #endregion
 
 
@@ -925,6 +949,42 @@ namespace Surtr.Bytecode
         /// so no per-type opcode is needed on the way back.
         /// </remarks>
         Unbox = 0x6D,
+
+        /// <summary>Boxes whatever primitive is on top of the stack, chosen by its own tag rather than the compiler's.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., a -&gt; ..., ref</c><br/>
+        /// Notes: a no-op when the subject is already a reference (including <c>null</c>) - the
+        /// same convention <c>BoxInt</c>/<c>BoxFloat</c>/<c>BoxBool</c>/<c>BoxChar</c> follow when
+        /// the compiler already knows a value needs no box, just decided from the tag instead of
+        /// from a static type. Exists for a generic type parameter's own erased slot: a value
+        /// reaching or leaving one through a body compiled once for every substitution of <c>T</c>
+        /// (an array element read while <c>T</c> is still the declaring generic's own bare
+        /// parameter, an <c>IIterator&lt;T&gt;.current</c> read through interface dispatch) may
+        /// already be boxed or may still be a built-in's own raw storage, and nothing at the call
+        /// site can tell which - only the value's own tag can. <see cref="Unbox"/> already reads
+        /// that tag on the way back out; this is its mirror on the way in, and the two together are
+        /// what let a value cross an erased slot without the compiler ever having to know <c>T</c>.
+        /// </remarks>
+        BoxDynamic = 0xE3,
+
+        /// <summary>The mirror of <see cref="BoxDynamic"/>: unboxes only a boxed primitive, leaving everything else untouched.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., a -&gt; ..., value</c><br/>
+        /// Notes: a no-op both when the subject is already a raw primitive and when it is a
+        /// reference that is not a box (an ordinary object, array, string - anything <see
+        /// cref="Unbox"/> would need to already know is a box to touch safely). Exists for the write
+        /// side of the same erased slot <see cref="BoxDynamic"/> reads from: a value statically
+        /// typed by a bare generic parameter arrives already boxed (the calling convention boxes an
+        /// argument or a field write on the way in), but the collection's own native storage this
+        /// body writes it into - an array element, a dict value - was never boxed to begin with and
+        /// must not become the one element that is (<c>docs/VM-Plan.md</c> §3.5's "no per-element
+        /// type tags", which holds regardless of whether the array's own compile-time element type
+        /// is still abstract). <c>Unbox</c> stays unconditional for the one call site that already
+        /// knows its subject is a box; this is for the site that cannot know.
+        /// </remarks>
+        UnboxDynamic = 0xE6,
         #endregion
 
 

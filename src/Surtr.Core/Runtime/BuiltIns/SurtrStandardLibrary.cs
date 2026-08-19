@@ -151,6 +151,24 @@ namespace Surtr.Runtime.BuiltIns
             return SurtrClassReference.Constructed(fullName, arguments);
         }
 
+        /// <summary>
+        /// The descriptor naming one of the core contracts for a concrete argument — the form a
+        /// built-in declares when it satisfies the contract for its own type
+        /// (<c>Osurtr:IEquatable`1;I</c> for <c>int</c>, <c>Osurtr:IEquatable`1;DG0G1</c> for a
+        /// dict), as opposed to <see cref="ContractReference(string, int)"/>'s open form.
+        /// </summary>
+        internal static SurtrClassReference ContractReference(string name, params SurtrClassReference[] arguments)
+        {
+            string fullName = SurtrBuiltIns.ModulePath
+                + SurtrClassReference.ModuleSeparator
+                + SurtrClassReference.MangleArity(name, arguments.Length);
+
+            if (arguments.Length == 0)
+                return SurtrClassReference.Object(fullName);
+
+            return SurtrClassReference.Constructed(fullName, arguments);
+        }
+
         private static SurtrInterface DeclareInterface(
             SurtrModule module,
             SurtrTypeHandleTable handles,

@@ -359,6 +359,7 @@ namespace Surtr.Bytecode.Image
             writer.Write(method.IsStatic);
             writer.Write(method.IsOverride);
             writer.Write(method.IsSealed);
+            writer.Write(method.IsExtension);
 
             var parameters = method.Parameters;
             writer.Write(parameters.Length);

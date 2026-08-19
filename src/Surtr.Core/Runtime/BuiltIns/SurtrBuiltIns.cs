@@ -361,6 +361,20 @@ namespace Surtr.Runtime.BuiltIns
             SurtrIteratorBuiltIns.DeclareIterable(BuilderFor(Dictionary, handles), SurtrIteratorKind.Dictionary);
             SurtrIteratorBuiltIns.DeclareIterable(BuilderFor(Range, handles), SurtrIteratorKind.Range);
 
+            // The comparability contracts, declared the same way and for the same reason: a
+            // `max<T : IComparable<T>>` names a contract, so the value families have to be able to
+            // say they satisfy it. Tuple and closure declare neither contract, deliberately - each
+            // is parameterised by a *list* whose length varies per value, so no fixed argument
+            // could name the type in `IEquatable<T>`, and their equality is identity either way.
+            SurtrContractBuiltIns.DeclareIntegerContracts(BuilderFor(Integer, handles));
+            SurtrContractBuiltIns.DeclareFloatContracts(BuilderFor(Float, handles));
+            SurtrContractBuiltIns.DeclareBooleanContracts(BuilderFor(Boolean, handles));
+            SurtrContractBuiltIns.DeclareCharacterContracts(BuilderFor(Character, handles));
+            SurtrContractBuiltIns.DeclareStringContracts(BuilderFor(String, handles));
+            SurtrContractBuiltIns.DeclareArrayContracts(BuilderFor(Array, handles));
+            SurtrContractBuiltIns.DeclareDictionaryContracts(BuilderFor(Dictionary, handles));
+            SurtrContractBuiltIns.DeclareRangeContracts(BuilderFor(Range, handles));
+
             // Every handle the built-in signatures mention is a built-in, so the whole table binds
             // from what was just declared - the built-in module is the one module with no external
             // dependencies, which is what lets it link before any runtime exists.

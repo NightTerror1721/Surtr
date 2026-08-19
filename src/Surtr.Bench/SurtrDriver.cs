@@ -49,10 +49,10 @@ namespace Surtr.Bench
             // cleanly instead of hanging the harness.
             runtime.InstructionBudget = 5_000_000_000;
 
-            // "hostAdd" is the link name the module's module-level `native fun hostAdd` resolves
-            // to (no owning type, so LinkName is just the method name - see ModuleEmitter.LinkName
-            // and DescriptorEmitter.EmitMethodName). It has to be published before LoadModule,
-            // exactly as the tests do it.
+            // "bench.hostAdd" is the link name the module's module-level `native fun hostAdd`
+            // resolves to: <modulePath>.<name>, since a module-level native has no owning type to
+            // qualify it the way a class member's does (docs/Language-Syntax.md §10). It has to be
+            // published before LoadModule, exactly as the tests do it.
             RegisterNativeBodies(runtime);
 
             foreach (var module in emitter.Modules)
@@ -68,7 +68,7 @@ namespace Surtr.Bench
         /// </summary>
         private static unsafe void RegisterNativeBodies(SurtrRuntime runtime)
         {
-            runtime.DefineNativeBody("hostAdd", SurtrNativeEntryPoint.FromFunctionPointer(&HostAdd));
+            runtime.DefineNativeBody(ModulePath + ".hostAdd", SurtrNativeEntryPoint.FromFunctionPointer(&HostAdd));
         }
 
         private static SurtrValue HostAdd(SurtrCallArguments arguments)
