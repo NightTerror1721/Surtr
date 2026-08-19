@@ -78,6 +78,20 @@ namespace Surtr.Runtime
         internal Dictionary<SurtrTypeInfo, SurtrTypeValue> TypeValueCache;
 
         /// <summary>
+        /// Text-to-object table backing <see cref="SurtrRuntime.GetOrCreateTypeValue"/> for
+        /// <em>constructed</em> generics — <c>typeof(Box&lt;int&gt;)</c> and
+        /// <c>Type.get("Obox:Box`1;I")</c> — so one construction is one <c>Type</c> value, distinct
+        /// from every other construction of the same class.
+        /// </summary>
+        /// <remarks>
+        /// Keyed by the full descriptor string, which is exactly what distinguishes one
+        /// construction from another. Lives here rather than on the metadata because the metadata
+        /// is process-wide and shared across runtimes, while the entity registry a
+        /// <see cref="SurtrTypeValue"/> is registered in is not.
+        /// </remarks>
+        internal Dictionary<string, SurtrTypeValue> ConstructedTypeValueCache;
+
+        /// <summary>
         /// Text-to-object table backing <see cref="SurtrRuntime.GetOrCreateModuleValue"/>, so
         /// <c>moduleof</c> and <c>Module.get</c>/<c>Module.tryGet</c> alike return the one shared
         /// <c>Module</c> value for a given <see cref="SurtrModule"/> within this runtime.
@@ -145,6 +159,7 @@ namespace Surtr.Runtime
             HostTypeHandles = new SurtrTypeHandleTable();
             InternedStrings = new Dictionary<string, SurtrString>(StringComparer.Ordinal);
             TypeValueCache = new Dictionary<SurtrTypeInfo, SurtrTypeValue>();
+            ConstructedTypeValueCache = new Dictionary<string, SurtrTypeValue>(StringComparer.Ordinal);
             ModuleValueCache = new Dictionary<SurtrModule, SurtrModuleValue>();
 
             Roots = new SurtrRawValue[InitialRootCapacity];

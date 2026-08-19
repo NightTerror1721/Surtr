@@ -4086,6 +4086,112 @@ namespace Surtr.Tests.Compiler.CodeGen
             // carries the backtick - the same `Box`1` any other reflection over it would report.
             Assert.Equal("Box`1", Text(runtime, "boxIntTypeName"));
         }
+
+        /// <summary>
+        /// The generic metadata the compiler now keeps (§docs/Plan-Genericos-Metadata.md, Pasos 1-2)
+        /// is readable from Surtr: a Type's parameter names and their bounds are the class's own
+        /// tables, exposed verbatim. The open class — whose descriptor's argument is the
+        /// declaration's own parameter — is reached through Type.get of its open descriptor, since
+        /// neither typeof(Box) nor Box() can name it (the parser only reads a type operand with an
+        /// argument list, and a construction without arguments is ambiguous).
+        /// </summary>
+        [Fact]
+        public void AGenericTypesParametersAndConstraintsAreReadableFromReflection()
+        {
+            var runtime = Run(
+                "class Box<T : IComparable<T>> { public fun n(): int { return 1; } }\n"
+                    + "fun parameterCount(): int { return Type.get(\"Ogame.core:Box`1;G0\").genericParameterCount; }\n"
+                    + "fun parameterName(): string { return Type.get(\"Ogame.core:Box`1;G0\").genericParameters()[0]; }\n"
+                    + "fun firstConstraint(): string { return Type.get(\"Ogame.core:Box`1;G0\").genericConstraints()[0][0]; }");
+
+            Assert.Equal(1, Int(runtime, "parameterCount"));
+            Assert.Equal("T", Text(runtime, "parameterName"));
+            Assert.Equal("Osurtr:IComparable`1;G0", Text(runtime, "firstConstraint"));
+        }
+
+        [Fact]
+        public void AConstructionRetainsItsArgumentsAndItsDescriptor()
+        {
+            var runtime = Run(
+                "class Box<T> { public let value: T; constructor(value: T) { this.value = value; } }\n"
+                    + "fun argumentName(): string { return typeof(Box<int>).genericArguments()[0].name; }\n"
+                    + "fun descriptor(): string { return typeof(Box<int>).descriptor; }\n"
+                    + "fun sameViaGet(): int { return typeof(Box<int>) === Type.get(\"Ogame.core:Box`1;I\") ? 1 : 0; }");
+
+            Assert.Equal("int", Text(runtime, "argumentName"));
+            Assert.Equal("Ogame.core:Box`1;I", Text(runtime, "descriptor"));
+            Assert.Equal(1, Int(runtime, "sameViaGet"));
+        }
+
+        /// <summary>
+        /// The whole point of retaining the descriptor: two constructions of one class are two
+        /// distinct Type values with distinct arguments, exactly as C#'s List&lt;int&gt; and
+        /// List&lt;string&gt; are distinct types. Nothing reified - one class, one method table -
+        /// only the descriptor that named each construction.
+        /// </summary>
+        [Fact]
+        public void TwoConstructionsAreDistinctTypeValuesWithTheirOwnArguments()
+        {
+            var runtime = Run(
+                "class Box<T> { }\n"
+                    + "fun distinct(): int { return typeof(Box<int>) === typeof(Box<string>) ? 1 : 0; }\n"
+                    + "fun intArgument(): string { return typeof(Box<int>).genericArguments()[0].name; }\n"
+                    + "fun stringArgument(): string { return typeof(Box<string>).genericArguments()[0].name; }");
+
+            Assert.Equal(0, Int(runtime, "distinct"));
+            Assert.Equal("int", Text(runtime, "intArgument"));
+            Assert.Equal("string", Text(runtime, "stringArgument"));
+        }
+
+        /// <summary>
+        /// An open form — the descriptor whose argument is the declaration's own parameter — is
+        /// the class itself, not a construction: same identity as Type.of(instance), and no
+        /// arguments to report. typeof(Box) cannot reach it (the parser only reads a type operand
+        /// when there is an argument list), so the open class is reached through Type.of or
+        /// Type.get of its open descriptor.
+        /// </summary>
+        [Fact]
+        public void TheOpenFormIsTheSharedClassNotAConstruction()
+        {
+            var runtime = Run(
+                "class Box<T> { public fun n(): int { return 1; } }\n"
+                    + "fun openHasNoArguments(): int { return Type.get(\"Ogame.core:Box`1;G0\").genericArguments().length; }\n"
+                    + "fun openIsTheInstanceClass(): int { return Type.get(\"Ogame.core:Box`1;G0\") === Type.of(Box<int>()) ? 1 : 0; }");
+
+            Assert.Equal(0, Int(runtime, "openHasNoArguments"));
+            Assert.Equal(1, Int(runtime, "openIsTheInstanceClass"));
+        }
+
+        /// <summary>
+        /// An instance carries no construction, so Type.of and the instance typeof cannot say which
+        /// one it is - the documented limit of the class-shared design. The descriptor is null and
+        /// the arguments are empty, rather than guessed.
+        /// </summary>
+        [Fact]
+        public void AnInstanceCannotSayItsConstruction()
+        {
+            var runtime = Run(
+                "class Box<T> { public fun n(): int { return 1; } }\n"
+                    + "fun noArguments(): int { return Type.of(Box<int>()).genericArguments().length; }\n"
+                    + "fun noDescriptor(): int { return Type.of(Box<int>()).descriptor == null ? 1 : 0; }\n"
+                    + "fun openViaGetHasNoArguments(): int { return Type.get(\"Ogame.core:Box`1;G0\").genericArguments().length; }");
+
+            Assert.Equal(0, Int(runtime, "noArguments"));
+            Assert.Equal(1, Int(runtime, "noDescriptor"));
+            Assert.Equal(0, Int(runtime, "openViaGetHasNoArguments"));
+        }
+
+        [Fact]
+        public void TypeGetOnAConstructionRetainsTheDescriptorItWasAskedFor()
+        {
+            var runtime = Run(
+                "class Box<T> { }\n"
+                    + "fun descriptor(): string { return Type.get(\"Ogame.core:Box`1;S\").descriptor; }\n"
+                    + "fun argumentName(): string { return Type.get(\"Ogame.core:Box`1;S\").genericArguments()[0].name; }");
+
+            Assert.Equal("Ogame.core:Box`1;S", Text(runtime, "descriptor"));
+            Assert.Equal("string", Text(runtime, "argumentName"));
+        }
         #endregion
 
         #region Accessibility (§3.1)

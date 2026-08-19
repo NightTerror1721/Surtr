@@ -1140,12 +1140,13 @@ namespace Surtr.VM
 
                 case OpCode.LoadType:
                 {
-                    var target = typeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
+                    ref var typeHandle = ref typeTable[(ip[0] | (ip[1] << 8))];
+                    var target = typeHandle.ResolvedType!;
                     ip += 2;
                     current.IP = ip;
                     _sp = sp;
 
-                    var typeValue = runtime.GetOrCreateTypeValue(target);
+                    var typeValue = runtime.GetOrCreateTypeValue(target, typeHandle.Reference);
                     entities = context.EntityRegistry.Entities;
                     *sp++ = SurtrValue.TagMaskReference | (uint)typeValue.GetSurtrReference();
                     goto Dispatch;
@@ -1153,14 +1154,15 @@ namespace Surtr.VM
 
                 case OpCode.LoadTypeX:
                 {
-                    var target = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
+                    ref var typeHandleX = ref typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    var targetX = typeHandleX.ResolvedType!;
                     ip += 4;
                     current.IP = ip;
                     _sp = sp;
 
-                    var typeValue = runtime.GetOrCreateTypeValue(target);
+                    var typeValueX = runtime.GetOrCreateTypeValue(targetX, typeHandleX.Reference);
                     entities = context.EntityRegistry.Entities;
-                    *sp++ = SurtrValue.TagMaskReference | (uint)typeValue.GetSurtrReference();
+                    *sp++ = SurtrValue.TagMaskReference | (uint)typeValueX.GetSurtrReference();
                     goto Dispatch;
                 }
 

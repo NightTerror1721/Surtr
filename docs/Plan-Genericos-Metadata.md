@@ -1,7 +1,7 @@
 # Plan: retención de metadata genérica — constraints, parámetros de método y superficie de reflexión
 
-**Estado: Pasos 1 y 2 completos (implementados y verdes — 2264/2268, los 4 restantes son fallos
-preexistentes de stdlib ajenos a este trabajo). Paso 3 pendiente.**
+**Estado: Pasos 1-3 completos (implementados y verdes — 2319/2323, los 4 restantes son fallos
+preexistentes de stdlib ajenos a este trabajo).**
 
 El objetivo, tal como se acordó con el usuario: que **toda la información genérica sobreviva a la
 compilación y sea recuperable desde los metadatos**, sin crear una `SurtrClass` por especialización.
@@ -208,24 +208,34 @@ En las tres: los built-ins nuevos en `SurtrReflectionBuiltIns` leen tablas que *
 ejecución** toca. Tests en `SurtrStandardLibraryTests` (o archivo propio). La decisión (A/B/C) es la
 pregunta 1 de §5.
 
+**Implementado (opción A):** `SurtrTypeValue` retiene el descriptor de construcción; una caché por
+descriptor (`SurtrContext.ConstructedTypeValueCache`) da identidad estable por construcción cerrada;
+`SurtrClassReference.ContainsOpenParameter` distingue la forma abierta (la clase misma) de la
+cerrada (una construcción); `LoadType`/`LoadTypeX` y `Type.get`/`tryGet` pasan la referencia al
+wrapper; y la superficie nueva en `Type` es `descriptor`, `genericParameterCount`,
+`genericParameters()`, `genericConstraints()` y `genericArguments()`. Documentado en
+`Language-Syntax.md` §13.5. Tests end-to-end en la región "typeof (Fase 13)" de `ModuleEmitterTests`.
+
 ---
 
 ## 5. Decisiones pendientes del usuario
 
-1. **Alcance del Paso 3**: opción A, B o C (§4).
+1. **Alcance del Paso 3**: opción A, B o C (§4). **Decidido: opción A** (clase compartida +
+   descriptor retenido en `Type.get`/`typeof`, con `genericArguments`).
 2. **Símbolo del descriptor** para parámetros de método: `H` (recomendado), `M` o `K` (§3.1).
+   **Decidido: `H`**.
 3. **Constraints de método**: ¿viajan también en el Paso 2 (lista por parámetro en `Method`, misma
    forma que en tipos)? Recomendado: sí — sin ellas un `pick<T : IComparable<T>>` importado no
    podría re-chequearse en el módulo B. Alternativa: solo parámetros (nombres), constraints de
-   método diferidas.
+   método diferidas. **Decidido: sí** (formato 6).
 
 ## 6. Orden de implementación y verificación
 
 1. Paso 1 completo (runtime → emisor → imagen → importer → tests → docs, `FormatVersion` = 5),
-   `dotnet build Surtr.sln` + `dotnet test Surtr.sln` en verde.
+   `dotnet build Surtr.sln` + `dotnet test Surtr.sln` en verde. **Hecho.**
 2. Paso 2: test rojo del agujero cross-module primero, luego §3.2 → §3.3 → §3.5 → verde → docs,
-   `FormatVersion` = 6.
-3. Paso 3 según la decisión tomada.
+   `FormatVersion` = 6. **Hecho.**
+3. Paso 3 según la decisión tomada (opción A). **Hecho.**
 
 ## 7. Riesgos
 

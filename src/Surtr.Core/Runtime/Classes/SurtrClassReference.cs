@@ -646,6 +646,65 @@ namespace Surtr.Runtime.Classes
         }
 
         /// <summary>
+        /// Whether this descriptor mentions any generic parameter — <c>G&lt;n&gt;</c> or
+        /// <c>H&lt;n&gt;</c> — anywhere outside a full name.
+        /// </summary>
+        /// <remarks>
+        /// The test that separates an <em>open</em> form from a <em>construction</em>: a descriptor
+        /// whose arguments are the declaration's own parameters names the class itself, while one
+        /// whose arguments are all concrete names a specific construction.
+        /// <c>typeof(Box)</c> and <c>typeof(Box&lt;int&gt;)</c> emit different descriptors, and this
+        /// is how the reflection surface tells which one it is looking at. <c>O</c>/<c>N</c> full
+        /// names never contain a parameter (the same assumption <see cref="AppendErased"/> makes),
+        /// but a construction's <em>arguments</em> are fair game — <c>Obox:Box`1;G0</c> is open.
+        /// </remarks>
+        public bool ContainsOpenParameter()
+        {
+            if (TryGetGenericParameterIndex(out _) || TryGetMethodGenericParameterIndex(out _))
+                return true;
+
+            switch (TypeCode)
+            {
+                case SurtrValueTypeCode.Array:
+                    return GetArrayElementType().ContainsOpenParameter();
+
+                case SurtrValueTypeCode.Dictionary:
+                    return GetDictionaryKeyType().ContainsOpenParameter()
+                        || GetDictionaryValueType().ContainsOpenParameter();
+
+                case SurtrValueTypeCode.Tuple:
+                    foreach (var element in GetTupleElementTypes())
+                    {
+                        if (element.ContainsOpenParameter())
+                            return true;
+                    }
+                    return false;
+
+                case SurtrValueTypeCode.Closure:
+                    foreach (var parameter in GetClosureParameterTypes())
+                    {
+                        if (parameter.ContainsOpenParameter())
+                            return true;
+                    }
+                    return GetClosureReturnType().ContainsOpenParameter();
+
+                case SurtrValueTypeCode.Object:
+                case SurtrValueTypeCode.Native:
+                {
+                    foreach (var argument in GetTypeArguments())
+                    {
+                        if (argument.ContainsOpenParameter())
+                            return true;
+                    }
+                    return false;
+                }
+
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>
         /// Extracts the full name from an object or native reference (without the leading symbol
         /// or the trailing <see cref="NameTerminator"/>).
         /// </summary>

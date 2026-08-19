@@ -58,6 +58,11 @@ namespace Surtr.Runtime.BuiltIns
             builder.Property("name", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&TypeName));
             builder.Property("baseType", selfType, SurtrNativeEntryPoint.FromFunctionPointer(&TypeBaseType));
             builder.Property("isInterface", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&TypeIsInterface));
+            builder.Property("descriptor", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&TypeDescriptor));
+            builder.Property("genericParameterCount", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&TypeGenericParameterCount));
+            builder.Method("genericParameters", SurtrClassReference.Array(SurtrClassReference.String), SurtrNativeEntryPoint.FromFunctionPointer(&TypeGenericParameters));
+            builder.Method("genericConstraints", SurtrClassReference.Array(SurtrClassReference.Array(SurtrClassReference.String)), SurtrNativeEntryPoint.FromFunctionPointer(&TypeGenericConstraints));
+            builder.Method("genericArguments", SurtrClassReference.Array(selfType), SurtrNativeEntryPoint.FromFunctionPointer(&TypeGenericArguments));
             builder.Method("members", memberArray, SurtrNativeEntryPoint.FromFunctionPointer(&TypeMembers));
             builder.Method("attributes", attributeArray, SurtrNativeEntryPoint.FromFunctionPointer(&TypeAttributes));
         }
@@ -91,18 +96,18 @@ namespace Surtr.Runtime.BuiltIns
         /// </summary>
         private static SurtrValue TypeGet(SurtrCallArguments arguments)
         {
-            string name = arguments.GetString(0).Text;
-            if (!arguments.Runtime.TryResolveReference(SurtrClassReference.FromDescriptor(name), out var resolved))
-                throw new KeyNotFoundException($"No type is known under descriptor '{name}'.");
+            var reference = SurtrClassReference.FromDescriptor(arguments.GetString(0).Text);
+            if (!arguments.Runtime.TryResolveReference(reference, out var resolved))
+                throw new KeyNotFoundException($"No type is known under descriptor '{reference.Descriptor}'.");
 
-            return WrapType(arguments.Runtime, resolved!);
+            return WrapType(arguments.Runtime, resolved!, reference);
         }
 
         private static SurtrValue TypeTryGet(SurtrCallArguments arguments)
         {
-            string name = arguments.GetString(0).Text;
-            return arguments.Runtime.TryResolveReference(SurtrClassReference.FromDescriptor(name), out var resolved)
-                ? WrapType(arguments.Runtime, resolved!)
+            var reference = SurtrClassReference.FromDescriptor(arguments.GetString(0).Text);
+            return arguments.Runtime.TryResolveReference(reference, out var resolved)
+                ? WrapType(arguments.Runtime, resolved!, reference)
                 : SurtrValue.Null;
         }
 
@@ -119,6 +124,84 @@ namespace Surtr.Runtime.BuiltIns
 
         private static SurtrValue TypeIsInterface(SurtrCallArguments arguments)
             => SurtrValue.CreateBool(SelfType(arguments).IsInterface);
+
+        /// <summary>
+        /// The full descriptor this <c>Type</c> value came from — <c>Obox:Box`1;I</c> for
+        /// <c>Type.get("Obox:Box`1;I")</c> or <c>typeof(Box&lt;int&gt;)</c> — or null when the
+        /// value was reached from an instance (<c>Type.of</c>, <c>typeof(x)</c>), which cannot
+        /// carry a construction. It is the canonical form, not the display name: <c>name</c> gives
+        /// <c>Box</c> for every construction, <c>descriptor</c> tells them apart.
+        /// </summary>
+        private static SurtrValue TypeDescriptor(SurtrCallArguments arguments)
+        {
+            var reference = SelfTypeValue(arguments).Reference;
+            return reference.IsValid
+                ? arguments.Runtime.NewStringValue(reference.Descriptor)
+                : SurtrValue.Null;
+        }
+
+        private static SurtrValue TypeGenericParameterCount(SurtrCallArguments arguments)
+            => SurtrValue.CreateInt(SelfType(arguments).GenericParameters.Length);
+
+        private static SurtrValue TypeGenericParameters(SurtrCallArguments arguments)
+        {
+            var runtime = arguments.Runtime;
+            var names = SelfType(arguments).GenericParameters;
+            var array = runtime.NewArray(SurtrClassReference.Array(SurtrClassReference.String), names.Length);
+            for (int i = 0; i < names.Length; i++)
+                array.Add(runtime.NewStringValue(names[i]));
+
+            return SurtrValue.CreateReference(array.GetSurtrReference());
+        }
+
+        /// <summary>
+        /// One <c>string[]</c> per generic parameter, each holding that parameter's bound
+        /// descriptors — <c>Osurtr:IComparable`1;G0</c> for <c>T : IComparable&lt;T&gt;</c>. A
+        /// parameter with no bounds yields an empty array. The bounds are descriptors, the same
+        /// canonical form <c>Type.get</c> reads, so a caller can resolve them back to <c>Type</c>s.
+        /// </summary>
+        private static SurtrValue TypeGenericConstraints(SurtrCallArguments arguments)
+        {
+            var runtime = arguments.Runtime;
+            var constraints = SelfType(arguments).GenericConstraints;
+            var innerType = SurtrClassReference.Array(SurtrClassReference.String);
+            var outer = runtime.NewArray(SurtrClassReference.Array(innerType), constraints.Length);
+
+            for (int i = 0; i < constraints.Length; i++)
+            {
+                var bounds = constraints[i];
+                var inner = runtime.NewArray(innerType, bounds.Length);
+                for (int b = 0; b < bounds.Length; b++)
+                    inner.Add(runtime.NewStringValue(bounds[b]));
+
+                outer.Add(SurtrValue.CreateReference(inner.GetSurtrReference()));
+            }
+
+            return SurtrValue.CreateReference(outer.GetSurtrReference());
+        }
+
+        /// <summary>
+        /// The construction's arguments as <c>Type</c>s, in order — <c>[Type.of(int)]</c> for
+        /// <c>Type.get("Obox:Box`1;I")</c>. Empty for a <c>Type</c> that did not come from a
+        /// construction: the bare class, or one reached from an instance, which cannot say which
+        /// construction it is. An argument that somehow fails to resolve (never for a closed form)
+        /// yields null rather than a stale type.
+        /// </summary>
+        private static SurtrValue TypeGenericArguments(SurtrCallArguments arguments)
+        {
+            var runtime = arguments.Runtime;
+            var value = SelfTypeValue(arguments);
+            var array = runtime.NewArray(SurtrClassReference.Array(SurtrBuiltIns.Type.SelfReference));
+
+            foreach (var argument in value.Reference.GetTypeArguments())
+            {
+                array.Add(runtime.TryResolveReference(argument, out var resolved)
+                    ? WrapType(runtime, resolved!, argument)
+                    : SurtrValue.Null);
+            }
+
+            return SurtrValue.CreateReference(array.GetSurtrReference());
+        }
 
         private static SurtrValue TypeMembers(SurtrCallArguments arguments)
         {
@@ -219,10 +302,16 @@ namespace Surtr.Runtime.BuiltIns
         private static bool IsSynthetic(string name) => name.Length > 0 && name[0] == '$';
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-        private static SurtrTypeInfo SelfType(SurtrCallArguments arguments) => arguments.GetUnchecked<SurtrTypeValue>(0).Wrapped;
+        private static SurtrTypeValue SelfTypeValue(SurtrCallArguments arguments) => arguments.GetUnchecked<SurtrTypeValue>(0);
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        private static SurtrTypeInfo SelfType(SurtrCallArguments arguments) => SelfTypeValue(arguments).Wrapped;
 
         private static SurtrValue WrapType(SurtrRuntime runtime, SurtrTypeInfo wrapped)
             => SurtrValue.CreateReference(runtime.GetOrCreateTypeValue(wrapped).GetSurtrReference());
+
+        private static SurtrValue WrapType(SurtrRuntime runtime, SurtrTypeInfo wrapped, SurtrClassReference reference)
+            => SurtrValue.CreateReference(runtime.GetOrCreateTypeValue(wrapped, reference).GetSurtrReference());
         #endregion
 
         #region Member

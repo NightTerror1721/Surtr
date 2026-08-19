@@ -346,6 +346,36 @@ namespace Surtr.Runtime
         }
 
         /// <summary>
+        /// The one shared <c>Type</c> value for a <em>construction</em> — <c>typeof(Box&lt;int&gt;)</c>
+        /// or <c>Type.get("Obox:Box`1;I")</c> — which keeps the descriptor that named it, so
+        /// <c>genericArguments</c> can answer which construction it is.
+        /// </summary>
+        /// <remarks>
+        /// A construction is keyed by its full descriptor string: the same class shared by every
+        /// construction still gets one distinct <c>Type</c> value per closed form, so
+        /// <c>Type.get("...I")</c> never equals <c>Type.get("...S")</c>. An <em>open</em> form —
+        /// a descriptor whose arguments are the declaration's own parameters, as
+        /// <c>typeof(Box)</c> emits — is not a construction at all and falls back to the shared
+        /// class value, the same one <c>Type.of(instancia)</c> and <c>GetTypeOfValue</c> reach.
+        /// Rooted and cached exactly like <see cref="GetOrCreateTypeValue(SurtrTypeInfo)"/>.
+        /// </remarks>
+        public SurtrTypeValue GetOrCreateTypeValue(SurtrTypeInfo wrapped, SurtrClassReference reference)
+        {
+            if (!reference.IsValid || reference.GenericArity == 0 || reference.ContainsOpenParameter())
+                return GetOrCreateTypeValue(wrapped);
+
+            string key = reference.Descriptor;
+            if (_context.ConstructedTypeValueCache.TryGetValue(key, out var existing))
+                return existing;
+
+            var value = new SurtrTypeValue(wrapped, reference);
+            SurtrRef handle = _context.EntityRegistry.Register(value);
+            _context.ConstructedTypeValueCache.Add(key, value);
+            _context.AddRoot(SurtrValue.CreateReference(handle).Raw);
+            return value;
+        }
+
+        /// <summary>
         /// Wraps a <see cref="SurtrModule"/> as a first-class <c>Module</c> value, as <c>moduleof</c>
         /// and <c>Module.get</c>/<c>Module.tryGet</c> do.
         /// </summary>

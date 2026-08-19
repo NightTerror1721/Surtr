@@ -559,6 +559,26 @@ namespace Surtr.Tests.Runtime.Classes
             Assert.Equal("T0", SurtrClassReference.MethodGenericParameter(0).ToDisplayString());
         }
 
+        [Theory]
+        [InlineData("G0", true)]
+        [InlineData("H2", true)]
+        [InlineData("AG0", true)]
+        [InlineData("L(H0)V", true)]
+        [InlineData("Obox:Box`1;G0", true)]
+        [InlineData("Obox:Box`1;H0", true)]
+        [InlineData("Obox:Pair`2;IObox:Box`1;G0", true)]
+        [InlineData("I", false)]
+        [InlineData("S", false)]
+        [InlineData("AI", false)]
+        [InlineData("DIS", false)]
+        [InlineData("Obox:Box`1;I", false)]
+        [InlineData("Obox:Box`1;S", false)]
+        [InlineData("Ogame:H0;", false)]
+        public void ContainsOpenParameter_DetectsAParameterMentionAnywhereButAFullName(string descriptor, bool expected)
+        {
+            Assert.Equal(expected, SurtrClassReference.FromDescriptor(descriptor).ContainsOpenParameter());
+        }
+
         #endregion
 
         #region Generic types

@@ -2585,6 +2585,31 @@ moduleof(Ogame.core).path;    // "Ogame.core"
   one entry each; see below for exactly what "own declared" excludes.
 - `attributes(): Attribute[]` — every `Runtime`-retention attribute (§11) written directly on the
   type.
+- `descriptor: string?` — the full descriptor this `Type` came from (`` Obox:Box`1;I `` for
+  `typeof(Box<int>)` or `Type.get("Obox:Box`1;I")`), or `null` when it came from a value (`Type.of`,
+  `typeof(x)`), which cannot carry a construction. The canonical form, not the display name: `name`
+  gives `Box` for every construction of `Box`, `descriptor` tells them apart.
+- `genericParameterCount: int` — how many type parameters the declaration has; zero for a
+  non-generic type.
+- `genericParameters(): string[]` — the parameter names, in declaration order (`["T"]`).
+- `genericConstraints(): string[][]` — one `string[]` per parameter, each holding that parameter's
+  bound **descriptors** (`Osurtr:IComparable`1;G0` for `T : IComparable<T>`); a parameter with no
+  bounds yields an empty array. The bounds are descriptors, the same form `Type.get` reads, so a
+  caller can resolve them back to `Type`s.
+- `genericArguments(): Type[]` — the construction's arguments as `Type`s, in order (`[Type.of(int)]`
+  for `Type.get("Obox:Box`1;I")`). Empty for a `Type` that did not come from a construction: the
+  bare class, or one reached from a value.
+
+Generic metadata is read straight off the same tables the compiler and linker keep, and nothing on
+an execution path touches it — the reflection surface is the only reader. Generics are erased
+(§6): one class, one method table, one body per declaration, so `Box<int>` and `Box<string>` are
+two `Type` values over one class. Each closed construction keeps its descriptor, which is what
+makes them distinct — `Type.get("Obox:Box`1;I")` ≠ `Type.get("Obox:Box`1;S")`, exactly as C#'s
+`List<int>` and `List<string>` are distinct types. An **open** form — a descriptor whose arguments
+are the declaration's own parameters, like the one `typeof` emits for a bare generic name — is the
+class itself, not a construction: same identity as `Type.of`, and no arguments to report. A `Type`
+reached from an **instance** cannot say its construction at all (a `Box<int>` object does not carry
+one), so its `descriptor` is `null` and `genericArguments()` is empty, rather than guessed.
 
 **`Member`'s full surface:**
 

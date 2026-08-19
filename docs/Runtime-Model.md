@@ -138,6 +138,13 @@ terminator. Three consequences, all deliberate:
   and `SurtrMethodInfo` carries `GenericParameters`/`GenericConstraints` in the same shape as a
   type. Same customers (the importer, tooling, interop), same non-customers (the execution path):
   erasure means an `H0` slot is a plain reference.
+- **The reflection surface is the one runtime reader of those tables.** `Type` exposes
+  `genericParameterCount`, `genericParameters()`, `genericConstraints()` and — for a value reached
+  from a closed construction, whose `SurtrTypeValue` retains the descriptor that named it —
+  `genericArguments()`. One class is shared by every construction, so `SurtrRuntime` caches one
+  `Type` value per class plus one per distinct construction descriptor; `SurtrClassReference`
+  distinguishes the two with `ContainsOpenParameter()`. Nothing else in the runtime reads them —
+  the tables exist for the importer, tooling, interop and this one API.
 
 Backtick is illegal in a Surtr identifier, so a mangled name can never collide with a declared one,
 and a non-generic type's descriptor is byte-for-byte what it always was. A generic type has **no
