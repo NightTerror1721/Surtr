@@ -1,0 +1,10 @@
+public class AssertionException : Exception
+{
+    public constructor(message: string = "Assertion failed.") : super(message) {}
+}
+
+
+public fun assert(condition: bool, message: string = "Assertion failed."): void
+{
+    if (!condition) throw AssertionException(message);
+}

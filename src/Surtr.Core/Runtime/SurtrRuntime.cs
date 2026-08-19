@@ -380,7 +380,7 @@ namespace Surtr.Runtime
         /// and <c>Module.get</c>/<c>Module.tryGet</c> do.
         /// </summary>
         /// <remarks>
-        /// Same caching and rooting as <see cref="GetOrCreateTypeValue"/>: created and permanently
+        /// Same caching and rooting as <see cref="GetOrCreateTypeValue(SurtrTypeInfo)"/>: created and permanently
         /// rooted the first time this runtime is asked about <paramref name="wrapped"/>, and the
         /// cached object returned on every call after that - see
         /// <see cref="SurtrContext.ModuleValueCache"/>.

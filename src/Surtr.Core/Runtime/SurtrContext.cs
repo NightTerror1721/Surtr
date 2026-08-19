@@ -65,8 +65,8 @@ namespace Surtr.Runtime
         internal Dictionary<string, SurtrString> InternedStrings;
 
         /// <summary>
-        /// Text-to-object table backing <see cref="SurtrRuntime.GetOrCreateTypeValue"/>, so
-        /// <c>typeof</c> and <c>Type.of</c> alike return the one shared <c>Type</c> value for a
+        /// Text-to-object table backing <see cref="SurtrRuntime.GetOrCreateTypeValue(SurtrTypeInfo)"/>,
+        /// so <c>typeof</c> and <c>Type.of</c> alike return the one shared <c>Type</c> value for a
         /// given class or interface within this runtime.
         /// </summary>
         /// <remarks>
@@ -78,7 +78,8 @@ namespace Surtr.Runtime
         internal Dictionary<SurtrTypeInfo, SurtrTypeValue> TypeValueCache;
 
         /// <summary>
-        /// Text-to-object table backing <see cref="SurtrRuntime.GetOrCreateTypeValue"/> for
+        /// Text-to-object table backing
+        /// <see cref="SurtrRuntime.GetOrCreateTypeValue(SurtrTypeInfo, SurtrClassReference)"/> for
         /// <em>constructed</em> generics — <c>typeof(Box&lt;int&gt;)</c> and
         /// <c>Type.get("Obox:Box`1;I")</c> — so one construction is one <c>Type</c> value, distinct
         /// from every other construction of the same class.

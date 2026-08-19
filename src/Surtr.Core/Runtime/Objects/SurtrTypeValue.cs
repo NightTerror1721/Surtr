@@ -17,7 +17,7 @@ namespace Surtr.Runtime.Objects
     /// reference to a host object: <see cref="Wrapped"/> is plain CLR state the collector does not
     /// have to trace, because what it points at outlives this object regardless. One of these is
     /// created at most once per distinct <see cref="Wrapped"/> per runtime - see
-    /// <see cref="SurtrRuntime.GetOrCreateTypeValue"/>.
+    /// <see cref="SurtrRuntime.GetOrCreateTypeValue(SurtrTypeInfo)"/>.
     /// </remarks>
     public sealed class SurtrTypeValue : SurtrObject
     {

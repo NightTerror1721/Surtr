@@ -501,7 +501,7 @@ namespace Surtr.Compiler.Binding
         /// </summary>
         /// <remarks>
         /// Each bound travels as a descriptor, so importing one is the same
-        /// <see cref="Import(SurtrClassReference, NamedTypeSymbol?)"/> call any other type
+        /// <see cref="Import(SurtrClassReference, Symbol?)"/> call any other type
         /// position takes - which is also what keeps a bound naming the
         /// type's own parameter (<c>IComparable&lt;T&gt;</c> → <c>G0</c>) resolving to the right
         /// <see cref="TypeParameterSymbol"/> rather than to <c>unknown</c>.

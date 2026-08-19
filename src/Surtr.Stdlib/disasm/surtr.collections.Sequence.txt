@@ -1,0 +1,71 @@
+module surtr.collections.Sequence
+  constants: 0   types: 0   fields: 0   methods: 21   modules: 0
+
+  method table:
+    #0  surtr.collections.Sequence:ISequence<.get_length() -> int
+    #1  surtr.collections.Sequence:ISequence<.map((T0) -> T0) -> surtr.collections.Sequence:ISequence<T0>
+    #2  surtr.collections.Sequence:ISequence<.flatMap((T0) -> surtr.collections.Sequence:ISequence<T0>) -> surtr.collections.Sequence:ISequence<T0>
+    #3  surtr.collections.Sequence:ISequence<.filter((T0) -> bool) -> surtr.collections.Sequence:ISequence<T0>
+    #4  surtr.collections.Sequence:ISequence<.take(int) -> surtr.collections.Sequence:ISequence<T0>
+    #5  surtr.collections.Sequence:ISequence<.skip(int) -> surtr.collections.Sequence:ISequence<T0>
+    #6  surtr.collections.Sequence:ISequence<.distinct() -> surtr.collections.Sequence:ISequence<T0>
+    #7  surtr.collections.Sequence:ISequence<.sorted((T0, T0) -> int) -> surtr.collections.Sequence:ISequence<T0>
+    #8  surtr.collections.Sequence:ISequence<.chain(surtr.collections.Sequence:ISequence<T0>) -> surtr.collections.Sequence:ISequence<T0>
+    #9  surtr.collections.Sequence:ISequence<.zip(surtr.collections.Sequence:ISequence<T0>) -> surtr.collections.Sequence:ISequence<(T0, T0)>
+    #10  surtr.collections.Sequence:ISequence<.enumerate() -> surtr.collections.Sequence:ISequence<(int, T0)>
+    #11  surtr.collections.Sequence:ISequence<.reverse() -> surtr.collections.Sequence:ISequence<T0>
+    #12  surtr.collections.Sequence:ISequence<.cast() -> surtr.collections.Sequence:ISequence<T0>
+    #13  surtr.collections.Sequence:ISequence<.forEach((T0) -> void) -> void
+    #14  surtr.collections.Sequence:ISequence<.reduce((T0, T0) -> T0, T0) -> T0
+    #15  surtr.collections.Sequence:ISequence<.firstOrNull((T0) -> bool) -> T0
+    #16  surtr.collections.Sequence:ISequence<.any((T0) -> bool) -> bool
+    #17  surtr.collections.Sequence:ISequence<.all((T0) -> bool) -> bool
+    #18  surtr.collections.Sequence:ISequence<.toArray() -> T0[]
+    #19  surtr.collections.Sequence:ISequence<.toList() -> surtr.collections.List:List<T0>
+    #20  surtr.collections.Sequence:ISequence<.toReadOnlyCollection() -> surtr.collections.Collection:IReadOnlyCollection<T0>
+
+interface ISequence`1<T> : surtr:IIterable<T0>  [public]
+
+  [public] property length: int { get; }
+    get:
+      ; abstract
+
+  [public] abstract all(predicate: (T0) -> bool): bool
+
+  [public] abstract any(predicate: (T0) -> bool): bool
+
+  [public] abstract cast(): surtr.collections.Sequence:ISequence<T0>
+
+  [public] abstract chain(other: surtr.collections.Sequence:ISequence<T0>): surtr.collections.Sequence:ISequence<T0>
+
+  [public] abstract distinct(): surtr.collections.Sequence:ISequence<T0>
+
+  [public] abstract enumerate(): surtr.collections.Sequence:ISequence<(int, T0)>
+
+  [public] abstract filter(predicate: (T0) -> bool): surtr.collections.Sequence:ISequence<T0>
+
+  [public] abstract firstOrNull(predicate: (T0) -> bool): T0
+
+  [public] abstract flatMap(mapper: (T0) -> surtr.collections.Sequence:ISequence<T0>): surtr.collections.Sequence:ISequence<T0>
+
+  [public] abstract forEach(action: (T0) -> void): void
+
+  [public] abstract map(mapper: (T0) -> T0): surtr.collections.Sequence:ISequence<T0>
+
+  [public] abstract reduce(reducer: (T0, T0) -> T0, initialValue: T0): T0
+
+  [public] abstract reverse(): surtr.collections.Sequence:ISequence<T0>
+
+  [public] abstract skip(count: int): surtr.collections.Sequence:ISequence<T0>
+
+  [public] abstract sorted(comparator: (T0, T0) -> int): surtr.collections.Sequence:ISequence<T0>
+
+  [public] abstract take(count: int): surtr.collections.Sequence:ISequence<T0>
+
+  [public] abstract toArray(): T0[]
+
+  [public] abstract toList(): surtr.collections.List:List<T0>
+
+  [public] abstract toReadOnlyCollection(): surtr.collections.Collection:IReadOnlyCollection<T0>
+
+  [public] abstract zip(other: surtr.collections.Sequence:ISequence<T0>): surtr.collections.Sequence:ISequence<(T0, T0)>
