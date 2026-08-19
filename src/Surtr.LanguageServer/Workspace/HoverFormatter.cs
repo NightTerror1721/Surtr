@@ -165,7 +165,7 @@ namespace Surtr.LanguageServer.Workspace
             if (implements is not null)
                 builder.Append(Break).Append(implements);
 
-            builder.Append(Break).Append(ContainingLabel(method.ContainingSymbol, "method", "function"));
+            builder.Append(Break).Append(ExtensionOrContainingLabel(method.ExtensionTargetType, method.ContainingSymbol, "method", "function"));
             return builder.ToString();
         }
 
@@ -337,7 +337,7 @@ namespace Surtr.LanguageServer.Workspace
             if (property.IsStatic)
                 builder.Append(Break).Append("static");
 
-            builder.Append(Break).Append(ContainingLabel(property.ContainingSymbol, "property", "property"));
+            builder.Append(Break).Append(ExtensionOrContainingLabel(property.ExtensionTargetType, property.ContainingSymbol, "property", "property"));
             return builder.ToString();
         }
 
@@ -400,6 +400,23 @@ namespace Surtr.LanguageServer.Workspace
             if (containing is ModuleSymbol module)
                 return moduleWord + " in module `" + module.Path + "`";
             return moduleWord + " in module";
+        }
+
+        /// <summary>
+        /// The "declared where" line for a method or property, distinguishing an <c>extension</c>
+        /// (§15) from an ordinary member — <paramref name="containing"/> is always the declaring
+        /// *module* for one of these (an extension is emitted as a module-level function/pair of
+        /// them, never a real member of the type it extends), so without this a hover on
+        /// <c>obj.length()</c> would read exactly like a call to a bare module function and hide the
+        /// one fact that actually explains why <c>obj.</c> reached it at all.
+        /// </summary>
+        private static string ExtensionOrContainingLabel(TypeSymbol? extensionTarget, Symbol? containing, string memberWord, string moduleWord)
+        {
+            if (extensionTarget is null)
+                return ContainingLabel(containing, memberWord, moduleWord);
+
+            string inModule = containing is ModuleSymbol module ? ", in module `" + module.Path + "`" : string.Empty;
+            return "extension " + memberWord + " on `" + extensionTarget.ToDisplayString() + "`" + inModule;
         }
 
         /// <summary>Renders a user-written name like <c>op_+</c> back to its source spelling.</summary>

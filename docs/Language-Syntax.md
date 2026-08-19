@@ -2884,14 +2884,34 @@ extended type's parameters, the same static-nested rule that already governs an 
 type (§6):
 
 ```
-extension Array<T> {
-    fun second(self: Array<T>): T => self[1];
+extension T[] {
+    fun second(self: T[]): T => self[1];
+}
+
+extension Box<T> {
+    fun unwrap(self: Box<T>): T => self.get();
 }
 ```
 
-The `T` above is inferred from the receiver at the call site exactly as any other generic
+A bare name mentioned inside the target type needs no separate list at all — `T` above is
+declared the moment it is used, Kotlin/Swift-style, exactly as a generic class's own `<T>`
+introduces a name rather than referencing one. Only a **bound** needs writing out, and only then
+does the explicit form appear, right after `extension` since the block has no name of its own to
+attach it to:
+
+```
+extension<T : IComparable<T>> T[] {
+    fun maxOf(self: T[]): T { /* ... */ }
+}
+```
+
+Either way, `T` is inferred from the receiver at the call site exactly as any other generic
 method's type parameter is (§6) — it is never the array built-in's own `G0`, because a method
-declared this way is not a member the built-in class knows about (§15.5).
+declared this way is not a member the built-in class knows about (§15.5). Each member of a
+generic block gets its **own** copy of the parameter, not one shared across the block: two
+methods that both write `T` are never unified against each other through it. A property cannot
+be declared inside a block that writes an explicit `<T>` list yet — a property has no argument
+list for a call's inference to run against, and a read has no such mechanism at all.
 
 ### 15.5 What it compiles to
 

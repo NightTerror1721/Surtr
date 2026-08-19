@@ -121,6 +121,7 @@
         { "include": "#import-declaration" },
         { "include": "#alias-declaration" },
         { "include": "#type-declaration" },
+        { "include": "#extension-declaration" },
         { "include": "#function-declaration" },
         { "include": "#constructor-declaration" },
         { "include": "#variable-declaration" },
@@ -154,6 +155,21 @@
       "end": "(?=[{;])",
       "name": "meta.type.declaration.surtr",
       "patterns": [
+        { "include": "#type-reference" },
+        { "include": "#comments" },
+        { "include": "#punctuation" }
+      ]
+    },
+    "extension-declaration": {
+      "comment": "extension <Type> { ... } (§15) adds members to a type already declared elsewhere, without editing it - the target names an *existing* type rather than declaring a new one, so it is colored support.type.surtr like any other type reference, not entity.name.type.surtr the way type-declaration's own name is. An optional extension<T : Bound> ... list (§15.4) only needs writing out for a constraint; a bare type parameter used inside the target (extension T[] { }, extension Box<T> { }) is enough on its own and is highlighted by type-reference like any other identifier there.",
+      "begin": "\\bextension\\b",
+      "beginCaptures": {
+        "0": { "name": "keyword.declaration.type.surtr" }
+      },
+      "end": "(?=\\{)",
+      "name": "meta.extension.declaration.surtr",
+      "patterns": [
+        { "include": "#builtin-types" },
         { "include": "#type-reference" },
         { "include": "#comments" },
         { "include": "#punctuation" }
@@ -339,6 +355,7 @@
         { "match": "\\bconstructor\\b", "name": "keyword.declaration.function.surtr" },
         { "match": "\\boperator\\b", "name": "keyword.declaration.function.surtr" },
         { "match": "\\b(?:class|interface|enum|singleton)\\b", "name": "keyword.declaration.type.surtr" },
+        { "match": "\\bextension\\b", "name": "keyword.declaration.type.surtr" },
         { "match": "\\balias\\b", "name": "keyword.declaration.alias.surtr" },
         { "match": "\\b(?:let|var)\\b", "name": "storage.type.variable.surtr" },
         { "match": "\\bvalue(?=\\s+class\\b)", "name": "keyword.declaration.type.surtr" },

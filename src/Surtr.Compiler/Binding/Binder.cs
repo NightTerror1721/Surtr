@@ -1708,17 +1708,6 @@ namespace Surtr.Compiler.Binding
             Scope scope,
             string sourceName)
         {
-            var targetType = _resolver.Resolve(syntax.TargetType, scope, sourceName);
-            if (targetType.IsError)
-                return;
-
-            if (targetType is not NamedTypeSymbol target)
-            {
-                ReportAt(sourceName, syntax.TargetType.Span, SurtrDiagnosticCode.InvalidExtensionTarget,
-                    $"'{targetType.ToDisplayString()}' is a composite or built-in shape, which 'extension' does not support yet — only an ordinary named type.");
-                return;
-            }
-
             // §3.1's two defaults, the same rule DeclareType applies to a type: a block written
             // directly in a module is internal to it, and one nested inside a class is private to
             // that class like any other member — except inside an interface, where §2.3 makes every
@@ -1749,7 +1738,32 @@ namespace Surtr.Compiler.Binding
             {
                 if (member is PropertyDeclarationSyntax property)
                 {
-                    if (BindExtensionProperty(property, module, target, containingType, blockAccessibility, scope, sourceName) is PropertySymbol bound)
+                    // Fase 6 (§15.4) does not extend to properties: a property has no argument list
+                    // for overload resolution to infer a type parameter from the way a call's
+                    // arguments do (`SubstituteGenericCandidates`), and a read (`obj.prop`) has no
+                    // machinery at all to run that inference against — so a generic block's `T`
+                    // never reaches one. Rejected here rather than silently resolved against an
+                    // unfilled `T`, which would misreport as an ordinary unresolved-name error far
+                    // from its actual cause.
+                    if (syntax.TypeParameters.Count > 0)
+                    {
+                        ReportAt(sourceName, property.Span, SurtrDiagnosticCode.InvalidExtensionMember,
+                            $"'{property.Name}' cannot be declared inside a generic extension block (§15.4) — only methods can take the block's type parameters yet.");
+                        continue;
+                    }
+
+                    var propertyTarget = _resolver.Resolve(syntax.TargetType, scope, sourceName);
+                    if (propertyTarget.IsError)
+                        continue;
+
+                    if (!IsValidExtensionTarget(propertyTarget))
+                    {
+                        ReportAt(sourceName, syntax.TargetType.Span, SurtrDiagnosticCode.InvalidExtensionTarget,
+                            $"'{propertyTarget.ToDisplayString()}' cannot be extended (§15) — a type parameter and 'void' name no concrete receiver.");
+                        continue;
+                    }
+
+                    if (BindExtensionProperty(property, module, propertyTarget, containingType, blockAccessibility, scope, sourceName) is PropertySymbol bound)
                         extensionProperties.Add(bound);
 
                     continue;
@@ -1766,7 +1780,7 @@ namespace Surtr.Compiler.Binding
                     || method.Dispatch != DispatchModifier.None || method.IsSealed || method.Body is null)
                 {
                     ReportAt(sourceName, method.Span, SurtrDiagnosticCode.InvalidExtensionMember,
-                        $"'{method.Name}' cannot be generic, native, const, abstract/virtual/override, sealed, or bodyless — an extension block does not support that yet (§15).");
+                        $"'{method.Name}' cannot declare its own type parameters (write them on the 'extension' block itself, §15.4), or be native, const, abstract/virtual/override, sealed, or bodyless — an extension block does not support that yet (§15).");
                     continue;
                 }
 
@@ -1777,10 +1791,40 @@ namespace Surtr.Compiler.Binding
                     Accessibility = ResolveExtensionMemberAccessibility(method.Visibility, blockAccessibility, sourceName, method.Span),
                     IsInline = method.Inline == InlineModifier.Inline,
                     IsForceInline = method.Inline == InlineModifier.ForceInline,
-                    ExtensionTargetType = target,
                     ExtensionDeclaringContainer = containingType,
                     ExtensionIsStatic = method.IsStatic,
                 };
+
+                // The block's own type parameters (§15.4), written explicitly only when a bound is
+                // needed — the same per-method declaration and constraint-binding an ordinary
+                // generic method's own `<T>` already gets, since an extension method is exactly that:
+                // a module-level function, generic over parameters nobody but itself owns. Reused
+                // rather than re-implemented, and deliberately a *fresh* symbol set per member (not
+                // one shared across the block) so two members are never accidentally unified against
+                // each other through a name they only look like they share.
+                if (syntax.TypeParameters.Count > 0)
+                    BindTypeParameters(extMethod, syntax.TypeParameters, methodScope, sourceName);
+
+                var implicitParameters = new List<TypeParameterSymbol>();
+                var target = BindExtensionTargetType(syntax.TargetType, extMethod, methodScope, sourceName, implicitParameters);
+
+                // `null` only comes back once `TypeResolver` itself already reported why (a wrong
+                // type argument count, a genuinely undeclared qualified name) — reporting a second,
+                // vaguer diagnostic on top would turn one mistake into two.
+                if (target is null)
+                    continue;
+
+                if (!IsValidExtensionTarget(target))
+                {
+                    ReportAt(sourceName, syntax.TargetType.Span, SurtrDiagnosticCode.InvalidExtensionTarget,
+                        $"'{target.ToDisplayString()}' cannot be extended (§15) — a bare type parameter and 'void' name no concrete receiver.");
+                    continue;
+                }
+
+                if (syntax.TypeParameters.Count == 0 && implicitParameters.Count > 0)
+                    extMethod.TypeParameters = implicitParameters;
+
+                extMethod.ExtensionTargetType = target;
 
                 extMethod.ReturnType = _resolver.Resolve(method.ReturnType, methodScope, sourceName);
                 extMethod.Parameters = BindParameters(method.Parameters, extMethod, methodScope, sourceName);
@@ -1799,7 +1843,7 @@ namespace Surtr.Compiler.Binding
                     && (extMethod.Parameters.Count == 0 || !ReferenceEquals(extMethod.Parameters[0].Type, target)))
                 {
                     ReportAt(sourceName, method.Span, SurtrDiagnosticCode.InvalidExtensionReceiver,
-                        $"'{method.Name}' must take '{target.Name}' as its first parameter — the receiver 'obj.{method.Name}(...)' is bound against.");
+                        $"'{method.Name}' must take '{target.ToDisplayString()}' as its first parameter — the receiver 'obj.{method.Name}(...)' is bound against.");
                 }
 
                 RecordBody(extMethod, method.Body, methodScope, module, containingType: null, sourceName);
@@ -1807,6 +1851,95 @@ namespace Surtr.Compiler.Binding
 
                 signatures.Add(extMethod, sourceName, method.Span);
                 extensions.Add(extMethod);
+            }
+        }
+
+        /// <summary>
+        /// Whether a resolved type is one <c>extension</c> may target (§15): anything concrete. A
+        /// bare type parameter and <c>void</c> are the two things a receiver can never actually be.
+        /// </summary>
+        private static bool IsValidExtensionTarget(TypeSymbol type)
+            => type is not TypeParameterSymbol && !type.IsVoid;
+
+        /// <summary>
+        /// Resolves an <c>extension</c> block's target type (§15.4), declaring a fresh type
+        /// parameter — owned by <paramref name="owner"/> — for any bare name mentioned inside it that
+        /// does not already resolve to something, Kotlin/Swift-style: <c>extension T[] { }</c> and
+        /// <c>extension Box&lt;T&gt; { }</c> need no separate <c>&lt;T&gt;</c> list at all, only a
+        /// bound does (§15.4's explicit <c>extension&lt;T : Bound&gt;</c> form, already declared into
+        /// <paramref name="scope"/> by the time this runs — which is exactly why a name already found
+        /// there is read, never redeclared).
+        /// </summary>
+        /// <remarks>
+        /// Declaration and resolution are interleaved on purpose, not run as two passes: a later
+        /// argument (<c>{T: T}</c>'s value position) has to see the same parameter a earlier one just
+        /// declared, and <c>Box&lt;T&gt;</c>'s <c>T</c> must <em>not</em> resolve against whatever
+        /// <c>Box</c>'s own declaration happens to have called its parameter — the static-nested rule
+        /// (§6) that is the entire reason this method exists instead of a plain
+        /// <see cref="TypeResolver.Resolve"/> call. <see cref="TypeResolver.TryResolveTypeName"/> is
+        /// what makes "does this already mean something" answerable without reporting a diagnostic
+        /// for the common case where it does not — a parameter's whole point.
+        /// </remarks>
+        private TypeSymbol? BindExtensionTargetType(
+            TypeSyntax syntax,
+            MethodSymbol owner,
+            Scope scope,
+            string sourceName,
+            List<TypeParameterSymbol> declared)
+        {
+            switch (syntax)
+            {
+                case NamedTypeSyntax { Path.Count: 1, TypeArguments.Count: 0 } named:
+                {
+                    if (_resolver.TryResolveTypeName(named.Path, scope, named.Span, out var existing))
+                        return existing;
+
+                    if (scope.Lookup(named.Path[0]) is { IsFound: true, Symbol: TypeParameterSymbol already })
+                        return already;
+
+                    var parameter = _factory.DeclareTypeParameter(named.Path[0], owner, declared.Count);
+                    declared.Add(parameter);
+                    scope.TryDeclare(named.Path[0], parameter);
+                    return parameter;
+                }
+
+                case NamedTypeSyntax named:
+                {
+                    // The arguments are declared/resolved first so a name in one of them (`T` in
+                    // `Box<T>`) is already in `scope` by the time the whole reference resolves — the
+                    // ordinary resolver then finds it exactly like any other type in scope, so there
+                    // is no need to hand-build the construction here too.
+                    foreach (var argument in named.TypeArguments)
+                    {
+                        if (BindExtensionTargetType(argument, owner, scope, sourceName, declared) is null)
+                            return null;
+                    }
+
+                    var resolved = _resolver.Resolve(syntax, scope, sourceName);
+                    return resolved.IsError ? null : resolved;
+                }
+
+                case ArrayTypeSyntax array:
+                {
+                    var element = BindExtensionTargetType(array.ElementType, owner, scope, sourceName, declared);
+                    return element is null ? null : _factory.Array(element);
+                }
+
+                case DictTypeSyntax dictionary:
+                {
+                    var key = BindExtensionTargetType(dictionary.KeyType, owner, scope, sourceName, declared);
+                    var value = BindExtensionTargetType(dictionary.ValueType, owner, scope, sourceName, declared);
+                    return key is null || value is null ? null : _factory.Dictionary(key, value);
+                }
+
+                default:
+                {
+                    // A tuple, closure or nullable target — no case in §15.4's examples needs an
+                    // implicitly-declared parameter this deep, so a bare name here resolves as an
+                    // ordinary (and, for one not already in scope, unresolved) type reference.
+                    var resolved = _resolver.Resolve(syntax, scope, sourceName);
+                    return resolved.IsError ? null : resolved;
+                }
             }
         }
 
@@ -1820,7 +1953,7 @@ namespace Surtr.Compiler.Binding
         private PropertySymbol? BindExtensionProperty(
             PropertyDeclarationSyntax syntax,
             ModuleSymbol module,
-            NamedTypeSymbol target,
+            TypeSymbol target,
             NamedTypeSymbol? containingType,
             Accessibility blockAccessibility,
             Scope scope,
@@ -1887,7 +2020,7 @@ namespace Surtr.Compiler.Binding
             AccessorSyntax syntax,
             string name,
             ModuleSymbol module,
-            NamedTypeSymbol target,
+            TypeSymbol target,
             NamedTypeSymbol? containingType,
             bool isStatic,
             TypeSymbol returnType,

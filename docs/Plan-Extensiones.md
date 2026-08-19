@@ -560,59 +560,201 @@ encaja en la forma que esa optimización asume.
 
 **Commit sugerido**: `Feature: extension properties (Fase 4 de §15)`
 
-### Fase 5 — Extensiones sobre tipos compuestos y built-ins
+### Fase 5 — Extensiones sobre tipos compuestos y built-ins — **Hecha**
 
-- `extension int[] { }`, `extension Dictionary<K, V> { }` (o el tipo dict real), `extension
-  string { }`, extensiones sobre una `value class` de usuario.
-- Resolución del tipo objetivo declarado a través de `MemberLookup.BackingType` (misma
-  indirección que hace que `int[].push(3)` funcione hoy) — necesario tanto para saber contra qué
-  construcción concreta (`array<int>` vs. `array<string>`) compara el receptor real, como para
-  evitar que `extension int[] { }` y `extension string[] { }` colisionen entre sí.
-- Verificar (con test, no solo lectura de código) que el boxing de un receptor `value class`/
-  primitivo sigue las reglas normales de conversión de argumento — sin caso especial nuevo.
-- Tests: extensión sobre `int[]`, sobre un `dict`, sobre una `value class` de usuario, sobre
-  `string`.
+**Hallazgo de diseño real, que simplifica el borrador de la Fase 0**: la investigación previa
+suponía que haría falta pasar por `MemberLookup.BackingType` para saber "contra qué construcción
+concreta compara el receptor real" — resultó innecesario. `AddExtensionCandidates` (Fase 1) nunca
+filtró candidatos por `ExtensionTargetType`; solo recoge por nombre y deja que
+`OverloadResolution`/`Conversions.Classify` decidan si el receptor real convierte al primer
+parámetro declarado, exactamente como cualquier argumento ordinario — y `Conversions.Classify` ya
+sabe comparar `int[]` con `int[]` (identidad, interned por elemento) o con una interfaz que
+`array` implementa (vía `Conversions.IsSubtype`/`_lookup.BackingType`, **ya usado internamente**
+por `Conversions`, no por el binder de extensiones). Así que aceptar un target compuesto es, en la
+práctica, solo cuestión de dejar de rechazarlo. Tampoco hacía falta ninguna indirección extra para
+`int` — ya funcionaba desde la Fase 1, porque los primitivos (`int`, `float`, `string`, ...) ya son
+`NamedTypeSymbol` (`TypeSymbolFactory.Special`), no un caso especial.
 
-### Fase 6 — Extensiones genéricas
+**Cambios**:
+- `MethodSymbol.ExtensionTargetType`/`PropertySymbol.ExtensionTargetType` ensanchados de
+  `NamedTypeSymbol?` a `TypeSymbol?` (`Binding/Symbols/MemberSymbols.cs`) — el único cambio de tipo
+  necesario, ya que tanto el emparejamiento de instancia (por conversión) como
+  `Conversions.IsAssignable` (usado por las propiedades de extensión) ya aceptaban `TypeSymbol`
+  general.
+- `Binder.BindExtension`: la comprobación `targetType is not NamedTypeSymbol` se sustituye por
+  `IsValidExtensionTarget` (rechaza solo un `TypeParameterSymbol` bare o `void` — ninguno nombra un
+  receptor concreto); cualquier otro `TypeSymbol` resuelto (compuesto o no) es un target válido.
+  `BindExtensionProperty`/`BindExtensionAccessor` ensanchados en paralelo (`TypeSymbol target` en
+  vez de `NamedTypeSymbol target`).
+- Sin cambios en `BodyBinder.Expressions.cs`: el emparejamiento de instancia (por conversión) y de
+  propiedad de instancia (`_conversions.IsAssignable`) ya operaban en `TypeSymbol`, no en
+  `NamedTypeSymbol` — nunca hubo una restricción ahí que retirar.
+- Tests: `ModuleEmitterTests.cs`, región "Fase 5" (6 tests) — método de extensión sobre `int[]`
+  contra la VM real (`for`-in + acumulador), dos extensiones sobre `int[]`/`string[]` resolviendo
+  independientemente (misma prueba de identidad-por-elemento que Fase 1 ya hacía para `Vec2`/`int`),
+  método sobre `{string: int}`, método sobre `string`, método sobre una `value class` de usuario
+  (`EntityId`), propiedad de extensión sobre `int[]`. El test obsoleto de la Fase 1
+  (`AnExtensionTargetingACompositeTypeIsRejectedForNow`, que esperaba exactamente el rechazo que
+  esta fase retira) se eliminó, mismo patrón que el test obsoleto retirado en la Fase 3.
+- Suite completa verificada: 2251/2251 en verde.
 
-- `extension Array<T> { fun sum(self: Array<T>): T }`, `extension List<T> { }` sobre un tipo
-  genérico de usuario.
-- El bloque `extension` declara su propia lista `<T>` (regla "static-nested" de §6, no ve los
-  parámetros del tipo objetivo); inferencia en el call site contra el argumento de tipo real
-  del receptor, reutilizando `TypeInference.cs` (mismo mecanismo que ya usa un método genérico
-  normal) — sin mecanismo nuevo de inferencia.
-- Tests: extensión genérica sobre `Array<T>`, sobre una clase de usuario `Box<T>`, con
-  constraint (`<T : IComparable<T>>`).
+**Commit sugerido**: incluido en el commit combinado de Fases 5-8 (ver cierre del documento).
 
-### Fase 7 — Language Server
+### Fase 6 — Extensiones genéricas — **Hecha**
 
-- `CompletionProvider.Keywords`: añadir `extension`.
-- `MemberLookup` (compilador): nuevo método público `FindExtensionMethods`, reutilizado tanto
-  por `BodyBinder` (Fases 1-2) como por el LSP.
-- `CompletionProvider.AddReachableMembers`/`ResolveCallableByName`: invocar el método nuevo de
-  `MemberLookup` y fusionar candidatos de extensión con los reachable normales, para completado
-  tras `.` y `signatureHelp`.
-- `SymbolResolver.AllDeclarations`: nuevo caso para recorrer miembros de un
-  `ExtensionDeclarationSyntax`; ajuste de la comparación de "padre" (`MatchesParent` o
-  equivalente) para reconocerlo — ir-a-definición debe saltar al sitio real dentro del bloque
-  `extension`, no fallar ni apuntar al tipo receptor.
-- `HoverFormatter`: distinguir en el texto de hover que un miembro viene de una extensión
-  (p. ej. "extension method sobre `Tipo`, declarado en `Modulo`") — cosmético pero evita
-  confusión.
-- Semantic tokens: **sin cambios** (confirmado — solo aplica a contextuales).
-- Tests: `LanguageServerWorkspaceTests.cs` — completado tras `.` incluyendo un extension method
-  visible por import wildcard, hover y definición sobre una llamada a extensión, `extension` en
-  el completado suelto de keywords.
+**Hallazgo de diseño real, que corrige el borrador de la Fase 0**: el borrador original mostraba
+`extension Array<T> { fun second(self: Array<T>): T => self[1]; }`, dando a entender que el bloque
+necesitaría siempre una lista `<T>` propia escrita aparte. Investigado a fondo, no hace falta
+ninguna lista separada para el caso simple: un nombre suelto mencionado dentro del propio tipo
+objetivo (`extension T[] { }`, `extension Box<T> { }`) se **declara** ahí mismo, al estilo
+Kotlin/Swift, en vez de tener que resolverse como referencia — `Binder.BindExtensionTargetType`
+intenta primero `TypeResolver.TryResolveTypeName` (silencioso, ya existente) y, solo si falla,
+declara un `TypeParameterSymbol` nuevo con `_factory.DeclareTypeParameter` en el scope de ese
+miembro. Solo hace falta la forma explícita — `extension<T : IComparable<T>> T[] { }`, situada justo
+tras `extension` porque el bloque no tiene nombre propio donde colgarla — cuando un `T` necesita un
+bound; en ese caso se reutiliza tal cual `Binder.BindTypeParameters`, el mismo mecanismo que ya
+declara el `<T>` de un método genérico ordinario (mismo `ConstraintBinding`, resuelto en la misma
+pasada diferida). Además, la spec de la Fase 0 escribía `Array<T>` como si fuera sintaxis real —
+no lo es (`§5.9`: el array se escribe `T[]`; `array<T>` en minúscula es la forma nombrable, ya
+existente, que `TypeResolver.Apply` redirige al mismo `ArrayTypeSymbol`) — corregido en
+`Language-Syntax.md` §15.4.
 
-### Fase 8 — Cliente VSCode
+**Segundo hallazgo real**: no hizo falta ningún mecanismo de inferencia nuevo, ni para el binder ni
+para el emisor. `CompleteExtension` (la ruta de llamada de instancia de un método de extensión) solo
+necesitó una línea — `candidates = SubstituteGenericCandidates(syntax, candidates, combinedInfos,
+name);`, justo antes de `_overloads.Resolve` — reutilizando exactamente el mismo
+`SubstituteGenericCandidates`/`TypeInference.TryInfer`/`_lookup.SubstituteMethod` que ya usa
+cualquier llamada a un método genérico ordinario, porque el receptor ya viaja como
+`combinedInfos[0]` alineado con `Parameters[0]` (el propio diseño de la Fase 1). Las llamadas
+estáticas genéricas (`Type.metodo()`) ya pasaban, sin tocar nada, por el `Complete` ordinario
+(Fase 3), que **ya** llamaba a `SubstituteGenericCandidates` — cero cambios ahí. Las propiedades de
+extensión quedan **fuera** de esta fase a propósito: una lectura (`obj.prop`) no tiene mecanismo de
+inferencia como el de una llamada, así que un miembro `PropertyDeclarationSyntax` dentro de un
+bloque con lista explícita `<T>` se rechaza con un diagnóstico claro (`InvalidExtensionMember`) en
+vez de compilar contra un `T` que nunca se llenaría.
 
-- `syntaxes/surtr.tmLanguage.json`: añadir `extension` a la alternancia de reservadas de tipo;
-  nuevo bloque `extension-declaration` (análogo a `type-declaration`), capturando el tipo
-  objetivo como `support.type.surtr`.
-- `snippets/surtr.code-snippets`: snippet nuevo (`extension`), análogo a `class`/`interface`/
-  `singleton`/`vclass` ya existentes.
-- Commit de *feature* separado del commit de *release* (bump de `package.json`, regeneración del
-  `.vsix`), siguiendo el patrón ya establecido en el historial del proyecto.
+**Hallazgo colateral, fuera del alcance de esta fase**: mientras se verificaba el caso "extensión
+sobre una clase de usuario `Box<T>`", se encontró un bug preexistente y no relacionado —
+`fun f(b: Box<int>): string => "x" + b.get();` (una función **no genérica**, con un **parámetro**
+de tipo genérico construido) revienta la VM con `NullReferenceException` en `StrCat`, solo cuando
+el resultado de `b.get()` se concatena a una cadena; devolverlo directamente como `int` no falla.
+Confirmado sin relación con `extension` (ni con genéricos declarados por la propia función: el
+mismo patrón revienta con y sin `<T>` en `f`). Marcado con `spawn_task` para una sesión aparte en
+vez de investigarse aquí — es un bug de erasure/boxing en el emisor de llamadas, no de este plan —
+y el test de esta fase (`AnExtensionMethodOverAUserGenericClassInfersItsTypeParameter`) se escribió
+alrededor de él, devolviendo el valor sin concatenarlo.
+
+**Cambios**:
+- `ExtensionDeclarationSyntax` (`Syntax/Ast/DeclarationSyntax.cs`) gana `TypeParameters:
+  IReadOnlyList<TypeParameterSyntax>`; `ParseExtensionDeclaration` (`Parser.Declarations.cs`) llama
+  a `ParseTypeParameterList()` (ya existente, reutilizado tal cual) justo tras `extension` y antes
+  del tipo objetivo.
+- `Binder.BindExtension`: por cada método, si el bloque declaró una lista explícita se llama a
+  `BindTypeParameters(extMethod, syntax.TypeParameters, methodScope, sourceName)` (declara símbolos
+  frescos, **propios de ese miembro**, no compartidos entre los demás miembros del bloque — dos
+  métodos que escriben `T` nunca terminan unificados entre sí a través de ese nombre); el tipo
+  objetivo se resuelve **por miembro**, dentro de `methodScope`, con el nuevo
+  `Binder.BindExtensionTargetType` (recorre `ArrayTypeSyntax`/`DictTypeSyntax`/
+  `NamedTypeSyntax.TypeArguments` declarando implícitamente cualquier nombre suelto no resoluble).
+  El chequeo de receptor (`Parameters[0].Type == target`) sigue funcionando sin cambios porque
+  `TypeSymbolFactory.Array`/`NamedTypeSymbol.Construct` internan por identidad de argumento — el
+  mismo `T` reaparece igual en el tipo objetivo y en el parámetro escrito.
+- `IsValidExtensionTarget`/mensaje de error ajustados para no repetir un diagnóstico que
+  `TypeResolver` ya reportó (`target is null` solo ocurre tras un fallo ya señalado).
+- `BodyBinder.Expressions.cs` — `CompleteExtension`: una línea (`SubstituteGenericCandidates`),
+  documentada arriba.
+- Tests: `ModuleEmitterTests.cs`, región "Fase 6" (6 tests) — extensión implícitamente genérica
+  sobre `T[]` (`second`), sobre una clase de usuario `Box<T>` (`unwrap`, sorteando el bug
+  colateral), un segundo parámetro de tipo `T` además del receptor infiriendo correctamente,
+  extensión con bound explícito (`extension<T : IComparable<T>> T[] { fun maxOf(...) }`) llamando a
+  un miembro de la constraint, violación de esa constraint rechazada
+  (`SurtrDiagnosticCode.ConstraintNotSatisfied`), propiedad dentro de un bloque con lista explícita
+  rechazada.
+- Suite completa verificada: 2257/2257 en verde.
+
+**Commit sugerido**: incluido en el commit combinado de Fases 5-8 (ver cierre del documento).
+
+### Fase 7 — Language Server — **Hecha**
+
+**Decisión de alcance, explícita**: la investigación de la Fase 0 recomendaba que
+`BodyBinder.ExtensionCandidates`/`AddExtensionCandidates` (Fases 1-2) pasaran a **usar** el nuevo
+`MemberLookup.FindExtensionMethods` en vez de mantener su propia lógica. Evaluado y descartado a
+propósito: `BodyBinder` filtra y combina candidatos para **resolver una llamada real** (con
+`OverloadResolution`, con la regla de prioridad silenciosa sobre un miembro real), mientras que el
+LSP solo necesita **listar** el conjunto alcanzable, sin ningún paso de resolución — refactorizar
+la ruta de `BodyBinder`, ya probada en cinco fases previas, para ahorrar una duplicación menor de
+lógica de filtrado no compensaba el riesgo de desestabilizarla. `MemberLookup` gana los métodos
+nuevos como una API **adicional**, pensada y usada solo por el LSP; `BodyBinder` sigue con su
+propia implementación intacta.
+
+**Cambios**:
+- `MemberLookup.cs`: `FindExtensionMethods`/`FindStaticExtensionMethods`/`FindExtensionProperties`/
+  `FindStaticExtensionProperties`, cada uno recorriendo el módulo de uso más los importados por
+  wildcard, filtrando por `Conversions.IsAssignable` (instancia) o `ReferenceEquals` (estático) y
+  por `AccessCheck.IsAccessible`/`IsAccessibleWithin` (visibilidad anidada, §15.2) — el mismo par de
+  reglas que `BodyBinder` ya aplicaba, leído en la forma de lista en vez de la forma de resolución.
+- `CompletionProvider.Keywords`: `extension` añadida.
+- `CompletionProvider.CompleteMember`: los cuatro puntos de retorno que ya llamaban a
+  `AddReachableMembers` (receptor ligado, `this`, valor en scope, nombre de tipo) ganan una llamada
+  hermana — `AddExtensionInstanceMembers` para los tres primeros, `AddExtensionStaticMembers` para
+  el último — que invoca los métodos nuevos de `MemberLookup` y fusiona el resultado, sin repetir un
+  nombre ya ofrecido por un miembro real (mismo "el real gana en silencio" del binder, aplicado al
+  completado). `scope` (antes calculado solo donde hacía falta) se calcula una vez al principio del
+  método, porque `ThisType` es también lo que la visibilidad anidada de una extensión necesita.
+- `CompletionProvider.ResolveCallableByName` (usado por `signatureHelp` cuando el árbol ligado aún
+  no tiene la llamada completa): la rama de "nombre de tipo" y la de "valor en scope" caen a
+  `FindStaticExtensionMethods`/`FindExtensionMethods` solo cuando los miembros reales no dan ningún
+  candidato — misma prioridad silenciosa.
+- `SymbolResolver.AllDeclarations`: ahora recorre también los miembros de un
+  `ExtensionDeclarationSyntax` (a nivel de módulo o anidado en una clase), etiquetando cada uno con
+  ese nodo como "padre" en vez de `null`/el tipo contenedor.
+- `SymbolResolver.FindMethodDeclaration`/`FindNamedMemberDeclaration`: **hallazgo real** — antes de
+  este cambio, buscar la declaración de un método/propiedad de extensión (`ContainingType == null`,
+  igual que una función de módulo) coincidía con `MatchesParent(parent, null) → parent is null`, que
+  además de nunca encontrar el método real (sus miembros no se recorrían) podía casar por accidente
+  con la primera función de módulo de igual nombre/aridad que si existiera. Corregido con una rama
+  dedicada: para un símbolo con `ExtensionTargetType`/`ExtensionDeclaringContainer` propio, el
+  "padre" tiene que ser un `ExtensionDeclarationSyntax`, nunca la regla de `MatchesParent` que
+  asume un miembro real dentro de un `TypeDeclarationSyntax`.
+- `HoverFormatter`: `ExtensionOrContainingLabel` sustituye la última línea de
+  `FormatMethod`/`FormatProperty` cuando el símbolo trae `ExtensionTargetType` —
+  "extension method on `Vec2`, in module `...`" en vez de "function in module `...`", que
+  antes ocultaba precisamente el hecho que explica por qué `obj.` alcanzó ese miembro.
+- Semantic tokens: sin cambios, confirmado — `extension` es reservada (decisión #2 de la Fase 0),
+  así que la gramática TextMate la resuelve sola sin el caso especial que sí necesitan las
+  contextuales.
+- Tests: `LanguageServerWorkspaceTests.cs` (3 tests) — completado tras `.` de una propiedad de
+  extensión traída por wildcard import, hover + ir-a-definición sobre una llamada a un método de
+  extensión (verifica tanto el texto "extension method on" como que el span de la declaración cae
+  dentro del bloque `extension`, no en un falso positivo), `extension` en el completado suelto de
+  palabras clave.
+- Suite completa verificada: 2260/2260 en verde (25/25 en `LanguageServerWorkspaceTests`).
+
+**Commit sugerido**: incluido en el commit combinado de Fases 5-8 (ver cierre del documento).
+
+### Fase 8 — Cliente VSCode — **Hecha**
+
+**Cambios**:
+- `syntaxes/surtr.tmLanguage.json`: nuevo bloque `extension-declaration` (`declarations`, antes de
+  `function-declaration`) — `begin: \bextension\b` (sin nombre que capturar junto al keyword, a
+  diferencia de `type-declaration`, porque lo que sigue es una referencia de tipo, no una
+  declaración nueva), `end: (?=\{)`, cuerpo delegado a `type-reference`/`builtin-types` así que el
+  tipo objetivo se colorea `support.type.surtr` — se está *nombrando* un tipo ya existente, no
+  declarando uno, la misma distinción que ya documentó la investigación de la Fase 0. `extension`
+  añadida también a la alternancia de reservadas de tipo del `keywords` de respaldo
+  (`\b(?:class|interface|enum|singleton)\b`), mismo patrón que ya siguen esas cuatro. La lista
+  explícita `<T : Bound>` (§15.4) no se parsea en detalle — approximation de TextMate, igual que el
+  resto del archivo — pero el propio target sigue coloreándose correctamente después de ella.
+- `snippets/surtr.code-snippets`: snippet `extension` nuevo, análogo a `class`/`interface`/
+  `singleton`/`vclass` — expande a un bloque con un método de instancia de ejemplo (receptor +
+  cuerpo), consistente con el modelo de receptor explícito de la Fase 1.
+- **Deliberadamente sin commit de release**: el patrón ya establecido en el historial de
+  `vscode-surtr` separa el commit de *feature* (fuente) del de *release* (bump de
+  `package.json`, regeneración del `.vsix`, mensaje de commit como changelog) — esta fase entrega
+  solo la fuente; publicar una versión nueva (`0.1.5`) queda para cuando el usuario lo pida
+  explícitamente, la misma razón por la que un push nunca se hace sin confirmación.
+
+**Commit sugerido**: incluido en el commit combinado de Fases 5-8 (ver cierre del documento).
 
 ### Fase 9 (opcional, diferida) — Extension members con doble receptor estilo Kotlin
 

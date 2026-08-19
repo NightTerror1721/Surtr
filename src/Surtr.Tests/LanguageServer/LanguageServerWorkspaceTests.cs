@@ -640,6 +640,100 @@ namespace Surtr.Tests.LanguageServer
                 "The stub the code action generated must itself compile clean: " + Describe(patchedDiagnostics) + "\n" + patched);
         }
 
+        [Fact]
+        public void AnExtensionMethodBroughtByAWildcardImportCompletesAfterADot()
+        {
+            const string coreSource =
+                "public class Vec2 {\n" +
+                "    public let x: float;\n" +
+                "    public let y: float;\n" +
+                "    public constructor(x: float, y: float) { this.x = x; this.y = y; }\n" +
+                "}\n" +
+                "public extension Vec2 { lengthSquared: float => this.x * this.x + this.y * this.y; }\n";
+            const string appSource =
+                "import proj.core.*;\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let v: Vec2 = Vec2(3.0, 4.0);\n" +
+                "        let n: float = v.lengthSquared;\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Vec2.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            int dotEnd = appSource.IndexOf("v.lengthSquared", StringComparison.Ordinal) + "v.".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, appPath, appSource, dotEnd);
+
+            Assert.Contains(completion.Items, item => item.Label == "lengthSquared");
+        }
+
+        [Fact]
+        public void HoverAndDefinitionOnAnExtensionMethodCallReachTheExtensionBlockAndNameItAsOne()
+        {
+            const string source =
+                "class Vec2 {\n" +
+                "    public let x: float;\n" +
+                "    public let y: float;\n" +
+                "    public constructor(x: float, y: float) { this.x = x; this.y = y; }\n" +
+                "}\n" +
+                "extension Vec2 {\n" +
+                "    fun lengthSquared(self: Vec2): float => self.x * self.x + self.y * self.y;\n" +
+                "}\n" +
+                "fun run(): float { return Vec2(3.0, 4.0).lengthSquared(); }\n";
+
+            var workspace = Tree(("app/Vec2.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Vec2.surtr");
+            int callNameOffset = source.LastIndexOf("lengthSquared()", StringComparison.Ordinal);
+
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, callNameOffset);
+
+            Assert.NotNull(hit);
+            Assert.Contains("extension method on `Vec2`", hit!.Markdown);
+
+            Assert.True(hit.HasDefinition, "Expected the call to resolve to the extension method's own declaration.");
+            Assert.Equal(Path.GetFullPath(path), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
+
+            // The declaration's span must land on the method *inside* the `extension` block, not on
+            // some unrelated same-named/same-arity module function `SymbolResolver` might otherwise
+            // have matched by accident (`MatchesParent`'s original, extension-unaware rule).
+            int declaredAt = source.IndexOf("fun lengthSquared(self: Vec2)", StringComparison.Ordinal) + "fun ".Length;
+            Assert.Equal(declaredAt, hit.DefinitionStart);
+        }
+
+        [Fact]
+        public void ExtensionAppearsInBareKeywordCompletion()
+        {
+            const string source =
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        \n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int insideBody = source.IndexOf("        \n", StringComparison.Ordinal) + "        ".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, path, source, insideBody);
+            Assert.Contains("extension", completion.Items.Select(item => item.Label));
+        }
+
         /// <summary>Applies a single LSP <see cref="Surtr.LanguageServer.Protocol.TextEdit"/> to plain text, for test assertions only.</summary>
         private static string ApplyEdit(string text, Surtr.LanguageServer.Protocol.TextEdit edit)
         {

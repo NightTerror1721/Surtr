@@ -372,5 +372,185 @@ namespace Surtr.Compiler.Binding
         /// </summary>
         public MethodSymbol SubstituteMethod(MethodSymbol method, TypeSubstitution substitution)
             => substitution.IsEmpty ? method : SubstituteMethodInto(method, method.ContainingSymbol!, substitution);
+
+        /// <summary>
+        /// Every instance extension method (§15) reachable on <paramref name="receiverType"/> from
+        /// <paramref name="useSiteModule"/> — its own module first, then each of <paramref name="imported"/>
+        /// (the wildcard-imported modules already in scope there) — visible per
+        /// <paramref name="useSiteType"/> for a nested block's narrower visibility (§15.2).
+        /// </summary>
+        /// <remarks>
+        /// A read-only twin of the matching <c>BodyBinder.ExtensionCandidates</c>/<c>CompleteExtension</c>
+        /// already do for a real call, kept separate rather than shared: those exist to *resolve* a
+        /// call (accessibility filtering feeding into <c>OverloadResolution</c>, one candidate has to
+        /// win), while a caller here — the Language Server's completion and signature help — only
+        /// ever wants the full reachable set to *list*, with no resolution step of its own. Matched by
+        /// <paramref name="conversions"/> against the method's first parameter exactly as an ordinary
+        /// call's receiver would be, so a listed method is one that would actually apply.
+        /// </remarks>
+        public IReadOnlyList<MethodSymbol> FindExtensionMethods(
+            TypeSymbol receiverType,
+            ModuleSymbol useSiteModule,
+            IReadOnlyList<ModuleSymbol> imported,
+            NamedTypeSymbol? useSiteType,
+            Conversions conversions)
+        {
+            var result = new List<MethodSymbol>();
+            AddExtensionMethods(receiverType, useSiteModule, useSiteModule, useSiteType, conversions, result);
+
+            foreach (var module in imported)
+                AddExtensionMethods(receiverType, module, useSiteModule, useSiteType, conversions, result);
+
+            return result;
+        }
+
+        private static void AddExtensionMethods(
+            TypeSymbol receiverType,
+            ModuleSymbol declaringModule,
+            ModuleSymbol useSiteModule,
+            NamedTypeSymbol? useSiteType,
+            Conversions conversions,
+            List<MethodSymbol> result)
+        {
+            foreach (var method in declaringModule.ExtensionMethods)
+            {
+                if (method.ExtensionIsStatic || method.Parameters.Count == 0)
+                    continue;
+
+                if (!conversions.IsAssignable(receiverType, method.Parameters[0].Type))
+                    continue;
+
+                if (IsExtensionMemberAccessible(method, method.Accessibility, method.ExtensionDeclaringContainer, useSiteType, useSiteModule))
+                    result.Add(method);
+            }
+        }
+
+        /// <summary>
+        /// Every static extension method (§15.3) declared for exactly <paramref name="type"/> and
+        /// reachable from <paramref name="useSiteModule"/>, the static counterpart of
+        /// <see cref="FindExtensionMethods"/> — matched by reference identity rather than
+        /// assignability, since <c>Type.member</c> is never reached polymorphically (§3.1).
+        /// </summary>
+        public IReadOnlyList<MethodSymbol> FindStaticExtensionMethods(
+            NamedTypeSymbol type,
+            ModuleSymbol useSiteModule,
+            IReadOnlyList<ModuleSymbol> imported,
+            NamedTypeSymbol? useSiteType)
+        {
+            var result = new List<MethodSymbol>();
+            AddStaticExtensionMethods(type, useSiteModule, useSiteModule, useSiteType, result);
+
+            foreach (var module in imported)
+                AddStaticExtensionMethods(type, module, useSiteModule, useSiteType, result);
+
+            return result;
+        }
+
+        private static void AddStaticExtensionMethods(
+            NamedTypeSymbol type,
+            ModuleSymbol declaringModule,
+            ModuleSymbol useSiteModule,
+            NamedTypeSymbol? useSiteType,
+            List<MethodSymbol> result)
+        {
+            foreach (var method in declaringModule.ExtensionMethods)
+            {
+                if (!method.ExtensionIsStatic || !ReferenceEquals(method.ExtensionTargetType, type))
+                    continue;
+
+                if (IsExtensionMemberAccessible(method, method.Accessibility, method.ExtensionDeclaringContainer, useSiteType, useSiteModule))
+                    result.Add(method);
+            }
+        }
+
+        /// <summary>The instance extension properties (§15.1) reachable on a receiver, the property counterpart of <see cref="FindExtensionMethods"/>.</summary>
+        public IReadOnlyList<PropertySymbol> FindExtensionProperties(
+            TypeSymbol receiverType,
+            ModuleSymbol useSiteModule,
+            IReadOnlyList<ModuleSymbol> imported,
+            NamedTypeSymbol? useSiteType,
+            Conversions conversions)
+        {
+            var result = new List<PropertySymbol>();
+            AddExtensionProperties(receiverType, useSiteModule, useSiteModule, useSiteType, conversions, result);
+
+            foreach (var module in imported)
+                AddExtensionProperties(receiverType, module, useSiteModule, useSiteType, conversions, result);
+
+            return result;
+        }
+
+        private static void AddExtensionProperties(
+            TypeSymbol receiverType,
+            ModuleSymbol declaringModule,
+            ModuleSymbol useSiteModule,
+            NamedTypeSymbol? useSiteType,
+            Conversions conversions,
+            List<PropertySymbol> result)
+        {
+            foreach (var property in declaringModule.ExtensionProperties)
+            {
+                if (property.IsStatic || property.ExtensionTargetType is null)
+                    continue;
+
+                if (!conversions.IsAssignable(receiverType, property.ExtensionTargetType))
+                    continue;
+
+                if (IsExtensionMemberAccessible(property, property.Accessibility, property.ExtensionDeclaringContainer, useSiteType, useSiteModule))
+                    result.Add(property);
+            }
+        }
+
+        /// <summary>The static extension properties (§15.3) declared for exactly a type, the property counterpart of <see cref="FindStaticExtensionMethods"/>.</summary>
+        public IReadOnlyList<PropertySymbol> FindStaticExtensionProperties(
+            NamedTypeSymbol type,
+            ModuleSymbol useSiteModule,
+            IReadOnlyList<ModuleSymbol> imported,
+            NamedTypeSymbol? useSiteType)
+        {
+            var result = new List<PropertySymbol>();
+            AddStaticExtensionProperties(type, useSiteModule, useSiteModule, useSiteType, result);
+
+            foreach (var module in imported)
+                AddStaticExtensionProperties(type, module, useSiteModule, useSiteType, result);
+
+            return result;
+        }
+
+        private static void AddStaticExtensionProperties(
+            NamedTypeSymbol type,
+            ModuleSymbol declaringModule,
+            ModuleSymbol useSiteModule,
+            NamedTypeSymbol? useSiteType,
+            List<PropertySymbol> result)
+        {
+            foreach (var property in declaringModule.ExtensionProperties)
+            {
+                if (!property.IsStatic || !ReferenceEquals(property.ExtensionTargetType, type))
+                    continue;
+
+                if (IsExtensionMemberAccessible(property, property.Accessibility, property.ExtensionDeclaringContainer, useSiteType, useSiteModule))
+                    result.Add(property);
+            }
+        }
+
+        /// <summary>
+        /// Whether an extension method or property is reachable from a use site — its own
+        /// accessibility (§3.1) against <paramref name="useSiteModule"/> when declared at module
+        /// level, or against <paramref name="declaringContainer"/> when nesting narrowed it (§15.2).
+        /// <paramref name="member"/> is what <see cref="AccessCheck.IsAccessible"/> reads
+        /// <c>ContainingSymbol</c> off to find the declaring module in the un-nested case — an
+        /// extension member's own is always that module, exactly like an ordinary module-level
+        /// function's.
+        /// </summary>
+        private static bool IsExtensionMemberAccessible(
+            Symbol member,
+            Accessibility accessibility,
+            NamedTypeSymbol? declaringContainer,
+            NamedTypeSymbol? useSiteType,
+            ModuleSymbol useSiteModule)
+            => declaringContainer is NamedTypeSymbol container
+                ? AccessCheck.IsAccessibleWithin(accessibility, container, useSiteType, useSiteModule)
+                : AccessCheck.IsAccessible(member, accessibility, useSiteType, useSiteModule);
     }
 }

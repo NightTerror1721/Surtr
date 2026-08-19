@@ -181,8 +181,18 @@ namespace Surtr.Compiler.Binding.Symbols
         /// module-level function, never a member of this type — so this is metadata for call-site
         /// resolution and diagnostics, not a second <see cref="ContainingType"/>. Its receiver is an
         /// ordinary, explicitly-named first parameter of this type, not an implicit <c>this</c>.
+        /// <para>
+        /// Typed as <see cref="TypeSymbol"/> rather than <see cref="NamedTypeSymbol"/> since Fase 5
+        /// (§15): a composite target (<c>int[]</c>, <c>{K: V}</c>) is not a <c>NamedTypeSymbol</c> at
+        /// all, and neither instance matching (ordinary argument conversion against the receiver
+        /// parameter, in <c>BodyBinder.ExtensionCandidates</c>) nor <c>Conversions.IsAssignable</c>
+        /// (used for an extension property's receiver) ever required it to be one — both already take
+        /// a general <c>TypeSymbol</c>. Only the reference-identity match a <em>static</em> extension
+        /// uses (<c>Type.member()</c> has no argument to convert) still assumes a concrete, nameable
+        /// type in practice, but nothing enforces that narrower assumption at the type level.
+        /// </para>
         /// </remarks>
-        public NamedTypeSymbol? ExtensionTargetType { get; internal set; }
+        public TypeSymbol? ExtensionTargetType { get; internal set; }
 
         /// <summary>
         /// The type an <c>extension</c> block was nested inside, or <see langword="null"/> when it was
@@ -421,7 +431,7 @@ namespace Surtr.Compiler.Binding.Symbols
         /// The type this property extends (§15), or <see langword="null"/> for an ordinary property.
         /// </summary>
         /// <remarks>The property counterpart of <see cref="MethodSymbol.ExtensionTargetType"/>.</remarks>
-        public NamedTypeSymbol? ExtensionTargetType { get; internal set; }
+        public TypeSymbol? ExtensionTargetType { get; internal set; }
 
         /// <summary>
         /// The type an <c>extension</c> block was nested inside, or <see langword="null"/> when it

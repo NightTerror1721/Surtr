@@ -91,6 +91,18 @@
       "}"
     ]
   },
+  "Extension": {
+    "prefix": "extension",
+    "scope": "surtr",
+    "description": "An extension block — adds methods/properties to an already-declared type",
+    "body": [
+      "extension ${1:Type} {",
+      "\tfun ${2:name}(${3:self}: ${1:Type}${4:, args}): ${5:int} {",
+      "\t\t$6",
+      "\t}",
+      "}"
+    ]
+  },
   "Field": {
     "prefix": "field",
     "scope": "surtr",

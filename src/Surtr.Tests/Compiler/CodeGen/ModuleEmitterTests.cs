@@ -5955,15 +5955,6 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         [Fact]
-        public void AnExtensionTargetingACompositeTypeIsRejectedForNow()
-        {
-            using var compilation = Reject(
-                "extension int[] { fun first(a: int[]): int => a[0]; }\nfun run(): int { return 1; }");
-
-            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidExtensionTarget);
-        }
-
-        [Fact]
         public void AnExtensionMethodWhoseFirstParameterIsNotTheTargetTypeIsRejected()
         {
             using var compilation = Reject(
@@ -6265,6 +6256,159 @@ namespace Surtr.Tests.Compiler.CodeGen
         {
             using var compilation = Reject(
                 Vec2 + "extension Vec2 { cached: float { get; } }\nfun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidExtensionMember);
+        }
+        #endregion
+
+        #region Extension methods (§15) — Fase 5: composite and built-in targets
+        [Fact]
+        public void AnExtensionMethodIsCallableOnAnArrayTargetType()
+        {
+            var runtime = Run(
+                "extension int[] { fun sum(xs: int[]): int {\n"
+                    + "  var total = 0;\n"
+                    + "  for (x in xs) { total += x; }\n"
+                    + "  return total;\n"
+                    + "} }\n"
+                    + "fun run(): int { let xs: int[] = [1, 2, 3, 4]; return xs.sum(); }");
+
+            Assert.Equal(10, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ExtensionsOverDifferentArrayElementTypesResolveIndependently()
+        {
+            var runtime = Run(
+                "extension int[] { fun describe(xs: int[]): string => \"ints\"; }\n"
+                    + "extension string[] { fun describe(xs: string[]): string => \"strings\"; }\n"
+                    + "fun runInts(): string { let xs: int[] = [1]; return xs.describe(); }\n"
+                    + "fun runStrings(): string { let xs: string[] = [\"a\"]; return xs.describe(); }");
+
+            Assert.Equal("ints", Text(runtime, "runInts"));
+            Assert.Equal("strings", Text(runtime, "runStrings"));
+        }
+
+        [Fact]
+        public void AnExtensionMethodIsCallableOnADictionaryTargetType()
+        {
+            var runtime = Run(
+                "extension {string: int} { fun total(m: {string: int}): int {\n"
+                    + "  var sum = 0;\n"
+                    + "  for (k in m.keys()) { sum += m.get(k); }\n"
+                    + "  return sum;\n"
+                    + "} }\n"
+                    + "fun run(): int { let m: {string: int} = {\"a\": 1, \"b\": 2}; return m.total(); }");
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnExtensionMethodIsCallableOnTheStringTargetType()
+        {
+            var runtime = Run(
+                "extension string { fun shout(s: string): string => s + \"!\"; }\n"
+                    + "fun run(): string { return \"hi\".shout(); }");
+
+            Assert.Equal("hi!", Text(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnExtensionMethodIsCallableOnAUserValueClassTargetType()
+        {
+            var runtime = Run(
+                "value class EntityId { public let raw: int; public constructor(raw: int) { this.raw = raw; } }\n"
+                    + "extension EntityId { fun doubled(id: EntityId): int => id.raw * 2; }\n"
+                    + "fun run(): int { return EntityId(21).doubled(); }");
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnExtensionPropertyIsReadableOnAnArrayTargetType()
+        {
+            var runtime = Run(
+                "extension int[] { isEmptyIsh: bool => this.length == 0; }\n"
+                    + "fun run(): bool { let xs: int[] = []; return xs.isEmptyIsh; }");
+
+            Assert.True(Call(runtime, "run").AsBool);
+        }
+        #endregion
+
+        #region Extension methods (§15) — Fase 6: generic extensions
+        [Fact]
+        public void AnExtensionMethodOverAnArrayInfersItsElementTypeImplicitly()
+        {
+            // `T` needs no separate `<T>` list at all (§15.4) - the bare name inside the target
+            // type (`T[]`) is enough to declare it.
+            var runtime = Run(
+                "extension T[] { fun second(self: T[]): T => self[1]; }\n"
+                    + "fun run(): int { let xs: int[] = [10, 20, 30]; return xs.second(); }");
+
+            Assert.Equal(20, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnExtensionMethodOverAUserGenericClassInfersItsTypeParameter()
+        {
+            var runtime = Run(
+                Box + "extension Box<T> { fun unwrap(self: Box<T>): T => self.get(); }\n"
+                    + "fun run(): int { return Box(5).unwrap(); }");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AGenericExtensionMethodsOwnTypeParameterIsNotTheTargetsRealG0()
+        {
+            // §15.4: the extension's own `T` is inferred fresh at each call site through ordinary
+            // generic-method substitution, never through the array built-in's own erasure — an
+            // extra parameter of type `T` (`fallback`), not just the receiver, still infers and
+            // substitutes correctly.
+            var runtime = Run(
+                "extension T[] { fun firstOrDefault(self: T[], fallback: T): T => self.length == 0 ? fallback : self[0]; }\n"
+                    + "fun run(): int { let xs: int[] = []; return xs.firstOrDefault(9); }");
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AGenericExtensionMethodWithAConstraintCanCallItsBoundsMembers()
+        {
+            var runtime = Run(
+                "class Score : IComparable<Score> {\n"
+                    + "  public let value: int;\n"
+                    + "  constructor(value: int) { this.value = value; }\n"
+                    + "  public override fun compareTo(other: Score): int { return value - other.value; }\n"
+                    + "}\n"
+                    + "extension<T : IComparable<T>> T[] {\n"
+                    + "  fun maxOf(self: T[]): T {\n"
+                    + "    var best = self[0];\n"
+                    + "    for (x in self) { if (x.compareTo(best) > 0) { best = x; } }\n"
+                    + "    return best;\n"
+                    + "  }\n"
+                    + "}\n"
+                    + "fun run(): int { let xs: Score[] = [Score(4), Score(9), Score(2)]; return xs.maxOf().value; }");
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AGenericExtensionMethodViolatingItsConstraintIsRejected()
+        {
+            using var compilation = Reject(
+                "class Plain { }\n"
+                    + "extension<T : IComparable<T>> T[] { fun maxOf(self: T[]): T => self[0]; }\n"
+                    + "fun run(): Plain { let xs: Plain[] = [Plain()]; return xs.maxOf(); }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.ConstraintNotSatisfied);
+        }
+
+        [Fact]
+        public void APropertyInsideAnExplicitlyGenericExtensionBlockIsRejected()
+        {
+            using var compilation = Reject(
+                "extension<T> T[] { first: T => this[0]; }\nfun run(): int { return 1; }");
 
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidExtensionMember);
         }

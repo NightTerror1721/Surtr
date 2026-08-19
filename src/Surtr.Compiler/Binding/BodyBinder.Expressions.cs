@@ -1731,6 +1731,12 @@ namespace Surtr.Compiler.Binding
             combinedInfos[0] = new ArgumentInfo(receiver.Type);
             Array.Copy(infos, 0, combinedInfos, 1, infos.Length);
 
+            // A generic extension method (§15.4) has its receiver as `Parameters[0]` exactly like
+            // every other extension method, so it lines up with `combinedInfos[0]` the same way an
+            // ordinary generic call's arguments line up with its parameters — no extension-specific
+            // inference needed, just feeding the receiver in as if it were argument zero.
+            candidates = SubstituteGenericCandidates(syntax, candidates, combinedInfos, name);
+
             var result = _overloads.Resolve(candidates, combinedInfos);
 
             switch (result.Status)

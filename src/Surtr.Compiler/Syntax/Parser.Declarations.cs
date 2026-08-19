@@ -426,6 +426,11 @@ namespace Surtr.Compiler.Syntax
 
             reader.Advance();
 
+            // `extension<T : Bound> Type { }` (§15.4) — only needed for a constraint; a bare type
+            // parameter mentioned inside the target type (`extension T[] { }`) needs no separate
+            // list at all, the binder declares it implicitly from that use.
+            IReadOnlyList<TypeParameterSyntax> typeParameters = ParseTypeParameterList();
+
             TypeSyntax targetType = ParseType();
             reader.Expect(TokenType.LeftBrace, "'{' to open the extension body");
 
@@ -437,7 +442,7 @@ namespace Surtr.Compiler.Syntax
 
             reader.Expect(TokenType.RightBrace, "'}' to close the extension body");
 
-            return new ExtensionDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, targetType, members);
+            return new ExtensionDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, typeParameters, targetType, members);
         }
 
         /// <summary>
