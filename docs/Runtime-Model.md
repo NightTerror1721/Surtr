@@ -103,6 +103,7 @@ L(<param>...)<ret>        closure          L(II)F          -> (int, int) -> floa
 O<fullname>;<arg>...      Surtr type       Ogame.core:Entity.Handle;
 N<fullname>;<arg>...      host type        NUnityEngine:GameObject;
 G<digit>                  the declaring type's n-th generic parameter    G0
+H<digit>                  the declaring method's n-th generic parameter  H0
 ?<primitive>              nullable primitive                            ?I -> int?
 V                         void — legal only as a closure's return
 fullname := modulePath ':' segment ('.' segment)*
@@ -125,6 +126,18 @@ terminator. Three consequences, all deliberate:
 - **Only the last segment's arity counts.** A type nested inside a generic one does not see its
   container's parameters, so `Obox:Box`1.Entry;` names an `Entry` that takes nothing. Reading the
   arity is a side effect of scanning to the terminator, which keeps the whole grammar one pass.
+- **A bound is metadata, not a rule left in the compiler.** What `<T : IComparable<T>>` demanded of
+  `T` travels as descriptor strings on the type (`SurtrTypeInfo.GenericConstraints`, one list per
+  parameter in declaration order), so a module read back from an image can still answer the
+  question without re-compiling the declaration. The compiler's `MetadataImporter` rebuilds
+  `TypeParameterSymbol.Constraints` from them, and tooling and host interop can read them directly.
+  Nothing on an execution path does — slot layout sees `G<n>` as a reference regardless — which is
+  the same bargain `GenericParameters` already makes.
+- **A method's parameters are the same idea, under their own symbol.** `H<n>` names the declaring
+  method's n-th parameter — distinct from `G<n>` so the two can never be confused in a descriptor —
+  and `SurtrMethodInfo` carries `GenericParameters`/`GenericConstraints` in the same shape as a
+  type. Same customers (the importer, tooling, interop), same non-customers (the execution path):
+  erasure means an `H0` slot is a plain reference.
 
 Backtick is illegal in a Surtr identifier, so a mangled name can never collide with a declared one,
 and a non-generic type's descriptor is byte-for-byte what it always was. A generic type has **no

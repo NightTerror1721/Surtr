@@ -315,6 +315,35 @@ namespace Surtr.Tests.Runtime.Classes
         }
 
         [Fact]
+        public void SignatureKey_ErasesATypesAndAMethodsParameterToTheSameThing()
+        {
+            // G0 and H0 are distinct descriptors but the key erases both to E, so a class method
+            // f<T>(T) and a module function f(unknown) cannot share a slot without being caught
+            // here - the same collision SignatureSet reports at compile time.
+            var module = NewModule();
+            var owner = DefineClass(module, "Owner");
+
+            var byTypeParameter = Method(
+                module, owner, "f",
+                parameterTypes: new[] { SurtrClassReference.GenericParameter(0) });
+            var byMethodParameter = Method(
+                module, owner, "f",
+                parameterTypes: new[] { SurtrClassReference.MethodGenericParameter(0) });
+            var byErased = Method(
+                module, owner, "f",
+                parameterTypes: new[] { SurtrClassReference.Erased });
+
+            Assert.Equal("f(E)", byTypeParameter.SignatureKey());
+            Assert.Equal(byTypeParameter.SignatureKey(), byMethodParameter.SignatureKey());
+            Assert.Equal(byTypeParameter.SignatureKey(), byErased.SignatureKey());
+
+            // Which is exactly why declaring the second and third is an error rather than an overload.
+            owner.AddMethod(byTypeParameter);
+            Assert.Throws<ArgumentException>(() => owner.AddMethod(byMethodParameter));
+            Assert.Throws<ArgumentException>(() => owner.AddMethod(byErased));
+        }
+
+        [Fact]
         public void AModuleLevelFunction_IsHeldToTheSameRule()
         {
             var module = NewModule();

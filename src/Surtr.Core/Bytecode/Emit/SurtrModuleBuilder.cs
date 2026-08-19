@@ -475,13 +475,17 @@ namespace Surtr.Bytecode.Emit
             SurtrClassReference returnType,
             string linkName,
             SurtrParameterInfo[]? parameters = null,
-            SurtrVisibility visibility = SurtrVisibility.Public)
+            SurtrVisibility visibility = SurtrVisibility.Public,
+            string[]? genericParameters = null,
+            string[][]? genericConstraints = null)
         {
             var method = new SurtrNativeMethodInfo(
                 name, SurtrMethodDispatch.Direct, SurtrMethodRole.Normal, false,
                 TypeHandle(returnType),
                 parameters ?? Array.Empty<SurtrParameterInfo>(),
-                true, visibility, null, linkName);
+                true, visibility, null, linkName,
+                genericParameters: genericParameters,
+                genericConstraints: genericConstraints);
 
             _module.AddMethod(method);
             Method(method);

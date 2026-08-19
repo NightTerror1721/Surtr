@@ -1,6 +1,7 @@
 #nullable enable
 
 using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -208,6 +209,8 @@ namespace Surtr.Runtime.Classes
         private readonly SurtrMethodRole _role;
         private readonly bool _override;
         private readonly bool _sealed;
+        private readonly string[] _genericParameters;
+        private readonly string[][] _genericConstraints;
         private SurtrClassReference _signature;
         private string? _signatureKey;
 
@@ -229,7 +232,9 @@ namespace Surtr.Runtime.Classes
             bool isStatic,
             SurtrVisibility visibility,
             SurtrTypeHandle? declaringType,
-            bool isSealed = false)
+            bool isSealed = false,
+            string[]? genericParameters = null,
+            string[][]? genericConstraints = null)
             : base(name, SurtrMemberKind.Method, isStatic, visibility, declaringType)
         {
             // Constructors are never inherited, so they can never be dispatched through a vtable.
@@ -262,6 +267,16 @@ namespace Surtr.Runtime.Classes
             _sealed = isSealed;
             _returnType = returnType;
             _parameters = parameters;
+
+            _genericParameters = genericParameters ?? System.Array.Empty<string>();
+            _genericConstraints = genericConstraints ?? System.Array.Empty<string[]>();
+
+            if (_genericConstraints.Length != 0 && _genericConstraints.Length != _genericParameters.Length)
+            {
+                throw new ArgumentException(
+                    $"Method '{name}' carries {_genericConstraints.Length} constraint lists for {_genericParameters.Length} type parameters.",
+                    nameof(genericConstraints));
+            }
         }
 
         /// <summary>
@@ -341,6 +356,39 @@ namespace Surtr.Runtime.Classes
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _parameters;
+        }
+
+        /// <summary>
+        /// The names of the generic parameters this method declares, one per parameter. Empty for
+        /// a non-generic method.
+        /// </summary>
+        /// <remarks>
+        /// The type-level twin lives on <see cref="SurtrTypeInfo.GenericParameters"/>; these are
+        /// the method's own, and a signature mentions them through the <c>H&lt;n&gt;</c> descriptor
+        /// form so a call site can tell them from the declaring type's. Nothing on an execution
+        /// path reads them - erasure means the slots are plain references - so the table exists for
+        /// the compiler's <c>MetadataImporter</c>, tooling and host interop.
+        /// </remarks>
+        public IReadOnlyList<string> GenericParameters
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _genericParameters;
+        }
+
+        /// <summary>
+        /// The bounds each generic parameter declared, as descriptor strings - one list per
+        /// parameter, empty where the parameter is unconstrained.
+        /// </summary>
+        /// <remarks>
+        /// Same shape and same customers as <see cref="GenericParameters"/>: the importer rebuilds
+        /// <c>TypeParameterSymbol.Constraints</c> from them, so a call site in another module is
+        /// checked against the bound the declaring module wrote, and nothing on an execution path
+        /// reads them.
+        /// </remarks>
+        public IReadOnlyList<string[]> GenericConstraints
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _genericConstraints;
         }
 
         /// <summary>How many parameters the method declares.</summary>

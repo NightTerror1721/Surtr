@@ -80,7 +80,7 @@ or a version mismatch, and both are reported as `SurtrImageFormatException` rath
 | Field | Type | Meaning |
 |---|---|---|
 | `magic` | `u64` | `0x444F4D5254525553` — `SURTRMOD` in ASCII, little-endian |
-| `formatVersion` | `u16` | Currently **3**. A reader refuses anything else outright. |
+| `formatVersion` | `u16` | Currently **6**. A reader refuses anything else outright. |
 | `strings` | `i32` count, then each: `i32` byte length + UTF-8 bytes | The string table. |
 
 `formatVersion` counts changes to how a module is **framed**. It is normally separate from the
@@ -97,6 +97,24 @@ instruction set was regrouped by family and renumbered once, deliberately, to fi
 anything shipped — so every code byte of a version 2 image means something different under this
 reader. Refusing to load one is the whole point of the field; there is no upgrade path, and none is
 wanted. Recompile.
+
+**Version 4** retired the native-global mechanism: images no longer carry lists of host-global
+variable and function imports, because module-level `native` members now travel as methods and
+properties published by link name.
+
+**Version 5** adds a per-generic-parameter constraint list to the `Class` and `Interface`
+sections, written right after each type's `genericParameters`. Each bound travels as the descriptor
+string it already is — `G<n>` included, so a bound naming the type's own parameter means the same
+thing after the round trip. Nothing on an execution path reads the new table; it exists for the
+compiler's `MetadataImporter`, tooling and host interop. A version 4 reader would misparse the
+extra counts, so it is refused like every other older format.
+
+**Version 6** extends the same idea to methods: every `Method` entry now carries its own
+`genericParameters` and per-parameter constraint lists, written after `parameters` and before the
+`implKind` tail. The method-level parameter descriptor `H<n>` accompanies it — distinct from the
+type-level `G<n>`, so a signature says which parameter it means without knowing the declaring
+member. Both stay off every execution path; a version 5 reader would read the extra counts as the
+bytecode fields, so it is refused like every other older format.
 
 The string table is written in front of the body but is only complete once the body has been walked,
 so the writer builds the body into a buffer first and prepends the table.
@@ -202,6 +220,8 @@ same type's method section, and the signature key is how the reader finds them a
 | `isOverride` | `bool` |
 | `isSealed` | `bool` |
 | `parameters` | `Parameter[]` |
+| `genericParameters` | `str[]` | The method's own parameter names; empty for a non-generic method. |
+| `constraints` | per parameter: `i32` count + `str[]` | As on a class — the bounds each parameter declared, as descriptors (`H<n>` included, e.g. `Osurtr:IComparable`1;H0`). Written only when `genericParameters` is non-empty; one list per parameter, empty where the parameter is unconstrained. |
 
 Then a tail that depends on `implKind`:
 
@@ -269,7 +289,8 @@ some runtime interns it — the same reason `SurtrConstant` exists at all.
 | `isEnum` | `bool` | |
 | `baseType` | `str?` | `-1` for a class with no base — there is no root `object`. |
 | `interfaces` | `str[]` | Declared, not the transitive closure; the linker builds that. |
-| `genericParameters` | `str[]` | Names only. Generics are erased. |
+| `genericParameters` | `str[]` | Names only, one per parameter. |
+| `constraints` | per parameter: `i32` count + `str[]` | The bounds each parameter declared, as descriptors (`G<n>` included, e.g. `Osurtr:IComparable`1;G0`). Written only when `genericParameters` is non-empty; one list per parameter, empty where the parameter is unconstrained. |
 | `enumCases` | `{ name: str, visibility: u8 }[]` | |
 | `fields` | `Field[]` | Enum-case backing fields excluded — see below. |
 | `properties` | `Property[]` | |
@@ -293,7 +314,8 @@ excluded from the field section for the same reason: `AddEnumCase` creates them.
 | `name` | `str` |
 | `visibility` | `u8` |
 | `extendedInterfaces` | `str[]` |
-| `genericParameters` | `str[]` |
+| `genericParameters` | `str[]` | Names only, one per parameter. |
+| `constraints` | per parameter: `i32` count + `str[]` | As on a class — the bounds each parameter declared, as descriptors. Written only when `genericParameters` is non-empty. |
 | `methods` | `Method[]` |
 | `properties` | `Property[]` |
 

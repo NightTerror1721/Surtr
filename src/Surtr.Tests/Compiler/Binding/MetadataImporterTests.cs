@@ -106,6 +106,93 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
+        public void AGenericParameterInsideAMethodsSignatureResolvesAgainstTheDeclaringType()
+        {
+            using var runtime = new SurtrRuntime();
+
+            var builder = new SurtrModuleBuilder("app");
+            var box = builder.DefineClass("Box");
+            box.Class.SetGenericParameters("T");
+            var get = box.DefineMethod("get", SurtrClassReference.GenericParameter(0));
+            get.Code.ReturnVoid();
+
+            runtime.LoadModule(builder.Build());
+            Assert.True(runtime.TryGetModule("app", out var module));
+
+            var importer = Importer(out _);
+            var symbol = importer.ImportModule(module).Types.Single(t => t.Name == "Box");
+
+            // G0 anywhere in a method signature names the declaring type's parameter — the
+            // importer must find it through the method to its containing type.
+            var method = symbol.Members.OfType<MethodSymbol>().Single(m => m.Name == "get");
+            Assert.Same(symbol.TypeParameters[0], method.ReturnType);
+        }
+
+        [Fact]
+        public void AMethodParameterResolvesAgainstItsDeclaringMethod()
+        {
+            using var runtime = new SurtrRuntime();
+
+            var builder = new SurtrModuleBuilder("app");
+            var pick = builder.DefineFunction(
+                "pick", SurtrClassReference.Array(SurtrClassReference.MethodGenericParameter(0)));
+            pick.DeclareGenericParameters(new[] { "U" });
+            pick.Code.ReturnVoid();
+
+            runtime.LoadModule(builder.Build());
+            Assert.True(runtime.TryGetModule("app", out var module));
+
+            var importer = Importer(out var factory);
+            var symbol = importer.ImportModule(module).Methods.Single(m => m.Name == "pick");
+
+            // H0 names the method's own parameter — and nested inside a composite (AU) it still
+            // finds its position.
+            Assert.Same(factory.Array(symbol.TypeParameters[0]), symbol.ReturnType);
+        }
+
+        [Fact]
+        public void GAndHParametersLiveSideBySideInOneSignature()
+        {
+            using var runtime = new SurtrRuntime();
+
+            var builder = new SurtrModuleBuilder("app");
+            var box = builder.DefineClass("Box");
+            box.Class.SetGenericParameters("T");
+            box.Class.SetGenericConstraints(new[] { "Osurtr:IComparable`1;G0" });
+
+            var biggest = box.DefineMethod("biggest", SurtrClassReference.MethodGenericParameter(0),
+                parameters: new[]
+                {
+                    builder.Parameter("a", SurtrClassReference.MethodGenericParameter(0)),
+                    builder.Parameter("b", SurtrClassReference.GenericParameter(0)),
+                });
+            biggest.DeclareGenericParameters(
+                new[] { "U" },
+                new[] { new[] { "Osurtr:IComparable`1;H0" } });
+            biggest.Code.ReturnVoid();
+
+            runtime.LoadModule(builder.Build());
+            Assert.True(runtime.TryGetModule("app", out var module));
+
+            var importer = Importer(out _);
+            var symbol = importer.ImportModule(module).Types.Single(t => t.Name == "Box");
+
+            var method = symbol.Members.OfType<MethodSymbol>().Single(m => m.Name == "biggest");
+            var u = Assert.Single(method.TypeParameters);
+
+            Assert.Same(u, method.ReturnType);
+            Assert.Same(u, method.Parameters[0].Type);
+            Assert.Same(symbol.TypeParameters[0], method.Parameters[1].Type);
+
+            // The method's own constraint lands on the method's own parameter, untouched by the
+            // type's constraint sitting in the same signature.
+            var bound = Assert.Single(u.Constraints);
+            var contract = Assert.IsType<NamedTypeSymbol>(bound);
+            Assert.Equal("IComparable", contract.Name);
+            Assert.Same(u, Assert.Single(contract.TypeArguments));
+        }
+
+        [Fact]
         public void AnUnknownNameBecomesAnErrorTypeThatStillSaysWhatWasWritten()
         {
             var importer = Importer(out _);
@@ -248,6 +335,67 @@ namespace Surtr.Tests.Compiler.Binding
 
             Assert.True(symbol.IsSealed);
             Assert.False(symbol.IsAbstract);
+        }
+
+        [Fact]
+        public void AGenericClassComesBackWithItsConstraints()
+        {
+            using var runtime = new SurtrRuntime();
+
+            var builder = new SurtrModuleBuilder("app");
+            var box = builder.DefineClass("Box");
+            box.Class.SetGenericParameters("T", "U");
+            box.Class.SetGenericConstraints(
+                new[] { "Osurtr:IComparable`1;G0" },
+                System.Array.Empty<string>());
+
+            runtime.LoadModule(builder.Build());
+            Assert.True(runtime.TryGetModule("app", out var module));
+
+            var importer = Importer(out _);
+            var symbol = importer.ImportModule(module).Types.Single(t => t.Name == "Box");
+
+            // The bound comes back as the constructed contract it was written as, with the type's
+            // own parameter where the declaration said `IComparable<T>` — not as `unknown`.
+            var bound = Assert.Single(symbol.TypeParameters[0].Constraints);
+            var contract = Assert.IsType<NamedTypeSymbol>(bound);
+            Assert.Equal("IComparable", contract.Name);
+            Assert.Same(symbol.TypeParameters[0], Assert.Single(contract.TypeArguments));
+
+            Assert.Empty(symbol.TypeParameters[1].Constraints);
+        }
+
+        /// <summary>
+        /// A generic method comes back with its own type parameters and their bounds, the bound
+        /// referencing the method's own parameter resolving to the rebuilt symbol rather than to
+        /// <c>unknown</c>.
+        /// </summary>
+        [Fact]
+        public void AGenericMethodComesBackWithItsParametersAndConstraints()
+        {
+            using var runtime = new SurtrRuntime();
+
+            var builder = new SurtrModuleBuilder("app");
+            var pick = builder.DefineFunction("pick", SurtrClassReference.Void);
+            pick.DeclareGenericParameters(
+                new[] { "T" },
+                new[] { new[] { "Osurtr:IComparable`1;H0" } });
+            pick.Code.ReturnVoid();
+
+            runtime.LoadModule(builder.Build());
+            Assert.True(runtime.TryGetModule("app", out var module));
+
+            var importer = Importer(out _);
+            var symbol = importer.ImportModule(module).Methods.Single(m => m.Name == "pick");
+
+            var parameter = Assert.Single(symbol.TypeParameters);
+            Assert.Equal("T", parameter.Name);
+
+            // H0 resolves onto the method's own parameter, exactly as G0 does for a type.
+            var bound = Assert.Single(parameter.Constraints);
+            var contract = Assert.IsType<NamedTypeSymbol>(bound);
+            Assert.Equal("IComparable", contract.Name);
+            Assert.Same(parameter, Assert.Single(contract.TypeArguments));
         }
         #endregion
 

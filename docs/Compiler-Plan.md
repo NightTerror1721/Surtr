@@ -697,6 +697,22 @@ The standard library's contracts are now declared as `IIterable`1`, `IIterator`1
 and `IEquatable`1`, each naming itself with its own parameter (`Osurtr:IIterable`1;G0`). There is
 no open form to write: a name promising one argument and supplying none is malformed.
 
+**Constraints survive now too.** What `<T : IComparable<T>>` demanded of `T` lands in the image as
+a descriptor list per parameter on the `Class`/`Interface` sections (format version 5), written by
+the emitter alongside the parameter names and rebuilt by `MetadataImporter` onto
+`TypeParameterSymbol.Constraints`. Nothing on an execution path reads the table — the same bargain
+`GenericParameters` already made — so this changes no layout, dispatch or opcode.
+
+**Generic methods travel whole (format version 6).** A method's own parameters and their bounds
+now ride in the `Method` section in the same shape a type's do, and a signature mentions a method
+parameter through the `H<n>` descriptor form — its own symbol, so an importer never mistakes the
+declaring method's first parameter for the declaring type's. `MetadataImporter` rebuilds the
+method's `TypeParameterSymbol`s (names, `Constraints`) before its signature, so a call site in
+another module infers against real parameters and is checked against real bounds. Erasure still
+governs every slot and every signature key: `H0` and `G0` both key as `E`, so a bridge or an
+interface implementation written against the erased form still lines up, and no layout, dispatch
+or opcode changes.
+
 ---
 
 ## 8b. Decided: array/dict/tuple get a nameable, callable identifier too

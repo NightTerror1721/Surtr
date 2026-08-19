@@ -3,11 +3,11 @@ module surtr.collections.Stream
 
   type table:
     #0  surtr.collections.List:List<int>
-    #1  unknown[]
+    #1  T0[]
 
   method table:
     #0  test() -> void
-    #1  toArray(surtr:IIterable<unknown>) -> unknown[]
+    #1  toArray(surtr:IIterable<T0>) -> T0[]
     #2  surtr.collections.List:List<.ctor(int) -> void
     #3  surtr:IIterable<T0>.iterate() -> surtr:IIterator<T0>
     #4  surtr:IIterator<T0>.moveNext() -> bool
@@ -25,9 +25,9 @@ module surtr.collections.Stream
     0012  Stl1
     0013  ReturnVoid
 
-[internal] static toArray(self: surtr:IIterable<unknown>): unknown[]
+[internal] static toArray(self: surtr:IIterable<T0>): T0[]
   ; entry 1, locals 3, stack 2, code 0014..0037
-    0014  ArrPack 1 (unknown[]) count=0
+    0014  ArrPack 1 (T0[]) count=0
     0019  Stl1
     001A  Ldl0
     001B  InvokeInterface 3 (iterate) args=1 ret=1

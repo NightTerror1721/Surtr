@@ -21,7 +21,9 @@ namespace Surtr.Runtime.Classes
             SurtrTypeHandle returnType,
             SurtrParameterInfo[] parameters,
             SurtrVisibility visibility,
-            SurtrTypeHandle? declaringType)
+            SurtrTypeHandle? declaringType,
+            string[]? genericParameters = null,
+            string[][]? genericConstraints = null)
             : base(
                 name,
                 SurtrMethodImplKind.Abstract,
@@ -34,7 +36,9 @@ namespace Surtr.Runtime.Classes
                 parameters,
                 isStatic: false,
                 visibility,
-                declaringType)
+                declaringType,
+                genericParameters: genericParameters,
+                genericConstraints: genericConstraints)
         {
         }
 

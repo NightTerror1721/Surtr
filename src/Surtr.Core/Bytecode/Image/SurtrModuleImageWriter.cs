@@ -365,6 +365,25 @@ namespace Surtr.Bytecode.Image
             for (int i = 0; i < parameters.Length; i++)
                 WriteParameter(state, parameters[i]);
 
+            // The method's own generic parameters, names then per-parameter constraint lists -
+            // the same shape the type sections carry, so a reader has one rule to know.
+            var genericParameters = method.GenericParameters;
+            writer.Write(genericParameters.Count);
+            for (int i = 0; i < genericParameters.Count; i++)
+                writer.Write(Intern(state, genericParameters[i]));
+
+            if (genericParameters.Count > 0)
+            {
+                var constraints = method.GenericConstraints;
+                for (int i = 0; i < genericParameters.Count; i++)
+                {
+                    var bounds = constraints[i];
+                    writer.Write(bounds.Length);
+                    for (int b = 0; b < bounds.Length; b++)
+                        writer.Write(Intern(state, bounds[b]));
+                }
+            }
+
             if (method is SurtrBytecodeMethodInfo bytecode)
             {
                 writer.Write(bytecode.EntryIndex);
@@ -475,6 +494,19 @@ namespace Surtr.Bytecode.Image
             for (int i = 0; i < genericParameters.Length; i++)
                 writer.Write(Intern(state, genericParameters[i]));
 
+            // The constraints ride along with the parameters that declare them, as descriptor
+            // strings naming the bound - `G<n>` included, so a bound naming the type's own
+            // parameter means the same thing after the round trip. Nothing on an execution path
+            // reads them; they exist for the importer, tooling and host interop.
+            var genericConstraints = type.GenericConstraints;
+            for (int i = 0; i < genericConstraints.Length; i++)
+            {
+                var constraints = genericConstraints[i];
+                writer.Write(constraints.Length);
+                for (int j = 0; j < constraints.Length; j++)
+                    writer.Write(Intern(state, constraints[j]));
+            }
+
             // Enum cases come before the fields so the reader can register each case's backing
             // field through AddEnumCase, which is what assigns the ordinal - writing the ordinal
             // and trusting it would let a hand-edited image renumber a switch.
@@ -558,6 +590,15 @@ namespace Surtr.Bytecode.Image
             writer.Write(genericParameters.Length);
             for (int i = 0; i < genericParameters.Length; i++)
                 writer.Write(Intern(state, genericParameters[i]));
+
+            var genericConstraints = contract.GenericConstraints;
+            for (int i = 0; i < genericConstraints.Length; i++)
+            {
+                var constraints = genericConstraints[i];
+                writer.Write(constraints.Length);
+                for (int j = 0; j < constraints.Length; j++)
+                    writer.Write(Intern(state, constraints[j]));
+            }
 
             int methodCount = 0;
             foreach (var overloads in contract.Methods)

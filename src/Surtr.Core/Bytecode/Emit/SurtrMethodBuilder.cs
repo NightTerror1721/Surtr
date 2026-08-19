@@ -76,6 +76,8 @@ namespace Surtr.Bytecode.Emit
         private readonly int _argumentSlots;
         private readonly List<string?> _localNames = new List<string?>();
         private readonly List<PendingHandler> _handlers = new List<PendingHandler>();
+        private string[] _genericParameters = Array.Empty<string>();
+        private string[][] _genericConstraints = Array.Empty<string[]>();
 
         // Attributes cannot land on the metadata as they are written, because the metadata does
         // not exist until the body has been laid out. They wait here and are attached in Build,
@@ -141,6 +143,37 @@ namespace Surtr.Bytecode.Emit
                 throw new ArgumentNullException(nameof(attribute));
 
             _attributes.Add(attribute);
+            return this;
+        }
+
+        /// <summary>
+        /// Declares the method's own generic parameters: their names, and each one's bounds as
+        /// descriptors (<c>H&lt;n&gt;</c> included, since a bound may name a parameter of the
+        /// method itself).
+        /// </summary>
+        /// <remarks>
+        /// The metadata table exists for the compiler's <c>MetadataImporter</c>, tooling and host
+        /// interop - erasure means the slots a generic method uses are plain references, so nothing
+        /// on an execution path reads it.
+        /// </remarks>
+        /// <exception cref="ArgumentException">
+        /// The constraints do not line up with the names - one list per parameter.
+        /// </exception>
+        public SurtrMethodBuilder DeclareGenericParameters(string[] names, string[][]? constraints = null)
+        {
+            if (names is null)
+                throw new ArgumentNullException(nameof(names));
+
+            var written = constraints ?? Array.Empty<string[]>();
+            if (written.Length != 0 && written.Length != names.Length)
+            {
+                throw new ArgumentException(
+                    $"'{_name}' declares {names.Length} type parameter(s) but {written.Length} constraint list(s).",
+                    nameof(constraints));
+            }
+
+            _genericParameters = names;
+            _genericConstraints = written;
             return this;
         }
 
@@ -309,7 +342,9 @@ namespace Surtr.Bytecode.Emit
                 entryIndex,
                 LocalCount,
                 _code.MaxStackDepth,
-                _sealed);
+                _sealed,
+                _genericParameters,
+                _genericConstraints);
 
             for (int i = 0; i < _attributes.Count; i++)
                 _built.AddAttribute(_attributes[i]);

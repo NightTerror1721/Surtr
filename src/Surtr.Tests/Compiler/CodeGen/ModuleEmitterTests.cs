@@ -4455,6 +4455,130 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedName);
         }
 
+        /// <summary>
+        /// A bound is not only a compile-time rule: it reaches the metadata, so a module loaded
+        /// from an image can still answer what <c>Box&lt;T&gt;</c> demanded of <c>T</c>.
+        /// </summary>
+        [Fact]
+        public void AGenericClasssConstraintsReachTheMetadata()
+        {
+            var runtime = Run("class Box<T : IComparable<T>> { constructor() { } }");
+
+            Assert.True(runtime.TryGetModule("game.core", out var module));
+            // The arity is part of the type's identity (§6), so the metadata name is mangled.
+            Assert.True(module.TryGetClass("Box`1", out var box));
+
+            Assert.Equal("T", box.GenericParameters[0]);
+            Assert.Equal("Osurtr:IComparable`1;G0", Assert.Single(box.GenericConstraints[0]));
+        }
+
+        /// <summary>
+        /// A generic method compiled into one module and called from another arrives with its type
+        /// parameters intact, so inference and its constraint check work across the image rather
+        /// than only in the process that compiled it.
+        /// </summary>
+        [Fact]
+        public void AGnricMethodFromAnotherModuleInfersItsParameters()
+        {
+            // Phase 1: the declaring module, as an image.
+            var emitter = Build(
+                "public class Score : IComparable<Score> {\n"
+                    + "  public let value: int;\n"
+                    + "  constructor(value: int) { this.value = value; }\n"
+                    + "  public override fun compareTo(other: Score): int { return value - other.value; }\n"
+                    + "}\n"
+                    + "public class Plain { }\n"
+                    + "public fun biggest<T : IComparable<T>>(a: T, b: T): T { return a.compareTo(b) >= 0 ? a : b; }");
+            var built = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes()).Instantiate();
+
+            // Phase 2: a fresh runtime and a fresh compilation, importing the image.
+            using var runtime = new SurtrRuntime();
+            runtime.LoadModule(built);
+
+            var app = new SurtrProject(Root);
+            app.AddReference(built);
+            app.AddSourceFile(
+                Root + "/game/util/Util.surtr",
+                "import game.core.*;\nfun run(): int { let s: Score = biggest(Score(4), Score(9)); return s.value; }");
+
+            using var compilation = SurtrCompilation.Create(app);
+            var binder = compilation.Bind();
+            binder.BindBodies();
+            Assert.False(compilation.HasErrors);
+            var appEmitter = new ModuleEmitter(compilation, binder);
+            Assert.True(appEmitter.TryEmit());
+            runtime.LoadModule(appEmitter.Modules[0]);
+
+            Assert.Equal(9, runtime.Invoke(Function(runtime, "game.util", "run"), Array.Empty<SurtrValue>()).AsInt);
+        }
+
+        /// <summary>
+        /// The same cross-module call, with a type the bound rejects: the constraint the declaring
+        /// module wrote must still be checked against the substituted argument.
+        /// </summary>
+        [Fact]
+        public void AGnricMethodFromAnotherModuleKeepsItsConstraint()
+        {
+            var emitter = Build(
+                "public class Plain { }\n"
+                    + "public fun biggest<T : IComparable<T>>(a: T, b: T): T { return a; }");
+            var built = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes()).Instantiate();
+
+            var app = new SurtrProject(Root);
+            app.AddReference(built);
+            app.AddSourceFile(
+                Root + "/game/util/Util.surtr",
+                "import game.core.*;\nfun run(): int { biggest(Plain(), Plain()); return 1; }");
+
+            using var compilation = SurtrCompilation.Create(app);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.ConstraintNotSatisfied);
+        }
+
+        /// <summary>
+        /// A generic method declared inside a generic class, compiled into one module and called
+        /// from another: the type's parameter (G0, in the field and the constructor) and the
+        /// method's own (H0, with its own constraint) both arrive through the image, substitute,
+        /// and are checked against the substituted arguments.
+        /// </summary>
+        [Fact]
+        public void AGnricMethodOnAGnricClassSurvivesTheImage()
+        {
+            var emitter = Build(
+                "public class Score : IComparable<Score> {\n"
+                    + "  public let value: int;\n"
+                    + "  constructor(value: int) { this.value = value; }\n"
+                    + "  public override fun compareTo(other: Score): int { return value - other.value; }\n"
+                    + "}\n"
+                    + "public class Box<T : IComparable<T>> {\n"
+                    + "  public let value: T;\n"
+                    + "  constructor(value: T) { this.value = value; }\n"
+                    + "  public fun biggest<U : IComparable<U>>(a: U, b: U): U { return a.compareTo(b) >= 0 ? a : b; }\n"
+                    + "}");
+            var built = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes()).Instantiate();
+
+            using var runtime = new SurtrRuntime();
+            runtime.LoadModule(built);
+
+            var app = new SurtrProject(Root);
+            app.AddReference(built);
+            app.AddSourceFile(
+                Root + "/game/util/Util.surtr",
+                "import game.core.*;\n"
+                    + "fun run(): int { let b: Box<Score> = Box(Score(3)); let s: Score = b.biggest(Score(4), Score(9)); return s.value; }");
+
+            using var compilation = SurtrCompilation.Create(app);
+            var binder = compilation.Bind();
+            binder.BindBodies();
+            Assert.False(compilation.HasErrors);
+            var appEmitter = new ModuleEmitter(compilation, binder);
+            Assert.True(appEmitter.TryEmit());
+            runtime.LoadModule(appEmitter.Modules[0]);
+
+            Assert.Equal(9, runtime.Invoke(Function(runtime, "game.util", "run"), Array.Empty<SurtrValue>()).AsInt);
+        }
+
         [Fact]
         public void AGenericTypeIsConstructedFromTheTypeItGoesInto()
         {

@@ -384,26 +384,56 @@ namespace Surtr.Compiler.CodeGen
             return name.ToString();
         }
 
-        /// <summary>Copies a declaration's type parameter names onto its metadata.</summary>
+        /// <summary>
+        /// Copies a declaration's type parameter names and constraints onto its metadata.
+        /// </summary>
         /// <remarks>
-        /// Only the names: everything else about a generic is erased (§8), and the arity is already
-        /// in the name. What the runtime does with these is answer <c>G&lt;n&gt;</c>, which is why
-        /// the order matters and the identity does not.
+        /// The arity is already in the name, and the constraints are the rest of what the binder
+        /// checked against a construction - both travel so a module loaded from an image can
+        /// answer <c>Box&lt;T : IComparable&lt;T&gt;&gt;</c> without re-compiling the declaration.
+        /// Nothing on an execution path reads either; <c>G&lt;n&gt;</c> is a reference slot
+        /// regardless. A bound is written as the descriptor it already emits, which is what keeps
+        /// a bound naming the type's own parameter (<c>IComparable&lt;T&gt;</c> → <c>G0</c>)
+        /// meaningful after the round trip.
         /// </remarks>
-        private static void Parameterise(SurtrTypeInfo type, NamedTypeSymbol symbol)
+        private void Parameterise(SurtrTypeInfo type, NamedTypeSymbol symbol)
         {
             var parameters = symbol.TypeParameters;
             if (parameters.Count == 0)
                 return;
 
             var names = new string[parameters.Count];
-            for (int i = 0; i < names.Length; i++)
+            var constraints = new string[parameters.Count][];
+
+            for (int i = 0; i < parameters.Count; i++)
+            {
                 names[i] = parameters[i].Name;
+
+                var written = parameters[i].Constraints;
+                if (written.Count == 0)
+                {
+                    constraints[i] = [];
+                    continue;
+                }
+
+                var bounds = new string[written.Count];
+                for (int b = 0; b < written.Count; b++)
+                    bounds[b] = _descriptors.Emit(written[b]).Descriptor;
+
+                constraints[i] = bounds;
+            }
 
             switch (type)
             {
-                case SurtrClass @class: @class.SetGenericParameters(names); return;
-                case SurtrInterface contract: contract.SetGenericParameters(names); return;
+                case SurtrClass @class:
+                    @class.SetGenericParameters(names);
+                    @class.SetGenericConstraints(constraints);
+                    return;
+
+                case SurtrInterface contract:
+                    contract.SetGenericParameters(names);
+                    contract.SetGenericConstraints(constraints);
+                    return;
             }
         }
 
@@ -731,9 +761,17 @@ namespace Surtr.Compiler.CodeGen
 
             if (method.Dispatch == MethodDispatch.Abstract)
             {
+                var (names, constraints) = GenericParameterTable(method);
+
                 context.Bind(
                     method,
-                    @class.DefineAbstractMethod(name, _descriptors.Emit(method.ReturnType), parameters, Visibility(method.Accessibility)));
+                    @class.DefineAbstractMethod(
+                        name,
+                        _descriptors.Emit(method.ReturnType),
+                        parameters,
+                        Visibility(method.Accessibility),
+                        names,
+                        constraints));
 
                 return;
             }
@@ -742,6 +780,8 @@ namespace Surtr.Compiler.CodeGen
             {
                 // A native member travels as a name: the address cannot, so every runtime that
                 // loads the image publishes its own body under this link name (§10).
+                var (names, constraints) = GenericParameterTable(method);
+
                 context.Bind(
                     method,
                     @class.DeclareNativeMethod(
@@ -752,7 +792,10 @@ namespace Surtr.Compiler.CodeGen
                         method.IsStatic,
                         Dispatch(method),
                         method.IsOverride,
-                        Visibility(method.Accessibility)));
+                        Visibility(method.Accessibility),
+                        method.IsSealed,
+                        names,
+                        constraints));
 
                 return;
             }
@@ -767,6 +810,8 @@ namespace Surtr.Compiler.CodeGen
                 Visibility(method.Accessibility),
                 method.IsSealed);
 
+            DeclareGenericParameters(builder, method);
+
             foreach (var use in method.Attributes)
             {
                 if (use.Type.IsCompileTimeOnlyAttribute)
@@ -777,6 +822,43 @@ namespace Surtr.Compiler.CodeGen
 
             context.Declare(method, builder);
             emission.Methods.Add((method, builder));
+        }
+
+        /// <summary>
+        /// The names and per-parameter constraints of a generic method, in the descriptor form the
+        /// method metadata carries (§8) - the same shape the type sections use, so the image has
+        /// one rule to know. A bound naming the method's own parameter goes out as <c>H&lt;n&gt;</c>,
+        /// which the importer maps back onto the rebuilt <see cref="TypeParameterSymbol"/>.
+        /// </summary>
+        private void DeclareGenericParameters(SurtrMethodBuilder builder, MethodSymbol method)
+        {
+            var (names, constraints) = GenericParameterTable(method);
+            if (names.Length == 0)
+                return;
+
+            builder.DeclareGenericParameters(names, constraints);
+        }
+
+        private (string[] Names, string[][] Constraints) GenericParameterTable(MethodSymbol method)
+        {
+            var parameters = method.TypeParameters;
+            var names = new string[parameters.Count];
+            var constraints = new string[parameters.Count][];
+
+            for (int i = 0; i < parameters.Count; i++)
+            {
+                names[i] = parameters[i].Name;
+
+                var bounds = parameters[i].Constraints;
+                constraints[i] = bounds.Count == 0
+                    ? Array.Empty<string>()
+                    : new string[bounds.Count];
+
+                for (int b = 0; b < bounds.Count; b++)
+                    constraints[i][b] = _descriptors.Emit(bounds[b]).Descriptor;
+            }
+
+            return (names, constraints);
         }
 
         /// <summary>
@@ -870,12 +952,16 @@ namespace Surtr.Compiler.CodeGen
                 // ever passes it around still fails to load when the host never registered it.
                 if (method.IsNative)
                 {
+                    var (names, constraints) = GenericParameterTable(method);
+
                     var native = builder.DeclareNativeFunction(
                         _descriptors.EmitMethodName(method),
                         _descriptors.Emit(method.ReturnType),
                         LinkName(method),
                         Parameters(context, method),
-                        Visibility(method.Accessibility));
+                        Visibility(method.Accessibility),
+                        names,
+                        constraints);
 
                     context.Bind(method, native);
                     continue;
@@ -886,6 +972,8 @@ namespace Surtr.Compiler.CodeGen
                     _descriptors.Emit(method.ReturnType),
                     Parameters(context, method),
                     Visibility(method.Accessibility));
+
+                DeclareGenericParameters(function, method);
 
                 foreach (var use in method.Attributes)
                 {
@@ -925,12 +1013,16 @@ namespace Surtr.Compiler.CodeGen
         {
             if (method.IsNative)
             {
+                var (names, constraints) = GenericParameterTable(method);
+
                 var native = builder.DeclareNativeFunction(
                     _descriptors.EmitMethodName(method),
                     _descriptors.Emit(method.ReturnType),
                     LinkName(method),
                     Parameters(context, method),
-                    Visibility(method.Accessibility));
+                    Visibility(method.Accessibility),
+                    names,
+                    constraints);
 
                 context.Bind(method, native);
                 return;
@@ -941,6 +1033,8 @@ namespace Surtr.Compiler.CodeGen
                 _descriptors.Emit(method.ReturnType),
                 Parameters(context, method),
                 Visibility(method.Accessibility));
+
+            DeclareGenericParameters(function, method);
 
             foreach (var use in method.Attributes)
             {
