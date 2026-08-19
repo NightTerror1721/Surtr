@@ -6412,6 +6412,24 @@ namespace Surtr.Tests.Compiler.CodeGen
 
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidExtensionMember);
         }
+
+        [Fact]
+        public void AGenericExtensionOverABuiltInInterfaceInfersItsTypeParameterThroughTheImplementingComposite()
+        {
+            // `IIterable<T>` is the target, not `int[]` itself - inferring the extension's own `T`
+            // has to walk from the supplied `int[]` up to the built-in `array<int>` class behind it
+            // and on to the `IIterable<int>` it implements, the same hierarchy walk
+            // `Conversions.WalkForBase` already does for ordinary assignability.
+            var runtime = Run(
+                "extension IIterable<T> { fun countAll(self: IIterable<T>): int {\n"
+                    + "  var total = 0;\n"
+                    + "  for (x in self) { total += 1; }\n"
+                    + "  return total;\n"
+                    + "} }\n"
+                    + "fun run(): int { let xs: int[] = [1, 2, 3]; return xs.countAll(); }");
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
         #endregion
     }
 }

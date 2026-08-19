@@ -2051,7 +2051,7 @@ namespace Surtr.Compiler.Binding
                 for (int i = 0; i < supplied.Length && i < arguments.Count; i++)
                     supplied[i] = arguments[i].Name is null ? arguments[i].Type : null;
 
-                if (TypeInference.TryInfer(candidate.TypeParameters, declared, supplied, _factory, out var inferred, out _))
+                if (TypeInference.TryInfer(candidate.TypeParameters, declared, supplied, _factory, out var inferred, out _, _lookup))
                     substituted.Add(Construct(candidate, inferred, syntax));
             }
 
@@ -2857,7 +2857,7 @@ namespace Surtr.Compiler.Binding
                 for (int i = 0; i < declared.Length; i++)
                     declared[i] = constructor.Parameters[i].Type;
 
-                if (TypeInference.TryInfer(definition.TypeParameters, declared, supplied, _factory, out arguments, out _))
+                if (TypeInference.TryInfer(definition.TypeParameters, declared, supplied, _factory, out arguments, out _, _lookup))
                     return true;
             }
 
