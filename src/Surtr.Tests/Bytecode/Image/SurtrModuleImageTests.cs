@@ -310,6 +310,62 @@ namespace Surtr.Tests.Bytecode.Image
             Assert.Equal("Ogame:Entity.Handle;", rebuiltHandle.SelfReference.Descriptor);
         }
 
+        /// <summary>
+        /// A generic type's bounds ride with the parameters that declared them, so a module read
+        /// back from an image can still answer what the declaration demanded of its parameters.
+        /// </summary>
+        [Fact]
+        public void GenericConstraintsSurviveTheRoundTrip()
+        {
+            var builder = new SurtrModuleBuilder("box");
+
+            var box = builder.DefineClass("Box");
+            box.Class.SetGenericParameters("T", "U");
+            box.Class.SetGenericConstraints(
+                new[] { "Osurtr:IComparable`1;G0" },
+                System.Array.Empty<string>());
+
+            var image = SurtrModuleImage.FromModule(builder.Build());
+
+            using var runtime = new SurtrRuntime();
+            var module = runtime.LoadModule(image);
+
+            Assert.True(module.TryGetClass("Box", out var rebuilt));
+            Assert.Equal("T", rebuilt.GenericParameters[0]);
+            Assert.Equal("U", rebuilt.GenericParameters[1]);
+            Assert.Equal("Osurtr:IComparable`1;G0", Assert.Single(rebuilt.GenericConstraints[0]));
+            Assert.Empty(rebuilt.GenericConstraints[1]);
+        }
+
+        /// <summary>
+        /// A generic method's own parameters and their bounds ride with it, exactly the way a
+        /// type's do — so a module read back from an image can still check a call site against the
+        /// bound the declaring module wrote.
+        /// </summary>
+        [Fact]
+        public void GenericMethodParametersAndConstraintsSurviveTheRoundTrip()
+        {
+            var builder = new SurtrModuleBuilder("util");
+
+            var pick = builder.DefineFunction("pick", SurtrClassReference.Void);
+            pick.DeclareGenericParameters(
+                new[] { "T" },
+                new[] { new[] { "Osurtr:IComparable`1;H0" } });
+            pick.Code.ReturnVoid();
+
+            var image = SurtrModuleImage.FromModule(builder.Build());
+
+            using var runtime = new SurtrRuntime();
+            var module = runtime.LoadModule(image);
+
+            Assert.True(module.TryGetMethods("pick", out var overloads));
+            var rebuilt = Assert.Single(overloads);
+
+            Assert.Equal("T", Assert.Single(rebuilt.GenericParameters));
+            // The bound names the method's own parameter through H0, which survives verbatim.
+            Assert.Equal("Osurtr:IComparable`1;H0", Assert.Single(Assert.Single(rebuilt.GenericConstraints)));
+        }
+
         [Fact]
         public void ParameterDefaultsAndVarargsSurvive()
         {

@@ -384,26 +384,56 @@ namespace Surtr.Compiler.CodeGen
             return name.ToString();
         }
 
-        /// <summary>Copies a declaration's type parameter names onto its metadata.</summary>
+        /// <summary>
+        /// Copies a declaration's type parameter names and constraints onto its metadata.
+        /// </summary>
         /// <remarks>
-        /// Only the names: everything else about a generic is erased (§8), and the arity is already
-        /// in the name. What the runtime does with these is answer <c>G&lt;n&gt;</c>, which is why
-        /// the order matters and the identity does not.
+        /// The arity is already in the name, and the constraints are the rest of what the binder
+        /// checked against a construction - both travel so a module loaded from an image can
+        /// answer <c>Box&lt;T : IComparable&lt;T&gt;&gt;</c> without re-compiling the declaration.
+        /// Nothing on an execution path reads either; <c>G&lt;n&gt;</c> is a reference slot
+        /// regardless. A bound is written as the descriptor it already emits, which is what keeps
+        /// a bound naming the type's own parameter (<c>IComparable&lt;T&gt;</c> → <c>G0</c>)
+        /// meaningful after the round trip.
         /// </remarks>
-        private static void Parameterise(SurtrTypeInfo type, NamedTypeSymbol symbol)
+        private void Parameterise(SurtrTypeInfo type, NamedTypeSymbol symbol)
         {
             var parameters = symbol.TypeParameters;
             if (parameters.Count == 0)
                 return;
 
             var names = new string[parameters.Count];
-            for (int i = 0; i < names.Length; i++)
+            var constraints = new string[parameters.Count][];
+
+            for (int i = 0; i < parameters.Count; i++)
+            {
                 names[i] = parameters[i].Name;
+
+                var written = parameters[i].Constraints;
+                if (written.Count == 0)
+                {
+                    constraints[i] = [];
+                    continue;
+                }
+
+                var bounds = new string[written.Count];
+                for (int b = 0; b < written.Count; b++)
+                    bounds[b] = _descriptors.Emit(written[b]).Descriptor;
+
+                constraints[i] = bounds;
+            }
 
             switch (type)
             {
-                case SurtrClass @class: @class.SetGenericParameters(names); return;
-                case SurtrInterface contract: contract.SetGenericParameters(names); return;
+                case SurtrClass @class:
+                    @class.SetGenericParameters(names);
+                    @class.SetGenericConstraints(constraints);
+                    return;
+
+                case SurtrInterface contract:
+                    contract.SetGenericParameters(names);
+                    contract.SetGenericConstraints(constraints);
+                    return;
             }
         }
 
@@ -731,9 +761,17 @@ namespace Surtr.Compiler.CodeGen
 
             if (method.Dispatch == MethodDispatch.Abstract)
             {
+                var (names, constraints) = GenericParameterTable(method);
+
                 context.Bind(
                     method,
-                    @class.DefineAbstractMethod(name, _descriptors.Emit(method.ReturnType), parameters, Visibility(method.Accessibility)));
+                    @class.DefineAbstractMethod(
+                        name,
+                        _descriptors.Emit(method.ReturnType),
+                        parameters,
+                        Visibility(method.Accessibility),
+                        names,
+                        constraints));
 
                 return;
             }
@@ -742,6 +780,8 @@ namespace Surtr.Compiler.CodeGen
             {
                 // A native member travels as a name: the address cannot, so every runtime that
                 // loads the image publishes its own body under this link name (§10).
+                var (names, constraints) = GenericParameterTable(method);
+
                 context.Bind(
                     method,
                     @class.DeclareNativeMethod(
@@ -752,7 +792,10 @@ namespace Surtr.Compiler.CodeGen
                         method.IsStatic,
                         Dispatch(method),
                         method.IsOverride,
-                        Visibility(method.Accessibility)));
+                        Visibility(method.Accessibility),
+                        method.IsSealed,
+                        names,
+                        constraints));
 
                 return;
             }
@@ -767,6 +810,8 @@ namespace Surtr.Compiler.CodeGen
                 Visibility(method.Accessibility),
                 method.IsSealed);
 
+            DeclareGenericParameters(builder, method);
+
             foreach (var use in method.Attributes)
             {
                 if (use.Type.IsCompileTimeOnlyAttribute)
@@ -777,6 +822,43 @@ namespace Surtr.Compiler.CodeGen
 
             context.Declare(method, builder);
             emission.Methods.Add((method, builder));
+        }
+
+        /// <summary>
+        /// The names and per-parameter constraints of a generic method, in the descriptor form the
+        /// method metadata carries (§8) - the same shape the type sections use, so the image has
+        /// one rule to know. A bound naming the method's own parameter goes out as <c>H&lt;n&gt;</c>,
+        /// which the importer maps back onto the rebuilt <see cref="TypeParameterSymbol"/>.
+        /// </summary>
+        private void DeclareGenericParameters(SurtrMethodBuilder builder, MethodSymbol method)
+        {
+            var (names, constraints) = GenericParameterTable(method);
+            if (names.Length == 0)
+                return;
+
+            builder.DeclareGenericParameters(names, constraints);
+        }
+
+        private (string[] Names, string[][] Constraints) GenericParameterTable(MethodSymbol method)
+        {
+            var parameters = method.TypeParameters;
+            var names = new string[parameters.Count];
+            var constraints = new string[parameters.Count][];
+
+            for (int i = 0; i < parameters.Count; i++)
+            {
+                names[i] = parameters[i].Name;
+
+                var bounds = parameters[i].Constraints;
+                constraints[i] = bounds.Count == 0
+                    ? Array.Empty<string>()
+                    : new string[bounds.Count];
+
+                for (int b = 0; b < bounds.Count; b++)
+                    constraints[i][b] = _descriptors.Emit(bounds[b]).Descriptor;
+            }
+
+            return (names, constraints);
         }
 
         /// <summary>
@@ -870,12 +952,16 @@ namespace Surtr.Compiler.CodeGen
                 // ever passes it around still fails to load when the host never registered it.
                 if (method.IsNative)
                 {
+                    var (names, constraints) = GenericParameterTable(method);
+
                     var native = builder.DeclareNativeFunction(
                         _descriptors.EmitMethodName(method),
                         _descriptors.Emit(method.ReturnType),
                         LinkName(method),
                         Parameters(context, method),
-                        Visibility(method.Accessibility));
+                        Visibility(method.Accessibility),
+                        names,
+                        constraints);
 
                     context.Bind(method, native);
                     continue;
@@ -887,6 +973,8 @@ namespace Surtr.Compiler.CodeGen
                     Parameters(context, method),
                     Visibility(method.Accessibility));
 
+                DeclareGenericParameters(function, method);
+
                 foreach (var use in method.Attributes)
                 {
                     if (use.Type.IsCompileTimeOnlyAttribute)
@@ -897,6 +985,71 @@ namespace Surtr.Compiler.CodeGen
 
                 context.Declare(method, function);
             }
+
+            // An extension method (§15) is, by the time it reaches here, an ordinary module-level
+            // function — its receiver is already its first declared parameter, and nothing about
+            // its emission differs from `module.Methods` above. It stays a separate list only so
+            // bare-name resolution in the binder never finds one (`ModuleSymbol.ExtensionMethods`).
+            foreach (var method in module.ExtensionMethods)
+                DeclareExtensionFunction(context, builder, method);
+
+            // An extension property's accessors (§15.1) are declared the same way, one at a time —
+            // never through `builder.DefineProperty`/`DefineGetter`/`DefineSetter`, which assume a
+            // getter takes zero declared parameters and a setter exactly one (`value`), the receiver
+            // always implicit. An extension accessor's receiver is instead its own first declared
+            // parameter (or, for a `static` one, absent entirely) — the same shape an extension
+            // method's is, which is exactly what `DeclareExtensionFunction` already emits correctly.
+            foreach (var property in module.ExtensionProperties)
+            {
+                if (property.Getter is MethodSymbol getter)
+                    DeclareExtensionFunction(context, builder, getter);
+
+                if (property.Setter is MethodSymbol setter)
+                    DeclareExtensionFunction(context, builder, setter);
+            }
+        }
+
+        private void DeclareExtensionFunction(EmitContext context, SurtrModuleBuilder builder, MethodSymbol method)
+        {
+            if (method.IsNative)
+            {
+                var (names, constraints) = GenericParameterTable(method);
+
+                var native = builder.DeclareNativeFunction(
+                    _descriptors.EmitMethodName(method),
+                    _descriptors.Emit(method.ReturnType),
+                    LinkName(method),
+                    Parameters(context, method),
+                    Visibility(method.Accessibility),
+                    names,
+                    constraints,
+                    isExtension: true);
+
+                context.Bind(method, native);
+                return;
+            }
+
+            var function = builder.DefineFunction(
+                _descriptors.EmitMethodName(method),
+                _descriptors.Emit(method.ReturnType),
+                Parameters(context, method),
+                Visibility(method.Accessibility));
+
+            // The mark travels in the image so a later compiler recognises the imported member as
+            // an extension again (SurtrMethodInfo.IsExtension); the runtime itself ignores it.
+            function.IsExtension = true;
+
+            DeclareGenericParameters(function, method);
+
+            foreach (var use in method.Attributes)
+            {
+                if (use.Type.IsCompileTimeOnlyAttribute)
+                    continue;
+
+                function.AddAttribute(Usage(context, use));
+            }
+
+            context.Declare(method, function);
         }
 
         private SurtrParameterInfo[] Parameters(EmitContext context, MethodSymbol method)
@@ -1127,7 +1280,7 @@ namespace Surtr.Compiler.CodeGen
                     if (!NeedsBridge(owner, declared, wanted, out var target))
                         continue;
 
-                    EmitBridge(context, @class, declared, wanted, target);
+                    EmitBridge(context, @class, owner, declared, wanted, target);
                 }
             }
         }
@@ -1136,10 +1289,14 @@ namespace Surtr.Compiler.CodeGen
         /// Whether a contract slot needs a bridge, and which member it should forward to.
         /// </summary>
         /// <remarks>
-        /// Only when the class fills the slot with something more specific than the slot's own
-        /// erased shape. A member already declared against the erased type occupies the slot
-        /// directly and needs nothing, and a contract that mentions no type parameter has nothing
-        /// to erase in the first place.
+        /// Two independent reasons a slot can be unfilled by anything sitting directly in the
+        /// vtable, and a bridge closes both the same way: a member more specific than the slot's
+        /// own erased shape (generics — the class wrote <c>compareTo(Vec2)</c> against
+        /// <c>IComparable&lt;Vec2&gt;</c>'s erased <c>compareTo(E)</c>), or a member whose signature
+        /// already matches the slot exactly but whose dispatch is <c>Direct</c> (§3.3 — no
+        /// <c>override</c> written, so <c>SurtrTypeLinker</c> never placed it in
+        /// <c>VirtualMethods</c> to begin with). Either way the class's own member keeps whatever
+        /// dispatch it was declared with, and the bridge is what actually answers the interface.
         /// </remarks>
         private bool NeedsBridge(
             NamedTypeSymbol owner,
@@ -1150,18 +1307,21 @@ namespace Surtr.Compiler.CodeGen
             target = null!;
 
             string slot = SlotKey(declared);
-            if (string.Equals(slot, SlotKey(wanted), StringComparison.Ordinal))
-                return false;
+            string wantedKey = SlotKey(wanted);
 
             foreach (var candidate in _binder.MemberLookup.FindMethods(owner, wanted.Name))
             {
                 string key = SlotKey(candidate);
 
-                // Already erased: the class wrote the slot's own shape, so nothing is missing.
-                if (string.Equals(key, slot, StringComparison.Ordinal))
+                // Sits in the vtable at the slot's own erased position already - SurtrTypeLinker's
+                // SignatureKey match finds it directly, so nothing here has to.
+                if (string.Equals(key, slot, StringComparison.Ordinal) && candidate.Dispatch != MethodDispatch.Direct)
                     return false;
 
-                if (string.Equals(key, SlotKey(wanted), StringComparison.Ordinal))
+                // The member the class actually wrote to satisfy this obligation, by its own
+                // signature - possibly more specific than the slot's erased shape, and possibly
+                // `Direct` (never placed in the vtable at all).
+                if (string.Equals(key, wantedKey, StringComparison.Ordinal))
                     target = candidate;
             }
 
@@ -1182,6 +1342,7 @@ namespace Surtr.Compiler.CodeGen
         private void EmitBridge(
             EmitContext context,
             SurtrClassBuilder @class,
+            NamedTypeSymbol owner,
             MethodSymbol declared,
             MethodSymbol wanted,
             MethodSymbol target)
@@ -1205,6 +1366,14 @@ namespace Surtr.Compiler.CodeGen
 
             var code = bridge.Code;
             code.LoadLocal(bridge.Receiver);
+
+            // The bridge is Virtual, so a value class receiver arrives boxed at this slot exactly
+            // as it does for any other interface-dispatched call on one (§6.3) — the same test
+            // MethodBodyEmitter.LoadReceiver makes for a value class's own virtual-dispatch body,
+            // applied here since the bridge plays that same role. The `target` it forwards to keeps
+            // `Direct` dispatch and so expects the unboxed field, never the boxed form.
+            if (owner.TypeKind == TypeSymbolKind.ValueClass)
+                code.Unbox();
 
             for (int i = 0; i < parameters.Length; i++)
             {
@@ -1264,7 +1433,22 @@ namespace Surtr.Compiler.CodeGen
                     Guarded(method, () => EmitBody(context, method, function, allowMissing: false));
             }
 
+            foreach (var method in module.ExtensionMethods)
+            {
+                if (context.TryGetBuilder(method, out var function))
+                    Guarded(method, () => EmitBody(context, method, function, allowMissing: false));
+            }
+
             foreach (var property in module.Properties)
+            {
+                if (property.Getter is MethodSymbol getter && context.TryGetBuilder(getter, out var read))
+                    Guarded(getter, () => EmitBody(context, getter, read, allowMissing: false));
+
+                if (property.Setter is MethodSymbol setter && context.TryGetBuilder(setter, out var write))
+                    Guarded(setter, () => EmitBody(context, setter, write, allowMissing: false));
+            }
+
+            foreach (var property in module.ExtensionProperties)
             {
                 if (property.Getter is MethodSymbol getter && context.TryGetBuilder(getter, out var read))
                     Guarded(getter, () => EmitBody(context, getter, read, allowMissing: false));
@@ -1542,7 +1726,25 @@ namespace Surtr.Compiler.CodeGen
                 }
             }
 
+            // Same recording as `symbol.Methods` above, for the same reason: a module built later
+            // resolves a call to one of these (§15) through `_builtMethods`, not through this
+            // module's own `EmitContext` — that only lives for the duration of building it.
+            foreach (var method in symbol.ExtensionMethods)
+            {
+                if (context.TryGetBuilder(method, out var builder) && builder.Built is SurtrMethodInfo info)
+                {
+                    _builtMethods[method] = info;
+                    _methodOwners[method] = built;
+                }
+            }
+
             foreach (var property in symbol.Properties)
+            {
+                RecordAccessor(context, property.Getter, built, moduleLevel: true);
+                RecordAccessor(context, property.Setter, built, moduleLevel: true);
+            }
+
+            foreach (var property in symbol.ExtensionProperties)
             {
                 RecordAccessor(context, property.Getter, built, moduleLevel: true);
                 RecordAccessor(context, property.Setter, built, moduleLevel: true);

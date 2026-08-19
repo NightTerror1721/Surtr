@@ -358,6 +358,21 @@ namespace Surtr.Bytecode.Emit
                 };
             }
 
+            // A still-abstract type parameter: `==`/`!=` are value equality everywhere in Surtr
+            // (Language-Syntax.md §5.7), and REQ/RNE below would answer by entity identity instead —
+            // wrong the moment two independently boxed primitives hold the same value. DynEQ/DynNE
+            // read the runtime's own SurtrValueComparer, which already treats a boxed 5 and an
+            // unboxed 5 as one value for exactly this reason.
+            if (operandType == SurtrValueTypeCode.Erased)
+            {
+                return comparison switch
+                {
+                    SurtrComparison.Equal => OpCode.DynEQ,
+                    SurtrComparison.NotEqual => OpCode.DynNE,
+                    _ => throw NoOrdering(comparison, operandType),
+                };
+            }
+
             if (operandType.IsReferenceType)
             {
                 return comparison switch
@@ -482,6 +497,15 @@ namespace Surtr.Bytecode.Emit
         /// The shape the erasure rule needs: a value flowing into an erased slot has to be a
         /// reference, and a reference already is one. Callers can therefore box unconditionally on
         /// that path without first testing what they have.
+        /// <para>
+        /// <see cref="SurtrValueTypeCode.Erased"/> reaches <see cref="BoxDynamic"/> rather than the
+        /// no-op every other non-primitive family gets: a value statically typed by a bare generic
+        /// parameter may already be boxed (arrived as an argument, which <c>ConversionTarget</c> in
+        /// <c>BodyBinder.Expressions.cs</c> already boxes on the way in) or may still be a built-in
+        /// collection's own raw storage read while <c>T</c> is still abstract (an array element, an
+        /// <c>IIterator&lt;T&gt;.current</c>) - nothing at this call site can tell which, only the
+        /// value's own tag can, which is exactly what <see cref="OpCode.BoxDynamic"/> reads.
+        /// </para>
         /// </remarks>
         public SurtrCodeEmitter Box(SurtrValueTypeCode valueType) => valueType switch
         {
@@ -489,6 +513,7 @@ namespace Surtr.Bytecode.Emit
             SurtrValueTypeCode.Float => BoxFloat(),
             SurtrValueTypeCode.Boolean => BoxBool(),
             SurtrValueTypeCode.Character => BoxChar(),
+            SurtrValueTypeCode.Erased => BoxDynamic(),
             _ => this,
         };
 

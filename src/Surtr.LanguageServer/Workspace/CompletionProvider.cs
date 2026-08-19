@@ -76,12 +76,21 @@ namespace Surtr.LanguageServer.Workspace
         {
             var items = new List<CompletionItem>();
             var binder = snapshot.Binder!;
+            ModuleSymbol? module = ModuleFor(snapshot, filePath);
+
+            // An in-scope value: the tree may have dropped the half-typed access, so the receiver
+            // reads as a name the scope knows. A local shadows a type of the same name. Collected up
+            // front (not just where the original code needed it) because `ThisType` is also what an
+            // extension's nested-in-class visibility check (§15.2) is measured against, and every
+            // branch below may need it.
+            var scope = CollectScope(binder, filePath, text.Length, position);
 
             // A receiver that is a value: its span ends exactly at the dot.
             BoundExpression? receiver = FindReceiverEndingAt(binder, filePath, text.Length, dot.Span.Start.Position);
             if (receiver is not null)
             {
                 AddReachableMembers(binder, receiver.Type, includeStatics: false, items);
+                AddExtensionInstanceMembers(binder, snapshot, filePath, module, scope.ThisType, receiver.Type, items);
                 return new CompletionList { IsIncomplete = false, Items = items };
             }
 
@@ -89,16 +98,12 @@ namespace Surtr.LanguageServer.Workspace
             if (receiverText.Length == 0)
                 return NoItems();
 
-            ModuleSymbol? module = ModuleFor(snapshot, filePath);
-
-            // An in-scope value: the tree may have dropped the half-typed access, so the receiver
-            // reads as a name the scope knows. A local shadows a type of the same name.
-            var scope = CollectScope(binder, filePath, text.Length, position);
             if (receiverText == "this")
             {
                 if (scope.ThisType is not null)
                 {
                     AddReachableMembers(binder, scope.ThisType, includeStatics: false, items);
+                    AddExtensionInstanceMembers(binder, snapshot, filePath, module, scope.ThisType, scope.ThisType, items);
                     return new CompletionList { IsIncomplete = false, Items = items };
                 }
             }
@@ -120,6 +125,7 @@ namespace Surtr.LanguageServer.Workspace
                         continue;
 
                     AddReachableMembers(binder, valueType, includeStatics: false, items);
+                    AddExtensionInstanceMembers(binder, snapshot, filePath, module, scope.ThisType, valueType, items);
                     return new CompletionList { IsIncomplete = false, Items = items };
                 }
             }
@@ -144,10 +150,78 @@ namespace Surtr.LanguageServer.Workspace
             if (type is not null)
             {
                 AddReachableMembers(binder, type, includeStatics: true, items);
+                AddExtensionStaticMembers(binder, snapshot, filePath, module, scope.ThisType, type, items);
                 return new CompletionList { IsIncomplete = false, Items = items };
             }
 
             return new CompletionList { IsIncomplete = false, Items = items };
+        }
+
+        /// <summary>
+        /// Adds every instance extension method/property (§15) reachable on a receiver's type — the
+        /// completion-time counterpart of what <c>BodyBinder.ExtensionCandidates</c>/
+        /// <c>InstanceExtensionProperty</c> resolve for a real call, via the same
+        /// <c>MemberLookup.FindExtensionMethods</c>/<c>FindExtensionProperties</c> both now share. A
+        /// name already offered by <see cref="AddReachableMembers"/> is skipped, mirroring §15.3's
+        /// "a real member always wins silently" — an extension that could never actually be reached
+        /// through this receiver has no business in the list either.
+        /// </summary>
+        private static void AddExtensionInstanceMembers(
+            Binder binder, CompilationSnapshot snapshot, string filePath, ModuleSymbol? module, NamedTypeSymbol? useSiteType, TypeSymbol receiverType, List<CompletionItem> items)
+        {
+            if (module is null)
+                return;
+
+            var imported = ImportedModuleSymbols(binder, snapshot, filePath, module);
+            var seen = new HashSet<string>(items.Select(i => i.Label), StringComparer.Ordinal);
+
+            foreach (var method in binder.MemberLookup.FindExtensionMethods(receiverType, module, imported, useSiteType, binder.Conversions))
+            {
+                if (MemberItem(method, includeStatics: false) is CompletionItem item && seen.Add(item.Label))
+                    items.Add(item);
+            }
+
+            foreach (var property in binder.MemberLookup.FindExtensionProperties(receiverType, module, imported, useSiteType, binder.Conversions))
+            {
+                if (MemberItem(property, includeStatics: false) is CompletionItem item && seen.Add(item.Label))
+                    items.Add(item);
+            }
+        }
+
+        /// <summary>The static counterpart of <see cref="AddExtensionInstanceMembers"/>, for a <c>Type.</c> completion (§15.3).</summary>
+        private static void AddExtensionStaticMembers(
+            Binder binder, CompilationSnapshot snapshot, string filePath, ModuleSymbol? module, NamedTypeSymbol? useSiteType, NamedTypeSymbol type, List<CompletionItem> items)
+        {
+            if (module is null)
+                return;
+
+            var imported = ImportedModuleSymbols(binder, snapshot, filePath, module);
+            var seen = new HashSet<string>(items.Select(i => i.Label), StringComparer.Ordinal);
+
+            foreach (var method in binder.MemberLookup.FindStaticExtensionMethods(type, module, imported, useSiteType))
+            {
+                if (MemberItem(method, includeStatics: true) is CompletionItem item && seen.Add(item.Label))
+                    items.Add(item);
+            }
+
+            foreach (var property in binder.MemberLookup.FindStaticExtensionProperties(type, module, imported, useSiteType))
+            {
+                if (MemberItem(property, includeStatics: true) is CompletionItem item && seen.Add(item.Label))
+                    items.Add(item);
+            }
+        }
+
+        /// <summary>The <see cref="ModuleSymbol"/>s a file's wildcard imports name, resolved from <see cref="ImportedModules"/>'s paths.</summary>
+        private static List<ModuleSymbol> ImportedModuleSymbols(Binder binder, CompilationSnapshot snapshot, string filePath, ModuleSymbol module)
+        {
+            var result = new List<ModuleSymbol>();
+            foreach (string path in ImportedModules(snapshot, filePath, module))
+            {
+                if (binder.Modules.TryGetValue(path, out ModuleSymbol? imported))
+                    result.Add(imported);
+            }
+
+            return result;
         }
 
         /// <summary>Whatever an expression may name in the module, in the current scope.</summary>
@@ -272,8 +346,8 @@ namespace Surtr.LanguageServer.Workspace
         /// <summary>The identifiers reserved by the language, offered where an expression goes.</summary>
         private static readonly string[] Keywords =
         {
-            "abstract", "alias", "as", "break", "case", "catch", "class", "const", "constructor",
-            "continue", "default", "else", "enum", "false", "finally", "for", "forceinline", "fun",
+            "abstract", "alias", "as", "attribute", "break", "case", "catch", "class", "const", "constructor",
+            "continue", "default", "else", "enum", "extension", "false", "finally", "for", "forceinline", "fun",
             "if", "import", "in", "inline", "interface", "internal", "is", "let", "moduleof", "native", "null",
             "operator", "override", "private", "protected", "public", "range", "return", "sealed",
             "singleton", "static", "super", "switch", "this", "throw", "true", "try", "typeof",
@@ -467,6 +541,8 @@ namespace Surtr.LanguageServer.Workspace
 
             if (prefix.Length > 0)
             {
+                var scope = CollectScope(binder, filePath, textLength, openParen);
+
                 // A qualified name: a foreign module, that module reached through an alias, or a
                 // member of a type in this one.
                 if (binder.Modules.TryGetValue(prefix, out ModuleSymbol? foreign))
@@ -478,11 +554,18 @@ namespace Surtr.LanguageServer.Workspace
 
                 NamedTypeSymbol? type = FindType(binder, snapshot, filePath, module, prefix);
                 if (type is not null)
-                    return MethodsNamed(type, name);
+                {
+                    List<MethodSymbol> real = MethodsNamed(type, name);
+
+                    // §15.3's silent fallback: a static extension is only a candidate once the type's
+                    // own statics have nothing of that name.
+                    return real.Count > 0
+                        ? real
+                        : NamedExtensionMethods(binder.MemberLookup.FindStaticExtensionMethods(type, module, ImportedModuleSymbols(binder, snapshot, filePath, module), scope.ThisType), name);
+                }
 
                 // The tree can drop a half-typed call, so read the prefix as an in-scope value
                 // instead of only a type.
-                var scope = CollectScope(binder, filePath, textLength, openParen);
                 foreach (var symbol in scope.Symbols)
                 {
                     if (symbol.Name != prefix)
@@ -495,10 +578,16 @@ namespace Surtr.LanguageServer.Workspace
                         _ => null,
                     };
 
-                    if (valueType is null || valueType is not NamedTypeSymbol named)
+                    if (valueType is null)
                         continue;
 
-                    return MethodsNamed(named, name);
+                    List<MethodSymbol> real = valueType is NamedTypeSymbol named ? MethodsNamed(named, name) : new List<MethodSymbol>();
+                    if (real.Count > 0)
+                        return real;
+
+                    // §15.3's silent fallback, the instance counterpart: an extension is only a
+                    // candidate once the receiver's own real members have nothing of that name.
+                    return NamedExtensionMethods(binder.MemberLookup.FindExtensionMethods(valueType, module, ImportedModuleSymbols(binder, snapshot, filePath, module), scope.ThisType, binder.Conversions), name);
                 }
 
                 return new List<MethodSymbol>();
@@ -560,6 +649,19 @@ namespace Surtr.LanguageServer.Workspace
             foreach (var member in type.Definition.Members)
             {
                 if (member is MethodSymbol method && method.Name == name && !method.IsSynthetic && method.Role != MethodRole.StaticInitializer)
+                    result.Add(method);
+            }
+
+            return result;
+        }
+
+        /// <summary>Narrows a reachable-extension-method list (§15) down to one name, for signature help.</summary>
+        private static List<MethodSymbol> NamedExtensionMethods(IReadOnlyList<MethodSymbol> candidates, string name)
+        {
+            var result = new List<MethodSymbol>();
+            foreach (var method in candidates)
+            {
+                if (method.Name == name)
                     result.Add(method);
             }
 

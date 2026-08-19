@@ -18,6 +18,7 @@ namespace Surtr.Tests.Runtime.Classes
             Assert.Equal("S", SurtrClassReference.String.Descriptor);
             Assert.Equal("E", SurtrClassReference.Erased.Descriptor);
             Assert.Equal("G0", SurtrClassReference.GenericParameter(0).Descriptor);
+            Assert.Equal("H0", SurtrClassReference.MethodGenericParameter(0).Descriptor);
             Assert.Equal("?I", SurtrClassReference.Nullable(SurtrClassReference.Integer).Descriptor);
             Assert.Equal("V", SurtrClassReference.Void.Descriptor);
         }
@@ -117,6 +118,8 @@ namespace Surtr.Tests.Runtime.Classes
         [InlineData("Ogame:Foo;", SurtrValueTypeCode.Object)]
         [InlineData("Nhost:Foo;", SurtrValueTypeCode.Native)]
         [InlineData("E", SurtrValueTypeCode.Erased)]
+        [InlineData("G0", SurtrValueTypeCode.Erased)]
+        [InlineData("H0", SurtrValueTypeCode.Erased)]
         [InlineData("V", SurtrValueTypeCode.Void)]
         public void TypeCode_ReadsTheLeadingSymbol(string descriptor, SurtrValueTypeCode expected)
         {
@@ -296,6 +299,8 @@ namespace Surtr.Tests.Runtime.Classes
         [InlineData("S")]
         [InlineData("E")]
         [InlineData("V")]
+        [InlineData("G0")]
+        [InlineData("H0")]
         [InlineData("AI")]
         [InlineData("AAI")]
         [InlineData("DIS")]
@@ -323,6 +328,9 @@ namespace Surtr.Tests.Runtime.Classes
         [InlineData("Nhost:Type")]
         [InlineData("II")]
         [InlineData("AI ")]
+        [InlineData("G")]
+        [InlineData("H")]
+        [InlineData("Hx")]
         public void IsWellFormed_RejectsEachMalformedOrTrailingShape(string descriptor)
         {
             Assert.False(SurtrClassReference.IsWellFormed(descriptor));
@@ -357,6 +365,7 @@ namespace Surtr.Tests.Runtime.Classes
         [InlineData("E", "unknown")]
         [InlineData("V", "void")]
         [InlineData("G0", "T0")]
+        [InlineData("H0", "T0")]
         [InlineData("?I", "int?")]
         public void ToDisplayString_OfAPrimitive(string descriptor, string expected)
         {
@@ -457,6 +466,117 @@ namespace Surtr.Tests.Runtime.Classes
             Assert.False(left.IsValid);
             Assert.False(right.IsValid);
             Assert.NotEqual(left, right);
+        }
+
+        #endregion
+
+        #region Method generic parameters (H<n>)
+        // docs/Runtime-Model.md §3.1: a signature mentions a method's own type parameter through
+        // H<n>, distinct from the declaring type's G<n> so the two can never be confused.
+
+        [Fact]
+        public void MethodGenericParameter_WritesTheIndexAndRoundsTrip()
+        {
+            var parameter = SurtrClassReference.MethodGenericParameter(2);
+
+            Assert.Equal("H2", parameter.Descriptor);
+            Assert.Equal(SurtrValueTypeCode.Erased, parameter.TypeCode);
+            Assert.True(SurtrClassReference.IsWellFormed(parameter.Descriptor));
+        }
+
+        [Theory]
+        [InlineData("H0", 0)]
+        [InlineData("H1", 1)]
+        [InlineData("H9", 9)]
+        public void TryGetMethodGenericParameterIndex_ReadsSingleDigitIndices(string descriptor, int expected)
+        {
+            Assert.True(SurtrClassReference.FromDescriptor(descriptor).TryGetMethodGenericParameterIndex(out int index));
+            Assert.Equal(expected, index);
+        }
+
+        [Theory]
+        [InlineData("G0")]
+        [InlineData("I")]
+        [InlineData("E")]
+        [InlineData("H")]
+        [InlineData("Hx")]
+        [InlineData("AH0")]
+        public void TryGetMethodGenericParameterIndex_FailsOnAnythingElse(string descriptor)
+        {
+            Assert.False(SurtrClassReference.FromDescriptor(descriptor).TryGetMethodGenericParameterIndex(out int index));
+            Assert.Equal(-1, index);
+        }
+
+        [Fact]
+        public void GenericParameterAndMethodGenericParameter_AreDistinctDescriptors()
+        {
+            var typeParameter = SurtrClassReference.GenericParameter(0);
+            var methodParameter = SurtrClassReference.MethodGenericParameter(0);
+
+            Assert.NotEqual(typeParameter, methodParameter);
+            Assert.True(typeParameter.TryGetGenericParameterIndex(out int _));
+            Assert.False(methodParameter.TryGetGenericParameterIndex(out int _));
+        }
+
+        [Fact]
+        public void Erase_MethodParameter_BecomesTheSameErasedDescriptorAsATypes()
+        {
+            // H0 erases to E exactly as G0 does - a signature key or a slot layout sees the same
+            // thing either way, which is the whole point of the two being distinct forms of one
+            // idea (docs/Compiler-Plan.md §8).
+            Assert.Equal(
+                SurtrClassReference.Erase(SurtrClassReference.MethodGenericParameter(0)),
+                SurtrClassReference.Erase(SurtrClassReference.GenericParameter(0)));
+            Assert.Equal("E", SurtrClassReference.Erase(SurtrClassReference.MethodGenericParameter(0)).Descriptor);
+        }
+
+        [Theory]
+        [InlineData("H0", "E")]
+        [InlineData("AH0", "AE")]
+        [InlineData("DIS", "DIS")]
+        [InlineData("L(H0)V", "L(E)V")]
+        [InlineData("T(IG0H0)", "T(IEE)")]
+        [InlineData("Ogame:Box`1;H0", "Ogame:Box`1;E")]
+        [InlineData("Nhost:Foo;G0H0", "Nhost:Foo;EE")]
+        public void Erase_RewritesEveryParameterInTheDescriptorButNeverInsideAFullName(string descriptor, string expected)
+        {
+            Assert.Equal(expected, SurtrClassReference.Erase(SurtrClassReference.FromDescriptor(descriptor)).Descriptor);
+        }
+
+        [Fact]
+        public void Erase_LeavesAFullNameThatMerelyContainsHUntouched()
+        {
+            // "H0" as a type name inside a full name is not a parameter mention - the eraser
+            // skips the full name of O/N descriptors whole, exactly as it does for G.
+            Assert.Equal(
+                "Ogame:H0;",
+                SurtrClassReference.Erase(SurtrClassReference.FromDescriptor("Ogame:H0;")).Descriptor);
+        }
+
+        [Fact]
+        public void ToDisplayString_OfAMethodParameter_ReadsLikeAnyTypeParameter()
+        {
+            Assert.Equal("T0", SurtrClassReference.MethodGenericParameter(0).ToDisplayString());
+        }
+
+        [Theory]
+        [InlineData("G0", true)]
+        [InlineData("H2", true)]
+        [InlineData("AG0", true)]
+        [InlineData("L(H0)V", true)]
+        [InlineData("Obox:Box`1;G0", true)]
+        [InlineData("Obox:Box`1;H0", true)]
+        [InlineData("Obox:Pair`2;IObox:Box`1;G0", true)]
+        [InlineData("I", false)]
+        [InlineData("S", false)]
+        [InlineData("AI", false)]
+        [InlineData("DIS", false)]
+        [InlineData("Obox:Box`1;I", false)]
+        [InlineData("Obox:Box`1;S", false)]
+        [InlineData("Ogame:H0;", false)]
+        public void ContainsOpenParameter_DetectsAParameterMentionAnywhereButAFullName(string descriptor, bool expected)
+        {
+            Assert.Equal(expected, SurtrClassReference.FromDescriptor(descriptor).ContainsOpenParameter());
         }
 
         #endregion

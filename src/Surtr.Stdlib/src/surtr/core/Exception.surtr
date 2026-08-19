@@ -1,4 +1,9 @@
-public class NoSupportedException : Exception
+public class NotSupportedException : Exception
+{
+    public constructor(message: string) : super(message) {}
+}
+
+public class InvalidOperationException : Exception
 {
     public constructor(message: string) : super(message) {}
 }

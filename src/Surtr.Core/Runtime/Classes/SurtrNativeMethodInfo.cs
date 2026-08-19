@@ -63,8 +63,12 @@ namespace Surtr.Runtime.Classes
             SurtrTypeHandle? declaringType,
             SurtrNativeEntryPoint entryPoint,
             bool isSealed = false,
-            string? linkName = null)
-            : base(name, SurtrMethodImplKind.Native, dispatch, role, isOverride, returnType, parameters, isStatic, visibility, declaringType, isSealed)
+            string? linkName = null,
+            string[]? genericParameters = null,
+            string[][]? genericConstraints = null,
+            bool isExtension = false,
+            bool isBridge = false)
+            : base(name, SurtrMethodImplKind.Native, dispatch, role, isOverride, returnType, parameters, isStatic, visibility, declaringType, isSealed, genericParameters, genericConstraints, isExtension, isBridge)
         {
             if (!entryPoint.IsValid)
                 throw new ArgumentException($"Native method '{name}' was given a null entry point.", nameof(entryPoint));
@@ -95,8 +99,12 @@ namespace Surtr.Runtime.Classes
             SurtrVisibility visibility,
             SurtrTypeHandle? declaringType,
             string linkName,
-            bool isSealed = false)
-            : base(name, SurtrMethodImplKind.Native, dispatch, role, isOverride, returnType, parameters, isStatic, visibility, declaringType, isSealed)
+            bool isSealed = false,
+            string[]? genericParameters = null,
+            string[][]? genericConstraints = null,
+            bool isExtension = false,
+            bool isBridge = false)
+            : base(name, SurtrMethodImplKind.Native, dispatch, role, isOverride, returnType, parameters, isStatic, visibility, declaringType, isSealed, genericParameters, genericConstraints, isExtension, isBridge)
         {
             if (string.IsNullOrEmpty(linkName))
                 throw new ArgumentException($"Native method '{name}' has no entry point, so it needs a link name to be bound by.", nameof(linkName));

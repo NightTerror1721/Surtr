@@ -205,14 +205,18 @@ namespace Surtr.Bytecode.Emit
             string name,
             SurtrClassReference returnType,
             SurtrParameterInfo[]? parameters = null,
-            SurtrVisibility visibility = SurtrVisibility.Public)
+            SurtrVisibility visibility = SurtrVisibility.Public,
+            string[]? genericParameters = null,
+            string[][]? genericConstraints = null)
         {
             var method = new SurtrAbstractMethodInfo(
                 name,
                 _module.TypeHandle(returnType),
                 parameters ?? Array.Empty<SurtrParameterInfo>(),
                 visibility,
-                _selfHandle);
+                _selfHandle,
+                genericParameters,
+                genericConstraints);
 
             _class.AddMethod(method);
             return method;
@@ -265,13 +269,16 @@ namespace Surtr.Bytecode.Emit
             SurtrMethodDispatch dispatch = SurtrMethodDispatch.Direct,
             bool isOverride = false,
             SurtrVisibility visibility = SurtrVisibility.Public,
-            bool isSealed = false)
+            bool isSealed = false,
+            string[]? genericParameters = null,
+            string[][]? genericConstraints = null)
         {
             var method = new SurtrNativeMethodInfo(
                 name, dispatch, SurtrMethodRole.Normal, isOverride,
                 _module.TypeHandle(returnType),
                 parameters ?? Array.Empty<SurtrParameterInfo>(),
-                isStatic, visibility, _selfHandle, linkName, isSealed);
+                isStatic, visibility, _selfHandle, linkName, isSealed,
+                genericParameters, genericConstraints);
 
             _class.AddMethod(method);
             return method;

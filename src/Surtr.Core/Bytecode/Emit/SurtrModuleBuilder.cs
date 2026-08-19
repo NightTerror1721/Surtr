@@ -447,13 +447,15 @@ namespace Surtr.Bytecode.Emit
             SurtrNativeEntryPoint entryPoint,
             SurtrParameterInfo[]? parameters = null,
             SurtrVisibility visibility = SurtrVisibility.Public,
-            string? linkName = null)
+            string? linkName = null,
+            bool isExtension = false)
         {
             var method = new SurtrNativeMethodInfo(
                 name, SurtrMethodDispatch.Direct, SurtrMethodRole.Normal, false,
                 TypeHandle(returnType),
                 parameters ?? Array.Empty<SurtrParameterInfo>(),
-                true, visibility, null, entryPoint, false, linkName);
+                true, visibility, null, entryPoint, false, linkName,
+                isExtension: isExtension);
 
             _module.AddMethod(method);
             Method(method);
@@ -475,13 +477,19 @@ namespace Surtr.Bytecode.Emit
             SurtrClassReference returnType,
             string linkName,
             SurtrParameterInfo[]? parameters = null,
-            SurtrVisibility visibility = SurtrVisibility.Public)
+            SurtrVisibility visibility = SurtrVisibility.Public,
+            string[]? genericParameters = null,
+            string[][]? genericConstraints = null,
+            bool isExtension = false)
         {
             var method = new SurtrNativeMethodInfo(
                 name, SurtrMethodDispatch.Direct, SurtrMethodRole.Normal, false,
                 TypeHandle(returnType),
                 parameters ?? Array.Empty<SurtrParameterInfo>(),
-                true, visibility, null, linkName);
+                true, visibility, null, linkName,
+                genericParameters: genericParameters,
+                genericConstraints: genericConstraints,
+                isExtension: isExtension);
 
             _module.AddMethod(method);
             Method(method);

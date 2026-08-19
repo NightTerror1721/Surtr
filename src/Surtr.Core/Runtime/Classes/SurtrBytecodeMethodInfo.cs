@@ -36,8 +36,12 @@ namespace Surtr.Runtime.Classes
             int entryIndex,
             int localCount,
             int maxStackSize,
-            bool isSealed = false)
-            : base(name, SurtrMethodImplKind.Bytecode, dispatch, role, isOverride, returnType, parameters, isStatic, visibility, declaringType, isSealed)
+            bool isSealed = false,
+            string[]? genericParameters = null,
+            string[][]? genericConstraints = null,
+            bool isExtension = false,
+            bool isBridge = false)
+            : base(name, SurtrMethodImplKind.Bytecode, dispatch, role, isOverride, returnType, parameters, isStatic, visibility, declaringType, isSealed, genericParameters, genericConstraints, isExtension, isBridge)
         {
             _chunk = chunk;
             _entryIndex = entryIndex;

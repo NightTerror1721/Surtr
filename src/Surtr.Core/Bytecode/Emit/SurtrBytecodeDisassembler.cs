@@ -902,10 +902,12 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.FEQ:
                 case OpCode.REQ:
                 case OpCode.StrEQ:
+                case OpCode.DynEQ:
                 case OpCode.NE:
                 case OpCode.FNE:
                 case OpCode.RNE:
                 case OpCode.StrNE:
+                case OpCode.DynNE:
                 case OpCode.GT:
                 case OpCode.FGT:
                 case OpCode.GE:
@@ -938,6 +940,8 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.BoxBool:
                 case OpCode.BoxChar:
                 case OpCode.Unbox:
+                case OpCode.BoxDynamic:
+                case OpCode.UnboxDynamic:
                 case OpCode.GetTypeOfValue:
                 case OpCode.LoadCurrentModule:
                 case OpCode.StrLen:

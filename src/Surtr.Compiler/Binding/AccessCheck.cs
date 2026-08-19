@@ -69,6 +69,38 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
+        /// Whether an extension method (§15) nested inside a class is reachable from the given
+        /// context, using the same private/protected/internal rules a real member of that class
+        /// would — even though the method's own <see cref="Symbol.ContainingSymbol"/> is the
+        /// declaring module, not the class it was nested inside for visibility purposes only.
+        /// </summary>
+        /// <param name="accessibility">The method's own accessibility.</param>
+        /// <param name="declaringContainer">The class the <c>extension</c> block was nested inside.</param>
+        /// <param name="fromType">The type the use sits in, or <see langword="null"/> at module level.</param>
+        /// <param name="fromModule">The module the use sits in.</param>
+        internal static bool IsAccessibleWithin(
+            Accessibility accessibility,
+            NamedTypeSymbol declaringContainer,
+            NamedTypeSymbol? fromType,
+            ModuleSymbol? fromModule)
+        {
+            if (accessibility == Accessibility.Public)
+                return true;
+
+            switch (accessibility)
+            {
+                case Accessibility.Private:
+                    return SharesOutermostType(fromType, declaringContainer);
+
+                case Accessibility.Protected:
+                    return SharesOutermostType(fromType, declaringContainer) || Inherits(fromType, declaringContainer);
+
+                default:
+                    return SameModule(declaringContainer.ContainingModule, fromModule);
+            }
+        }
+
+        /// <summary>
         /// Whether two types are the same declaration, or nested inside one outermost declaration.
         /// </summary>
         /// <remarks>

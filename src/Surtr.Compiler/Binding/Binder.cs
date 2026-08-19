@@ -49,6 +49,15 @@ namespace Surtr.Compiler.Binding
         private readonly Dictionary<string, List<ModuleSymbol>> _importedModules =
             new Dictionary<string, List<ModuleSymbol>>(StringComparer.Ordinal);
 
+        // Accumulated across every `extension` block bound for a module — at module level and
+        // nested inside a class alike (§15) — then handed to `ModuleSymbol.ExtensionMethods` once,
+        // after both `BindMembers` and `BindModuleMembers` have run for every module.
+        private readonly Dictionary<string, List<MethodSymbol>> _extensionMethodsByModule =
+            new Dictionary<string, List<MethodSymbol>>(StringComparer.Ordinal);
+
+        private readonly Dictionary<string, List<PropertySymbol>> _extensionPropertiesByModule =
+            new Dictionary<string, List<PropertySymbol>>(StringComparer.Ordinal);
+
         private readonly List<BodyBinding> _bodies = new List<BodyBinding>();
         private readonly List<InitializerBinding> _initializers = new List<InitializerBinding>();
         private readonly List<DefaultBinding> _defaults = new List<DefaultBinding>();
@@ -432,8 +441,16 @@ namespace Surtr.Compiler.Binding
             scope.AddCandidate(syntax.Name, symbol);
             RecordAttributes(symbol, syntax.Attributes, scope, sourceName);
 
-            // A type's own parameters and its nested types are visible inside it and nowhere else.
-            var typeScope = scope.CreateChild();
+            // A type's own parameters and its nested types are visible inside it and nowhere else,
+            // but they cannot live in one scope: a nested type's declaration must not see its
+            // container's type parameters (§6, the static-nested rule), yet its body may still name
+            // its container's other nested types - a sibling. So the container gets two scopes:
+            // `nestedScope` holds its nested types' names, and `typeScope` (a child of it) holds its
+            // type parameters and is what its own members bind against. A nested type's declaration
+            // binds against `nestedScope`, which puts the sibling names on its chain and keeps the
+            // parameters off it.
+            var nestedScope = scope.CreateChild();
+            var typeScope = nestedScope.CreateChild();
             foreach (var parameter in symbol.TypeParameters)
                 typeScope.TryDeclare(parameter.Name, parameter);
 
@@ -456,12 +473,14 @@ namespace Surtr.Compiler.Binding
 
             foreach (var member in members)
             {
-                // §6: a nested type is declared against `scope`, not `typeScope` - the
-                // static-nested rule, not the inner-class one. `typeScope` already carries
-                // `symbol`'s own type parameters (just above), and a nested type's declaration
-                // must not see them; only the members bound directly on `symbol` itself do.
+                // A nested type's name is a member of its container (§2.6), so it is declared
+                // against `nestedScope` rather than `scope` - it must not be visible at the
+                // container's outside, or two containers' same-named nested types collide there.
+                // The static-nested rule is why it is not `typeScope` either: `typeScope` carries
+                // `symbol`'s own type parameters, and a nested type's declaration must not see
+                // them; only the members bound directly on `symbol` itself do.
                 if (member is TypeDeclarationSyntax or AliasDeclarationSyntax)
-                    DeclareMember(member, module, symbol, scope, nested, nestedNames, sourceName);
+                    DeclareMember(member, module, symbol, nestedScope, nested, nestedNames, sourceName);
             }
 
             symbol.NestedTypes = nested;
@@ -698,6 +717,20 @@ namespace Surtr.Compiler.Binding
                 BindModuleMembers(module);
             }
 
+            // Every `extension` block for a module is bound by now, whether written at module level
+            // (BindModuleMembers, just above) or nested inside one of its classes (BindMembers, just
+            // above that) — this is the one place both contributions are combined.
+            foreach (var module in _modules.Values)
+            {
+                module.ExtensionMethods = _extensionMethodsByModule.TryGetValue(module.Path, out var extensions)
+                    ? extensions
+                    : Array.Empty<MethodSymbol>();
+
+                module.ExtensionProperties = _extensionPropertiesByModule.TryGetValue(module.Path, out var extensionProperties)
+                    ? extensionProperties
+                    : Array.Empty<PropertySymbol>();
+            }
+
             // Again, for the type parameters a method's own signature declared: those did not exist
             // when the first run went through, and a bound nobody resolved is a bound a body cannot
             // call anything through.
@@ -858,11 +891,13 @@ namespace Surtr.Compiler.Binding
         /// </summary>
         /// <remarks>
         /// <para>
-        /// <c>BuildInterfaceDispatch</c> needs a vtable slot to exist for it at all — which only a
-        /// <c>virtual</c>/<c>override</c> or another <c>abstract</c> declaration creates, since a
-        /// plain, non-overriding method never enters the vtable and so can never satisfy one, even
-        /// where its name and parameters happen to match. <c>VerifyConcrete</c> then refuses to let
-        /// a concrete class leave the slot it found still abstract.
+        /// <c>BuildInterfaceDispatch</c> needs a vtable slot to exist for it at all. A
+        /// <c>virtual</c>/<c>override</c> or another <c>abstract</c> declaration occupies one
+        /// directly; a plain <c>Direct</c> member never enters the vtable itself, but
+        /// <see cref="CodeGen.ModuleEmitter.EmitBridges"/> gives it a synthetic forwarding bridge in
+        /// the slot instead, so it satisfies the obligation without giving up <c>Direct</c> dispatch
+        /// anywhere else it's called. <c>VerifyConcrete</c> then refuses to let a concrete class
+        /// leave the slot it found still abstract.
         /// </para>
         /// <para>
         /// The signature check is the half the runtime cannot see. <c>SurtrTypeLinker</c> matches by
@@ -883,8 +918,8 @@ namespace Surtr.Compiler.Binding
                     SurtrDiagnosticCode.MissingImplementation,
                     binding,
                     binding.Syntax.Span,
-                    $"'{symbol.Name}' does not implement '{contract.Name}.{required.Name}'; implement it with 'override', "
-                        + $"or declare it 'abstract' on '{symbol.Name}' to leave it for a subclass.");
+                    $"'{symbol.Name}' does not implement '{contract.Name}.{required.Name}'; declare a matching member, "
+                        + $"or mark it 'abstract' on '{symbol.Name}' to leave it for a subclass.");
                 return;
             }
 
@@ -908,6 +943,70 @@ namespace Surtr.Compiler.Binding
                     $"'{symbol.Name}.{found.ToDisplayString()}' does not implement "
                         + $"'{contract.Name}.{substituted.ToDisplayString()}' as '{contract.ToDisplayString()}' declares it.");
             }
+        }
+
+        /// <summary>
+        /// Every abstract obligation <paramref name="type"/> does not yet answer — an interface
+        /// member (its own, inherited, or reached through an interface-to-interface extension) or an
+        /// inherited <c>abstract</c> class member with no matching member anywhere in its own
+        /// hierarchy. Read-only, and exposed for tooling: the language server's "implement missing
+        /// members" code action needs exactly this answer, and re-deriving the substitution-aware
+        /// interface walk itself in <c>Surtr.LanguageServer</c> would risk repeating the two real
+        /// bugs <c>5cca11a</c>/<c>0bef8a2</c> already found and fixed here — a member reached through
+        /// a constructed built-in interface reading its own unsubstituted type parameter instead of
+        /// the receiver's. This method answers by calling the exact same private helpers
+        /// <see cref="CheckMembersImplemented"/> does (<see cref="CollectInterfaces"/>,
+        /// <see cref="FindMember"/>, <see cref="SubstitutedBase"/>), so the two can never drift apart
+        /// on what counts as "missing".
+        /// </summary>
+        /// <remarks>
+        /// Deliberately narrower than every failure <see cref="CheckObligation"/> reports: a member
+        /// that exists but has the wrong signature (<see cref="SurtrDiagnosticCode.OverrideSignatureMismatch"/>)
+        /// is a correction, not something a stub can fill in, so it is left out here on purpose.
+        /// </remarks>
+        public IReadOnlyList<MissingMember> MissingAbstractMembers(NamedTypeSymbol type)
+        {
+            var result = new List<MissingMember>();
+
+            // Same exemption CheckMembersImplemented uses: an interface owes nothing to itself, and
+            // a construction reports through its own declaration instead.
+            if (type.TypeKind == TypeSymbolKind.Interface || !type.IsDefinition)
+                return result;
+
+            void Consider(NamedTypeSymbol contract, MethodSymbol required, bool fromInterface)
+            {
+                var found = FindMember(type, required.Name, required.Parameters.Count);
+                bool missing = found is null || (!type.IsAbstract && found.Dispatch == MethodDispatch.Abstract);
+                if (!missing)
+                    return;
+
+                var substituted = MemberLookup.SubstituteMethod(required, contract.SubstitutionFromArguments(_factory));
+                result.Add(new MissingMember(contract, substituted, fromInterface));
+            }
+
+            var visited = new HashSet<NamedTypeSymbol>();
+            var contracts = new List<NamedTypeSymbol>();
+            CollectInterfaces(type, visited, contracts);
+
+            foreach (var contract in contracts)
+            {
+                foreach (var member in contract.Members)
+                {
+                    if (member is MethodSymbol { Dispatch: MethodDispatch.Abstract } required)
+                        Consider(contract, required, fromInterface: true);
+                }
+            }
+
+            for (var ancestor = type.BaseType; ancestor is not null; ancestor = SubstitutedBase(ancestor))
+            {
+                foreach (var member in ancestor.Members)
+                {
+                    if (member is MethodSymbol { Dispatch: MethodDispatch.Abstract } required)
+                        Consider(ancestor, required, fromInterface: false);
+                }
+            }
+
+            return result;
         }
 
         /// <summary>
@@ -962,19 +1061,26 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
-        /// The nearest member of <paramref name="type"/> or of a class it extends occupying a
-        /// vtable slot (<c>Virtual</c> or <c>Abstract</c> dispatch — never <c>Direct</c>, which never
-        /// enters the vtable and so cannot answer for one) matching by name and parameter count.
-        /// Closest to <paramref name="type"/> wins, the same as the runtime's own vtable: an override
-        /// replaces the slot in place, so a derived class's answer is this walk's first match.
+        /// The nearest member of <paramref name="type"/> or of a class it extends that can answer
+        /// for an interface obligation, matching by name and parameter count. Closest to
+        /// <paramref name="type"/> wins, the same as the runtime's own vtable: an override replaces
+        /// the slot in place, so a derived class's answer is this walk's first match.
         /// </summary>
+        /// <remarks>
+        /// <c>Virtual</c>/<c>Abstract</c> candidates occupy a real vtable slot and answer directly.
+        /// A <c>Direct</c> candidate answers too — <see cref="CodeGen.ModuleEmitter.EmitBridges"/>
+        /// gives it a synthetic forwarding bridge in the contract's slot instead, the same mechanism
+        /// already used for a generic contract's erased slot (§8), so the member itself keeps
+        /// <c>Direct</c> dispatch (and every optimisation that comes with it) everywhere but through
+        /// the interface.
+        /// </remarks>
         private static MethodSymbol? FindMember(NamedTypeSymbol type, string name, int arity)
         {
             for (var walk = type; walk is not null; walk = walk.BaseType)
             {
                 foreach (var member in walk.Members)
                 {
-                    if (member is MethodSymbol { Dispatch: not MethodDispatch.Direct } candidate
+                    if (member is MethodSymbol candidate
                         && string.Equals(candidate.Name, name, StringComparison.Ordinal)
                         && candidate.Parameters.Count == arity)
                     {
@@ -1392,6 +1498,14 @@ namespace Surtr.Compiler.Binding
                         members.Add(bound);
                         continue;
                     }
+
+                    case ExtensionDeclarationSyntax extension:
+                    {
+                        // Nesting inside a class only narrows visibility (§15.2) - the block's
+                        // methods still belong to the declaring module, never to `symbol`.
+                        BindExtension(extension, binding.Module, symbol, binding.Scope, binding.SourceName);
+                        continue;
+                    }
                 }
             }
 
@@ -1567,6 +1681,10 @@ namespace Surtr.Compiler.Binding
                                 block, scope, module, null, unit.File.Path, _nextInitializerOrder++));
 
                             continue;
+
+                        case ExtensionDeclarationSyntax extension:
+                            BindExtension(extension, module, containingType: null, scope, unit.File.Path);
+                            continue;
                     }
                 }
             }
@@ -1574,6 +1692,400 @@ namespace Surtr.Compiler.Binding
             module.Fields = fields;
             module.Properties = properties;
             module.Methods = methods;
+        }
+
+        /// <summary>
+        /// Binds one <c>extension &lt;Type&gt; { ... }</c> block (§15) — at module level
+        /// (<paramref name="containingType"/> <see langword="null"/>) or nested inside a class.
+        /// Every method it declares is appended to <see cref="_extensionMethodsByModule"/>, keyed by
+        /// <paramref name="module"/>'s path; <see cref="MemberPhase"/> hands the accumulated list to
+        /// <c>ModuleSymbol.ExtensionMethods</c> once, after every block for every module has run.
+        /// </summary>
+        private void BindExtension(
+            ExtensionDeclarationSyntax syntax,
+            ModuleSymbol module,
+            NamedTypeSymbol? containingType,
+            Scope scope,
+            string sourceName)
+        {
+            // §3.1's two defaults, the same rule DeclareType applies to a type: a block written
+            // directly in a module is internal to it, and one nested inside a class is private to
+            // that class like any other member — except inside an interface, where §2.3 makes every
+            // member public.
+            Accessibility blockAccessibility = Translate(
+                syntax.Visibility,
+                containingType is null
+                    ? Accessibility.Internal
+                    : containingType.TypeKind == TypeSymbolKind.Interface
+                        ? Accessibility.Public
+                        : Accessibility.Private);
+
+            if (!_extensionMethodsByModule.TryGetValue(module.Path, out var extensions))
+            {
+                extensions = new List<MethodSymbol>();
+                _extensionMethodsByModule.Add(module.Path, extensions);
+            }
+
+            if (!_extensionPropertiesByModule.TryGetValue(module.Path, out var extensionProperties))
+            {
+                extensionProperties = new List<PropertySymbol>();
+                _extensionPropertiesByModule.Add(module.Path, extensionProperties);
+            }
+
+            var signatures = new SignatureSet(_factory, _diagnostics);
+
+            foreach (var member in syntax.Members)
+            {
+                if (member is PropertyDeclarationSyntax property)
+                {
+                    // Fase 6 (§15.4) does not extend to properties: a property has no argument list
+                    // for overload resolution to infer a type parameter from the way a call's
+                    // arguments do (`SubstituteGenericCandidates`), and a read (`obj.prop`) has no
+                    // machinery at all to run that inference against — so a generic block's `T`
+                    // never reaches one. Rejected here rather than silently resolved against an
+                    // unfilled `T`, which would misreport as an ordinary unresolved-name error far
+                    // from its actual cause.
+                    if (syntax.TypeParameters.Count > 0)
+                    {
+                        ReportAt(sourceName, property.Span, SurtrDiagnosticCode.InvalidExtensionMember,
+                            $"'{property.Name}' cannot be declared inside a generic extension block (§15.4) — only methods can take the block's type parameters yet.");
+                        continue;
+                    }
+
+                    var propertyTarget = _resolver.Resolve(syntax.TargetType, scope, sourceName);
+                    if (propertyTarget.IsError)
+                        continue;
+
+                    if (!IsValidExtensionTarget(propertyTarget))
+                    {
+                        ReportAt(sourceName, syntax.TargetType.Span, SurtrDiagnosticCode.InvalidExtensionTarget,
+                            $"'{propertyTarget.ToDisplayString()}' cannot be extended (§15) — a type parameter and 'void' name no concrete receiver.");
+                        continue;
+                    }
+
+                    if (BindExtensionProperty(property, module, propertyTarget, containingType, blockAccessibility, scope, sourceName) is PropertySymbol bound)
+                        extensionProperties.Add(bound);
+
+                    continue;
+                }
+
+                if (member is not MethodDeclarationSyntax method)
+                {
+                    ReportAt(sourceName, member.Span, SurtrDiagnosticCode.InvalidExtensionMember,
+                        "An extension block may only declare methods and computed properties (§15) — fields, constructors and static blocks are not supported.");
+                    continue;
+                }
+
+                if (method.TypeParameters.Count > 0 || method.IsNative || method.IsConst
+                    || method.Dispatch != DispatchModifier.None || method.IsSealed || method.Body is null)
+                {
+                    ReportAt(sourceName, method.Span, SurtrDiagnosticCode.InvalidExtensionMember,
+                        $"'{method.Name}' cannot declare its own type parameters (write them on the 'extension' block itself, §15.4), or be native, const, abstract/virtual/override, sealed, or bodyless — an extension block does not support that yet (§15).");
+                    continue;
+                }
+
+                var methodScope = scope.CreateChild();
+                var extMethod = new MethodSymbol(method.Name, module, _factory.ErrorType)
+                {
+                    IsStatic = true,
+                    Accessibility = ResolveExtensionMemberAccessibility(method.Visibility, blockAccessibility, sourceName, method.Span),
+                    IsInline = method.Inline == InlineModifier.Inline,
+                    IsForceInline = method.Inline == InlineModifier.ForceInline,
+                    ExtensionDeclaringContainer = containingType,
+                    ExtensionIsStatic = method.IsStatic,
+                };
+
+                // The block's own type parameters (§15.4), written explicitly only when a bound is
+                // needed — the same per-method declaration and constraint-binding an ordinary
+                // generic method's own `<T>` already gets, since an extension method is exactly that:
+                // a module-level function, generic over parameters nobody but itself owns. Reused
+                // rather than re-implemented, and deliberately a *fresh* symbol set per member (not
+                // one shared across the block) so two members are never accidentally unified against
+                // each other through a name they only look like they share.
+                if (syntax.TypeParameters.Count > 0)
+                    BindTypeParameters(extMethod, syntax.TypeParameters, methodScope, sourceName);
+
+                var implicitParameters = new List<TypeParameterSymbol>();
+                var target = BindExtensionTargetType(syntax.TargetType, extMethod, methodScope, sourceName, implicitParameters);
+
+                // `null` only comes back once `TypeResolver` itself already reported why (a wrong
+                // type argument count, a genuinely undeclared qualified name) — reporting a second,
+                // vaguer diagnostic on top would turn one mistake into two.
+                if (target is null)
+                    continue;
+
+                if (!IsValidExtensionTarget(target))
+                {
+                    ReportAt(sourceName, syntax.TargetType.Span, SurtrDiagnosticCode.InvalidExtensionTarget,
+                        $"'{target.ToDisplayString()}' cannot be extended (§15) — a bare type parameter and 'void' name no concrete receiver.");
+                    continue;
+                }
+
+                if (syntax.TypeParameters.Count == 0 && implicitParameters.Count > 0)
+                    extMethod.TypeParameters = implicitParameters;
+
+                extMethod.ExtensionTargetType = target;
+
+                extMethod.ReturnType = _resolver.Resolve(method.ReturnType, methodScope, sourceName);
+                extMethod.Parameters = BindParameters(method.Parameters, extMethod, methodScope, sourceName);
+
+                // An instance extension's receiver — `obj.method()` is bound against it — is an
+                // ordinary, explicitly-named first parameter, not the implicit `this` a real instance
+                // method reads off slot zero (BodyBinder.BindThis): extension methods are
+                // module-level functions (`ContainingSymbol` is `module`, not `target`), with no
+                // implicit receiver slot to give it. `this` still works inside the body — it resolves
+                // to this same parameter (`BodyBinder.ExtensionReceiver`) rather than through
+                // `_containingType` — but the parameter itself has to be written out, since there is
+                // nothing else here to bind `this` to. A `static fun` (§15.3) takes no receiver at
+                // all — it is reached as `Type.method()`, resolved by matching the type named at the
+                // call site, never an argument.
+                if (!method.IsStatic
+                    && (extMethod.Parameters.Count == 0 || !ReferenceEquals(extMethod.Parameters[0].Type, target)))
+                {
+                    ReportAt(sourceName, method.Span, SurtrDiagnosticCode.InvalidExtensionReceiver,
+                        $"'{method.Name}' must take '{target.ToDisplayString()}' as its first parameter — the receiver 'obj.{method.Name}(...)' is bound against.");
+                }
+
+                RecordBody(extMethod, method.Body, methodScope, module, containingType: null, sourceName);
+                RecordAttributes(extMethod, method.Attributes, methodScope, sourceName);
+
+                signatures.Add(extMethod, sourceName, method.Span);
+                extensions.Add(extMethod);
+            }
+        }
+
+        /// <summary>
+        /// Whether a resolved type is one <c>extension</c> may target (§15): anything concrete. A
+        /// bare type parameter and <c>void</c> are the two things a receiver can never actually be.
+        /// </summary>
+        private static bool IsValidExtensionTarget(TypeSymbol type)
+            => type is not TypeParameterSymbol && !type.IsVoid;
+
+        /// <summary>
+        /// Resolves an <c>extension</c> block's target type (§15.4), declaring a fresh type
+        /// parameter — owned by <paramref name="owner"/> — for any bare name mentioned inside it that
+        /// does not already resolve to something, Kotlin/Swift-style: <c>extension T[] { }</c> and
+        /// <c>extension Box&lt;T&gt; { }</c> need no separate <c>&lt;T&gt;</c> list at all, only a
+        /// bound does (§15.4's explicit <c>extension&lt;T : Bound&gt;</c> form, already declared into
+        /// <paramref name="scope"/> by the time this runs — which is exactly why a name already found
+        /// there is read, never redeclared).
+        /// </summary>
+        /// <remarks>
+        /// Declaration and resolution are interleaved on purpose, not run as two passes: a later
+        /// argument (<c>{T: T}</c>'s value position) has to see the same parameter a earlier one just
+        /// declared, and <c>Box&lt;T&gt;</c>'s <c>T</c> must <em>not</em> resolve against whatever
+        /// <c>Box</c>'s own declaration happens to have called its parameter — the static-nested rule
+        /// (§6) that is the entire reason this method exists instead of a plain
+        /// <see cref="TypeResolver.Resolve"/> call. <see cref="TypeResolver.TryResolveTypeName"/> is
+        /// what makes "does this already mean something" answerable without reporting a diagnostic
+        /// for the common case where it does not — a parameter's whole point.
+        /// </remarks>
+        private TypeSymbol? BindExtensionTargetType(
+            TypeSyntax syntax,
+            MethodSymbol owner,
+            Scope scope,
+            string sourceName,
+            List<TypeParameterSymbol> declared)
+        {
+            switch (syntax)
+            {
+                case NamedTypeSyntax { Path.Count: 1, TypeArguments.Count: 0 } named:
+                {
+                    if (_resolver.TryResolveTypeName(named.Path, scope, named.Span, out var existing))
+                        return existing;
+
+                    if (scope.Lookup(named.Path[0]) is { IsFound: true, Symbol: TypeParameterSymbol already })
+                        return already;
+
+                    var parameter = _factory.DeclareTypeParameter(named.Path[0], owner, declared.Count);
+                    declared.Add(parameter);
+                    scope.TryDeclare(named.Path[0], parameter);
+                    return parameter;
+                }
+
+                case NamedTypeSyntax named:
+                {
+                    // The arguments are declared/resolved first so a name in one of them (`T` in
+                    // `Box<T>`) is already in `scope` by the time the whole reference resolves — the
+                    // ordinary resolver then finds it exactly like any other type in scope, so there
+                    // is no need to hand-build the construction here too.
+                    foreach (var argument in named.TypeArguments)
+                    {
+                        if (BindExtensionTargetType(argument, owner, scope, sourceName, declared) is null)
+                            return null;
+                    }
+
+                    var resolved = _resolver.Resolve(syntax, scope, sourceName);
+                    return resolved.IsError ? null : resolved;
+                }
+
+                case ArrayTypeSyntax array:
+                {
+                    var element = BindExtensionTargetType(array.ElementType, owner, scope, sourceName, declared);
+                    return element is null ? null : _factory.Array(element);
+                }
+
+                case DictTypeSyntax dictionary:
+                {
+                    var key = BindExtensionTargetType(dictionary.KeyType, owner, scope, sourceName, declared);
+                    var value = BindExtensionTargetType(dictionary.ValueType, owner, scope, sourceName, declared);
+                    return key is null || value is null ? null : _factory.Dictionary(key, value);
+                }
+
+                default:
+                {
+                    // A tuple, closure or nullable target — no case in §15.4's examples needs an
+                    // implicitly-declared parameter this deep, so a bare name here resolves as an
+                    // ordinary (and, for one not already in scope, unresolved) type reference.
+                    var resolved = _resolver.Resolve(syntax, scope, sourceName);
+                    return resolved.IsError ? null : resolved;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Binds one property inside an <c>extension</c> block (§15.1) — always computed, since
+        /// there is no backing field an already-built type could offer it. The receiver an instance
+        /// accessor's body reaches through <c>this</c> (<c>BodyBinder.ExtensionReceiver</c>) is a
+        /// synthesized first parameter, exactly like an extension method's except the user never
+        /// writes it out — there is nowhere in a property's own declaration to name it.
+        /// </summary>
+        private PropertySymbol? BindExtensionProperty(
+            PropertyDeclarationSyntax syntax,
+            ModuleSymbol module,
+            TypeSymbol target,
+            NamedTypeSymbol? containingType,
+            Accessibility blockAccessibility,
+            Scope scope,
+            string sourceName)
+        {
+            if (syntax.IsNative)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidExtensionMember,
+                    $"'{syntax.Name}' cannot be native — an extension block does not support that (§15).");
+                return null;
+            }
+
+            var propertyScope = scope.CreateChild();
+            var type = _resolver.Resolve(syntax.Type, propertyScope, sourceName);
+            var accessibility = ResolveExtensionMemberAccessibility(syntax.Visibility, blockAccessibility, sourceName, syntax.Span);
+
+            var property = new PropertySymbol(syntax.Name, module, type)
+            {
+                // Unlike every extension method's `MethodSymbol.IsStatic` (always true, §15's whole
+                // module-level-function trick), this one stays the source truth: `ResolveProperty`/
+                // `EmitPropertyRead`/`Store` read `PropertySymbol.IsStatic` alone to decide whether to
+                // push a receiver before the accessor call, and an instance extension property needs
+                // exactly that push — its accessors take the receiver as an ordinary parameter, which
+                // is what ends up filled from it.
+                IsStatic = syntax.IsStatic,
+                Accessibility = accessibility,
+                ExtensionTargetType = target,
+                ExtensionDeclaringContainer = containingType,
+            };
+
+            AccessorSyntax? getter = null;
+            AccessorSyntax? setter = null;
+            foreach (var accessor in syntax.Accessors)
+            {
+                if (accessor.IsGetter)
+                    getter = accessor;
+                else
+                    setter = accessor;
+            }
+
+            if (getter is null && setter is null)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidExtensionMember,
+                    $"'{syntax.Name}' must declare at least one accessor with a body — an extension property is always computed (§15.1).");
+                return null;
+            }
+
+            if (getter is AccessorSyntax boundGetter)
+                property.Getter = BindExtensionAccessor(boundGetter, MemberNames.Getter(syntax.Name), module, target, containingType, syntax.IsStatic, type, accessibility, propertyScope, sourceName);
+
+            if (setter is AccessorSyntax boundSetter)
+                property.Setter = BindExtensionAccessor(boundSetter, MemberNames.Setter(syntax.Name), module, target, containingType, syntax.IsStatic, _factory.Void, accessibility, propertyScope, sourceName, valueParameterType: type);
+
+            RecordAttributes(property, syntax.Attributes, propertyScope, sourceName);
+            return property;
+        }
+
+        /// <summary>
+        /// Binds one accessor of an extension property — the shared shape between <c>get</c> and
+        /// <c>set</c>, which differ only in their return type and whether a trailing <c>value</c>
+        /// parameter follows the receiver.
+        /// </summary>
+        private MethodSymbol BindExtensionAccessor(
+            AccessorSyntax syntax,
+            string name,
+            ModuleSymbol module,
+            TypeSymbol target,
+            NamedTypeSymbol? containingType,
+            bool isStatic,
+            TypeSymbol returnType,
+            Accessibility propertyAccessibility,
+            Scope scope,
+            string sourceName,
+            TypeSymbol? valueParameterType = null)
+        {
+            var accessorScope = scope.CreateChild();
+            var accessor = new MethodSymbol(name, module, returnType)
+            {
+                IsStatic = true,
+                Accessibility = ResolveAccessorAccessibility(syntax, propertyAccessibility, sourceName),
+                Role = valueParameterType is null ? MethodRole.PropertyGetter : MethodRole.PropertySetter,
+                ExtensionTargetType = target,
+                ExtensionDeclaringContainer = containingType,
+                ExtensionIsStatic = isStatic,
+            };
+
+            if (syntax.HasOwnDispatch || syntax.IsSealed)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidExtensionMember,
+                    $"'{name}' cannot be virtual/override/abstract or sealed — an extension block does not support that (§15).");
+            }
+
+            var parameters = new List<ParameterSymbol>();
+            if (!isStatic)
+                parameters.Add(new ParameterSymbol(SyntheticNames.ExtensionReceiver, target, parameters.Count, accessor));
+
+            if (valueParameterType is not null)
+                parameters.Add(new ParameterSymbol("value", valueParameterType, parameters.Count, accessor));
+
+            accessor.Parameters = parameters;
+
+            if (syntax.Body is null)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidExtensionMember,
+                    $"'{name}' must have a body — an extension property is always computed, never an auto-property (§15.1).");
+            }
+            else
+            {
+                RecordBody(accessor, syntax.Body, accessorScope, module, containingType: null, sourceName);
+            }
+
+            return accessor;
+        }
+
+        /// <summary>
+        /// A member's effective accessibility inside an <c>extension</c> block (§15.2): its own, when
+        /// written, narrowed to or left equal to the block's — never wider. Left unwritten, it
+        /// inherits the block's outright, the same default an ordinary member takes from its type.
+        /// </summary>
+        private Accessibility ResolveExtensionMemberAccessibility(Visibility written, Accessibility blockAccessibility, string sourceName, SourceSpan span)
+        {
+            if (written == Visibility.Default)
+                return blockAccessibility;
+
+            Accessibility resolved = Translate(written, blockAccessibility);
+            if (resolved > blockAccessibility)
+            {
+                ReportAt(sourceName, span, SurtrDiagnosticCode.ExtensionMemberVisibilityTooWide,
+                    $"A member's own visibility cannot be wider than its extension block's — '{Describe(resolved)}' is wider than '{Describe(blockAccessibility)}'.");
+            }
+
+            return resolved;
         }
 
         /// <summary>Records a <c>const</c>, both for folding and for the §7.1 check on its initializer.</summary>
@@ -3242,5 +3754,34 @@ namespace Surtr.Compiler.Binding
             public string SourceName { get; }
         }
         #endregion
+
+        /// <summary>One unmet abstract obligation, as <see cref="MissingAbstractMembers"/> reports it.</summary>
+        public sealed class MissingMember
+        {
+            /// <summary>Creates one unmet abstract obligation.</summary>
+            public MissingMember(NamedTypeSymbol contract, MethodSymbol required, bool fromInterface)
+            {
+                Contract = contract;
+                Required = required;
+                FromInterface = fromInterface;
+            }
+
+            /// <summary>The interface or abstract base class that declares the obligation.</summary>
+            public NamedTypeSymbol Contract { get; }
+
+            /// <summary>
+            /// The member to implement, already substituted through <see cref="Contract"/>'s
+            /// construction — a stub built from this reads the receiver's own type arguments, not
+            /// the open declaration's.
+            /// </summary>
+            public MethodSymbol Required { get; }
+
+            /// <summary>
+            /// Whether <see cref="Contract"/> is an interface — a stub for it never writes
+            /// <c>override</c> (§3.3: satisfying an interface never requires it) — or an abstract
+            /// base class, where <c>override</c> is mandatory.
+            /// </summary>
+            public bool FromInterface { get; }
+        }
     }
 }

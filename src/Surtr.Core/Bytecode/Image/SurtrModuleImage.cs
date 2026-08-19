@@ -91,8 +91,25 @@ namespace Surtr.Bytecode.Image
         /// this removal, but a version 3 reader would still misparse a version 4 image, so it is
         /// refused like every other older format.
         /// </para>
+        /// <para>
+        /// Version 5 adds a per-generic-parameter constraint list to the <c>Class</c> and
+        /// <c>Interface</c> sections, written right after each type's <c>genericParameters</c>.
+        /// Each constraint travels as the descriptor string it already is, so a bound naming the
+        /// type's own parameter (<c>G&lt;n&gt;</c>) means the same thing after the round trip.
+        /// Nothing on an execution path reads the new table - it exists for the compiler's
+        /// metadata importer, for tooling and for host interop - but a version 4 reader would
+        /// misparse the extra counts, so it is refused like every other older format.
+        /// </para>
+        /// <para>
+        /// Version 6 extends the same idea to methods: every <c>Method</c> entry now carries its
+        /// own generic parameter names and per-parameter constraint lists, and the method-level
+        /// parameter descriptor <c>H&lt;n&gt;</c> exists so a signature can say which parameter it
+        /// means without knowing the declaring method. Both stay off every execution path; a
+        /// version 5 reader would read the extra counts as the bytecode fields, so it is refused
+        /// like every other older format.
+        /// </para>
         /// </remarks>
-        internal const ushort FormatVersion = 4;
+        internal const ushort FormatVersion = 7;
 
         private readonly byte[] _bytes;
         private readonly string _path;

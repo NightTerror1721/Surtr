@@ -63,6 +63,9 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordSingleton:
                     return ParseTypeDeclaration(start, docComment, attributes, modifiers, ToTypeKind(reader.CurrentType));
 
+                case TokenType.KeywordExtension:
+                    return ParseExtensionDeclaration(start, docComment, attributes, modifiers);
+
                 case TokenType.KeywordAlias:
                     return ParseAliasDeclaration(start, docComment, attributes, modifiers);
 
@@ -405,6 +408,41 @@ namespace Surtr.Compiler.Syntax
             return new TypeDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, kind, name,
                 typeParameters, baseTypes, cases, members, modifiers.IsAbstract, modifiers.IsSealed, modifiers.IsStatic,
                 isAttribute, attributeTargets, isCompileTimeOnlyAttribute);
+        }
+
+        /// <summary>
+        /// Parses <c>extension &lt;Type&gt; { ... }</c> (§15). Reuses the same member-loop
+        /// <see cref="ParseTypeDeclaration"/> uses — which members make sense inside an extension
+        /// block is a binder question, not a parser one.
+        /// </summary>
+        private DeclarationSyntax ParseExtensionDeclaration(SourceLocation start, IReadOnlyList<string> docComment,
+            IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers)
+        {
+            if (modifiers.IsStatic || modifiers.IsSealed || modifiers.IsAbstract || modifiers.Dispatch != DispatchModifier.None
+                || modifiers.Inline != InlineModifier.None || modifiers.IsConst || modifiers.IsNative)
+            {
+                throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "An extension block accepts only a visibility modifier (§15).", start);
+            }
+
+            reader.Advance();
+
+            // `extension<T : Bound> Type { }` (§15.4) — only needed for a constraint; a bare type
+            // parameter mentioned inside the target type (`extension T[] { }`) needs no separate
+            // list at all, the binder declares it implicitly from that use.
+            IReadOnlyList<TypeParameterSyntax> typeParameters = ParseTypeParameterList();
+
+            TypeSyntax targetType = ParseType();
+            reader.Expect(TokenType.LeftBrace, "'{' to open the extension body");
+
+            List<DeclarationSyntax> members = new List<DeclarationSyntax>();
+            while (!reader.Check(TokenType.RightBrace) && !reader.Check(TokenType.EndOfFile))
+            {
+                members.Add(ParseDeclaration());
+            }
+
+            reader.Expect(TokenType.RightBrace, "'}' to close the extension body");
+
+            return new ExtensionDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, typeParameters, targetType, members);
         }
 
         /// <summary>

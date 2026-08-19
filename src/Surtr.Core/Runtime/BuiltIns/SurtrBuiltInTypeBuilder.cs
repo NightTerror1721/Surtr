@@ -117,13 +117,19 @@ namespace Surtr.Runtime.BuiltIns
         /// <summary>Declares the interfaces this built-in class satisfies.</summary>
         /// <remarks>
         /// The handles are interned unresolved and bound by the built-in module's own binding pass,
-        /// which is what lets a collection name an interface declared after it.
+        /// which is what lets a collection name an interface declared after it. Additive across
+        /// calls — a built-in's contracts arrive from more than one declaration site (the iterator
+        /// contracts here, the comparability contracts in <see cref="SurtrContractBuiltIns"/>), and
+        /// <see cref="SurtrClass.SetDeclaredInterfaces"/> underneath is a plain assignment, so a
+        /// second call would otherwise silently drop whatever the first one declared.
         /// </remarks>
         internal void Implements(params SurtrClassReference[] interfaces)
         {
-            var handles = new SurtrTypeHandle[interfaces.Length];
+            var existing = _class.DeclaredInterfaces;
+            var handles = new SurtrTypeHandle[existing.Length + interfaces.Length];
+            System.Array.Copy(existing, handles, existing.Length);
             for (int i = 0; i < interfaces.Length; i++)
-                handles[i] = Handle(interfaces[i]);
+                handles[existing.Length + i] = Handle(interfaces[i]);
 
             _class.SetDeclaredInterfaces(handles);
         }

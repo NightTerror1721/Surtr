@@ -46,6 +46,15 @@ namespace Surtr.Compiler.Binding.Symbols
         public const string InstanceCategory = "instance";
 
         /// <summary>
+        /// The name of the receiver parameter an extension property's accessor synthesises (§15.1).
+        /// An extension method's receiver is always written out by the user (§15's own explicit-
+        /// parameter model), but a property's accessor has no parameter list to write one in — this
+        /// is what fills that gap, reached from the body only through <c>this</c>
+        /// (<c>BodyBinder.ExtensionReceiver</c>), never by name.
+        /// </summary>
+        public const string ExtensionReceiver = "$receiver";
+
+        /// <summary>
         /// The name of the static field holding a <c>singleton</c>'s instance (§2.8).
         /// </summary>
         /// <remarks>

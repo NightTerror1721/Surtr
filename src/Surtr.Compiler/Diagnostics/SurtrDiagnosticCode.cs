@@ -417,6 +417,35 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         PositionalArgumentAfterNamed = 3060,
 
+        /// <summary>
+        /// An <c>extension</c> block's target (§15) does not resolve to an ordinary named type — a
+        /// composite/built-in shape (<c>int[]</c>, a dict, ...) or a generic argument, neither of
+        /// which Phase 1 of §15 supports yet.
+        /// </summary>
+        InvalidExtensionTarget = 3061,
+
+        /// <summary>
+        /// A member declared inside an <c>extension</c> block (§15) is not a plain method — a field,
+        /// constructor, static block, property, or a method kind not supported yet (generic, native,
+        /// const, abstract/virtual/override, sealed, bodyless). Nothing here has a storage position
+        /// or a receiver to run against on a type the block does not own.
+        /// </summary>
+        InvalidExtensionMember = 3062,
+
+        /// <summary>
+        /// A method inside an <c>extension</c> block (§15) has no parameters, or its first parameter's
+        /// type is not exactly the block's target type — the receiver <c>obj.method()</c> is bound
+        /// against.
+        /// </summary>
+        InvalidExtensionReceiver = 3063,
+
+        /// <summary>
+        /// A member's own visibility inside an <c>extension</c> block (§15.2) is wider than the
+        /// block's — a member may narrow the block's visibility or leave it unwritten to inherit it,
+        /// never widen it.
+        /// </summary>
+        ExtensionMemberVisibilityTooWide = 3064,
+
         #endregion
 
         #region Code generation — 4xxx

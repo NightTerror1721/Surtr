@@ -131,7 +131,21 @@ namespace Surtr.Compiler.Binding
             symbol.Types = types;
             symbol.Fields = ImportFields(module.Fields, containingSymbol: symbol, declaringType: null);
             symbol.Properties = ImportProperties(module.Properties, containingSymbol: symbol, declaringType: null);
-            symbol.Methods = ImportMethods(module.Methods, containingSymbol: symbol, declaringType: null);
+            var methods = ImportMethods(module.Methods, containingSymbol: symbol, declaringType: null);
+            symbol.Methods = methods;
+
+            // An extension member travels as an ordinary module function whose receiver is its
+            // first parameter; the image's `IsExtension` mark is what lets a later compiler tell
+            // it apart again, so the imported module resolves `obj.member(...)` through the
+            // extension path (§15) instead of treating it as a bare function.
+            var extensions = new List<MethodSymbol>();
+            for (int i = 0; i < methods.Count; i++)
+            {
+                if (methods[i].ImportedFrom is SurtrMethodInfo imported && imported.IsExtension)
+                    extensions.Add(methods[i]);
+            }
+
+            symbol.ExtensionMethods = extensions;
 
             return symbol;
         }
@@ -169,11 +183,11 @@ namespace Surtr.Compiler.Binding
         /// </summary>
         /// <param name="reference">The descriptor.</param>
         /// <param name="declaringType">
-        /// Whose generic parameters a <c>G&lt;n&gt;</c> in the descriptor refers to. Without it,
-        /// one resolves to <c>unknown</c>, which is the same representation and all that is left to
-        /// say about it.
+        /// Whose generic parameters a <c>G&lt;n&gt;</c> or <c>H&lt;n&gt;</c> in the descriptor
+        /// refers to - the type for <c>G</c>, the method for <c>H</c>. Without it, one resolves to
+        /// <c>unknown</c>, which is the same representation and all that is left to say about it.
         /// </param>
-        public TypeSymbol Import(SurtrClassReference reference, NamedTypeSymbol? declaringType = null)
+        public TypeSymbol Import(SurtrClassReference reference, Symbol? declaringType = null)
         {
             if (!reference.IsValid)
                 return _factory.ErrorType;
@@ -211,11 +225,22 @@ namespace Surtr.Compiler.Binding
                 {
                     // `G<n>` and `E` are one representation, and the descriptor is the only thing
                     // that still tells them apart - which is exactly what it was given the form for.
-                    if (reference.TryGetGenericParameterIndex(out int ordinal)
-                        && declaringType is not null
-                        && ordinal < declaringType.TypeParameters.Count)
+                    // A method's `H<n>` is its own, resolved against the method rather than the type.
+                    if (reference.TryGetGenericParameterIndex(out int ordinal))
                     {
-                        return declaringType.TypeParameters[ordinal];
+                        var owner = declaringType is MethodSymbol declaringMethod
+                            ? declaringMethod.ContainingType
+                            : declaringType as NamedTypeSymbol;
+
+                        if (owner is not null && ordinal < owner.TypeParameters.Count)
+                            return owner.TypeParameters[ordinal];
+                    }
+
+                    if (reference.TryGetMethodGenericParameterIndex(out int methodOrdinal)
+                        && declaringType is MethodSymbol method
+                        && methodOrdinal < method.TypeParameters.Count)
+                    {
+                        return method.TypeParameters[methodOrdinal];
                     }
 
                     return _factory.Unknown;
@@ -311,7 +336,7 @@ namespace Surtr.Compiler.Binding
             return true;
         }
 
-        private TypeSymbol ImportNamed(SurtrClassReference reference, NamedTypeSymbol? declaringType)
+        private TypeSymbol ImportNamed(SurtrClassReference reference, Symbol? declaringType)
         {
             if (!reference.TryGetFullName(out string fullName))
                 return _factory.ErrorType;
@@ -328,7 +353,7 @@ namespace Surtr.Compiler.Binding
             return definition.Construct(ImportAll(arguments, declaringType));
         }
 
-        private TypeSymbol[] ImportAll(SurtrClassReference[] references, NamedTypeSymbol? declaringType)
+        private TypeSymbol[] ImportAll(SurtrClassReference[] references, Symbol? declaringType)
         {
             var imported = new TypeSymbol[references.Length];
             for (int i = 0; i < references.Length; i++)
@@ -467,6 +492,39 @@ namespace Surtr.Compiler.Binding
             }
 
             symbol.Interfaces = interfaces;
+
+            ImportConstraints(symbol, type);
+        }
+
+        /// <summary>
+        /// Rebuilds the bounds a generic type declared, which erasure used to drop at emit.
+        /// </summary>
+        /// <remarks>
+        /// Each bound travels as a descriptor, so importing one is the same
+        /// <see cref="Import(SurtrClassReference, NamedTypeSymbol?)"/> call any other type
+        /// position takes - which is also what keeps a bound naming the
+        /// type's own parameter (<c>IComparable&lt;T&gt;</c> → <c>G0</c>) resolving to the right
+        /// <see cref="TypeParameterSymbol"/> rather than to <c>unknown</c>.
+        /// </remarks>
+        private void ImportConstraints(NamedTypeSymbol symbol, SurtrTypeInfo type)
+        {
+            var written = type.GenericConstraints;
+            if (written.Length == 0)
+                return;
+
+            var parameters = symbol.TypeParameters;
+            for (int i = 0; i < parameters.Count; i++)
+            {
+                var bounds = written[i];
+                if (bounds.Length == 0)
+                    continue;
+
+                var imported = new TypeSymbol[bounds.Length];
+                for (int b = 0; b < bounds.Length; b++)
+                    imported[b] = Import(SurtrClassReference.FromDescriptor(bounds[b]), symbol);
+
+                parameters[i].Constraints = imported;
+            }
         }
 
         private TypeSymbol ImportHandle(SurtrTypeHandle handle, NamedTypeSymbol declaringType)
@@ -581,10 +639,13 @@ namespace Surtr.Compiler.Binding
             Symbol containingSymbol,
             NamedTypeSymbol? declaringType)
         {
+            // The method's own type parameters exist before its signature is imported, because a
+            // parameter or return written `H<n>` must resolve to them. The placeholder return is
+            // replaced once they exist.
             var symbol = new MethodSymbol(
                 method.Name,
                 containingSymbol,
-                Import(method.ReturnType.Reference, declaringType))
+                _factory.Void)
             {
                 IsStatic = method.IsStatic,
                 Accessibility = Translate(method.Visibility),
@@ -597,33 +658,79 @@ namespace Surtr.Compiler.Binding
                 ImportedFrom = method,
             };
 
-            var declared = method.Parameters;
-            var parameters = new ParameterSymbol[declared.Length];
-            for (int i = 0; i < declared.Length; i++)
+            // A class-nested extension (§15.2) carries its container so the accessibility check
+            // runs against the class it was private to, the way the source binder records it.
+            if (method.IsExtension && declaringType is not null)
+                symbol.ExtensionDeclaringContainer = declaringType;
+
+            var declared = method.GenericParameters;
+            if (declared.Count > 0)
             {
-                var parameterType = Import(declared[i].ParameterType.Reference, declaringType);
+                var parameters = new TypeParameterSymbol[declared.Count];
+                for (int i = 0; i < declared.Count; i++)
+                    parameters[i] = _factory.DeclareTypeParameter(declared[i], symbol, i);
+
+                symbol.TypeParameters = parameters;
+            }
+
+            symbol.ReturnType = Import(method.ReturnType.Reference, symbol);
+
+            var declaredParameters = method.Parameters;
+            var parameters2 = new ParameterSymbol[declaredParameters.Length];
+            for (int i = 0; i < declaredParameters.Length; i++)
+            {
+                var parameterType = Import(declaredParameters[i].ParameterType.Reference, symbol);
 
                 // Metadata carries a varargs parameter by its element type, which is what §3.5
                 // declares — so the array the body sees has to be rebuilt here, or an imported
                 // signature would differ from the same one in source.
-                if (declared[i].IsVarargs)
+                if (declaredParameters[i].IsVarargs)
                     parameterType = _factory.Array(parameterType);
 
-                parameters[i] = new ParameterSymbol(
-                    declared[i].Name,
+                parameters2[i] = new ParameterSymbol(
+                    declaredParameters[i].Name,
                     parameterType,
                     i,
                     symbol)
                 {
-                    IsVararg = declared[i].IsVarargs,
-                    HasDefaultValue = declared[i].HasDefault,
-                    DefaultValue = Import(declared[i].DefaultValue),
-                    DefaultValueFolded = declared[i].HasDefault,
+                    IsVararg = declaredParameters[i].IsVarargs,
+                    HasDefaultValue = declaredParameters[i].HasDefault,
+                    DefaultValue = Import(declaredParameters[i].DefaultValue),
+                    DefaultValueFolded = declaredParameters[i].HasDefault,
                 };
             }
 
-            symbol.Parameters = parameters;
+            symbol.Parameters = parameters2;
+
+            ImportMethodConstraints(symbol, method);
             return symbol;
+        }
+
+        /// <summary>
+        /// Rebuilds the bounds a generic method declared, the way
+        /// <see cref="ImportConstraints(NamedTypeSymbol, SurtrTypeInfo)"/> does for a type — one
+        /// list per parameter, each bound imported against the method so an <c>H&lt;n&gt;</c>
+        /// inside it resolves to the rebuilt parameter rather than to <c>unknown</c>.
+        /// </summary>
+        private void ImportMethodConstraints(MethodSymbol symbol, SurtrMethodInfo method)
+        {
+            var written = method.GenericConstraints;
+            if (written.Count == 0)
+                return;
+
+            var parameters = symbol.TypeParameters;
+            for (int i = 0; i < parameters.Count; i++)
+            {
+                var bounds = written[i];
+                if (bounds.Length == 0)
+                    continue;
+
+                var imported = new TypeSymbol[bounds.Length];
+                for (int b = 0; b < bounds.Length; b++)
+                    imported[b] = Import(SurtrClassReference.FromDescriptor(bounds[b]), symbol);
+
+                parameters[i].Constraints = imported;
+            }
         }
 
         /// <summary>

@@ -395,6 +395,7 @@ namespace Surtr.Bytecode.Image
             bool isStatic = reader.ReadBoolean();
             bool isOverride = reader.ReadBoolean();
             bool isSealed = reader.ReadBoolean();
+            bool isExtension = reader.ReadBoolean();
 
             int parameterCount = state.Count();
             var parameters = parameterCount == 0
@@ -404,9 +405,38 @@ namespace Surtr.Bytecode.Image
             for (int i = 0; i < parameterCount; i++)
                 parameters[i] = ReadParameter(state);
 
+            // The method's own generic parameters, names then per-parameter constraint lists -
+            // read before the impl kind branches because every kind can carry them.
+            int genericCount = state.Count();
+            string[]? genericParameters = null;
+            string[][]? genericConstraints = null;
+
+            if (genericCount > 0)
+            {
+                genericParameters = new string[genericCount];
+                for (int i = 0; i < genericCount; i++)
+                    genericParameters[i] = state.Text();
+
+                genericConstraints = new string[genericCount][];
+                for (int i = 0; i < genericCount; i++)
+                {
+                    int boundCount = state.Count();
+                    var bounds = boundCount == 0
+                        ? Array.Empty<string>()
+                        : new string[boundCount];
+
+                    for (int b = 0; b < boundCount; b++)
+                        bounds[b] = state.Text();
+
+                    genericConstraints[i] = bounds;
+                }
+            }
+
             if (implKind == SurtrMethodImplKind.Abstract)
             {
-                var contractMethod = new SurtrAbstractMethodInfo(name, returnType, parameters, visibility, declaringType);
+                var contractMethod = new SurtrAbstractMethodInfo(
+                    name, returnType, parameters, visibility, declaringType,
+                    genericParameters, genericConstraints, isExtension);
                 ReadAttributes(state, contractMethod);
                 return contractMethod;
             }
@@ -417,7 +447,8 @@ namespace Surtr.Bytecode.Image
                 // through the link name that was just read.
                 var nativeMethod = new SurtrNativeMethodInfo(
                     name, dispatch, role, isOverride, returnType, parameters,
-                    isStatic, visibility, declaringType, state.Text(), isSealed);
+                    isStatic, visibility, declaringType, state.Text(), isSealed,
+                    genericParameters, genericConstraints, isExtension);
 
                 ReadAttributes(state, nativeMethod);
                 return nativeMethod;
@@ -436,7 +467,8 @@ namespace Surtr.Bytecode.Image
             var method = new SurtrBytecodeMethodInfo(
                 name, dispatch, role, isOverride, returnType, parameters,
                 isStatic, visibility, declaringType,
-                chunk, entryIndex, localCount, maxStackSize, isSealed);
+                chunk, entryIndex, localCount, maxStackSize, isSealed,
+                genericParameters, genericConstraints, isExtension);
 
             int handlerCount = state.Count();
             if (handlerCount != 0)
@@ -598,6 +630,19 @@ namespace Surtr.Bytecode.Image
                     genericParameters[i] = state.Text();
 
                 type.SetGenericParameters(genericParameters);
+
+                var genericConstraints = new string[genericCount][];
+                for (int i = 0; i < genericCount; i++)
+                {
+                    int boundCount = state.Count();
+                    var bounds = new string[boundCount];
+                    for (int b = 0; b < boundCount; b++)
+                        bounds[b] = state.Text();
+
+                    genericConstraints[i] = bounds;
+                }
+
+                type.SetGenericConstraints(genericConstraints);
             }
 
             int caseCount = state.Count();
@@ -682,6 +727,19 @@ namespace Surtr.Bytecode.Image
                     genericParameters[i] = state.Text();
 
                 contract.SetGenericParameters(genericParameters);
+
+                var genericConstraints = new string[genericCount][];
+                for (int i = 0; i < genericCount; i++)
+                {
+                    int boundCount = state.Count();
+                    var bounds = new string[boundCount];
+                    for (int b = 0; b < boundCount; b++)
+                        bounds[b] = state.Text();
+
+                    genericConstraints[i] = bounds;
+                }
+
+                contract.SetGenericConstraints(genericConstraints);
             }
 
             int methodCount = state.Count();

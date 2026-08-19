@@ -1215,7 +1215,9 @@ namespace Surtr.LanguageServer.Workspace
                     return FindNamedMemberDeclaration(field.ContainingSymbol, field.Name, (d, n) => d is FieldDeclarationSyntax f && f.Name == n, snapshot);
 
                 case PropertySymbol property:
-                    return FindNamedMemberDeclaration(property.ContainingSymbol, property.Name, (d, n) => d is PropertyDeclarationSyntax p && p.Name == n, snapshot);
+                    return FindNamedMemberDeclaration(
+                        property.ContainingSymbol, property.Name, (d, n) => d is PropertyDeclarationSyntax p && p.Name == n, snapshot,
+                        isExtensionMember: property.ExtensionTargetType is not null);
 
                 case NamedTypeSymbol type:
                     return FindTypeDeclaration(type, snapshot);
@@ -1230,18 +1232,35 @@ namespace Surtr.LanguageServer.Workspace
 
         private static (string? File, int Start, int Length) FindMethodDeclaration(MethodSymbol method, CompilationSnapshot snapshot)
         {
+            // An extension method (§15) has no `ContainingType` — it is emitted as an ordinary
+            // module-level function, `ContainingSymbol` names the declaring module rather than the
+            // type it extends — so `MatchesParent` (built around a real member's `TypeDeclarationSyntax`
+            // parent) cannot be asked here the way it is below: it would read `ContainingType is null`
+            // as "declared at module level" and accept the first same-named, same-arity module
+            // function it finds, real or not. Matching "declared inside *an* extension block" instead
+            // is what `AllDeclarations` now yields a parent for.
+            bool isExtensionMethod = method.ExtensionTargetType is not null;
+
             foreach (var unit in UnitsOf(method.ContainingSymbol, snapshot))
             {
                 foreach (var (declaration, parent) in AllDeclarations(unit.Syntax))
                 {
-                    if (declaration is MethodDeclarationSyntax methodSyntax
-                        && methodSyntax.Name == method.Name
-                        && methodSyntax.Parameters.Count == method.Parameters.Count
-                        && MatchesParent(parent, method.ContainingType))
+                    if (declaration is not MethodDeclarationSyntax methodSyntax
+                        || methodSyntax.Name != method.Name
+                        || methodSyntax.Parameters.Count != method.Parameters.Count)
                     {
-                        SourceSpan nameSpan = NameSpanOf(unit.File.Text, methodSyntax, methodSyntax.Name);
-                        return (unit.File.Path, nameSpan.Start.Position, nameSpan.Length);
+                        continue;
                     }
+
+                    bool parentMatches = isExtensionMethod
+                        ? parent is ExtensionDeclarationSyntax
+                        : MatchesParent(parent, method.ContainingType);
+
+                    if (!parentMatches)
+                        continue;
+
+                    SourceSpan nameSpan = NameSpanOf(unit.File.Text, methodSyntax, methodSyntax.Name);
+                    return (unit.File.Path, nameSpan.Start.Position, nameSpan.Length);
                 }
             }
 
@@ -1252,17 +1271,25 @@ namespace Surtr.LanguageServer.Workspace
             Symbol? containing,
             string name,
             Func<DeclarationSyntax, string, bool> matches,
-            CompilationSnapshot snapshot)
+            CompilationSnapshot snapshot,
+            bool isExtensionMember = false)
         {
             foreach (var unit in UnitsOf(containing, snapshot))
             {
                 foreach (var (declaration, parent) in AllDeclarations(unit.Syntax))
                 {
-                    if (matches(declaration, name) && MatchesParent(parent, containing as NamedTypeSymbol))
-                    {
-                        SourceSpan nameSpan = NameSpanOf(unit.File.Text, declaration, name);
-                        return (unit.File.Path, nameSpan.Start.Position, nameSpan.Length);
-                    }
+                    if (!matches(declaration, name))
+                        continue;
+
+                    bool parentMatches = isExtensionMember
+                        ? parent is ExtensionDeclarationSyntax
+                        : MatchesParent(parent, containing as NamedTypeSymbol);
+
+                    if (!parentMatches)
+                        continue;
+
+                    SourceSpan nameSpan = NameSpanOf(unit.File.Text, declaration, name);
+                    return (unit.File.Path, nameSpan.Start.Position, nameSpan.Length);
                 }
             }
 
@@ -1337,7 +1364,12 @@ namespace Surtr.LanguageServer.Workspace
                 && typeSyntax.TypeParameters.Count == containingType.TypeParameters.Count;
         }
 
-        /// <summary>Every declaration in a unit, with the type declaring it, or <see langword="null"/> at module level.</summary>
+        /// <summary>
+        /// Every declaration in a unit, with its immediate declaring node — a
+        /// <see cref="TypeDeclarationSyntax"/> for an ordinary member, an
+        /// <see cref="ExtensionDeclarationSyntax"/> for one declared inside an <c>extension</c> block
+        /// (§15), or <see langword="null"/> at module level.
+        /// </summary>
         private static IEnumerable<(DeclarationSyntax Declaration, DeclarationSyntax? Parent)> AllDeclarations(CompilationUnitSyntax unit)
         {
             foreach (var declaration in unit.Declarations)
@@ -1347,7 +1379,22 @@ namespace Surtr.LanguageServer.Workspace
                 if (declaration is TypeDeclarationSyntax type)
                 {
                     foreach (var member in type.Members)
+                    {
                         yield return (member, type);
+
+                        // An `extension` block may itself be nested inside a class (§15.2), narrowing
+                        // its visibility without gaining a second receiver.
+                        if (member is ExtensionDeclarationSyntax nestedExtension)
+                        {
+                            foreach (var extensionMember in nestedExtension.Members)
+                                yield return (extensionMember, nestedExtension);
+                        }
+                    }
+                }
+                else if (declaration is ExtensionDeclarationSyntax extension)
+                {
+                    foreach (var member in extension.Members)
+                        yield return (member, extension);
                 }
             }
         }

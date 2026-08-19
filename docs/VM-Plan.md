@@ -493,8 +493,12 @@ in what was built — the exception is §4.14, which is §3.3's problem reached 
 > differently from how they were first written down, and each is noted in place: §4.1 turned out to
 > be largely built already; §4.6 got real generic parameters on the built-ins rather than an
 > erased placeholder; §4.7's budget is charged on control transfers rather than per instruction;
-> and §4.15's attributes are real classes rather than name/value pairs. The one thing §4 did *not*
-> settle, and still has not, is the compiler side — every obligation in §4.8 is still owed.
+> and §4.15's attributes are real classes rather than name/value pairs. **The closing sentence below
+> is itself stale and should not be trusted** — most of §4.8's unstruck bullets are done too
+> (inline/forceinline, operator overload resolution, alias erasure, the generic-interface bridge,
+> and now both devirtualisation bullets), this list was just never updated to say so as each landed.
+> `docs/Compiler-Plan.md` §10.2 is the authoritative, currently-maintained list of what the compiler
+> still owes — check there rather than trusting §4.8's strikethrough state.
 
 ### 4.1 Member tables keyed by signature — mostly already built
 
@@ -665,8 +669,10 @@ None of these need runtime work; all of them are things the runtime assumes and 
   `Binding/InitializerOrder.cs`, and `docs/Compiler-Plan.md` §10.1g for the shape it took.
 * **Honour `SurtrMethodInfo.DeclaringType` naming the declaring interface** for interface methods
   (§3.1).
-* **Devirtualise calls on a `sealed` type** — `Language-Syntax.md` §2.2 justifies the modifier
-  partly on this, and §3.6 makes it the ideal case for inlining, so it should actually happen.
+* ~~**Devirtualise calls on a `sealed` type**~~ **Done** — `Language-Syntax.md` §2.2 justifies the
+  modifier partly on this, and §3.6 makes it the ideal case for inlining. `BodyBinder.Expressions.cs`
+  marks a call on a sealed-typed receiver non-virtual, which feeds `TryInline`/`ShouldInlineByCost`
+  and `EmitResolvedCall`'s opcode choice directly.
 * **Inline at the bytecode level** for `inline`/`forceinline` (`Language-Syntax.md` §3.6),
   remapping the callee's `SurtrExceptionHandler` ranges into the caller's chunk-absolute table.
   The emitter computing `LocalCount` and `MaxStackSize` (rather than accepting them) is what makes
@@ -679,8 +685,10 @@ None of these need runtime work; all of them are things the runtime assumes and 
   `!=` from `==`, all four relational operators from `<=>`, and both the prefix and postfix form of
   `++`/`--` from one declaration, expanded into an assignment back to the operand. `operator as` is
   an explicit conversion only, so it never enters overload resolution.
-* **Devirtualise below a `sealed override`** (`Language-Syntax.md` §3.3), which closes a branch of
-  the hierarchy the same way a `sealed` class closes the whole of one.
+* ~~**Devirtualise below a `sealed override`**~~ **Done** (`Language-Syntax.md` §3.3), which closes
+  a branch of the hierarchy the same way a `sealed` class closes the whole of one. Extended to
+  method calls, property/accessor reads and writes, and the auto-property field-load fast path
+  alike, since a `sealed override` accessor is exactly as closed as a `sealed override` method.
 * **Lower `<=>` on built-in types** (`Language-Syntax.md` §5.7). It is a surface operator, not a
   new instruction — but "to the comparison opcodes that already exist" holds only for the numeric
   ones. `string` has `StrEQ`/`StrNE` and no ordering opcode at all, so `<=>` and all four
@@ -787,24 +795,17 @@ and its varargs array already packed. A default value is a compile-time constant
 primitives and `string` (§7.1 of the syntax document), so it fits in a `SurtrValue` beside the
 handle; varargs is one bit on the last parameter. This is metadata and emitter work only.
 
-### 4.13 `sealed` and enum-ness are not in the metadata
+### 4.13 Resolved: `sealed` and enum-ness are in the metadata
 
-Two declaration facts the syntax fixes have nowhere to live, and both are read by a *compiler
-looking at another module's metadata* rather than by the interpreter.
-
-* **`sealed`.** `SurtrClass` carries `IsAbstract` and no counterpart, and `SurtrMethodInfo` has no
-  mark for a `sealed override`. `Language-Syntax.md` §2.2 and §3.3 justify the modifier mainly on
-  devirtualisation — which §4.8 above already records as a compiler obligation, and which cannot be
-  honoured against a type the compiler did not itself just parse. The linker also has no way to
-  reject a class extending a sealed one.
-* **Enum-ness.** `SurtrMemberKind.Enum` exists and is never used: `SurtrClass` passes
-  `SurtrMemberKind.Class` to its base unconditionally, and `SurtrModuleBuilder.DefineClass` has no
-  parameter for it. `Language-Syntax.md` §2.4 makes an enum a sealed class with a fixed set of
-  named static instances, and §4.3 checks a `switch` expression for exhaustiveness over one — which
-  needs both "this class is an enum" and its case list, in declaration order, out of metadata.
-
-The case list also wants an **ordinal per case**, for the reason in §4.16: a dense switch over an
-enum has nothing to index on otherwise.
+~~Two declaration facts the syntax fixes have nowhere to live, and both are read by a *compiler
+looking at another module's metadata* rather than by the interpreter.~~ **Stale — both landed.**
+`SurtrClass.IsSealed` and `SurtrMethodInfo.IsSealed` (a `sealed override` mark) both exist, are
+checked by `SurtrTypeLinker` (a class extending a sealed one, or an override replacing a sealed
+one, are both rejected at link time), and round-trip through `.surtrc` images via
+`SurtrModuleImageWriter`/`MetadataImporter` — so a compiler reading another module's metadata sees
+the fact, not just one that just parsed the source. Enum-ness and a per-case ordinal are likewise
+implemented, per `CLAUDE.md`'s own summary ("enums with per-case ordinals" is in the list of
+everything §4 asked for and got).
 
 ### 4.14 Resolved: there is no per-module native import table, because there is no native import table
 

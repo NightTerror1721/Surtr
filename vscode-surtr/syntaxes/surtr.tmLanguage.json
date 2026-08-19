@@ -121,6 +121,7 @@
         { "include": "#import-declaration" },
         { "include": "#alias-declaration" },
         { "include": "#type-declaration" },
+        { "include": "#extension-declaration" },
         { "include": "#function-declaration" },
         { "include": "#constructor-declaration" },
         { "include": "#variable-declaration" },
@@ -154,6 +155,21 @@
       "end": "(?=[{;])",
       "name": "meta.type.declaration.surtr",
       "patterns": [
+        { "include": "#type-reference" },
+        { "include": "#comments" },
+        { "include": "#punctuation" }
+      ]
+    },
+    "extension-declaration": {
+      "comment": "extension <Type> { ... } (§15) adds members to a type already declared elsewhere, without editing it - the target names an *existing* type rather than declaring a new one, so it is colored support.type.surtr like any other type reference, not entity.name.type.surtr the way type-declaration's own name is. An optional extension<T : Bound> ... list (§15.4) only needs writing out for a constraint; a bare type parameter used inside the target (extension T[] { }, extension Box<T> { }) is enough on its own and is highlighted by type-reference like any other identifier there.",
+      "begin": "\\bextension\\b",
+      "beginCaptures": {
+        "0": { "name": "keyword.declaration.type.surtr" }
+      },
+      "end": "(?=\\{)",
+      "name": "meta.extension.declaration.surtr",
+      "patterns": [
+        { "include": "#builtin-types" },
         { "include": "#type-reference" },
         { "include": "#comments" },
         { "include": "#punctuation" }
@@ -339,10 +355,21 @@
         { "match": "\\bconstructor\\b", "name": "keyword.declaration.function.surtr" },
         { "match": "\\boperator\\b", "name": "keyword.declaration.function.surtr" },
         { "match": "\\b(?:class|interface|enum|singleton)\\b", "name": "keyword.declaration.type.surtr" },
+        { "match": "\\bextension\\b", "name": "keyword.declaration.type.surtr" },
         { "match": "\\balias\\b", "name": "keyword.declaration.alias.surtr" },
         { "match": "\\b(?:let|var)\\b", "name": "storage.type.variable.surtr" },
         { "match": "\\bvalue(?=\\s+class\\b)", "name": "keyword.declaration.type.surtr" },
-        { "match": "\\bimport\\b", "name": "keyword.control.import.surtr" }
+        {
+          "comment": "attribute is contextual (§1.2), recognized only immediately before the 'class' that makes it an attribute class declaration (§11) - with or without a parenthesized target/retention list (attribute(Method, Property) class X). Anywhere else the word is an ordinary identifier, same as 'value' above.",
+          "match": "\\battribute\\b(?=\\s*(?:\\([^()]*\\))?\\s*class\\b)",
+          "name": "keyword.declaration.type.surtr"
+        },
+        { "match": "\\bimport\\b", "name": "keyword.control.import.surtr" },
+        {
+          "comment": "get/set are not reserved at all - the parser recognizes them purely by position inside a property's accessor list (§3.4). A regex grammar cannot see that position the way the real parser does, so this only fires for the accessor shapes that can never be a call: 'get'/'set' immediately followed by '=>', '{' or a bare ';' - a call like dict.get(k) always has '(' right after and never matches. The narrow false positive this still admits is a variable literally named get/set read bare before a ';' (e.g. 'return get;'); textDocument/semanticTokens is the robust fix for full position-accuracy, this is the regex-only approximation.",
+          "match": "\\b(?:get|set)\\b(?=\\s*(?:=>|\\{|;))",
+          "name": "keyword.other.accessor.surtr"
+        }
       ]
     },
     "builtin-types": {

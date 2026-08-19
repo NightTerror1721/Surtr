@@ -21,12 +21,35 @@ namespace Surtr.Runtime.Objects
     /// </remarks>
     public sealed class SurtrTypeValue : SurtrObject
     {
+        private readonly SurtrClassReference _reference;
+
         internal SurtrTypeValue(SurtrTypeInfo wrapped) : base(SurtrBuiltIns.Type)
         {
             Wrapped = wrapped;
         }
 
+        /// <summary>
+        /// Creates a <c>Type</c> value for a constructed generic — <c>typeof(Box&lt;int&gt;)</c>
+        /// or <c>Type.get("Obox:Box`1;I")</c> — keeping the descriptor that named the
+        /// construction, so <c>genericArguments</c> can answer which one it is. Never used for an
+        /// open form: a descriptor whose arguments are the declaration's own parameters is the
+        /// class itself, not a construction.
+        /// </summary>
+        internal SurtrTypeValue(SurtrTypeInfo wrapped, SurtrClassReference reference) : base(SurtrBuiltIns.Type)
+        {
+            Wrapped = wrapped;
+            _reference = reference;
+        }
+
         /// <summary>The class or interface this value reflects.</summary>
         public SurtrTypeInfo Wrapped { get; }
+
+        /// <summary>
+        /// The descriptor this value came from — <c>Obox:Box`1;I</c> for a construction, or a
+        /// default/invalid reference when the value was reached from an instance (<c>Type.of</c>,
+        /// <c>typeof(x)</c>), which cannot carry one. <c>genericArguments</c> is empty exactly when
+        /// this is not valid or names an open form.
+        /// </summary>
+        public SurtrClassReference Reference => _reference;
     }
 }

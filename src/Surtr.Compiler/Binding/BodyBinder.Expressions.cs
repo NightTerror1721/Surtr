@@ -290,7 +290,13 @@ namespace Surtr.Compiler.Binding
                 arguments[i] = Convert(new BoundParameterExpression(syntax, parameters[i]), method.Parameters[i].Type, syntax.Span);
             }
 
-            bool isVirtual = !method.IsStatic && method.ContainingType is not null && method.Dispatch != MethodDispatch.Direct;
+            // Same static devirtualisation §2.2/§3.3 give an ordinary call: a sealed receiver
+            // type or a `sealed override` target needs no vtable slot here either.
+            bool isVirtual = !method.IsStatic
+                && method.ContainingType is not null
+                && method.Dispatch != MethodDispatch.Direct
+                && !method.IsSealed
+                && !(receiver?.Type.NonNullable is NamedTypeSymbol { IsSealed: true });
             var call = new BoundCallExpression(syntax, receiver, method, arguments, isVirtual);
 
             BoundStatement body = closure.ReturnType.IsVoid
@@ -346,6 +352,28 @@ namespace Surtr.Compiler.Binding
             return new BoundFieldExpression(syntax, receiver, field);
         }
 
+        /// <summary>
+        /// Builds a property access, resolving each accessor's own devirtualisation the same way
+        /// an ordinary call does (§2.2/§3.3): false for a missing accessor, one dispatched
+        /// <c>Direct</c>, one reached through <c>super</c>, one declared <c>sealed override</c>,
+        /// or one on a receiver whose static type is <c>sealed</c>. Computed once here, mirroring
+        /// <see cref="BoundCallExpression.IsVirtual"/>, rather than re-derived at every accessor
+        /// call site.
+        /// </summary>
+        private BoundPropertyExpression ResolveProperty(SyntaxNode syntax, BoundExpression? receiver, PropertySymbol property)
+            => new(syntax, receiver, property, IsVirtualAccess(property.Getter, receiver), IsVirtualAccess(property.Setter, receiver));
+
+        private static bool IsVirtualAccess(MethodSymbol? accessor, BoundExpression? receiver)
+        {
+            if (accessor is null || accessor.Dispatch == MethodDispatch.Direct || accessor.IsSealed)
+                return false;
+
+            if (receiver is BoundThisExpression { IsSuper: true })
+                return false;
+
+            return receiver?.Type.NonNullable is not NamedTypeSymbol { IsSealed: true };
+        }
+
         private BoundExpression? BindImplicitMember(SyntaxNode syntax, NamedTypeSymbol type, string name)
         {
             if (_lookup.FindField(type, name) is FieldSymbol field)
@@ -357,7 +385,7 @@ namespace Surtr.Compiler.Binding
             if (_lookup.FindProperty(type, name) is PropertySymbol property)
             {
                 RequireAccessible(property, property.Accessibility, property.Name, syntax);
-                return new BoundPropertyExpression(syntax, property.IsStatic ? null : ImplicitThis(syntax, type), property);
+                return ResolveProperty(syntax, property.IsStatic ? null : ImplicitThis(syntax, type), property);
             }
 
             return null;
@@ -435,7 +463,7 @@ namespace Surtr.Compiler.Binding
                 if (string.Equals(property.Name, name, StringComparison.Ordinal))
                 {
                     RequireAccessible(property, property.Accessibility, property.Name, syntax);
-                    return new BoundPropertyExpression(syntax, null, property);
+                    return ResolveProperty(syntax, null, property);
                 }
             }
 
@@ -469,8 +497,41 @@ namespace Surtr.Compiler.Binding
             return new BoundThisExpression(syntax, type, isSuper);
         }
 
+        /// <summary>
+        /// The synthesized receiver an extension method or property accessor (§15) reads <c>this</c>
+        /// as, or <see langword="null"/> for an ordinary body or a <c>static</c> extension member.
+        /// </summary>
+        /// <remarks>
+        /// Derived from <see cref="_method"/> alone — never a constructor parameter threaded through
+        /// <see cref="BodyBinder"/> — because it is exactly the same fact <c>Binder.BindExtension</c>
+        /// already recorded on the method symbol: an instance extension's receiver is always its
+        /// first parameter, whether the user wrote it out (a method) or the binder synthesized it
+        /// under <see cref="SyntheticNames.ExtensionReceiver"/> (a property accessor, which has no
+        /// parameter list of its own to write one in). This is also why an extension *method* can use
+        /// `this` too, even though §15.1 has the user name that same parameter explicitly — both
+        /// spellings reach the identical <see cref="ParameterSymbol"/>.
+        /// </remarks>
+        private ParameterSymbol? ExtensionReceiver
+            => _method.ExtensionTargetType is not null && !_method.ExtensionIsStatic && _method.Parameters.Count > 0
+                ? _method.Parameters[0]
+                : null;
+
         private BoundExpression BindThis(ExpressionSyntax syntax, bool isSuper)
         {
+            if (ExtensionReceiver is ParameterSymbol receiver)
+            {
+                if (isSuper)
+                {
+                    return Error(
+                        syntax,
+                        SurtrDiagnosticCode.NoInstanceInScope,
+                        "An extension has no base class (§15), so 'super' names nothing.");
+                }
+
+                NoteCapture(receiver, syntax.Span);
+                return new BoundParameterExpression(syntax, receiver);
+            }
+
             if (_containingType is null || _method.IsStatic)
             {
                 return Error(
@@ -592,7 +653,7 @@ namespace Surtr.Compiler.Binding
             if (_lookup.FindProperty(lookupType, syntax.Name) is PropertySymbol property)
             {
                 RequireAccessible(property, property.Accessibility, property.Name, syntax);
-                return Guard(new BoundPropertyExpression(syntax, property.IsStatic ? null : accessed, property), syntax);
+                return Guard(ResolveProperty(syntax, property.IsStatic ? null : accessed, property), syntax);
             }
 
             // §8: `obj.method` where a closure is expected is sugar for a lambda calling it — never
@@ -603,6 +664,11 @@ namespace Surtr.Compiler.Binding
             {
                 return group;
             }
+
+            // §15.3: tried last, only once field, property, and method-group have all failed —
+            // the same silent priority a real member already has over an extension method's call.
+            if (InstanceExtensionProperty(lookupType, syntax.Name, syntax) is PropertySymbol extensionProperty)
+                return Guard(ResolveProperty(syntax, accessed, extensionProperty), syntax);
 
             return Error(
                 syntax,
@@ -642,7 +708,7 @@ namespace Surtr.Compiler.Binding
             if (_lookup.FindProperty(type, syntax.Name) is PropertySymbol property && property.IsStatic)
             {
                 RequireAccessible(property, property.Accessibility, property.Name, syntax);
-                return new BoundPropertyExpression(syntax, null, property);
+                return ResolveProperty(syntax, null, property);
             }
 
             // §8: `Type.method` where a closure is expected is sugar for a lambda calling it —
@@ -650,6 +716,10 @@ namespace Surtr.Compiler.Binding
             // receiver for an instance one to read.
             if (TryBindMethodGroup(syntax, expected, StaticMethodsOf(type, syntax.Name), receiverSyntax: null) is BoundExpression group)
                 return group;
+
+            // §15.3: same silent priority as the instance case, tried last.
+            if (StaticExtensionProperty(type, syntax.Name, syntax) is PropertySymbol extensionProperty)
+                return ResolveProperty(syntax, null, extensionProperty);
 
             return Error(
                 syntax,
@@ -927,6 +997,7 @@ namespace Surtr.Compiler.Binding
                 callArguments[i] = Convert(operands[i], method.Parameters[i + 1].Type, syntax.Span);
 
             bool virtualCall = method.Dispatch != MethodDispatch.Direct
+                && !method.IsSealed
                 && !(boundReceiver.Type.NonNullable is NamedTypeSymbol { IsSealed: true });
 
             return new BoundCallExpression(syntax, boundReceiver, method, callArguments, virtualCall);
@@ -1244,6 +1315,19 @@ namespace Surtr.Compiler.Binding
                         if (ClosureValue(staticOwner, instance, name, member) is BoundExpression stored)
                             return BindClosureInvocation(syntax, stored);
 
+                        // §15.3: a static extension is tried only once `staticOwner` has no real
+                        // static member of this name at all — same silent priority the instance case
+                        // gives a real member over an extension. There is no receiver to insert: a
+                        // static extension is reached by matching the type named at the call site
+                        // against `ExtensionTargetType`, so it completes exactly like a call to an
+                        // ordinary module function.
+                        if (_lookup.FindMethods(staticOwner, name).Count == 0)
+                        {
+                            var staticExtensionCandidates = StaticExtensionCandidates(staticOwner, name);
+                            if (staticExtensionCandidates.Count > 0)
+                                return Complete(syntax, null, staticExtensionCandidates, name, isVirtual: false);
+                        }
+
                         return BindMethodCall(syntax, instance, staticOwner, name, isVirtual: false);
                     }
 
@@ -1290,6 +1374,18 @@ namespace Surtr.Compiler.Binding
             // answers to the name.
             if (owner is not null && ClosureValue(owner, receiver, name, syntax.Callee) is BoundExpression held)
                 return BindClosureInvocation(syntax, held);
+
+            // §15.3: an extension is tried only once the receiver's own type — walked through its
+            // full hierarchy just above — has nothing of this name at all. Never for a call with no
+            // receiver at all (a bare module-level call), which is what `receiver is not null` rules
+            // out here — `this` bound implicitly for a bare name inside an instance method still
+            // counts as one.
+            if (receiver is not null)
+            {
+                var extensionCandidates = ExtensionCandidates(name);
+                if (extensionCandidates.Count > 0)
+                    return CompleteExtension(syntax, receiver, extensionCandidates, name);
+            }
 
             if (DeclaresMethod(_module, name))
                 return BindModuleCall(syntax, _module, name);
@@ -1356,7 +1452,7 @@ namespace Surtr.Compiler.Binding
                 && property.Type.NonNullable is ClosureTypeSymbol)
             {
                 RequireAccessible(property, property.Accessibility, property.Name, syntax);
-                return new BoundPropertyExpression(syntax, property.IsStatic ? null : receiver, property);
+                return ResolveProperty(syntax, property.IsStatic ? null : receiver, property);
             }
 
             return null;
@@ -1415,6 +1511,272 @@ namespace Surtr.Compiler.Binding
             return Complete(syntax, null, candidates, name, isVirtual: false);
         }
 
+        /// <summary>
+        /// Every extension method (§15) named <paramref name="name"/> visible from here: declared in
+        /// this body's own module, or in one it wildcard-imports (§2.1) — the same reach a bare
+        /// module-level function already has (<see cref="AddModuleMethods"/>). A named or selective
+        /// import never contributes here, exactly as neither ever contributes a module function
+        /// either — both bring in types only.
+        /// </summary>
+        /// <remarks>
+        /// Every source is folded into one list rather than tried in <see cref="_module"/>-then-
+        /// <see cref="_imported"/> sequence, unlike <see cref="BindCall"/>'s own module-function
+        /// fallback: two extensions equally applicable from two different imports are a genuine
+        /// ambiguity (§15.3), not a "first import wins" pick, and <see cref="CompleteExtension"/>
+        /// only sees that by handing every candidate to one <see cref="OverloadResolution.Resolve"/>
+        /// call together.
+        /// </remarks>
+        private List<MethodSymbol> ExtensionCandidates(string name)
+        {
+            var candidates = new List<MethodSymbol>();
+            AddExtensionCandidates(_module, name, candidates);
+
+            foreach (var imported in _imported)
+                AddExtensionCandidates(imported, name, candidates);
+
+            return candidates;
+        }
+
+        private void AddExtensionCandidates(ModuleSymbol module, string name, List<MethodSymbol> candidates)
+        {
+            foreach (var method in module.ExtensionMethods)
+            {
+                // A static extension (§15.3) has no receiver-shaped first parameter to match an
+                // instance call's receiver against — `StaticExtensionCandidates` is its call site.
+                if (!method.ExtensionIsStatic
+                    && string.Equals(method.Name, name, StringComparison.Ordinal)
+                    && IsExtensionAccessible(method))
+                {
+                    candidates.Add(method);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Every static extension method (§15.3) named <paramref name="name"/> declared for
+        /// exactly <paramref name="type"/> and visible from here — this body's own module, or one it
+        /// wildcard-imports, the same reach <see cref="ExtensionCandidates"/> gives an instance one.
+        /// </summary>
+        /// <remarks>
+        /// Matched by reference identity against <see cref="MethodSymbol.ExtensionTargetType"/>
+        /// rather than walked through <paramref name="type"/>'s hierarchy the way an instance
+        /// extension's receiver is: there is no argument here for <c>Conversions</c> to classify, only
+        /// the type named at the call site, and an ordinary static member is not inherited through a
+        /// type name either (§3.1) — `Type.member` only ever means <em>this</em> type's own.
+        /// </remarks>
+        private List<MethodSymbol> StaticExtensionCandidates(NamedTypeSymbol type, string name)
+        {
+            var candidates = new List<MethodSymbol>();
+            AddStaticExtensionCandidates(_module, type, name, candidates);
+
+            foreach (var imported in _imported)
+                AddStaticExtensionCandidates(imported, type, name, candidates);
+
+            return candidates;
+        }
+
+        private void AddStaticExtensionCandidates(ModuleSymbol module, NamedTypeSymbol type, string name, List<MethodSymbol> candidates)
+        {
+            foreach (var method in module.ExtensionMethods)
+            {
+                if (method.ExtensionIsStatic
+                    && ReferenceEquals(method.ExtensionTargetType, type)
+                    && string.Equals(method.Name, name, StringComparison.Ordinal)
+                    && IsExtensionAccessible(method))
+                {
+                    candidates.Add(method);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Whether an extension property is reachable from here — the property counterpart of
+        /// <see cref="IsExtensionAccessible"/>, checked against <see cref="PropertySymbol"/>'s own
+        /// <c>ExtensionDeclaringContainer</c> rather than a method's.
+        /// </summary>
+        private bool IsExtensionPropertyAccessible(PropertySymbol property)
+        {
+            return property.ExtensionDeclaringContainer is NamedTypeSymbol container
+                ? AccessCheck.IsAccessibleWithin(property.Accessibility, container, _containingType, _module)
+                : AccessCheck.IsAccessible(property, property.Accessibility, _containingType, _module);
+        }
+
+        /// <summary>
+        /// The extension property (§15.1) named <paramref name="name"/> reachable on a receiver of
+        /// type <paramref name="receiverType"/>, or <see langword="null"/> if none applies.
+        /// </summary>
+        /// <remarks>
+        /// Matched by assignability against <see cref="PropertySymbol.ExtensionTargetType"/> rather
+        /// than reference identity — the same polymorphism an instance extension method's receiver
+        /// already gets through ordinary argument conversion (§15.3), so an extension declared for an
+        /// interface reaches every type that implements it.
+        /// </remarks>
+        private PropertySymbol? InstanceExtensionProperty(TypeSymbol receiverType, string name, SyntaxNode syntax)
+        {
+            var candidates = new List<PropertySymbol>();
+            AddInstanceExtensionPropertyCandidates(_module, receiverType, name, candidates);
+
+            foreach (var imported in _imported)
+                AddInstanceExtensionPropertyCandidates(imported, receiverType, name, candidates);
+
+            return PickExtensionProperty(candidates, name, syntax);
+        }
+
+        private void AddInstanceExtensionPropertyCandidates(ModuleSymbol module, TypeSymbol receiverType, string name, List<PropertySymbol> candidates)
+        {
+            foreach (var property in module.ExtensionProperties)
+            {
+                if (property.IsStatic
+                    || property.ExtensionTargetType is null
+                    || !string.Equals(property.Name, name, StringComparison.Ordinal)
+                    || !_conversions.IsAssignable(receiverType, property.ExtensionTargetType)
+                    || !IsExtensionPropertyAccessible(property))
+                {
+                    continue;
+                }
+
+                candidates.Add(property);
+            }
+        }
+
+        /// <summary>
+        /// The static extension property (§15.3) named <paramref name="name"/> declared for exactly
+        /// <paramref name="type"/>, or <see langword="null"/> if none applies — matched by reference
+        /// identity for the same reason a static extension method is (§3.1: a static member is never
+        /// reached polymorphically through a type name).
+        /// </summary>
+        private PropertySymbol? StaticExtensionProperty(NamedTypeSymbol type, string name, SyntaxNode syntax)
+        {
+            var candidates = new List<PropertySymbol>();
+            AddStaticExtensionPropertyCandidates(_module, type, name, candidates);
+
+            foreach (var imported in _imported)
+                AddStaticExtensionPropertyCandidates(imported, type, name, candidates);
+
+            return PickExtensionProperty(candidates, name, syntax);
+        }
+
+        private void AddStaticExtensionPropertyCandidates(ModuleSymbol module, NamedTypeSymbol type, string name, List<PropertySymbol> candidates)
+        {
+            foreach (var property in module.ExtensionProperties)
+            {
+                if (!property.IsStatic
+                    || !ReferenceEquals(property.ExtensionTargetType, type)
+                    || !string.Equals(property.Name, name, StringComparison.Ordinal)
+                    || !IsExtensionPropertyAccessible(property))
+                {
+                    continue;
+                }
+
+                candidates.Add(property);
+            }
+        }
+
+        /// <summary>
+        /// Picks the one extension property a name means, reporting an ambiguity (§15.3) exactly as
+        /// two equally applicable extension methods from different imports already would — properties
+        /// take no arguments for an overload-resolution-style tie-break to apply to, so two visible
+        /// candidates of the same name are always ambiguous outright.
+        /// </summary>
+        private PropertySymbol? PickExtensionProperty(List<PropertySymbol> candidates, string name, SyntaxNode syntax)
+        {
+            if (candidates.Count == 0)
+                return null;
+
+            if (candidates.Count > 1)
+            {
+                Report(
+                    SurtrDiagnosticCode.UnresolvedCall,
+                    syntax.Span,
+                    $"'{name}' matches {candidates.Count} extension properties equally well; there is no way to disambiguate one.");
+            }
+
+            return candidates[0];
+        }
+
+        /// <summary>
+        /// Whether an extension method is reachable from here: its own accessibility (§3.1) against
+        /// this module, when it was declared at module level — or against the class it was nested
+        /// inside, when nesting narrowed it that way (§15.2).
+        /// </summary>
+        private bool IsExtensionAccessible(MethodSymbol method)
+        {
+            return method.ExtensionDeclaringContainer is NamedTypeSymbol container
+                ? AccessCheck.IsAccessibleWithin(method.Accessibility, container, _containingType, _module)
+                : AccessCheck.IsAccessible(method, method.Accessibility, _containingType, _module);
+        }
+
+        /// <summary>
+        /// Completes a call an extension method answers (§15): <c>obj.method(args)</c> resolves
+        /// exactly as a call to the module-level function it compiles to, <c>method(obj, args)</c> —
+        /// the receiver becomes the first argument, matched against the method's first parameter like
+        /// any other.
+        /// </summary>
+        /// <remarks>
+        /// A hand-rolled twin of <see cref="Complete"/> rather than a call into it: <see cref="Complete"/>
+        /// always re-binds <c>syntax.Arguments</c> from scratch through <see cref="BindArguments"/>,
+        /// and the receiver here is already bound — passing it through unmodified, instead of handing
+        /// its syntax back in for a second binding pass, is what keeps a receiver with a side effect
+        /// (a call, an increment) from running twice.
+        /// </remarks>
+        private BoundExpression CompleteExtension(
+            CallExpressionSyntax syntax,
+            BoundExpression receiver,
+            IReadOnlyList<MethodSymbol> candidates,
+            string name)
+        {
+            BindArguments(syntax.Arguments, out var arguments, out var infos);
+
+            var combinedInfos = new ArgumentInfo[infos.Length + 1];
+            combinedInfos[0] = new ArgumentInfo(receiver.Type);
+            Array.Copy(infos, 0, combinedInfos, 1, infos.Length);
+
+            // A generic extension method (§15.4) has its receiver as `Parameters[0]` exactly like
+            // every other extension method, so it lines up with `combinedInfos[0]` the same way an
+            // ordinary generic call's arguments line up with its parameters — no extension-specific
+            // inference needed, just feeding the receiver in as if it were argument zero.
+            candidates = SubstituteGenericCandidates(syntax, candidates, combinedInfos, name);
+
+            var result = _overloads.Resolve(candidates, combinedInfos);
+
+            switch (result.Status)
+            {
+                case OverloadStatus.Resolved:
+                    break;
+
+                case OverloadStatus.NoCandidates:
+                    return Error(syntax, SurtrDiagnosticCode.UnresolvedName, $"'{name}' does not name a method in scope.");
+
+                case OverloadStatus.Ambiguous:
+                    return Error(
+                        syntax,
+                        SurtrDiagnosticCode.UnresolvedCall,
+                        $"The call to '{name}' matches {result.Candidates.Count} extension overloads equally well; a cast has to say which.");
+
+                default:
+                    return Error(syntax, SurtrDiagnosticCode.UnresolvedCall, $"No extension overload of '{name}' takes these arguments.");
+            }
+
+            var method = result.Method!;
+
+            // A synthetic leading entry standing for the receiver - `OrderArguments`/
+            // `BindDeferredLambdas` read only `.Name` and `.Span` off a written argument, never
+            // `.Value`, so this is never re-bound; the already-bound `receiver` below is what
+            // actually fills the slot.
+            var combinedWritten = new ArgumentSyntax[syntax.Arguments.Count + 1];
+            combinedWritten[0] = new ArgumentSyntax(syntax.Callee.Span, null, syntax.Callee);
+            for (int i = 0; i < syntax.Arguments.Count; i++)
+                combinedWritten[i + 1] = syntax.Arguments[i];
+
+            var combinedBound = new BoundExpression?[arguments.Length + 1];
+            combinedBound[0] = receiver;
+            Array.Copy(arguments, 0, combinedBound, 1, arguments.Length);
+
+            var ordered = OrderArguments(syntax, combinedWritten, method, BindDeferredLambdas(combinedWritten, combinedBound, method));
+
+            return new BoundCallExpression(syntax, null, method, ordered, isVirtual: false);
+        }
+
         private BoundExpression Complete(
             CallExpressionSyntax syntax,
             BoundExpression? receiver,
@@ -1457,10 +1819,15 @@ namespace Surtr.Compiler.Binding
             var ordered = OrderArguments(
                 syntax, syntax.Arguments, method, BindDeferredLambdas(syntax.Arguments, arguments, method));
 
-            // A call on a sealed type or through `super` can be bound directly, which is the
-            // devirtualisation §2.2 calls out as a static fact rather than a guess.
+            // A call on a sealed type, through `super`, or on a member itself declared
+            // `sealed override` can be bound directly, which is the devirtualisation §2.2 and
+            // §3.3 call out as a static fact rather than a guess. `method` is already the most
+            // derived declaration visible from the receiver's static type (member lookup walks
+            // from that type toward its base), so a `sealed override` found here closes every
+            // type below that static type, not just the receiver's own exact type.
             bool virtualCall = isVirtual
                 && method.Dispatch != MethodDispatch.Direct
+                && !method.IsSealed
                 && !(receiver?.Type.NonNullable is NamedTypeSymbol { IsSealed: true });
 
             return new BoundCallExpression(syntax, method.IsStatic ? null : receiver, method, ordered, virtualCall);
@@ -1684,7 +2051,7 @@ namespace Surtr.Compiler.Binding
                 for (int i = 0; i < supplied.Length && i < arguments.Count; i++)
                     supplied[i] = arguments[i].Name is null ? arguments[i].Type : null;
 
-                if (TypeInference.TryInfer(candidate.TypeParameters, declared, supplied, _factory, out var inferred, out _))
+                if (TypeInference.TryInfer(candidate.TypeParameters, declared, supplied, _factory, out var inferred, out _, _lookup))
                     substituted.Add(Construct(candidate, inferred, syntax));
             }
 
@@ -1784,6 +2151,18 @@ namespace Surtr.Compiler.Binding
             if (parameters.Count == 0)
                 return NoArguments;
 
+            // `SubstituteGenericCandidates` replaces a generic method with the concrete view its
+            // arguments infer (§6) *before* this runs, which is what lets ordinary conversion rules
+            // decide applicability — but it means `parameters[i].Type` here already reads `int`
+            // where the declaration reads `T`, and converting an argument against that concrete
+            // type is an identity conversion with nothing left to box. The declaration's own frame
+            // slot is still erased, though (one compiled body per generic method, §6's "nothing is
+            // reified"), so a value reaching it still has to become a reference the same way one
+            // reaching `unknown` does. `original` is the unsubstituted declaration - itself when
+            // this call was never substituted at all - and a parameter still bare `T` there is
+            // exactly the case `array`/`dict`'s own `G0`/`G1` members are the built-in version of.
+            var original = method.OriginalDefinition ?? method;
+
             var ordered = new BoundExpression?[parameters.Count];
             var varargs = new List<BoundExpression>();
             int varargIndex = -1;
@@ -1805,7 +2184,7 @@ namespace Surtr.Compiler.Binding
                     {
                         if (string.Equals(parameters[p].Name, name, StringComparison.Ordinal))
                         {
-                            ordered[p] = Convert(arguments[i], parameters[p].Type, written[i].Span);
+                            ordered[p] = Convert(arguments[i], ConversionTarget(original, parameters, p), written[i].Span);
                             break;
                         }
                     }
@@ -1823,7 +2202,7 @@ namespace Surtr.Compiler.Binding
                         && arguments.Count - i == 1
                         && _conversions.IsAssignable(arguments[i].Type, vararg.Type))
                     {
-                        ordered[varargIndex] = Convert(arguments[i], vararg.Type, written[i].Span);
+                        ordered[varargIndex] = Convert(arguments[i], ConversionTarget(original, parameters, varargIndex), written[i].Span);
                         continue;
                     }
 
@@ -1833,7 +2212,7 @@ namespace Surtr.Compiler.Binding
                 }
 
                 if (target < parameters.Count)
-                    ordered[target] = Convert(arguments[i], parameters[target].Type, written[i].Span);
+                    ordered[target] = Convert(arguments[i], ConversionTarget(original, parameters, target), written[i].Span);
             }
 
             if (varargIndex >= 0 && ordered[varargIndex] is null)
@@ -1847,6 +2226,30 @@ namespace Surtr.Compiler.Binding
                 result[i] = ordered[i] ?? Omitted(syntax, parameters[i]);
 
             return result;
+        }
+
+        /// <summary>
+        /// The type an argument at <paramref name="index"/> converts against: the substituted
+        /// parameter's own type, unless the declaration's unsubstituted parameter there is a bare
+        /// type parameter of the method itself, in which case it is <c>unknown</c> instead.
+        /// </summary>
+        /// <remarks>
+        /// A value reaching a generic method's own erased frame slot has to become a reference the
+        /// same way one reaching a written <c>unknown</c> parameter does (§1.11) - the declaration
+        /// is compiled once, generically, so the slot is erased regardless of which concrete type a
+        /// given call substituted in. Converting against the substituted type instead would classify
+        /// <c>int</c> reaching a substituted <c>int</c> parameter as an identity conversion, which
+        /// leaves nothing for <c>MethodBodyEmitter</c> to box - exactly the gap that let a
+        /// raw <c>int</c> reach <c>InvokeInterface</c> unboxed and crash on the entity lookup only
+        /// a boxed value answers. Anything already a reference erases the same way for free (the
+        /// emitted <c>Box</c> is a no-op there), so this widens correctness without narrowing it.
+        /// </remarks>
+        private TypeSymbol ConversionTarget(MethodSymbol original, IReadOnlyList<ParameterSymbol> substitutedParameters, int index)
+        {
+            if (index < original.Parameters.Count && original.Parameters[index].Type.NonNullable is TypeParameterSymbol)
+                return _factory.Unknown;
+
+            return substitutedParameters[index].Type;
         }
 
         /// <summary>
@@ -2490,7 +2893,7 @@ namespace Surtr.Compiler.Binding
                 for (int i = 0; i < declared.Length; i++)
                     declared[i] = constructor.Parameters[i].Type;
 
-                if (TypeInference.TryInfer(definition.TypeParameters, declared, supplied, _factory, out arguments, out _))
+                if (TypeInference.TryInfer(definition.TypeParameters, declared, supplied, _factory, out arguments, out _, _lookup))
                     return true;
             }
 

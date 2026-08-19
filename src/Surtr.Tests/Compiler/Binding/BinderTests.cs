@@ -1350,6 +1350,84 @@ namespace Surtr.Tests.Compiler.Binding
         }
         #endregion
 
+        #region Binder.MissingAbstractMembers (tooling API for the LSP's "implement missing members" code action)
+        [Fact]
+        public void MissingAbstractMembersFindsAnUnimplementedInterfaceMember()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Counter : IIterable<int> { }"));
+
+            binder.BindBodies();
+            AssertReports(compilation, SurtrDiagnosticCode.MissingImplementation);
+
+            var counter = Type(binder, "game.core", "Counter");
+            var missing = binder.MissingAbstractMembers(counter);
+
+            var member = Assert.Single(missing);
+            Assert.True(member.FromInterface);
+            Assert.Equal("iterate", member.Required.Name);
+            Assert.Equal("IIterable<int>", member.Contract.ToDisplayString());
+
+            // The substituted signature, not the interface's own unsubstituted `T` - the exact
+            // distinction the 5cca11a/0bef8a2 bugs got wrong, and what a generated stub must read
+            // correctly to compile.
+            Assert.Equal("IIterator<int>", member.Required.ReturnType.ToDisplayString());
+        }
+
+        [Fact]
+        public void MissingAbstractMembersFindsAnUnoverriddenAbstractBaseMember()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "abstract class Shape\n"
+                + "{\n"
+                + "    public abstract fun area(): float;\n"
+                + "}\n"
+                + "class Circle : Shape { }"));
+
+            binder.BindBodies();
+            AssertReports(compilation, SurtrDiagnosticCode.MissingImplementation);
+
+            var circle = Type(binder, "game.core", "Circle");
+            var missing = binder.MissingAbstractMembers(circle);
+
+            var member = Assert.Single(missing);
+            Assert.False(member.FromInterface);
+            Assert.Equal("area", member.Required.Name);
+            Assert.Equal("Shape", member.Contract.ToDisplayString());
+        }
+
+        [Fact]
+        public void MissingAbstractMembersIsEmptyOnceEveryObligationIsSatisfied()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Counter : IIterable<int>\n"
+                + "{\n"
+                + "    public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
+                + "}"));
+
+            binder.BindBodies();
+            AssertNoErrors(compilation);
+
+            var counter = Type(binder, "game.core", "Counter");
+            Assert.Empty(binder.MissingAbstractMembers(counter));
+        }
+
+        [Fact]
+        public void MissingAbstractMembersIsEmptyOnAnInterfaceItself()
+        {
+            // An interface owes nothing to itself - CheckMembersImplemented's own exemption, mirrored
+            // here since a code action offered on an interface declaration would have nothing to fill.
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "interface INumbers : IIterable<int> { }"));
+
+            binder.BindBodies();
+            AssertNoErrors(compilation);
+
+            var numbers = Type(binder, "game.core", "INumbers");
+            Assert.Empty(binder.MissingAbstractMembers(numbers));
+        }
+        #endregion
+
         #region Per-accessor modifiers (§3.2, §3.4)
         [Fact]
         public void AnAccessorMayNarrowItsOwnVisibilityBelowTheProperty()

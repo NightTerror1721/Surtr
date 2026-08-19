@@ -212,7 +212,7 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
-        public void ATypesParameterEmitsItsPositionAndAMethodsDoesNot()
+        public void ATypeParameterEmitsItsPositionAndAMethodsDoesToo()
         {
             var factory = new TypeSymbolFactory();
             var emitter = new DescriptorEmitter();
@@ -222,12 +222,13 @@ namespace Surtr.Tests.Compiler.Binding
             Assert.Equal("G0", emitter.EmitDescriptor(box.TypeParameters[0]));
             Assert.Equal("G1", emitter.EmitDescriptor(box.TypeParameters[1]));
 
-            // Nothing at a call site indexes into a method's own parameter list, so its parameters
-            // are plainly erased.
+            // A method's parameters keep their position under their own symbol, so an importer can
+            // tell "the declaring method's first parameter" from "the declaring type's first" —
+            // which is what lets a call site's inference and constraints survive the image.
             var method = new MethodSymbol("map", box, factory.Void);
             var methodParameter = factory.DeclareTypeParameter("R", method, 0);
 
-            Assert.Equal("E", emitter.EmitDescriptor(methodParameter));
+            Assert.Equal("H0", emitter.EmitDescriptor(methodParameter));
         }
 
         [Fact]
@@ -241,6 +242,25 @@ namespace Surtr.Tests.Compiler.Binding
 
             Assert.Equal("AG0", emitter.EmitDescriptor(factory.Array(parameter)));
             Assert.Equal("DIAG0", emitter.EmitDescriptor(factory.Dictionary(factory.Int, factory.Array(parameter))));
+        }
+
+        [Fact]
+        public void AMethodParameterInsideACompositeStillEmitsItsPosition()
+        {
+            var factory = new TypeSymbolFactory();
+            var emitter = new DescriptorEmitter();
+
+            var box = factory.DeclareType("Box", TypeSymbolKind.Class, new ModuleSymbol("box"));
+            var method = new MethodSymbol("map", box, factory.Void);
+            var parameter = factory.DeclareTypeParameter("R", method, 0);
+
+            Assert.Equal("AH0", emitter.EmitDescriptor(factory.Array(parameter)));
+            Assert.Equal(
+                "DIAH0",
+                emitter.EmitDescriptor(factory.Dictionary(factory.Int, factory.Array(parameter))));
+            Assert.Equal(
+                "L(H0)V",
+                emitter.EmitDescriptor(factory.Closure(new[] { parameter }, factory.Void)));
         }
         #endregion
 

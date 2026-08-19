@@ -42,6 +42,7 @@ namespace Surtr.Runtime.Classes
     ///             | 'R'                                range of ints
     ///             | 'E'                                erased generic type parameter
     ///             | 'G' digit                          the declaring type's n-th generic parameter
+    ///             | 'H' digit                          the declaring method's n-th generic parameter
     ///             | '?' primitive                      nullable primitive (?I, ?F, ?B, ?C)
     /// fullname   := modulePath ':' segment ('.' segment)*
     /// segment    := typeName ('`' arity)?
@@ -132,6 +133,29 @@ namespace Surtr.Runtime.Classes
         /// descriptor of a closure descriptor - a parameter, field or element can never be void.
         /// </summary>
         public const char SymbolVoid = 'V';
+
+        /// <summary>
+        /// Descriptor symbol introducing a declared generic parameter of the <em>method</em> the
+        /// member belongs to: <c>H</c> followed by one decimal digit, so <c>H0</c> is the method's
+        /// first parameter.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The type-level twin <see cref="SymbolGenericParameter"/> already exists and resolves to
+        /// the same erased class, but the two cannot share a symbol: a descriptor is the canonical
+        /// form for comparison and hashing, and <c>G0</c> in a signature written against one
+        /// construction must never be mistaken for the same parameter in another. Keeping the
+        /// method's parameters under their own symbol lets a reader tell "the declaring type's
+        /// first parameter" from "the declaring method's first parameter" without knowing which
+        /// member the descriptor belongs to - the <c>SignatureKey()</c> erasure rewrites both to
+        /// <see cref="SymbolErased"/>, so the slot they occupy stays the same.
+        /// </para>
+        /// <para>
+        /// One digit, like <c>G</c>: the arity that would need ten parameters does not exist, and a
+        /// fixed width keeps this parsing in one pass with a single character of lookahead.
+        /// </para>
+        /// </remarks>
+        public const char SymbolMethodGenericParameter = 'H';
 
         /// <summary>
         /// Descriptor symbol introducing a declared generic parameter of the type the member
@@ -264,9 +288,20 @@ namespace Surtr.Runtime.Classes
         /// </summary>
         /// <returns><see langword="true"/> if the descriptor is a generic parameter.</returns>
         public bool TryGetGenericParameterIndex(out int index)
+            => TryGetParameterIndex(SymbolGenericParameter, out index);
+
+        /// <summary>
+        /// Whether this reference names a declared generic parameter of the declaring
+        /// <em>method</em>, and which one.
+        /// </summary>
+        /// <returns><see langword="true"/> if the descriptor is a method generic parameter.</returns>
+        public bool TryGetMethodGenericParameterIndex(out int index)
+            => TryGetParameterIndex(SymbolMethodGenericParameter, out index);
+
+        private bool TryGetParameterIndex(char symbol, out int index)
         {
             string descriptor = Descriptor;
-            if (descriptor.Length == 2 && descriptor[0] == SymbolGenericParameter)
+            if (descriptor.Length == 2 && descriptor[0] == symbol)
             {
                 int digit = descriptor[1] - '0';
                 if ((uint)digit <= 9)
@@ -462,6 +497,20 @@ namespace Surtr.Runtime.Classes
             return new SurtrClassReference(GenericParameterDescriptors[index]);
         }
 
+        /// <summary>
+        /// Builds a reference to the declaring method's <paramref name="index"/>-th generic
+        /// parameter. Distinct from <see cref="GenericParameter"/> by its symbol, so a signature
+        /// can never confuse one with the other - see <see cref="SymbolMethodGenericParameter"/>.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException"><paramref name="index"/> is outside 0-9.</exception>
+        public static SurtrClassReference MethodGenericParameter(int index)
+        {
+            if ((uint)index > 9)
+                throw new ArgumentOutOfRangeException(nameof(index), index, "A method generic parameter index must be a single digit.");
+
+            return new SurtrClassReference(MethodGenericParameterDescriptors[index]);
+        }
+
         /// <summary>Builds a reference to the nullable form of a primitive type.</summary>
         /// <exception cref="ArgumentException"><paramref name="primitiveType"/> is not a primitive.</exception>
         public static SurtrClassReference Nullable(SurtrClassReference primitiveType)
@@ -498,8 +547,12 @@ namespace Surtr.Runtime.Classes
         {
             string descriptor = reference.Descriptor;
 
-            if (descriptor.IndexOf(SymbolGenericParameter) < 0)
+            // Either symbol makes a rewrite necessary - a method parameter is a parameter too.
+            if (descriptor.IndexOf(SymbolGenericParameter) < 0
+                && descriptor.IndexOf(SymbolMethodGenericParameter) < 0)
+            {
                 return reference;
+            }
 
             var builder = new StringBuilder(descriptor.Length);
             AppendErased(builder, descriptor);
@@ -510,11 +563,11 @@ namespace Surtr.Runtime.Classes
         /// Appends a descriptor with every generic parameter rewritten to the erased symbol.
         /// </summary>
         /// <remarks>
-        /// A single left-to-right pass, because <c>G</c> is always followed by exactly one digit
-        /// and nothing else in the grammar can produce that pair - the same one-character-of-
-        /// lookahead property the descriptor encoding is built on. Nested forms are covered for
-        /// free: <c>AG0</c> becomes <c>AE</c> without the loop having to know it is inside an
-        /// array.
+        /// A single left-to-right pass, because <c>G</c> and <c>H</c> are always followed by
+        /// exactly one digit and nothing else in the grammar can produce that pair - the same
+        /// one-character-of-lookahead property the descriptor encoding is built on. Nested forms
+        /// are covered for free: <c>AG0</c> becomes <c>AE</c> without the loop having to know it
+        /// is inside an array.
         /// </remarks>
         internal static void AppendErased(StringBuilder builder, string descriptor)
         {
@@ -522,7 +575,8 @@ namespace Surtr.Runtime.Classes
             {
                 char symbol = descriptor[i];
 
-                if (symbol == SymbolGenericParameter && i + 1 < descriptor.Length)
+                if ((symbol == SymbolGenericParameter || symbol == SymbolMethodGenericParameter)
+                    && i + 1 < descriptor.Length)
                 {
                     builder.Append(SymbolErased);
                     i++;
@@ -549,6 +603,12 @@ namespace Surtr.Runtime.Classes
         private static readonly string[] GenericParameterDescriptors =
         {
             "G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8", "G9",
+        };
+
+        // The method-level twin, kept separate so a signature key cannot confuse the two.
+        private static readonly string[] MethodGenericParameterDescriptors =
+        {
+            "H0", "H1", "H2", "H3", "H4", "H5", "H6", "H7", "H8", "H9",
         };
         #endregion
 
@@ -583,6 +643,65 @@ namespace Surtr.Runtime.Classes
             string descriptor = Descriptor;
             ReadList(descriptor, 2, out int afterList);
             return Slice(afterList, SkipDescriptor(descriptor, afterList));
+        }
+
+        /// <summary>
+        /// Whether this descriptor mentions any generic parameter — <c>G&lt;n&gt;</c> or
+        /// <c>H&lt;n&gt;</c> — anywhere outside a full name.
+        /// </summary>
+        /// <remarks>
+        /// The test that separates an <em>open</em> form from a <em>construction</em>: a descriptor
+        /// whose arguments are the declaration's own parameters names the class itself, while one
+        /// whose arguments are all concrete names a specific construction.
+        /// <c>typeof(Box)</c> and <c>typeof(Box&lt;int&gt;)</c> emit different descriptors, and this
+        /// is how the reflection surface tells which one it is looking at. <c>O</c>/<c>N</c> full
+        /// names never contain a parameter (the same assumption <see cref="AppendErased"/> makes),
+        /// but a construction's <em>arguments</em> are fair game — <c>Obox:Box`1;G0</c> is open.
+        /// </remarks>
+        public bool ContainsOpenParameter()
+        {
+            if (TryGetGenericParameterIndex(out _) || TryGetMethodGenericParameterIndex(out _))
+                return true;
+
+            switch (TypeCode)
+            {
+                case SurtrValueTypeCode.Array:
+                    return GetArrayElementType().ContainsOpenParameter();
+
+                case SurtrValueTypeCode.Dictionary:
+                    return GetDictionaryKeyType().ContainsOpenParameter()
+                        || GetDictionaryValueType().ContainsOpenParameter();
+
+                case SurtrValueTypeCode.Tuple:
+                    foreach (var element in GetTupleElementTypes())
+                    {
+                        if (element.ContainsOpenParameter())
+                            return true;
+                    }
+                    return false;
+
+                case SurtrValueTypeCode.Closure:
+                    foreach (var parameter in GetClosureParameterTypes())
+                    {
+                        if (parameter.ContainsOpenParameter())
+                            return true;
+                    }
+                    return GetClosureReturnType().ContainsOpenParameter();
+
+                case SurtrValueTypeCode.Object:
+                case SurtrValueTypeCode.Native:
+                {
+                    foreach (var argument in GetTypeArguments())
+                    {
+                        if (argument.ContainsOpenParameter())
+                            return true;
+                    }
+                    return false;
+                }
+
+                default:
+                    return false;
+            }
         }
 
         /// <summary>
@@ -744,6 +863,7 @@ namespace Surtr.Runtime.Classes
                 }
 
                 case SymbolGenericParameter:
+                case SymbolMethodGenericParameter:
                 {
                     // Exactly one digit has to follow, which is what keeps this fixed-width.
                     if ((uint)(index + 1) >= (uint)descriptor.Length)
@@ -886,8 +1006,10 @@ namespace Surtr.Runtime.Classes
             SymbolErased => SurtrValueTypeCode.Erased,
             SymbolVoid => SurtrValueTypeCode.Void,
             // A generic parameter is an erased slot that remembers which parameter it was: the
-            // index is metadata for the compiler, the representation is the erased one.
+            // index is metadata for the compiler, the representation is the erased one. The
+            // method-level one is the same slot and the same representation.
             SymbolGenericParameter => SurtrValueTypeCode.Erased,
+            SymbolMethodGenericParameter => SurtrValueTypeCode.Erased,
             _ => SurtrValueTypeCode.Invalid,
         };
         #endregion
@@ -924,6 +1046,7 @@ namespace Surtr.Runtime.Classes
                 case SymbolVoid: builder.Append("void"); return index + 1;
 
                 case SymbolGenericParameter:
+                case SymbolMethodGenericParameter:
                 {
                     // No name to print: the descriptor carries the position, and the declaring
                     // type - which is what knows the name - is not reachable from here.

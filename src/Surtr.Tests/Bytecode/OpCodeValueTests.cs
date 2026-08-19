@@ -81,7 +81,8 @@ namespace Surtr.Tests.Bytecode
             (OpCode.DictValues, 0xD8), (OpCode.DictIn, 0xD9), (OpCode.DictNIn, 0xDA), (OpCode.RangeNew, 0xDB),
             (OpCode.RangeNewInclusive, 0xDC), (OpCode.LoadType, 0xDD), (OpCode.LoadTypeX, 0xDE),
             (OpCode.GetTypeOfValue, 0xDF), (OpCode.LoadModule, 0xE0), (OpCode.LoadModuleX, 0xE1),
-            (OpCode.LoadCurrentModule, 0xE2)
+            (OpCode.LoadCurrentModule, 0xE2), (OpCode.BoxDynamic, 0xE3), (OpCode.DynEQ, 0xE4),
+            (OpCode.DynNE, 0xE5), (OpCode.UnboxDynamic, 0xE6)
         };
 
         [Fact]

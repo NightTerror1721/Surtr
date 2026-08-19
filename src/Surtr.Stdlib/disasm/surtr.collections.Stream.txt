@@ -1,0 +1,46 @@
+module surtr.collections.Stream
+  constants: 0   types: 2   fields: 0   methods: 6   modules: 0
+
+  type table:
+    #0  surtr.collections.List:List<int>
+    #1  T0[]
+
+  method table:
+    #0  test() -> void
+    #1  toArray(surtr:IIterable<T0>) -> T0[]
+    #2  surtr.collections.List:List<.ctor(int) -> void
+    #3  surtr:IIterable<T0>.iterate() -> surtr:IIterator<T0>
+    #4  surtr:IIterator<T0>.moveNext() -> bool
+    #5  surtr:IIterator<T0>.get_current() -> T0
+
+[internal] static test(): void
+  ; entry 0, locals 2, stack 3, code 0000..0014
+    0000  ObjNew 0 (surtr.collections.List:List<int>)
+    0003  Dup
+    0004  PushI8 16
+    0006  InvokeSpecial 2 (ctor) args=2 ret=0
+    000B  Stl0
+    000C  Ldl0
+    000D  CallLocalModule 1 (toArray) args=1 ret=1
+    0012  Stl1
+    0013  ReturnVoid
+
+[internal] static toArray(self: surtr:IIterable<T0>): T0[]
+  ; entry 1, locals 3, stack 2, code 0014..0037
+    0014  ArrPack 1 (T0[]) count=0
+    0019  Stl1
+    001A  Ldl0
+    001B  InvokeInterface 3 (iterate) args=1 ret=1
+    0020  Stl2
+  L0:
+    0021  Ldl2
+    0022  InvokeInterface 4 (moveNext) args=1 ret=1
+    0027  JPZ +11 -> L1 (0035)
+    002A  Ldl1
+    002B  Ldl2
+    002C  InvokeInterface 5 (get_current) args=1 ret=1
+    0031  ArrPush
+    0032  JP -20 -> L0 (0021)
+  L1:
+    0035  Ldl1
+    0036  ReturnValue

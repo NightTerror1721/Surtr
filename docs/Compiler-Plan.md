@@ -471,18 +471,17 @@ Three of those took a decision worth recording:
   an override further down still wins. It is emitted, never bound, so nothing in source can name it
   and `SignatureSet` never sees it as a duplicate. `SurtrClassReference.Erase` is new and shared with
   `SurtrMethodInfo.SignatureKey`, because the compiler has to produce exactly the descriptor the
-  linker compares and two copies of that rule would agree until one was edited.
+  linker compares and two copies of that rule would agree until one was edited. **Generalised
+  later**: the same shape now also fires whenever a `Direct` member (no erasure involved at all)
+  fills a contract slot, which is what makes `override` optional for interface satisfaction
+  (`Language-Syntax.md` §3.3).
 * **A call on a `value class`.** The receiver boxes with `BoxAs` only where the callee might be
   reached through its class — a method whose own dispatch is not `Direct` — and `this` inside such
   a callee unwraps to match; a `Direct` method (the common case: nothing but interface satisfaction
   ever makes a value class method non-`Direct`, since it cannot be extended) needs neither, on
   either side of the call. `BoxReceiverForCall` and `LoadReceiver` share the one test that decides
   this, so a method's body and every caller of it can never disagree about which convention it was
-  compiled against. What remains a missed optimisation rather than a correctness gap is a call to a
-  method that satisfies an interface but is reached without going through it — closing that would
-  need two entry points per such method (a boxing bridge occupying the vtable slot, forwarding to
-  an unboxed body), which is more surface than the untested combination has earned so far; boxing
-  more than needed is safe there where boxing less is a type confusion.
+  compiled against. §6.3 records how the interface case closed.
 * **Nested lambda captures.** `NoteCapture` walks a *stack* of lambda frames outwards and stops at
   the first one the symbol is inside. An inner lambda's upvalue has to come from the outer body, so
   the outer lambda has to have captured it too; stopping at the innermost boundary is exactly what
@@ -565,15 +564,16 @@ knowing every site. A missed one is a type confusion, not a slow path.
   `get`/`set`, which are calls too. `BoxReceiverForCall` (`MethodBodyEmitter.cs`) is the single test
   this and every other boxing site below it agree with.
 
-**Still boxes, as a known missed optimisation** — a call to a method it declares that satisfies an
-interface but is reached without going through that interface. That method's own dispatch is not
-`Direct` (interface satisfaction is written `override` in source, same as a base-class override, so
-it is never `Direct`), so a devirtualised call on it — a value class is sealed by §2.9, so this is
-every direct-typed call to such a method — still boxes today, the same as a call reached through the
-interface does. Closing it needs two entry points per such method: a thin boxing bridge occupying
-the vtable slot, unboxing and forwarding via a direct call to the real, unboxed-receiver body. Left
-alone because nothing exercises a value class implementing an interface yet, so there is no
-regression risk to weigh against the extra surface.
+**Closed.** A method satisfying an interface no longer has to give up `Direct` dispatch to do it
+(`Language-Syntax.md` §3.3): `override` is optional there, and a plain `Direct` member is answered
+for by a synthetic bridge occupying the interface's slot instead. `EmitBridge` (`ModuleEmitter.cs`)
+is that same two-entry-point shape this section used to describe as owed — a thin bridge occupying
+the vtable slot, unboxing the receiver (a value class is sealed by §2.9, so every direct-typed call
+reaches the same `Direct` body either way) and forwarding via a direct call to the real, unboxed-
+receiver body — now built as the general mechanism for interface satisfaction rather than a
+value-class-only fix.
+`LoweringChoiceTests.AValueClassMethodSatisfyingAnInterfaceWithoutOverrideDoesNotBoxOnADirectCall`
+pins it.
 
 Reading one back out of an erased slot is the mirror obligation: a `Cast` to the value class, then
 unwrap. That is the same pair §7 already lists for primitives, applied to one more type.
@@ -696,6 +696,22 @@ which is precisely why two constructions land on one `SurtrClass`.
 The standard library's contracts are now declared as `IIterable`1`, `IIterator`1`, `IComparable`1`
 and `IEquatable`1`, each naming itself with its own parameter (`Osurtr:IIterable`1;G0`). There is
 no open form to write: a name promising one argument and supplying none is malformed.
+
+**Constraints survive now too.** What `<T : IComparable<T>>` demanded of `T` lands in the image as
+a descriptor list per parameter on the `Class`/`Interface` sections (format version 5), written by
+the emitter alongside the parameter names and rebuilt by `MetadataImporter` onto
+`TypeParameterSymbol.Constraints`. Nothing on an execution path reads the table — the same bargain
+`GenericParameters` already made — so this changes no layout, dispatch or opcode.
+
+**Generic methods travel whole (format version 6).** A method's own parameters and their bounds
+now ride in the `Method` section in the same shape a type's do, and a signature mentions a method
+parameter through the `H<n>` descriptor form — its own symbol, so an importer never mistakes the
+declaring method's first parameter for the declaring type's. `MetadataImporter` rebuilds the
+method's `TypeParameterSymbol`s (names, `Constraints`) before its signature, so a call site in
+another module infers against real parameters and is checked against real bounds. Erasure still
+governs every slot and every signature key: `H0` and `G0` both key as `E`, so a bridge or an
+interface implementation written against the erased form still lines up, and no layout, dispatch
+or opcode changes.
 
 ---
 

@@ -1036,6 +1036,22 @@ namespace Surtr.VM
                     goto Dispatch;
                 }
 
+                case OpCode.DynEQ:
+                {
+                    SurtrValue right = SurtrValue.FromRaw(*--sp);
+                    SurtrValue left = SurtrValue.FromRaw(*(sp - 1));
+                    *(sp - 1) = SurtrValue.TagMaskBool | (comparer.ValuesEqual(left, right) ? 1UL : 0UL);
+                    goto Dispatch;
+                }
+
+                case OpCode.DynNE:
+                {
+                    SurtrValue right = SurtrValue.FromRaw(*--sp);
+                    SurtrValue left = SurtrValue.FromRaw(*(sp - 1));
+                    *(sp - 1) = SurtrValue.TagMaskBool | (comparer.ValuesEqual(left, right) ? 0UL : 1UL);
+                    goto Dispatch;
+                }
+
                 case OpCode.GT:
                 {
                     int right = (int)*--sp;
@@ -1140,12 +1156,13 @@ namespace Surtr.VM
 
                 case OpCode.LoadType:
                 {
-                    var target = typeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
+                    ref var typeHandle = ref typeTable[(ip[0] | (ip[1] << 8))];
+                    var target = typeHandle.ResolvedType!;
                     ip += 2;
                     current.IP = ip;
                     _sp = sp;
 
-                    var typeValue = runtime.GetOrCreateTypeValue(target);
+                    var typeValue = runtime.GetOrCreateTypeValue(target, typeHandle.Reference);
                     entities = context.EntityRegistry.Entities;
                     *sp++ = SurtrValue.TagMaskReference | (uint)typeValue.GetSurtrReference();
                     goto Dispatch;
@@ -1153,14 +1170,15 @@ namespace Surtr.VM
 
                 case OpCode.LoadTypeX:
                 {
-                    var target = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
+                    ref var typeHandleX = ref typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    var targetX = typeHandleX.ResolvedType!;
                     ip += 4;
                     current.IP = ip;
                     _sp = sp;
 
-                    var typeValue = runtime.GetOrCreateTypeValue(target);
+                    var typeValueX = runtime.GetOrCreateTypeValue(targetX, typeHandleX.Reference);
                     entities = context.EntityRegistry.Entities;
-                    *sp++ = SurtrValue.TagMaskReference | (uint)typeValue.GetSurtrReference();
+                    *sp++ = SurtrValue.TagMaskReference | (uint)typeValueX.GetSurtrReference();
                     goto Dispatch;
                 }
 
@@ -1363,6 +1381,44 @@ namespace Surtr.VM
                 case OpCode.Unbox:
                     *(sp - 1) = ((SurtrBoxed)entities[(SurtrRef)(*(sp - 1))]!).Value.Raw;
                     goto Dispatch;
+
+                case OpCode.BoxDynamic:
+                {
+                    SurtrRawValue subject = *(sp - 1);
+
+                    // Already a reference (or null) - the same no-op every fixed Box* opcode is for
+                    // a value that needs none, just read off the tag instead of a static type.
+                    if ((subject & SurtrValue.TagMask) == SurtrValue.TagMaskReference)
+                        goto Dispatch;
+
+                    current.IP = ip;
+                    _sp = sp;
+                    SurtrValue value = SurtrValue.FromRaw(subject);
+                    var boxed = new SurtrBoxed(SurtrBuiltIns.ForValue(value), value);
+                    SurtrRef reference = context.EntityRegistry.Register(boxed);
+                    entities = context.EntityRegistry.Entities;
+                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Dispatch;
+                }
+
+                case OpCode.UnboxDynamic:
+                {
+                    SurtrRawValue subject = *(sp - 1);
+
+                    // Not a reference at all - already the raw value this is supposed to produce.
+                    if ((subject & SurtrValue.TagMask) != SurtrValue.TagMaskReference)
+                        goto Dispatch;
+
+                    SurtrRef reference = (SurtrRef)subject;
+
+                    // Null, or a reference that is not a box at all (an ordinary object, array,
+                    // string) - both stay exactly as they are, the same "leave a reference alone"
+                    // rule BoxDynamic follows in the other direction.
+                    if (reference != 0 && entities[reference] is SurtrBoxed boxed)
+                        *(sp - 1) = boxed.Value.Raw;
+
+                    goto Dispatch;
+                }
 
                 case OpCode.Cast:
                 {

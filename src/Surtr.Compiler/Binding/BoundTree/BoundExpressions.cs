@@ -135,11 +135,18 @@ namespace Surtr.Compiler.Binding.BoundTree
     /// <summary>A property read, which becomes a call to its getter.</summary>
     public sealed class BoundPropertyExpression : BoundExpression
     {
-        internal BoundPropertyExpression(SyntaxNode syntax, BoundExpression? receiver, PropertySymbol property)
+        internal BoundPropertyExpression(
+            SyntaxNode syntax,
+            BoundExpression? receiver,
+            PropertySymbol property,
+            bool isVirtualGet,
+            bool isVirtualSet)
             : base(syntax, property.Type)
         {
             Receiver = receiver;
             Property = property;
+            IsVirtualGet = isVirtualGet;
+            IsVirtualSet = isVirtualSet;
         }
 
         /// <summary>The instance it is read from, or <see langword="null"/> for a static.</summary>
@@ -147,6 +154,18 @@ namespace Surtr.Compiler.Binding.BoundTree
 
         /// <summary>The property.</summary>
         public PropertySymbol Property { get; }
+
+        /// <summary>
+        /// Whether a read goes through the getter's vtable slot. False for a static property, a
+        /// `Direct` getter, a getter reached through `super`, one declared `sealed override`, or
+        /// one on a sealed receiver — the same devirtualisation §2.2/§3.3 give an ordinary call
+        /// (<see cref="BoundCallExpression.IsVirtual"/>), computed once here rather than
+        /// re-derived at every accessor call site.
+        /// </summary>
+        public bool IsVirtualGet { get; }
+
+        /// <summary>The setter's counterpart to <see cref="IsVirtualGet"/>.</summary>
+        public bool IsVirtualSet { get; }
 
         /// <inheritdoc/>
         public override bool IsAssignable => Property.Setter is not null;

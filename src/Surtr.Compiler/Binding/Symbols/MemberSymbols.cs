@@ -171,6 +171,57 @@ namespace Surtr.Compiler.Binding.Symbols
         /// </remarks>
         public MethodSymbol? OriginalDefinition { get; internal set; }
 
+        /// <summary>
+        /// The type this method extends (§15), or <see langword="null"/> for an ordinary method or
+        /// module-level function.
+        /// </summary>
+        /// <remarks>
+        /// Set only on a method declared inside an <c>extension</c> block. <see cref="ContainingSymbol"/>
+        /// still names the declaring <em>module</em> — an extension method is emitted as an ordinary
+        /// module-level function, never a member of this type — so this is metadata for call-site
+        /// resolution and diagnostics, not a second <see cref="ContainingType"/>. Its receiver is an
+        /// ordinary, explicitly-named first parameter of this type, not an implicit <c>this</c>.
+        /// <para>
+        /// Typed as <see cref="TypeSymbol"/> rather than <see cref="NamedTypeSymbol"/> since Fase 5
+        /// (§15): a composite target (<c>int[]</c>, <c>{K: V}</c>) is not a <c>NamedTypeSymbol</c> at
+        /// all, and neither instance matching (ordinary argument conversion against the receiver
+        /// parameter, in <c>BodyBinder.ExtensionCandidates</c>) nor <c>Conversions.IsAssignable</c>
+        /// (used for an extension property's receiver) ever required it to be one — both already take
+        /// a general <c>TypeSymbol</c>. Only the reference-identity match a <em>static</em> extension
+        /// uses (<c>Type.member()</c> has no argument to convert) still assumes a concrete, nameable
+        /// type in practice, but nothing enforces that narrower assumption at the type level.
+        /// </para>
+        /// </remarks>
+        public TypeSymbol? ExtensionTargetType { get; internal set; }
+
+        /// <summary>
+        /// The type an <c>extension</c> block was nested inside, or <see langword="null"/> when it was
+        /// declared at module level.
+        /// </summary>
+        /// <remarks>
+        /// Nesting an <c>extension</c> block inside a class narrows its visibility to that class's own
+        /// members (§15.2) — it does not give the method a second receiver. This is read only by
+        /// <c>AccessCheck.IsAccessibleWithin</c>, since <see cref="Accessibility"/> alone cannot express
+        /// "private to this class" for a method whose real <see cref="ContainingSymbol"/> is a module.
+        /// </remarks>
+        public NamedTypeSymbol? ExtensionDeclaringContainer { get; internal set; }
+
+        /// <summary>
+        /// Whether a member of an <c>extension</c> block was declared <c>static</c> in source (§15.3)
+        /// — reached as <c>Type.foo()</c>, with no receiver parameter at all.
+        /// </summary>
+        /// <remarks>
+        /// A separate flag from <see cref="IsStatic"/> because that one is always <see langword="true"/>
+        /// on every extension method, static or not — an instance extension is still a module-level
+        /// function to every part of the binder that reads <see cref="IsStatic"/>/<see cref="ContainingSymbol"/>
+        /// together (<c>BodyBinder.BindThis</c> among them), only with its receiver as an ordinary,
+        /// explicitly-declared first parameter instead of an absent one. This is what call-site
+        /// resolution actually branches on: an instance extension is found by matching a receiver
+        /// argument against that first parameter, a static one by matching the type named at the call
+        /// site against <see cref="ExtensionTargetType"/> with no argument involved at all.
+        /// </remarks>
+        public bool ExtensionIsStatic { get; internal set; }
+
         /// <inheritdoc/>
         public override string ToDisplayString()
         {
@@ -375,6 +426,19 @@ namespace Surtr.Compiler.Binding.Symbols
 
         /// <summary>Who may see it.</summary>
         public Accessibility Accessibility { get; internal set; } = Accessibility.Private;
+
+        /// <summary>
+        /// The type this property extends (§15), or <see langword="null"/> for an ordinary property.
+        /// </summary>
+        /// <remarks>The property counterpart of <see cref="MethodSymbol.ExtensionTargetType"/>.</remarks>
+        public TypeSymbol? ExtensionTargetType { get; internal set; }
+
+        /// <summary>
+        /// The type an <c>extension</c> block was nested inside, or <see langword="null"/> when it
+        /// was declared at module level.
+        /// </summary>
+        /// <remarks>The property counterpart of <see cref="MethodSymbol.ExtensionDeclaringContainer"/>.</remarks>
+        public NamedTypeSymbol? ExtensionDeclaringContainer { get; internal set; }
 
         /// <inheritdoc/>
         public override string ToDisplayString() => Name + ": " + Type.ToDisplayString();

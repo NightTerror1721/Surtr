@@ -1,6 +1,7 @@
 #nullable enable
 
 using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -208,6 +209,10 @@ namespace Surtr.Runtime.Classes
         private readonly SurtrMethodRole _role;
         private readonly bool _override;
         private readonly bool _sealed;
+        private readonly bool _extension;
+        private readonly bool _bridge;
+        private readonly string[] _genericParameters;
+        private readonly string[][] _genericConstraints;
         private SurtrClassReference _signature;
         private string? _signatureKey;
 
@@ -229,7 +234,11 @@ namespace Surtr.Runtime.Classes
             bool isStatic,
             SurtrVisibility visibility,
             SurtrTypeHandle? declaringType,
-            bool isSealed = false)
+            bool isSealed = false,
+            string[]? genericParameters = null,
+            string[][]? genericConstraints = null,
+            bool isExtension = false,
+            bool isBridge = false)
             : base(name, SurtrMemberKind.Method, isStatic, visibility, declaringType)
         {
             // Constructors are never inherited, so they can never be dispatched through a vtable.
@@ -262,6 +271,18 @@ namespace Surtr.Runtime.Classes
             _sealed = isSealed;
             _returnType = returnType;
             _parameters = parameters;
+
+            _genericParameters = genericParameters ?? System.Array.Empty<string>();
+            _genericConstraints = genericConstraints ?? System.Array.Empty<string[]>();
+            _extension = isExtension;
+            _bridge = isBridge;
+
+            if (_genericConstraints.Length != 0 && _genericConstraints.Length != _genericParameters.Length)
+            {
+                throw new ArgumentException(
+                    $"Method '{name}' carries {_genericConstraints.Length} constraint lists for {_genericParameters.Length} type parameters.",
+                    nameof(genericConstraints));
+            }
         }
 
         /// <summary>
@@ -315,6 +336,36 @@ namespace Surtr.Runtime.Classes
             get => _sealed;
         }
 
+        /// <summary>
+        /// Whether this method was declared in an <c>extension</c> block (§15) rather than written
+        /// as a bare member of its module or class. The interpreter does not care - an extension
+        /// method is an ordinary method whose receiver is its first parameter - but the image
+        /// carries the mark so a module compiled later can recognise the imported members as
+        /// extensions again instead of losing them to plain function resolution.
+        /// </summary>
+        public bool IsExtension
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _extension;
+        }
+
+        /// <summary>
+        /// Whether this method is a synthetic <em>bridge</em>: a second member, named after the
+        /// interface slot it fills and taking its erased parameters, that casts and forwards to the
+        /// member a class actually wrote. Bridges occupy the vtable slots a generic interface's
+        /// <c>compareTo(G0)</c>-shaped members need filled, so the loader treats one exactly like
+        /// any other virtual method — the flag exists for the compiler's
+        /// <c>MetadataImporter</c>, which must not surface the bridge as a member source can call:
+        /// it has no written signature of its own, and two visible <c>equals</c> overloads would
+        /// make every call site ambiguous. It travels in the image for the same reason
+        /// <see cref="IsExtension"/> does.
+        /// </summary>
+        public bool IsBridge
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _bridge;
+        }
+
         /// <summary>Whether calls to this method go through the vtable rather than being bound directly.</summary>
         public bool IsVirtualDispatch
         {
@@ -341,6 +392,39 @@ namespace Surtr.Runtime.Classes
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _parameters;
+        }
+
+        /// <summary>
+        /// The names of the generic parameters this method declares, one per parameter. Empty for
+        /// a non-generic method.
+        /// </summary>
+        /// <remarks>
+        /// The type-level twin lives on <see cref="SurtrTypeInfo.GenericParameters"/>; these are
+        /// the method's own, and a signature mentions them through the <c>H&lt;n&gt;</c> descriptor
+        /// form so a call site can tell them from the declaring type's. Nothing on an execution
+        /// path reads them - erasure means the slots are plain references - so the table exists for
+        /// the compiler's <c>MetadataImporter</c>, tooling and host interop.
+        /// </remarks>
+        public IReadOnlyList<string> GenericParameters
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _genericParameters;
+        }
+
+        /// <summary>
+        /// The bounds each generic parameter declared, as descriptor strings - one list per
+        /// parameter, empty where the parameter is unconstrained.
+        /// </summary>
+        /// <remarks>
+        /// Same shape and same customers as <see cref="GenericParameters"/>: the importer rebuilds
+        /// <c>TypeParameterSymbol.Constraints</c> from them, so a call site in another module is
+        /// checked against the bound the declaring module wrote, and nothing on an execution path
+        /// reads them.
+        /// </remarks>
+        public IReadOnlyList<string[]> GenericConstraints
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _genericConstraints;
         }
 
         /// <summary>How many parameters the method declares.</summary>
@@ -429,15 +513,36 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>
         /// Adds <paramref name="method"/> to an overload group, rejecting one that repeats a
-        /// signature already in it.
+        /// signature already in it — except a <c>Direct</c> member and a virtual/abstract one
+        /// sharing a signature, which is exactly the shape an interface bridge takes when it lets
+        /// <c>override</c> stay optional (§3.3).
         /// </summary>
         /// <remarks>
+        /// <para>
         /// Shared by class, interface and module declaration so all three enforce
         /// <c>Language-Syntax.md</c> §3.5's first rule identically. Declaration-time code, run once
         /// per member, so a linear scan over a group that is almost always one entry long is the
         /// right shape.
+        /// </para>
+        /// <para>
+        /// A <c>Direct</c> member and a virtual/abstract one never collide in a real table:
+        /// <c>SurtrTypeLinker.BuildMethodTables</c> sorts purely on <see cref="IsVirtualDispatch"/>,
+        /// so one lands in <c>DirectMethods</c> and the other becomes (or occupies) a vtable slot —
+        /// the only place a shared key could silently overwrite something, <c>PlaceInVTable</c>,
+        /// never even looks at a <c>Direct</c> method. This is precisely how a class satisfies an
+        /// interface without <c>override</c>: the member itself keeps its own signature and
+        /// <c>Direct</c> dispatch, and the compiler declares a synthetic bridge under the identical
+        /// name and parameters to occupy the interface's slot. Two members sharing a signature and
+        /// *the same* dispatch kind are still rejected — that pair really would collide, and is what
+        /// §3.5's rule 1 forbids. Source-level authoring never reaches this ambiguity in the other
+        /// direction either: <c>SignatureSet</c> already rejects two written members sharing a
+        /// signature regardless of dispatch, before a bridge is ever synthesized.
+        /// </para>
         /// </remarks>
-        /// <exception cref="ArgumentException">The group already holds that signature.</exception>
+        /// <exception cref="ArgumentException">
+        /// The group already holds that signature with the same dispatch kind (both <c>Direct</c>,
+        /// or both virtual/abstract).
+        /// </exception>
         internal static SurtrMethodInfo[] AppendOverload(SurtrMethodInfo[]? overloads, SurtrMethodInfo method, string ownerName)
         {
             if (overloads is null)
@@ -446,10 +551,15 @@ namespace Surtr.Runtime.Classes
             string key = method.SignatureKey();
             for (int i = 0; i < overloads.Length; i++)
             {
-                if (string.Equals(overloads[i].SignatureKey(), key, StringComparison.Ordinal))
-                    throw new ArgumentException(
-                        $"'{ownerName}' already declares a member with the signature '{key}'.",
-                        nameof(method));
+                if (!string.Equals(overloads[i].SignatureKey(), key, StringComparison.Ordinal))
+                    continue;
+
+                if (overloads[i].IsVirtualDispatch != method.IsVirtualDispatch)
+                    continue;
+
+                throw new ArgumentException(
+                    $"'{ownerName}' already declares a member with the signature '{key}'.",
+                    nameof(method));
             }
 
             var grown = new SurtrMethodInfo[overloads.Length + 1];

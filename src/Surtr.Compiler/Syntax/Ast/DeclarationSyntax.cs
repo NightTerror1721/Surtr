@@ -388,6 +388,46 @@ namespace Surtr.Compiler.Syntax.Ast
         Method = 1 << 5,
     }
 
+    /// <summary>
+    /// An <c>extension &lt;Type&gt; { ... }</c> block (§15): methods and properties added to a type
+    /// already declared, without editing its own declaration. Not a <see cref="TypeDeclarationSyntax"/>
+    /// — it names a target type rather than declaring a new one, has no base list and no constructor.
+    /// </summary>
+    public sealed class ExtensionDeclarationSyntax : DeclarationSyntax
+    {
+        /// <summary>
+        /// The block's own type parameters (§15.4), written <c>extension&lt;T : Bound&gt; ...</c>,
+        /// empty when the block declares none. Only needed to attach a constraint — an unbound
+        /// parameter mentioned bare inside <see cref="TargetType"/> (<c>extension T[] { }</c>,
+        /// <c>extension Box&lt;T&gt; { }</c>) is enough on its own, and the binder declares it
+        /// implicitly from that use.
+        /// </summary>
+        public IReadOnlyList<TypeParameterSyntax> TypeParameters { get; }
+
+        /// <summary>The type this block adds members to.</summary>
+        public TypeSyntax TargetType { get; }
+
+        /// <summary>The members declared in the body.</summary>
+        public IReadOnlyList<DeclarationSyntax> Members { get; }
+
+        /// <summary>Initializes an extension declaration.</summary>
+        /// <param name="span">The source the declaration covers.</param>
+        /// <param name="attributes">Attributes attached to it.</param>
+        /// <param name="docComment">Doc comment lines preceding it.</param>
+        /// <param name="visibility">Its declared visibility.</param>
+        /// <param name="typeParameters">The block's own type parameters, empty when it declares none.</param>
+        /// <param name="targetType">The type this block adds members to.</param>
+        /// <param name="members">The members declared in the body.</param>
+        public ExtensionDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
+            IReadOnlyList<TypeParameterSyntax> typeParameters, TypeSyntax targetType, IReadOnlyList<DeclarationSyntax> members)
+            : base(span, attributes, docComment, visibility)
+        {
+            TypeParameters = typeParameters;
+            TargetType = targetType;
+            Members = members;
+        }
+    }
+
     /// <summary>One case of an enum: a name plus the arguments to the enum's constructor (§2.4).</summary>
     public sealed class EnumCaseSyntax : SyntaxNode
     {

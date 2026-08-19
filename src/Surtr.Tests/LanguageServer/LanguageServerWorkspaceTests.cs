@@ -1,6 +1,7 @@
 #nullable enable
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Surtr.LanguageServer.Workspace;
@@ -147,6 +148,12 @@ namespace Surtr.Tests.LanguageServer
             Assert.DoesNotContain("new", labels);
             Assert.DoesNotContain("not", labels);
             Assert.DoesNotContain("or", labels);
+
+            // §1.2's fourth contextual keyword ("this", "super" and "value" are the other three,
+            // already covered above via §1.2's reserved-word list) — "attribute" (§11) was added to
+            // the language in the same session that documented this list but never propagated here,
+            // so completion never offered it even though it is a real, legal token.
+            Assert.Contains("attribute", labels);
         }
 
         [Fact]
@@ -477,6 +484,369 @@ namespace Surtr.Tests.LanguageServer
             var completion = CompletionProvider.Complete(workspace.Snapshot, path, source, dotEnd);
 
             Assert.Contains(completion.Items, item => item.Label == "value");
+        }
+
+        [Fact]
+        public void HoverOnACallToAnImplicitInterfaceMemberNamesTheContractItSatisfies()
+        {
+            // §3.3: satisfying an interface never requires `override` - `iterate` here is a plain
+            // Direct method with nothing in its own signature saying it fulfils IIterable<int>. Hover
+            // resolves a call site through the bound tree (SymbolResolver's pass one), which is where
+            // this enrichment lives; hovering the declaration's own name instead falls to the plain
+            // signature-text pass (pass two) and is not covered by this fix — a follow-up, not a claim
+            // made here.
+            const string source =
+                "public class Counter : IIterable<int> {\n" +
+                "    public fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n" +
+                "}\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let c: Counter = Counter();\n" +
+                "        let it = c.iterate();\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Counter.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Counter.surtr");
+            int nameOffset = source.IndexOf("c.iterate()", StringComparison.Ordinal) + "c.".Length;
+
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.Contains("implements", hit!.Markdown);
+            Assert.Contains("IIterable<int>.iterate", hit.Markdown);
+        }
+
+        [Fact]
+        public void HoverOnACallResolvingToAnAbstractMethodNeverClaimsToImplementAnything()
+        {
+            // The obligation-declaring side of a contract must not show "implements" itself - it is
+            // the thing being implemented, not an implementation. `s.area()` resolves (statically) to
+            // Shape's own abstract declaration, not Circle's override, since dispatch is a runtime
+            // fact and binding only sees the static type of `s`.
+            const string source =
+                "public interface IShape {\n" +
+                "    fun area(): float;\n" +
+                "}\n" +
+                "public abstract class Shape : IShape {\n" +
+                "    public abstract fun area(): float;\n" +
+                "}\n" +
+                "public class Circle : Shape {\n" +
+                "    public override fun area(): float { return 3.14; }\n" +
+                "}\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let s: Shape = Circle();\n" +
+                "        let a = s.area();\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Shape.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Shape.surtr");
+            int nameOffset = source.IndexOf("s.area()", StringComparison.Ordinal) + "s.".Length;
+
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.DoesNotContain("implements", hit!.Markdown);
+        }
+
+        [Fact]
+        public void ImplementMissingMembersOffersNoActionOnceEveryObligationIsSatisfied()
+        {
+            const string source =
+                "public class Counter : IIterable<int> {\n" +
+                "    public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Counter.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Counter.surtr");
+            int somewhereInClass = source.IndexOf("class Counter", StringComparison.Ordinal);
+
+            var actions = CodeActionProvider.Complete(workspace.Snapshot, path, source, somewhereInClass);
+            Assert.Empty(actions);
+        }
+
+        [Fact]
+        public void ImplementMissingMembersFixesAnUnimplementedInterfaceAndAppliedEditCompilesClean()
+        {
+            const string source =
+                "public class Counter : IIterable<int> {\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Counter.surtr", source));
+            workspace.Rebuild();
+
+            string path = Path.Combine(_root, "app", "Counter.surtr");
+            int somewhereInClass = source.IndexOf("class Counter", StringComparison.Ordinal);
+
+            var actions = CodeActionProvider.Complete(workspace.Snapshot, path, source, somewhereInClass);
+            var action = Assert.Single(actions);
+            Assert.Contains("iterate", action.Title);
+
+            var edits = Assert.Single(action.Edit!.Changes);
+            var edit = Assert.Single(edits.Value);
+
+            // No "override" for an interface member (§3.3: satisfying one never requires it).
+            Assert.DoesNotContain("override", edit.NewText);
+            Assert.Contains("fun iterate()", edit.NewText);
+            Assert.Contains("InvalidOperationException", edit.NewText);
+
+            string patched = ApplyEdit(source, edit);
+            var patchedWorkspace = Tree(("app/Counter.surtr", patched));
+            var patchedDiagnostics = patchedWorkspace.Rebuild();
+            Assert.True(patchedDiagnostics.Values.All(list => list.Count == 0),
+                "The stub the code action generated must itself compile clean: " + Describe(patchedDiagnostics) + "\n" + patched);
+        }
+
+        [Fact]
+        public void ImplementMissingMembersWritesOverrideForAnAbstractBaseMemberButNotForAnInterface()
+        {
+            const string source =
+                "public abstract class Shape {\n" +
+                "    public abstract fun area(): float;\n" +
+                "}\n" +
+                "public class Circle : Shape {\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Shape.surtr", source));
+            workspace.Rebuild();
+
+            string path = Path.Combine(_root, "app", "Shape.surtr");
+            int somewhereInClass = source.IndexOf("class Circle", StringComparison.Ordinal);
+
+            var actions = CodeActionProvider.Complete(workspace.Snapshot, path, source, somewhereInClass);
+            var action = Assert.Single(actions);
+            var edit = Assert.Single(Assert.Single(action.Edit!.Changes).Value);
+
+            Assert.Contains("override fun area()", edit.NewText);
+
+            string patched = ApplyEdit(source, edit);
+            var patchedWorkspace = Tree(("app/Shape.surtr", patched));
+            var patchedDiagnostics = patchedWorkspace.Rebuild();
+            Assert.True(patchedDiagnostics.Values.All(list => list.Count == 0),
+                "The stub the code action generated must itself compile clean: " + Describe(patchedDiagnostics) + "\n" + patched);
+        }
+
+        [Fact]
+        public void AnExtensionMethodBroughtByAWildcardImportCompletesAfterADot()
+        {
+            const string coreSource =
+                "public class Vec2 {\n" +
+                "    public let x: float;\n" +
+                "    public let y: float;\n" +
+                "    public constructor(x: float, y: float) { this.x = x; this.y = y; }\n" +
+                "}\n" +
+                "public extension Vec2 { lengthSquared: float => this.x * this.x + this.y * this.y; }\n";
+            const string appSource =
+                "import proj.core.*;\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let v: Vec2 = Vec2(3.0, 4.0);\n" +
+                "        let n: float = v.lengthSquared;\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/core/Vec2.surtr", coreSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            int dotEnd = appSource.IndexOf("v.lengthSquared", StringComparison.Ordinal) + "v.".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, appPath, appSource, dotEnd);
+
+            Assert.Contains(completion.Items, item => item.Label == "lengthSquared");
+        }
+
+        [Fact]
+        public void HoverAndDefinitionOnAnExtensionMethodCallReachTheExtensionBlockAndNameItAsOne()
+        {
+            const string source =
+                "class Vec2 {\n" +
+                "    public let x: float;\n" +
+                "    public let y: float;\n" +
+                "    public constructor(x: float, y: float) { this.x = x; this.y = y; }\n" +
+                "}\n" +
+                "extension Vec2 {\n" +
+                "    fun lengthSquared(self: Vec2): float => self.x * self.x + self.y * self.y;\n" +
+                "}\n" +
+                "fun run(): float { return Vec2(3.0, 4.0).lengthSquared(); }\n";
+
+            var workspace = Tree(("app/Vec2.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Vec2.surtr");
+            int callNameOffset = source.LastIndexOf("lengthSquared()", StringComparison.Ordinal);
+
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, callNameOffset);
+
+            Assert.NotNull(hit);
+            Assert.Contains("extension method on `Vec2`", hit!.Markdown);
+
+            Assert.True(hit.HasDefinition, "Expected the call to resolve to the extension method's own declaration.");
+            Assert.Equal(Path.GetFullPath(path), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
+
+            // The declaration's span must land on the method *inside* the `extension` block, not on
+            // some unrelated same-named/same-arity module function `SymbolResolver` might otherwise
+            // have matched by accident (`MatchesParent`'s original, extension-unaware rule).
+            int declaredAt = source.IndexOf("fun lengthSquared(self: Vec2)", StringComparison.Ordinal) + "fun ".Length;
+            Assert.Equal(declaredAt, hit.DefinitionStart);
+        }
+
+        [Fact]
+        public void ExtensionAppearsInBareKeywordCompletion()
+        {
+            const string source =
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        \n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int insideBody = source.IndexOf("        \n", StringComparison.Ordinal) + "        ".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, path, source, insideBody);
+            Assert.Contains("extension", completion.Items.Select(item => item.Label));
+        }
+
+        /// <summary>Applies a single LSP <see cref="Surtr.LanguageServer.Protocol.TextEdit"/> to plain text, for test assertions only.</summary>
+        private static string ApplyEdit(string text, Surtr.LanguageServer.Protocol.TextEdit edit)
+        {
+            var lines = TextLines.Index(text);
+            int offset = lines.OffsetAt(edit.Range.Start.Line, edit.Range.Start.Character);
+            return text.Substring(0, offset) + edit.NewText + text.Substring(offset);
+        }
+
+        [Fact]
+        public void SemanticTokensTagThisAndSuperOnlyWhereTheyAreRealReceiversNotElsewhere()
+        {
+            // "this" inside the string literal must NOT be tagged - only the two real occurrences
+            // (an implicit receiver on the field read, and an explicit one before .bark()) are
+            // resolved from the bound tree, which is exactly the position-accuracy a regex grammar
+            // cannot get right on its own.
+            const string source =
+                "public class Animal {\n" +
+                "    public let name: string = \"this\";\n" +
+                "    public constructor(name: string) { this.name = name; }\n" +
+                "    public fun bark(): string { return this.name; }\n" +
+                "}\n" +
+                "public class Dog : Animal {\n" +
+                "    public constructor(name: string) : super(name) { }\n" +
+                "    public fun describe(): string { return this.bark(); }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Animal.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Animal.surtr");
+            var result = SemanticTokensProvider.Compute(workspace.Snapshot, path, source);
+
+            int tokenCount = result.Data.Count / 5;
+            Assert.True(tokenCount >= 3, $"Expected at least 3 this/super tokens, got {tokenCount}.");
+
+            // Decode back to absolute offsets and check every tagged span really reads "this".
+            var lines = TextLines.Index(source);
+            int line = 0;
+            int character = 0;
+            for (int i = 0; i < result.Data.Count; i += 5)
+            {
+                line += result.Data[i];
+                character = result.Data[i] == 0 ? character + result.Data[i + 1] : result.Data[i + 1];
+                int length = result.Data[i + 2];
+
+                int offset = lines.OffsetAt(line, character);
+                string tagged = source.Substring(offset, length);
+                Assert.Equal("this", tagged);
+            }
+
+            // The literal "this" text inside the string must not itself be tagged - none of the
+            // decoded spans may fall inside the string literal's own range.
+            int stringLiteralStart = source.IndexOf("\"this\"", StringComparison.Ordinal);
+            int stringLiteralEnd = stringLiteralStart + "\"this\"".Length;
+            line = 0;
+            character = 0;
+            for (int i = 0; i < result.Data.Count; i += 5)
+            {
+                line += result.Data[i];
+                character = result.Data[i] == 0 ? character + result.Data[i + 1] : result.Data[i + 1];
+                int offset = lines.OffsetAt(line, character);
+                Assert.False(offset >= stringLiteralStart && offset < stringLiteralEnd,
+                    "The 'this' spelled inside the string literal must not be tagged as the keyword.");
+            }
+        }
+
+        [Fact]
+        public void SemanticTokensTagValueAndAttributeOnlyOnTheDeclarationsThatUseThemAsKeywords()
+        {
+            const string source =
+                "value class Money {\n" +
+                "    public let amount: int;\n" +
+                "    public constructor(amount: int) { this.amount = amount; }\n" +
+                "}\n" +
+                "attribute class Range {\n" +
+                "    public let lo: int = 0;\n" +
+                "}\n" +
+                "public class Box {\n" +
+                // "value" here is the implicit setter parameter, never the keyword - must not be tagged.
+                "    public amount: int { get => 0; set { let value2 = value; } }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Money.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Money.surtr");
+            var result = SemanticTokensProvider.Compute(workspace.Snapshot, path, source);
+
+            var lines = TextLines.Index(source);
+            var taggedTexts = new List<string>();
+            int line = 0;
+            int character = 0;
+            for (int i = 0; i < result.Data.Count; i += 5)
+            {
+                line += result.Data[i];
+                character = result.Data[i] == 0 ? character + result.Data[i + 1] : result.Data[i + 1];
+                int length = result.Data[i + 2];
+                int offset = lines.OffsetAt(line, character);
+                taggedTexts.Add(source.Substring(offset, length));
+            }
+
+            Assert.Contains("value", taggedTexts);
+            Assert.Contains("attribute", taggedTexts);
+            Assert.Contains("get", taggedTexts);
+            Assert.Contains("set", taggedTexts);
+
+            // Exactly one "value" is tagged (the "value class" keyword) - the setter's implicit
+            // parameter, spelled "value" twice more in the last line, must not add two more.
+            Assert.Single(taggedTexts.FindAll(t => t == "value"));
         }
 
         private static string Describe(System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<Surtr.Compiler.Diagnostics.SurtrDiagnostic>> diagnostics)

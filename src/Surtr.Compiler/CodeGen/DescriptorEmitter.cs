@@ -158,11 +158,20 @@ namespace Surtr.Compiler.CodeGen
                 {
                     var parameter = (TypeParameterSymbol)type;
 
-                    // A method's parameter has no positional encoding: nothing at a call site knows
-                    // which method's list to index into, so it is plain erasure.
+                    // A method's parameter keeps its position under its own symbol: `H0` tells the
+                    // importer which parameter it was, which is what lets a call site's inference
+                    // and constraints survive the image. Signature keys still erase it, so no slot
+                    // or dispatch changes.
                     if (parameter.IsMethodTypeParameter)
                     {
-                        builder.Append(SurtrClassReference.SymbolErased);
+                        if ((uint)parameter.Ordinal > 9)
+                        {
+                            throw new InvalidOperationException(
+                                $"'{parameter.ContainingSymbol?.Name}' declares more than ten type parameters, " +
+                                "which the single-digit 'H' descriptor form cannot encode.");
+                        }
+
+                        builder.Append(SurtrClassReference.SymbolMethodGenericParameter).Append((char)('0' + parameter.Ordinal));
                         return;
                     }
 

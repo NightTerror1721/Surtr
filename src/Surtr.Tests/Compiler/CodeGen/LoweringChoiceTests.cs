@@ -64,6 +64,27 @@ namespace Surtr.Tests.Compiler.CodeGen
                     .Skip(1)
                     .FirstOrDefault()?.Split(' ')[0] == mnemonic);
 
+        /// <summary>
+        /// Slices one method's own block out of a whole-module disassembly — every header line
+        /// starts with a <c>[visibility]</c> tag, so this is the boundary between one method's
+        /// instructions and the next. Needed wherever a module declares more than the one method
+        /// under test, such as a class emitting a synthetic bridge alongside the member it forwards
+        /// to (§3.3): a shape assertion about <em>that</em> member must not see the bridge's own
+        /// instructions, which legitimately differ.
+        /// </summary>
+        private static string MethodBody(string disassembly, string signaturePrefix)
+        {
+            var lines = disassembly.Split('\n');
+            int start = Array.FindIndex(lines, l => l.TrimStart().StartsWith('[') && l.Contains(signaturePrefix, StringComparison.Ordinal));
+            Assert.True(start >= 0, $"No method header contains '{signaturePrefix}'.");
+
+            int end = start + 1;
+            while (end < lines.Length && !lines[end].TrimStart().StartsWith('['))
+                end++;
+
+            return string.Join('\n', lines.Skip(start).Take(end - start));
+        }
+
         #region String concatenation
 
         [Fact]
@@ -767,6 +788,77 @@ namespace Surtr.Tests.Compiler.CodeGen
 
         #endregion
 
+        #region Devirtualisation (§2.2, §3.3)
+
+        /// <summary>
+        /// A `sealed override` closes its branch of the hierarchy even though `Dog` itself is not
+        /// `sealed` (§3.3) — the call needs no vtable slot, exactly as a call on a fully `sealed`
+        /// class does not. Value correctness is
+        /// <see cref="ModuleEmitterTests.ASealedOverrideDevirtualizesOnAnUnsealedClass"/>.
+        /// </summary>
+        [Fact]
+        public void ASealedOverrideDevirtualizesOnAnUnsealedClass()
+        {
+            string code = Disassemble(
+                "class Animal { public virtual fun speak(): string { return \"...\"; } }\n"
+                    + "class Dog : Animal { public sealed override fun speak(): string { return \"Woof\"; } }\n"
+                    + "fun run(d: Dog): string { return d.speak(); }");
+
+            Assert.Equal(0, Count(code, "InvokeVirtual"));
+        }
+
+        /// <summary>
+        /// Negative control for <see cref="ASealedOverrideDevirtualizesOnAnUnsealedClass"/>: without
+        /// `sealed` on the override, a further subclass could still replace it, so the call has to
+        /// keep dispatching.
+        /// </summary>
+        [Fact]
+        public void AnOverrideWithoutSealedStillDispatchesOnAnUnsealedClass()
+        {
+            string code = Disassemble(
+                "class Animal { public virtual fun speak(): string { return \"...\"; } }\n"
+                    + "class Dog : Animal { public override fun speak(): string { return \"Woof\"; } }\n"
+                    + "fun run(d: Dog): string { return d.speak(); }");
+
+            Assert.Equal(1, Count(code, "InvokeVirtual"));
+        }
+
+        /// <summary>
+        /// The same devirtualisation applied to a computed getter (§3.4 gives an accessor its own
+        /// dispatch), reaching <see cref="TryInlinePropertyGetter"/>'s guard rather than
+        /// <c>EmitResolvedCall</c>'s.
+        /// </summary>
+        [Fact]
+        public void ASealedOverrideComputedGetterDevirtualizes()
+        {
+            string code = Disassemble(
+                "class Animal { public virtual n: int { get { return 1; } } }\n"
+                    + "class Dog : Animal { public sealed override n: int { get { return 2; } } }\n"
+                    + "fun run(d: Dog): int { return d.n; }");
+
+            Assert.Equal(0, Count(code, "InvokeVirtual"));
+        }
+
+        /// <summary>
+        /// An auto-property's `sealed override` still lowers all the way to the backing field
+        /// (§3.6) — the whole point of extending devirtualisation into
+        /// <see cref="MethodBodyEmitter.TryInlineAutoAccessorGet"/> rather than stopping at
+        /// <c>EmitResolvedCall</c>.
+        /// </summary>
+        [Fact]
+        public void ASealedOverrideAutoPropertyLowersToTheBackingField()
+        {
+            string code = Disassemble(
+                "class Animal { public virtual n: int { get; set; } }\n"
+                    + "class Dog : Animal { public sealed override n: int { get; set; } }\n"
+                    + "fun run(d: Dog): int { return d.n; }");
+
+            Assert.Equal(0, Count(code, "InvokeVirtual"));
+            Assert.Equal(0, Count(code, "InvokeSpecial"));
+        }
+
+        #endregion
+
         #region Const function folding (§7.2)
 
         /// <summary>
@@ -852,6 +944,37 @@ namespace Surtr.Tests.Compiler.CodeGen
 
             Assert.Equal(0, Count(code, "BoxAs"));
             Assert.Equal(0, Count(code, "Unbox"));
+        }
+
+        /// <summary>
+        /// Closes the "known missed optimisation" Compiler-Plan.md §6.3 used to record: a value
+        /// class method satisfying an interface no longer has to be `override` (§3.3's bridge
+        /// occupies the interface slot instead), so it stays `Direct` and a direct-typed call never
+        /// boxes the receiver, exactly as an ordinary (non-interface) value class method already
+        /// didn't.
+        /// </summary>
+        /// <remarks>
+        /// The module also carries the synthetic bridge <see cref="ModuleEmitter.EmitBridge"/>
+        /// gives the interface slot, which unboxes the receiver on <em>its</em> own path — correctly,
+        /// since that is the only path a boxed receiver can reach the `Direct` body from. The
+        /// assertion is scoped to <c>run</c>'s own block so the bridge's legitimate <c>Unbox</c>
+        /// does not read as a regression here.
+        /// </remarks>
+        [Fact]
+        public void AValueClassMethodSatisfyingAnInterfaceWithoutOverrideDoesNotBoxOnADirectCall()
+        {
+            string code = Disassemble(
+                "interface IDoubling { fun doubled(): int; }\n"
+                    + "value class EntityId : IDoubling {\n"
+                    + "  public let raw: int;\n"
+                    + "  public constructor(raw: int) { this.raw = raw; }\n"
+                    + "  public fun doubled(): int { return this.raw * 2; }\n"
+                    + "}\n"
+                    + "fun run(): int { let id = EntityId(21); return id.doubled(); }");
+
+            string run = MethodBody(code, "run(");
+            Assert.Equal(0, Count(run, "BoxAs"));
+            Assert.Equal(0, Count(run, "Unbox"));
         }
 
         /// <summary>Flowing the same value class into an erased slot still has to box — §6.3 unchanged.</summary>

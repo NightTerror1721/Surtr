@@ -78,9 +78,29 @@ namespace Surtr.Compiler.Compilation
         /// <param name="path">Where it lives, which decides its module (§2.1).</param>
         /// <param name="text">Its contents.</param>
         public SurtrSourceFile(string path, string text)
+            : this(path, text, modulePath: null)
+        {
+        }
+
+        /// <summary>
+        /// Creates a source file with an explicit module path, used where §2.1's directory
+        /// derivation cannot name the module — the stdlib's one-module-per-file layout, whose
+        /// module name ends in the file name.
+        /// </summary>
+        /// <param name="path">Where the file lives, used for diagnostics.</param>
+        /// <param name="text">Its contents.</param>
+        /// <param name="modulePath">
+        /// The module this file belongs to, overriding the path derived from where it lives.
+        /// </param>
+        public SurtrSourceFile(string path, string text, string? modulePath)
         {
             Path = path ?? throw new ArgumentNullException(nameof(path));
             Text = text ?? throw new ArgumentNullException(nameof(text));
+
+            if (modulePath is not null && !Surtr.Compiler.Compilation.ModulePath.IsValid(modulePath))
+                throw new ArgumentException($"'{modulePath}' is not a legal module path.", nameof(modulePath));
+
+            ModulePath = modulePath;
         }
 
         /// <summary>Where the file lives.</summary>
@@ -88,6 +108,12 @@ namespace Surtr.Compiler.Compilation
 
         /// <summary>Its contents.</summary>
         public string Text { get; }
+
+        /// <summary>
+        /// The module this file belongs to, when one is given outright rather than derived from
+        /// <see cref="Path"/> (§2.1).
+        /// </summary>
+        public string? ModulePath { get; }
 
         /// <inheritdoc/>
         public override string ToString() => Path;
@@ -153,6 +179,10 @@ namespace Surtr.Compiler.Compilation
 
         /// <summary>Adds a file to compile.</summary>
         public SurtrProject AddSourceFile(string path, string text) => AddSourceFile(new SurtrSourceFile(path, text));
+
+        /// <summary>Adds a file to compile, giving it a module outright instead of deriving one from where it lives.</summary>
+        public SurtrProject AddSourceFile(string path, string modulePath, string text)
+            => AddSourceFile(new SurtrSourceFile(path, text, modulePath));
 
         /// <summary>References a compiled module by its image.</summary>
         public SurtrProject AddReference(SurtrModuleImage image)

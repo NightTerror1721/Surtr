@@ -100,7 +100,10 @@ ordinary `ProjectReference`, the same way `Surtr.Compiler` and every other consu
 on it:
 
 1. `Surtr.Stdlib.Tool` (a `net8.0` console app referencing only `Surtr.Compiler`) reads every
-   `.surtr` file under `src/surtr/` and compiles each to its own `.surtrc` image. It reads sources
+   `.surtr` file under `src/surtr/` and compiles them all as **one compilation** — one module per
+   source file, each under its own module path (see the table above), so a module that imports a
+   sibling (`surtr.collections.List` imports `surtr.collections.Collection`) resolves against the
+   real sibling module rather than against a compilation that never had it. It reads sources
    from disk and references only the compiler, so `Surtr.Stdlib` can invoke it without a reference
    cycle back to itself.
 2. The `BuildStdlibImages` target on `Surtr.Stdlib.csproj` runs the tool on every `dotnet build`,
