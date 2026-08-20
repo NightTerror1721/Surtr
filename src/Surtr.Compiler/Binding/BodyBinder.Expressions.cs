@@ -1816,6 +1816,18 @@ namespace Surtr.Compiler.Binding
             }
 
             var method = result.Method!;
+
+            // A null receiver reaches this only through the type-name call path (§5.5's type-first
+            // rule): a singleton supplies its instance as the receiver and so never arrives here,
+            // and a module-level function is always static. An instance method on that path is an
+            // error — previously it kept the null receiver and failed at emit time as a confusing
+            // operand-stack underflow instead of naming the mistake.
+            if (receiver is null && !method.IsStatic)
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.UnresolvedCall,
+                    $"'{name}' is an instance member of '{method.ContainingType?.ToDisplayString()}' and needs a receiver; a type name is not a value.");
+
             var ordered = OrderArguments(
                 syntax, syntax.Arguments, method, BindDeferredLambdas(syntax.Arguments, arguments, method));
 

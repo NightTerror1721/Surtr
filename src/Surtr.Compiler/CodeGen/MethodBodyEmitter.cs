@@ -2530,10 +2530,13 @@ case BoundFieldExpression field:
             var receiver = field.Receiver ?? throw Unsupported($"a read of '{field.Field.Name}' with no receiver");
 
             // A value class is its one field, so reading that field off one is the value itself —
-            // there is no instance to load from (§2.9).
+            // there is no instance to load from (§2.9). A field declared against the class's own
+            // type parameter is still an erased slot, so a value that reached it was boxed on the
+            // way in and has to come back out the same way any other erased field does.
             if (receiver.Type.NonNullable.TypeKind == TypeSymbolKind.ValueClass)
             {
                 Expression(receiver);
+                UnerasedFieldResult(field.Field);
                 return;
             }
 
@@ -2947,8 +2950,15 @@ case BoundFieldExpression field:
                     $"building a '{type.Name}' with no constructor, which leaves nothing to put in the field it wraps");
             }
 
+            // A construction of a generic value class carries the substituted clone (§6), whose
+            // parameters are new symbols and whose body is keyed by the declaration — bodies are
+            // bound once against it, never against a view. So the body and the spliced assignment's
+            // parameters both come from the declaration, and each argument maps onto the
+            // *declaration's* parameter, which is the one the assignment's expression references.
+            var original = constructor.OriginalDefinition ?? constructor;
+
             if (_context.Bodies is null
-                || !_context.Bodies.TryGetValue(constructor, out var body)
+                || !_context.Bodies.TryGetValue(original, out var body)
                 || WrappedValue(body) is not BoundExpression wrapped)
             {
                 throw Unsupported(
@@ -2957,10 +2967,10 @@ case BoundFieldExpression field:
 
             for (int i = 0; i < creation.Arguments.Count; i++)
             {
-                var slot = _method.DeclareLocal("$value$" + constructor.Parameters[i].Name);
+                var slot = _method.DeclareLocal("$value$" + original.Parameters[i].Name);
                 Expression(creation.Arguments[i]);
                 Code.StoreLocal(slot);
-                _splicedParameters[constructor.Parameters[i]] = slot;
+                _splicedParameters[original.Parameters[i]] = slot;
             }
 
             Expression(wrapped);

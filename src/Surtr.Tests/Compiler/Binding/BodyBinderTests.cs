@@ -408,6 +408,20 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
+        public void AnInstanceMethodCalledThroughATypeNameIsReportedAtBindTime()
+        {
+            // §1.1's type-first rule resolves `Vec2.length()` as a member access on the type,
+            // and a type is not a value an instance method can be called on. This used to keep
+            // the null receiver and fail at emit time as an operand-stack underflow instead of
+            // naming the mistake.
+            Bind(out var compilation,
+                "class Vec2 { public virtual fun length(): float { return 0.0; } }\n"
+                + "class Test { public fun run(): void { let l = Vec2.length(); } }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.UnresolvedCall);
+        }
+
+        [Fact]
         public void ConstructionNeedsNoKeyword()
         {
             var binder = Bind(out var compilation,

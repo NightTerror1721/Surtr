@@ -1,7 +1,7 @@
 import surtr.collections.Collection;
 import surtr.collections.List;
 
-public interface ISequence<T> : IIterable<T>
+/*public interface ISequence<T> : IIterable<T>
 {
     // -- Intermediary Operations -- //
     fun map<U>(mapper: (T) -> U): ISequence<U>;
@@ -28,9 +28,9 @@ public interface ISequence<T> : IIterable<T>
     // -- Conversion Operations -- //
     fun toArray(): T[];
     fun toList(): List<T>;
-}
+}*/
 
-public class Sequence<T> : ISequence<T>
+public value class Sequence<T>
 {
     private let _provider: () -> IIterator<T>;
 
@@ -39,40 +39,41 @@ public class Sequence<T> : ISequence<T>
         this._provider = provider;
     }
 
-    public fun map<U>(mapper : (T) -> U): ISequence<U> {
+    public fun map<U>(mapper : (T) -> U): Sequence<U> {
+        let mapIt: () -> IIterator<U> = () => MapIterator<T, U>(_provider(), mapper);
+        return Sequence<U>(mapIt);
+    }
+    public fun flatMap<U>(mapper : (T) -> Sequence<U>): Sequence<U> {
         throw InvalidOperationException("Not implemented");
     }
-    public fun flatMap<U>(mapper : (T) -> ISequence<U>): ISequence<U> {
+    public fun filter(predicate : (T) -> bool): Sequence<T> {
         throw InvalidOperationException("Not implemented");
     }
-    public fun filter(predicate : (T) -> bool): ISequence<T> {
+    public fun take(count : int): Sequence<T> {
         throw InvalidOperationException("Not implemented");
     }
-    public fun take(count : int): ISequence<T> {
+    public fun skip(count : int): Sequence<T> {
         throw InvalidOperationException("Not implemented");
     }
-    public fun skip(count : int): ISequence<T> {
+    public fun distinct(): Sequence<T> {
         throw InvalidOperationException("Not implemented");
     }
-    public fun distinct(): ISequence<T> {
+    public fun sorted(comparator : (T, T) -> int): Sequence<T> {
         throw InvalidOperationException("Not implemented");
     }
-    public fun sorted(comparator : (T, T) -> int): ISequence<T> {
+    public fun chain(other : Sequence<T>): Sequence<T> {
         throw InvalidOperationException("Not implemented");
     }
-    public fun chain(other : ISequence<T>): ISequence<T> {
+    public fun zip<U>(other : Sequence<U>): Sequence<(T, U)> {
         throw InvalidOperationException("Not implemented");
     }
-    public fun zip<U>(other : ISequence<U>): ISequence<(T, U)> {
+    public fun enumerate(): Sequence<(int, T)> {
         throw InvalidOperationException("Not implemented");
     }
-    public fun enumerate(): ISequence<(int, T)> {
+    public fun reverse(): Sequence<T> {
         throw InvalidOperationException("Not implemented");
     }
-    public fun reverse(): ISequence<T> {
-        throw InvalidOperationException("Not implemented");
-    }
-    public fun cast<U>(): ISequence<U> {
+    public fun cast<U>(): Sequence<U> {
         throw InvalidOperationException("Not implemented");
     }
     public fun forEach(action : (T) -> void): void {
@@ -94,8 +95,8 @@ public class Sequence<T> : ISequence<T>
     public fun count(): int
     {
         var count: int = 0;
-        var iterator: IIterator<T> = _provider();
-        while (iterator.moveNext()) count++;
+        var iter = _provider();
+        while (iter.moveNext()) count++;
         return count;
     }
 
@@ -156,10 +157,10 @@ class MapIterator<T, U> : IIterator<U>
 class FlatMapIterator<T, U> : IIterator<U>
 {
     private let _source: IIterator<T>;
-    private let _mapper: (T) -> ISequence<U>;
+    private let _mapper: (T) -> Sequence<U>;
     private var _currentIterator: IIterator<U>? = null;
 
-    public constructor(source: IIterator<T>, mapper: (T) -> ISequence<U>)
+    public constructor(source: IIterator<T>, mapper: (T) -> Sequence<U>)
     {
         this._source = source;
         this._mapper = mapper;

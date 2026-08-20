@@ -1687,6 +1687,22 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(7, Int(runtime, "run"));
         }
 
+        /// <summary>
+        /// Building a <em>generic</em> value class reaches its constructor through the substituted
+        /// clone (§6), but the body and the wrapped assignment are keyed by the declaration. The
+        /// splice has to resolve through <c>OriginalDefinition</c> or every construction of one
+        /// fails with a SURTR4001 instead of emitting the wrapped field.
+        /// </summary>
+        [Fact]
+        public void AGenericValueClassConstructionSplicesItsDeclarationBody()
+        {
+            var runtime = Run(
+                "value class Box<T> { public let value: T; public constructor(value: T) { this.value = value; } }\n"
+                    + "fun run(): int { let b = Box<int>(7); return b.value; }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
         [Fact]
         public void AnArraysOwnMembersAreCallableFromSource()
         {
