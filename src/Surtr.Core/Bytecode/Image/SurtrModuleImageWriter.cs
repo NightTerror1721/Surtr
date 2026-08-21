@@ -51,7 +51,7 @@ namespace Surtr.Bytecode.Image
             var strings = new List<string>();
             var stringIndices = new Dictionary<string, int>(StringComparer.Ordinal);
 
-            using var body = new MemoryStream();
+            using var body = new MemoryStream(module.Chunk.Code.Length + 4096);
             using (var writer = new BinaryWriter(body, Encoding.UTF8, leaveOpen: true))
             {
                 var state = new WriterState(writer, strings, stringIndices, module);
@@ -61,7 +61,7 @@ namespace Surtr.Bytecode.Image
                 WriteModuleDeclarations(state, module);
             }
 
-            using var image = new MemoryStream();
+            using var image = new MemoryStream((int)body.Length + 1024);
             using (var writer = new BinaryWriter(image, Encoding.UTF8, leaveOpen: true))
             {
                 writer.Write(SurtrModuleImage.Magic);
@@ -114,9 +114,14 @@ namespace Surtr.Bytecode.Image
         {
             var writer = state.Writer;
 
-            writer.Write(chunk.Code.Length);
-            for (int i = 0; i < chunk.Code.Length; i++)
-                writer.Write(chunk.Code[i]);
+            // One memcpy into a managed array, then one Write: a module's code is the single
+            // largest contiguous span in the image, and writing it byte by byte is a virtual call
+            // per byte.
+            var code = chunk.Code;
+            var codeBytes = new byte[code.Length];
+            code.CopyTo(codeBytes, 0, code.Length);
+            writer.Write(code.Length);
+            writer.Write(codeBytes);
 
             writer.Write(chunk.Constants.Length);
             for (int i = 0; i < chunk.Constants.Length; i++)

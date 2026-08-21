@@ -597,9 +597,7 @@ namespace Surtr.Bytecode.Emit
             for (int i = 0; i < methods.Count; i++)
             {
                 var body = bodies[i];
-                int start = offsets[i];
-                for (int b = 0; b < body.Length; b++)
-                    chunk.Code[start + b] = body[b];
+                chunk.Code.CopyFrom(body, 0, offsets[i], body.Length);
             }
 
             // Written before any metadata is constructed: SurtrBytecodeMethodInfo snapshots its own

@@ -235,8 +235,8 @@ namespace Surtr.Compiler.Binding
                             continue;
                         }
 
-                        var absorbed = _conversions.Classify(argument.Type, element);
-                        if (!absorbed.IsImplicit)
+                        var absorbed = _conversions.ClassifyImplicitOnly(argument.Type, element);
+                        if (!absorbed.Exists)
                             return false;
 
                         mapped[varargIndex] = parameters[varargIndex].Type;
@@ -268,8 +268,10 @@ namespace Surtr.Compiler.Binding
                         continue;
                     }
 
-                    var conversion = _conversions.Classify(argument.Type, parameters[target].Type);
-                    if (!conversion.IsImplicit)
+                    // Implicit-only: a candidate rejected on its first argument (the common case
+                    // with overloads) never pays for the explicit or user-defined half of Classify.
+                    var conversion = _conversions.ClassifyImplicitOnly(argument.Type, parameters[target].Type);
+                    if (!conversion.Exists)
                         return false;
 
                     mapped[target] = argument.Type;
@@ -303,8 +305,8 @@ namespace Surtr.Compiler.Binding
                     continue;
                 }
 
-                var namedConversion = _conversions.Classify(argument.Type, parameters[named].Type);
-                if (!namedConversion.IsImplicit)
+                var namedConversion = _conversions.ClassifyImplicitOnly(argument.Type, parameters[named].Type);
+                if (!namedConversion.Exists)
                     return false;
 
                 mapped[named] = argument.Type;

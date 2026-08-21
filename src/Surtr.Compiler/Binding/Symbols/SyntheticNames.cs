@@ -86,17 +86,38 @@ namespace Surtr.Compiler.Binding.Symbols
         public static bool IsSynthetic(string name) => name.Length > 0 && name[0] == Marker;
 
         private static string Build(string category, string context)
-            => string.Concat(Marker.ToString(), category, Marker.ToString(), context);
+        {
+            int length = 2 + category.Length + context.Length;
+            return string.Create(length, (category, context), static (span, state) =>
+            {
+                int position = 0;
+                span[position++] = Marker;
+                state.category.AsSpan().CopyTo(span[position..]);
+                position += state.category.Length;
+                span[position++] = Marker;
+                state.context.AsSpan().CopyTo(span[position..]);
+            });
+        }
 
         private static string Build(string category, string context, int index)
         {
             if (index < 0)
                 throw new ArgumentOutOfRangeException(nameof(index), index, "A synthetic member's index cannot be negative.");
 
-            return string.Concat(
-                Build(category, context),
-                Marker.ToString(),
-                index.ToString(CultureInfo.InvariantCulture));
+            string indexText = index.ToString(CultureInfo.InvariantCulture);
+            int length = 3 + category.Length + context.Length + indexText.Length;
+            return string.Create(length, (category, context, indexText), static (span, state) =>
+            {
+                int position = 0;
+                span[position++] = Marker;
+                state.category.AsSpan().CopyTo(span[position..]);
+                position += state.category.Length;
+                span[position++] = Marker;
+                state.context.AsSpan().CopyTo(span[position..]);
+                position += state.context.Length;
+                span[position++] = Marker;
+                state.indexText.AsSpan().CopyTo(span[position..]);
+            });
         }
     }
 }

@@ -51,6 +51,9 @@ namespace Surtr.Compiler.CodeGen
 
         private readonly Dictionary<string, int> _syntheticCounts = new Dictionary<string, int>(StringComparer.Ordinal);
 
+        private readonly Dictionary<Binding.BoundTree.BoundStatement, int> _inlineCosts =
+            new Dictionary<Binding.BoundTree.BoundStatement, int>();
+
         /// <summary>Creates a context over one module being built.</summary>
         /// <param name="module">The module every declaration lands on.</param>
         /// <param name="descriptors">
@@ -281,10 +284,7 @@ namespace Surtr.Compiler.CodeGen
         }
         #endregion
 
-        /// <summary>
-        /// Hands out the next name in a synthetic category, so two lambdas in one method do not
-        /// collide.
-        /// </summary>
+        /// <summary>Hands out the next name in a synthetic category, so two lambdas in one method do not collide.</summary>
         /// <remarks>
         /// The counter is per context — one name in one method table — rather than per method, so a
         /// name is stable for a given emission order and cannot be reused by a later declaration.
@@ -295,6 +295,20 @@ namespace Surtr.Compiler.CodeGen
             _syntheticCounts.TryGetValue(key, out int next);
             _syntheticCounts[key] = next + 1;
             return next;
+        }
+
+        /// <summary>
+        /// The estimated splice cost of a bound body, computed once. A bound body is immutable after
+        /// binding, so the estimate is a pure function of it — and every call site that considers
+        /// splicing the same callee (a hot accessor, for instance) would otherwise re-walk the whole
+        /// tree.
+        /// </summary>
+        public int InlineCostOf(Binding.BoundTree.BoundStatement body)
+        {
+            if (_inlineCosts.TryGetValue(body, out int cached))
+                return cached;
+
+            return _inlineCosts[body] = InlineCost.Estimate(body);
         }
     }
 }

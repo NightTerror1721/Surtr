@@ -28,7 +28,7 @@ namespace Surtr.Compiler.Binding.Symbols
     /// into the name the runtime will see. See <c>docs/Compiler-Plan.md</c> §8.
     /// </para>
     /// </remarks>
-    public class NamedTypeSymbol : TypeSymbol
+    public sealed class NamedTypeSymbol : TypeSymbol
     {
         private static readonly IReadOnlyList<TypeSymbol> NoTypeArguments = Array.Empty<TypeSymbol>();
         private static readonly IReadOnlyList<TypeParameterSymbol> NoTypeParameters = Array.Empty<TypeParameterSymbol>();
@@ -44,6 +44,10 @@ namespace Surtr.Compiler.Binding.Symbols
         private IReadOnlyList<NamedTypeSymbol> _interfaces = NoInterfaces;
         private IReadOnlyList<Symbol> _members = NoMembers;
         private Dictionary<IReadOnlyList<TypeSymbol>, NamedTypeSymbol>? _constructions;
+
+        // Cached per construction: a construction is interned per definition, so its argument
+        // substitution is a pure function of the instance and never changes.
+        private TypeSubstitution? _substitutionFromArguments;
 
         /// <summary>Creates a type definition.</summary>
         internal NamedTypeSymbol(
@@ -330,13 +334,16 @@ namespace Surtr.Compiler.Binding.Symbols
         {
             var parameters = TypeParameters;
             if (parameters.Count == 0 || _typeArguments.Count != parameters.Count)
-                return TypeSubstitution.Empty(factory);
+                return factory.EmptySubstitution();
+
+            if (_substitutionFromArguments is not null)
+                return _substitutionFromArguments;
 
             var builder = new TypeSubstitutionBuilder(factory);
             for (int i = 0; i < parameters.Count; i++)
                 builder.Add(parameters[i], _typeArguments[i]);
 
-            return builder.ToSubstitution();
+            return _substitutionFromArguments = builder.ToSubstitution();
         }
 
         /// <summary>

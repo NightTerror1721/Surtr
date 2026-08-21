@@ -23,6 +23,10 @@ namespace Surtr.LanguageServer.Workspace
 
         private CompilationSnapshot _snapshot = CompilationSnapshot.Empty;
 
+        // The source files the last Rebuild enumerated and read — what PublishAll publishes over,
+        // so it does not walk and re-read the tree a second time.
+        private IReadOnlyList<string> _lastBuildFiles = Array.Empty<string>();
+
         public Workspace(string rootPath, string rootModulePath = "")
         {
             _rootPath = rootPath;
@@ -78,6 +82,7 @@ namespace Surtr.LanguageServer.Workspace
         public IReadOnlyDictionary<string, IReadOnlyList<Surtr.Compiler.Diagnostics.SurtrDiagnostic>> Rebuild()
         {
             var files = FindSourceFiles().ToList();
+            _lastBuildFiles = files;
 
             Surtr.Compiler.Compilation.SurtrProject project =
                 _sourceProvider is null
@@ -165,6 +170,9 @@ namespace Surtr.LanguageServer.Workspace
 
             return groups;
         }
+
+        /// <summary>The files the most recent <see cref="Rebuild"/> compiled, in enumeration order.</summary>
+        public IReadOnlyList<string> LastBuildFiles => _lastBuildFiles;
 
         /// <summary>Every <c>.surtr</c> file under the root, skipping build and version-control noise.</summary>
         public IEnumerable<string> FindSourceFiles()

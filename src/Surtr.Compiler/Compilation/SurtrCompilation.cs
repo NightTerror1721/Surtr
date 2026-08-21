@@ -9,6 +9,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace Surtr.Compiler.Compilation
 {
@@ -184,32 +185,112 @@ namespace Surtr.Compiler.Compilation
 
         private void ParseSources()
         {
-            foreach (var file in Project.SourceFiles)
+            var files = Project.SourceFiles;
+
+            // Parsing a file is independent of every other: derive its module, lex it, parse it —
+            // the only shared state is read-only. Each file parses into its own bag and its own slot,
+            // and the results merge back in file order, which keeps diagnostic report order exactly
+            // what the sequential path produced. Bind, the dependency graph and emit stay sequential.
+            var results = new FileParseResult[files.Count];
+            Parallel.For(0, files.Count, i =>
             {
-                // A file that names its own module overrides §2.1's derivation from its location.
-                string modulePath;
-                if (file.ModulePath is not null)
-                {
-                    modulePath = file.ModulePath;
-                }
-                else
-                {
-                    var status = ModulePath.TryDerive(
-                        Project.SourceRoot,
-                        file.Path,
-                        Project.RootModulePath,
-                        out modulePath,
-                        out string offendingSegment);
+                results[i] = ParseFile(files[i]);
+            });
 
-                    if (status != ModulePathStatus.Ok)
-                    {
-                        ReportModulePath(file, status, offendingSegment);
-                        continue;
-                    }
-                }
+            for (int i = 0; i < results.Length; i++)
+                MergeParseResult(results[i]);
+        }
 
-                ParseSourceInto(modulePath, file.Path, file.Text);
+        private readonly struct FileParseResult
+        {
+            internal FileParseResult(
+                SurtrSourceFile file,
+                string modulePath,
+                CompilationUnitSyntax? syntax,
+                SurtrDiagnosticBag bag,
+                ModulePathStatus status,
+                string offendingSegment)
+            {
+                File = file;
+                ModulePath = modulePath;
+                Syntax = syntax;
+                Bag = bag;
+                Status = status;
+                OffendingSegment = offendingSegment;
             }
+
+            internal SurtrSourceFile File { get; }
+            internal string ModulePath { get; }
+            internal CompilationUnitSyntax? Syntax { get; }
+            internal SurtrDiagnosticBag Bag { get; }
+            internal ModulePathStatus Status { get; }
+            internal string OffendingSegment { get; }
+        }
+
+        /// <summary>The whole per-file front end, isolated so it can run on any thread.</summary>
+        private FileParseResult ParseFile(SurtrSourceFile file)
+        {
+            string modulePath = file.ModulePath;
+            ModulePathStatus status = ModulePathStatus.Ok;
+            string offendingSegment = string.Empty;
+
+            // A file that names its own module overrides §2.1's derivation from its location.
+            if (modulePath is null)
+            {
+                status = ModulePath.TryDerive(
+                    Project.SourceRoot,
+                    file.Path,
+                    Project.RootModulePath,
+                    out modulePath,
+                    out offendingSegment);
+            }
+
+            var bag = new SurtrDiagnosticBag();
+            CompilationUnitSyntax? syntax = null;
+
+            if (status == ModulePathStatus.Ok && ModulePath.IsValid(modulePath))
+            {
+                var parser = new Parser(SurtrSourceBuffer.FromString(file.Text, file.Path), bag);
+                syntax = parser.ParseCompilationUnit();
+            }
+
+            return new FileParseResult(file, modulePath, syntax, bag, status, offendingSegment);
+        }
+
+        /// <summary>Folds one file's parallel result into the compilation, in the sequential path's reporting order.</summary>
+        private void MergeParseResult(in FileParseResult result)
+        {
+            if (result.Status != ModulePathStatus.Ok)
+            {
+                ReportModulePath(result.File, result.Status, result.OffendingSegment);
+                return;
+            }
+
+            if (!ModulePath.IsValid(result.ModulePath))
+            {
+                // An explicit module path that is not a legal dotted path cannot be named by an
+                // import and is not something to keep around.
+                Diagnostics.ReportError(
+                    SurtrDiagnosticCode.InvalidModulePath,
+                    $"'{result.ModulePath}' is not a legal module path.",
+                    result.File.Path,
+                    span: default);
+                return;
+            }
+
+            if (result.Bag.Count > 0)
+                Diagnostics.AddRange(result.Bag);
+
+            if (result.Syntax is null)
+                return;
+
+            if (!_modules.TryGetValue(result.ModulePath, out var module))
+            {
+                module = new SurtrSourceModule(result.ModulePath);
+                _modules.Add(result.ModulePath, module);
+            }
+
+            module.Add(new SurtrSourceUnit(result.File, result.ModulePath, result.Syntax));
         }
 
         /// <summary>Parses one source text into the compilation's module set, creating the module if needed.</summary>

@@ -1,6 +1,7 @@
 #nullable enable
 
 using Surtr.Compiler.Diagnostics;
+using System;
 using System.Collections.Generic;
 using Surtr.Compiler.Syntax.Ast;
 
@@ -17,14 +18,14 @@ namespace Surtr.Compiler.Syntax
             // A statement that does not parse is reported and skipped, and the block carries on
             // with the next one. Recovering here rather than only at declaration level is what
             // keeps one bad line inside a long method from discarding the whole method.
-            List<StatementSyntax> statements = new List<StatementSyntax>();
+            List<StatementSyntax>? statements = null;
             while (!reader.Check(TokenType.RightBrace) && !reader.Check(TokenType.EndOfFile))
             {
                 int before = reader.Position;
 
                 try
                 {
-                    statements.Add(ParseStatement());
+                    (statements ??= new List<StatementSyntax>(8)).Add(ParseStatement());
                 }
                 catch (SurtrParserException)
                 {
@@ -38,7 +39,7 @@ namespace Surtr.Compiler.Syntax
             }
 
             reader.Expect(TokenType.RightBrace, "'}' to close the block");
-            return new BlockStatementSyntax(SpanFrom(start), statements);
+            return new BlockStatementSyntax(SpanFrom(start), (IReadOnlyList<StatementSyntax>?)statements ?? Array.Empty<StatementSyntax>());
         }
 
         /// <summary>Parses one statement.</summary>

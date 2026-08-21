@@ -38,9 +38,12 @@ namespace Surtr.Compiler.Binding.Symbols
         private readonly Dictionary<string, ErrorTypeSymbol> _errors =
             new Dictionary<string, ErrorTypeSymbol>(StringComparer.Ordinal);
 
+        private readonly TypeSubstitution _empty;
+
         /// <summary>Creates a factory with the built-in types already interned.</summary>
         public TypeSymbolFactory()
         {
+            _empty = new TypeSubstitution(this, map: null);
             BuiltInModule = new ModuleSymbol("surtr");
 
             Int = Special("int", SpecialType.Int);
@@ -179,8 +182,11 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>Starts a substitution that will intern whatever it rebuilds through this factory.</summary>
         public TypeSubstitutionBuilder BeginSubstitution() => new TypeSubstitutionBuilder(this);
 
-        /// <summary>A substitution that replaces nothing.</summary>
-        public TypeSubstitution EmptySubstitution() => TypeSubstitution.Empty(this);
+        /// <summary>
+        /// A substitution that replaces nothing. One shared instance per factory: a substitution
+        /// is immutable once built, so the empty one is safe to hand out from everywhere.
+        /// </summary>
+        public TypeSubstitution EmptySubstitution() => _empty;
 
         private NamedTypeSymbol Special(string name, SpecialType specialType)
             => new NamedTypeSymbol(name, TypeSymbolKind.Class, BuiltInModule, containingType: null, specialType);

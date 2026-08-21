@@ -1,6 +1,7 @@
 #nullable enable
 
 using Surtr.Compiler.Diagnostics;
+using System;
 using System.Collections.Generic;
 using Surtr.Compiler.Syntax.Ast;
 
@@ -271,7 +272,7 @@ namespace Surtr.Compiler.Syntax
         /// of the type argument list it was never trying to be.
         /// </para>
         /// </remarks>
-        private bool LooksLikeTypeArgumentList(bool requireMemberAccess = false)
+        private (bool isGenericCall, bool isMemberAccess) LooksLikeTypeArgumentList()
         {
             const int Limit = 256;
 
@@ -279,7 +280,7 @@ namespace Surtr.Compiler.Syntax
 
             for (int offset = 0; offset < Limit; offset++)
             {
-                switch (reader.Peek(offset).Type)
+                switch (reader.PeekType(offset))
                 {
                     case TokenType.Less:
                         depth++;
@@ -291,7 +292,7 @@ namespace Surtr.Compiler.Syntax
                     {
                         // Maximal munch hands back `>>` and `>>>` whole, and in a nested list they
                         // close two and three levels — the same split ConsumeTypeArgumentClose makes.
-                        depth -= reader.Peek(offset).Type switch
+                        depth -= reader.PeekType(offset) switch
                         {
                             TokenType.Greater => 1,
                             TokenType.ShiftRight => 2,
@@ -303,15 +304,12 @@ namespace Surtr.Compiler.Syntax
 
                         // A list that closes more angles than it opened was never one.
                         // After the close comes a `(` (a generic call), or — for the member-access
-                        // form — a `.`/`?.` (a generic name reaching a static member).
-                        var following = reader.Peek(offset + 1).Type;
-                        if (requireMemberAccess)
-                            return depth == 0 && (following == TokenType.Dot || following == TokenType.QuestionDot);
-
-                        return depth == 0
-                            && (following == TokenType.LeftParen
-                                || following == TokenType.Dot
-                                || following == TokenType.QuestionDot);
+                        // form — a `.`/`?.` (a generic name reaching a static member). Both facts are
+                        // answered by the same scan, so a postfix `<` pays for it exactly once.
+                        var following = reader.PeekType(offset + 1);
+                        return (
+                            depth == 0 && (following == TokenType.LeftParen || following == TokenType.Dot || following == TokenType.QuestionDot),
+                            depth == 0 && (following == TokenType.Dot || following == TokenType.QuestionDot));
                     }
 
                     // Everything a type can be written with: a name, a qualification, a separator,
@@ -331,11 +329,11 @@ namespace Surtr.Compiler.Syntax
                         break;
 
                     default:
-                        return false;
+                        return (false, false);
                 }
             }
 
-            return false;
+            return (false, false);
         }
 
         /// <summary>Parses calls, indexing, member access, postfix increment and <c>!!</c>.</summary>
@@ -375,26 +373,31 @@ namespace Surtr.Compiler.Syntax
                 // `pick<int>(1, 2)` — a call with its type arguments written out (§6). Only taken
                 // when the tokens really close a type argument list and a `(` follows, so
                 // `a < b` stays a comparison.
-                if (reader.Check(TokenType.Less) && LooksLikeTypeArgumentList())
+                if (reader.Check(TokenType.Less))
                 {
-                    // `Box<int>.prop` / `Box<,>.make()` — a generic name reaching a static member.
-                    // The member access branch below consumes the `.`; the generic name is the
-                    // receiver it hangs off.
-                    if (LooksLikeTypeArgumentList(requireMemberAccess: true))
+                    var (isGenericCall, isMemberAccess) = LooksLikeTypeArgumentList();
+
+                    if (isGenericCall)
                     {
-                        var nameArguments = ParseWildcardTypeArgumentList();
-
-                        if (expression is IdentifierExpressionSyntax named)
+                        // `Box<int>.prop` / `Box<,>.make()` — a generic name reaching a static member.
+                        // The member access branch below consumes the `.`; the generic name is the
+                        // receiver it hangs off.
+                        if (isMemberAccess)
                         {
-                            expression = new GenericNameExpressionSyntax(SpanFrom(named.Span.Start), named.Name, nameArguments);
-                            continue;
-                        }
-                    }
+                            var nameArguments = ParseWildcardTypeArgumentList();
 
-                    var typeArguments = ParseTypeArgumentList();
-                    var arguments = ParseArgumentList();
-                    expression = new CallExpressionSyntax(SpanFrom(expression.Span.Start), expression, typeArguments, arguments);
-                    continue;
+                            if (expression is IdentifierExpressionSyntax named)
+                            {
+                                expression = new GenericNameExpressionSyntax(SpanFrom(named.Span.Start), named.Name, nameArguments);
+                                continue;
+                            }
+                        }
+
+                        var typeArguments = ParseTypeArgumentList();
+                        var arguments = ParseArgumentList();
+                        expression = new CallExpressionSyntax(SpanFrom(expression.Span.Start), expression, typeArguments, arguments);
+                        continue;
+                    }
                 }
 
                 if (reader.Check(TokenType.LeftBracket))
@@ -439,7 +442,8 @@ namespace Surtr.Compiler.Syntax
         {
             reader.Expect(TokenType.LeftParen, "'(' to open the arguments");
 
-            List<ArgumentSyntax> arguments = new List<ArgumentSyntax>();
+            // Lazy: `f()` is the most common call shape of all, and it needs no list at all.
+            List<ArgumentSyntax>? arguments = null;
             while (!reader.Check(TokenType.RightParen))
             {
                 SourceLocation start = reader.CurrentLocation;
@@ -454,7 +458,7 @@ namespace Surtr.Compiler.Syntax
                 }
 
                 ExpressionSyntax argumentValue = ParseExpression();
-                arguments.Add(new ArgumentSyntax(SpanFrom(start), name, argumentValue));
+                (arguments ??= new List<ArgumentSyntax>(4)).Add(new ArgumentSyntax(SpanFrom(start), name, argumentValue));
 
                 if (!reader.Match(TokenType.Comma))
                 {
@@ -463,7 +467,7 @@ namespace Surtr.Compiler.Syntax
             }
 
             reader.Expect(TokenType.RightParen, "')' to close the arguments");
-            return arguments;
+            return (IReadOnlyList<ArgumentSyntax>?)arguments ?? Array.Empty<ArgumentSyntax>();
         }
 
         /// <summary>Parses the atoms: literals, names, and the bracketed forms.</summary>

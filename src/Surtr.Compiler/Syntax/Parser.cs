@@ -125,14 +125,14 @@ namespace Surtr.Compiler.Syntax
                 }
             }
 
-            List<DeclarationSyntax> declarations = new List<DeclarationSyntax>();
+            List<DeclarationSyntax>? declarations = null;
             while (!reader.Check(TokenType.EndOfFile))
             {
                 int before = reader.Position;
 
                 try
                 {
-                    declarations.Add(ParseDeclaration());
+                    (declarations ??= new List<DeclarationSyntax>(8)).Add(ParseDeclaration());
                 }
                 catch (SurtrParserException)
                 {
@@ -147,7 +147,7 @@ namespace Surtr.Compiler.Syntax
                 }
             }
 
-            return new CompilationUnitSyntax(SpanFrom(start), imports, declarations);
+            return new CompilationUnitSyntax(SpanFrom(start), imports, (IReadOnlyList<DeclarationSyntax>?)declarations ?? Array.Empty<DeclarationSyntax>());
         }
 
         /// <summary>
@@ -403,13 +403,13 @@ namespace Surtr.Compiler.Syntax
                 reader.Advance();
 
                 string name = reader.ExpectIdentifier("an attribute name");
-                List<ExpressionSyntax> arguments = new List<ExpressionSyntax>();
+                List<ExpressionSyntax>? arguments = null;
 
                 if (reader.Match(TokenType.LeftParen))
                 {
                     while (!reader.Check(TokenType.RightParen))
                     {
-                        arguments.Add(ParseExpression());
+                        (arguments ??= new List<ExpressionSyntax>(4)).Add(ParseExpression());
                         if (!reader.Match(TokenType.Comma))
                         {
                             break;
@@ -419,8 +419,8 @@ namespace Surtr.Compiler.Syntax
                     reader.Expect(TokenType.RightParen, "')' to close the attribute arguments");
                 }
 
-                attributes ??= new List<AttributeSyntax>();
-                attributes.Add(new AttributeSyntax(SpanFrom(start), name, arguments));
+                attributes ??= new List<AttributeSyntax>(4);
+                attributes.Add(new AttributeSyntax(SpanFrom(start), name, (IReadOnlyList<ExpressionSyntax>?)arguments ?? Array.Empty<ExpressionSyntax>()));
             }
 
             return (IReadOnlyList<AttributeSyntax>?)attributes ?? EmptyAttributes;

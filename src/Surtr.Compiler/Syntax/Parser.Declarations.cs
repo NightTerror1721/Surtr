@@ -1,6 +1,7 @@
 #nullable enable
 
 using Surtr.Compiler.Diagnostics;
+using System;
 using System.Collections.Generic;
 using Surtr.Compiler.Syntax.Ast;
 
@@ -543,7 +544,7 @@ namespace Surtr.Compiler.Syntax
 
                 IReadOnlyList<ArgumentSyntax> arguments = reader.Check(TokenType.LeftParen)
                     ? ParseArgumentList()
-                    : new List<ArgumentSyntax>();
+                    : Array.Empty<ArgumentSyntax>();
 
                 cases.Add(new EnumCaseSyntax(SpanFrom(start), name, arguments, caseDoc));
 
@@ -956,7 +957,7 @@ namespace Surtr.Compiler.Syntax
             reader.Expect(TokenType.RightParen, "')' after the condition");
 
             IReadOnlyList<DeclarationSyntax> then = ParseDeclarationGroup();
-            IReadOnlyList<DeclarationSyntax> otherwise = new List<DeclarationSyntax>();
+            IReadOnlyList<DeclarationSyntax> otherwise = Array.Empty<DeclarationSyntax>();
 
             if (reader.Match(TokenType.KeywordElse))
             {

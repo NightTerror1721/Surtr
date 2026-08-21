@@ -56,6 +56,9 @@ namespace Surtr.Compiler.Binding.Symbols
         }
 
         private Dictionary<string, List<NamedTypeSymbol>>? _byName;
+        private Dictionary<string, List<MethodSymbol>>? _methodsByName;
+        private Dictionary<string, FieldSymbol>? _fieldsByName;
+        private Dictionary<string, PropertySymbol>? _propertiesByName;
 
         /// <summary>
         /// Every type declared here under a name, which is a list rather than one symbol because
@@ -100,21 +103,100 @@ namespace Surtr.Compiler.Binding.Symbols
         public IReadOnlyList<FieldSymbol> Fields
         {
             get => _fields;
-            internal set => _fields = value;
+            internal set
+            {
+                _fields = value;
+                _fieldsByName = null;
+            }
         }
 
         /// <summary>The module-level properties.</summary>
         public IReadOnlyList<PropertySymbol> Properties
         {
             get => _properties;
-            internal set => _properties = value;
+            internal set
+            {
+                _properties = value;
+                _propertiesByName = null;
+            }
         }
 
         /// <summary>The module-level functions.</summary>
         public IReadOnlyList<MethodSymbol> Methods
         {
             get => _methods;
-            internal set => _methods = value;
+            internal set
+            {
+                _methods = value;
+                _methodsByName = null;
+            }
+        }
+
+        /// <summary>
+        /// Every method declared here under a name, in declaration order. The indexed twin of
+        /// <see cref="Methods"/> for the resolution paths that already know the name they want —
+        /// built lazily and invalidated by the setter, exactly like <see cref="FindTypes"/>.
+        /// </summary>
+        public IReadOnlyList<MethodSymbol> FindMethods(string name)
+        {
+            if (_methodsByName is null)
+            {
+                _methodsByName = new Dictionary<string, List<MethodSymbol>>(StringComparer.Ordinal);
+                foreach (var method in _methods)
+                {
+                    if (!_methodsByName.TryGetValue(method.Name, out var bucket))
+                    {
+                        bucket = new List<MethodSymbol>();
+                        _methodsByName.Add(method.Name, bucket);
+                    }
+
+                    bucket.Add(method);
+                }
+            }
+
+            return _methodsByName.TryGetValue(name, out var found)
+                ? found
+                : (IReadOnlyList<MethodSymbol>)Array.Empty<MethodSymbol>();
+        }
+
+        /// <summary>
+        /// The field declared here under a name, or <see langword="null"/>. The indexed twin of
+        /// <see cref="Fields"/>; a name wins the first declaration, matching the linear scan it
+        /// replaces (a duplicate field is a compile error anyway).
+        /// </summary>
+        public FieldSymbol? FindField(string name)
+        {
+            if (_fieldsByName is null)
+            {
+                _fieldsByName = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
+                foreach (var field in _fields)
+                {
+                    if (!_fieldsByName.ContainsKey(field.Name))
+                        _fieldsByName.Add(field.Name, field);
+                }
+            }
+
+            return _fieldsByName.TryGetValue(name, out var found) ? found : null;
+        }
+
+        /// <summary>
+        /// The property declared here under a name, or <see langword="null"/>. The indexed twin of
+        /// <see cref="Properties"/>; a name wins the first declaration, matching the linear scan it
+        /// replaces (a duplicate property is a compile error anyway).
+        /// </summary>
+        public PropertySymbol? FindProperty(string name)
+        {
+            if (_propertiesByName is null)
+            {
+                _propertiesByName = new Dictionary<string, PropertySymbol>(StringComparer.Ordinal);
+                foreach (var property in _properties)
+                {
+                    if (!_propertiesByName.ContainsKey(property.Name))
+                        _propertiesByName.Add(property.Name, property);
+                }
+            }
+
+            return _propertiesByName.TryGetValue(name, out var found) ? found : null;
         }
 
         /// <summary>

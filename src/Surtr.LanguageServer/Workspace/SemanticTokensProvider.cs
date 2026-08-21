@@ -73,13 +73,16 @@ namespace Surtr.LanguageServer.Workspace
         {
             var spans = new List<TaggedSpan>();
 
+            // One lex for the whole request — previously the bound-tree walk and the declaration
+            // passes each tokenized the document again.
+            var tokens = new Lexer(SurtrSourceBuffer.FromString(text, filePath)).Tokenize();
+
             if (!snapshot.IsEmpty && snapshot.Binder is not null)
-                CollectThisSuperAndExpressionTypes(snapshot.Binder, filePath, text, spans);
+                CollectThisSuperAndExpressionTypes(snapshot.Binder, filePath, text, tokens, spans);
 
             var unit = snapshot.UnitFor(filePath);
             if (unit is not null)
             {
-                var tokens = new Lexer(SurtrSourceBuffer.FromString(text, filePath)).Tokenize();
                 CollectDeclarationKeywords(unit.Syntax.Declarations, tokens, spans);
                 CollectTypePositions(unit.Syntax.Declarations, tokens, spans);
             }
@@ -96,9 +99,8 @@ namespace Surtr.LanguageServer.Workspace
         // keeps such a read out of the keyword/this pass.
         // ------------------------------------------------------------------------------------
 
-        private static void CollectThisSuperAndExpressionTypes(Binder binder, string filePath, string text, List<TaggedSpan> spans)
+        private static void CollectThisSuperAndExpressionTypes(Binder binder, string filePath, string text, List<Token> tokens, List<TaggedSpan> spans)
         {
-            var tokens = new Lexer(SurtrSourceBuffer.FromString(text, filePath)).Tokenize();
 
             foreach (var pair in binder.Bodies)
             {

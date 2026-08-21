@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 
 namespace Surtr.Bytecode.Emit
 {
@@ -250,6 +251,7 @@ namespace Surtr.Bytecode.Emit
             return _labelPositions[ValidateLabel(label)];
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int ValidateLabel(SurtrLabel label)
         {
             if (!label.IsValid)
@@ -268,6 +270,7 @@ namespace Surtr.Bytecode.Emit
                 throw new InvalidOperationException($"Label L{id} has already been marked at offset {_labelPositions[id]}.");
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void RecordLabelDepth(int id, int depth)
         {
             int existing = _labelDepths[id];
@@ -299,6 +302,7 @@ namespace Surtr.Bytecode.Emit
             return this;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void Track(int pop, int push)
         {
             // Unreachable code never runs, so it can neither underflow the stack nor raise the high
@@ -317,6 +321,7 @@ namespace Surtr.Bytecode.Emit
         }
 
         /// <summary>Marks the following instructions as unreachable, until the next label.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void EndFlow() => _reachable = false;
 
         #endregion
@@ -365,6 +370,7 @@ namespace Surtr.Bytecode.Emit
             return this;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void ThrowIfFinished()
         {
             if (_finished)
@@ -376,6 +382,7 @@ namespace Surtr.Bytecode.Emit
         #region Internal emission primitives
 
         /// <summary>An opcode with no immediates.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private SurtrCodeEmitter Simple(OpCode op, int pop, int push)
         {
             ThrowIfFinished();
@@ -385,6 +392,7 @@ namespace Surtr.Bytecode.Emit
         }
 
         /// <summary>An opcode followed by one unsigned byte.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private SurtrCodeEmitter WithU8(OpCode op, int value, int pop, int push, string operand)
         {
             ThrowIfFinished();
@@ -396,6 +404,7 @@ namespace Surtr.Bytecode.Emit
         }
 
         /// <summary>An opcode followed by one unsigned 2-byte index.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private SurtrCodeEmitter WithU16(OpCode op, int value, int pop, int push, string operand)
         {
             ThrowIfFinished();
@@ -408,6 +417,7 @@ namespace Surtr.Bytecode.Emit
         }
 
         /// <summary>An opcode followed by one 4-byte index.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private SurtrCodeEmitter WithI32(OpCode op, int value, int pop, int push)
         {
             ThrowIfFinished();
@@ -417,6 +427,7 @@ namespace Surtr.Bytecode.Emit
             return this;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void CheckRange(int value, int min, int max, OpCode op, string operand)
         {
             if (value < min || value > max)
@@ -424,6 +435,7 @@ namespace Surtr.Bytecode.Emit
                     operand, value, $"{op} takes a {operand} in [{min}, {max}].");
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void AppendI32(List<byte> code, int value)
         {
             code.Add((byte)value);
@@ -554,6 +566,7 @@ namespace Surtr.Bytecode.Emit
             AppendI32(_code, 0);
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int TypeIndex(SurtrTypeToken token)
         {
             if (!token.IsValid)
@@ -561,6 +574,7 @@ namespace Surtr.Bytecode.Emit
             return token.Index;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int ModuleIndex(SurtrModuleToken token)
         {
             if (!token.IsValid)

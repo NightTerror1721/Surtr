@@ -66,6 +66,20 @@ namespace Surtr.Runtime.Utilities
         public readonly void Clear()
             => MemOps.Clear(Pointer, (nuint)Length * (nuint)sizeof(T));
 
+        /// <summary>Copies a managed byte array into this buffer at <paramref name="destinationOffset"/>, as one memcpy.</summary>
+        public readonly void CopyFrom(byte[] source, int sourceOffset, int destinationOffset, int count)
+        {
+            fixed (byte* src = source)
+                Buffer.MemoryCopy(src + sourceOffset, Pointer + destinationOffset, count, count);
+        }
+
+        /// <summary>Copies this buffer's bytes into a managed array at <paramref name="destinationOffset"/>, as one memcpy.</summary>
+        public readonly void CopyTo(byte[] destination, int destinationOffset, int count)
+        {
+            fixed (byte* dst = destination)
+                Buffer.MemoryCopy(Pointer, dst + destinationOffset, count, count);
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Dispose()
         {

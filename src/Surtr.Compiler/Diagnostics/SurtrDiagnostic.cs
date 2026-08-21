@@ -72,9 +72,12 @@ namespace Surtr.Compiler.Diagnostics
         public bool IsError => Severity == SurtrDiagnosticSeverity.Error;
 
         /// <summary>
-        /// The code as it is written down and searched for: <c>SURTR2001</c>.
+        /// The code as it is written down and searched for: <c>SURTR2001</c>. Computed once — the
+        /// Language Server reads it once per diagnostic per publish, which is often.
         /// </summary>
-        public string Id => "SURTR" + ((int)Code).ToString("D4", CultureInfo.InvariantCulture);
+        private string? _id;
+
+        public string Id => _id ??= "SURTR" + ((int)Code).ToString("D4", CultureInfo.InvariantCulture);
 
         /// <summary>
         /// Renders the diagnostic in the shape every C-family toolchain prints:

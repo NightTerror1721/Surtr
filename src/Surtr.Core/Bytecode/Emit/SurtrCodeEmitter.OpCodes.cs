@@ -3,6 +3,7 @@
 using Surtr.Runtime.Classes;
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 
 namespace Surtr.Bytecode.Emit
 {
@@ -92,6 +93,7 @@ namespace Surtr.Bytecode.Emit
             CheckRange(resultCount, 0, 1, op, "retCount");
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int MethodIndex(SurtrMethodToken token)
         {
             if (!token.IsValid)
@@ -99,6 +101,7 @@ namespace Surtr.Bytecode.Emit
             return token.Index;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int FieldIndex(SurtrFieldToken token)
         {
             if (!token.IsValid)
@@ -106,6 +109,7 @@ namespace Surtr.Bytecode.Emit
             return token.Index;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int ConstantIndex(SurtrConstantToken token)
         {
             if (!token.IsValid)

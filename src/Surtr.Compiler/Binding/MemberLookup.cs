@@ -41,6 +41,12 @@ namespace Surtr.Compiler.Binding
         private readonly Dictionary<NamedTypeSymbol, IReadOnlyList<Symbol>> _substituted =
             new Dictionary<NamedTypeSymbol, IReadOnlyList<Symbol>>();
 
+        // Materialized reachable sets, keyed on the type asked for. A hierarchy is final once
+        // binding's member phase has run — Reachable is only ever consulted from body binding,
+        // emit and the Language Server, all after that point — so the walk result is stable.
+        private readonly Dictionary<TypeSymbol, IReadOnlyList<Symbol>> _reachableCache =
+            new Dictionary<TypeSymbol, IReadOnlyList<Symbol>>();
+
         /// <summary>Creates a lookup over one compilation's types.</summary>
         /// <param name="factory">The factory every substituted type is interned through.</param>
         /// <param name="importer">
@@ -140,6 +146,17 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         public IEnumerable<Symbol> Reachable(TypeSymbol type)
         {
+            if (_reachableCache.TryGetValue(type, out var cached))
+                return cached;
+
+            var members = new List<Symbol>();
+            CollectReachable(type, members);
+            _reachableCache[type] = members;
+            return members;
+        }
+
+        private void CollectReachable(TypeSymbol type, List<Symbol> members)
+        {
             var seen = new HashSet<NamedTypeSymbol>();
             var queue = new Queue<NamedTypeSymbol>();
 
@@ -152,7 +169,7 @@ namespace Surtr.Compiler.Binding
                 }
 
                 if (queue.Count == 0)
-                    yield break;
+                    return;
             }
             else if (BackingType(type.NonNullable) is NamedTypeSymbol named)
             {
@@ -160,7 +177,7 @@ namespace Surtr.Compiler.Binding
             }
             else
             {
-                yield break;
+                return;
             }
 
             while (queue.Count > 0)
@@ -170,7 +187,7 @@ namespace Surtr.Compiler.Binding
                     continue;
 
                 foreach (var member in MembersOf(current))
-                    yield return member;
+                    members.Add(member);
 
                 // A construction's declared base and interfaces are written in terms of the
                 // declaration's own type parameters (§6), so they must be read as the receiver's

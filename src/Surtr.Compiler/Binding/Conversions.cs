@@ -111,6 +111,7 @@ namespace Surtr.Compiler.Binding
     {
         private readonly TypeSymbolFactory _factory;
         private readonly MemberLookup? _lookup;
+        private readonly HashSet<NamedTypeSymbol> _subtypeScratch = new HashSet<NamedTypeSymbol>();
 
         /// <summary>Creates a classifier over one compilation's types.</summary>
         /// <param name="factory">The factory every type is interned through.</param>
@@ -127,7 +128,42 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>Whether a value of <paramref name="source"/> may be used where <paramref name="destination"/> is expected.</summary>
         public bool IsAssignable(TypeSymbol source, TypeSymbol destination)
-            => Classify(source, destination).IsImplicit;
+            => IsImplicitlyConvertible(source, destination);
+
+        /// <summary>
+        /// Whether an implicit conversion exists — the cheap half of <see cref="Classify"/>, for the
+        /// callers that only need to answer yes or no. It never descends into the explicit or
+        /// user-defined half, which is dead work for an assignment check and the dominant cost of
+        /// <see cref="Classify"/> for a type pair that does not convert.
+        /// </summary>
+        public bool IsImplicitlyConvertible(TypeSymbol source, TypeSymbol destination)
+            => ClassifyImplicitOnly(source, destination).Exists;
+
+        /// <summary>
+        /// The implicit conversion between two types, or <see cref="Conversion.None"/> when only an
+        /// explicit one exists. The fast half of <see cref="Classify"/>, for the callers — overload
+        /// applicability, assignment, extension-method filtering — that never want the explicit or
+        /// user-defined answer.
+        /// </summary>
+        public Conversion ClassifyImplicitOnly(TypeSymbol source, TypeSymbol destination)
+        {
+            if (ReferenceEquals(source, destination))
+                return Conversion.Identity;
+
+            // One bad name should report once, not everywhere its value goes.
+            if (source.IsError || destination.IsError)
+                return Conversion.Identity;
+
+            // `never` is the bottom type: a throw can stand wherever a value of any type is
+            // expected, and reaching it means the value is never produced.
+            if (source.IsNever)
+                return Conversion.Identity;
+
+            if (source.IsVoid || destination.IsVoid)
+                return Conversion.None;
+
+            return ClassifyImplicit(source, destination);
+        }
 
         /// <summary>How <paramref name="source"/> reaches <paramref name="destination"/>, if it does.</summary>
         public Conversion Classify(TypeSymbol source, TypeSymbol destination)
@@ -181,7 +217,11 @@ namespace Surtr.Compiler.Binding
             if (Named(derived) is not NamedTypeSymbol from || baseType.NonNullable is not NamedTypeSymbol to)
                 return false;
 
-            return WalkForBase(from, to, new HashSet<NamedTypeSymbol>());
+            // Reused across calls: the walk is depth-first, never re-enters IsSubtype, and clears
+            // the set at its own entry, so one scratch instance is safe and saves an allocation per
+            // subtype check — the most frequent primitive of overload resolution.
+            _subtypeScratch.Clear();
+            return WalkForBase(from, to, _subtypeScratch);
         }
 
         private NamedTypeSymbol? Named(TypeSymbol type)

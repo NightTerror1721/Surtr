@@ -2640,20 +2640,22 @@ case BoundFieldExpression field:
         }
 
         /// <summary>Whether <paramref name="property"/> is, by identity, the built-in dictionary's <c>length</c>.</summary>
+        private const string LengthGetterName = "get_length";
+
         private static bool IsDictionaryLength(PropertySymbol property)
-            => property.Getter is { } getter && IsDictionaryMember(getter, MemberNames.Getter("length"));
+            => property.Getter is { } getter && IsDictionaryMember(getter, LengthGetterName);
 
         /// <summary>Whether <paramref name="property"/> is, by identity, the built-in array's <c>length</c>.</summary>
         private static bool IsArrayLength(PropertySymbol property)
-            => property.Getter is { } getter && IsArrayMember(getter, MemberNames.Getter("length"));
+            => property.Getter is { } getter && IsArrayMember(getter, LengthGetterName);
 
         /// <summary>Whether <paramref name="property"/> is, by identity, the built-in string's <c>length</c>.</summary>
         private static bool IsStringLength(PropertySymbol property)
-            => property.Getter is { } getter && IsStringMember(getter, MemberNames.Getter("length"));
+            => property.Getter is { } getter && IsStringMember(getter, LengthGetterName);
 
         /// <summary>Whether <paramref name="property"/> is, by identity, the built-in tuple's <c>length</c>.</summary>
         private static bool IsTupleLength(PropertySymbol property)
-            => property.Getter is { } getter && IsTupleMember(getter, MemberNames.Getter("length"));
+            => property.Getter is { } getter && IsTupleMember(getter, LengthGetterName);
 
         /// <summary>
         /// Replaces a read of an auto-property by the field load that is its whole body (§3.4, §3.6).
@@ -2775,7 +2777,7 @@ case BoundFieldExpression field:
                 if (_context.Bodies is null || !_context.Bodies.TryGetValue(getter, out var body))
                     return false;
 
-                if (!InlineCost.WorthInline(body, declaredInline: false))
+                if (_context.InlineCostOf(body) > InlineCost.DefaultThreshold)
                     return false;
             }
 
@@ -2833,7 +2835,7 @@ case BoundFieldExpression field:
                 if (_context.Bodies is null || !_context.Bodies.TryGetValue(setter, out var costBody))
                     return false;
 
-                if (!InlineCost.WorthInline(costBody, declaredInline: false))
+                if (_context.InlineCostOf(costBody) > InlineCost.DefaultThreshold)
                     return false;
             }
 
@@ -3045,15 +3047,20 @@ case BoundFieldExpression field:
             // but each of these operations also has a dedicated opcode that does the same thing in
             // one dispatch and no frame. Where the callee is one of them, this call site takes the
             // opcode — the member is matched by identity so a user type that happens to declare its
-            // own `remove` is not confused with the built-in's.
-            if (TryEmitDictionaryOperation(call, discardResult))
-                return;
+            // own `remove` is not confused with the built-in's. A local method never is one (its
+            // `ImportedFrom` is null), so the three Try* dispatches are gated on a single
+            // precomputed identity set instead of probing each name against the built-in classes.
+            if (call.Method.ImportedFrom is { } imported && OpcodeableMembers.Value.Contains(imported))
+            {
+                if (TryEmitDictionaryOperation(call, discardResult))
+                    return;
 
-            if (TryEmitArrayOperation(call, discardResult))
-                return;
+                if (TryEmitArrayOperation(call, discardResult))
+                    return;
 
-            if (TryEmitStringOperation(call, discardResult))
-                return;
+                if (TryEmitStringOperation(call, discardResult))
+                    return;
+            }
 
             if (call.Method.IsForceInline)
             {
@@ -3478,6 +3485,30 @@ case BoundFieldExpression field:
                 : null;
 
         /// <summary>
+        /// The built-in members this emitter can lower to a dedicated opcode, keyed by their
+        /// <c>SurtrMethodInfo</c> identity — the same set the <c>Is*Member</c> checks name. Built
+        /// once, so a call site decides in one set lookup whether any of the <c>Try*</c> operations
+        /// could apply.
+        /// </summary>
+        private static readonly Lazy<HashSet<SurtrMethodInfo>> OpcodeableMembers = new(() =>
+        {
+            var members = new HashSet<SurtrMethodInfo>();
+            AddSingleOverloads(members, SurtrBuiltIns.Dictionary, "clear", "get", "set", "containsKey", "remove", "keys", "values");
+            AddSingleOverloads(members, SurtrBuiltIns.Array, "get", "set", "push", "pop", "insert", "removeAt", "clear", "indexOf", "contains");
+            AddSingleOverloads(members, SurtrBuiltIns.String, "charAt");
+            return members;
+        });
+
+        private static void AddSingleOverloads(HashSet<SurtrMethodInfo> members, SurtrClass type, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                if (type.TryGetMethods(name, out var overloads) && overloads.Length == 1)
+                    members.Add(overloads[0]);
+            }
+        }
+
+        /// <summary>
         /// Replaces a call to a <c>const fun</c> with constant arguments by the value it folds to
         /// (§7.2).
         /// </summary>
@@ -3543,7 +3574,7 @@ case BoundFieldExpression field:
                     return false;
             }
 
-            return InlineCost.WorthInline(body, declaredInline: false);
+            return _context.InlineCostOf(body) <= InlineCost.DefaultThreshold;
         }
 
         /// <summary>

@@ -96,7 +96,11 @@ namespace Surtr.Compiler.Syntax
         /// </remarks>
         public List<Token> Tokenize()
         {
-            List<Token> tokens = new List<Token>();
+            // Preseed from the buffer: a source of length N yields on the order of N/2 tokens, and
+            // starting there avoids the doubling reallocations a token-heavy file would otherwise
+            // grow through.
+            int capacity = Math.Min(source.Text.Length / 2 + 16, 1 << 20);
+            List<Token> tokens = new List<Token>(capacity);
 
             while (true)
             {
@@ -215,7 +219,10 @@ namespace Surtr.Compiler.Syntax
             {
                 char current = reader.Current;
 
-                if (char.IsWhiteSpace(current))
+                // Fast path for the whitespace that actually occurs in source, before falling
+                // back to the full Unicode table.
+                if (current == ' ' || current == '\t' || current == '\n' || current == '\r'
+                    || current == '\f' || current == '\v' || char.IsWhiteSpace(current))
                 {
                     reader.Skip();
                     continue;
@@ -279,8 +286,8 @@ namespace Surtr.Compiler.Syntax
             int textStart = reader.Position;
             reader.AdvanceUntil('\n');
 
-            string text = source.Text.Slice(textStart, reader.Position - textStart).ToString().Trim();
-            return Make(TokenType.DocComment, start, TokenPayload.ForString(text));
+            ReadOnlySpan<char> text = source.Text.Span.Slice(textStart, reader.Position - textStart).Trim();
+            return Make(TokenType.DocComment, start, TokenPayload.ForString(text.ToString()));
         }
 
         /// <summary>Scans an identifier, then checks whether it is one of §1.2's reserved words.</summary>
@@ -304,15 +311,15 @@ namespace Surtr.Compiler.Syntax
         {
             if (reader.Current == '0' && (reader.Peek(1) == 'x' || reader.Peek(1) == 'X'))
             {
-                return ScanRadixNumber(start, 16, IsHexDigit, "hexadecimal");
+                return ScanRadixNumber(start, 16, DigitKind.Hex, "hexadecimal");
             }
 
             if (reader.Current == '0' && (reader.Peek(1) == 'b' || reader.Peek(1) == 'B'))
             {
-                return ScanRadixNumber(start, 2, IsBinaryDigit, "binary");
+                return ScanRadixNumber(start, 2, DigitKind.Binary, "binary");
             }
 
-            SkipDigits(IsDigit);
+            SkipDigits(DigitKind.Decimal);
 
             bool isFloat = false;
 
@@ -323,7 +330,7 @@ namespace Surtr.Compiler.Syntax
             {
                 isFloat = true;
                 reader.Skip();
-                SkipDigits(IsDigit);
+                SkipDigits(DigitKind.Decimal);
             }
 
             if (reader.Current == 'e' || reader.Current == 'E')
@@ -334,62 +341,127 @@ namespace Surtr.Compiler.Syntax
                 {
                     isFloat = true;
                     reader.Skip(offset);
-                    SkipDigits(IsDigit);
+                    SkipDigits(DigitKind.Decimal);
                 }
             }
 
-            string digits = StripSeparators(source.Text.Span.Slice(start.Position, reader.Position - start.Position));
+            ReadOnlySpan<char> digits = source.Text.Span.Slice(start.Position, reader.Position - start.Position);
 
             if (isFloat)
             {
-                if (!double.TryParse(digits, NumberStyles.Float, CultureInfo.InvariantCulture, out double floatValue))
+                if (!TryParseFloat(digits, out double floatValue))
                 {
-                    throw Error(SurtrDiagnosticCode.InvalidNumericLiteral, $"'{digits}' is not a valid floating-point literal.", start);
+                    throw Error(SurtrDiagnosticCode.InvalidNumericLiteral, $"'{digits.ToString()}' is not a valid floating-point literal.", start);
                 }
 
                 return Make(TokenType.FloatLiteral, start, TokenPayload.ForFloat(floatValue));
             }
 
-            if (!long.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out long intValue))
+            if (!TryParseInteger(digits, out long intValue))
             {
-                throw Error(SurtrDiagnosticCode.InvalidNumericLiteral, $"'{digits}' is not a valid integer literal.", start);
+                throw Error(SurtrDiagnosticCode.InvalidNumericLiteral, $"'{digits.ToString()}' is not a valid integer literal.", start);
             }
 
             return Make(TokenType.IntegerLiteral, start, TokenPayload.ForInteger(intValue));
         }
 
-        /// <summary>Scans a <c>0x</c> or <c>0b</c> literal. <paramref name="radix"/> and <paramref name="isDigit"/> are what differ between the two.</summary>
-        private Token ScanRadixNumber(SourceLocation start, int radix, Predicate<char> isDigit, string description)
+        /// <summary>Scans a <c>0x</c> or <c>0b</c> literal. <paramref name="radix"/> and <paramref name="kind"/> are what differ between the two.</summary>
+        private Token ScanRadixNumber(SourceLocation start, int radix, DigitKind kind, string description)
         {
             reader.Skip(2);
 
             int digitsStart = reader.Position;
-            SkipDigits(isDigit);
+            SkipDigits(kind);
 
-            string digits = StripSeparators(source.Text.Span.Slice(digitsStart, reader.Position - digitsStart));
+            ReadOnlySpan<char> digits = source.Text.Span.Slice(digitsStart, reader.Position - digitsStart);
 
             if (digits.Length == 0)
             {
                 throw Error(SurtrDiagnosticCode.InvalidNumericLiteral, $"A {description} literal needs at least one digit.", start);
             }
 
+            long value = 0;
+            int digitCount = 0;
             try
             {
-                return Make(TokenType.IntegerLiteral, start, TokenPayload.ForInteger(Convert.ToInt64(digits, radix)));
+                for (int i = 0; i < digits.Length; i++)
+                {
+                    char current = digits[i];
+                    if (current == '_')
+                        continue;
+
+                    digitCount++;
+                    value = checked((value * radix) + DigitValue(current));
+                }
             }
             catch (OverflowException)
             {
                 throw Error(SurtrDiagnosticCode.NumericLiteralOutOfRange, $"The {description} literal is too large to fit in an integer.", start);
             }
+
+            if (digitCount == 0)
+            {
+                throw Error(SurtrDiagnosticCode.InvalidNumericLiteral, $"A {description} literal needs at least one digit.", start);
+            }
+
+            return Make(TokenType.IntegerLiteral, start, TokenPayload.ForInteger(value));
         }
 
-        /// <summary>Advances over digits accepted by <paramref name="isDigit"/>, allowing <c>_</c> separators between them.</summary>
-        private void SkipDigits(Predicate<char> isDigit)
+        private enum DigitKind
         {
-            while (!reader.IsAtEnd && (isDigit(reader.Current) || reader.Current == '_'))
+            Decimal,
+            Hex,
+            Binary,
+        }
+
+        /// <summary>Advances over the digits <paramref name="kind"/> accepts, allowing <c>_</c> separators between them.</summary>
+        private void SkipDigits(DigitKind kind)
+        {
+            while (!reader.IsAtEnd && (IsDigitOfKind(reader.Current, kind) || reader.Current == '_'))
             {
                 reader.Skip();
             }
+        }
+
+        private static bool IsDigitOfKind(char c, DigitKind kind) => kind switch
+        {
+            DigitKind.Decimal => c >= '0' && c <= '9',
+            DigitKind.Hex => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'),
+            _ => c == '0' || c == '1',
+        };
+
+        /// <summary>Parses a decimal integer literal over its raw span, stripping <c>_</c> separators only when present.</summary>
+        private static bool TryParseInteger(ReadOnlySpan<char> digits, out long value)
+        {
+            if (digits.IndexOf('_') < 0)
+                return long.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out value);
+
+            Span<char> buffer = digits.Length <= 64 ? stackalloc char[64] : new char[digits.Length];
+            int count = 0;
+            for (int i = 0; i < digits.Length; i++)
+            {
+                if (digits[i] != '_')
+                    buffer[count++] = digits[i];
+            }
+
+            return long.TryParse(buffer.Slice(0, count), NumberStyles.None, CultureInfo.InvariantCulture, out value);
+        }
+
+        /// <summary>Parses a float literal over its raw span, stripping <c>_</c> separators only when present.</summary>
+        private static bool TryParseFloat(ReadOnlySpan<char> digits, out double value)
+        {
+            if (digits.IndexOf('_') < 0)
+                return double.TryParse(digits, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+
+            Span<char> buffer = digits.Length <= 64 ? stackalloc char[64] : new char[digits.Length];
+            int count = 0;
+            for (int i = 0; i < digits.Length; i++)
+            {
+                if (digits[i] != '_')
+                    buffer[count++] = digits[i];
+            }
+
+            return double.TryParse(buffer.Slice(0, count), NumberStyles.Float, CultureInfo.InvariantCulture, out value);
         }
 
         /// <summary>
@@ -409,9 +481,11 @@ namespace Surtr.Compiler.Syntax
             reader.Skip();
 
             int contentStart = reader.Position;
-            StringBuilder decoded = new StringBuilder();
+            int decodedLength = 0;
             bool interpolated = false;
 
+            // First pass: find the closing quote, validating every escape via ScanEscape (which is
+            // what reports a bad one), counting the decoded length and detecting an unescaped `$`.
             while (true)
             {
                 if (reader.IsAtEnd)
@@ -433,7 +507,8 @@ namespace Surtr.Compiler.Syntax
 
                 if (current == '\\')
                 {
-                    decoded.Append(ScanEscape());
+                    ScanEscape();
+                    decodedLength++;
                     continue;
                 }
 
@@ -443,7 +518,7 @@ namespace Surtr.Compiler.Syntax
                     interpolated = true;
                 }
 
-                decoded.Append(current);
+                decodedLength++;
                 reader.Skip();
             }
 
@@ -456,7 +531,57 @@ namespace Surtr.Compiler.Syntax
                 return Make(TokenType.InterpolatedStringLiteral, start, TokenPayload.ForString(raw));
             }
 
-            return Make(TokenType.StringLiteral, start, TokenPayload.ForString(decoded.ToString()));
+            // Decoded length never exceeds the raw content (an escape only shrinks), so the raw
+            // content bounds the buffer. Small strings stay on the stack; the only heap allocation
+            // is the final string itself — no StringBuilder in between.
+            Span<char> buffer = contentLength <= 256 ? stackalloc char[contentLength] : new char[contentLength];
+            int count = DecodeSpan(source.Text.Span.Slice(contentStart, contentLength), buffer);
+            return Make(TokenType.StringLiteral, start, TokenPayload.ForString(new string(buffer.Slice(0, count))));
+        }
+
+        /// <summary>Decodes an already-validated string's content into <paramref name="destination"/>. Pass 1 validated every escape, so nothing here can fail.</summary>
+        private static int DecodeSpan(ReadOnlySpan<char> content, Span<char> destination)
+        {
+            int source = 0;
+            int target = 0;
+
+            while (source < content.Length)
+            {
+                char current = content[source];
+                if (current == '\\')
+                {
+                    char escape = content[source + 1];
+                    source += 2;
+
+                    switch (escape)
+                    {
+                        case 'n': destination[target++] = '\n'; break;
+                        case 't': destination[target++] = '\t'; break;
+                        case 'r': destination[target++] = '\r'; break;
+                        case '0': destination[target++] = '\0'; break;
+                        case '\\': destination[target++] = '\\'; break;
+                        case '\'': destination[target++] = '\''; break;
+                        case '"': destination[target++] = '"'; break;
+                        case '$': destination[target++] = '$'; break;
+                        case 'u':
+                        {
+                            int value = 0;
+                            for (int i = 0; i < 4; i++)
+                                value = (value * 16) + DigitValue(content[source + i]);
+                            source += 4;
+                            destination[target++] = (char)value;
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    destination[target++] = current;
+                    source++;
+                }
+            }
+
+            return target;
         }
 
         /// <summary>Scans a character literal: exactly one character, or one escape sequence, between single quotes.</summary>
@@ -536,7 +661,7 @@ namespace Surtr.Compiler.Syntax
                     throw Error(SurtrDiagnosticCode.InvalidEscapeSequence, "A '\\u' escape needs exactly four hexadecimal digits.", start);
                 }
 
-                value = (value * 16) + HexDigitValue(reader.Advance());
+                value = (value * 16) + DigitValue(reader.Advance());
             }
 
             return (char)value;
@@ -781,41 +906,21 @@ namespace Surtr.Compiler.Syntax
 
         private static bool Is(ReadOnlySpan<char> text, string keyword) => text.SequenceEqual(keyword.AsSpan());
 
-        private static bool IsIdentifierStart(char c) => char.IsLetter(c) || c == '_';
+        private static bool IsIdentifierStart(char c)
+            => (uint)(c - 'A') <= 25u || (uint)(c - 'a') <= 25u || c == '_' || char.IsLetter(c);
 
-        private static bool IsIdentifierPart(char c) => char.IsLetterOrDigit(c) || c == '_';
+        private static bool IsIdentifierPart(char c)
+            => (uint)(c - 'A') <= 25u || (uint)(c - 'a') <= 25u || (uint)(c - '0') <= 9u || c == '_' || char.IsLetterOrDigit(c);
 
         private static bool IsDigit(char c) => c >= '0' && c <= '9';
 
-        private static bool IsBinaryDigit(char c) => c == '0' || c == '1';
-
         private static bool IsHexDigit(char c) => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 
-        private static int HexDigitValue(char c)
+        private static int DigitValue(char c)
         {
             if (c <= '9') return c - '0';
-            return (char.ToLowerInvariant(c) - 'a') + 10;
-        }
-
-        /// <summary>Removes <c>_</c> digit-group separators, which are purely visual (§5.8).</summary>
-        private static string StripSeparators(ReadOnlySpan<char> digits)
-        {
-            if (digits.IndexOf('_') < 0)
-            {
-                return digits.ToString();
-            }
-
-            StringBuilder builder = new StringBuilder(digits.Length);
-
-            for (int i = 0; i < digits.Length; i++)
-            {
-                if (digits[i] != '_')
-                {
-                    builder.Append(digits[i]);
-                }
-            }
-
-            return builder.ToString();
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            return c - 'A' + 10;
         }
     }
 }

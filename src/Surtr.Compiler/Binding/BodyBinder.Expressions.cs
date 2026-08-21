@@ -197,11 +197,8 @@ namespace Surtr.Compiler.Binding
 
         private static void AddModuleMethods(ModuleSymbol module, string name, List<MethodSymbol> candidates)
         {
-            foreach (var method in module.Methods)
-            {
-                if (string.Equals(method.Name, name, StringComparison.Ordinal))
-                    candidates.Add(method);
-            }
+            foreach (var method in module.FindMethods(name))
+                candidates.Add(method);
         }
 
         /// <summary>
@@ -214,8 +211,24 @@ namespace Surtr.Compiler.Binding
         {
             foreach (var imported in _imported)
             {
-                if (imported.Only is null || imported.Only.Any(member => member == name))
-                    yield return imported.Module;
+                var only = imported.Only;
+                if (only is not null)
+                {
+                    bool present = false;
+                    for (int i = 0; i < only.Count; i++)
+                    {
+                        if (only[i] == name)
+                        {
+                            present = true;
+                            break;
+                        }
+                    }
+
+                    if (!present)
+                        continue;
+                }
+
+                yield return imported.Module;
             }
         }
 
@@ -466,22 +479,16 @@ namespace Surtr.Compiler.Binding
 
         private BoundExpression? BindMemberOf(ModuleSymbol module, SyntaxNode syntax, string name)
         {
-            foreach (var field in module.Fields)
+            if (module.FindField(name) is FieldSymbol field)
             {
-                if (string.Equals(field.Name, name, StringComparison.Ordinal))
-                {
-                    RequireAccessible(field, field.Accessibility, field.Name, syntax);
-                    return ResolveField(syntax, null, field);
-                }
+                RequireAccessible(field, field.Accessibility, field.Name, syntax);
+                return ResolveField(syntax, null, field);
             }
 
-            foreach (var property in module.Properties)
+            if (module.FindProperty(name) is PropertySymbol property)
             {
-                if (string.Equals(property.Name, name, StringComparison.Ordinal))
-                {
-                    RequireAccessible(property, property.Accessibility, property.Name, syntax);
-                    return ResolveProperty(syntax, null, property);
-                }
+                RequireAccessible(property, property.Accessibility, property.Name, syntax);
+                return ResolveProperty(syntax, null, property);
             }
 
             return null;
@@ -1472,13 +1479,13 @@ namespace Surtr.Compiler.Binding
                     return CompleteExtension(syntax, receiver, extensionCandidates, name, expected);
             }
 
-            if (DeclaresMethod(_module, name))
-                return BindModuleCall(syntax, _module, name, expected);
+            if (BindModuleCall(syntax, _module, name, expected) is BoundExpression own)
+                return own;
 
             foreach (var imported in ImportedFor(name))
             {
-                if (DeclaresMethod(imported, name))
-                    return BindModuleCall(syntax, imported, name, expected);
+                if (BindModuleCall(syntax, imported, name, expected) is BoundExpression member)
+                    return member;
             }
 
             return Error(
@@ -1559,40 +1566,20 @@ namespace Surtr.Compiler.Binding
                     return true;
             }
 
-            foreach (var field in _module.Fields)
-            {
-                if (string.Equals(field.Name, name, StringComparison.Ordinal))
-                    return field.Type.NonNullable is ClosureTypeSymbol;
-            }
+            if (_module.FindField(name) is FieldSymbol field)
+                return field.Type.NonNullable is ClosureTypeSymbol;
 
-            foreach (var property in _module.Properties)
-            {
-                if (string.Equals(property.Name, name, StringComparison.Ordinal))
-                    return property.Type.NonNullable is ClosureTypeSymbol;
-            }
+            if (_module.FindProperty(name) is PropertySymbol property)
+                return property.Type.NonNullable is ClosureTypeSymbol;
 
             return false;
         }
 
-        private static bool DeclaresMethod(ModuleSymbol module, string name)
+        private BoundExpression? BindModuleCall(CallExpressionSyntax syntax, ModuleSymbol module, string name, TypeSymbol? expected = null)
         {
-            foreach (var method in module.Methods)
-            {
-                if (string.Equals(method.Name, name, StringComparison.Ordinal))
-                    return true;
-            }
-
-            return false;
-        }
-
-        private BoundExpression BindModuleCall(CallExpressionSyntax syntax, ModuleSymbol module, string name, TypeSymbol? expected = null)
-        {
-            var candidates = new List<MethodSymbol>();
-            foreach (var method in module.Methods)
-            {
-                if (string.Equals(method.Name, name, StringComparison.Ordinal))
-                    candidates.Add(method);
-            }
+            var candidates = module.FindMethods(name);
+            if (candidates.Count == 0)
+                return null;
 
             return Complete(syntax, null, candidates, name, isVirtual: false, expected);
         }
