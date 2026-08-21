@@ -439,6 +439,62 @@ namespace Surtr.Tests.Compiler.CodeGen
             var runtime = Load(emitter);
             Assert.Equal(0, Call(runtime, "run").AsInt);
         }
+
+        /// <summary>
+        /// Regression: iterating a <c>Sequence&lt;T&gt;</c> (a value class) with <c>for-in</c> used
+        /// to crash the VM with "SurtrNativeArray index out of range" because the loop's value was
+        /// the erased closure field, which <c>InvokeInterface</c> could not dispatch on. The emitter
+        /// now boxes the receiver first, and <c>Sequence&lt;T&gt;</c> implements <c>IIterable&lt;T&gt;</c>
+        /// so the boxed form has the slot to answer.
+        /// </summary>
+        [Fact]
+        public void AForInOverASequenceValueClassWorks()
+        {
+            string collections = RepoRoot() + "/src/Surtr.Stdlib/src/surtr/collections";
+            string collectionSource = File.ReadAllText(collections + "/Collection.surtr");
+            string listSource = File.ReadAllText(collections + "/List.surtr");
+            string sequenceSource = File.ReadAllText(collections + "/Sequence.surtr");
+
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "import surtr.collections.Sequence;\n"
+                    + "fun run(): int {\n"
+                    + "    var sum = 0;\n"
+                    + "    for (x in Sequence<int>.of(1, 2, 3)) sum = sum + x;\n"
+                    + "    if (sum != 6) return 1;\n"
+                    + "    var emptySum = 0;\n"
+                    + "    for (x in Sequence<int>.empty) emptySum = emptySum + x;\n"
+                    + "    if (emptySum != 0) return 2;\n"
+                    + "    if (Sequence<int>.empty.count() != 0) return 3;\n"
+                    + "    return 0;\n"
+                    + "}");
+            project.AddSourceFile(
+                Root + "/surtr/collections/Collection.surtr", "surtr.collections.Collection", collectionSource);
+            project.AddSourceFile(
+                Root + "/surtr/collections/List.surtr", "surtr.collections.List", listSource);
+            project.AddSourceFile(
+                Root + "/surtr/collections/Sequence.surtr", "surtr.collections.Sequence", sequenceSource);
+
+            var compilation = SurtrCompilation.Create(project);
+            _owned.Add(compilation);
+
+            var binder = compilation.Bind();
+            binder.BindBodies();
+
+            Assert.True(
+                !compilation.HasErrors,
+                "Binding reported: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+
+            var emitter = new ModuleEmitter(compilation, binder);
+
+            Assert.True(
+                emitter.TryEmit(),
+                "Emission reported: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+
+            var runtime = Load(emitter);
+            Assert.Equal(0, Call(runtime, "run").AsInt);
+        }
         #endregion
 
         #region Import: modulo completo sin wildcard (§2.1)
@@ -953,6 +1009,34 @@ namespace Surtr.Tests.Compiler.CodeGen
                     + "fun run(): int { return 1; }");
 
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.MissingOverride);
+        }
+
+        [Fact]
+        public void HidingAVirtualMemberWithDifferentReturnTypeStillRequiresOverride()
+        {
+            // The runtime places vtable slots by name plus parameter types, return type deliberately
+            // excluded (SignatureKey). So a derived member that shares name and parameter shape with
+            // a base virtual collides with that slot even when its return type differs — the binding
+            // must demand `override` here, or the linker collapses the two at load time.
+            using var compilation = Reject(
+                "class Animal { public virtual fun speak(): string { return \"...\"; } }\n"
+                    + "class Dog : Animal { public fun speak(): int { return 1; } }\n"
+                    + "fun run(): int { return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.MissingOverride);
+        }
+
+        [Fact]
+        public void OverrideWithDifferentReturnTypeIsAcceptedWhenMarkedOverride()
+        {
+            // `override` makes the intent explicit, so the return-type difference is fine — the
+            // member takes the base's slot deliberately.
+            using var compilation = Reject(
+                "class Animal { public virtual fun speak(): string { return \"...\"; } }\n"
+                    + "class Dog : Animal { public override fun speak(): int { return 1; } }\n"
+                    + "fun run(): int { return 1; }");
+
+            Assert.DoesNotContain(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.MissingOverride);
         }
 
         [Fact]
@@ -2256,6 +2340,30 @@ namespace Surtr.Tests.Compiler.CodeGen
                     + "fun run(): int { let id = EntityId(7); return id.raw; }");
 
             Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AValueClassWithNoConstructorIsBuiltFromItsField()
+        {
+            // A value class that declares no constructor gets a synthetic one taking the type of
+            // its single `let` field and assigning it, so `EntityId(7)` binds and yields `7`.
+            var runtime = Run(
+                "value class EntityId { public let raw: int; }\n"
+                    + "fun run(): int { let id = EntityId(7); return id.raw; }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AValueClassWithNoConstructorRejectsZeroOrSeveralArguments()
+        {
+            // The synthetic value-class constructor takes exactly one argument (the field's type),
+            // so zero or several arguments is a clean binding error, not an emit-time crash.
+            using var zero = Reject("value class EntityId { public let raw: int; }\nfun run(): int { return EntityId().raw; }");
+            Assert.Contains(zero.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedCall);
+
+            using var several = Reject("value class EntityId { public let raw: int; }\nfun run(): int { return EntityId(1, 2).raw; }");
+            Assert.Contains(several.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedCall);
         }
 
         [Fact]
@@ -5198,6 +5306,26 @@ namespace Surtr.Tests.Compiler.CodeGen
                     + "}\n"
                     + "fun take(b: Box<float>): float { return b.get(); }\n"
                     + "fun run(): int { return take(Box(5.0)) > 4.5 ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AConstructionWithItsOwnIntStillWidensToItsFloatParameter()
+        {
+            // `take(Box(5))` with `take(b: Box<float>)`: the `5` is an int but the parameter is
+            // `Box<float>`, so the int→float conversion has to happen BEFORE the box. The value
+            // class's own type parameter `T` is already substituted to `float` in the construction,
+            // so it must convert against `float` — not be treated as a method type parameter and
+            // erased to `unknown`, which would box the raw int and then fail the cast on read.
+            var runtime = Run(
+                "class Box<T> {\n"
+                    + "  private let _value: T;\n"
+                    + "  constructor(value: T) { _value = value; }\n"
+                    + "  public fun get(): T { return _value; }\n"
+                    + "}\n"
+                    + "fun take(b: Box<float>): float { return b.get(); }\n"
+                    + "fun run(): int { return take(Box(5)) > 4.5 ? 1 : 0; }");
 
             Assert.Equal(1, Int(runtime, "run"));
         }

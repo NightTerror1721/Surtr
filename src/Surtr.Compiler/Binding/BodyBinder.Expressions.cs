@@ -2330,7 +2330,7 @@ namespace Surtr.Compiler.Binding
                     {
                         if (string.Equals(parameters[p].Name, name, StringComparison.Ordinal))
                         {
-                            ordered[p] = Convert(arguments[i], ConversionTarget(original, parameters, p), written[i].Span);
+                            ordered[p] = ConvertIntoErased(syntax, arguments[i], original, parameters, p, written[i].Span);
                             break;
                         }
                     }
@@ -2348,7 +2348,7 @@ namespace Surtr.Compiler.Binding
                         && arguments.Count - i == 1
                         && _conversions.IsAssignable(arguments[i].Type, vararg.Type))
                     {
-                        ordered[varargIndex] = Convert(arguments[i], ConversionTarget(original, parameters, varargIndex), written[i].Span);
+                        ordered[varargIndex] = ConvertIntoErased(syntax, arguments[i], original, parameters, varargIndex, written[i].Span);
                         continue;
                     }
 
@@ -2358,7 +2358,7 @@ namespace Surtr.Compiler.Binding
                 }
 
                 if (target < parameters.Count)
-                    ordered[target] = Convert(arguments[i], ConversionTarget(original, parameters, target), written[i].Span);
+                    ordered[target] = ConvertIntoErased(syntax, arguments[i], original, parameters, target, written[i].Span);
             }
 
             if (varargIndex >= 0 && ordered[varargIndex] is null)
@@ -2392,10 +2392,60 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         private TypeSymbol ConversionTarget(MethodSymbol original, IReadOnlyList<ParameterSymbol> substitutedParameters, int index)
         {
-            if (index < original.Parameters.Count && original.Parameters[index].Type.NonNullable is TypeParameterSymbol)
+            // A bare type parameter of the METHOD erases to a frame slot of one compiled generic
+            // body (§6), so a value reaching it has to box against `unknown` — converting against
+            // the substituted type instead would classify it as identity with nothing left to box.
+            // A type parameter of the CONTAINING TYPE is different: it is already substituted to a
+            // concrete type in the construction (e.g. `Box<float>`'s `T` is `float`), so the
+            // argument converts against that concrete type — and OrderArguments boxes the result
+            // afterwards, since the constructed class's own field slot is still erased.
+            if (index < original.Parameters.Count
+                && original.Parameters[index].Type.NonNullable is TypeParameterSymbol parameter
+                && parameter.IsMethodTypeParameter)
+            {
                 return _factory.Unknown;
+            }
 
             return substitutedParameters[index].Type;
+        }
+
+        /// <summary>
+        /// Converts an argument for a parameter of a constructed generic type (a type parameter of
+        /// the containing type, not the method): first the numeric conversion against the concrete
+        /// substituted type, then the box the erased field slot still requires.
+        /// </summary>
+        /// <remarks>
+        /// <see cref="ConversionTarget"/> returns the concrete type for such a parameter, so a
+        /// <c>Box&lt;float&gt;</c> constructor sees <c>int</c> widen to <c>float</c>
+        /// (<c>ImplicitNumeric</c> → <c>Convert</c>) rather than box the raw <c>int</c>. But a
+        /// generic class is compiled once, generically (§6), so its field slot is erased and the
+        /// widened primitive still has to box on the way in — which a lone <c>ImplicitNumeric</c>
+        /// would not do. Wrapping the (possibly identity) conversion in an <c>ImplicitErasure</c>
+        /// composes the two: <c>Convert</c> then <c>Box</c>.
+        /// </remarks>
+        private BoundExpression ConvertIntoErased(
+            SyntaxNode syntax,
+            BoundExpression expression,
+            MethodSymbol original,
+            IReadOnlyList<ParameterSymbol> substitutedParameters,
+            int index,
+            SourceSpan span)
+        {
+            if (index < original.Parameters.Count
+                && original.Parameters[index].Type.NonNullable is TypeParameterSymbol parameter
+                && !parameter.IsMethodTypeParameter)
+            {
+                var target = substitutedParameters[index].Type;
+                var converted = Convert(expression, target, span);
+
+                if (converted is BoundErrorExpression)
+                    return converted;
+
+                return new BoundConversionExpression(
+                    syntax, converted, _factory.Unknown, Conversion.Of(ConversionKind.ImplicitErasure), isExplicit: false);
+            }
+
+            return Convert(expression, ConversionTarget(original, substitutedParameters, index), span);
         }
 
         /// <summary>
@@ -3522,6 +3572,27 @@ namespace Surtr.Compiler.Binding
 
             if (constructors.Count == 0)
             {
+                // A value class with no declared constructor is given one by the compiler: a
+                // single parameter of the type of its one `let` field, assigned to that field.
+                // So a construction with exactly one argument convertible to the field's type
+                // binds; zero arguments (or more than one) is a clear error rather than the
+                // emit-time crash a missing constructor used to cause.
+                if (type.TypeKind == TypeSymbolKind.ValueClass && type.UnderlyingType is not null)
+                {
+                    if (arguments.Length != 1)
+                    {
+                        Report(
+                            SurtrDiagnosticCode.UnresolvedCall,
+                            syntax.Span,
+                            $"'{type.Name}' wraps a single field, so it is built from one value of '{type.UnderlyingType.ToDisplayString()}' — this takes {arguments.Length} argument(s).");
+
+                        return false;
+                    }
+
+                    ordered = new[] { Convert(arguments[0], type.UnderlyingType, written[0].Span) };
+                    return true;
+                }
+
                 if (arguments.Length == 0)
                     return true;
 

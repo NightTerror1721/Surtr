@@ -923,6 +923,20 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
+        public void TwoOverloadsDifferingOnlyByReturnTypeCollide()
+        {
+            // §3.5 rule 1: no call site could choose between them, so they are one overload — and
+            // the runtime's SignatureKey is return-blind, so they would occupy the same slot anyway.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Store {\n"
+                + "  public fun put(a: int): string { return \"\"; }\n"
+                + "  public fun put(a: int): int { return 1; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
+        }
+
+        [Fact]
         public void ANullablePrimitiveIsStillItsOwnType()
         {
             Bind(out var compilation, ("game/core/Test.surtr",

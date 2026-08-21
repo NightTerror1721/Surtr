@@ -821,11 +821,12 @@ namespace Surtr.Compiler.Binding
         /// instead of silently hiding it.
         /// </summary>
         /// <remarks>
-        /// Matched on the same full, return-included signature <see cref="CheckObligation"/> already
-        /// uses for an interface obligation (<see cref="SignatureSet.Matches"/>) rather than the
-        /// looser name-plus-count <see cref="Overridden"/> uses for the sealed check above, so two
-        /// overloads that merely share a name and arity are not mistaken for one hiding the other.
-        /// Only a <c>Direct</c>-dispatch base member is exempt - it has no vtable slot to begin with,
+        /// Matched on the same erased name-plus-parameter <see cref="SignatureSet.MatchesSlot"/> the
+        /// runtime's <c>SignatureKey</c> uses to place vtable slots (return type deliberately
+        /// excluded — a derived member sharing the slot must say so), rather than the looser
+        /// name-plus-count <see cref="Overridden"/> uses for the sealed check above, so two overloads
+        /// that merely share a name and arity are not mistaken for one hiding the other. Only a
+        /// <c>Direct</c>-dispatch base member is exempt - it has no vtable slot to begin with,
         /// so nothing is silently lost by not overriding it.
         /// </remarks>
         private void CheckOverrideRequired(TypeBinding binding)
@@ -844,7 +845,7 @@ namespace Surtr.Compiler.Binding
                     foreach (var candidate in walk.Members)
                     {
                         if (candidate is MethodSymbol { Dispatch: MethodDispatch.Virtual or MethodDispatch.Abstract } virtualCandidate
-                            && _signatures.Matches(method, virtualCandidate))
+                            && _signatures.MatchesSlot(method, virtualCandidate))
                         {
                             hidden = virtualCandidate;
                             break;

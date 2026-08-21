@@ -834,6 +834,13 @@ namespace Surtr.Compiler.CodeGen
         /// The general path, and the only one that allocates. Every call goes through the interface
         /// dispatch table rather than a vtable slot, because the receiver's own class is not what
         /// the loop was written against.
+        /// <para>
+        /// A <c>value class</c> receiver must be boxed first, exactly as <see cref="EmitCall"/>
+        /// boxes one before a call that might resolve through its class: the loop's value is the
+        /// erased field (e.g. <c>Sequence&lt;T&gt;</c>'s closure), which is not an object and has no
+        /// interface table for <c>CallInterface</c> to dispatch on. Boxing to the boxed form makes
+        /// the receiver a real object whose class carries the implemented <c>IIterable&lt;T&gt;</c>.
+        /// </para>
         /// </remarks>
         private void EmitForInIterable(BoundForInStatement loop)
         {
@@ -845,6 +852,7 @@ namespace Surtr.Compiler.CodeGen
             var variable = Declare(loop.Variable);
 
             Expression(loop.Sequence);
+            BoxIfValueClass(loop.Sequence.Type);
             Code.CallInterface(iterate);
             Code.StoreLocal(cursor);
 
@@ -2954,6 +2962,16 @@ case BoundFieldExpression field:
         {
             if (creation.Constructor is not MethodSymbol constructor)
             {
+                // A value class that declared no constructor was given one by the binder taking the
+                // type of its single field; the binder already converted the one argument against
+                // that field type, so the value to wrap is simply the argument. (The binding
+                // guarantees exactly one argument here — zero or several never reach emission.)
+                if (creation.Arguments.Count == 1)
+                {
+                    Expression(creation.Arguments[0]);
+                    return;
+                }
+
                 throw Unsupported(
                     $"building a '{type.Name}' with no constructor, which leaves nothing to put in the field it wraps");
             }

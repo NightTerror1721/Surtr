@@ -2093,6 +2093,13 @@ namespace Surtr.VM
                     current.IP = ip;
                     _sp = sp;
 
+                    // Defense in depth: the binder rejects constructing an abstract class in source,
+                    // but raw bytecode (or a frontend without that check) could still ask ObjNew to
+                    // allocate one. An abstract class has no concrete layout to build, so reject it
+                    // here too rather than hand back a half-made instance.
+                    if (declared.IsAbstract)
+                        throw AbstractInstantiation(declared.Name);
+
                     SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared));
                     entities = context.EntityRegistry.Entities;
 
@@ -2106,6 +2113,9 @@ namespace Surtr.VM
                     ip += 4;
                     current.IP = ip;
                     _sp = sp;
+
+                    if (declared.IsAbstract)
+                        throw AbstractInstantiation(declared.Name);
 
                     SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared));
                     entities = context.EntityRegistry.Entities;
@@ -2791,6 +2801,15 @@ namespace Surtr.VM
                     // from a method this size - the two have to stay in step.
                     int contractId = contract.InterfaceId;
                     int indexMask = receiverClass.InterfaceIndexMask;
+
+                    // A receiver whose class implements no interface has an empty interface-dispatch
+                    // table (`InterfaceIndexMask` == -1). Indexing it below would read past the end
+                    // of the `SurtrNativeArray` and trip the debug assertion; surface it as a cast
+                    // failure instead, so a bad `InvokeInterface` is a diagnosable Surtr exception
+                    // rather than a memory-safety crash.
+                    if (indexMask < 0)
+                        throw InvalidCast(receiverClass.Name, contract.Name);
+
                     int probe = contractId & indexMask;
 
                     while (receiverClass.InterfaceIndexById[probe << 1] != contractId)
@@ -3172,6 +3191,10 @@ namespace Surtr.VM
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException InvalidCast(string fromName, string toName)
             => new SurtrExecutionException($"A '{fromName}' cannot be cast to '{toName}'.", SurtrBuiltIns.InvalidCastException);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException AbstractInstantiation(string className)
+            => new SurtrExecutionException($"'{className}' is abstract and cannot be instantiated.", SurtrBuiltIns.InvalidOperationException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException InvalidOpCode(byte opCode)
