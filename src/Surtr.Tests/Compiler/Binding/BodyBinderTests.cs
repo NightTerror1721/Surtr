@@ -487,6 +487,221 @@ namespace Surtr.Tests.Compiler.Binding
             AssertReports(compilation, SurtrDiagnosticCode.CannotInferType);
         }
 
+        /// <summary>
+        /// The zero-parameter lambda's only type information is its return, so where the inferred
+        /// return is a concrete class it cannot widen to the interface the target declares — the
+        /// closure types are simply different. The target has to supply the return type, exactly as
+        /// it supplies an untyped parameter's type, so the lambda is left for the winning overload.
+        /// </summary>
+        [Fact]
+        public void AZeroParameterLambdaTakesItsReturnTypeFromWhereItGoes()
+        {
+            var binder = BindIn(
+                out var compilation,
+                "let h = Holder(() => Impl());",
+                extra: "interface IT { fun get(): int; }\n"
+                    + "class Impl : IT { public fun get(): int { return 1; } }\n"
+                    + "class Holder { public constructor(provider: () -> IT) { } }");
+
+            AssertNoErrors(compilation);
+
+            var lambda = First<BoundLambdaExpression>(binder);
+            Assert.Empty(lambda.Parameters);
+            Assert.Equal("() -> IT", lambda.Type.ToDisplayString());
+
+            // The body was converted against the target's return type, so the `Impl`
+            // construction sits under an explicit conversion to `IT` rather than failing
+            // the call.
+            var returned = Assert.IsType<BoundReturnStatement>(lambda.Body).Value;
+            var conversion = Assert.IsType<BoundConversionExpression>(returned);
+            Assert.IsType<BoundObjectCreationExpression>(conversion.Operand);
+        }
+
+        [Fact]
+        public void AZeroParameterLambdaTakesItsReturnTypeFromAMethodParameter()
+        {
+            var binder = Bind(
+                out var compilation,
+                "interface IT { fun get(): int; }\n"
+                    + "class Impl : IT { public fun get(): int { return 1; } }\n"
+                    + "class Test {\n"
+                    + "  public fun run(): void { let x = Make(() => Impl()); }\n"
+                    + "  public static fun Make(provider: () -> IT): IT { return provider(); }\n"
+                    + "}");
+
+            AssertNoErrors(compilation);
+            Assert.Equal("() -> IT", First<BoundLambdaExpression>(binder).Type.ToDisplayString());
+        }
+
+        /// <summary>§8: `(params): Ret => body` pins the lambda's type where no target supplies one.</summary>
+        [Fact]
+        public void AWrittenReturnTypeTypesALambdaWithoutATarget()
+        {
+            var binder = BindIn(out var compilation, "let f = (): int => 42;");
+
+            AssertNoErrors(compilation);
+            Assert.Equal("() -> int", First<BoundLambdaExpression>(binder).Type.ToDisplayString());
+        }
+
+        /// <summary>The written return type is authoritative, so it converts the body to itself.</summary>
+        [Fact]
+        public void AWrittenReturnTypeConvertsTheBodyToIt()
+        {
+            var binder = BindIn(out var compilation, "let f = (): float => 1;");
+
+            AssertNoErrors(compilation);
+
+            var lambda = First<BoundLambdaExpression>(binder);
+            Assert.Equal("() -> float", lambda.Type.ToDisplayString());
+
+            // The written return type is the context the body binds against, so the int
+            // literal widens to float for free (§5.7) rather than needing a conversion node.
+            var returned = Assert.IsType<BoundReturnStatement>(lambda.Body).Value;
+            Assert.Equal("float", Assert.IsType<BoundLiteralExpression>(returned).Type.ToDisplayString());
+        }
+
+        /// <summary>A written return type still converts to the interface the target declares.</summary>
+        [Fact]
+        public void AWrittenReturnTypeFeedsAConstructorExpectingItsInterface()
+        {
+            var binder = BindIn(
+                out var compilation,
+                "let h = Holder(() : IT => Impl());",
+                extra: "interface IT { fun get(): int; }\n"
+                    + "class Impl : IT { public fun get(): int { return 1; } }\n"
+                    + "class Holder { public constructor(provider: () -> IT) { } }");
+
+            AssertNoErrors(compilation);
+            Assert.Equal("() -> IT", First<BoundLambdaExpression>(binder).Type.ToDisplayString());
+        }
+
+        /// <summary>A return type the body cannot reach is an error, not a silent cast.</summary>
+        [Fact]
+        public void AWrittenReturnTypeTheBodyCannotReachIsReported()
+        {
+            BindIn(out var compilation, "let f = (): int => \"hi\";");
+            AssertReports(compilation, SurtrDiagnosticCode.CannotConvert);
+        }
+
+        /// <summary>A function may omit its return type and have the body's inferred — arrow and block alike.</summary>
+        [Fact]
+        public void AnOmittedReturnTypeIsInferredFromTheBody()
+        {
+            var binder = Bind(out var compilation,
+                "class Test {\n"
+                    + "  public fun run(): void { let a = add(1, 2); let b = give(); say(); }\n"
+                    + "  public static fun add(a: int, b: int) => a + b;\n"
+                    + "  public static fun give() { return 7; }\n"
+                    + "  public static fun say() { }\n"
+                    + "}");
+
+            AssertNoErrors(compilation);
+
+            var calls = Walk(Body(binder)).OfType<BoundCallExpression>().ToList();
+            Assert.Equal("int", calls[0].Type.ToDisplayString());
+            Assert.Equal("int", calls[1].Type.ToDisplayString());
+            Assert.Equal("void", calls[2].Type.ToDisplayString());
+        }
+
+        /// <summary>A bare <c>return;</c> infers <c>void</c>.</summary>
+        [Fact]
+        public void ABareReturnInfersVoid()
+        {
+            var binder = Bind(out var compilation,
+                "class Test {\n"
+                    + "  public fun run(): void { stop(); }\n"
+                    + "  public static fun stop() { return; }\n"
+                    + "}");
+
+            AssertNoErrors(compilation);
+            Assert.Equal("void", First<BoundCallExpression>(binder).Type.ToDisplayString());
+        }
+
+        /// <summary>One inferred function may call another whose own return type is inferred too — the fixpoint settles both.</summary>
+        [Fact]
+        public void InferredReturnTypesChainAcrossFunctions()
+        {
+            var binder = Bind(out var compilation,
+                "class Test {\n"
+                    + "  public fun run(): void { let x = f(); }\n"
+                    + "  public static fun f() => g();\n"
+                    + "  public static fun g() => 1;\n"
+                    + "}");
+
+            AssertNoErrors(compilation);
+            Assert.Equal("int", First<BoundCallExpression>(binder).Type.ToDisplayString());
+        }
+
+        /// <summary>A generic function's inferred return is its own type parameter, substituted at the call.</summary>
+        [Fact]
+        public void AGenericFunctionInfersItsReturnType()
+        {
+            var binder = Bind(out var compilation,
+                "class Test {\n"
+                    + "  public fun run(): void { let x = id(5); }\n"
+                    + "  public static fun id<T>(value: T) => value;\n"
+                    + "}");
+
+            AssertNoErrors(compilation);
+            Assert.Equal("int", First<BoundCallExpression>(binder).Type.ToDisplayString());
+        }
+
+        /// <summary>A recursive call has no return type to read yet, so the body cannot settle one — the type is demanded.</summary>
+        [Fact]
+        public void ARecursiveInferredReturnTypeIsReported()
+        {
+            Bind(out var compilation,
+                "class Test {\n"
+                    + "  public fun run(): void { }\n"
+                    + "  public static fun fact(n: int) => fact(n - 1);\n"
+                    + "}");
+            AssertReports(compilation, SurtrDiagnosticCode.CannotInferType);
+        }
+
+        /// <summary>Returns that do not agree leave nothing for the body to settle — the type is demanded.</summary>
+        [Fact]
+        public void ConflictingReturnsPreventInference()
+        {
+            Bind(out var compilation,
+                "class Test {\n"
+                    + "  public fun run(): void { }\n"
+                    + "  public static fun pick(b: bool) { if (b) return 1; return \"x\"; }\n"
+                    + "}");
+            AssertReports(compilation, SurtrDiagnosticCode.CannotInferType);
+        }
+
+        /// <summary>An override's signature is the contract's, so the body cannot be left to settle it.</summary>
+        [Fact]
+        public void AnOverrideMustDeclareItsReturnType()
+        {
+            Bind(out var compilation,
+                "class Animal { public virtual fun speak(): string { return \"\"; } }\n"
+                    + "class Dog : Animal { public override fun speak() { return \"Woof\"; } }");
+            AssertReports(compilation, SurtrDiagnosticCode.ReturnTypeRequired);
+        }
+
+        /// <summary>An interface implementation's signature is the contract's, so the body cannot be left to settle it.</summary>
+        [Fact]
+        public void AnInterfaceImplementationMustDeclareItsReturnType()
+        {
+            Bind(out var compilation,
+                "interface IT { fun get(): int; }\n"
+                    + "class Impl : IT { public fun get() { return 1; } }");
+            AssertReports(compilation, SurtrDiagnosticCode.ReturnTypeRequired);
+        }
+
+        /// <summary>A method with no body has nothing to infer from.</summary>
+        [Fact]
+        public void ABodylessMethodMustDeclareItsReturnType()
+        {
+            Bind(out var compilation,
+                "abstract class Animal {\n"
+                    + "  public abstract fun speak();\n"
+                    + "  public virtual fun move() { }\n"
+                    + "}");
+            AssertReports(compilation, SurtrDiagnosticCode.ReturnTypeRequired);
+        }
+
         [Fact]
         public void AClosureIsInvokedThroughItsValue()
         {

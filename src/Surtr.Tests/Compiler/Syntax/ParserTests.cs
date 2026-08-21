@@ -424,6 +424,39 @@ namespace Surtr.Tests.Compiler.Syntax
             Assert.Null(block.Body);
         }
 
+        /// <summary>§8: a lambda may write its return type, `(params): Ret => body`, reading like the `fun` it is.</summary>
+        [Fact]
+        public void LambdaReturnTypesMayBeWritten()
+        {
+            LambdaExpressionSyntax annotated = Assert.IsType<LambdaExpressionSyntax>(ParseExpression("(x: int): int => x * 2"));
+            Assert.Equal("int", Assert.IsType<NamedTypeSyntax>(annotated.ReturnType!).Path.Single());
+            Assert.NotNull(annotated.Parameters.Single().Type);
+
+            // The annotation works with an unwritten parameter type too.
+            LambdaExpressionSyntax inferred = Assert.IsType<LambdaExpressionSyntax>(ParseExpression("(x): int => x * 2"));
+            Assert.Equal("int", Assert.IsType<NamedTypeSyntax>(inferred.ReturnType!).Path.Single());
+            Assert.Null(inferred.Parameters.Single().Type);
+
+            // ... and on a block-bodied lambda.
+            LambdaExpressionSyntax block = Assert.IsType<LambdaExpressionSyntax>(ParseExpression("(x: int): int => { return x; }"));
+            Assert.Equal("int", Assert.IsType<NamedTypeSyntax>(block.ReturnType!).Path.Single());
+            Assert.NotNull(block.BlockBody);
+            Assert.Null(block.Body);
+        }
+
+        /// <summary>
+        /// The `:` opens a return type, so the lookahead has to cross it — and whatever nesting
+        /// it opens, like a closure return type — before the `=>` that ends the lambda.
+        /// </summary>
+        [Fact]
+        public void AWrittenReturnTypeStillEndsAtTheFatArrow()
+        {
+            Assert.IsType<LambdaExpressionSyntax>(ParseExpression("(a, b): int => a + b"));
+            Assert.IsType<LambdaExpressionSyntax>(ParseExpression("(): (int) -> int => x"));
+            Assert.IsType<LambdaExpressionSyntax>(ParseExpression("(): {int: bool} => x"));
+            Assert.IsType<LambdaExpressionSyntax>(ParseExpression("(): Box<Box<int>> => x"));
+        }
+
         /// <summary>§5.4: position decides. A `{` where a statement is due is a block; in expression position it is a dict.</summary>
         [Fact]
         public void BraceMeansBlockInStatementPositionAndDictInExpressionPosition()

@@ -1945,6 +1945,16 @@ namespace Surtr.Compiler.Binding
         /// <summary>
         /// The lambda an argument is, when it cannot be bound without being told its parameter types.
         /// </summary>
+        /// <remarks>
+        /// A lambda with an unwritten parameter type has to wait for the overload that wins, since
+        /// that parameter is where the type comes from (§5.9). A <em>zero-parameter</em> lambda has
+        /// no parameter to carry its type either, so when it also has no written return type, the
+        /// target has to supply that — <c>Sequence&lt;U&gt;(() =&gt; MapIterator&lt;T, U&gt;(...))</c>
+        /// would otherwise bind the lambda eagerly against nothing and infer the concrete
+        /// <c>MapIterator</c> return, which no closure conversion can then widen to the
+        /// <c>IIterator&lt;U&gt;</c> the constructor declares. A written return type (<c>(params): Ret =&gt; body</c>,
+        /// §8) pins the lambda's own type, so only unwritten parameters still demand the target.
+        /// </remarks>
         private static LambdaExpressionSyntax? NeedsTargetType(ExpressionSyntax syntax)
         {
             if (syntax is not LambdaExpressionSyntax lambda)
@@ -1956,7 +1966,7 @@ namespace Surtr.Compiler.Binding
                     return lambda;
             }
 
-            return null;
+            return lambda.Parameters.Count == 0 && lambda.ReturnType is null ? lambda : null;
         }
 
         /// <summary>
@@ -3988,6 +3998,13 @@ namespace Surtr.Compiler.Binding
         {
             var target = expected?.NonNullable as ClosureTypeSymbol;
 
+            // A written return type is the lambda's own declaration (§8), authoritative exactly as a
+            // method's `: Ret` is. The target only supplies what was left unwritten; when both are
+            // present they must agree, which the conversion at the use site settles.
+            TypeSymbol? writtenReturn = syntax.ReturnType is null
+                ? null
+                : _resolver.Resolve(syntax.ReturnType, _typeScope, _sourceName);
+
             var parameters = new ParameterSymbol[syntax.Parameters.Count];
             for (int i = 0; i < parameters.Length; i++)
             {
@@ -4036,18 +4053,18 @@ namespace Surtr.Compiler.Binding
 
             if (syntax.Body is not null)
             {
-                var value = BindExpression(syntax.Body, target?.ReturnType);
-                returnType = target?.ReturnType ?? value.Type;
+                var value = BindExpression(syntax.Body, writtenReturn ?? target?.ReturnType);
+                returnType = writtenReturn ?? target?.ReturnType ?? value.Type;
                 body = new BoundReturnStatement(syntax.Body, Convert(value, returnType, syntax.Body.Span));
             }
             else if (syntax.BlockBody is not null)
             {
-                returnType = target?.ReturnType ?? _factory.Void;
+                returnType = writtenReturn ?? target?.ReturnType ?? _factory.Void;
                 body = BindBlock(syntax.BlockBody);
             }
             else
             {
-                returnType = _factory.Void;
+                returnType = writtenReturn ?? target?.ReturnType ?? _factory.Void;
                 body = new BoundNopStatement(syntax);
             }
 

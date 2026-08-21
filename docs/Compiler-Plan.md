@@ -1003,6 +1003,49 @@ Three consequences worth keeping:
 * A lambda whose parameters *are* written is bound eagerly as before, so nothing about the existing
   path moved.
 
+Two extensions the mechanism needed once the stdlib's `Sequence` grew real bodies:
+
+* **A zero-parameter lambda is deferred too** — it has no parameter to carry the target-supplied
+  type, so its only type information is its return, which has to come from the target. Eager
+  binding inferred the concrete return (`MapIterator<T, U>`) and no closure conversion widens that
+  to the `() -> IIterator<U>` the constructor declares, so `Sequence<U>(() => MapIterator<T, U>(...))`
+  reported *"No constructor takes these arguments"*.
+* **A lambda may write its return type**, `(params): Ret => body` (§8), which pins the lambda's
+  own type so a zero-parameter lambda no longer depends on a target to exist at all. A written
+  return type is authoritative over the body (the body binds against it), so it is only deferred
+  when it is absent — `NeedsTargetType` asks for a written return type before it defers.
+
+### 10.1e A function's return type inferred from its body
+
+§8 lets a lambda omit its return type and have the body settle it; once the lambda had the written
+form, the natural question was why a `fun` could not too. It can now: `fun add(a: int, b: int) => a + b`
+omits the `: int`, and the binder reads it back off the body's `return` statements — none at all
+means `void`, several mean they have to agree.
+
+The pipeline is where the design lives. Return types are needed *during* the member phase — an
+override or an interface implementation is compared against its contract by signature, return
+included — but bodies do not bind until `BindBodies`. So `InferReturnTypes` runs a *speculative*
+body bind for each omitted one (a throwaway `BodyBinder` whose diagnostics are discarded, the same
+trick the binder's own `Speculative` uses) at the end of `Bind()`, just before the obligation
+checks, so the signature comparisons see concrete answers. A **fixpoint** because one inferred
+function may call another whose own type is inferred too: `fun f() => g()` cannot know it returns
+`int` until `g` has, so the loop re-tries whoever still could not decide until no one can.
+
+Three things still have to write it, and each is enforced where it is knowable:
+
+* **A bodyless method** (`abstract`, `native`, an interface member) has nothing to infer from —
+  reported in `BindMethodReturnType` (`Binder.cs`).
+* **An `override`** must reproduce the signature it replaces — also reported in
+  `BindMethodReturnType`, from the `override` modifier alone.
+* **An interface implementation** must reproduce the contract's signature — reported by
+  `InferReturnTypes`'s obligation walk, which keeps the offending member out of the inference
+  fixpoint and out of `CheckObligation`'s signature comparison (which would otherwise add a
+  misleading mismatch on top of an empty return).
+
+Recursion is the inference's blind spot: `fun fact(n) => fact(n - 1)` reads its own call's return,
+which is not settled yet, so the body cannot settle it either — the function is reported with
+`CannotInferType` and the annotation demanded, which is the honest answer.
+
 Found alongside it and fixed: **a field or property holding a closure could not be invoked**. A local
 or parameter could, and where the closure is kept says nothing about how it is called (§8) — a
 method of the same name still wins, since that is what a bare call usually means.

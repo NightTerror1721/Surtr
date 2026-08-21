@@ -875,9 +875,18 @@ namespace Surtr.Compiler.Syntax
         /// grouping or a tuple, by scanning balanced parentheses for a following <c>=&gt;</c>.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// The two forms are identical up to the closing paren — <c>(a, b)</c> is a tuple and
         /// <c>(a, b) =&gt; a + b</c> a lambda — so no bounded lookahead settles it. Scanning is
         /// cheap because a parameter list is short and the scan never nests into another one.
+        /// </para>
+        /// <para>
+        /// A return-annotated lambda <c>(a, b): Ret =&gt; a + b</c> adds the <c>:</c> a function
+        /// declaration uses after its parameter list (§8), so the lambda reads exactly like the
+        /// <c>fun</c> it is an anonymous form of. The <c>:</c> can only follow the closing paren
+        /// here — it is not a postfix operator — so the scan treats it as the introduction of a
+        /// return type and keeps going for the <c>=&gt;</c> that ends it.
+        /// </para>
         /// </remarks>
         private bool IsLambdaAhead()
         {
@@ -896,7 +905,17 @@ namespace Surtr.Compiler.Syntax
                     case TokenType.RightParen:
                         if (--depth == 0)
                         {
-                            return reader.Peek(offset + 1).Type == TokenType.FatArrow;
+                            TokenType after = reader.Peek(offset + 1).Type;
+
+                            if (after == TokenType.FatArrow)
+                                return true;
+
+                            // `(params): Ret => ...`: skip the return type, which can itself nest
+                            // (a closure return, a generic construction), to the `=>` that ends it.
+                            if (after == TokenType.Colon)
+                                return LambdaReturnTypeEndsWithFatArrow(offset + 2);
+
+                            return false;
                         }
                         break;
 
@@ -906,7 +925,76 @@ namespace Surtr.Compiler.Syntax
             }
         }
 
-        /// <summary>Parses <c>(params) =&gt; expr</c> and <c>(params) =&gt; { ... }</c> (§8).</summary>
+        /// <summary>
+        /// Whether the return type that starts at <paramref name="offset"/> — right after the
+        /// lambda's <c>(params):</c> — is followed by the <c>=&gt;</c> that ends the lambda.
+        /// </summary>
+        /// <remarks>
+        /// A return type is scanned rather than parsed because this runs in lookahead, where the
+        /// reader cannot be advanced. The depth a composite type opens — parentheses for a tuple or
+        /// closure, brackets for an array, braces for a dict, angle brackets for a construction — is
+        /// tracked so that a nested <c>=&gt;</c> is not mistaken for the lambda's own, and the
+        /// lexer's <c>&gt;&gt;</c>/<c>&gt;&gt;&gt;</c> close two or three angle brackets at once.
+        /// Only the <c>=&gt;</c> at depth zero counts. A <c>:</c> at depth zero ends the scan the
+        /// other way: the return type cannot contain one (a dict type keeps its own <c>:</c> inside
+        /// braces), so a bare one is a ternary or a dict separator after a parenthesized expression
+        /// — <c>cond ? (x) : (y) =&gt; z</c> and <c>{ (x): (y) =&gt; z }</c> are not lambdas.
+        /// </remarks>
+        private bool LambdaReturnTypeEndsWithFatArrow(int offset)
+        {
+            int depth = 0;
+
+            for (int i = offset; ; i++)
+            {
+                TokenType type = reader.Peek(i).Type;
+
+                switch (type)
+                {
+                    case TokenType.LeftParen:
+                    case TokenType.LeftBracket:
+                    case TokenType.LeftBrace:
+                    case TokenType.Less:
+                        depth++;
+                        break;
+
+                    case TokenType.RightParen:
+                    case TokenType.RightBracket:
+                    case TokenType.RightBrace:
+                    case TokenType.Greater:
+                        if (--depth < 0)
+                            return false;
+                        break;
+
+                    case TokenType.ShiftRight:
+                        if ((depth -= 2) < 0)
+                            return false;
+                        break;
+
+                    case TokenType.UnsignedShiftRight:
+                        if ((depth -= 3) < 0)
+                            return false;
+                        break;
+
+                    case TokenType.FatArrow:
+                        return depth == 0;
+
+                    case TokenType.Colon:
+                        if (depth == 0)
+                            return false;
+                        break;
+
+                    case TokenType.EndOfFile:
+                        return false;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Parses <c>(params) =&gt; expr</c>, <c>(params) =&gt; { ... }</c> and the return-annotated
+        /// forms <c>(params): Ret =&gt; expr</c>/<c>{ ... }</c> (§8). The <c>:</c> is the same colon a
+        /// function declaration uses after its parameter list, so the lambda reads exactly like the
+        /// <c>fun</c> it is an anonymous form of.
+        /// </summary>
         private ExpressionSyntax ParseLambda()
         {
             SourceLocation start = reader.CurrentLocation;
@@ -929,16 +1017,18 @@ namespace Surtr.Compiler.Syntax
             }
 
             reader.Expect(TokenType.RightParen, "')' to close the lambda parameters");
+
+            TypeSyntax? returnType = reader.Match(TokenType.Colon) ? ParseType() : null;
             reader.Expect(TokenType.FatArrow, "'=>' in the lambda");
 
             if (reader.Check(TokenType.LeftBrace))
             {
                 BlockStatementSyntax lambdaBody = ParseBlock();
-                return new LambdaExpressionSyntax(SpanFrom(start), parameters, null, lambdaBody);
+                return new LambdaExpressionSyntax(SpanFrom(start), parameters, returnType, null, lambdaBody);
             }
 
             ExpressionSyntax lambdaResult = ParseExpression();
-            return new LambdaExpressionSyntax(SpanFrom(start), parameters, lambdaResult, null);
+            return new LambdaExpressionSyntax(SpanFrom(start), parameters, returnType, lambdaResult, null);
         }
 
         /// <summary>Parses the expression form of <c>switch</c> (§4.3).</summary>

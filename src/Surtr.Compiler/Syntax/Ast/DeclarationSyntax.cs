@@ -638,8 +638,12 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>Its parameters, in order.</summary>
         public IReadOnlyList<ParameterSyntax> Parameters { get; }
 
-        /// <summary>Its return type. Always written out, <c>void</c> included (§1.1).</summary>
-        public TypeSyntax ReturnType { get; }
+        /// <summary>
+        /// Its return type, or <c>null</c> when the body's is inferred (§8) — a method may omit it
+        /// exactly as a lambda may, though a bodyless one (<c>abstract</c>, <c>native</c>, an
+        /// interface member) has no body to infer from and so must keep writing it.
+        /// </summary>
+        public TypeSyntax? ReturnType { get; }
 
         /// <summary>Its body, or <c>null</c> when abstract, native, or an interface member.</summary>
         public BlockStatementSyntax? Body { get; }
@@ -670,7 +674,7 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="name">The method's name.</param>
         /// <param name="typeParameters">Its type parameters.</param>
         /// <param name="parameters">Its parameters.</param>
-        /// <param name="returnType">Its return type.</param>
+        /// <param name="returnType">Its return type, or <c>null</c> to infer it from the body (§8).</param>
         /// <param name="body">Its body, or <c>null</c>.</param>
         /// <param name="isStatic">True when declared <c>static</c>.</param>
         /// <param name="dispatch">How it dispatches.</param>
@@ -679,7 +683,7 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="isConst">True when declared <c>const</c>.</param>
         /// <param name="isNative">True when declared <c>native</c>.</param>
         public MethodDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
-            string name, IReadOnlyList<TypeParameterSyntax> typeParameters, IReadOnlyList<ParameterSyntax> parameters, TypeSyntax returnType,
+            string name, IReadOnlyList<TypeParameterSyntax> typeParameters, IReadOnlyList<ParameterSyntax> parameters, TypeSyntax? returnType,
             BlockStatementSyntax? body, bool isStatic, DispatchModifier dispatch, bool isSealed, InlineModifier inline, bool isConst, bool isNative)
             : base(span, attributes, docComment, visibility)
         {

@@ -716,12 +716,15 @@ namespace Surtr.Compiler.Syntax
             IReadOnlyList<TypeParameterSyntax> typeParameters = ParseTypeParameterList();
             IReadOnlyList<ParameterSyntax> parameters = ParseParameterList();
 
-            reader.Expect(TokenType.Colon, "':' before the return type");
-            TypeSyntax returnType = ParseType();
+            // §8: the return type may be omitted and inferred from the body, exactly as a lambda's
+            // may — `fun add(a: int, b: int) => a + b` needs no `: int`.
+            TypeSyntax? returnType = reader.Match(TokenType.Colon) ? ParseType() : null;
 
             // No body means abstract, native, or an interface member — all signature-only (§2.3).
             // An arrow body (§3.3) is sugar for a block holding one statement — a `return` for a
-            // value-returning method, an expression statement for a `void` one.
+            // value-returning method, an expression statement for a `void` one. Without a written
+            // return type the body is a value's until inference says otherwise, so it is desugared
+            // to a `return`.
             BlockStatementSyntax? body = null;
             if (reader.Check(TokenType.FatArrow))
             {

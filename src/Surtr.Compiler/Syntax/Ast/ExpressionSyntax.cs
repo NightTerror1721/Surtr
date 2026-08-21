@@ -393,6 +393,12 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>The parameters. A parameter's type may be absent when a target type supplies it (§5.9).</summary>
         public IReadOnlyList<ParameterSyntax> Parameters { get; }
 
+        /// <summary>
+        /// The written return type, <c>(params): Ret =&gt; body</c> (§8), or <c>null</c> when the
+        /// return type is inferred from the body or taken from a target type.
+        /// </summary>
+        public TypeSyntax? ReturnType { get; }
+
         /// <summary>The body when written as a single expression, otherwise <c>null</c>.</summary>
         public ExpressionSyntax? Body { get; }
 
@@ -402,12 +408,14 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>Initializes a lambda.</summary>
         /// <param name="span">The source the expression covers.</param>
         /// <param name="parameters">The parameters.</param>
+        /// <param name="returnType">The written return type, or <c>null</c>.</param>
         /// <param name="body">The expression body, or <c>null</c>.</param>
         /// <param name="blockBody">The block body, or <c>null</c>.</param>
-        public LambdaExpressionSyntax(SourceSpan span, IReadOnlyList<ParameterSyntax> parameters, ExpressionSyntax? body, BlockStatementSyntax? blockBody)
+        public LambdaExpressionSyntax(SourceSpan span, IReadOnlyList<ParameterSyntax> parameters, TypeSyntax? returnType, ExpressionSyntax? body, BlockStatementSyntax? blockBody)
             : base(span)
         {
             Parameters = parameters;
+            ReturnType = returnType;
             Body = body;
             BlockBody = blockBody;
         }

@@ -2135,7 +2135,37 @@ let f = (x) => x * 2;                          // error: nothing determines x's 
 let g = (x: int) => x * 2;                     // fine
 ```
 
-A lambda's return type is always inferred from its body and is never written.
+A lambda's return type is inferred from its body when nothing names it, and may be written: a
+`:` between the parameters and the `=>`, exactly as a function declaration writes it:
+
+```
+let f = (): int => 42;                          // f: () -> int, from the annotation alone
+let g = (x: int): float => x;                   // g: (int) -> float; the body widens to float
+let h: () -> IIterator<T> = (): IIterator<T> => ArrayIterator<T>(...);
+```
+
+The written return type is the lambda's own declaration, authoritative exactly as a function's
+`: Ret` is: the body binds against it, so `(): float => 1` is `() -> float`, not `() -> int`, and a
+body the declared type cannot reach is an error. Where a target type also exists, the two must
+agree — the conversion at the use site settles that. Writing it matters most for a zero-parameter
+lambda: it has no parameter to carry a target-supplied type, so without a written return type its
+only option is the target — which is why `Sequence<U>(() => MapIterator<T, U>(...))`
+resolves the lambda against the constructor's `() -> IIterator<U>`.
+
+**A function may do the same.** The `: Ret` of a `fun` is optional when the body can settle it:
+the return type is inferred from the body's `return` statements, and a body with none is `void` —
+
+```
+fun add(a: int, b: int) => a + b;               // : int, from the body
+fun give() { return 7; }                        // : int
+fun say() { print("hi"); }                      // : void
+```
+
+Three places still have to write it, because there is no body to read from or a contract to match:
+a bodyless method (`abstract`, `native`, an interface member) has nothing to infer from; an
+`override` and an interface implementation must reproduce the signature they replace, which an
+inferred one cannot be checked against. A recursive call (where the body's own type never settles)
+or `return`s of different types are also reported and demand the annotation.
 
 **A closure is called wherever it is kept**, because it is a value and where a value lives says
 nothing about how it is used. A local, a parameter, a field, a property and a module-level variable

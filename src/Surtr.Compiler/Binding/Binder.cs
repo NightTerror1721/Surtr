@@ -59,6 +59,11 @@ namespace Surtr.Compiler.Binding
             new Dictionary<string, List<PropertySymbol>>(StringComparer.Ordinal);
 
         private readonly List<BodyBinding> _bodies = new List<BodyBinding>();
+
+        // Methods whose declaration omitted the return type (§8) — the body is to infer it from.
+        // A method may also be *added* here and yet never infer (recursion, conflicting returns),
+        // which InferReturnTypes reports at the end of its pass.
+        private readonly HashSet<MethodSymbol> _inferReturnTypes = new HashSet<MethodSymbol>();
         private readonly List<InitializerBinding> _initializers = new List<InitializerBinding>();
         private readonly List<DefaultBinding> _defaults = new List<DefaultBinding>();
         private readonly List<BoundFieldInitializer> _boundInitializers = new List<BoundFieldInitializer>();
@@ -737,6 +742,11 @@ namespace Surtr.Compiler.Binding
             EnterContext(null, null);
             BindConstraints();
 
+            // Before the hierarchy checks, because those compare return types against a contract:
+            // a method that omitted its own is inferred from its body here, so an override or an
+            // interface implementation that *does* declare one is compared against something real.
+            InferReturnTypes();
+
             // After every type has its members, because the question is about a base class's, and
             // nothing says a base is bound before what extends it.
             foreach (var binding in _declared)
@@ -932,6 +942,13 @@ namespace Surtr.Compiler.Binding
                     $"'{symbol.Name}' does not implement '{contract.Name}.{required.Name}'; "
                         + $"implement it, or declare '{symbol.Name}' abstract.");
             }
+
+            // §8: a member with no return type was reported by InferReturnTypes — either its declaration
+            // omitted one and the contract check there kept it out of inference, or the inference
+            // failed. Comparing its empty return against the contract's would only add a second,
+            // misleading mismatch on top, so the signature check is skipped for it.
+            if (found.ReturnType.IsError)
+                return;
 
             var substituted = MemberLookup.SubstituteMethod(required, contract.SubstitutionFromArguments(_factory));
             if (!_signatures.Matches(substituted, found))
@@ -1826,7 +1843,10 @@ namespace Surtr.Compiler.Binding
 
                 extMethod.ExtensionTargetType = target;
 
-                extMethod.ReturnType = _resolver.Resolve(method.ReturnType, methodScope, sourceName);
+                if (method.ReturnType is not null)
+                    extMethod.ReturnType = _resolver.Resolve(method.ReturnType, methodScope, sourceName);
+                else
+                    _inferReturnTypes.Add(extMethod);
                 extMethod.Parameters = BindParameters(method.Parameters, extMethod, methodScope, sourceName);
 
                 // An instance extension's receiver — `obj.method()` is bound against it — is an
@@ -2102,6 +2122,264 @@ namespace Surtr.Compiler.Binding
             {
                 ReportAt(sourceName, span, SurtrDiagnosticCode.BuildConstantShadowed,
                     $"The build defines '{name}', so a module member cannot take that name.");
+            }
+        }
+        #endregion
+
+        #region Phase 2.5 - inferred return types
+        /// <summary>
+        /// Fills in the return types a declaration omitted (§8) by binding each body's and reading
+        /// the type back off its <c>return</c> statements.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Run between the member phase and the obligation checks: an <c>override</c> or an
+        /// interface implementation that <em>does</em> declare its return type is compared against
+        /// the contract by signature, which needs this pass's answers to be real before that runs.
+        /// </para>
+        /// <para>
+        /// A fixpoint, not a single pass, because one inferred function may call another whose own
+        /// return type is inferred too: <c>fun f() =&gt; g()</c> cannot know it returns <c>int</c>
+        /// until <c>g</c> has, so the loop re-tries whoever still could not decide until no one
+        /// can. The body is bound speculatively — a throwaway <see cref="BodyBinder"/> whose
+        /// diagnostics are discarded, exactly like the binder's own <c>Speculative</c> — so the
+        /// real body pass later reports everything once. A body that itself has errors is left
+        /// alone (the real pass reports them); a body that binds cleanly but whose returns do not
+        /// agree, or that reaches a recursive call whose own type is still unresolved, is reported
+        /// here for writing the type instead.
+        /// </para>
+        /// </remarks>
+        private void InferReturnTypes()
+        {
+            var errored = new HashSet<MethodSymbol>();
+            var contracted = new HashSet<MethodSymbol>();
+
+            // An interface implementation is a contract, so its return type cannot be inferred from
+            // the body the way an ordinary method's can — the signature has to be the contract's,
+            // which means it has to be written. A class member that answers an obligation with no
+            // written return type is reported here, before the inference runs, and kept out of it.
+            foreach (var binding in _declared)
+            {
+                var symbol = binding.Symbol;
+                if (symbol.TypeKind == TypeSymbolKind.Interface || !symbol.IsDefinition)
+                    continue;
+
+                var visited = new HashSet<NamedTypeSymbol>();
+                var contracts = new List<NamedTypeSymbol>();
+                CollectInterfaces(symbol, visited, contracts);
+
+                foreach (var contract in contracts)
+                {
+                    foreach (var member in contract.Members)
+                    {
+                        if (member is not MethodSymbol { Dispatch: MethodDispatch.Abstract } required)
+                            continue;
+
+                        EnforceDeclaredContractReturn(binding, symbol, contract, required, contracted);
+                    }
+                }
+
+                for (var ancestor = symbol.BaseType; ancestor is not null; ancestor = SubstitutedBase(ancestor))
+                {
+                    foreach (var member in ancestor.Members)
+                    {
+                        if (member is MethodSymbol { Dispatch: MethodDispatch.Abstract } required)
+                            EnforceDeclaredContractReturn(binding, symbol, ancestor, required, contracted);
+                    }
+                }
+            }
+
+            bool progressed = true;
+
+            while (progressed)
+            {
+                progressed = false;
+
+                foreach (var body in _bodies)
+                {
+                    var method = body.Method;
+                    if (!_inferReturnTypes.Contains(method) || errored.Contains(method) || contracted.Contains(method)
+                        || !method.ReturnType.IsError)
+                        continue;
+
+                    switch (TryInferReturnType(body, out TypeSymbol inferred))
+                    {
+                        case ReturnInference.Inferred:
+                            method.ReturnType = inferred;
+                            progressed = true;
+                            break;
+
+                        case ReturnInference.BodyError:
+                            errored.Add(method);
+                            break;
+
+                        case ReturnInference.CannotInfer:
+                            break;
+                    }
+                }
+            }
+
+            foreach (var body in _bodies)
+            {
+                var method = body.Method;
+                if (!_inferReturnTypes.Contains(method) || errored.Contains(method) || contracted.Contains(method)
+                    || !method.ReturnType.IsError)
+                    continue;
+
+                ReportAt(
+                    body.SourceName,
+                    body.Syntax.Span,
+                    SurtrDiagnosticCode.CannotInferType,
+                    $"Cannot infer the return type of '{method.Name}'; write it after the ':'.");
+            }
+        }
+
+        /// <summary>
+        /// Reports one obligation a class answers with a member that omits its return type, and
+        /// keeps that member out of inference.
+        /// </summary>
+        private void EnforceDeclaredContractReturn(
+            TypeBinding binding,
+            NamedTypeSymbol symbol,
+            NamedTypeSymbol contract,
+            MethodSymbol required,
+            HashSet<MethodSymbol> contracted)
+        {
+            var found = FindMember(symbol, required.Name, required.Parameters.Count);
+            if (found is null || !found.ReturnType.IsError)
+                return;
+
+            Report(
+                SurtrDiagnosticCode.ReturnTypeRequired,
+                binding,
+                binding.Syntax.Span,
+                $"'{symbol.Name}.{found.Name}' implements '{contract.Name}.{required.Name}', so its return type cannot be inferred; write it after the ':'.");
+
+            contracted.Add(found);
+        }
+
+        private enum ReturnInference
+        {
+            Inferred,
+            BodyError,
+            CannotInfer,
+        }
+
+        /// <summary>Binds one body speculatively and reads what it returns.</summary>
+        private ReturnInference TryInferReturnType(BodyBinding body, out TypeSymbol inferred)
+        {
+            inferred = _factory.Void;
+
+            EnterContext(body.Module, body.ContainingType);
+
+            var binder = new BodyBinder(
+                _factory,
+                _resolver,
+                Conversions,
+                MemberLookup,
+                OverloadResolution,
+                Constants,
+                _diagnostics,
+                body.SourceName,
+                body.Scope,
+                body.Module,
+                body.ContainingType,
+                body.Method,
+                ImportedBy(body.Module));
+
+            int before = _diagnostics.Count;
+            var bound = binder.BindBody(body.Syntax);
+            if (_diagnostics.Count > before)
+            {
+                _diagnostics.TruncateTo(before);
+                return ReturnInference.BodyError;
+            }
+
+            var types = new List<TypeSymbol>();
+            CollectReturnTypes(bound, types);
+
+            if (types.Count == 0)
+            {
+                inferred = _factory.Void;
+                return ReturnInference.Inferred;
+            }
+
+            TypeSymbol? agreed = null;
+            foreach (var type in types)
+            {
+                if (agreed is null)
+                {
+                    agreed = type;
+                    continue;
+                }
+
+                if (!ReferenceEquals(agreed, type))
+                    return ReturnInference.CannotInfer;
+            }
+
+            if (agreed is null || agreed.IsError)
+                return ReturnInference.CannotInfer;
+
+            inferred = agreed;
+            return ReturnInference.Inferred;
+        }
+
+        /// <summary>
+        /// Collects every <c>return</c> statement a body can take, for inference. Statements only:
+        /// an expression holds no <c>return</c> except inside a lambda, and a lambda's is its own —
+        /// not this function's — so the walk stops at statements and never enters expressions.
+        /// </summary>
+        private void CollectReturnTypes(BoundNode? node, List<TypeSymbol> types)
+        {
+            if (node is null)
+                return;
+
+            switch (node)
+            {
+                case BoundReturnStatement @return:
+                    types.Add(@return.Value?.Type ?? _factory.Void);
+                    return;
+
+                case BoundBlockStatement block:
+                    foreach (var statement in block.Statements)
+                        CollectReturnTypes(statement, types);
+                    return;
+
+                case BoundIfStatement @if:
+                    CollectReturnTypes(@if.Then, types);
+                    CollectReturnTypes(@if.Else, types);
+                    return;
+
+                case BoundWhileStatement @while:
+                    CollectReturnTypes(@while.Body, types);
+                    return;
+
+                case BoundForStatement @for:
+                    CollectReturnTypes(@for.Body, types);
+                    return;
+
+                case BoundForInStatement forIn:
+                    CollectReturnTypes(forIn.Body, types);
+                    return;
+
+                case BoundSwitchStatement @switch:
+                    foreach (var section in @switch.Sections)
+                    {
+                        foreach (var statement in section.Statements)
+                            CollectReturnTypes(statement, types);
+                    }
+                    return;
+
+                case BoundTryStatement @try:
+                    CollectReturnTypes(@try.Body, types);
+                    foreach (var clause in @try.Catches)
+                        CollectReturnTypes(clause.Body, types);
+                    CollectReturnTypes(@try.Finally, types);
+                    return;
+
+                case BoundLabeledStatement labeled:
+                    CollectReturnTypes(labeled.Statement, types);
+                    return;
             }
         }
         #endregion
@@ -3031,7 +3309,7 @@ namespace Surtr.Compiler.Binding
             };
 
             BindTypeParameters(method, syntax.TypeParameters, scope, binding.SourceName);
-            method.ReturnType = _resolver.Resolve(syntax.ReturnType, scope, binding.SourceName);
+            BindMethodReturnType(method, syntax, scope, binding.SourceName);
             method.Parameters = BindParameters(syntax.Parameters, method, scope, binding.SourceName);
             RecordBody(method, syntax.Body, scope, binding.Module, owner, binding.SourceName);
             RecordAttributes(method, syntax.Attributes, binding.Scope, binding.SourceName);
@@ -3056,11 +3334,46 @@ namespace Surtr.Compiler.Binding
             };
 
             BindTypeParameters(method, syntax.TypeParameters, scope, sourceName);
-            method.ReturnType = _resolver.Resolve(syntax.ReturnType, scope, sourceName);
+            BindMethodReturnType(method, syntax, scope, sourceName);
             method.Parameters = BindParameters(syntax.Parameters, method, scope, sourceName);
             RecordBody(method, syntax.Body, scope, owner, containingType: null, sourceName);
             RecordAttributes(method, syntax.Attributes, scope, sourceName);
             return method;
+        }
+
+        /// <summary>
+        /// Resolves a method's return type, or records that the body is to infer it (§8).
+        /// </summary>
+        /// <remarks>
+        /// An omitted return type is inferred from the body — exactly as a lambda's is — but only
+        /// where there is a body to infer from and a signature the method owns. A bodyless method
+        /// (<c>abstract</c>, <c>native</c>, an interface member) has nothing to infer from, and an
+        /// <c>override</c> must match the contract it replaces, which cannot be checked against an
+        /// inferred one; both have to write it.
+        /// </remarks>
+        private void BindMethodReturnType(MethodSymbol method, MethodDeclarationSyntax syntax, Scope scope, string sourceName)
+        {
+            if (syntax.ReturnType is not null)
+            {
+                method.ReturnType = _resolver.Resolve(syntax.ReturnType, scope, sourceName);
+                return;
+            }
+
+            if (syntax.Dispatch == DispatchModifier.Override)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.ReturnTypeRequired,
+                    $"'{method.Name}' overrides a member, so its return type cannot be inferred; write it after the ':'.");
+                return;
+            }
+
+            if (syntax.Body is null)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.ReturnTypeRequired,
+                    $"'{method.Name}' has no body to infer a return type from; write it after the ':'.");
+                return;
+            }
+
+            _inferReturnTypes.Add(method);
         }
 
         private MethodSymbol BindConstructor(
