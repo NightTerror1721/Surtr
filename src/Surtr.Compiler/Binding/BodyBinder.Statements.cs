@@ -3,6 +3,7 @@
 using Surtr.Compiler.Binding.BoundTree;
 using Surtr.Compiler.Binding.Symbols;
 using Surtr.Compiler.Diagnostics;
+using Surtr.Compiler.Syntax;
 using Surtr.Compiler.Syntax.Ast;
 using System.Collections.Generic;
 
@@ -401,7 +402,24 @@ namespace Surtr.Compiler.Binding
         private BoundStatement BindThrow(ThrowStatementSyntax syntax)
         {
             var value = BindExpression(syntax.Value);
-            var exceptionBase = ResolveBuiltInType("Exception", syntax.Span);
+            CheckThrowable(value, syntax.Span);
+
+            return new BoundThrowStatement(syntax, value);
+        }
+
+        /// <summary>Binds <c>throw</c> used as an expression, typed <c>never</c> (§9).</summary>
+        private BoundExpression BindThrowExpression(ThrowExpressionSyntax syntax)
+        {
+            var value = BindExpression(syntax.Value);
+            CheckThrowable(value, syntax.Span);
+
+            return new BoundThrowExpression(syntax, value, _factory.Never);
+        }
+
+        /// <summary>§9: <c>throw</c> only ever type-checks against an Exception-typed expression.</summary>
+        private void CheckThrowable(BoundExpression value, SourceSpan span)
+        {
+            var exceptionBase = ResolveBuiltInType("Exception", span);
 
             // §9: `throw` only ever type-checks against an Exception-typed expression, so a
             // `catch (e: T)` anywhere is always matching against a real hierarchy.
@@ -409,11 +427,9 @@ namespace Surtr.Compiler.Binding
             {
                 Report(
                     SurtrDiagnosticCode.InvalidThrowableType,
-                    syntax.Span,
+                    span,
                     $"'{value.Type.ToDisplayString()}' does not extend 'Exception', so it cannot be thrown.");
             }
-
-            return new BoundThrowStatement(syntax, value);
         }
 
         private BoundStatement BindReturn(ReturnStatementSyntax syntax)
@@ -422,7 +438,7 @@ namespace Surtr.Compiler.Binding
 
             if (syntax.Value is null)
             {
-                if (!expected.IsVoid && !expected.IsError)
+                if (!expected.IsVoid && !expected.IsNever && !expected.IsError)
                 {
                     Report(
                         SurtrDiagnosticCode.CannotConvert,
@@ -433,7 +449,7 @@ namespace Surtr.Compiler.Binding
                 return new BoundReturnStatement(syntax, null);
             }
 
-            if (expected.IsVoid)
+            if (expected.IsVoid || expected.IsNever)
             {
                 BindExpression(syntax.Value);
                 Report(

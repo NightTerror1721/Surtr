@@ -802,6 +802,131 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         [Fact]
+        public void AThrowExpressionFillsTheFalseBranchOfAConditional()
+        {
+            // §9: `throw` is an expression typed `never`, so a branch of `?:` can be a throw and
+            // the conditional still has the other branch's type.
+            var runtime = Run(
+                "class MyException : Exception {\n"
+                    + "  public constructor(message: string) : super(message) { }\n"
+                    + "}\n"
+                    + "fun pick(cond: bool): int { return cond ? 7 : throw MyException(\"boom\"); }\n"
+                    + "fun run(): int {\n"
+                    + "  try { return pick(true); } catch (e: MyException) { return 2; }\n"
+                    + "}");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AThrowExpressionOnTheThrowingSideOfAConditionalEscapes()
+        {
+            var runtime = Run(
+                "class MyException : Exception {\n"
+                    + "  public constructor(message: string) : super(message) { }\n"
+                    + "}\n"
+                    + "fun pick(cond: bool): int { return cond ? 7 : throw MyException(\"boom\"); }\n"
+                    + "fun run(): int {\n"
+                    + "  try { return pick(false); } catch (e: MyException) { return 3; }\n"
+                    + "}");
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AThrowExpressionIsTheRightOperandOfNullCoalesce()
+        {
+            // §9: `??`'s right operand can be a throw; the whole expression takes the left's
+            // non-nullable type.
+            var runtime = Run(
+                "class MyException : Exception {\n"
+                    + "  public constructor(message: string) : super(message) { }\n"
+                    + "}\n"
+                    + "fun guarded(value: int?): int { return value ?? throw MyException(\"boom\"); }\n"
+                    + "fun run(): int {\n"
+                    + "  try { return guarded(5); } catch (e: MyException) { return 2; }\n"
+                    + "}");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AThrowExpressionReachesACatchFromNullCoalesce()
+        {
+            var runtime = Run(
+                "class MyException : Exception {\n"
+                    + "  public constructor(message: string) : super(message) { }\n"
+                    + "}\n"
+                    + "fun guarded(value: int?): int { return value ?? throw MyException(\"boom\"); }\n"
+                    + "fun run(): int {\n"
+                    + "  try { return guarded(null); } catch (e: MyException) { return 9; }\n"
+                    + "}");
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnExpressionLambdasBodyMayBeAThrow()
+        {
+            // A lambda `() => throw E` is a closure whose body never completes; invoking it
+            // surfaces the exception.
+            var runtime = Run(
+                "class MyException : Exception {\n"
+                    + "  public constructor(message: string) : super(message) { }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "  let explode = (): int => throw MyException(\"boom\");\n"
+                    + "  try { return explode(); } catch (e: MyException) { return 4; }\n"
+                    + "}");
+
+            Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AMethodDeclaredNeverDoesNotNeedToReturn()
+        {
+            // `never` as a written return type: a body that only throws satisfies it, and
+            // NotAllPathsReturn is not reported.
+            var runtime = Run(
+                "class MyException : Exception {\n"
+                    + "  public constructor(message: string) : super(message) { }\n"
+                    + "}\n"
+                    + "fun fail(): never { throw MyException(\"boom\"); }\n"
+                    + "fun run(): int {\n"
+                    + "  try { return fail(); } catch (e: MyException) { return 6; }\n"
+                    + "}");
+
+            Assert.Equal(6, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AThrowExpressionInAReturnStillChecksTheThrownType()
+        {
+            using var compilation = Reject(
+                "class NotAnException { }\nfun run(): int { return true ? 1 : throw NotAnException(); }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidThrowableType);
+        }
+
+        [Fact]
+        public void AThrowExpressionDoesNotMakeFollowingCodeUnreachable()
+        {
+            // Flow analysis joins the branches of `?:`: a throw in the false branch must not mark
+            // the statement after the conditional unreachable.
+            var runtime = Run(
+                "class MyException : Exception {\n"
+                    + "  public constructor(message: string) : super(message) { }\n"
+                    + "}\n"
+                    + "fun pick(cond: bool): int {\n"
+                    + "  let v = cond ? 1 : throw MyException(\"boom\");\n"
+                    + "  return v + 1;\n"
+                    + "}\n"
+                    + "fun run(): int { return pick(true); }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        [Fact]
         public void ModifiersOutOfOrderAreRejected()
         {
             using var compilation = Reject("class Foo { static public fun bar(): int { return 1; } }");
@@ -4562,6 +4687,84 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(9, Int(runtime, "run"));
         }
 
+        [Fact]
+        public void AStaticFieldOnAGenericClassIsReachedThroughItsConstruction()
+        {
+            // §6: a static member of a generic class is reached through a *construction* —
+            // `Box<int>.counter` — which substitutes the type. The field is one slot shared by
+            // every construction (erasure).
+            var runtime = Run(
+                "class Counter<T> {\n"
+                    + "  public static var total: int = 0;\n"
+                    + "  public fun bump(): int { Counter<int>.total = Counter<int>.total + 1; return Counter<int>.total; }\n"
+                    + "}\n"
+                    + "fun run(): int { let c = Counter<int>(); c.bump(); c.bump(); return Counter<int>.total; }");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AStaticFieldNotMentioningTheTypeParameterWorksOnTheOpenForm()
+        {
+            // `Box<>.total` (open form) is valid when the member's type does not mention `T`; the
+            // statics are shared by every construction, so the slot is the same one.
+            var runtime = Run(
+                "class Counter<T> {\n"
+                    + "  public static var total: int = 0;\n"
+                    + "}\n"
+                    + "fun run(): int { Counter<>.total = 41; return Counter<int>.total + 1; }");
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnOpenFormStaticThatMentionsTheTypeParameterIsRejected()
+        {
+            // `Box<>.make` has `T` in its signature, so the open form would hand back an
+            // unsubstituted type; the construction form `Box<int>.make` is the one that works.
+            using var compilation = Reject(
+                "class Box<T> {\n"
+                    + "  private let _value: T;\n"
+                    + "  constructor(value: T) { _value = value; }\n"
+                    + "  public static fun make(value: T): Box<T> { return Box<T>(value); }\n"
+                    + "}\n"
+                    + "fun run(): int { let b = Box<>.make(5); return 1; }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.WrongTypeArgumentCount);
+        }
+
+        [Fact]
+        public void AStaticMethodOnAGenericClassIsReachedThroughItsConstruction()
+        {
+            var runtime = Run(
+                "class Box<T> {\n"
+                    + "  private let _value: T;\n"
+                    + "  constructor(value: T) { _value = value; }\n"
+                    + "  public fun get(): T { return _value; }\n"
+                    + "  public static fun make(value: T): Box<T> { return Box<T>(value); }\n"
+                    + "}\n"
+                    + "fun run(): int { return Box<int>.make(7).get(); }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AStaticPropertyOnAGenericClassSubstitutesItsType()
+        {
+            // A static property whose type mentions `T` substitutes it through a construction:
+            // `Holder<int>.last` binds as a `Holder<int>`, not the open `Holder<T>`.
+            var runtime = Run(
+                "class Holder<T> {\n"
+                    + "  private let _value: T;\n"
+                    + "  constructor(value: T) { _value = value; }\n"
+                    + "  public fun get(): T { return _value; }\n"
+                    + "  public static last: int => 42;\n"
+                    + "}\n"
+                    + "fun run(): int { return Holder<int>.last; }");
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
         /// <summary>
         /// A direct call on a statically-typed <c>int</c> receiver never goes through a type
         /// parameter at all: overload resolution just finds <c>int</c>'s own <c>compareTo</c>, and
@@ -4917,6 +5120,84 @@ namespace Surtr.Tests.Compiler.CodeGen
         public void AGenericCallMayWriteItsTypeArguments()
         {
             var runtime = Run("fun pick<T>(a: T, b: T): T { return a; }\nfun run(): int { return pick<int>(1, 2); }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AGenericCallInfersItsTypeArgumentsFromTheExpectedReturn()
+        {
+            // `let b: Box<int> = makeBox();` fills `T` from the expected return type even though no
+            // argument mentions it. The body only throws, so no `T` value is ever needed.
+            var runtime = Run(
+                "class Box<T> {\n"
+                    + "  private let _value: T;\n"
+                    + "  constructor(value: T) { _value = value; }\n"
+                    + "  public fun get(): T { return _value; }\n"
+                    + "}\n"
+                    + "class Boom : Exception {\n"
+                    + "  public constructor(message: string) : super(message) { }\n"
+                    + "}\n"
+                    + "fun makeBox<T>(): Box<T> { throw Boom(\"unreachable\"); }\n"
+                    + "fun run(): int {\n"
+                    + "  try { let b: Box<int> = makeBox(); return b.get(); }\n"
+                    + "  catch (e: Exception) { return 3; }\n"
+                    + "}");
+
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AGenericConstructionInfersFromTheExpectedParameterAtACallSite()
+        {
+            // `take(Box())` with `take(b: Box<int>)` fills the construction's `T` from the
+            // parameter the argument lands in, so the call site does not have to write it.
+            var runtime = Run(
+                "class Box<T> {\n"
+                    + "  private let _value: T;\n"
+                    + "  constructor(value: T) { _value = value; }\n"
+                    + "  public fun get(): T { return _value; }\n"
+                    + "}\n"
+                    + "fun take(b: Box<int>): int { return b.get(); }\n"
+                    + "fun run(): int { return take(Box(7)); }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AConstructionWithNoOwnSourceDefersToItsParameter()
+        {
+            // The real Brecha B: `take(Box())` — the construction has no type arguments written and
+            // no argument of its own to infer from, so the winning parameter `Box<int>` supplies
+            // them, exactly as it would type a deferred lambda.
+            var runtime = Run(
+                "class Box<T> {\n"
+                    + "  private var _value: T?;\n"
+                    + "  constructor() { _value = null; }\n"
+                    + "  public constructor(value: T) { _value = value; }\n"
+                    + "  public fun hasValue(): bool { return _value != null; }\n"
+                    + "}\n"
+                    + "fun take(b: Box<int>): int { return b.hasValue() ? 0 : 1; }\n"
+                    + "fun run(): int { return take(Box()); }");
+
+            // `Box()` built a `Box<int>` with a null value, so `hasValue` is false — the point is
+            // that it bound at all: before the deferral it failed with CannotInferTypeArgument.
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AConstructionWithItsOwnSourceStillWidensToItsParameter()
+        {
+            // `take(Box(5.0))` with `take(b: Box<float>)` defers the construction and re-binds it
+            // against the parameter, so `Box<float>` wins (top-down target typing).
+            var runtime = Run(
+                "class Box<T> {\n"
+                    + "  private let _value: T;\n"
+                    + "  constructor(value: T) { _value = value; }\n"
+                    + "  public fun get(): T { return _value; }\n"
+                    + "}\n"
+                    + "fun take(b: Box<float>): float { return b.get(); }\n"
+                    + "fun run(): int { return take(Box(5.0)) > 4.5 ? 1 : 0; }");
 
             Assert.Equal(1, Int(runtime, "run"));
         }

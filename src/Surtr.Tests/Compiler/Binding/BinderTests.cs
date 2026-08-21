@@ -390,6 +390,21 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
+        public void TheIteratorBuiltInResolvesUnderItsCapitalisedName()
+        {
+            // The cursor class is `Iterator` (PascalCase, like the other library classes), not
+            // `iterator` - the lowercase form was the one anomaly, and it collided with the common
+            // identifier `iterator` used for a loop cursor variable.
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "class Holder { public var c: Iterator; }"));
+
+            AssertNoErrors(compilation);
+
+            var field = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single();
+            Assert.Equal("Iterator", ((NamedTypeSymbol)field.Type).Definition.Name);
+        }
+
+        [Fact]
         public void ABuiltInClassImportsAsTheFactorysOwnSymbol()
         {
             // The `surtr` module holds the built-in classes too, so importing it must land on the
@@ -797,6 +812,41 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
+        public void ASingletonCannotBeGeneric()
+        {
+            // §2.8: a singleton has exactly one instance created at module load, so nothing a type
+            // argument could select exists; a generic singleton would be a degenerate type that
+            // cannot even be named by its arity and could be "constructed".
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "singleton Registry<T> { public var value: int; }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidGenericDeclaration);
+        }
+
+        [Fact]
+        public void AnEnumCannotBeGeneric()
+        {
+            // §2.4: an enum's cases are a fixed set of ordinals, so a type argument has nothing to
+            // select; a generic enum cannot be named by its arity and its cases become unreachable.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "enum Suit<T> { Hearts, Spades }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidGenericDeclaration);
+        }
+
+        [Fact]
+        public void AGenericEnumDoesNotBecomeConstructable()
+        {
+            // The generic declaration is rejected and no type parameters are created, so the symbol
+            // stays non-generic and `Suit<int>` cannot resolve to a constructed type.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "enum Suit<T> { Hearts, Spades }\nclass Holder { public var s: Suit<int>; }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidGenericDeclaration);
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.WrongTypeArgumentCount);
+        }
+
+        [Fact]
         public void AnInterfaceCannotCarryADefaultImplementation()
         {
             Bind(out var compilation, ("game/core/Test.surtr",
@@ -1198,7 +1248,7 @@ namespace Surtr.Tests.Compiler.Binding
                 + "private value class ReadOnlyCollection<T> : IReadOnlyCollection<T>\n"
                 + "{\n"
                 + "    private let _col: IReadOnlyCollection<T>;\n"
-                + "    public inline constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
+                + "    public constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
                 + "    public override fun get(index: int): T { return _col.get(index); }\n"
                 + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
                 + "}"));
@@ -1225,7 +1275,7 @@ namespace Surtr.Tests.Compiler.Binding
                 + "private value class ReadOnlyCollection<T> : IReadOnlyCollection<int>\n"
                 + "{\n"
                 + "    private let _col: IReadOnlyCollection<T>;\n"
-                + "    public inline constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
+                + "    public constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
                 + "    public override fun get(index: int): T { return _col.get(index); }\n"
                 + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
                 + "}"));
@@ -1253,7 +1303,7 @@ namespace Surtr.Tests.Compiler.Binding
                 + "private value class ReadOnlyCollection<T> : ICollection<int>\n"
                 + "{\n"
                 + "    private let _col: IReadOnlyCollection<T>;\n"
-                + "    public inline constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
+                + "    public constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
                 + "    public override fun get(index: int): T { return _col.get(index); }\n"
                 + "    public override fun add(item: int): void { }\n"
                 + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
@@ -1275,7 +1325,7 @@ namespace Surtr.Tests.Compiler.Binding
                 + "private value class ReadOnlyCollection<T> : IReadOnlyCollection<T>\n"
                 + "{\n"
                 + "    private let _col: IReadOnlyCollection<T>;\n"
-                + "    public inline constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
+                + "    public constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
                 + "    public override fun get(index: int): T { return _col.get(index); }\n"
                 + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
                 + "}"));

@@ -319,7 +319,7 @@ namespace Surtr.Compiler.CodeGen
 
             Expression(expression);
 
-            if (!expression.Type.IsVoid)
+            if (!expression.Type.IsVoid && !expression.Type.IsNever)
                 Code.Pop();
         }
 
@@ -1399,6 +1399,14 @@ namespace Surtr.Compiler.CodeGen
 
                 case BoundSwitchExpression @switch:
                     EmitSwitchExpression(@switch);
+                    return;
+
+                case BoundThrowExpression @throw:
+                    // `throw` as an expression lowers to exactly what the statement form does:
+                    // evaluate the value, then Throw. The flow ends there, and the emitter's
+                    // MarkLabel joins tolerate a branch that falls out into nothing.
+                    Expression(@throw.Value);
+                    Code.Throw();
                     return;
 
                 case BoundNullConditionalExpression conditionalAccess:

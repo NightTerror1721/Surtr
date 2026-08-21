@@ -1,6 +1,7 @@
 #nullable enable
 
 using Surtr.Compiler.Binding.Symbols;
+using Surtr.Compiler.Syntax.Ast;
 using System;
 using System.Collections.Generic;
 
@@ -17,6 +18,7 @@ namespace Surtr.Compiler.Binding
             Type = type;
             Name = name;
             LambdaArity = null;
+            DeferredDefinition = null;
         }
 
         private ArgumentInfo(int arity, string? name, TypeSymbol type)
@@ -24,6 +26,15 @@ namespace Surtr.Compiler.Binding
             Type = type;
             Name = name;
             LambdaArity = arity;
+            DeferredDefinition = null;
+        }
+
+        private ArgumentInfo(NamedTypeSymbol deferred, string? name, TypeSymbol type)
+        {
+            Type = type;
+            Name = name;
+            LambdaArity = null;
+            DeferredDefinition = deferred;
         }
 
         /// <summary>
@@ -39,7 +50,16 @@ namespace Surtr.Compiler.Binding
         public static ArgumentInfo Lambda(int arity, TypeSymbol errorType, string? name = null)
             => new ArgumentInfo(arity, name, errorType);
 
-        /// <summary>The argument's type, or the error type for a lambda not yet bound.</summary>
+        /// <summary>
+        /// A generic construction whose type arguments nothing at the call site settles — <c>Box()</c>
+        /// with nothing written and no argument to infer from (§6). Like a deferred lambda it has no
+        /// type until the winning parameter tells it one, so it enters resolution as its generic
+        /// definition and is bound afterwards against the parameter it lands in.
+        /// </summary>
+        public static ArgumentInfo DeferredConstruction(NamedTypeSymbol definition, TypeSymbol errorType, string? name = null)
+            => new ArgumentInfo(definition, name, errorType);
+
+        /// <summary>The argument's type, or the error type for a lambda or deferred construction not yet bound.</summary>
         public TypeSymbol Type { get; }
 
         /// <summary>The parameter it names, or <see langword="null"/> when positional.</summary>
@@ -47,6 +67,11 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>How many parameters an unbound lambda takes, or <see langword="null"/> for anything else.</summary>
         public int? LambdaArity { get; }
+
+        /// <summary>
+        /// The generic definition an unbound construction is built from, or <see langword="null"/>.
+        /// </summary>
+        public NamedTypeSymbol? DeferredDefinition { get; }
     }
 
     /// <summary>How a call site resolved.</summary>
@@ -233,6 +258,16 @@ namespace Surtr.Compiler.Binding
                         continue;
                     }
 
+                    if (argument.DeferredDefinition is NamedTypeSymbol deferred)
+                    {
+                        if (!AcceptsDeferred(parameters[target].Type, deferred))
+                            return false;
+
+                        mapped[target] = parameters[target].Type;
+                        conversions.Add(Conversion.Of(ConversionKind.Identity));
+                        continue;
+                    }
+
                     var conversion = _conversions.Classify(argument.Type, parameters[target].Type);
                     if (!conversion.IsImplicit)
                         return false;
@@ -251,6 +286,16 @@ namespace Surtr.Compiler.Binding
                 if (argument.LambdaArity is int namedArity)
                 {
                     if (!Accepts(parameters[named].Type, namedArity))
+                        return false;
+
+                    mapped[named] = parameters[named].Type;
+                    conversions.Add(Conversion.Of(ConversionKind.Identity));
+                    continue;
+                }
+
+                if (argument.DeferredDefinition is NamedTypeSymbol namedDeferred)
+                {
+                    if (!AcceptsDeferred(parameters[named].Type, namedDeferred))
                         return false;
 
                     mapped[named] = parameters[named].Type;
@@ -301,6 +346,19 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         private static bool Accepts(TypeSymbol parameter, int arity)
             => parameter.NonNullable is ClosureTypeSymbol closure && closure.ParameterTypes.Count == arity;
+
+        /// <summary>
+        /// Whether a parameter could receive a deferred generic construction — one whose type
+        /// arguments the winning parameter will settle. The parameter has to be that construction's
+        /// own generic definition, or a construction of it; anything else cannot type it.
+        /// </summary>
+        private static bool AcceptsDeferred(TypeSymbol parameter, NamedTypeSymbol deferred)
+        {
+            if (parameter.NonNullable is not NamedTypeSymbol paramType)
+                return false;
+
+            return ReferenceEquals(paramType, deferred) || ReferenceEquals(paramType.Definition, deferred);
+        }
 
         /// <summary>
         /// Whether <paramref name="left"/> beats <paramref name="right"/>, by §3.5's rule 3.

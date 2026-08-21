@@ -113,6 +113,57 @@ namespace Surtr.Compiler.Syntax
             return arguments;
         }
 
+        /// <summary>
+        /// Parses the type argument list of a generic name in expression position (§6), where an
+        /// empty slot between commas — <c>Box&lt;&gt;</c>, <c>Box&lt;,&gt;</c>, <c>Box&lt;,,&gt;</c> —
+        /// is a wildcard: it occupies the arity position but names no type, selecting the open
+        /// declaration whose statics are shared by every construction.
+        /// </summary>
+        private IReadOnlyList<TypeSyntax> ParseWildcardTypeArgumentList()
+        {
+            reader.Expect(TokenType.Less, "'<' to open the type arguments");
+
+            var arguments = new List<TypeSyntax>();
+            int commas = 0;
+
+            while (true)
+            {
+                if (reader.CheckTypeArgumentClose())
+                {
+                    // `Box<>` — a close right after the open is one empty slot (arity 1).
+                    if (arguments.Count == 0 && commas == 0)
+                        arguments.Add(new WildcardTypeSyntax(SpanFrom(reader.CurrentLocation)));
+
+                    reader.ConsumeTypeArgumentClose();
+                    break;
+                }
+
+                if (reader.Check(TokenType.Comma))
+                {
+                    commas++;
+                    reader.Advance();
+                    continue;
+                }
+
+                arguments.Add(ParseType());
+
+                if (reader.Match(TokenType.Comma))
+                    commas++;
+                else
+                {
+                    reader.ConsumeTypeArgumentClose();
+                    break;
+                }
+            }
+
+            // The arity is commas + 1; any slot that was not written is a wildcard.
+            int arity = commas + 1;
+            while (arguments.Count < arity)
+                arguments.Add(new WildcardTypeSyntax(SpanFrom(reader.CurrentLocation)));
+
+            return arguments;
+        }
+
         /// <summary>Parses <c>{K: V}</c> — a self-delimiting production, per §5.3.</summary>
         private TypeSyntax ParseDictType()
         {

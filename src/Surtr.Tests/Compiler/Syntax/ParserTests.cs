@@ -281,6 +281,14 @@ namespace Surtr.Tests.Compiler.Syntax
             AssertRejected("class V { static operator+(a: V, b: V): V { } }", SurtrDiagnosticCode.InvalidModifier);
         }
 
+        /// <summary>§3.6: a constructor is never spliced, so `inline`/`forceinline` on one is rejected rather than silently ignored.</summary>
+        [Fact]
+        public void AConstructorRejectsInlineModifiers()
+        {
+            AssertRejected("class V { public inline constructor() { } }", SurtrDiagnosticCode.InvalidModifier);
+            AssertRejected("class V { public forceinline constructor() { } }", SurtrDiagnosticCode.InvalidModifier);
+        }
+
         /// <summary>A dispatch modifier makes an operator an instance method, so the parser keeps it rather than rejecting it.</summary>
         [Fact]
         public void ADispatchModifierOnAnOperatorParses()
@@ -492,6 +500,58 @@ namespace Surtr.Tests.Compiler.Syntax
             NamedTypeSyntax inner = Assert.IsType<NamedTypeSyntax>(middle.TypeArguments.Single());
 
             Assert.Equal("int", Assert.IsType<NamedTypeSyntax>(inner.TypeArguments.Single()).Path.Single());
+        }
+
+        /// <summary>
+        /// §6: a static member of a generic class is reached through a construction, so
+        /// <c>Box&lt;int&gt;.prop</c> parses as a member access whose target is a generic name.
+        /// </summary>
+        [Fact]
+        public void AGenericNameWithArgumentsParsesAsAStaticMemberAccess()
+        {
+            MemberAccessExpressionSyntax access = Assert.IsType<MemberAccessExpressionSyntax>(
+                ParseExpression("Box<int>.prop"));
+
+            GenericNameExpressionSyntax target = Assert.IsType<GenericNameExpressionSyntax>(access.Target);
+            Assert.Equal("Box", target.Name);
+            Assert.Equal("int", Assert.IsType<NamedTypeSyntax>(target.TypeArguments.Single()).Path.Single());
+            Assert.Equal("prop", access.Name);
+            Assert.False(access.IsNullConditional);
+        }
+
+        /// <summary>§6: the open form writes one wildcard per slot — <c>Box&lt;&gt;.prop</c>, <c>Box&lt;,&gt;.make()</c>.</summary>
+        [Fact]
+        public void AnOpenGenericNameWithEmptySlotsParsesAsWildcards()
+        {
+            MemberAccessExpressionSyntax access = Assert.IsType<MemberAccessExpressionSyntax>(
+                ParseExpression("Box<,>.prop"));
+
+            GenericNameExpressionSyntax target = Assert.IsType<GenericNameExpressionSyntax>(access.Target);
+            Assert.Equal(2, target.TypeArguments.Count);
+            Assert.All(target.TypeArguments, t => Assert.IsType<WildcardTypeSyntax>(t));
+        }
+
+        /// <summary>§6: a single empty slot is one wildcard — the arity 1 open form.</summary>
+        [Fact]
+        public void AGenericCallStillParsesWhenTheOpenFormWasAllowed()
+        {
+            CallExpressionSyntax call = Assert.IsType<CallExpressionSyntax>(
+                ParseExpression("Box<int>(5)"));
+
+            Assert.IsType<IdentifierExpressionSyntax>(call.Callee);
+            Assert.Equal("int", Assert.IsType<NamedTypeSyntax>(call.TypeArguments.Single()).Path.Single());
+        }
+
+        /// <summary>§6: a generic method call on a static generic owner is a call whose callee is a member access.</summary>
+        [Fact]
+        public void AGenericStaticMethodCallParsesWithTheGenericNameAsReceiver()
+        {
+            CallExpressionSyntax call = Assert.IsType<CallExpressionSyntax>(
+                ParseExpression("Box<int>.make(7)"));
+
+            MemberAccessExpressionSyntax callee = Assert.IsType<MemberAccessExpressionSyntax>(call.Callee);
+            Assert.IsType<GenericNameExpressionSyntax>(callee.Target);
+            Assert.Equal("make", callee.Name);
         }
 
         /// <summary>A generic constraint list closes with the same `&gt;&gt;` problem (§6).</summary>

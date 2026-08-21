@@ -51,6 +51,7 @@ namespace Surtr.Compiler.Binding.Symbols
             Range = Special("range", SpecialType.Range);
             Void = Special("void", SpecialType.Void);
             Unknown = Special("unknown", SpecialType.Unknown);
+            Never = Special("never", SpecialType.Never);
 
             ErrorType = new ErrorTypeSymbol("?");
         }
@@ -81,6 +82,9 @@ namespace Surtr.Compiler.Binding.Symbols
 
         /// <summary>The <c>unknown</c> type (§5.10), which shares the erased representation.</summary>
         public NamedTypeSymbol Unknown { get; }
+
+        /// <summary>The <c>never</c> bottom type (§9): assignable to every type, produced by a <c>throw</c>.</summary>
+        public NamedTypeSymbol Never { get; }
 
         /// <summary>The type an unresolvable type reference binds to.</summary>
         public ErrorTypeSymbol ErrorType { get; }

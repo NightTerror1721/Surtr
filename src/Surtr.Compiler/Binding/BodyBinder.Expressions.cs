@@ -48,6 +48,7 @@ namespace Surtr.Compiler.Binding
                 case DictLiteralExpressionSyntax dictionary: return BindDictLiteral(dictionary, expected);
                 case TupleLiteralExpressionSyntax tuple: return BindTupleLiteral(tuple, expected);
                 case SwitchExpressionSyntax @switch: return BindSwitchExpression(@switch, expected);
+                case ThrowExpressionSyntax @throw: return BindThrowExpression(@throw);
                 default: return Error(syntax);
             }
         }
@@ -578,6 +579,15 @@ namespace Surtr.Compiler.Binding
                 return BindStaticMember(syntax, staticType, expected);
             }
 
+            // `Box<int>.prop` / `Box<>.prop` — a generic type name reaching a static member (§6).
+            // The receiver is a construction (types substituted) or the open declaration (statics
+            // shared by every construction), never an instance value.
+            if (syntax.Target is GenericNameExpressionSyntax generic
+                && TryBindGenericName(generic, out var genericType))
+            {
+                return BindStaticMember(syntax, genericType, expected);
+            }
+
             var receiver = BindExpression(syntax.Target);
             if (receiver.Type.IsError)
                 return Error(syntax);
@@ -701,12 +711,18 @@ namespace Surtr.Compiler.Binding
 
             if (_lookup.FindField(type, syntax.Name) is FieldSymbol field && field.IsStatic)
             {
+                if (RejectOpenDependent(type, field.Type, syntax, field.Name))
+                    return Error(syntax);
+
                 RequireAccessible(field, field.Accessibility, field.Name, syntax);
                 return ResolveField(syntax, null, field);
             }
 
             if (_lookup.FindProperty(type, syntax.Name) is PropertySymbol property && property.IsStatic)
             {
+                if (RejectOpenDependent(type, property.Type, syntax, property.Name))
+                    return Error(syntax);
+
                 RequireAccessible(property, property.Accessibility, property.Name, syntax);
                 return ResolveProperty(syntax, null, property);
             }
@@ -715,7 +731,15 @@ namespace Surtr.Compiler.Binding
             // static candidates only, since accessing a member through a type name never has a
             // receiver for an instance one to read.
             if (TryBindMethodGroup(syntax, expected, StaticMethodsOf(type, syntax.Name), receiverSyntax: null) is BoundExpression group)
+            {
+                foreach (var method in StaticMethodsOf(type, syntax.Name))
+                {
+                    if (RejectOpenDependent(type, method.ReturnType, syntax, method.Name))
+                        return Error(syntax);
+                }
+
                 return group;
+            }
 
             // §15.3: same silent priority as the instance case, tried last.
             if (StaticExtensionProperty(type, syntax.Name, syntax) is PropertySymbol extensionProperty)
@@ -725,6 +749,25 @@ namespace Surtr.Compiler.Binding
                 syntax,
                 SurtrDiagnosticCode.UnresolvedMember,
                 $"'{type.ToDisplayString()}' has no static member called '{syntax.Name}'.");
+        }
+
+        /// <summary>
+        /// Rejects a static member reached through the open form of a generic type when the member's
+        /// type depends on the type's own parameters — <c>Box&lt;&gt;.empty</c> where
+        /// <c>empty: Sequence&lt;T&gt;</c> would hand back a type with <c>T</c> unsubstituted. The
+        /// construction form (<c>Box&lt;int&gt;.empty</c>) is the one that substitutes them.
+        /// </summary>
+        private bool RejectOpenDependent(NamedTypeSymbol type, TypeSymbol memberType, MemberAccessExpressionSyntax syntax, string memberName)
+        {
+            if (!MemberDependsOnOpenType(type, memberType))
+                return false;
+
+            Report(
+                SurtrDiagnosticCode.WrongTypeArgumentCount,
+                syntax.Span,
+                $"'{type.Name}' is open here — '{memberName}' mentions its type parameter(s). Write the access as '{type.Name}<...>." + memberName + "' to name a construction.");
+
+            return true;
         }
 
         private List<MethodSymbol> StaticMethodsOf(NamedTypeSymbol type, string name)
@@ -1325,10 +1368,36 @@ namespace Surtr.Compiler.Binding
                         {
                             var staticExtensionCandidates = StaticExtensionCandidates(staticOwner, name);
                             if (staticExtensionCandidates.Count > 0)
-                                return Complete(syntax, null, staticExtensionCandidates, name, isVirtual: false);
+                                return Complete(syntax, null, staticExtensionCandidates, name, isVirtual: false, expected);
                         }
 
-                        return BindMethodCall(syntax, instance, staticOwner, name, isVirtual: false);
+                        return BindMethodCall(syntax, instance, staticOwner, name, isVirtual: false, expected);
+                    }
+
+                    // `Box<int>.make()` / `Box<>.make()` — a static method on a generic type name.
+                    if (member.Target is GenericNameExpressionSyntax genericCallTarget
+                        && TryBindGenericName(genericCallTarget, out var genericStaticOwner))
+                    {
+                        // `Box<>.make()` with a static whose signature mentions `T` would hand back
+                        // an unsubstituted type — the open form is only for statics that do not
+                        // depend on the type's parameters (§6).
+                        if (genericStaticOwner is NamedTypeSymbol { IsConstructed: false } open
+                            && open.Arity > 0)
+                        {
+                            foreach (var candidate in _lookup.FindMethods(open, name))
+                            {
+                                if (MemberDependsOnOpenType(open, candidate.ReturnType))
+                                {
+                                    Report(
+                                        SurtrDiagnosticCode.WrongTypeArgumentCount,
+                                        member.Span,
+                                        $"'{open.Name}' is open here — '{candidate.Name}' mentions its type parameter(s). Write the access as '{open.Name}<...>." + candidate.Name + "(...)' to name a construction.");
+                                    return Error(syntax);
+                                }
+                            }
+                        }
+
+                        return BindMethodCall(syntax, null, genericStaticOwner, name, isVirtual: false, expected);
                     }
 
                     receiver = BindExpression(member.Target);
@@ -1346,7 +1415,7 @@ namespace Surtr.Compiler.Binding
                         BoundExpression guarded;
 
                         if (_lookup.FindMethods(lookupType, name).Count > 0)
-                            guarded = BindMethodCall(syntax, standIn, lookupType, name, isVirtual);
+                            guarded = BindMethodCall(syntax, standIn, lookupType, name, isVirtual, expected);
                         else if (ClosureValue(lookupType, standIn, name, member) is BoundExpression guardedValue)
                             guarded = BindClosureInvocation(syntax, guardedValue);
                         else
@@ -1368,7 +1437,7 @@ namespace Surtr.Compiler.Binding
             var owner = receiver?.Type.NonNullable ?? (TypeSymbol?)_containingType;
 
             if (owner is not null && _lookup.FindMethods(owner, name).Count > 0)
-                return BindMethodCall(syntax, receiver, owner, name, isVirtual);
+                return BindMethodCall(syntax, receiver, owner, name, isVirtual, expected);
 
             // A member holding a closure is a callee too (§8), and is looked at only once no method
             // answers to the name.
@@ -1384,16 +1453,16 @@ namespace Surtr.Compiler.Binding
             {
                 var extensionCandidates = ExtensionCandidates(name);
                 if (extensionCandidates.Count > 0)
-                    return CompleteExtension(syntax, receiver, extensionCandidates, name);
+                    return CompleteExtension(syntax, receiver, extensionCandidates, name, expected);
             }
 
             if (DeclaresMethod(_module, name))
-                return BindModuleCall(syntax, _module, name);
+                return BindModuleCall(syntax, _module, name, expected);
 
             foreach (var imported in _imported)
             {
                 if (DeclaresMethod(imported, name))
-                    return BindModuleCall(syntax, imported, name);
+                    return BindModuleCall(syntax, imported, name, expected);
             }
 
             return Error(
@@ -1407,10 +1476,11 @@ namespace Surtr.Compiler.Binding
             BoundExpression? receiver,
             TypeSymbol owner,
             string name,
-            bool isVirtual)
+            bool isVirtual,
+            TypeSymbol? expected = null)
         {
             var candidates = _lookup.FindMethods(owner, name);
-            return Complete(syntax, receiver, candidates, name, isVirtual);
+            return Complete(syntax, receiver, candidates, name, isVirtual, expected);
         }
 
         /// <summary>
@@ -1499,7 +1569,7 @@ namespace Surtr.Compiler.Binding
             return false;
         }
 
-        private BoundExpression BindModuleCall(CallExpressionSyntax syntax, ModuleSymbol module, string name)
+        private BoundExpression BindModuleCall(CallExpressionSyntax syntax, ModuleSymbol module, string name, TypeSymbol? expected = null)
         {
             var candidates = new List<MethodSymbol>();
             foreach (var method in module.Methods)
@@ -1508,7 +1578,7 @@ namespace Surtr.Compiler.Binding
                     candidates.Add(method);
             }
 
-            return Complete(syntax, null, candidates, name, isVirtual: false);
+            return Complete(syntax, null, candidates, name, isVirtual: false, expected);
         }
 
         /// <summary>
@@ -1723,7 +1793,8 @@ namespace Surtr.Compiler.Binding
             CallExpressionSyntax syntax,
             BoundExpression receiver,
             IReadOnlyList<MethodSymbol> candidates,
-            string name)
+            string name,
+            TypeSymbol? expected = null)
         {
             BindArguments(syntax.Arguments, out var arguments, out var infos);
 
@@ -1735,7 +1806,7 @@ namespace Surtr.Compiler.Binding
             // every other extension method, so it lines up with `combinedInfos[0]` the same way an
             // ordinary generic call's arguments line up with its parameters — no extension-specific
             // inference needed, just feeding the receiver in as if it were argument zero.
-            candidates = SubstituteGenericCandidates(syntax, candidates, combinedInfos, name);
+            candidates = SubstituteGenericCandidates(syntax, candidates, combinedInfos, name, expected);
 
             var result = _overloads.Resolve(candidates, combinedInfos);
 
@@ -1782,12 +1853,13 @@ namespace Surtr.Compiler.Binding
             BoundExpression? receiver,
             IReadOnlyList<MethodSymbol> candidates,
             string name,
-            bool isVirtual)
+            bool isVirtual,
+            TypeSymbol? expected = null)
         {
             BindArguments(syntax.Arguments, out var arguments, out var infos);
 
             candidates = Accessible(candidates, name, syntax);
-            candidates = SubstituteGenericCandidates(syntax, candidates, infos, name);
+            candidates = SubstituteGenericCandidates(syntax, candidates, infos, name, expected);
             var result = _overloads.Resolve(candidates, infos);
 
             switch (result.Status)
@@ -1937,9 +2009,49 @@ namespace Surtr.Compiler.Binding
                     continue;
                 }
 
+                // A generic construction with no type arguments written and no argument of its own to
+                // infer from — `take(Box())` with `take(b: Box<int>)` — cannot say what it is until
+                // the winning parameter tells it, exactly like a deferred lambda (§6).
+                if (IsDeferredConstruction(written[i].Value, out var definition))
+                {
+                    infos[i] = ArgumentInfo.DeferredConstruction(definition, _factory.ErrorType, written[i].Name);
+                    continue;
+                }
+
                 arguments[i] = BindExpression(written[i].Value);
                 infos[i] = new ArgumentInfo(arguments[i]!.Type, written[i].Name);
             }
+        }
+
+        /// <summary>
+        /// Whether an argument is a generic construction that must wait for its parameter to supply
+        /// the type arguments: a bare call to a generic definition — no type arguments written, and
+        /// the definition is not a module function with this name.
+        /// </summary>
+        private bool IsDeferredConstruction(ExpressionSyntax syntax, out NamedTypeSymbol definition)
+        {
+            definition = null!;
+
+            if (syntax is not CallExpressionSyntax { TypeArguments.Count: 0 } call
+                || call.Callee is not IdentifierExpressionSyntax identifier)
+            {
+                return false;
+            }
+
+            var found = _typeScope.Lookup(identifier.Name);
+            foreach (var candidate in found.IsAmbiguous ? found.Candidates : Single(found.Symbol))
+            {
+                if (candidate is NamedTypeSymbol { Arity: > 0 } named && !named.IsConstructed)
+                {
+                    definition = named;
+                    return true;
+                }
+            }
+
+            return false;
+
+            static IReadOnlyList<Symbol> Single(Symbol? symbol)
+                => symbol is null ? System.Array.Empty<Symbol>() : new[] { symbol };
         }
 
         /// <summary>
@@ -2035,7 +2147,8 @@ namespace Surtr.Compiler.Binding
             CallExpressionSyntax syntax,
             IReadOnlyList<MethodSymbol> candidates,
             IReadOnlyList<ArgumentInfo> arguments,
-            string name)
+            string name,
+            TypeSymbol? expected = null)
         {
             bool anyGeneric = false;
             for (int i = 0; i < candidates.Count && !anyGeneric; i++)
@@ -2065,13 +2178,24 @@ namespace Surtr.Compiler.Binding
                     continue;
                 }
 
-                var declared = new TypeSymbol[candidate.Parameters.Count];
-                for (int i = 0; i < declared.Length; i++)
+                // Two inference sources, in priority order: the arguments, then the expected
+                // return type — `let b: Box<int> = makeBox();` fills `T` from the target even
+                // though no argument mentions it (§6). Unifying both in one pass means an
+                // argument wins when both name a parameter.
+                int sources = candidate.Parameters.Count + (expected is not null ? 1 : 0);
+                var declared = new TypeSymbol[sources];
+                for (int i = 0; i < candidate.Parameters.Count; i++)
                     declared[i] = candidate.Parameters[i].Type;
 
-                var supplied = new TypeSymbol?[declared.Length];
-                for (int i = 0; i < supplied.Length && i < arguments.Count; i++)
+                if (expected is not null)
+                    declared[candidate.Parameters.Count] = candidate.ReturnType;
+
+                var supplied = new TypeSymbol?[sources];
+                for (int i = 0; i < candidate.Parameters.Count && i < arguments.Count; i++)
                     supplied[i] = arguments[i].Name is null ? arguments[i].Type : null;
+
+                if (expected is not null)
+                    supplied[candidate.Parameters.Count] = expected.NonNullable;
 
                 if (TypeInference.TryInfer(candidate.TypeParameters, declared, supplied, _factory, out var inferred, out _, _lookup))
                     substituted.Add(Construct(candidate, inferred, syntax));

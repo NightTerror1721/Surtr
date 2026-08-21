@@ -454,6 +454,14 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         ReturnTypeRequired = 3065,
 
+        /// <summary>
+        /// An <c>enum</c> or <c>singleton</c> declares type parameters (§6). An enum's cases are a
+        /// fixed set of ordinals and a singleton has exactly one instance created at module load, so
+        /// neither has anything a type argument could select; a generic declaration would be a
+        /// degenerate type that cannot be named by its arity and could even be "constructed".
+        /// </summary>
+        InvalidGenericDeclaration = 3066,
+
         #endregion
 
         #region Code generation — 4xxx

@@ -47,6 +47,22 @@ namespace Surtr.Compiler.Syntax.Ast
         }
     }
 
+    /// <summary>
+    /// A type argument slot that does not name a type, written as an empty position between commas:
+    /// <c>Box&lt;&gt;</c> (one), <c>Box&lt;,&gt;</c> (two), <c>Box&lt;,,&gt;</c> (three). It only
+    /// ever appears in a <see cref="GenericNameExpressionSyntax"/> naming an open generic for a
+    /// static member access — the arity it occupies is what selects the declaration, and the member
+    /// is shared by every construction of it.
+    /// </summary>
+    public sealed class WildcardTypeSyntax : TypeSyntax
+    {
+        /// <summary>Initializes a wildcard type argument.</summary>
+        /// <param name="span">The source the slot covers.</param>
+        public WildcardTypeSyntax(SourceSpan span) : base(span)
+        {
+        }
+    }
+
     /// <summary>An array type, written with the <c>[]</c> suffix: <c>int[]</c>, <c>string[][]</c>.</summary>
     public sealed class ArrayTypeSyntax : TypeSyntax
     {

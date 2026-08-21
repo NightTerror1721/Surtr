@@ -271,7 +271,7 @@ namespace Surtr.Compiler.Syntax
         /// of the type argument list it was never trying to be.
         /// </para>
         /// </remarks>
-        private bool LooksLikeTypeArgumentList()
+        private bool LooksLikeTypeArgumentList(bool requireMemberAccess = false)
         {
             const int Limit = 256;
 
@@ -302,7 +302,16 @@ namespace Surtr.Compiler.Syntax
                             break;
 
                         // A list that closes more angles than it opened was never one.
-                        return depth == 0 && reader.Peek(offset + 1).Type == TokenType.LeftParen;
+                        // After the close comes a `(` (a generic call), or — for the member-access
+                        // form — a `.`/`?.` (a generic name reaching a static member).
+                        var following = reader.Peek(offset + 1).Type;
+                        if (requireMemberAccess)
+                            return depth == 0 && (following == TokenType.Dot || following == TokenType.QuestionDot);
+
+                        return depth == 0
+                            && (following == TokenType.LeftParen
+                                || following == TokenType.Dot
+                                || following == TokenType.QuestionDot);
                     }
 
                     // Everything a type can be written with: a name, a qualification, a separator,
@@ -368,6 +377,20 @@ namespace Surtr.Compiler.Syntax
                 // `a < b` stays a comparison.
                 if (reader.Check(TokenType.Less) && LooksLikeTypeArgumentList())
                 {
+                    // `Box<int>.prop` / `Box<,>.make()` — a generic name reaching a static member.
+                    // The member access branch below consumes the `.`; the generic name is the
+                    // receiver it hangs off.
+                    if (LooksLikeTypeArgumentList(requireMemberAccess: true))
+                    {
+                        var nameArguments = ParseWildcardTypeArgumentList();
+
+                        if (expression is IdentifierExpressionSyntax named)
+                        {
+                            expression = new GenericNameExpressionSyntax(SpanFrom(named.Span.Start), named.Name, nameArguments);
+                            continue;
+                        }
+                    }
+
                     var typeArguments = ParseTypeArgumentList();
                     var arguments = ParseArgumentList();
                     expression = new CallExpressionSyntax(SpanFrom(expression.Span.Start), expression, typeArguments, arguments);
@@ -479,6 +502,13 @@ namespace Surtr.Compiler.Syntax
 
                 case TokenType.LeftParen:
                     return IsLambdaAhead() ? ParseLambda() : ParseParenthesizedOrTuple();
+
+                case TokenType.KeywordThrow:
+                    // `throw` as an expression (§9): the thrown value is whatever the full
+                    // expression grammar produces (`throw a + b` throws `a + b`), and the result
+                    // is typed `never`, which lets it sit in `?:`, `??` and lambda bodies.
+                    reader.Advance();
+                    return new ThrowExpressionSyntax(SpanFrom(start), ParseExpression());
 
                 case TokenType.Identifier:
                     // `this` and `super` are contextual (§3.2), so they arrive as identifiers.

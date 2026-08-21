@@ -875,8 +875,11 @@ Two decisions the heuristic makes that are worth spelling out:
 
 - **A constructor is never spliced.** What runs on construction is not its body alone but the chain
   and the initializers the emitter prepends to it, so a splice would silently skip the base's
-  construction. A `super(...)` call names exactly such a body, and the cost heuristic or a stray
-  `inline` must not get it there.
+  construction. A `super(...)` call names exactly such a body, and the cost heuristic must not get it
+  there. Because a splice is *impossible* rather than merely unattractive, `forceinline` could not
+  fail silently, so writing `inline` or `forceinline` on a constructor is rejected at the
+  declaration — `InvalidModifier` — never ignored. A `value class` constructor is still spliced by
+  its own dedicated path (it has no chain to skip), with or without the keyword.
 - **A property read honours `inline` and the heuristic on its getter.** Auto-properties go further:
   both accessors are one instruction — a field load and a field store — so both always lower to the
   backing field at the call site wherever the access is proven non-virtual — `Direct` dispatch,
@@ -1027,7 +1030,7 @@ common path cheap.
 
 **The built-in collections really do implement it**, rather than being iterable by compiler
 privilege alone — `array`, `string`, `tuple`, `dict` and `range` each declare `IIterable<T>` and
-hand back an `iterator`. Without that the interface would be a promise only user code could keep,
+hand back an `Iterator`. Without that the interface would be a promise only user code could keep,
 and `let xs: IIterable<int> = ints;` would not link. The lowering above still applies to every one
 of them: satisfying the contract is what makes the type system whole, not what a loop does.
 
@@ -1750,7 +1753,7 @@ are right-associative, everything else is left-associative):
 | 15 | `* / %` | multiplicative |
 | 16 | `as` `as?` | cast |
 | 17 | `! - ~ ++ --` (prefix) | unary not / negate / bitwise-not / pre-inc/dec, right-associative |
-| 18 (highest) | `++ --` (postfix) `.` `?.` `!!` `()` `[]` | postfix inc/dec, member access, call, index |
+| 18 (highest) | `++ --` (postfix) `.` `?.` `!!` `()` `[]` `throw` | postfix inc/dec, member access, call, index; `throw` as an expression is primary (§9.1) |
 
 `&&`/`||` short-circuit as usual. `++`/`--` exist in both prefix and postfix form with the
 conventional C-family semantics (prefix evaluates to the updated value, postfix to the value
@@ -1826,7 +1829,13 @@ supplies one — an annotation, a parameter type, or a declared return type. Whe
 is an error rather than a deferred decision: inferring it from a later use would need backtracking
 inference, and the diagnostics that produces when it fails are famously hard to read.
 
-The same target-typing rule is what lets lambda parameters go unannotated (§8). Annotation is
+The same target-typing rule is what lets lambda parameters go unannotated (§8). It also reaches
+generics (§6) in two directions: a generic *call* whose return type is annotated
+(`let b: Box<int> = makeBox();`) infers its type arguments from that target, and a generic
+*construction* passed as an argument (`take(Box())` with `take(b: Box<int>)`) is deferred to the
+parameter it lands in and bound against it, exactly as a deferred lambda is.
+
+Annotation is
 mandatory in exactly three places, all of them cases where there is nothing to infer *from*: a
 member's declared type and return type (a signature is the contract, so it is always written out),
 a parameter, and a `let`/`var` with no initializer.
@@ -1917,6 +1926,30 @@ of a concrete need for it.
 happen to share a name, the way `Result<T>` and `Result<T, E>` want to be. This is Java's one real
 absence in this area, and it costs nothing to have: the arity is mangled into the name the runtime
 sees, which no lookup path has to know about.
+
+**A static member of a generic class is reached through a construction.** `Box<int>.prop`,
+`Box<int>.make(...)` — the type arguments select the construction, which is what substitutes a
+member whose signature mentions `T`:
+
+```
+class Box<T> {
+    static empty: Box<T> => ...;      // `Box<int>.empty` is a `Box<int>`
+    static fun of(items: T...): Box<T> => ...;
+}
+
+let b = Box<int>.of(1, 2, 3);        // `of`'s `T` is `int` here
+```
+
+The **open form** writes empty slots instead of types — `Box<>.prop` (one), `Box<,>.prop` (two),
+`Box<,,>.prop` (three) — counting one per comma, C#-style. It names the declaration itself rather
+than a construction, and is valid only for a static member whose own type does not mention the
+type's parameters: `static var count: int` works as `Box<>.count`, while `static empty: Box<T>`
+does not, since it would hand back a `Box<T>` with `T` unsubstituted. Because generics are erased,
+a generic class has exactly **one** set of statics — one class, one table, one body — shared by
+every construction, so `Box<>.count` and `Box<int>.count` read the same slot.
+
+A bare `Box.prop` without angle brackets is not legal: the arity is part of the name, so an access
+that names the type must state it.
 
 **A nested type does not see its container's type parameters** — the static-nested rule, not the
 inner-class one. Nesting (§2.6) is qualification, so a type declared inside `Box<T>` is reached as
@@ -2276,6 +2309,39 @@ catch.
 the compiler on every exit path plus a catch-all that runs it and re-raises — there's no
 `Leave`/`EndFinally` opcode because the source-to-bytecode lowering does that work instead.
 
+### 9.1 `throw` as an expression, and `never`
+
+`throw` is an expression as well as a statement. Its type is `never`, the bottom type: no value
+ever has it, but it is assignable to *every* type, which is what lets a throw stand in any
+expression slot without contributing to the surrounding type. Two examples:
+
+```
+fun require(condition: bool): void {
+    if (!condition)
+        throw InvalidOperationException("require failed");
+}
+
+fun firstOrFail(values: int[], fallback: int): int {
+    return values.length > 0 ? values[0] : throw IndexOutOfRangeException("empty");
+}
+
+// A lambda body may be a throw:
+let explode = (): int => throw InvalidOperationException("never returns");
+
+// `??` accepts a throw on its right:
+fun guarded(value: int?): int => value ?? throw NullReferenceException("value");
+```
+
+Because `never` is a bottom type, the branches of `?:` and `??` and the arms of a switch-expression
+join the same way: a branch that throws contributes nothing, and the whole expression takes the
+other branch's type. A body that only throws satisfies a `never` return type without a `return`, and
+the flow analysis joins the branches of a conditional so the code after `x = c ? 1 : throw E;` is
+still reachable.
+
+`never` is legal only as a return type — it names a function that never completes — and as the
+implicit type of a throw expression. It is not a value type: a variable cannot be declared of it
+in any way that reads one back, since no value ever has that type.
+
 ---
 
 ## 10. Native/host interop surface
@@ -2509,7 +2575,7 @@ Surtr.
 generator: it is a shape the compiler can pattern-match and lower into a plain indexed loop for the
 cases §4.2 lists, which a generator-based protocol would not be.
 
-The cursor the built-ins hand back is a single `iterator` class covering all five sources, the same
+The cursor the built-ins hand back is a single `Iterator` class covering all five sources, the same
 way one `array` class covers every element type. It also carries a `reset()`, which is
 *not* on `IIterator<T>`: rewinding is meaningful for a cursor over a snapshot and meaningless for
 one over a stream, so it stays off the contract a user class has to satisfy.
@@ -2652,7 +2718,7 @@ one), so its `descriptor` is `null` and `genericArguments()` is empty, rather th
   to a module, not a type, so there is nothing for this to point at.
 - `attributes(): Attribute[]` — every `Runtime`-retention attribute written on this member.
 
-Declaring a bare `Type()`/`Member()` is rejected, the same way `iterator()` is: neither declares a
+Declaring a bare `Type()`/`Member()` is rejected, the same way `Iterator()` is: neither declares a
 constructor, so `Type.of`/`Type.get`/`Type.tryGet` (and, for `Member`, only ever reading one back
 off a `Type.members()`/`Module.members()` call) are the only ways to get one. `members()` reports
 each declaration once, under the shape a reader of the source would recognize: an auto-property's

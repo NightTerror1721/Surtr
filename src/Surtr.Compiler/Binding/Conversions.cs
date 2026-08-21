@@ -139,6 +139,11 @@ namespace Surtr.Compiler.Binding
             if (source.IsError || destination.IsError)
                 return Conversion.Identity;
 
+            // `never` is the bottom type: a throw can stand wherever a value of any type is
+            // expected, and reaching it means the value is never produced.
+            if (source.IsNever)
+                return Conversion.Identity;
+
             if (source.IsVoid || destination.IsVoid)
                 return Conversion.None;
 

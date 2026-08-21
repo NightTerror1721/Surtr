@@ -747,6 +747,18 @@ namespace Surtr.Compiler.Syntax
         private DeclarationSyntax ParseConstructor(SourceLocation start, IReadOnlyList<string> docComment,
             IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers)
         {
+            if (modifiers.Inline != InlineModifier.None)
+            {
+                // §3.6: a constructor is never spliced - what runs is not its body alone but the
+                // chain and the initializers the emitter prepends to it - so the cost heuristic or
+                // a stray `inline` must not get it there. Forceinline must not fall back silently,
+                // so the modifier is rejected outright rather than ignored.
+                throw reader.Error(
+                    SurtrDiagnosticCode.InvalidModifier,
+                    "A constructor is never inlined; 'inline'/'forceinline' is not written on one.",
+                    start);
+            }
+
             reader.Advance();
             IReadOnlyList<ParameterSyntax> parameters = ParseParameterList();
 

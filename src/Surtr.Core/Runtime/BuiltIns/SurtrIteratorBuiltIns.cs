@@ -6,7 +6,7 @@ using Surtr.Runtime.Objects;
 namespace Surtr.Runtime.BuiltIns
 {
     /// <summary>
-    /// The <c>iterator</c> class, and the <c>iterate()</c> member every built-in collection gets in
+    /// The <c>Iterator</c> class, and the <c>iterate()</c> member every built-in collection gets in
     /// order to satisfy <c>IIterable&lt;T&gt;</c>.
     /// </summary>
     /// <remarks>
@@ -49,7 +49,7 @@ namespace Surtr.Runtime.BuiltIns
 
         /// <summary>Declares the cursor itself: the two members <c>IIterator&lt;T&gt;</c> asks for.</summary>
         /// <remarks>
-        /// <c>current</c> is declared as <c>G0</c> even though <c>iterator</c> declares no generic
+        /// <c>current</c> is declared as <c>G0</c> even though <c>Iterator</c> declares no generic
         /// parameter of its own, because the contract's slot is keyed on the erased signature and
         /// the element type genuinely is whatever the source held. A compiler substitutes the
         /// source's element type at the use site; the runtime sees a reference either way.

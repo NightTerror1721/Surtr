@@ -222,6 +222,7 @@ namespace Surtr.Compiler.Binding
             _globalScope.TryDeclare("range", _factory.Range);
             _globalScope.TryDeclare("void", _factory.Void);
             _globalScope.TryDeclare("unknown", _factory.Unknown);
+            _globalScope.TryDeclare("never", _factory.Never);
 
             // §13: the standard library is imported implicitly - `surtr` is in scope in every file
             // with no `import` line, which is what lets `Exception` and `IComparable<T>` be written
@@ -414,7 +415,21 @@ namespace Surtr.Compiler.Binding
 
             if (syntax.TypeParameters.Count > 0)
             {
-                if (syntax.TypeParameters.Count > 10)
+                // An enum's cases are a fixed set of ordinals and a singleton has exactly one
+                // instance created at module load, so neither has anything a type argument could
+                // select. A generic declaration would be a degenerate type that cannot be named by
+                // its arity and could even be "constructed" (§6, §2.4, §2.8). Report it and skip
+                // creating the parameters so the symbol stays non-generic and unconstructable.
+                if (syntax.Kind is TypeDeclarationKind.Enum or TypeDeclarationKind.Singleton)
+                {
+                    string kindWord = syntax.Kind == TypeDeclarationKind.Enum ? "enum" : "singleton";
+                    _diagnostics.ReportError(
+                        SurtrDiagnosticCode.InvalidGenericDeclaration,
+                        $"'{syntax.Name}' is a {kindWord}; only one of it exists, so it cannot declare type parameters.",
+                        sourceName,
+                        syntax.TypeParameters[0].Span);
+                }
+                else if (syntax.TypeParameters.Count > 10)
                 {
                     _diagnostics.ReportError(
                         SurtrDiagnosticCode.TooManyTypeParameters,
@@ -424,11 +439,14 @@ namespace Surtr.Compiler.Binding
                         syntax.Span);
                 }
 
-                var parameters = new TypeParameterSymbol[syntax.TypeParameters.Count];
-                for (int i = 0; i < parameters.Length; i++)
-                    parameters[i] = _factory.DeclareTypeParameter(syntax.TypeParameters[i].Name, symbol, i);
+                if (syntax.Kind is not (TypeDeclarationKind.Enum or TypeDeclarationKind.Singleton))
+                {
+                    var parameters = new TypeParameterSymbol[syntax.TypeParameters.Count];
+                    for (int i = 0; i < parameters.Length; i++)
+                        parameters[i] = _factory.DeclareTypeParameter(syntax.TypeParameters[i].Name, symbol, i);
 
-                symbol.SetTypeParameters(parameters);
+                    symbol.SetTypeParameters(parameters);
+                }
             }
 
             // Arity is part of identity, so a duplicate is a name *and* an arity that already

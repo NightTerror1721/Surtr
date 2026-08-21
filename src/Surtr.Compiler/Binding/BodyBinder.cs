@@ -426,6 +426,79 @@ namespace Surtr.Compiler.Binding
                 => symbol is null ? System.Array.Empty<Symbol>() : new[] { symbol };
         }
 
+        /// <summary>
+        /// Resolves a generic type name written in expression position — the target of a static
+        /// member access: <c>Box&lt;int&gt;.prop</c> or the open <c>Box&lt;&gt;.prop</c>. The written
+        /// arguments construct the type; a wildcard slot names the open declaration of that arity.
+        /// </summary>
+        /// <remarks>
+        /// Only the declaration is searched, exactly like <see cref="TryBindAsGenericDefinition"/>:
+        /// a name that also names a constructed type in the scope is not a definition. And only a
+        /// generic declaration answers — arity part of identity, so a matching arity is required.
+        /// </remarks>
+        private bool TryBindGenericName(GenericNameExpressionSyntax syntax, out NamedTypeSymbol type)
+        {
+            type = null!;
+
+            var found = _typeScope.Lookup(syntax.Name);
+            bool wildcard = false;
+            foreach (var argument in syntax.TypeArguments)
+            {
+                if (argument is WildcardTypeSyntax)
+                    wildcard = true;
+            }
+
+            foreach (var candidate in found.IsAmbiguous ? found.Candidates : Single(found.Symbol))
+            {
+                if (candidate is not NamedTypeSymbol { Arity: > 0 } named || named.IsConstructed)
+                    continue;
+
+                if (named.Arity != syntax.TypeArguments.Count)
+                    continue;
+
+                if (wildcard)
+                {
+                    // The open form: the declaration itself, whose statics are shared by every
+                    // construction (erasure — one class, one table, one body).
+                    type = named;
+                    return true;
+                }
+
+                var arguments = new TypeSymbol[syntax.TypeArguments.Count];
+                for (int i = 0; i < arguments.Length; i++)
+                {
+                    arguments[i] = _resolver.Resolve(syntax.TypeArguments[i], _typeScope, _sourceName);
+                    if (arguments[i].IsError)
+                        return false;
+                }
+
+                type = named.Construct(arguments);
+                return true;
+            }
+
+            return false;
+
+            static IReadOnlyList<Symbol> Single(Symbol? symbol)
+                => symbol is null ? System.Array.Empty<Symbol>() : new[] { symbol };
+        }
+
+        /// <summary>
+        /// Whether a static member reached through the <em>open</em> form of a generic type —
+        /// <c>Box&lt;&gt;.member</c> — depends on the type's own parameters, in which case the access
+        /// has to name a construction (<c>Box&lt;int&gt;.member</c>) so the type is substituted.
+        /// </summary>
+        private bool MemberDependsOnOpenType(NamedTypeSymbol openType, TypeSymbol memberType)
+        {
+            if (openType.IsConstructed || openType.Arity == 0)
+                return false;
+
+            var substitution = _factory.BeginSubstitution();
+            foreach (var parameter in openType.TypeParameters)
+                substitution.Add(parameter, _factory.ErrorType);
+
+            return !ReferenceEquals(memberType.Substitute(substitution.ToSubstitution()), memberType);
+        }
+
         private static bool TryFlatten(ExpressionSyntax syntax, List<string> path)
         {
             switch (syntax)

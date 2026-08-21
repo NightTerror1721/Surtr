@@ -88,7 +88,7 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass Range;
 
         /// <summary>
-        /// The <c>iterator</c> class, behind every <see cref="SurtrIterator"/>: the cursor each
+        /// The <c>Iterator</c> class, behind every <see cref="SurtrIterator"/>: the cursor each
         /// built-in collection hands back from <c>iterate()</c>.
         /// </summary>
         /// <remarks>
@@ -283,7 +283,7 @@ namespace Surtr.Runtime.BuiltIns
             Type = DeclareObject("Type");
             Member = DeclareObject("Member");
             ModuleType = DeclareObject("Module");
-            Iterator = DeclareObject("iterator");
+            Iterator = DeclareObject("Iterator");
 
             Erased = Declare("erased", SurtrValueTypeCode.Erased, SurtrClassReference.Erased, isAbstract: true);
             Void = Declare("void", SurtrValueTypeCode.Void, SurtrClassReference.Void, isAbstract: true);

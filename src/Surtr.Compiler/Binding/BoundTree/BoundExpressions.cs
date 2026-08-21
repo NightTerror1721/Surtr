@@ -802,4 +802,21 @@ namespace Surtr.Compiler.Binding.BoundTree
         /// <summary>The arms, in order.</summary>
         public IReadOnlyList<BoundSwitchArm> Arms { get; }
     }
+
+    /// <summary>
+    /// A <c>throw</c> in expression position. Typed <c>never</c> — the bottom type — so it is
+    /// assignable to whatever the surrounding expression needs and contributes nothing to a
+    /// <c>?:</c>, <c>??</c> or switch-expression's common type.
+    /// </summary>
+    public sealed class BoundThrowExpression : BoundExpression
+    {
+        internal BoundThrowExpression(SyntaxNode syntax, BoundExpression value, TypeSymbol type)
+            : base(syntax, type)
+        {
+            Value = value;
+        }
+
+        /// <summary>The thrown value.</summary>
+        public BoundExpression Value { get; }
+    }
 }

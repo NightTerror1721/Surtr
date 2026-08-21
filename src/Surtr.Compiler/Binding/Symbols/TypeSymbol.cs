@@ -83,6 +83,15 @@ namespace Surtr.Compiler.Binding.Symbols
         /// representation a generic type parameter has.
         /// </summary>
         Unknown,
+
+        /// <summary>
+        /// <c>never</c> (§9): the bottom type. No value has this type, but an expression that throws
+        /// is typed as it, which lets <c>throw</c> sit in any expression slot — a branch of
+        /// <c>?:</c>, the right operand of <c>??</c>, a lambda body — without contributing to the
+        /// surrounding type. <c>never</c> is assignable to every type and is legal only as a return
+        /// type, where a body that never completes satisfies it.
+        /// </summary>
+        Never,
     }
 
     /// <summary>The base of every type the binder works with.</summary>
@@ -136,6 +145,9 @@ namespace Surtr.Compiler.Binding.Symbols
 
         /// <summary>Whether this is <c>void</c>, which names no value and is legal only as a return type.</summary>
         public bool IsVoid => SpecialType == SpecialType.Void;
+
+        /// <summary>Whether this is <c>never</c>, the bottom type: assignable to everything, produced by a <c>throw</c>.</summary>
+        public bool IsNever => SpecialType == SpecialType.Never;
 
         /// <summary>Whether this type mentions a type parameter anywhere inside it.</summary>
         public virtual bool ContainsTypeParameter => false;

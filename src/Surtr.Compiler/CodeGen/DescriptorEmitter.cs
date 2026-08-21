@@ -223,6 +223,12 @@ namespace Surtr.Compiler.CodeGen
                 case SpecialType.String: builder.Append(SurtrClassReference.SymbolString); return;
                 case SpecialType.Range: builder.Append(SurtrClassReference.SymbolRange); return;
                 case SpecialType.Void: builder.Append(SurtrClassReference.SymbolVoid); return;
+
+                // `never` produces a value that never arrives: the call site must balance a result
+                // (a `return fail()` reads one), but the body always throws before producing it.
+                // Erased is the one reference representation a value of any type can stand in for.
+                case SpecialType.Never: builder.Append(SurtrClassReference.SymbolErased); return;
+
                 case SpecialType.Unknown: builder.Append(SurtrClassReference.SymbolErased); return;
             }
 

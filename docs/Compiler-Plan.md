@@ -962,7 +962,14 @@ method, and reading a member off a type parameter were all errors — §6's own
   applicability, specificity, the argument conversions and the call's type are then all decided
   against concrete types, and nothing downstream knows a type parameter was involved. Resolving
   against the open signature instead would ask whether an `int` converts to a `T`, which has no
-  answer.
+  answer. A generic method also infers from its **expected return type** (`let b: Box<int> =
+  makeBox();` fills `T` from the target even though no argument mentions it), unified in the same
+  pass so an argument wins when both name a parameter.
+* **A construction without its own inference source is deferred to the winning parameter.** `take(Box())`
+  with `take(b: Box<int>)` binds the construction against the parameter it lands in — target typing
+  in argument position, exactly how a deferred lambda's parameters are typed. A construction whose
+  own argument already infers (<c>Box(5.0)</c>) re-binds against the parameter too, so
+  <c>take(Box(5.0))</c> against <c>Box&lt;float&gt;</c> takes the target's type.
 * **`TypeInference` is one mechanism for both**, a structural walk with first-binding-wins and no
   lattice. Two answers for one parameter is a refusal rather than a widening — §3.5's "no silent pick"
   applied to inference.
