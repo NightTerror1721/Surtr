@@ -120,6 +120,10 @@ namespace Surtr.LanguageServer
                     OnSemanticTokensFull(message);
                     break;
 
+                case "textDocument/inlayHint":
+                    OnInlayHint(message);
+                    break;
+
                 default:
                     if (message.IsRequest)
                         Fail(message, RpcErrorCodes.MethodNotFound, "Method not implemented: " + message.Method);
@@ -399,6 +403,21 @@ namespace Surtr.LanguageServer
             string text = _workspace.CurrentText(path);
 
             Reply(message, SemanticTokensProvider.Compute(_workspace.Snapshot, path, text));
+        }
+
+        private void OnInlayHint(RpcMessage message)
+        {
+            var parameters = Params<InlayHintParams>(message);
+            if (parameters?.TextDocument is null || _workspace is null)
+            {
+                Reply(message, null);
+                return;
+            }
+
+            string path = Workspace.Workspace.PathFromUri(parameters.TextDocument.Uri);
+            string text = _workspace.CurrentText(path);
+
+            Reply(message, InlayHintProvider.Compute(_workspace.Snapshot, path, text));
         }
 
         /// <summary>Publishes diagnostics for every file with some, and clears the ones that went quiet.</summary>

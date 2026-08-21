@@ -21,7 +21,7 @@ namespace Surtr.Tests.Compiler.Compilation
 
         #region Grouping
         [Fact]
-        public void FilesInOneDirectoryBecomeOneModule()
+        public void FilesInOneDirectoryAreDistinctModules()
         {
             var compilation = SurtrCompilation.Create(Project()
                 .AddSourceFile(Root + "/game/core/Entity.surtr", "class Entity { }")
@@ -29,16 +29,17 @@ namespace Surtr.Tests.Compiler.Compilation
                 .AddSourceFile(Root + "/game/math/Vec2.surtr", "class Vec2 { }"));
 
             Assert.False(compilation.HasErrors);
-            Assert.Equal(2, compilation.Modules.Count);
-            Assert.Equal(2, compilation.Modules["game.core"].Units.Count);
-            Assert.Single(compilation.Modules["game.math"].Units);
+            Assert.Equal(3, compilation.Modules.Count);
+            Assert.Single(compilation.Modules["game.core.Entity"].Units);
+            Assert.Single(compilation.Modules["game.core.World"].Units);
+            Assert.Single(compilation.Modules["game.math.Vec2"].Units);
         }
 
         [Fact]
-        public void AFileWithNoModuleIsReportedAndSkipped()
+        public void AFileWithAnIllegalNameIsReportedAndSkipped()
         {
             var compilation = SurtrCompilation.Create(Project()
-                .AddSourceFile(Root + "/Loose.surtr", "class Loose { }")
+                .AddSourceFile(Root + "/my-module.surtr", "class Loose { }")
                 .AddSourceFile(Root + "/game/Entity.surtr", "class Entity { }"));
 
             Assert.True(compilation.HasErrors);
@@ -46,7 +47,7 @@ namespace Surtr.Tests.Compiler.Compilation
 
             // The rest of the project still compiles: one bad file is not a reason to stop.
             Assert.Single(compilation.Modules);
-            Assert.True(compilation.Modules.ContainsKey("game"));
+            Assert.True(compilation.Modules.ContainsKey("game.Entity"));
         }
 
         [Fact]
@@ -93,7 +94,7 @@ namespace Surtr.Tests.Compiler.Compilation
                 .AddSourceFile(Root + "/game/core/Entity.surtr", "import game.math.Vec2;\nclass Entity { }"));
 
             Assert.False(compilation.HasErrors);
-            Assert.Contains("game.math", compilation.Dependencies.DependenciesOf("game.core"));
+            Assert.Contains("game.math.Vec2", compilation.Dependencies.DependenciesOf("game.core.Entity"));
         }
 
         [Fact]
@@ -104,7 +105,7 @@ namespace Surtr.Tests.Compiler.Compilation
                 .AddSourceFile(Root + "/game/core/Entity.surtr", "import game.math.*;\nclass Entity { }"));
 
             Assert.False(compilation.HasErrors);
-            Assert.Contains("game.math", compilation.Dependencies.DependenciesOf("game.core"));
+            Assert.Contains("game.math.Vec2", compilation.Dependencies.DependenciesOf("game.core.Entity"));
         }
 
         [Fact]
@@ -118,7 +119,7 @@ namespace Surtr.Tests.Compiler.Compilation
             Assert.False(compilation.HasErrors);
 
             var order = compilation.LoadOrder.Select(m => m.Path).ToList();
-            Assert.Equal(new[] { "game.math", "game.core", "app" }, order);
+            Assert.Equal(new[] { "game.math.Vec2", "game.core.Entity", "app.Main" }, order);
         }
 
         [Fact]
@@ -140,7 +141,7 @@ namespace Surtr.Tests.Compiler.Compilation
                 .AddSourceFile(Root + "/game/Entity.surtr", "import surtr.IComparable;\nclass Entity { }"));
 
             Assert.False(compilation.HasErrors);
-            Assert.Contains("surtr", compilation.Dependencies.DependenciesOf("game"));
+            Assert.Contains("surtr", compilation.Dependencies.DependenciesOf("game.Entity"));
         }
 
         [Fact]
@@ -166,20 +167,23 @@ namespace Surtr.Tests.Compiler.Compilation
 
             var cycle = compilation.Diagnostics.Single(d => d.Code == SurtrDiagnosticCode.ModuleCycle);
 
-            Assert.Contains("a", cycle.Message);
-            Assert.Contains("b", cycle.Message);
+            Assert.Contains("a.A", cycle.Message);
+            Assert.Contains("b.B", cycle.Message);
             Assert.Contains("->", cycle.Message);
         }
 
         [Fact]
-        public void TwoFilesInOneModuleImportingEachOtherIsNotACycle()
+        public void TwoFilesInOneDirectoryImportingEachOtherIsACycle()
         {
+            // A module is a file, so two files in one directory are two modules; importing one
+            // another is a real cycle, not a self-reference within a single module.
             var compilation = SurtrCompilation.Create(Project()
                 .AddSourceFile(Root + "/game/A.surtr", "import game.B;\nclass A { }")
                 .AddSourceFile(Root + "/game/B.surtr", "import game.A;\nclass B { }"));
 
-            Assert.False(compilation.HasErrors);
-            Assert.Single(compilation.LoadOrder);
+            Assert.True(compilation.HasErrors);
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.ModuleCycle);
+            Assert.Empty(compilation.LoadOrder);
         }
 
         /// <summary>
@@ -188,22 +192,24 @@ namespace Surtr.Tests.Compiler.Compilation
         /// <see cref="Create"/> only scans <c>import</c> syntax, at parse time, before binding has
         /// resolved anything. <see cref="TypeResolver"/> now records the edge itself, the moment it
         /// resolves such a name — which only happens once binding runs, hence <c>Bind().BindBodies()</c>
-        /// here rather than asserting straight after <c>Create</c>.
+        /// here rather than asserting straight after <c>Create</c>. Under §2.1's file-per-module rule
+        /// the type's full spelling repeats the file name: module <c>game.math.Vec2</c> holds type
+        /// <c>Vec2</c>, so the qualified reference is <c>game.math.Vec2.Vec2</c>.
         /// </summary>
         [Fact]
         public void AFullyQualifiedReferenceWithNoImportBecomesADependencyEdgeOnceBound()
         {
             var compilation = SurtrCompilation.Create(Project()
                 .AddSourceFile(Root + "/game/math/Vec2.surtr", "public class Vec2 { }")
-                .AddSourceFile(Root + "/game/core/Entity.surtr", "class Entity { public var p: game.math.Vec2; }"));
+                .AddSourceFile(Root + "/game/core/Entity.surtr", "class Entity { public var p: game.math.Vec2.Vec2; }"));
 
             // Create() alone never saw an import, so the edge does not exist yet.
-            Assert.DoesNotContain("game.math", compilation.Dependencies.DependenciesOf("game.core"));
+            Assert.DoesNotContain("game.math.Vec2", compilation.Dependencies.DependenciesOf("game.core.Entity"));
 
             compilation.Bind().BindBodies();
 
             Assert.False(compilation.HasErrors);
-            Assert.Contains("game.math", compilation.Dependencies.DependenciesOf("game.core"));
+            Assert.Contains("game.math.Vec2", compilation.Dependencies.DependenciesOf("game.core.Entity"));
         }
 
         /// <summary>
@@ -217,16 +223,17 @@ namespace Surtr.Tests.Compiler.Compilation
         {
             var compilation = SurtrCompilation.Create(Project()
                 .AddSourceFile(Root + "/game/math/Vec2.surtr", "public class Vec2 { }")
-                .AddSourceFile(Root + "/game/core/Entity.surtr", "class Entity { public var p: game.math.Vec2; }"));
+                .AddSourceFile(Root + "/game/core/Entity.surtr", "class Entity { public var p: game.math.Vec2.Vec2; }"));
 
             // Nothing connects the two modules yet, so their relative order is whichever the
-            // alphabetical tie-break gives unconnected modules — "game.core" before "game.math".
-            Assert.Equal(new[] { "game.core", "game.math" }, compilation.LoadOrder.Select(m => m.Path));
+            // alphabetical tie-break gives unconnected modules — "game.core.Entity" before
+            // "game.math.Vec2".
+            Assert.Equal(new[] { "game.core.Entity", "game.math.Vec2" }, compilation.LoadOrder.Select(m => m.Path));
 
             compilation.Bind().BindBodies();
             compilation.RefreshLoadOrder();
 
-            Assert.Equal(new[] { "game.math", "game.core" }, compilation.LoadOrder.Select(m => m.Path));
+            Assert.Equal(new[] { "game.math.Vec2", "game.core.Entity" }, compilation.LoadOrder.Select(m => m.Path));
         }
         #endregion
 
@@ -247,11 +254,11 @@ namespace Surtr.Tests.Compiler.Compilation
                 .AddSourceFile(Root + "/game/core/Entity.surtr", "import game.math.Vec2;\nclass Entity { }"));
 
             Assert.False(compilation.HasErrors);
-            Assert.Contains("game.math", compilation.Dependencies.DependenciesOf("game.core"));
+            Assert.Contains("game.math", compilation.Dependencies.DependenciesOf("game.core.Entity"));
 
             // The referenced module is already built, so it has no source to order - only the
             // source module comes out.
-            Assert.Equal(new[] { "game.core" }, compilation.LoadOrder.Select(m => m.Path));
+            Assert.Equal(new[] { "game.core.Entity" }, compilation.LoadOrder.Select(m => m.Path));
         }
 
         [Fact]

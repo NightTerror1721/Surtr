@@ -56,10 +56,10 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            Assert.Equal(TypeSymbolKind.Class, Type(binder, "game.core", "Entity").TypeKind);
-            Assert.Equal(TypeSymbolKind.Interface, Type(binder, "game.core", "IThing").TypeKind);
-            Assert.Equal(TypeSymbolKind.Enum, Type(binder, "game.core", "Suit").TypeKind);
-            Assert.Equal(TypeSymbolKind.Singleton, Type(binder, "game.core", "Registry").TypeKind);
+            Assert.Equal(TypeSymbolKind.Class, Type(binder, "game.core.Test", "Entity").TypeKind);
+            Assert.Equal(TypeSymbolKind.Interface, Type(binder, "game.core.Test", "IThing").TypeKind);
+            Assert.Equal(TypeSymbolKind.Enum, Type(binder, "game.core.Test", "Suit").TypeKind);
+            Assert.Equal(TypeSymbolKind.Singleton, Type(binder, "game.core.Test", "Registry").TypeKind);
         }
 
         [Fact]
@@ -70,12 +70,12 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var entity = Type(binder, "game.core", "Entity");
+            var entity = Type(binder, "game.core.Test", "Entity");
             var handle = Assert.Single(entity.NestedTypes);
 
             Assert.Equal("Handle", handle.Name);
             Assert.Same(entity, handle.ContainingType);
-            Assert.Equal("game.core:Entity.Handle", handle.FullMetadataName);
+            Assert.Equal("game.core.Test:Entity.Handle", handle.FullMetadataName);
         }
 
         [Fact]
@@ -86,7 +86,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var declared = binder.Modules["game.core"].FindTypes("Result");
+            var declared = binder.Modules["game.core.Test"].FindTypes("Result");
             Assert.Equal(2, declared.Count);
             Assert.Contains(declared, t => t.Arity == 1);
             Assert.Contains(declared, t => t.Arity == 2);
@@ -101,16 +101,18 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
-        public void FilesInOneModuleShareItsDeclarations()
+        public void FilesInOneDirectoryAreDistinctModulesAndNeedAnImport()
         {
+            // §2.1: a module is a file, so two files in one directory are two modules, and
+            // reaching a type across them requires an import.
             var binder = Bind(out var compilation,
-                ("game/core/A.surtr", "class Vec2 { }"),
-                ("game/core/B.surtr", "class Entity { public var position: Vec2; }"));
+                ("game/core/A.surtr", "public class Vec2 { }"),
+                ("game/core/B.surtr", "import game.core.A;\nclass Entity { public var position: Vec2; }"));
 
             AssertNoErrors(compilation);
 
-            var position = Type(binder, "game.core", "Entity").Members.OfType<FieldSymbol>().Single();
-            Assert.Same(Type(binder, "game.core", "Vec2"), position.Type);
+            var position = Type(binder, "game.core.B", "Entity").Members.OfType<FieldSymbol>().Single();
+            Assert.Same(Type(binder, "game.core.A", "Vec2"), position.Type);
         }
         #endregion
 
@@ -132,7 +134,7 @@ namespace Surtr.Tests.Compiler.Binding
             AssertNoErrors(compilation);
 
             var factory = compilation.TypeFactory;
-            var fields = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().ToList();
+            var fields = Type(binder, "game.core.Test", "Holder").Members.OfType<FieldSymbol>().ToList();
 
             Assert.Same(factory.Int, fields[0].Type);
             Assert.Same(factory.Float, fields[1].Type);
@@ -158,7 +160,7 @@ namespace Surtr.Tests.Compiler.Binding
             AssertNoErrors(compilation);
 
             var factory = compilation.TypeFactory;
-            var fields = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().ToList();
+            var fields = Type(binder, "game.core.Test", "Holder").Members.OfType<FieldSymbol>().ToList();
 
             Assert.Same(factory.Array(factory.Int), fields[0].Type);
             Assert.Same(factory.Dictionary(factory.Int, factory.String), fields[1].Type);
@@ -175,8 +177,8 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var box = Type(binder, "game.core", "Box");
-            var fields = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().ToList();
+            var box = Type(binder, "game.core.Test", "Box");
+            var fields = Type(binder, "game.core.Test", "Holder").Members.OfType<FieldSymbol>().ToList();
 
             Assert.NotSame(fields[0].Type, fields[1].Type);
             Assert.Same(box, ((NamedTypeSymbol)fields[0].Type).Definition);
@@ -191,7 +193,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var box = Type(binder, "game.core", "Box");
+            var box = Type(binder, "game.core.Test", "Box");
             var field = box.Members.OfType<FieldSymbol>().Single();
 
             Assert.Same(box.TypeParameters[0], field.Type);
@@ -207,23 +209,25 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var handle = Type(binder, "game.core", "Entity").NestedTypes.Single();
-            Assert.Same(handle, Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single().Type);
+            var handle = Type(binder, "game.core.Test", "Entity").NestedTypes.Single();
+            Assert.Same(handle, Type(binder, "game.core.Test", "Holder").Members.OfType<FieldSymbol>().Single().Type);
         }
 
-        [Fact]
+[Fact]
         public void AFullyQualifiedNameWorksWithoutAnImport()
         {
-            // §2.1: an import is convenience, not a requirement to reference something.
+            // §2.1: an import is convenience, not a requirement to reference something. Under the
+            // file-per-module rule the type's full spelling repeats the file name: module
+            // `game.math.Vec2` holds type `Vec2`, so the qualified reference is `game.math.Vec2.Vec2`.
             var binder = Bind(out var compilation,
                 ("game/math/Vec2.surtr", "public class Vec2 { }"),
-                ("game/core/Entity.surtr", "class Entity { public var p: game.math.Vec2; }"));
+                ("game/core/Entity.surtr", "class Entity { public var p: game.math.Vec2.Vec2; }"));
 
             AssertNoErrors(compilation);
 
             Assert.Same(
-                Type(binder, "game.math", "Vec2"),
-                Type(binder, "game.core", "Entity").Members.OfType<FieldSymbol>().Single().Type);
+                Type(binder, "game.math.Vec2", "Vec2"),
+                Type(binder, "game.core.Entity", "Entity").Members.OfType<FieldSymbol>().Single().Type);
         }
 
         [Fact]
@@ -264,7 +268,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var fields = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().ToList();
+            var fields = Type(binder, "game.core.Test", "Holder").Members.OfType<FieldSymbol>().ToList();
 
             Assert.Same(fields[0].Type, fields[1].Type);
             Assert.Same(fields[2].Type, fields[3].Type);
@@ -281,7 +285,7 @@ namespace Surtr.Tests.Compiler.Binding
             AssertNoErrors(compilation);
 
             var factory = compilation.TypeFactory;
-            var field = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single();
+            var field = Type(binder, "game.core.Test", "Holder").Members.OfType<FieldSymbol>().Single();
 
             Assert.Same(factory.Tuple(System.Array.Empty<TypeSymbol>()), field.Type);
         }
@@ -299,8 +303,8 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var userArray = Type(binder, "game.core", "array");
-            var field = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single();
+            var userArray = Type(binder, "game.core.Test", "array");
+            var field = Type(binder, "game.core.Test", "Holder").Members.OfType<FieldSymbol>().Single();
 
             Assert.Same(userArray, ((NamedTypeSymbol)field.Type).Definition);
             Assert.NotSame(compilation.TypeFactory.Array(compilation.TypeFactory.Int), field.Type);
@@ -330,8 +334,8 @@ namespace Surtr.Tests.Compiler.Binding
             AssertNoErrors(compilation);
 
             Assert.Same(
-                Type(binder, "game.math", "Vec2"),
-                Type(binder, "game.core", "Entity").Members.OfType<FieldSymbol>().Single().Type);
+                Type(binder, "game.math.Vec2", "Vec2"),
+                Type(binder, "game.core.Entity", "Entity").Members.OfType<FieldSymbol>().Single().Type);
         }
 
         [Fact]
@@ -344,8 +348,8 @@ namespace Surtr.Tests.Compiler.Binding
             AssertNoErrors(compilation);
 
             Assert.Same(
-                Type(binder, "game.math", "Vec3"),
-                Type(binder, "game.core", "Entity").Members.OfType<FieldSymbol>().Single().Type);
+                Type(binder, "game.math.Vec2", "Vec3"),
+                Type(binder, "game.core.Entity", "Entity").Members.OfType<FieldSymbol>().Single().Type);
         }
 
         [Fact]
@@ -382,7 +386,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var field = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single();
+            var field = Type(binder, "game.core.Test", "Holder").Members.OfType<FieldSymbol>().Single();
             var comparable = Assert.IsType<NamedTypeSymbol>(field.Type);
 
             Assert.Equal("IComparable", comparable.Definition.Name);
@@ -400,7 +404,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var field = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single();
+            var field = Type(binder, "game.core.Test", "Holder").Members.OfType<FieldSymbol>().Single();
             Assert.Equal("Iterator", ((NamedTypeSymbol)field.Type).Definition.Name);
         }
 
@@ -415,7 +419,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             Assert.Same(
                 compilation.TypeFactory.Int,
-                Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single().Type);
+                Type(binder, "game.core.Test", "Holder").Members.OfType<FieldSymbol>().Single().Type);
         }
 
         [Fact]
@@ -426,10 +430,10 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var field = Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single();
+            var field = Type(binder, "game.core.Test", "Holder").Members.OfType<FieldSymbol>().Single();
 
             Assert.Same(
-                Type(binder, "game.core", "IComparable"),
+                Type(binder, "game.core.Test", "IComparable"),
                 Assert.IsType<NamedTypeSymbol>(field.Type).Definition);
         }
 
@@ -443,8 +447,8 @@ namespace Surtr.Tests.Compiler.Binding
             AssertNoErrors(compilation);
 
             Assert.Same(
-                Type(binder, "game.core", "Vec2"),
-                Type(binder, "game.core", "Entity").Members.OfType<FieldSymbol>().Single().Type);
+                Type(binder, "game.core.Entity", "Vec2"),
+                Type(binder, "game.core.Entity", "Entity").Members.OfType<FieldSymbol>().Single().Type);
         }
         #endregion
 
@@ -460,7 +464,7 @@ namespace Surtr.Tests.Compiler.Binding
             // §2.7: EntityId and int are the same type everywhere.
             Assert.Same(
                 compilation.TypeFactory.Int,
-                Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single().Type);
+                Type(binder, "game.core.Test", "Holder").Members.OfType<FieldSymbol>().Single().Type);
         }
 
         [Fact]
@@ -473,7 +477,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             Assert.Same(
                 compilation.TypeFactory.Dictionary(compilation.TypeFactory.Int, compilation.TypeFactory.String),
-                Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single().Type);
+                Type(binder, "game.core.Test", "Holder").Members.OfType<FieldSymbol>().Single().Type);
         }
 
         [Fact]
@@ -486,7 +490,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             Assert.Same(
                 compilation.TypeFactory.Int,
-                Type(binder, "game.core", "Holder").Members.OfType<FieldSymbol>().Single().Type);
+                Type(binder, "game.core.Test", "Holder").Members.OfType<FieldSymbol>().Single().Type);
         }
 
         [Fact]
@@ -524,8 +528,8 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var foo = Type(binder, "game.core", "Foo");
-            Assert.Same(Type(binder, "game.core", "Base"), foo.BaseType);
+            var foo = Type(binder, "game.core.Test", "Foo");
+            Assert.Same(Type(binder, "game.core.Test", "Base"), foo.BaseType);
             Assert.Equal(2, foo.Interfaces.Count);
         }
 
@@ -535,7 +539,7 @@ namespace Surtr.Tests.Compiler.Binding
             var binder = Bind(out var compilation, ("game/core/Test.surtr", "class Foo { }"));
 
             AssertNoErrors(compilation);
-            Assert.Null(Type(binder, "game.core", "Foo").BaseType);
+            Assert.Null(Type(binder, "game.core.Test", "Foo").BaseType);
         }
 
         [Fact]
@@ -578,7 +582,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var suit = Type(binder, "game.core", "Suit");
+            var suit = Type(binder, "game.core.Test", "Suit");
             Assert.True(suit.IsSealed);
 
             // Each case is a static readonly of the enum's own type.
@@ -598,7 +602,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var entity = Type(binder, "game.core", "Entity");
+            var entity = Type(binder, "game.core.Test", "Entity");
             var property = entity.Members.OfType<PropertySymbol>().Single();
 
             Assert.Equal("get_health", property.Getter!.Name);
@@ -646,15 +650,15 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
-        public void TwoUnitsOfOneModuleCollideOnASharedSignature()
+        public void TwoFilesInOneDirectoryNoLongerCollideOnASharedSignature()
         {
-            // A module's method table is one table no matter how many files declared it, so a
-            // duplicate must be found across units, not just within one.
+            // §2.1: a module is a file, so two files in one directory are two modules, each with
+            // its own method table — a same-named function in each is not a duplicate.
             Bind(out var compilation,
                 ("game/core/A.surtr", "public fun f(): int { return 1; }\n"),
                 ("game/core/B.surtr", "public fun f(): int { return 2; }\n"));
 
-            AssertReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
+            AssertNoErrors(compilation);
         }
 
         [Fact]
@@ -685,7 +689,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var animal = Type(binder, "game.core", "Animal");
+            var animal = Type(binder, "game.core.Test", "Animal");
             var methods = animal.Members.OfType<MethodSymbol>().ToDictionary(m => m.Name);
 
             Assert.True(animal.IsAbstract);
@@ -703,7 +707,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var ctor = Type(binder, "game.core", "Vec2").Members.OfType<MethodSymbol>().Single();
+            var ctor = Type(binder, "game.core.Test", "Vec2").Members.OfType<MethodSymbol>().Single();
 
             Assert.Equal(MemberNames.Constructor, ctor.Name);
             Assert.Equal(MethodRole.Constructor, ctor.Role);
@@ -722,7 +726,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var names = Type(binder, "game.core", "Vec2").Members.OfType<MethodSymbol>().ToList();
+            var names = Type(binder, "game.core.Test", "Vec2").Members.OfType<MethodSymbol>().ToList();
 
             Assert.Contains(names, m => m.Name == "op_+");
             Assert.Contains(names, m => m.Name == "op_-u");
@@ -738,7 +742,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var module = binder.Modules["game.core"];
+            var module = binder.Modules["game.core.Test"];
             Assert.Equal("counter", Assert.Single(module.Fields).Name);
             Assert.Equal("step", Assert.Single(module.Methods).Name);
 
@@ -757,7 +761,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var entityId = Type(binder, "game.core", "EntityId");
+            var entityId = Type(binder, "game.core.Test", "EntityId");
 
             Assert.Equal(TypeSymbolKind.ValueClass, entityId.TypeKind);
             Assert.Same(compilation.TypeFactory.Int, entityId.UnderlyingType);
@@ -884,7 +888,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var shape = Type(binder, "game.core", "IShape");
+            var shape = Type(binder, "game.core.Test", "IShape");
             foreach (var method in shape.Members.OfType<MethodSymbol>())
             {
                 Assert.Equal(MethodDispatch.Abstract, method.Dispatch);
@@ -1424,7 +1428,7 @@ namespace Surtr.Tests.Compiler.Binding
             binder.BindBodies();
             AssertReports(compilation, SurtrDiagnosticCode.MissingImplementation);
 
-            var counter = Type(binder, "game.core", "Counter");
+            var counter = Type(binder, "game.core.Test", "Counter");
             var missing = binder.MissingAbstractMembers(counter);
 
             var member = Assert.Single(missing);
@@ -1451,7 +1455,7 @@ namespace Surtr.Tests.Compiler.Binding
             binder.BindBodies();
             AssertReports(compilation, SurtrDiagnosticCode.MissingImplementation);
 
-            var circle = Type(binder, "game.core", "Circle");
+            var circle = Type(binder, "game.core.Test", "Circle");
             var missing = binder.MissingAbstractMembers(circle);
 
             var member = Assert.Single(missing);
@@ -1472,7 +1476,7 @@ namespace Surtr.Tests.Compiler.Binding
             binder.BindBodies();
             AssertNoErrors(compilation);
 
-            var counter = Type(binder, "game.core", "Counter");
+            var counter = Type(binder, "game.core.Test", "Counter");
             Assert.Empty(binder.MissingAbstractMembers(counter));
         }
 
@@ -1487,7 +1491,7 @@ namespace Surtr.Tests.Compiler.Binding
             binder.BindBodies();
             AssertNoErrors(compilation);
 
-            var numbers = Type(binder, "game.core", "INumbers");
+            var numbers = Type(binder, "game.core.Test", "INumbers");
             Assert.Empty(binder.MissingAbstractMembers(numbers));
         }
         #endregion
@@ -1507,7 +1511,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var box = Type(binder, "game.core", "Box");
+            var box = Type(binder, "game.core.Test", "Box");
             var property = box.Members.OfType<PropertySymbol>().Single(p => p.Name == "value");
             Assert.Equal(Accessibility.Public, property.Getter!.Accessibility);
             Assert.Equal(Accessibility.Private, property.Setter!.Accessibility);
@@ -1555,7 +1559,7 @@ namespace Surtr.Tests.Compiler.Binding
                 + "    public value: int { get => _value; private set { _value = value; } }\n"
                 + "}"),
                 ("game/core/Other.surtr",
-                "class Other { public fun run(): void { let b = Box(); b.value = 1; } }"));
+                "import game.core.Box;\nclass Other { public fun run(): void { let b = Box(); b.value = 1; } }"));
 
             binder.BindBodies();
 
@@ -1576,7 +1580,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var box = Type(binder, "game.core", "Box");
+            var box = Type(binder, "game.core.Test", "Box");
             var property = box.Members.OfType<PropertySymbol>().Single(p => p.Name == "value");
             Assert.Equal(MethodDispatch.Virtual, property.Getter!.Dispatch);
             Assert.Equal(MethodDispatch.Direct, property.Setter!.Dispatch);
@@ -1595,7 +1599,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             AssertNoErrors(compilation);
 
-            var shape = Type(binder, "game.core", "Shape");
+            var shape = Type(binder, "game.core.Test", "Shape");
             var property = shape.Members.OfType<PropertySymbol>().Single(p => p.Name == "value");
             Assert.Equal(MethodDispatch.Abstract, property.Getter!.Dispatch);
             Assert.Equal(MethodDispatch.Direct, property.Setter!.Dispatch);

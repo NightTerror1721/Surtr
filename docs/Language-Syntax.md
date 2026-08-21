@@ -150,55 +150,60 @@ Source files use the **`.surtr`** extension. It's unambiguous — nothing else c
 typed once, when the file is created.
 
 There is no `module` header line in source. A file's module path is derived by the compiler from
-its location relative to a configured project source root: directories map to path segments
-joined by `.` (e.g. `Ogame/core/Entity.surtr` → module `Ogame.core`), the same way Go derives a
-package from its containing directory. Every declaration in the file belongs to that module
-automatically — no redundant line to keep in sync with the folder, and it matches the
-`modulePath:typeName` shape the descriptor grammar already commits to. Multiple files in the same
-directory contribute to the same module. The exact source-root configuration is a compiler/CLI
-concern, not a syntax concern — revisit once the front end and its project format exist.
+its location relative to a configured project source root: its directories map to path segments
+joined by `.`, and the file's own name (without the `.surtr` extension) is the final segment —
+`Ogame/core/Entity.surtr` is module `Ogame.core.Entity`. **A module is a file**, so every `.surtr`
+file is its own module no matter how many sit in one directory, and an `import` names a module by
+spelling exactly those segments. This keeps nothing to sync with the folder and already has the
+`modulePath:typeName` shape the descriptor grammar commits to — a fully qualified reference to a
+type repeats the file name (`Ogame.core.Entity.Entity`), because the module path ends where the
+type name begins. The exact source-root configuration is a compiler/CLI concern, not a syntax
+concern — revisit once the front end and its project format exist.
 
 Another module's declarations come into scope through an `import` statement at the top of the
 file, above any declarations:
 
 ```
-import Ogame.core.Entity;
-import Ogame.core.*;
-import Ogame.core as Core;
-import Ogame.core.{Entity, Vec2};
-import Ogame.core;
+import Ogame.core.Entity;                 // a module: the file Ogame/core/Entity.surtr
+import Ogame.core.*;                      // every module under the directory Ogame/core/
+import Ogame.core.Entity as Core;         // alias one module (one file)
+import Ogame.core.Shapes.{Entity, Vec2};  // selected names from one file's module
+import Ogame.core;                        // a directory with files inside: same as Ogame.core.*
 ```
 
-A named import brings exactly that one type into unqualified scope; a wildcard import
-(`ModulePath.*`) brings every top-level declaration in that module into scope at once. Either way,
-a name can still be written fully qualified (`Ogame.core.Entity`) even without importing it — the
-import is convenience, not a requirement to reference something. A colliding name pulled in from
-two imports is a compile error at the point of use, not at the `import` line itself.
+A named import brings that one module's declarations into unqualified scope; a wildcard import
+(`ModulePath.*`) does the same for every module under that directory prefix. Either way, a name can
+still be written fully qualified even without importing it — the import is convenience, not a
+requirement to reference something. A colliding name pulled in from two imports is a compile error
+at the point of use, not at the `import` line itself.
 
-**A wildcard import also reaches every submodule nested under that path, recursively.** A module is
-a directory (this section's opening), so `Ogame.core` and `Ogame.core.geometry` are two different
-modules, not one containing the other — without this, `import Ogame.core.*;` would silently miss
-anything declared one directory deeper. `Ogame.core.*` brings in `Ogame.core`'s own declarations
-if it has any, *and* every declaration from `Ogame.core.geometry`, `Ogame.core.geometry.solid`, and
-so on at any depth, unified into the same scope a same-level wildcard would populate — a directory
-that holds only subdirectories and no `.surtr` files of its own works exactly the same way, since
-there is nothing special about the exact path matching a real module versus only its descendants
-doing so. A name collision between two submodules, or between a submodule and the directory's own
-declarations, is diagnosed the same way as any other wildcard collision: at the point of use.
+**A wildcard import reaches every module whose path sits under the named prefix, recursively.** A
+module is a file (this section's opening), so `Ogame.core.Entity` and `Ogame.core.geometry.Hull`
+are different modules; `import Ogame.core.*;` names the *directory* prefix and brings in every
+module that starts with `Ogame.core.` — `Ogame.core.Entity`, `Ogame.core.Vec2`,
+`Ogame.core.geometry.Hull`, and so on at any depth, unified into the same scope a same-level
+wildcard would populate — a directory that holds only subdirectories and no `.surtr` files of its
+own works exactly the same way, since there is nothing special about the exact path matching a real
+module versus only its descendants doing so. A name collision between two such modules is diagnosed
+the same way as any other wildcard collision: at the point of use.
 
 **`import ModulePath;` with nothing after it — no type, no `*`, no `as`, no `{}` — is equivalent to
-`import ModulePath.*;` when `ModulePath` is itself a real module.** A named import and this form
+`import ModulePath.*;` when `ModulePath` is a real module (a file) or a directory prefix with
+modules under it.** A named import and this form
 share one syntax (`import` followed by a dotted path and nothing else); which one a given line is
 comes down to whether anything is left over to be a type name. Resolution tries the longest
 possible module prefix first: if the whole path already names a module — directly, or only through
-submodules nested under it, exactly as a wildcard's own resolution does — that wins outright and
-the line behaves as the wildcard form over that path, submodules and module-level functions/
-variables included. Only when the whole path does *not* resolve as a module does the shorter
-prefix-plus-trailing-type reading get a chance, exactly as `import Ogame.core.Entity;` already
-works. This also settles the one case where both readings could apply — a module `Ogame.core` and
-a type named `core` declared directly in module `Ogame`, say: the longest prefix, `Ogame.core` as
-a module, wins, the same way a longer module prefix always wins over a shorter one plus a trailing
-type name.
+modules nested under the directory prefix, exactly as a wildcard's own resolution does — that wins
+outright and the line behaves as the wildcard form over that path, nested modules and module-level
+functions/variables included. Only when the whole path does *not* resolve as a module does the
+shorter prefix-plus-trailing-type reading get a chance — `import Ogame.core.Entity;` is itself a
+whole-path module (the file), so it resolves whole, and the trailing-type reading only applies to a
+path like `import Ogame.core.Extra;` where no module `Ogame.core.Extra` exists but a type `Extra`
+lives in module `Ogame.core`. This also settles the one case where both readings could apply — a
+file `Ogame/core.surtr` declaring a type `Entity` (module `Ogame.core`), and a file
+`Ogame/core/Entity.surtr` (module `Ogame.core.Entity`), say: the longest prefix, `Ogame.core.Entity`
+as a module, wins, the same way a longer module prefix always wins over a shorter one plus a
+trailing type name.
 
 **`import ModulePath as Name;` aliases a whole module** rather than bringing anything into
 unqualified scope — `Name` itself resolves nowhere on its own, only qualified: `Core.Entity` reads
@@ -214,8 +219,9 @@ module is a compile error at the `import` line itself, unlike a colliding named/
 an alias has no import of its own to shadow, so there is nothing for the second one to lose to.
 
 **`import ModulePath.{A, B};` is a named import repeated**, written once instead of once per name —
-`import Ogame.core.{Entity, Vec2};` brings exactly `Entity` and `Vec2` into unqualified scope, the
-same two declarations `import Ogame.core.Entity; import Ogame.core.Vec2;` would. It reaches the
+`import Ogame.core.Shapes.{Entity, Vec2};` brings exactly `Entity` and `Vec2` into unqualified
+scope, the same two declarations `import Ogame.core.Shapes.Entity; import Ogame.core.Shapes.Vec2;`
+would — a module being a file, both names must live in that one file's module. It reaches the
 same surface a single named import already does (a module's top-level types) and no more: a name
 left off the list is not reachable unqualified, and — like a plain named import — it does not
 reach a module-level function or variable, only a type. The braced form exists purely to avoid
@@ -2796,10 +2802,10 @@ the alias first, exactly as a qualified type name already does — `moduleof(Cor
   same way a synthesised constructor appears as `ctor` on `Type.members()`. Deliberately separate
   from `classes()`/`interfaces()`, which already cover the module's types on their own.
 - `submodules(): Module[]` — every module loaded in the running program whose path sits strictly
-  under this one's, since a module is a directory (§2.1): `Ogame.core` and `Ogame.core.geometry`
-  are different modules, not one nested in the other, and this is `submodules()`'s way of walking
-  from a parent to what is nested under it at runtime, the same relationship a directory wildcard
-  import already walks at compile time.
+  under this one's, since a module is a file (§2.1): `Ogame.core.Entity` and
+  `Ogame.core.Entity.Inner` are different modules, not one nested in the other, and this is
+  `submodules()`'s way of walking from a parent to what is nested under it at runtime, the same
+  relationship a directory wildcard import already walks at compile time.
 - `Module.get(path: string): Module` / `Module.tryGet(path: string): Module?` — finds an already
   loaded module by its full path, dynamically, from a `string` computed at run time rather than a
   path written in source. `get` throws `KeyNotFoundException` if no module is loaded under that

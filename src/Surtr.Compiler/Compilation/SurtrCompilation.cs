@@ -24,14 +24,17 @@ namespace Surtr.Compiler.Compilation
         /// <summary>The file it came from.</summary>
         public SurtrSourceFile File { get; }
 
-        /// <summary>The module it belongs to, derived from where it lives (§2.1).</summary>
+        /// <summary>
+        /// The module it belongs to, derived from where it lives (§2.1): its directories under the
+        /// source root plus its own file name.
+        /// </summary>
         public string ModulePath { get; }
 
         /// <summary>Its syntax tree.</summary>
         public CompilationUnitSyntax Syntax { get; }
     }
 
-    /// <summary>Every file in one directory, which is to say one module's source.</summary>
+    /// <summary>One parsed source file, which is to say one module's source (§2.1: a module is a file).</summary>
     public sealed class SurtrSourceModule
     {
         private readonly List<SurtrSourceUnit> _units = new List<SurtrSourceUnit>();
@@ -41,7 +44,7 @@ namespace Surtr.Compiler.Compilation
         /// <summary>The module's dotted path.</summary>
         public string Path { get; }
 
-        /// <summary>The files contributing to it.</summary>
+        /// <summary>The files contributing to it — always exactly one, since a module is a file.</summary>
         public IReadOnlyList<SurtrSourceUnit> Units => _units;
 
         internal void Add(SurtrSourceUnit unit) => _units.Add(unit);
@@ -179,9 +182,7 @@ namespace Surtr.Compiler.Compilation
         {
             foreach (var file in Project.SourceFiles)
             {
-                // A file that names its own module is the exception, not the rule — the stdlib's
-                // one-module-per-file layout, whose module name ends in the file name — so the
-                // ordinary §2.1 directory derivation applies only where no module was given.
+                // A file that names its own module overrides §2.1's derivation from its location.
                 string modulePath;
                 if (file.ModulePath is not null)
                 {
@@ -427,11 +428,7 @@ namespace Surtr.Compiler.Compilation
                 ModulePathStatus.OutsideSourceRoot =>
                     $"'{file.Path}' is not under the source root '{Project.SourceRoot}', so nothing gives it a module.",
 
-                ModulePathStatus.Empty =>
-                    $"'{file.Path}' sits at the source root and the project declares no root module path, "
-                        + "so there is no module for it to belong to.",
-
-                _ => $"The directory '{offendingSegment}' is not a legal identifier, "
+                _ => $"The segment '{offendingSegment}' is not a legal identifier, "
                         + "so no import could ever name the module it would create.",
             };
 

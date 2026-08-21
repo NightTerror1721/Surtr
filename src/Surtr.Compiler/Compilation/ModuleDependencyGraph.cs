@@ -42,8 +42,8 @@ namespace Surtr.Compiler.Compilation
         /// must be loaded after it.
         /// </summary>
         /// <remarks>
-        /// A module depending on itself is not an edge: every file in a directory contributes to
-        /// one module, so a reference within it is ordinary and says nothing about load order.
+        /// A module depending on itself is not an edge: a module is one file (§2.1), so a
+        /// reference within it is ordinary and says nothing about load order.
         /// </remarks>
         public void AddDependency(string dependent, string dependency)
         {

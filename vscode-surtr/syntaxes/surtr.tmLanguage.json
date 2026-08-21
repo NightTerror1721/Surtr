@@ -345,6 +345,7 @@
         { "match": "\\bas\\?(?!\\w)", "name": "keyword.operator.cast.safe.surtr" },
         { "match": "\\bas\\b", "name": "keyword.operator.cast.surtr" },
         { "match": "\\bis\\b", "name": "keyword.operator.expression.surtr" },
+        { "match": "\\b(?:typeof|moduleof)\\b", "name": "keyword.operator.expression.surtr" },
         { "match": "\\b(?:if|else|for|while|switch|case|default|break|continue|return|in)\\b", "name": "keyword.control.surtr" },
         { "match": "\\b(?:try|catch|finally|throw)\\b", "name": "keyword.control.exception.surtr" },
         { "match": "\\b(?:abstract|public|private|protected|internal|static|sealed|virtual|override)\\b", "name": "storage.modifier.surtr" },

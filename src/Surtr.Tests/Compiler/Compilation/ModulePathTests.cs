@@ -5,8 +5,9 @@ using Surtr.Compiler.Compilation;
 namespace Surtr.Tests.Compiler.Compilation
 {
     /// <summary>
-    /// Covers §2.1: a module has no header line, so where a file lives is the only thing that says
-    /// what module it is in.
+    /// Covers §2.1: a module has no header line, so where a file lives — its directories under
+    /// the source root plus its own file name — is the only thing that says what module it is in.
+    /// Each <c>.surtr</c> file is its own module.
     /// </summary>
     public sealed class ModulePathTests
     {
@@ -16,41 +17,44 @@ namespace Surtr.Tests.Compiler.Compilation
             => ModulePath.TryDerive(Root, filePath, rootModulePath, out modulePath, out _);
 
         [Fact]
-        public void DirectoriesBecomeSegments()
+        public void DirectoriesAndFileNameBecomeSegments()
         {
             Assert.Equal(ModulePathStatus.Ok, Derive("D:/proj/src/game/core/Entity.surtr", out string path));
-            Assert.Equal("game.core", path);
+            Assert.Equal("game.core.Entity", path);
         }
 
         [Fact]
-        public void FilesInOneDirectoryShareAModule()
+        public void FilesInOneDirectoryAreDistinctModules()
         {
             Derive("D:/proj/src/game/core/Entity.surtr", out string first);
             Derive("D:/proj/src/game/core/World.surtr", out string second);
 
-            Assert.Equal(first, second);
+            Assert.Equal("game.core.Entity", first);
+            Assert.Equal("game.core.World", second);
+            Assert.NotEqual(first, second);
         }
 
         [Fact]
         public void TheRootModulePathIsPrefixedOntoEverything()
         {
             Assert.Equal(ModulePathStatus.Ok, Derive("D:/proj/src/core/Entity.surtr", out string path, "game"));
-            Assert.Equal("game.core", path);
+            Assert.Equal("game.core.Entity", path);
         }
 
         [Fact]
-        public void AFileAtTheRootTakesTheRootModulePath()
+        public void AFileAtTheRootTakesTheRootModulePathAndItsOwnName()
         {
             Assert.Equal(ModulePathStatus.Ok, Derive("D:/proj/src/Entity.surtr", out string path, "game"));
-            Assert.Equal("game", path);
+            Assert.Equal("game.Entity", path);
         }
 
         [Fact]
-        public void AFileAtTheRootWithNoRootModulePathHasNoModule()
+        public void AFileAtTheRootWithNoRootModulePathIsItsOwnModule()
         {
-            // Reported rather than allowed: an empty module path would produce descriptors like
-            // ":Entity", and no import could name what it belongs to.
-            Assert.Equal(ModulePathStatus.Empty, Derive("D:/proj/src/Entity.surtr", out _));
+            // A module is a file, so the file's own name is always a usable module — nothing is
+            // left unnamed by a missing root module path.
+            Assert.Equal(ModulePathStatus.Ok, Derive("D:/proj/src/Entity.surtr", out string path));
+            Assert.Equal("Entity", path);
         }
 
         [Fact]
@@ -77,10 +81,20 @@ namespace Surtr.Tests.Compiler.Compilation
         }
 
         [Fact]
+        public void AFileNameThatIsNotAnIdentifierIsRejected()
+        {
+            var status = ModulePath.TryDerive(
+                Root, "D:/proj/src/my-module.surtr", string.Empty, out _, out string offending);
+
+            Assert.Equal(ModulePathStatus.InvalidSegment, status);
+            Assert.Equal("my-module", offending);
+        }
+
+        [Fact]
         public void BackslashesAndForwardSlashesAreTheSamePath()
         {
             Assert.Equal(ModulePathStatus.Ok, Derive(@"D:\proj\src\game\core\Entity.surtr", out string path));
-            Assert.Equal("game.core", path);
+            Assert.Equal("game.core.Entity", path);
         }
 
         [Theory]

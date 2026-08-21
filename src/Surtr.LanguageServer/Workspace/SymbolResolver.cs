@@ -486,6 +486,13 @@ namespace Surtr.LanguageServer.Workspace
             string name = symbolOrType switch
             {
                 TypeSymbol type => type.Name,
+
+                // A constructor is written as its class's name (`Vec2(1.0, 2.0)`), never as its
+                // symbol name ("ctor"), so the hover anchor must be compared against the type it
+                // constructs for the constructor to claim it.
+                MethodSymbol method when method.Role == MethodRole.Constructor =>
+                    method.ContainingType?.Name ?? method.Name,
+
                 Symbol symbol => symbol.Name,
                 _ => string.Empty,
             };
@@ -660,7 +667,7 @@ namespace Surtr.LanguageServer.Workspace
                 if (parameter.Span.Contains(position))
                 {
                     string typeText = parameter.Type is null ? "unknown" : TextOf(text, parameter.Type.Span);
-                    string label = parameter.Name + ": " + typeText + (parameter.IsVarargs ? " ..." : string.Empty);
+                    string label = "let " + parameter.Name + ": " + typeText + (parameter.IsVarargs ? " ..." : string.Empty);
                     return new Hit
                     {
                         Markdown = "```surtr\n" + label + "\n```\n\nparameter of " + ShortName(declaration) + ".",
@@ -980,13 +987,14 @@ namespace Surtr.LanguageServer.Workspace
 
             string name = named.Path[named.Path.Count - 1];
 
-            // Built-ins get a label without needing a declaration.
+            // Built-ins get a label without needing a declaration. BuiltInLabel already fences the
+            // type's own name, so re-fencing the written source text here would show the type twice.
             string? builtIn = HoverFormatter.BuiltInLabel(name);
             if (builtIn is not null)
             {
                 return new Hit
                 {
-                    Markdown = "```surtr\n" + TextOf(text, typeSyntax.Span) + "\n```\n\n" + builtIn,
+                    Markdown = builtIn,
                     AnchorStart = anchor.Span.Start.Position,
                     AnchorLength = anchor.Span.Length,
                 };

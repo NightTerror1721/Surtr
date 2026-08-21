@@ -83,9 +83,9 @@ namespace Surtr.Compiler.Compilation
         }
 
         /// <summary>
-        /// Creates a source file with an explicit module path, used where §2.1's directory
-        /// derivation cannot name the module — the stdlib's one-module-per-file layout, whose
-        /// module name ends in the file name.
+        /// Creates a source file with an explicit module path, used where §2.1's location
+        /// derivation cannot name the module — a file whose directory or name is not a legal
+        /// identifier segment, or whose module a caller wants to pin outright.
         /// </summary>
         /// <param name="path">Where the file lives, used for diagnostics.</param>
         /// <param name="text">Its contents.</param>
@@ -140,8 +140,7 @@ namespace Surtr.Compiler.Compilation
         /// <summary>Creates a project.</summary>
         /// <param name="sourceRoot">The directory module paths are derived relative to.</param>
         /// <param name="rootModulePath">
-        /// What the source root itself is called. Empty means a file directly at the root belongs
-        /// to no module, which is reported rather than allowed.
+        /// What the source root itself is called, prefixed onto every derived module path.
         /// </param>
         public SurtrProject(string sourceRoot, string rootModulePath = "")
         {

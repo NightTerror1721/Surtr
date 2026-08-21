@@ -113,11 +113,11 @@ for the layer: three pairs the type checker must separate, all collapsing at emi
 
 ### How it came out
 
-* **`ModulePath`** derives a module from where a file lives (§2.1): directories become segments,
-  prefixed by the project's `RootModulePath`. Every segment must be a legal identifier, because an
-  `import` has to be able to name it — a directory called `my-module` is rejected here rather than
-  producing a module no source file could reach. A file at the root with no root module path is
-  rejected too: an empty path would produce descriptors like `:Entity`.
+* **`ModulePath`** derives a module from where a file lives (§2.1): directories become segments
+  plus the file's own name as the final one, prefixed by the project's `RootModulePath`. Every
+  segment must be a legal identifier, because an `import` has to be able to name it — a directory
+  or file called `my-module` is rejected here rather than producing a module no source file could
+  reach.
 * **`SurtrProject`** carries what is not source — source root, referenced images and modules, host
   types, and the build constants `const if` reads (§7.4).
 * **`ModuleDependencyGraph`** accumulates rather than being computed once. Imports declare most

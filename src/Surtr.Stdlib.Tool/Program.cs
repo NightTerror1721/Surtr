@@ -26,9 +26,9 @@ namespace Surtr.Stdlib.Tool
     /// Each <c>.surtr</c> file is its own module, named by its full location under <c>surtr/</c>:
     /// every directory segment plus the file name (without extension) becomes a dotted path segment,
     /// so <c>surtr/math/Angle.surtr</c> is module <c>surtr.math.Angle</c> and a file at
-    /// <c>surtr/Math.surtr</c> is module <c>surtr.Math</c>. This matches §2.1 — a module has no
-    /// header, so where a file lives is the only thing that names it — with the file name standing
-    /// in as the final segment, since the stdlib keeps each module in its own file.
+    /// <c>surtr/Math.surtr</c> is module <c>surtr.Math</c>. This is §2.1's general rule — a module
+    /// has no header, so where a file lives is the only thing that names it — with the module path
+    /// written out explicitly here for the same result the derivation would produce.
     /// </para>
     /// <para>
     /// It deliberately reads the <c>.surtr</c> sources from <em>disk</em> and references only

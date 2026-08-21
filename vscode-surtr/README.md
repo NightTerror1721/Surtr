@@ -29,6 +29,14 @@ Syntax highlighting, hover, go-to-definition and diagnostics for the
 - **Hover signatures** — type-accurate, cross-file, produced by the real compiler
   binder: fields, locals, parameters, methods (with their full signature), types
   and aliases.
+- **Semantic tokens** — the server resolves what the regex grammar cannot, with real
+  position accuracy: type references in *any* position (annotations, base lists,
+  `is`/`as`/`typeof`, constructions), type parameters, the contextual keywords
+  (`this`/`super`/`value`/`attribute`/`get`/`set`) coloured as modifiers rather than
+  bare keywords, and constructor calls tagged as calls.
+- **Inlay hints** — grey inline hints for an inferred local's type (`let x = 5` →
+  `x : int`), a lambda's return type, and the parameter a positional argument fills
+  when its value does not say so (`spawn(1.0, hp)` → `spawn(x: 1.0, hp:)`).
 - **Go to definition** — cross-file, resolved from the bound tree.
 - **Diagnostics** — every compile error the binder reports, re-published on each
   edit (errors and warnings underlined in the editor).
