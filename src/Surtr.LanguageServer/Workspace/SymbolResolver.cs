@@ -1089,6 +1089,21 @@ namespace Surtr.LanguageServer.Workspace
                 if (import.Alias is not null)
                     continue;
 
+                if (import.IsModule)
+                {
+                    // `import module X.Y;` (§2.1) brings a whole module's surface, the way a
+                    // wildcard over exactly that one module would.
+                    string modulePath = string.Join(".", import.Path);
+                    if (modulePath != current.Path && binder.Modules.TryGetValue(modulePath, out var whole))
+                    {
+                        var wholeTypes = whole.FindTypes(name);
+                        if (wholeTypes.Count > 0)
+                            return wholeTypes;
+                    }
+
+                    continue;
+                }
+
                 if (import.IsWildcard)
                 {
                     string importedPath = string.Join(".", import.Path);
@@ -1139,6 +1154,17 @@ namespace Surtr.LanguageServer.Workspace
                         if (candidates.Count > 0)
                             return candidates;
                     }
+                }
+
+                // `import ModulePath;` with nothing after it resolves as a whole module when the
+                // full path names one (§2.1) — the same wildcard surface as `import ModulePath.*;`,
+                // re-exports included. The binder treats this as a module, so the resolver must too.
+                string wholePath = string.Join(".", import.Path);
+                if (wholePath != current.Path && binder.Modules.TryGetValue(wholePath, out var wholeModule))
+                {
+                    var wholeTypes = wholeModule.FindTypes(name);
+                    if (wholeTypes.Count > 0)
+                        return wholeTypes;
                 }
             }
 

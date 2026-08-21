@@ -230,6 +230,9 @@ namespace Surtr.Compiler.Syntax
         /// <summary><c>while</c> (§4.2).</summary>
         KeywordWhile,
 
+        /// <summary><c>export</c> - marks an import as re-exposed by its module (§2.1's re-export).</summary>
+        KeywordExport,
+
         /// <summary><c>(</c></summary>
         LeftParen,
 

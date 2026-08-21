@@ -87,12 +87,22 @@ static     switch    throw     true      try       typeof      var      virtual
 while
 ```
 
+And a sixth line, because the list keeps growing and `export` joined §2.1's imports:
+
+```
+export
+```
+
 Four words are **contextual**, not reserved (§3.2): `this`, `super`, `value` and `attribute` mean
 something specific only where they are legal, and remain usable as ordinary identifiers everywhere
 else. `this` and `super` are recognized by position, inside a member body; `value` and `attribute`
 are recognized by what follows them — `value` by the `class` that makes it a `value class`
 declaration (§2.9) rather than the incoming value in a property's `set` accessor, and `attribute`
 by the `class` that makes it an `attribute class` declaration (§11) rather than a plain identifier.
+
+`module` is contextual the same way, in one place: directly after `import` (or `export import`) it
+names a whole-module import (§2.1), and everywhere else it remains an ordinary identifier — a
+`moduleof(no.such.module)` path is unaffected.
 
 The list is deliberately short — it holds only what the grammar actually branches on. Notable
 absences, each for a reason already decided above: no `new` (§5.5), no `object` (there is no root
@@ -226,6 +236,64 @@ same surface a single named import already does (a module's top-level types) and
 left off the list is not reachable unqualified, and — like a plain named import — it does not
 reach a module-level function or variable, only a type. The braced form exists purely to avoid
 repeating `import ModulePath.` once per name; nothing about what a name resolves to changes.
+
+**A named or selective import can also name a module-level member.** A module being a container of
+members (§2.5), the name a named import spells — or one listed in a selective import — need not be
+a type at all. If it is not a type but the module declares a module-level function, variable or
+property of that name, the import brings exactly that member into unqualified scope:
+
+```
+import Ogame.math.Math.add;          // the module-level function `add`
+import Ogame.math.Math.{add, sub};   // exactly these two functions, nothing else
+```
+
+Nothing else from the module leaks in: a selective import that names `add` does not make `sub`
+reachable, exactly as a selective import of types leaves unlisted siblings unreachable. Whether a
+listed name resolves as a type or as a member is per name, so a list may mix both.
+
+**`import module ModulePath;` brings a whole module's surface** — its types and its module-level
+members alike — the same reach a wildcard over exactly that one module would have, but **without
+recursing into submodules**. `module` is a contextual keyword that only means this directly after
+`import`; elsewhere it stays an ordinary identifier (`moduleof` is unaffected). This is the
+explicit way to say "this one file, all of it":
+
+```
+import module Ogame.math.Math;   // Math.surtr's types, functions and variables, no submodules
+```
+
+`import ModulePath;` with nothing after it already resolves to this form when the whole path names
+a module, so `import module` is the explicit spelling of the same intent.
+
+**`export import ...` re-exports what it imports as the importing module's own surface.** The
+`export` prefix turns any import — named, selective, wildcard, or whole-module — into a re-export:
+in addition to bringing the names into the importing module's own scope, the importing module now
+exposes them as if it had declared them. A consumer that imports the re-exporter reaches them, both
+unqualified and qualified through the re-exporter:
+
+```
+export import module Ogame.core.graphics.Mesh;   // Index.surtr aggregates a submodule
+export import module Ogame.core.graphics.Shaders;
+
+// Another module, importing the aggregator:
+import Ogame.core.Index;          // brings Mesh, Shaders and their members into scope
+import Ogame.core.Index as G;     // G.Mesh, G.Shaders reachable qualified
+```
+
+The re-export is **transitive**: if the re-exported module re-exports others, a consumer of the
+re-exporter sees the whole chain. It is also **not a widening**: a re-export only widens who can
+*name* a symbol, never who can access it — a module-level member that the declaring module kept
+`internal` stays inaccessible to a consumer of the re-exporter, exactly as if it had imported the
+declaring module directly. Re-export is a compile-time facade over the same symbols, never a copy:
+nothing is emitted twice, and the runtime knows nothing about it.
+
+**The source provider.** A module that no source file in the project handed over up front can still
+be resolved by an *embedding host* through an `ISourceProvider` supplied when the project is built —
+the compiler asks the provider for the module's text on demand when an `import` names it, rather
+than requiring the whole tree to be enumerated up front. A host that keeps source in memory, in a
+database, or behind a network call implements that interface; the CLI's directory-scanning build is
+just the default filesystem-backed provider. This is a compiler/CLI concern (§2.1's opening), not
+a syntax concern: the language itself spells `import` the same way regardless of where the source
+lives.
 
 ### 2.2 Classes
 

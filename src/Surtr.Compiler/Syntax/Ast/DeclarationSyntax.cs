@@ -207,6 +207,20 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>True when written with a trailing <c>.*</c>.</summary>
         public bool IsWildcard { get; }
 
+        /// <summary>
+        /// True when written with the <c>module</c> keyword — <c>import module X.Y;</c> — which
+        /// imports a whole module's surface (types and module-level members) without recursing into
+        /// submodules, unlike a wildcard (§2.1).
+        /// </summary>
+        public bool IsModule { get; }
+
+        /// <summary>
+        /// True when written with the <c>export</c> prefix — <c>export import X.Y;</c> — which, in
+        /// addition to the import itself, re-exposes what it brings in as the importing module's
+        /// own surface for its consumers (§2.1).
+        /// </summary>
+        public bool IsExport { get; }
+
         /// <summary>The name after <c>as</c>, or <see langword="null"/> when the import is unaliased.</summary>
         public string? Alias { get; }
 
@@ -222,17 +236,23 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="isWildcard">True when written with a trailing <c>.*</c>.</param>
         /// <param name="alias">The name after <c>as</c>, if any.</param>
         /// <param name="members">The names inside a trailing <c>.{A, B}</c>, if any.</param>
+        /// <param name="isModule">True when written with the <c>module</c> keyword.</param>
+        /// <param name="isExport">True when written with the <c>export</c> prefix.</param>
         public ImportSyntax(
             SourceSpan span,
             IReadOnlyList<string> path,
             bool isWildcard,
             string? alias = null,
-            IReadOnlyList<string>? members = null) : base(span)
+            IReadOnlyList<string>? members = null,
+            bool isModule = false,
+            bool isExport = false) : base(span)
         {
             Path = path;
             IsWildcard = isWildcard;
             Alias = alias;
             Members = members;
+            IsModule = isModule;
+            IsExport = isExport;
         }
     }
 

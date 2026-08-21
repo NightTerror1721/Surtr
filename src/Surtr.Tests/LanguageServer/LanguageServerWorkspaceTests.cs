@@ -1027,6 +1027,119 @@ namespace Surtr.Tests.LanguageServer
             Assert.Contains("let maybe: Dog?", annotated!.Markdown);
         }
 
+        #region Re-export and whole-module imports (Â§2.1)
+        [Fact]
+        public void HoverOnATypeReExportedByAnAggregatorReachesTheDeclaringFile()
+        {
+            const string mathSource = "public class Vec2 {\n    public let x: int;\n}\n";
+            const string indexSource = "export import module proj.math.Vec2;\n";
+            const string appSource =
+                "import proj.core.Index;\n\n" +
+                "public class Holder {\n" +
+                "    public var v: Vec2;\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/math/Vec2.surtr", mathSource),
+                ("proj/core/Index.surtr", indexSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+            string mathPath = Path.Combine(_root, "proj", "math", "Vec2.surtr");
+
+            int nameOffset = appSource.IndexOf("Vec2;", StringComparison.Ordinal);
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, appPath, appSource, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.True(hit!.HasDefinition, "Expected the re-exported type to resolve to its declaration.");
+            Assert.Equal(Path.GetFullPath(mathPath), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
+        }
+
+        [Fact]
+        public void CompletionAfterADotOnAnAggregatorOffersItsReExportedTypes()
+        {
+            const string mathSource = "public class Vec2 {\n    public let x: int;\n}\n";
+            const string indexSource = "export import module proj.math.Vec2;\n";
+            const string appSource =
+                "import proj.core.Index as I;\n\n" +
+                "public class Holder {\n" +
+                "    public var v: I.Vec2;\n" +
+                "    public fun run(): void {\n" +
+                "        let w = I.Vec2();\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/math/Vec2.surtr", mathSource),
+                ("proj/core/Index.surtr", indexSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+
+            int dotOffset = appSource.LastIndexOf("I.", StringComparison.Ordinal) + 2;
+            var completion = CompletionProvider.Complete(workspace.Snapshot, appPath, appSource, dotOffset);
+
+            Assert.True(
+                completion.Items.Any(item => item.Label == "Vec2"),
+                "Vec2 missing from: " + string.Join(", ", completion.Items.Select(i => i.Label)));
+        }
+
+        [Fact]
+        public void AWholeModuleImportedMemberCompletesUnqualified()
+        {
+            const string mathSource = "public fun add(a: int, b: int): int { return a + b; }\n";
+            const string appSource =
+                "import module proj.math.Math;\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): int {\n" +
+                "        return add(1, 2);\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/math/Math.surtr", mathSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string appPath = Path.Combine(_root, "proj", "app", "Holder.surtr");
+
+            int offset = appSource.IndexOf("add(", StringComparison.Ordinal) + 1;
+            var completion = CompletionProvider.Complete(workspace.Snapshot, appPath, appSource, offset);
+
+            Assert.Contains(completion.Items, item => item.Label == "add");
+        }
+
+        [Fact]
+        public void AWholeModuleImportOffersItsOwnModuleMembersInExpressionCompletion()
+        {
+            const string mathSource = "public fun add(a: int, b: int): int { return a + b; }\n";
+            const string appSource =
+                "import module proj.math.Math;\n\n" +
+                "public class Holder {\n" +
+                "    public fun run(): int { return add(2, 3); }\n" +
+                "}\n";
+
+            var workspace = Tree(
+                ("proj/math/Math.surtr", mathSource),
+                ("proj/app/Holder.surtr", appSource));
+
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+        }
+        #endregion
+
         private static List<(string Text, int TokenType)> DecodeSemanticTokens(SemanticTokens tokens, string source)
         {
             var decoded = new List<(string, int)>();

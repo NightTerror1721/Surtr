@@ -151,6 +151,33 @@ parameter's position, and a constructed generic's arguments.
   on every compile.
 * An imported symbol and a source symbol are indistinguishable to the binder, which is the point.
 
+### Source providers and lazy module resolution
+
+`SurtrProject` now carries an `ISourceProvider` — the seam where a module's source text comes from
+when an `import` names a module the project did not hand over up front. The default is a
+`FileSystemSourceProvider` rooted at the source root; an embedding host (Unity's asset database,
+an in-memory tree, a network call) implements the interface instead. `SurtrCompilation` implements
+`IModuleResolver` over that: `KnowsModule` falls through to the provider, and
+`TryGetSourceModule` parses a provider-supplied module on demand and joins it to the compilation's
+module set. Because a lazy load can add a module while the dependency graph is being built, the
+graph's construction runs to a fixed point — each pass processes every module not yet processed,
+and a pass that loaded new modules starts another. `SurtrCompilation` exposes this resolution
+surface as `IModuleResolver`, which the binder's module lookups go through.
+
+### Re-export (`export import`) and whole-module imports (`import module`)
+
+`import module X.Y;` imports a whole module's surface (types and module-level members) without
+recursing into submodules, and the `export` prefix on any import re-exposes what it brings in as
+the importing module's own surface. Re-exports are modeled on `ModuleSymbol`:
+`ReExportedModules` carries the re-exported modules (with an optional member filter for a
+named/selective member re-export), and `ReExportedTypes` carries the re-exported types — kept
+apart from `Types` so `ModuleEmitter` still emits only what a module truly declares, while
+`FindTypes` and the import scopes see both. `Binder.BindImports` records direct re-exports, and a
+post-pass (`ApplyReExports`) computes their transitive closure, folds re-exported types into each
+aggregator's surface, and extends each consumer's member-import list so `import Aggregator.*`
+reaches everything the aggregator re-exported. Re-export never widens accessibility and never
+duplicates emitted code — it is a compile-time facade over the same symbols.
+
 ---
 
 ## 3. Step 3 — The binder, in phases — **phases 1 and 2 done**

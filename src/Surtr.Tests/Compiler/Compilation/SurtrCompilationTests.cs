@@ -287,5 +287,86 @@ namespace Surtr.Tests.Compiler.Compilation
             Assert.Throws<System.ArgumentException>(() => project.Define("my-flag", BuildConstant.Bool(true)));
         }
         #endregion
+
+        #region Lazy module resolution through a source provider (§2.1)
+        private sealed class InMemorySourceProvider : ISourceProvider
+        {
+            private readonly System.Collections.Generic.Dictionary<string, string> _sources =
+                new System.Collections.Generic.Dictionary<string, string>(System.StringComparer.Ordinal);
+
+            public void Add(string modulePath, string text) => _sources[modulePath] = text;
+
+            public bool TryGetSource(string modulePath, out string text, out string diagnosticPath)
+            {
+                if (_sources.TryGetValue(modulePath, out text!))
+                {
+                    diagnosticPath = "memory://" + modulePath;
+                    return true;
+                }
+
+                text = string.Empty;
+                diagnosticPath = string.Empty;
+                return false;
+            }
+        }
+
+        [Fact]
+        public void AnImportResolvesAModuleTheProviderSupplies()
+        {
+            // A module the project never handed over up front is still reachable through a source
+            // provider: resolution loads it on demand instead of reporting an unresolved import.
+            var provider = new InMemorySourceProvider();
+            provider.Add("game.math.Math", "public class Box { public let value: int = 0; }");
+
+            var project = new SurtrProject(Root, sourceProvider: provider)
+                .AddSourceFile(Root + "/game/core/Test.surtr", "import game.math.Math;");
+
+            var compilation = SurtrCompilation.Create(project);
+
+            Assert.False(compilation.HasErrors, string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+            Assert.True(compilation.Modules.ContainsKey("game.math.Math"), "The lazy module should join the compilation's module set.");
+        }
+
+        [Fact]
+        public void ALazyLoadedModuleEntersTheLoadOrder()
+        {
+            var provider = new InMemorySourceProvider();
+            provider.Add("game.math.Math", "public class Box { }");
+
+            var project = new SurtrProject(Root, sourceProvider: provider)
+                .AddSourceFile(Root + "/game/core/Test.surtr", "import game.math.Math;");
+
+            var compilation = SurtrCompilation.Create(project);
+
+            var order = compilation.LoadOrder.Select(m => m.Path).ToList();
+            Assert.Contains("game.math.Math", order);
+            Assert.True(order.IndexOf("game.core.Test") > order.IndexOf("game.math.Math"),
+                "The dependent must load after its lazily-resolved dependency.");
+        }
+
+        [Fact]
+        public void AModuleNoProviderKnowsIsStillAnUnresolvedImport()
+        {
+            var project = Project().AddSourceFile(Root + "/game/core/Test.surtr", "import no.such.Thing;");
+
+            var compilation = SurtrCompilation.Create(project);
+
+            Assert.True(compilation.HasErrors);
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedImport);
+        }
+
+        [Fact]
+        public void ModulePathToFileReversesTheDerivation()
+        {
+            string sep = System.IO.Path.DirectorySeparatorChar.ToString();
+            Assert.Equal("game" + sep + "core" + sep + "Entity.surtr", ModulePath.TryToFile("", "game.core.Entity"));
+            Assert.Equal("core" + sep + "Entity.surtr", ModulePath.TryToFile("game", "game.core.Entity"));
+            Assert.Equal("Entity.surtr", ModulePath.TryToFile("game.core", "game.core.Entity"));
+
+            // A path without the expected root-module prefix, or with an illegal segment, is null.
+            Assert.Null(ModulePath.TryToFile("game", "other.Entity"));
+            Assert.Null(ModulePath.TryToFile("", "my-module"));
+        }
+        #endregion
     }
 }

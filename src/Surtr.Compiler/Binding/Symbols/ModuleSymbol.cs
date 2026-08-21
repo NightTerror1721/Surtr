@@ -23,6 +23,8 @@ namespace Surtr.Compiler.Binding.Symbols
         private IReadOnlyList<MethodSymbol> _extensionMethods = Array.Empty<MethodSymbol>();
         private IReadOnlyList<PropertySymbol> _extensionProperties = Array.Empty<PropertySymbol>();
         private IReadOnlyList<AliasSymbol> _aliases = Array.Empty<AliasSymbol>();
+        private IReadOnlyList<ImportedModule> _reExportedModules = Array.Empty<ImportedModule>();
+        private IReadOnlyList<NamedTypeSymbol> _reExportedTypes = Array.Empty<NamedTypeSymbol>();
 
         /// <summary>Creates a module symbol for a dotted module path.</summary>
         public ModuleSymbol(string path)
@@ -58,7 +60,9 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>
         /// Every type declared here under a name, which is a list rather than one symbol because
         /// arity is part of a type's identity: <c>Result&lt;T&gt;</c> and <c>Result&lt;T, E&gt;</c>
-        /// are two declarations sharing a source name.
+        /// are two declarations sharing a source name. Types re-exported as this module's own
+        /// (<c>export import</c>, §2.1) are folded in, so a qualified <c>Aggregator.Type</c> names
+        /// them as if they were declared here.
         /// </summary>
         public IReadOnlyList<NamedTypeSymbol> FindTypes(string name)
         {
@@ -67,19 +71,29 @@ namespace Surtr.Compiler.Binding.Symbols
                 _byName = new Dictionary<string, List<NamedTypeSymbol>>(StringComparer.Ordinal);
                 foreach (var type in _types)
                 {
-                    if (!_byName.TryGetValue(type.Name, out var bucket))
-                    {
-                        bucket = new List<NamedTypeSymbol>();
-                        _byName.Add(type.Name, bucket);
-                    }
+                    AddTypeToIndex(type);
+                }
 
-                    bucket.Add(type);
+                foreach (var type in _reExportedTypes)
+                {
+                    AddTypeToIndex(type);
                 }
             }
 
             return _byName.TryGetValue(name, out var found)
                 ? found
                 : (IReadOnlyList<NamedTypeSymbol>)Array.Empty<NamedTypeSymbol>();
+        }
+
+        private void AddTypeToIndex(NamedTypeSymbol type)
+        {
+            if (!_byName!.TryGetValue(type.Name, out var bucket))
+            {
+                bucket = new List<NamedTypeSymbol>();
+                _byName.Add(type.Name, bucket);
+            }
+
+            bucket.Add(type);
         }
 
         /// <summary>The module-level variables.</summary>
@@ -131,6 +145,37 @@ namespace Surtr.Compiler.Binding.Symbols
         {
             get => _aliases;
             internal set => _aliases = value;
+        }
+
+        /// <summary>
+        /// The modules this one re-exports as its own (<c>export import module X.Y;</c>, §2.1) —
+        /// a consumer that imports this module sees those modules' members too, as if they were
+        /// declared here. The re-exported modules' <em>types</em> are folded into <see cref="Types"/>
+        /// directly; this list is what carries their module-level members (functions and variables)
+        /// and what lets a wildcard import of this module reach them. A whole-module re-export has
+        /// no member filter; a re-export through a named/selective member import names exactly the
+        /// members it re-exposed.
+        /// </summary>
+        public IReadOnlyList<ImportedModule> ReExportedModules
+        {
+            get => _reExportedModules;
+            internal set => _reExportedModules = value;
+        }
+
+        /// <summary>
+        /// The types this module re-exports by name (<c>export import X.Y;</c>, §2.1) — the same
+        /// symbols their declaring module owns, never copies, so a qualified
+        /// <c>Aggregator.Type</c> names them as if declared here. Kept apart from <see cref="Types"/>
+        /// so the emitter still sees only the types this module truly declares.
+        /// </summary>
+        public IReadOnlyList<NamedTypeSymbol> ReExportedTypes
+        {
+            get => _reExportedTypes;
+            internal set
+            {
+                _reExportedTypes = value;
+                _byName = null;
+            }
         }
 
         /// <inheritdoc/>

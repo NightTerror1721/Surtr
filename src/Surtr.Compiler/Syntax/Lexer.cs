@@ -735,6 +735,7 @@ namespace Surtr.Compiler.Syntax
                     break;
 
                 case 6:
+                    if (Is(text, "export")) return TokenType.KeywordExport;
                     if (Is(text, "import")) return TokenType.KeywordImport;
                     if (Is(text, "inline")) return TokenType.KeywordInline;
                     if (Is(text, "native")) return TokenType.KeywordNative;

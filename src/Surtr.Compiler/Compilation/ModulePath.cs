@@ -164,6 +164,63 @@ namespace Surtr.Compiler.Compilation
             return ModulePathStatus.Ok;
         }
 
+        /// <summary>
+        /// Reverses <see cref="TryDerive"/>: given a module path, reconstructs the file path
+        /// (relative to the source root) that would hold it (§2.1). The final segment becomes the
+        /// file name with a <c>.surtr</c> extension, and every segment before it a directory.
+        /// </summary>
+        /// <param name="rootModulePath">What the source root is called, the prefix every derived path carries.</param>
+        /// <param name="modulePath">The dotted module path.</param>
+        /// <returns>
+        /// The relative file path, or <see langword="null"/> when the module path does not carry
+        /// the expected <paramref name="rootModulePath"/> prefix or contains an illegal segment.
+        /// </returns>
+        public static string? TryToFile(string rootModulePath, string modulePath)
+        {
+            if (string.IsNullOrEmpty(modulePath))
+                return null;
+
+            string[] segments = modulePath.Split(Separator);
+            if (segments.Length == 0)
+                return null;
+
+            // The root-module prefix is the source root's own name, which is not a directory on
+            // disk — it only appears in the dotted path. Strip it before mapping segments to files.
+            int start = 0;
+            if (!string.IsNullOrEmpty(rootModulePath))
+            {
+                string[] rootSegments = rootModulePath.Split(Separator);
+                if (segments.Length <= rootSegments.Length)
+                    return null;
+
+                for (int i = 0; i < rootSegments.Length; i++)
+                {
+                    if (!string.Equals(segments[i], rootSegments[i], StringComparison.Ordinal))
+                        return null;
+                }
+
+                start = rootSegments.Length;
+            }
+
+            // Every segment before the last is a directory; the last is the file name. All must be
+            // legal identifiers, matching what TryDerive would have accepted in the first place.
+            for (int i = start; i < segments.Length; i++)
+            {
+                if (!IsValidSegment(segments[i]))
+                    return null;
+            }
+
+            string[] dirs = new string[segments.Length - start - 1];
+            for (int i = start; i < segments.Length - 1; i++)
+                dirs[i - start] = segments[i];
+
+            string fileName = segments[segments.Length - 1] + ".surtr";
+            if (dirs.Length == 0)
+                return fileName;
+
+            return string.Join(Path.DirectorySeparatorChar.ToString(), dirs) + Path.DirectorySeparatorChar + fileName;
+        }
+
         private static string NormalizeFile(string path) => Path.GetFullPath(path).Replace('\\', '/');
 
         private static string NormalizeDirectory(string path)

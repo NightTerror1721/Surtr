@@ -113,7 +113,7 @@ namespace Surtr.Compiler.Syntax
             SourceLocation start = reader.CurrentLocation;
 
             List<ImportSyntax> imports = new List<ImportSyntax>();
-            while (reader.Check(TokenType.KeywordImport))
+            while (reader.Check(TokenType.KeywordImport) || reader.Check(TokenType.KeywordExport))
             {
                 try
                 {
@@ -313,7 +313,28 @@ namespace Surtr.Compiler.Syntax
         private ImportSyntax ParseImport()
         {
             SourceLocation start = reader.CurrentLocation;
-            reader.Expect(TokenType.KeywordImport, "'import'");
+
+            bool isExport = false;
+            if (reader.Match(TokenType.KeywordExport))
+            {
+                isExport = true;
+                reader.Expect(TokenType.KeywordImport, "'import' after 'export'");
+            }
+            else
+            {
+                reader.Expect(TokenType.KeywordImport, "'import'");
+            }
+
+            // `module` is a contextual keyword (§2.1): it only means "whole module" directly after
+            // `import`, so it is not reserved and stays a legal identifier everywhere else — a
+            // `moduleof(no.such.module)` path is unaffected.
+            bool isModule = false;
+            if (reader.Current.Type == TokenType.Identifier
+                && reader.Current.Lexeme.Span.SequenceEqual("module".AsSpan()))
+            {
+                isModule = true;
+                reader.Advance();
+            }
 
             List<string> path = new List<string> { reader.ExpectIdentifier("a module or type name") };
             bool wildcard = false;
@@ -341,7 +362,7 @@ namespace Surtr.Compiler.Syntax
                 alias = reader.ExpectIdentifier("a name after 'as'");
 
             reader.Expect(TokenType.Semicolon, "';' after the import");
-            return new ImportSyntax(SpanFrom(start), path, wildcard, alias, members);
+            return new ImportSyntax(SpanFrom(start), path, wildcard, alias, members, isModule, isExport);
         }
 
         /// <summary>The comma-separated names inside <c>import Module.{A, B};</c>'s trailing braces.</summary>

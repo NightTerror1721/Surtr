@@ -19,12 +19,28 @@ namespace Surtr.LanguageServer.Workspace
         private readonly string _rootModulePath;
         private readonly Dictionary<string, string> _openDocuments = new Dictionary<string, string>(PathComparer);
 
+        private readonly Surtr.Compiler.Compilation.ISourceProvider? _sourceProvider;
+
         private CompilationSnapshot _snapshot = CompilationSnapshot.Empty;
 
         public Workspace(string rootPath, string rootModulePath = "")
         {
             _rootPath = rootPath;
             _rootModulePath = rootModulePath ?? string.Empty;
+        }
+
+        /// <summary>
+        /// Creates a workspace whose compiler resolves lazily-named modules through
+        /// <paramref name="sourceProvider"/>.
+        /// </summary>
+        public Workspace(
+            string rootPath,
+            string rootModulePath,
+            Surtr.Compiler.Compilation.ISourceProvider sourceProvider)
+        {
+            _rootPath = rootPath;
+            _rootModulePath = rootModulePath ?? string.Empty;
+            _sourceProvider = sourceProvider;
         }
 
         /// <summary>The directory the compilation's module paths are derived from.</summary>
@@ -64,7 +80,9 @@ namespace Surtr.LanguageServer.Workspace
             var files = FindSourceFiles().ToList();
 
             Surtr.Compiler.Compilation.SurtrProject project =
-                new Surtr.Compiler.Compilation.SurtrProject(_rootPath, _rootModulePath);
+                _sourceProvider is null
+                    ? new Surtr.Compiler.Compilation.SurtrProject(_rootPath, _rootModulePath)
+                    : new Surtr.Compiler.Compilation.SurtrProject(_rootPath, _rootModulePath, _sourceProvider);
 
             foreach (string file in files)
                 project.AddSourceFile(file, CurrentText(file));

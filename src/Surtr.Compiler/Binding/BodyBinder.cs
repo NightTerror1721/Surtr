@@ -50,8 +50,10 @@ namespace Surtr.Compiler.Binding
         private readonly MethodSymbol _method;
 
         // Modules a wildcard import brought in. §2.5 makes a module a container of members, so its
-        // functions and variables are in scope unqualified exactly as its types are.
-        private readonly IReadOnlyList<ModuleSymbol> _imported;
+        // functions and variables are in scope unqualified exactly as its types are. A named or
+        // selective import that reached a module-level member carries a filter naming exactly
+        // those members, so nothing else from the module leaks into bare-name resolution.
+        private readonly IReadOnlyList<ImportedModule> _imported;
 
         private readonly HashSet<Symbol> _narrowed = new HashSet<Symbol>();
 
@@ -106,9 +108,9 @@ namespace Surtr.Compiler.Binding
             ModuleSymbol module,
             NamedTypeSymbol? containingType,
             MethodSymbol method,
-            IReadOnlyList<ModuleSymbol>? imported = null)
+            IReadOnlyList<ImportedModule>? imported = null)
         {
-            _imported = imported ?? Array.Empty<ModuleSymbol>();
+            _imported = imported ?? Array.Empty<ImportedModule>();
             _factory = factory;
             _resolver = resolver;
             _conversions = conversions;

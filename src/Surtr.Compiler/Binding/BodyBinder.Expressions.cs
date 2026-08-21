@@ -7,6 +7,7 @@ using Surtr.Compiler.Syntax;
 using Surtr.Compiler.Syntax.Ast;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Surtr.Compiler.Binding
 {
@@ -188,7 +189,7 @@ namespace Surtr.Compiler.Binding
             }
 
             AddModuleMethods(_module, name, candidates);
-            foreach (var imported in _imported)
+            foreach (var imported in ImportedFor(name))
                 AddModuleMethods(imported, name, candidates);
 
             return candidates;
@@ -200,6 +201,21 @@ namespace Surtr.Compiler.Binding
             {
                 if (string.Equals(method.Name, name, StringComparison.Ordinal))
                     candidates.Add(method);
+            }
+        }
+
+        /// <summary>
+        /// The imported modules that contribute a member named <paramref name="name"/>, applying the
+        /// member filter a named or selective import carried (§2.1). A whole-module import always
+        /// contributes; a filtered one contributes only when <paramref name="name"/> is one of the
+        /// members it brought in.
+        /// </summary>
+        private IEnumerable<ModuleSymbol> ImportedFor(string name)
+        {
+            foreach (var imported in _imported)
+            {
+                if (imported.Only is null || imported.Only.Any(member => member == name))
+                    yield return imported.Module;
             }
         }
 
@@ -439,7 +455,7 @@ namespace Surtr.Compiler.Binding
             if (BindMemberOf(_module, syntax, name) is BoundExpression own)
                 return own;
 
-            foreach (var imported in _imported)
+            foreach (var imported in ImportedFor(name))
             {
                 if (BindMemberOf(imported, syntax, name) is BoundExpression member)
                     return member;
@@ -1459,7 +1475,7 @@ namespace Surtr.Compiler.Binding
             if (DeclaresMethod(_module, name))
                 return BindModuleCall(syntax, _module, name, expected);
 
-            foreach (var imported in _imported)
+            foreach (var imported in ImportedFor(name))
             {
                 if (DeclaresMethod(imported, name))
                     return BindModuleCall(syntax, imported, name, expected);
@@ -1601,7 +1617,7 @@ namespace Surtr.Compiler.Binding
             var candidates = new List<MethodSymbol>();
             AddExtensionCandidates(_module, name, candidates);
 
-            foreach (var imported in _imported)
+            foreach (var imported in ImportedFor(name))
                 AddExtensionCandidates(imported, name, candidates);
 
             return candidates;
@@ -1639,7 +1655,7 @@ namespace Surtr.Compiler.Binding
             var candidates = new List<MethodSymbol>();
             AddStaticExtensionCandidates(_module, type, name, candidates);
 
-            foreach (var imported in _imported)
+            foreach (var imported in ImportedFor(name))
                 AddStaticExtensionCandidates(imported, type, name, candidates);
 
             return candidates;
@@ -1686,7 +1702,7 @@ namespace Surtr.Compiler.Binding
             var candidates = new List<PropertySymbol>();
             AddInstanceExtensionPropertyCandidates(_module, receiverType, name, candidates);
 
-            foreach (var imported in _imported)
+            foreach (var imported in ImportedFor(name))
                 AddInstanceExtensionPropertyCandidates(imported, receiverType, name, candidates);
 
             return PickExtensionProperty(candidates, name, syntax);
@@ -1720,7 +1736,7 @@ namespace Surtr.Compiler.Binding
             var candidates = new List<PropertySymbol>();
             AddStaticExtensionPropertyCandidates(_module, type, name, candidates);
 
-            foreach (var imported in _imported)
+            foreach (var imported in ImportedFor(name))
                 AddStaticExtensionPropertyCandidates(imported, type, name, candidates);
 
             return PickExtensionProperty(candidates, name, syntax);

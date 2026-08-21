@@ -196,7 +196,7 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.True(compilation.HasErrors, "'Box' should not be reachable unqualified through an alias-only import.");
         }
 
-        [Fact]
+[Fact]
         public void TwoImportsCannotClaimTheSameAlias()
         {
 using var compilation = Reject(
@@ -205,6 +205,178 @@ using var compilation = Reject(
                   ("/game/other/Thing.surtr", "public class Thing { }"));
 
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.DuplicateModuleAlias);
+        }
+        #endregion
+
+        #region Import: modulo completo (Â§2.1, import module)
+        [Fact]
+        public void AWholeModuleImportBringsItsModuleMembersUnqualified()
+        {
+            // `import module X.Y;` imports a whole module's surface — types and module-level
+            // members alike — the way `import X.Y.*;` would, without recursing into submodules.
+            var runtime = Run(
+                "import module game.math.Math;\nfun run(): int { return add(2, 3); }",
+                ("/game/math/Math.surtr", "public fun add(a: int, b: int): int { return a + b; }"));
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AWholeModuleImportBringsItsTypesUnqualified()
+        {
+            var runtime = Run(
+                "import module game.math.Box;\nfun run(): int { return Box(21).value; }",
+                ("/game/math/Box.surtr", "public class Box { public let value: int = 0; public constructor(value: int) { this.value = value; } }"));
+
+            Assert.Equal(21, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AWholeModuleImportDoesNotReachASubmodule()
+        {
+            // Unlike a directory wildcard, `import module` names exactly one file's module and
+            // stops there — a submodule is a different module.
+            using var compilation = Reject(
+                "import module game.math;\nfun run(): int { return add(2, 3); }",
+                ("/game/math/Math.surtr", "public fun add(a: int, b: int): int { return a + b; }"));
+
+            Assert.True(compilation.HasErrors, "`import module` should not recurse into submodules.");
+        }
+
+        [Fact]
+        public void AWholeModuleImportStillAllowsTheModuleKeywordAsAQualifier()
+        {
+            // `module` is a contextual keyword after `import`; elsewhere it stays an ordinary
+            // identifier, so `moduleof(no.such.module)` still parses.
+            var runtime = Run(
+                "import module game.math.Math;\nfun run(): Module { return moduleof(game.math.Math); }",
+                ("/game/math/Math.surtr", "public fun add(a: int, b: int): int { return a + b; }"));
+
+            Assert.NotNull(runtime.Invoke(Function(runtime, "game.core.Test", "run"), Array.Empty<SurtrValue>()));
+        }
+        #endregion
+
+        #region Import: re-export (Â§2.1, export import)
+        [Fact]
+        public void AnExportImportReExposesTypesToAQualifiedConsumer()
+        {
+            // `export import module` in the aggregator folds the target's types into the
+            // aggregator's own surface, so a module alias of the aggregator names a type declared
+            // in Box.surtr.
+            var runtime = Run(
+                "import game.core.Index as I;\nfun run(): int { return I.Box(21).value; }",
+                ("/game/math/Box.surtr", "public class Box { public let value: int = 0; public constructor(value: int) { this.value = value; } }"),
+                ("/game/core/Index.surtr", "export import module game.math.Box;"));
+
+            Assert.Equal(21, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnExportImportReExposesModuleMembersToAWildcardConsumer()
+        {
+            // A consumer that imports the aggregator reaches everything it re-exported without
+            // qualifying, exactly as if the aggregator had declared it.
+            var runtime = Run(
+                "import game.core.Index;\nfun run(): int { return add(2, 3); }",
+                ("/game/math/Math.surtr", "public fun add(a: int, b: int): int { return a + b; }"),
+                ("/game/core/Index.surtr", "export import module game.math.Math;"));
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnExportImportReExposesATypeToAClassField()
+        {
+            // A class field annotated with a type that an aggregator re-exported, reached by
+            // importing the aggregator as a module — the type resolves and works at runtime.
+            var runtime = Run(
+                "import proj.core.Index;\nclass Holder { public var v: Vec2; public fun make(): int { let b = Vec2(7); return b.x; } }\nfun run(): int { return Holder().make(); }",
+                ("/proj/math/Vec2.surtr", "public class Vec2 { public let x: int = 0; public constructor(x: int) { this.x = x; } }"),
+                ("/proj/core/Index.surtr", "export import module proj.math.Vec2;"));
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnExportImportFoldsTypesIntoTheAggregatorsSurface()
+        {
+            // `import game.core.Index.*` in a consumer brings the re-exported type in unqualified.
+            var runtime = Run(
+                "import game.core.Index;\nfun run(): int { return Box(21).value; }",
+                ("/game/math/Box.surtr", "public class Box { public let value: int = 0; public constructor(value: int) { this.value = value; } }"),
+                ("/game/core/Index.surtr", "export import module game.math.Box;"));
+
+            Assert.Equal(21, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AReExportChainIsTransitive()
+        {
+            // Index re-exports Math; Math re-exports the primitive box. A consumer of Index sees
+            // the whole chain.
+            var runtime = Run(
+                "import game.core.Index;\nfun run(): int { return add(2, 3); }",
+                ("/game/math/Math.surtr", "export import module game.math.Numbers;\npublic fun add(a: int, b: int): int { return a + b; }"),
+                ("/game/math/Numbers.surtr", "public fun twice(x: int): int { return x + x; }"),
+                ("/game/core/Index.surtr", "export import module game.math.Math;"));
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AReExportStillRespectsAccessibility()
+        {
+            // An internal member of a re-exported module is not widened by the re-export: only
+            // what the declaring module already made public crosses the boundary.
+            using var compilation = Reject(
+                "import game.core.Index;\nfun run(): int { return add(2, 3); }",
+                ("/game/math/Math.surtr", "fun add(a: int, b: int): int { return a + b; }"),
+                ("/game/core/Index.surtr", "export import module game.math.Math;"));
+
+            Assert.True(compilation.HasErrors, "an internal member should stay inaccessible across the re-export.");
+        }
+
+        [Fact]
+        public void ANamedMemberImportBringsAModuleFunctionInUnqualified()
+        {
+            // §2.1's broader member import: a named import may name a module-level function, not
+            // only a type.
+            var runtime = Run(
+                "import game.math.Math.add;\nfun run(): int { return add(2, 3); }",
+                ("/game/math/Math.surtr", "public fun add(a: int, b: int): int { return a + b; }"));
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ASelectiveMemberImportBringsOnlyTheListedMembers()
+        {
+            var runtime = Run(
+                "import game.math.Math.{add};\nfun run(): int { return add(2, 3); }",
+                ("/game/math/Math.surtr", "public fun add(a: int, b: int): int { return a + b; }\npublic fun sub(a: int, b: int): int { return a - b; }"));
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ASelectiveMemberImportLeavesUnlistedMembersUnreachable()
+        {
+            using var compilation = Reject(
+                "import game.math.Math.{add};\nfun run(): int { return sub(2, 1); }",
+                ("/game/math/Math.surtr", "public fun add(a: int, b: int): int { return a + b; }\npublic fun sub(a: int, b: int): int { return a - b; }"));
+
+            Assert.True(compilation.HasErrors, "'sub' should not be reachable through a selective import that left it out.");
+        }
+
+        [Fact]
+        public void AnExportNamedMemberImportReExposesAFunctionToAConsumer()
+        {
+            var runtime = Run(
+                "import game.core.Index;\nfun run(): int { return add(2, 3); }",
+                ("/game/math/Math.surtr", "public fun add(a: int, b: int): int { return a + b; }"),
+                ("/game/core/Index.surtr", "export import game.math.Math.add;"));
+
+            Assert.Equal(5, Int(runtime, "run"));
         }
         #endregion
 
