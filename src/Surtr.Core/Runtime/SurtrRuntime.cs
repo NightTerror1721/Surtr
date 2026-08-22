@@ -1283,6 +1283,37 @@ namespace Surtr.Runtime
             => _context.RemoveRoot(SurtrValue.CreateReference(entity.GetSurtrReference()).Raw);
 
         /// <summary>
+        /// Replaces the policy the collector runs under.
+        /// </summary>
+        /// <remarks>
+        /// A runtime collects on its own by default; pass <see cref="SurtrGcPolicy.Manual"/> to
+        /// restore the purely host-driven behaviour. The policy is folded at configuration time, so
+        /// a manual runtime's allocation path costs no more than it ever did. See
+        /// <see cref="SurtrGcPolicy"/>.
+        /// </remarks>
+        public void ConfigureGc(in SurtrGcPolicy policy)
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(SurtrRuntime));
+
+            _context.EntityRegistry.ConfigurePolicy(policy);
+        }
+
+        /// <summary>The policy this runtime's collector currently runs under.</summary>
+        public SurtrGcPolicy GcPolicy
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _context.EntityRegistry.Policy;
+        }
+
+        /// <summary>How many entities were registered since the last collection.</summary>
+        public long AllocationsSinceLastCollection
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _context.EntityRegistry.AllocationsSinceLastCollection;
+        }
+
+        /// <summary>
         /// Collects unreachable objects, tracing from the host globals and the explicit roots.
         /// </summary>
         /// <remarks>
@@ -1345,11 +1376,55 @@ namespace Surtr.Runtime
                 fullCollection);
         }
 
+        /// <summary>
+        /// Runs the collection a policy has asked for, at a machine safepoint.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The interpreter's only job on its hot path is to arm a flag (see
+        /// <see cref="SurtrEntityRegistry.GcPending"/>); the sweep itself is deferred here, to a
+        /// native boundary or the dispatch backstop, where the machine has already published its
+        /// stack top and every value the program is using is on the stack. That is the same
+        /// contract <see cref="Collect(bool)"/> relies on, so a policy-driven sweep is a plain
+        /// call into it with the full/nursery choice the policy's <see cref="SurtrGcPolicy.NurseryFrequency"/>
+        /// dictates.
+        /// </para>
+        /// <para>
+        /// Cold by construction: it is only reached once the pending flag is armed, so keeping the
+        /// body out of the dispatch loop's register allocation is free.
+        /// </para>
+        /// </remarks>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal void CollectAtSafepoint()
+        {
+            ref SurtrEntityRegistry registry = ref _context.EntityRegistry;
+            if (!registry.GcPending)
+                return;
+
+            // The sweep drains the flag and resets the allocation counter, so a single call covers
+            // both the threshold that armed it and the pressure behind a nested arm.
+            Collect(registry.ShouldCollectFull());
+        }
+
         /// <summary>Statistics about the collections this runtime has run.</summary>
         public long TotalCollections
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _context.EntityRegistry.TotalCollections;
+        }
+
+        /// <summary>How many of the collections this runtime has run were full sweeps.</summary>
+        public long TotalFullCollections
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _context.EntityRegistry.TotalFullCollections;
+        }
+
+        /// <summary>How many of the collections this runtime has run were nursery sweeps.</summary>
+        public long TotalNurseryCollections
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _context.EntityRegistry.TotalNurseryCollections;
         }
 
         /// <summary>How long the most recent collection took.</summary>

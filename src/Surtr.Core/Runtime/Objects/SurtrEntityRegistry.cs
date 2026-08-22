@@ -63,6 +63,23 @@ namespace Surtr.Runtime.Objects
         private long _totalCollectedEntities;
         private long _lastCollectionElapsedTicks;
 
+        // Automatic collection. The policy is folded into the fields below at configuration time so
+        // the hot path - Register - pays for arming the pending flag with nothing but a compare:
+        // in Manual mode the threshold is long.MaxValue and the branch is never taken.
+        private SurtrGcPolicy _policy;
+        private long _allocationThreshold;
+        private int _liveEntityThresholdPercent;
+        private int _nurseryFrequency;
+
+        /// <summary>How many entities were registered since the last collection.</summary>
+        private long _allocationsSinceLastCollection;
+
+        /// <summary>How many collections have run since the last full sweep.</summary>
+        private int _collectionsSinceFull;
+
+        /// <summary>Armed when a threshold has been crossed; drained at the next safepoint.</summary>
+        internal bool GcPending;
+
         public readonly int Capacity => _capacity;
 
         /// <summary>
@@ -117,6 +134,13 @@ namespace Surtr.Runtime.Objects
             _markTop = 0;
             _nextId = 1; // Start from 1, as 0 is reserved for SurtrNullRef
 
+            // A registry used directly defaults to Manual; a runtime's context reconfigures it to
+            // Automatic before anything runs. Either way the folds below are what the hot path reads.
+            _allocationsSinceLastCollection = 0;
+            _collectionsSinceFull = 0;
+            GcPending = false;
+            ConfigurePolicy(SurtrGcPolicy.Manual);
+
             // Only flip to Initialized once every allocation above has actually
             // succeeded, so a failed init can't leave the registry half-alive.
             ResourceState = RuntimeResourceState.Initialized;
@@ -149,7 +173,55 @@ namespace Surtr.Runtime.Objects
 
             _ages[newId] = 0;
 
+            // The one thing Register pays toward automatic collection: count the allocation and,
+            // when the count has crossed the folded threshold, arm the pending flag. Manual mode
+            // folds the threshold to long.MaxValue, so the branch below is never taken and predicts
+            // perfectly. The sweep itself never runs here - an allocation is often mid-construction
+            // (an array's elements are filled after it is registered), so collecting inline could
+            // reclaim the object being built; the interpreter drains the flag at its next safepoint.
+            if (++_allocationsSinceLastCollection >= _allocationThreshold)
+                GcPending = true;
+
             return newId;
+        }
+
+        /// <summary>Replaces the policy the collector runs under, folding its thresholds for the hot path.</summary>
+        /// <remarks>
+        /// Folding keeps <see cref="Register"/> to a single always-false compare in
+        /// <see cref="SurtrGcMode.Manual"/>: the allocation threshold becomes
+        /// <see cref="long.MaxValue"/> and the live-entity threshold becomes <c>0</c>. Manual mode
+        /// never arms the pending flag this way; capacity growth still does, but with the live
+        /// threshold folded to zero that arm is gated off too.
+        /// </remarks>
+        internal void ConfigurePolicy(in SurtrGcPolicy policy)
+        {
+            _policy = policy;
+            _allocationThreshold = policy.Mode == SurtrGcMode.Manual ? long.MaxValue : policy.AllocationThreshold;
+            _liveEntityThresholdPercent = policy.Mode == SurtrGcMode.Manual ? 0 : policy.LiveEntityThresholdPercent;
+            _nurseryFrequency = Math.Max(1, policy.NurseryFrequency);
+        }
+
+        /// <summary>The policy this registry currently collects under.</summary>
+        internal SurtrGcPolicy Policy => _policy;
+
+        /// <summary>How many entities were registered since the last collection.</summary>
+        internal long AllocationsSinceLastCollection => _allocationsSinceLastCollection;
+
+        /// <summary>
+        /// Whether the collection due at the next safepoint should be a full sweep, per
+        /// <see cref="SurtrGcPolicy.NurseryFrequency"/> and the live-entity pressure.
+        /// </summary>
+        /// <remarks>
+        /// Called only at a safepoint (cold), so computing the live-entity pressure here costs
+        /// nothing on any hot path.
+        /// </remarks>
+        internal bool ShouldCollectFull()
+        {
+            if (_liveEntityThresholdPercent != 0
+                && (_nextId - 1 - _freeCount) * 100 >= _capacity * _liveEntityThresholdPercent)
+                return true;
+
+            return _collectionsSinceFull >= _nurseryFrequency - 1;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -310,9 +382,21 @@ namespace Surtr.Runtime.Objects
             _totalCollectedEntities += released;
 
             if (fullCollection)
+            {
                 _totalFullCollections++;
+                _collectionsSinceFull = 0;
+            }
             else
+            {
                 _totalNurseryCollections++;
+                _collectionsSinceFull++;
+            }
+
+            // Whatever armed the pending flag has been drained: the sweep has just run, so the
+            // allocation counter restarts and the flag must not re-trigger at the next safepoint
+            // without fresh pressure.
+            _allocationsSinceLastCollection = 0;
+            GcPending = false;
 
             return released;
         }
@@ -359,6 +443,10 @@ namespace Surtr.Runtime.Objects
             _nextId = 0;
             _markTop = 0;
             _markStackCapacity = 0;
+            _allocationsSinceLastCollection = 0;
+            _collectionsSinceFull = 0;
+            GcPending = false;
+            _policy = default;
 
             ResourceState = RuntimeResourceState.Disposed;
         }
@@ -366,6 +454,14 @@ namespace Surtr.Runtime.Objects
         [MethodImpl(MethodImplOptions.NoInlining)]
         private void ExpandCapacity()
         {
+            // Capacity is about to double, which is the collector's best pressure signal: the live
+            // set has outgrown the registry, so a collection is due. Gated on the live-entity
+            // threshold, which ConfigurePolicy folds to zero in Manual mode - so a manual runtime
+            // never arms the flag this way. Arming here is cold and cannot re-enter: the sweep
+            // still runs at a safepoint.
+            if (_liveEntityThresholdPercent != 0)
+                GcPending = true;
+
             int newCapacity = _capacity * 2;
 
             Array.Resize(ref Entities, newCapacity);

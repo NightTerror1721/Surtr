@@ -154,6 +154,10 @@ namespace Surtr.Runtime
             EntityRegistry = default;
             EntityRegistry.Initialize(initialEntityCapacity);
 
+            // The runtime collects on its own by default. A host that wants the old, purely manual
+            // behaviour calls SurtrRuntime.ConfigureGc(SurtrGcPolicy.Manual).
+            EntityRegistry.ConfigurePolicy(SurtrGcPolicy.Automatic);
+
             Modules = new Dictionary<string, SurtrModule>(StringComparer.Ordinal);
             NativeClasses = new Dictionary<string, SurtrClass>(StringComparer.Ordinal);
             NativeBodies = new Dictionary<string, SurtrNativeEntryPoint>(StringComparer.Ordinal);

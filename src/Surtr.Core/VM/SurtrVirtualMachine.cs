@@ -1342,7 +1342,7 @@ namespace Surtr.VM
                     SurtrRef reference = context.EntityRegistry.Register(boxed);
                     entities = context.EntityRegistry.Entities;
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.BoxFloat:
@@ -1353,7 +1353,7 @@ namespace Surtr.VM
                     SurtrRef reference = context.EntityRegistry.Register(boxed);
                     entities = context.EntityRegistry.Entities;
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.BoxBool:
@@ -1364,7 +1364,7 @@ namespace Surtr.VM
                     SurtrRef reference = context.EntityRegistry.Register(boxed);
                     entities = context.EntityRegistry.Entities;
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.BoxChar:
@@ -1375,7 +1375,7 @@ namespace Surtr.VM
                     SurtrRef reference = context.EntityRegistry.Register(boxed);
                     entities = context.EntityRegistry.Entities;
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.Unbox:
@@ -1398,7 +1398,7 @@ namespace Surtr.VM
                     SurtrRef reference = context.EntityRegistry.Register(boxed);
                     entities = context.EntityRegistry.Entities;
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.UnboxDynamic:
@@ -1565,7 +1565,7 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.StrGet:
@@ -1612,7 +1612,7 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.ArrNewX:
@@ -1638,7 +1638,7 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.ArrPack:
@@ -1660,7 +1660,7 @@ namespace Surtr.VM
                         items[i] = SurtrValue.FromRaw(sp[i]);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.ArrLen:
@@ -1830,7 +1830,7 @@ namespace Surtr.VM
                         elements[i] = SurtrValue.FromRaw(sp[i]);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.TupUnpack:
@@ -1899,7 +1899,7 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.DictPack:
@@ -1938,7 +1938,7 @@ namespace Surtr.VM
                     }
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.DictLen:
@@ -2035,7 +2035,7 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.DictValues:
@@ -2053,7 +2053,7 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.DictIn:
@@ -2104,7 +2104,7 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.ObjNewX:
@@ -2121,7 +2121,7 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
                 #endregion
 
@@ -2189,7 +2189,7 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.NewClosureX:
@@ -2210,7 +2210,7 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
                 #endregion
 
@@ -2998,7 +2998,7 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.BoxAsX:
@@ -3013,7 +3013,7 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
                 #endregion
 
@@ -3029,7 +3029,7 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.RangeNewInclusive:
@@ -3043,7 +3043,7 @@ namespace Surtr.VM
                     entities = context.EntityRegistry.Entities;
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
                 #endregion
 
@@ -3052,6 +3052,18 @@ namespace Surtr.VM
                     _sp = sp;
                     throw InvalidOpCode(*(ip - 1));
             }
+
+        // The single safepoint for automatic collection. Every allocation opcode that completed
+        // (its result pushed on the stack) routes here instead of straight to Dispatch, so the
+        // flag is drained by exactly one call site rather than one per opcode. Living after the
+        // switch keeps it off the dispatch hot path entirely - nothing falls through to it.
+        Safepoint:
+            if (context.EntityRegistry.GcPending)
+            {
+                _sp = sp;
+                runtime.CollectAtSafepoint();
+            }
+            goto Dispatch;
 
         // ---- Shared call sequences ------------------------------------------------------------
         // Reached by goto, never by a call: the operands arrive in the pending* locals, so every
@@ -3079,6 +3091,15 @@ namespace Surtr.VM
                 _sp = sp;
 
                 entities = context.EntityRegistry.Entities;
+
+
+
+                // The native boundary is the other safepoint for automatic collection: a host body
+                // may have allocated enough to arm the flag, and the machine state is already
+                // published above, so the sweep can run here with a consistent stack.
+                if (context.EntityRegistry.GcPending)
+                    runtime.CollectAtSafepoint();
+
                 goto Dispatch;
             }
 

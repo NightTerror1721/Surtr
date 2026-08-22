@@ -1,5 +1,6 @@
 #nullable enable
 
+using Surtr.Runtime.Objects;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -20,16 +21,33 @@ namespace Surtr.Bench
         public readonly double LowerQuartile;
         public readonly double UpperQuartile;
 
+        /// <summary>
+        /// The 90th and 99th percentiles. The median says what a run typically costs; these say what
+        /// a run can occasionally cost, which is the number a frame budget is set from.
+        /// </summary>
+        public readonly double P90;
+        public readonly double P99;
+
         /// <summary>What one run cost in memory, measured outside the timed samples.</summary>
         public readonly MemorySample Memory;
 
-        public Measurement(double median, double min, double max, double lowerQuartile, double upperQuartile, MemorySample memory)
+        public Measurement(
+            double median,
+            double min,
+            double max,
+            double lowerQuartile,
+            double upperQuartile,
+            double p90,
+            double p99,
+            MemorySample memory)
         {
             Median = median;
             Min = min;
             Max = max;
             LowerQuartile = lowerQuartile;
             UpperQuartile = upperQuartile;
+            P90 = p90;
+            P99 = p99;
             Memory = memory;
         }
 
@@ -59,78 +77,177 @@ namespace Surtr.Bench
                 return 0;
             }
 
+            if (_options.VerifyOnly || _options.Smoke)
+                return VerifyRun();
+
             SurtrDriver? surtr = null;
+            SurtrDriver? surtrAuto = null;
             LuaDriver? moon = null;
             NativeLuaDriver? luajit = null;
             try
             {
-                if (_options.RunSurtr)
-                    surtr = SurtrDriver.Build(Workloads.ModuleSource);
-                if (_options.RunMoonSharp)
-                    moon = LuaDriver.Load(Workloads.LuaSource);
-                if (_options.RunLuaJit)
-                    luajit = NativeLuaDriver.Load(Workloads.LuaSource);
-
-                // Surtr first: it is the reference engine the ratios and the geomeans are relative to.
                 var engines = new List<IBenchEngine>();
+                BuildSurtrEngines(ref surtr, ref surtrAuto);
                 if (surtr != null) engines.Add(surtr);
-                if (moon != null) engines.Add(moon);
-                if (luajit != null) engines.Add(luajit);
+                if (surtrAuto != null) engines.Add(surtrAuto);
+                if (_options.RunMoonSharp)
+                {
+                    moon = LuaDriver.Load(Workloads.LuaSource);
+                    engines.Add(moon);
+                }
+                if (_options.RunLuaJit)
+                {
+                    luajit = NativeLuaDriver.Load(Workloads.LuaSource);
+                    engines.Add(luajit);
+                }
 
                 PrintHeader(engines);
 
-                var rows = new List<CsvRow>();
+                var accumulated = new Dictionary<string, Accumulator>();
                 bool allOk = true;
 
-                foreach (var workload in Workloads.AllWorkloads)
+                // One whole-catalogue pass per round. The point of a round is that it is whole:
+                // the order the cases run in changes what a later case pays for (generic
+                // instantiations warm up once and stay warm, and which ones that is depends on what
+                // ran first — the csproj's note on dictMembers documents a 1.27x swing from order
+                // alone). Shuffling the order per round and reporting the median across rounds is
+                // the only defence that does not depend on which cases happen to be neighbours.
+                for (int round = 0; round < _options.Rounds; round++)
                 {
-                    if (!Matches(workload.Name))
-                        continue;
-
-                    long size = ScaledSize(workload.Size);
-                    double expected = RunBaseline(workload, size);
-
-                    // One run per engine per case, checked against the C# reference. Three
-                    // implementations of the same algorithm agreeing on a checksum is the only
-                    // thing standing between a fast engine and one that is fast because it is not
-                    // doing the work — see the note on Workloads.
-                    var results = new double[engines.Count];
-                    for (int i = 0; i < engines.Count; i++)
-                        results[i] = engines[i].Call(workload, size);
-                    bool ok = Verified(workload, expected, results);
-                    allOk = allOk && ok;
-
-                    if (!ok)
-                        ReportDisagreement(workload, expected, results, engines);
-
-                    var engineMs = new Measurement[engines.Count];
-                    for (int i = 0; i < engines.Count; i++)
+                    foreach (var workload in OrderOfRound(round))
                     {
-                        IBenchEngine engine = engines[i];
-                        engineMs[i] = Measure(
-                            () => engine.Call(workload, size),
+                        if (!Matches(workload.Name))
+                            continue;
+
+                        if (!accumulated.TryGetValue(workload.Name, out var accumulator))
+                        {
+                            accumulator = new Accumulator();
+                            accumulated[workload.Name] = accumulator;
+                        }
+
+                        long size = ScaledSize(workload.Size);
+                        accumulator.Size = size;
+
+                        // One run per engine per case, checked against the C# reference. Three
+                        // implementations of the same algorithm agreeing on a checksum is the only
+                        // thing standing between a fast engine and one that is fast because it is not
+                        // doing the work — see the note on Workloads. Runs once, on the first round.
+                        if (round == 0)
+                        {
+                            double expected = RunBaseline(workload, size);
+                            var results = new double[engines.Count];
+                            for (int i = 0; i < engines.Count; i++)
+                                results[i] = engines[i].Call(workload, size);
+                            bool ok = Verified(workload, expected, results);
+                            allOk = allOk && ok;
+                            if (!ok)
+                                ReportDisagreement(workload, expected, results, engines);
+                            accumulator.Ok = ok;
+                        }
+
+                        var engineMs = new Measurement[engines.Count];
+                        for (int i = 0; i < engines.Count; i++)
+                        {
+                            IBenchEngine engine = engines[i];
+                            engineMs[i] = Measure(
+                                () => engine.Call(workload, size),
+                                _options.Iterations,
+                                _options.WarmupIterations,
+                                engine.Collect,
+                                engine.SampleMemory,
+                                _options.MemoryRuns,
+                                _options.GcInclusive);
+                        }
+                        Measurement baselineMs = Measure(
+                            () => RunBaseline(workload, size),
                             _options.Iterations,
                             _options.WarmupIterations,
-                            engine.Collect,
-                            engine.SampleMemory);
-                    }
-                    Measurement baselineMs = Measure(() => RunBaseline(workload, size), _options.Iterations, _options.WarmupIterations);
+                            memoryRuns: _options.MemoryRuns,
+                            gcInclusive: _options.GcInclusive);
 
-                    PrintRow(workload, size, engineMs, baselineMs, ok, engines);
-                    rows.Add(new CsvRow(workload.Name, size, workload.Measures, engineMs, baselineMs, ok));
+                        accumulator.Add(engineMs, baselineMs);
+                    }
+                }
+
+                var rows = new List<CsvRow>();
+                bool strictViolation = false;
+                int spreadWarnings = 0;
+
+                // Printed in catalogue order regardless of the order rounds ran in, so a table you
+                // compare against an earlier run lines up row for row even when both were shuffled.
+                foreach (var workload in Workloads.AllWorkloads)
+                {
+                    if (!Matches(workload.Name) || !accumulated.TryGetValue(workload.Name, out var accumulator))
+                        continue;
+
+                    (Measurement[] engineMs, Measurement baselineMs) = accumulator.Reduce();
+
+                    bool spreadWarn = engineMs.Length > 0
+                        && engineMs[0].Spread > RunnerOptions.SpreadWarningThreshold;
+                    if (spreadWarn)
+                        spreadWarnings++;
+                    if (_options.Strict && (!accumulator.Ok || spreadWarn))
+                        strictViolation = true;
+
+                    PrintRow(workload, accumulator.Size, engineMs, baselineMs, accumulator.Ok, spreadWarn, engines, _options.Percentiles);
+                    rows.Add(new CsvRow(workload.Name, accumulator.Size, workload.Measures, engineMs, baselineMs, accumulator.Ok));
                 }
 
                 PrintSummary(rows, engines);
 
+                if (spreadWarnings > 0)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine(
+                        "{0} row(s) marked ok!: reference spread above {1:P0}, so the median is not yet worth quoting.",
+                        spreadWarnings,
+                        RunnerOptions.SpreadWarningThreshold);
+                }
+
+                if (_options.Strict && strictViolation)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("--strict: at least one row failed verification or its reference spread exceeded {0:P0}.", RunnerOptions.SpreadWarningThreshold);
+                }
+
                 if (_options.CsvPath != null)
                     AppendCsv(_options.CsvPath, rows, engines);
 
-                return allOk ? 0 : 1;
+                return allOk && !strictViolation ? 0 : 1;
             }
             finally
             {
                 surtr?.Dispose();
+                surtrAuto?.Dispose();
                 luajit?.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Builds the Surtr engine(s) for the configured GC mode. In <c>both</c> mode the manual
+        /// engine keeps the plain name (it is the reference the ratios are relative to) and the
+        /// automatic one is named <c>surtr-auto</c>, so the two policies are compared like any two
+        /// engines. The default build is automatic — that is the runtime's own default.
+        /// </summary>
+        private void BuildSurtrEngines(ref SurtrDriver? manual, ref SurtrDriver? automatic)
+        {
+            if (!_options.RunSurtr)
+                return;
+
+            long budget = _options.Smoke ? SurtrDriver.SmokeInstructionBudget : SurtrDriver.DefaultInstructionBudget;
+
+            switch (_options.SurtrGc)
+            {
+                case SurtrGcBenchMode.Manual:
+                    manual = SurtrDriver.Build(Workloads.ModuleSource, budget, SurtrGcPolicy.Manual, "surtr");
+                    break;
+                case SurtrGcBenchMode.Automatic:
+                    manual = SurtrDriver.Build(Workloads.ModuleSource, budget, SurtrGcPolicy.Automatic, "surtr");
+                    break;
+                default:
+                    manual = SurtrDriver.Build(Workloads.ModuleSource, budget, SurtrGcPolicy.Manual, "surtr");
+                    automatic = SurtrDriver.Build(Workloads.ModuleSource, budget, SurtrGcPolicy.Automatic, "surtr-auto");
+                    break;
             }
         }
 
@@ -161,11 +278,144 @@ namespace Surtr.Bench
             Console.WriteLine("{0} cases.", shown);
         }
 
-        private bool Matches(string name)
-            => _options.WorkloadFilter == null || name.IndexOf(_options.WorkloadFilter, StringComparison.OrdinalIgnoreCase) >= 0;
+        /// <summary>
+        /// The fast, timing-free pass <c>--verify-only</c> and <c>--smoke</c> share. One run of
+        /// every selected case per engine, checked against the C# baseline; the exit code is the
+        /// verdict. This is the run a CI job calls: it catches a workload whose three implementations
+        /// have drifted apart, or a crash, in seconds, without a single timing being involved.
+        /// </summary>
+        private int VerifyRun()
+        {
+            SurtrDriver? surtr = null;
+            SurtrDriver? surtrAuto = null;
+            LuaDriver? moon = null;
+            NativeLuaDriver? luajit = null;
+            try
+            {
+                var engines = new List<IBenchEngine>();
+                BuildSurtrEngines(ref surtr, ref surtrAuto);
+                if (surtr != null) engines.Add(surtr);
+                if (surtrAuto != null) engines.Add(surtrAuto);
+                if (_options.RunMoonSharp)
+                {
+                    moon = LuaDriver.Load(Workloads.LuaSource);
+                    engines.Add(moon);
+                }
+                if (_options.RunLuaJit)
+                {
+                    luajit = NativeLuaDriver.Load(Workloads.LuaSource);
+                    engines.Add(luajit);
+                }
 
+                Console.WriteLine(_options.Smoke
+                    ? "Smoke pass — every case at a hundredth of its size, a tight instruction budget, no timing."
+                    : "Verification pass — one run per case at its full size, no timing.");
+                var names = new List<string>();
+                foreach (IBenchEngine engine in engines)
+                    names.Add(engine.Name);
+                names.Add("C# baseline");
+                Console.WriteLine("Engines: {0}", string.Join(" vs ", names));
+                Console.WriteLine();
+
+                var header = new List<string> { Pad("workload", 15), Pad("size", 9) };
+                foreach (IBenchEngine engine in engines)
+                    header.Add(Pad(engine.Name, 14));
+                header.Add(Pad("c#", 14));
+                header.Add("result");
+                Console.WriteLine(string.Join("  ", header));
+
+                bool allOk = true;
+                int shown = 0;
+
+                foreach (var workload in Workloads.AllWorkloads)
+                {
+                    if (!Matches(workload.Name))
+                        continue;
+
+                    long size = _options.Smoke
+                        ? ScaledSize(Math.Max(1L, workload.Size / 100))
+                        : ScaledSize(workload.Size);
+
+                    double expected = RunBaseline(workload, size);
+                    var results = new double[engines.Count];
+                    for (int i = 0; i < engines.Count; i++)
+                        results[i] = engines[i].Call(workload, size);
+                    bool ok = Verified(workload, expected, results);
+                    allOk = allOk && ok;
+                    shown++;
+
+                    var row = new List<string>
+                    {
+                        Pad(workload.Name, 15),
+                        Pad(size.ToString(CultureInfo.InvariantCulture), 9),
+                    };
+                    foreach (double result in results)
+                        row.Add(Pad(FormatChecksum(result), 14));
+                    row.Add(Pad(FormatChecksum(expected), 14));
+                    row.Add(ok ? "ok" : "FAIL");
+                    Console.WriteLine(string.Join("  ", row));
+
+                    if (!ok)
+                        ReportDisagreement(workload, expected, results, engines);
+                }
+
+                Console.WriteLine();
+                Console.WriteLine(allOk
+                    ? "All {0} cases agree with the C# baseline."
+                    : "{0} cases run; at least one disagrees.", shown);
+                return allOk ? 0 : 1;
+            }
+            finally
+            {
+                surtr?.Dispose();
+                surtrAuto?.Dispose();
+                luajit?.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// The catalogue in the order one round runs it: declaration order, or a seeded shuffle so
+        /// no case is always warmed by the same neighbours. The seed and the round number make the
+        /// order reproducible — the same seed gives the same run every time, which is what makes
+        /// two runs comparable at all.
+        /// </summary>
+        private IReadOnlyList<Workload> OrderOfRound(int round)
+        {
+            if (!_options.Shuffle)
+                return Workloads.AllWorkloads;
+
+            var list = new List<Workload>(Workloads.AllWorkloads);
+            var random = new Random(_options.ShuffleSeed + round * 7919);
+            for (int i = list.Count - 1; i > 0; i--)
+            {
+                int j = random.Next(i + 1);
+                (list[i], list[j]) = (list[j], list[i]);
+            }
+            return list;
+        }
+
+        private bool Matches(string name)
+        {
+            if (_options.WorkloadFilters.Count == 0)
+                return true;
+
+            foreach (string filter in _options.WorkloadFilters)
+            {
+                if (name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The size a workload actually runs at. Clamped to an int: every engine's entry point takes
+        /// a 32-bit size, and an unscaled run never gets near the limit — but <c>--scale</c> is
+        /// arbitrary user input, and a scale that pushed a size past 2^31 used to wrap to a negative
+        /// n silently, which is the kind of number a "reliable" benchmark must never produce.
+        /// </summary>
         private long ScaledSize(long size)
-            => Math.Max(1L, (long)(size * _options.Scale));
+            => Math.Min(int.MaxValue, Math.Max(1L, (long)(size * _options.Scale)));
 
         private static double RunBaseline(Workload workload, long size)
             => workload.Kind == WorkloadKind.Int ? workload.BaselineInt!(size) : workload.BaselineFloat!(size);
@@ -226,24 +476,39 @@ namespace Surtr.Bench
         /// collector the same way — but nothing in the timed region.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// The warm-up is a real phase rather than the single run it used to be, and it is what a
         /// median is worth anything on. It has two jobs: drive the JIT past first-call compilation
         /// on every path the workload touches (the csproj forces loop-bearing methods straight to
         /// optimized code, but a method without a loop still tiers up on call count), and let the
         /// heap reach the size the workload actually wants so the first timed sample is not paying
         /// for growth every later one inherits.
+        /// </para>
+        /// <para>
+        /// The default settles before each sample and never inside it, so the timed region is the
+        /// work alone. That is the right answer when comparing interpreters, but it means no sample
+        /// ever pays for the collection its own allocations cause — the bill is deferred to the next
+        /// sample and the last one never pays at all. <paramref name="gcInclusive"/> closes that by
+        /// collecting at the end of the timed region, so the sample pays for what it caused. The two
+        /// are different questions ("how fast is the engine" vs "how fast is the engine plus the
+        /// collector it feeds") and both have a mode.
+        /// </para>
         /// </remarks>
         private static Measurement Measure(
             Func<double> operation,
             int iterations,
             int warmupIterations,
             Action? settle = null,
-            Func<MemorySample>? sampleMemory = null)
+            Func<MemorySample>? sampleMemory = null,
+            int memoryRuns = 3,
+            bool gcInclusive = false)
         {
-            for (int i = 0; i < warmupIterations; i++)
-                operation();
+            Func<double> measured = gcInclusive ? MeasureWithCollection(operation, settle) : operation;
 
-            // Memory is counted on its own run, outside the samples: reading the counters costs
+            for (int i = 0; i < warmupIterations; i++)
+                measured();
+
+            // Memory is counted on its own runs, outside the samples: reading the counters costs
             // several calls, and a run that is being measured for time should have nothing else in
             // it. The heap is settled first so what the run allocates is not confused with what an
             // earlier one left behind.
@@ -252,19 +517,20 @@ namespace Surtr.Bench
             GC.WaitForPendingFinalizers();
 
             sampleMemory ??= DefaultMemorySample;
-            MemorySample before = sampleMemory();
-            operation();
-            MemorySample memory = sampleMemory().Since(before);
+            MemorySample memory = MeasureMemoryMedian(sampleMemory, settle, operation, memoryRuns);
 
             var samples = new double[iterations];
             for (int i = 0; i < iterations; i++)
             {
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-                settle?.Invoke();
+                if (!gcInclusive)
+                {
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    settle?.Invoke();
+                }
 
                 var stopwatch = Stopwatch.StartNew();
-                operation();
+                measured();
                 stopwatch.Stop();
                 samples[i] = stopwatch.Elapsed.TotalMilliseconds;
             }
@@ -276,7 +542,78 @@ namespace Surtr.Bench
                 samples[iterations - 1],
                 samples[iterations / 4],
                 samples[Math.Min(iterations - 1, (iterations * 3) / 4)],
+                samples[Math.Min(iterations - 1, (int)(iterations * 0.90))],
+                samples[Math.Min(iterations - 1, (int)(iterations * 0.99))],
                 memory);
+        }
+
+        /// <summary>
+        /// Wraps the operation so each timed sample ends by collecting — the engine's own collector
+        /// and the CLR's — making the sample pay for the garbage it just produced instead of handing
+        /// the bill to the next one.
+        /// </summary>
+        private static Func<double> MeasureWithCollection(Func<double> operation, Action? settle)
+            => () =>
+            {
+                double result = operation();
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                settle?.Invoke();
+                return result;
+            };
+
+        /// <summary>
+        /// A workload's memory figures as the median across several untimed runs rather than the
+        /// single run it used to be. One run's allocation delta is dominated by where the GC happened
+        /// to trigger for allocation-heavy cases, and the median of three gives a figure you can
+        /// quote. Every field that an engine marks unavailable is left unavailable.
+        /// </summary>
+        private static MemorySample MeasureMemoryMedian(
+            Func<MemorySample> sampleMemory,
+            Action? settle,
+            Func<double> operation,
+            int runs)
+        {
+            var allocated = new List<long>(runs);
+            var objects = new List<long>(runs);
+            var live = new List<long>(runs);
+            var heap = new List<long>(runs);
+
+            for (int i = 0; i < runs; i++)
+            {
+                settle?.Invoke();
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+
+                MemorySample before = sampleMemory();
+                operation();
+                MemorySample delta = sampleMemory().Since(before);
+
+                AddMemory(allocated, delta.AllocatedBytes);
+                AddMemory(objects, delta.AllocatedObjects);
+                AddMemory(live, delta.LiveObjects);
+                AddMemory(heap, delta.HeapBytes);
+            }
+
+            return new MemorySample(
+                MemoryMedian(allocated),
+                MemoryMedian(objects),
+                MemoryMedian(live),
+                MemoryMedian(heap));
+        }
+
+        private static void AddMemory(List<long> values, long value)
+        {
+            if (value != MemorySample.Unavailable)
+                values.Add(value);
+        }
+
+        private static long MemoryMedian(List<long> values)
+        {
+            if (values.Count == 0)
+                return MemorySample.Unavailable;
+            values.Sort();
+            return values[values.Count / 2];
         }
 
         /// <summary>What the C# baseline is measured with: the CLR counter and nothing else.</summary>
@@ -293,13 +630,29 @@ namespace Surtr.Bench
                 _options.Iterations,
                 _options.WarmupIterations);
 
+            if (_options.Rounds > 1)
+                Console.WriteLine("{0} whole-catalogue rounds (shuffle seed {1}); every figure below is the median across rounds.", _options.Rounds, _options.ShuffleSeed);
+            else if (_options.Shuffle)
+                Console.WriteLine("Catalogue order shuffled by seed {0}.", _options.ShuffleSeed);
+
+            if (_options.GcInclusive)
+                Console.WriteLine("Each timed sample pays for the collection its own allocations cause (--gc-inclusive).");
+            else
+                Console.WriteLine("Surtr collects its heap between runs only, never inside the timed region.");
+
+            if (_options.SurtrGc == SurtrGcBenchMode.Both)
+                Console.WriteLine("Surtr runs twice: 'surtr' collects only when the harness asks, 'surtr-auto' collects by itself at its safepoints.");
+            else
+                Console.WriteLine("Surtr collector: {0}.", _options.SurtrGc.ToString().ToLowerInvariant());
+
+            Console.WriteLine("Machine: {0}", SystemInfo.FingerprintLine());
+            Console.WriteLine();
+
             var names = new List<string>();
             foreach (IBenchEngine engine in engines)
                 names.Add(engine.Name);
             names.Add("C# baseline");
             Console.WriteLine("Engines: {0}", string.Join(" vs ", names));
-
-            Console.WriteLine("Surtr collects its heap between runs only, never inside the timed region.");
             Console.WriteLine();
             Console.WriteLine("Memory columns are per run, measured outside the timed samples:");
             Console.WriteLine("  bytes   managed bytes allocated (comparable across surtr, lua and c#: all three allocate on the CLR heap)");
@@ -307,6 +660,9 @@ namespace Surtr.Bench
             Console.WriteLine("  kept    Surtr objects still live when the run returned");
             Console.WriteLine("  c#B     managed bytes the C# baseline allocated, for the same work");
             Console.WriteLine("  spread  interquartile range over the median; above ~10% the median is not yet worth quoting");
+            if (_options.Percentiles)
+                Console.WriteLine("  p90/p99 the reference engine's 90th/99th percentile, the numbers a frame budget is set from");
+            Console.WriteLine("  ok!     verification passed but the reference spread is above 10%: read the median with care");
             Console.WriteLine();
 
             var header = new List<string> { Pad("workload", 15), Pad("size", 9) };
@@ -321,6 +677,12 @@ namespace Surtr.Bench
             header.Add(Pad("kept", 8));
             header.Add(Pad("c#B", 9));
             header.Add(Pad("spread", 8));
+            if (_options.Percentiles)
+            {
+                header.Add(Pad("p90", 7));
+                header.Add(Pad("p99", 7));
+            }
+            header.Add("result");
             Console.WriteLine(string.Join("  ", header));
         }
 
@@ -330,7 +692,9 @@ namespace Surtr.Bench
             Measurement[] engineMs,
             Measurement baselineMs,
             bool ok,
-            IReadOnlyList<IBenchEngine> engines)
+            bool spreadWarn,
+            IReadOnlyList<IBenchEngine> engines,
+            bool percentiles)
         {
             var cells = new List<string>
             {
@@ -365,8 +729,15 @@ namespace Surtr.Bench
             cells.Add(Pad(FormatCount(reference.AllocatedObjects), 8));
             cells.Add(Pad(FormatCount(reference.LiveObjects), 8));
             cells.Add(Pad(FormatBytes(baselineMs.Memory.AllocatedBytes), 9));
-            cells.Add(Pad(engineMs.Length > 0 ? FormatPercent(engineMs[0].Spread) : "  —  ", 8));
-            cells.Add(ok ? "ok" : "FAIL");
+            cells.Add(Pad(FormatPercent(engineMs.Length > 0 ? engineMs[0].Spread : 0), 8));
+
+            if (percentiles && engineMs.Length > 0)
+            {
+                cells.Add(Pad(FormatMs(engineMs[0].P90), 7));
+                cells.Add(Pad(FormatMs(engineMs[0].P99), 7));
+            }
+
+            cells.Add(ok ? (spreadWarn ? "ok!" : "ok") : "FAIL");
 
             Console.WriteLine(string.Join("  ", cells));
         }
@@ -408,7 +779,7 @@ namespace Surtr.Bench
             }
         }
 
-        private static void AppendCsv(string path, List<CsvRow> rows, IReadOnlyList<IBenchEngine> engines)
+        private void AppendCsv(string path, List<CsvRow> rows, IReadOnlyList<IBenchEngine> engines)
         {
             bool appendHeader = !File.Exists(path) || new FileInfo(path).Length == 0;
             var line = new StringBuilder();
@@ -416,6 +787,13 @@ namespace Surtr.Bench
             {
                 if (appendHeader)
                 {
+                    // Lines a CSV reader must skip: the machine a run happened on, and the settings
+                    // that produced it. Two runs of the same command on different machines are
+                    // different data and this is the only record of which was which.
+                    writer.WriteLine("# machine: " + SystemInfo.FingerprintLine());
+                    writer.WriteLine("# settings: iters={0} warmup={1} rounds={2} shuffle={3} seed={4} gc-inclusive={5} memory-runs={6} surtr-gc={7}",
+                        _options.Iterations, _options.WarmupIterations, _options.Rounds, _options.Shuffle, _options.ShuffleSeed, _options.GcInclusive, _options.MemoryRuns, _options.SurtrGc.ToString().ToLowerInvariant());
+
                     line.Append("workload,size");
                     foreach (IBenchEngine engine in engines)
                         line.Append(',').Append(engine.Name).Append("_ms");
@@ -427,8 +805,12 @@ namespace Surtr.Bench
                     }
                     line.Append(",surtr_over_csharp,measures");
                     line.Append(",surtr_alloc_bytes,surtr_alloc_objects,surtr_kept_objects,surtr_heap_bytes");
+                    if (HasEngine(engines, "surtr-auto"))
+                        line.Append(",surtr_auto_alloc_bytes,surtr_auto_alloc_objects,surtr_auto_kept_objects,surtr_auto_heap_bytes");
                     line.Append(",lua_alloc_bytes,luajit_heap_bytes,csharp_alloc_bytes");
-                    line.Append(",spread_pct,ok");
+                    line.Append(",spread_pct");
+                    line.Append(",surtr_p90_ms,surtr_p99_ms,csharp_p90_ms,csharp_p99_ms");
+                    line.Append(",ok");
                     writer.WriteLine(line);
                 }
 
@@ -439,7 +821,7 @@ namespace Surtr.Bench
                     line.Append(',').Append(row.Size.ToString(CultureInfo.InvariantCulture));
                     foreach (Measurement measurement in row.EngineMeasurements)
                         line.Append(',').Append(measurement.Median.ToString("F3", CultureInfo.InvariantCulture));
-                    line.Append(',').Append(row.BaselineMs.ToString("F3", CultureInfo.InvariantCulture));
+                    line.Append(',').Append(row.Baseline.Median.ToString("F3", CultureInfo.InvariantCulture));
                     for (int i = 1; i < row.EngineMeasurements.Length; i++)
                     {
                         if (row.EngineMeasurements[0].Median > 0 && row.EngineMeasurements[i].Median > 0)
@@ -452,8 +834,8 @@ namespace Surtr.Bench
                             line.Append(",,");
                         }
                     }
-                    if (row.EngineMeasurements.Length > 0 && row.EngineMeasurements[0].Median > 0 && row.BaselineMs > 0)
-                        line.Append(',').Append((row.EngineMeasurements[0].Median / row.BaselineMs).ToString("F3", CultureInfo.InvariantCulture));
+                    if (row.EngineMeasurements.Length > 0 && row.EngineMeasurements[0].Median > 0 && row.Baseline.Median > 0)
+                        line.Append(',').Append((row.EngineMeasurements[0].Median / row.Baseline.Median).ToString("F3", CultureInfo.InvariantCulture));
                     else
                         line.Append(',');
 
@@ -465,16 +847,30 @@ namespace Surtr.Bench
                     // which engines it was given, and a reader joining two CSVs from different
                     // invocations should not have to work out which is which.
                     AppendMemory(line, MemoryOf(row, engines, "surtr"), objectsAndHeap: true);
+                    if (HasEngine(engines, "surtr-auto"))
+                        AppendMemory(line, MemoryOf(row, engines, "surtr-auto"), objectsAndHeap: true);
                     AppendMemory(line, MemoryOf(row, engines, "lua"), objectsAndHeap: false);
 
                     MemorySample luajit = MemoryOf(row, engines, "luajit");
                     line.Append(',').Append(Number(luajit.HeapBytes));
-                    line.Append(',').Append(Number(row.BaselineMemory.AllocatedBytes));
+                    line.Append(',').Append(Number(row.Baseline.Memory.AllocatedBytes));
 
                     if (row.EngineMeasurements.Length > 0)
                         line.Append(',').Append(FormatPercent(row.EngineMeasurements[0].Spread));
                     else
                         line.Append(',');
+
+                    if (row.EngineMeasurements.Length > 0)
+                    {
+                        line.Append(',').Append(row.EngineMeasurements[0].P90.ToString("F3", CultureInfo.InvariantCulture));
+                        line.Append(',').Append(row.EngineMeasurements[0].P99.ToString("F3", CultureInfo.InvariantCulture));
+                        line.Append(',').Append(row.Baseline.P90.ToString("F3", CultureInfo.InvariantCulture));
+                        line.Append(',').Append(row.Baseline.P99.ToString("F3", CultureInfo.InvariantCulture));
+                    }
+                    else
+                    {
+                        line.Append(",,,,");
+                    }
 
                     line.Append(',').Append(row.Ok ? "ok" : "FAIL");
                     writer.WriteLine(line);
@@ -522,6 +918,9 @@ namespace Surtr.Bench
         private static string Pad(string text, int width)
             => (text + new string(' ', width)).Substring(0, width);
 
+        private static string FormatChecksum(double value)
+            => value.ToString("R", CultureInfo.InvariantCulture);
+
         /// <summary>One engine's memory figures for a row, found by name rather than by index.</summary>
         private static MemorySample MemoryOf(CsvRow row, IReadOnlyList<IBenchEngine> engines, string name)
         {
@@ -532,6 +931,17 @@ namespace Surtr.Bench
             }
 
             return MemorySample.None;
+        }
+
+        private static bool HasEngine(IReadOnlyList<IBenchEngine> engines, string name)
+        {
+            foreach (IBenchEngine engine in engines)
+            {
+                if (string.Equals(engine.Name, name, StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
         }
 
         private static void AppendMemory(StringBuilder line, MemorySample memory, bool objectsAndHeap)
@@ -555,8 +965,7 @@ namespace Surtr.Bench
             public readonly long Size;
             public readonly string Measures;
             public readonly Measurement[] EngineMeasurements;
-            public readonly double BaselineMs;
-            public readonly MemorySample BaselineMemory;
+            public readonly Measurement Baseline;
             public readonly bool Ok;
 
             public CsvRow(string name, long size, string measures, Measurement[] engineMeasurements, Measurement baseline, bool ok)
@@ -565,9 +974,89 @@ namespace Surtr.Bench
                 Size = size;
                 Measures = measures;
                 EngineMeasurements = engineMeasurements;
-                BaselineMs = baseline.Median;
-                BaselineMemory = baseline.Memory;
+                Baseline = baseline;
                 Ok = ok;
+            }
+        }
+
+        /// <summary>One workload's measurements across all rounds, reduced to a single row.</summary>
+        private sealed class Accumulator
+        {
+            public long Size;
+            public bool Ok;
+            private readonly List<Measurement[]> _engineRounds = new();
+            private readonly List<Measurement> _baselineRounds = new();
+
+            public void Add(Measurement[] engine, Measurement baseline)
+            {
+                _engineRounds.Add(engine);
+                _baselineRounds.Add(baseline);
+            }
+
+            /// <summary>
+            /// The row this workload prints: the median of its per-round figures, per engine. One
+            /// round passes straight through; several rounds are combined field by field so the
+            /// reported median, quartiles, percentiles and memory are all medians of the same shape.
+            /// </summary>
+            public (Measurement[] Engine, Measurement Baseline) Reduce()
+            {
+                int rounds = _engineRounds.Count;
+                if (rounds == 1)
+                    return (_engineRounds[0], _baselineRounds[0]);
+
+                var engine = new Measurement[_engineRounds[0].Length];
+                for (int i = 0; i < engine.Length; i++)
+                {
+                    var values = new Measurement[rounds];
+                    for (int r = 0; r < rounds; r++)
+                        values[r] = _engineRounds[r][i];
+                    engine[i] = ReduceMeasurement(values);
+                }
+
+                return (engine, ReduceMeasurement(_baselineRounds));
+            }
+
+            private static Measurement ReduceMeasurement(IReadOnlyList<Measurement> rounds)
+                => new Measurement(
+                    MedianAcross(rounds, m => m.Median),
+                    MedianAcross(rounds, m => m.Min),
+                    MedianAcross(rounds, m => m.Max),
+                    MedianAcross(rounds, m => m.LowerQuartile),
+                    MedianAcross(rounds, m => m.UpperQuartile),
+                    MedianAcross(rounds, m => m.P90),
+                    MedianAcross(rounds, m => m.P99),
+                    MedianMemory(rounds));
+
+            private static double MedianAcross(IReadOnlyList<Measurement> rounds, Func<Measurement, double> selector)
+            {
+                var values = new double[rounds.Count];
+                for (int i = 0; i < rounds.Count; i++)
+                    values[i] = selector(rounds[i]);
+                Array.Sort(values);
+                return values[values.Length / 2];
+            }
+
+            private static MemorySample MedianMemory(IReadOnlyList<Measurement> rounds)
+                => new MemorySample(
+                    MedianLong(rounds, m => m.Memory.AllocatedBytes),
+                    MedianLong(rounds, m => m.Memory.AllocatedObjects),
+                    MedianLong(rounds, m => m.Memory.LiveObjects),
+                    MedianLong(rounds, m => m.Memory.HeapBytes));
+
+            private static long MedianLong(IReadOnlyList<Measurement> rounds, Func<Measurement, long> selector)
+            {
+                var values = new List<long>(rounds.Count);
+                foreach (Measurement round in rounds)
+                {
+                    long value = selector(round);
+                    if (value != MemorySample.Unavailable)
+                        values.Add(value);
+                }
+
+                if (values.Count == 0)
+                    return MemorySample.Unavailable;
+                values.Sort();
+                return values[values.Count / 2];
             }
         }
     }
