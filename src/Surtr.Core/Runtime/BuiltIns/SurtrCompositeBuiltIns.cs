@@ -126,14 +126,15 @@ namespace Surtr.Runtime.BuiltIns
                     Merge(items, scratch, start, middle, end, runtime, comparator, operands);
                 }
 
-                Array.Copy(scratch, items, length);
+                for (int i = 0; i < length; i++)
+                    items[i] = scratch[i].Raw;
             }
 
             return SurtrValue.Null;
         }
 
         private static void Merge(
-            SurtrValue[] items,
+            SurtrRawValue* items,
             SurtrValue[] scratch,
             int start,
             int middle,
@@ -149,9 +150,9 @@ namespace Surtr.Runtime.BuiltIns
             {
                 // `<= 0` rather than `< 0` is what makes this stable: on a tie the left run, which
                 // held the earlier element, goes first.
-                bool takeLeft = left < middle && (right >= end || Compare(runtime, comparator, operands, items[left], items[right]) <= 0);
+                bool takeLeft = left < middle && (right >= end || Compare(runtime, comparator, operands, SurtrValue.FromRaw(items[left]), SurtrValue.FromRaw(items[right])) <= 0);
 
-                scratch[next] = takeLeft ? items[left++] : items[right++];
+                scratch[next] = SurtrValue.FromRaw(takeLeft ? items[left++] : items[right++]);
             }
         }
 

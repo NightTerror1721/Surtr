@@ -276,6 +276,9 @@ namespace Surtr.Runtime.Objects
             if (entity is null)
                 return;
 
+            if (entity is ISurtrNativeBufferOwner bufferOwner)
+                bufferOwner.ReleaseBuffer();
+
             Entities[@ref] = null;
             entity.SurtrRef = SurtrValue.NullRef;
             _ages[@ref] = 0;
@@ -389,6 +392,9 @@ namespace Surtr.Runtime.Objects
                 if (!fullCollection && _ages[@ref] > 0)
                     continue;
 
+                if (entity is ISurtrNativeBufferOwner bufferOwner)
+                    bufferOwner.ReleaseBuffer();
+
                 entity.SurtrRef = SurtrValue.NullRef;
                 entities[@ref] = null;
                 _ages[@ref] = 0;
@@ -432,6 +438,18 @@ namespace Surtr.Runtime.Objects
         {
             if (ResourceState.IsDisposed)
                 return;
+
+            // Anything still registered owns no managed leak, but an unmanaged buffer does: the
+            // sweep never ran on these entities (the runtime is going away, not collecting), so
+            // their buffers have to be drained here or they leak with the context.
+            if (Entities is not null)
+            {
+                for (int i = 1; i < _nextId; i++)
+                {
+                    if (Entities[i] is ISurtrNativeBufferOwner bufferOwner)
+                        bufferOwner.ReleaseBuffer();
+                }
+            }
 
             if (_freeIds != null)
             {

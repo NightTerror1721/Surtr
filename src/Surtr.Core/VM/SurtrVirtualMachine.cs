@@ -1620,7 +1620,7 @@ namespace Surtr.VM
                     {
                         var items = array.Items;
                         for (int i = 0; i < length; i++)
-                            items[i] = SurtrValue.FromRaw(elementZero);
+                            items[i] = elementZero;
                     }
 
                     SurtrRef reference = context.EntityRegistry.Register(array, out bool resized);
@@ -1646,7 +1646,7 @@ namespace Surtr.VM
                     {
                         var items = array.Items;
                         for (int i = 0; i < length; i++)
-                            items[i] = SurtrValue.FromRaw(elementZero);
+                            items[i] = elementZero;
                     }
 
                     SurtrRef reference = context.EntityRegistry.Register(array, out bool resized);
@@ -1672,7 +1672,7 @@ namespace Surtr.VM
                     var items = array.Items;
                     sp -= count;
                     for (int i = 0; i < count; i++)
-                        items[i] = SurtrValue.FromRaw(sp[i]);
+                        items[i] = sp[i];
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -1695,12 +1695,9 @@ namespace Surtr.VM
                         throw IndexOutOfRange(index, array.Count, "array");
                     }
 
-                    // Two range checks, not one: the explicit trap above, and the CLR's own on the
-                    // managed buffer, which the JIT cannot elide because it compares against
-                    // Items.Length rather than Count. Removing the second needs Unsafe.Add, which
-                    // netstandard2.1 does not carry without a NuGet dependency a Unity host would
-                    // have to ship as well - so it stays until the target framework moves.
-                    *(sp - 1) = array.Items[index].Raw;
+                    // The unmanaged buffer has no CLR bounds check of its own, so the explicit
+                    // trap above is the only range check ArrGet pays.
+                    *(sp - 1) = array.Items[index];
                     goto Dispatch;
                 }
 
@@ -1717,7 +1714,7 @@ namespace Surtr.VM
                         throw IndexOutOfRange(index, array.Count, "array");
                     }
 
-                    array.Items[index] = SurtrValue.FromRaw(value);
+                    array.Items[index] = value;
                     goto Dispatch;
                 }
 
@@ -1729,14 +1726,14 @@ namespace Surtr.VM
                     // Written out rather than calling Add, so the common case - room already
                     // available - is a store and an increment with no call at all.
                     int count = array.Count;
-                    if (count == array.Items.Length)
+                    if (count == array.ItemsCapacity)
                     {
                         current.IP = ip;
                         _sp = sp;
                         array.EnsureCapacity(count + 1);
                     }
 
-                    array.Items[count] = SurtrValue.FromRaw(value);
+                    array.Items[count] = value;
                     array.Count = count + 1;
                     goto Dispatch;
                 }
@@ -1753,11 +1750,11 @@ namespace Surtr.VM
                         throw EmptyArray();
                     }
 
-                    *(sp - 1) = array.Items[last].Raw;
+                    *(sp - 1) = array.Items[last];
 
                     // Blanked, not merely abandoned: a stale reference past Count would keep an
                     // entity alive the moment anything traced beyond the live prefix.
-                    array.Items[last] = SurtrValue.Null;
+                    array.Items[last] = 0;
                     array.Count = last;
                     goto Dispatch;
                 }
