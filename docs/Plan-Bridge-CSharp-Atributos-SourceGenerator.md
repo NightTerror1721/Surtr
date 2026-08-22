@@ -1,8 +1,13 @@
 # Plan: bridge Surtr <-> C# — atributos, escaneo CLR y source generator
 
-**Estado: DISEÑO EN REVISIÓN (v2).** Nada implementado todavía; este documento se presenta para
-validación antes de escribir código. La red de seguridad de cada fase es `dotnet build Surtr.sln` +
-`dotnet test Surtr.sln`, como en el resto de planes del repo.
+**Estado: IMPLEMENTADO (F1-F12).** El sistema completo está implementado, testeado y documentado.
+La guía de uso es `docs/Guia-Interop-Surtr-Csharp.md`. Todos los puntos del plan se cerraron,
+incluidos los operadores/indexadores, `<=>` vía `IComparable.CompareTo`, genéricos cerrados,
+delegates→closure, virtual/override, nomenclatura por scope, `out`/`ref`/`in`, y los diagnostics del
+generador (warnings `SURTRINTEROP001` + errores `SURTRINTEROP002-004`).
+
+> Histórico del diseño original. Las fases F1-F12 (tabla en §12) quedaron implementadas; ver el
+> historial de commits `docs:`/`feat:` del bridge para el detalle de cada entrega.
 
 ## 1. Contexto y objetivos
 

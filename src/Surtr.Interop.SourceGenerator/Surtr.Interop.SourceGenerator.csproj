@@ -20,4 +20,11 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all" />
   </ItemGroup>
 
+  <!-- The analyzer-release tracking the Roslyn analyzers validate: every rule in SurtrDiagnostics
+       is listed in Unshipped, so RS2008 passes without a NoWarn suppression. -->
+  <ItemGroup>
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
 </Project>

@@ -33,6 +33,13 @@ namespace Surtr.Interop
             => Register(runtime, SurtrReflectionScanner.Scan(typeof(T), DefaultNamingPolicy));
 
         /// <summary>
+        /// Scans and registers one type with an explicit runtime-scope naming policy, overriding
+        /// <see cref="DefaultNamingPolicy"/> at the runtime level of the precedence chain.
+        /// </summary>
+        public static SurtrClass Register<T>(SurtrRuntime runtime, SurtrNamingPolicy policy)
+            => Register(runtime, SurtrReflectionScanner.Scan(typeof(T), policy));
+
+        /// <summary>
         /// Registers a type under a specific module path, overriding the descriptor's own module.
         /// Native types are runtime-global (see <see cref="Register"/>), so "module" here is a naming
         /// scope: the type's full name becomes <c>modulePath:name</c>, which is how Surtr source
@@ -125,6 +132,21 @@ namespace Surtr.Interop
             var descriptors = new NativeTypeDescriptor[types.Length];
             for (int i = 0; i < types.Length; i++)
                 descriptors[i] = SurtrReflectionScanner.Scan(types[i], DefaultNamingPolicy);
+
+            return RegisterAll(runtime, descriptors);
+        }
+
+        /// <summary>
+        /// Scans and registers several types with an explicit runtime-scope naming policy.
+        /// </summary>
+        public static IReadOnlyList<SurtrClass> ScanAndRegister(SurtrRuntime runtime, SurtrNamingPolicy policy, params Type[] types)
+        {
+            if (types is null)
+                throw new ArgumentNullException(nameof(types));
+
+            var descriptors = new NativeTypeDescriptor[types.Length];
+            for (int i = 0; i < types.Length; i++)
+                descriptors[i] = SurtrReflectionScanner.Scan(types[i], policy);
 
             return RegisterAll(runtime, descriptors);
         }

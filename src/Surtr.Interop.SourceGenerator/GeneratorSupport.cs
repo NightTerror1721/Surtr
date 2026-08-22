@@ -154,6 +154,36 @@ namespace Surtr.Interop.SourceGenerator
             return "Nsurtr:native;";
         }
 
+        /// <summary>
+        /// Maps a C# <c>op_*</c> name to the Surtr operator name, or null when it has no Surtr
+        /// equivalent. Mirrors <c>Surtr.Interop.SurtrOperatorMapper.Map</c>.
+        /// </summary>
+        internal static string? MapOperator(string csharpName, int parameterCount, string returnDescriptor)
+        {
+            switch (csharpName)
+            {
+                case "op_Addition": return "op_+";
+                case "op_Subtraction": return parameterCount == 1 ? "op_-u" : "op_-";
+                case "op_Multiply": return "op_*";
+                case "op_Division": return "op_/";
+                case "op_Modulus": return "op_%";
+                case "op_BitwiseAnd": return "op_&";
+                case "op_BitwiseOr": return "op_|";
+                case "op_ExclusiveOr": return "op_^";
+                case "op_LeftShift": return "op_<<";
+                case "op_RightShift": return "op_>>";
+                case "op_UnsignedRightShift": return "op_>>>";
+                case "op_UnaryNegation": return "op_-u";
+                case "op_LogicalNot": return "op_!";
+                case "op_OnesComplement": return "op_~";
+                case "op_Increment": return "op_++";
+                case "op_Decrement": return "op_--";
+                case "op_Equality": return "op_==";
+                case "op_Explicit": return "op_as$" + returnDescriptor;
+                default: return null;
+            }
+        }
+
         internal static AttributeData? FindAttribute(ISymbol symbol, string fullName)
         {
             foreach (var attribute in symbol.GetAttributes())
@@ -163,6 +193,143 @@ namespace Surtr.Interop.SourceGenerator
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Whether a string is a well-formed Surtr descriptor. Mirrors SurtrClassReference's grammar
+        /// so a malformed TypeDescriptor/ReturnDescriptor is caught at compile time rather than at
+        /// registration.
+        /// </summary>
+        internal static bool IsWellFormedDescriptor(string descriptor)
+            => !string.IsNullOrEmpty(descriptor) && SkipDescriptor(descriptor, 0) == descriptor.Length;
+
+        private static int SkipDescriptor(string descriptor, int index)
+        {
+            if (index >= descriptor.Length)
+                return -1;
+
+            switch (descriptor[index])
+            {
+                case 'I':
+                case 'F':
+                case 'B':
+                case 'C':
+                case 'S':
+                case 'R':
+                case 'E':
+                case 'V':
+                    return index + 1;
+
+                case 'A':
+                    return SkipDescriptor(descriptor, index + 1);
+
+                case 'D':
+                {
+                    int afterKey = SkipDescriptor(descriptor, index + 1);
+                    return afterKey < 0 ? -1 : SkipDescriptor(descriptor, afterKey);
+                }
+
+                case 'T':
+                    return SkipList(descriptor, index + 1);
+
+                case 'L':
+                {
+                    int afterList = SkipList(descriptor, index + 1);
+                    return afterList < 0 ? -1 : SkipDescriptor(descriptor, afterList);
+                }
+
+                case 'O':
+                case 'N':
+                {
+                    int afterName = SkipFullName(descriptor, index + 1, out int arity);
+                    if (afterName < 0)
+                        return -1;
+
+                    for (int i = 0; i < arity; i++)
+                    {
+                        afterName = SkipDescriptor(descriptor, afterName);
+                        if (afterName < 0)
+                            return -1;
+                    }
+
+                    return afterName;
+                }
+
+                case 'G':
+                case 'H':
+                    if (index + 1 >= descriptor.Length || descriptor[index + 1] < '0' || descriptor[index + 1] > '9')
+                        return -1;
+                    return index + 2;
+
+                case '?':
+                    if (index + 1 >= descriptor.Length)
+                        return -1;
+                    return descriptor[index + 1] is 'I' or 'F' or 'B' or 'C' ? index + 2 : -1;
+
+                default:
+                    return -1;
+            }
+        }
+
+        private static int SkipFullName(string descriptor, int index, out int arity)
+        {
+            arity = 0;
+
+            while (index < descriptor.Length)
+            {
+                char symbol = descriptor[index];
+
+                if (symbol == ';')
+                    return index + 1;
+
+                if (symbol == '.')
+                {
+                    arity = 0;
+                    index++;
+                    continue;
+                }
+
+                if (symbol == '`')
+                {
+                    index++;
+                    int digits = 0;
+                    while (index < descriptor.Length && descriptor[index] >= '0' && descriptor[index] <= '9')
+                    {
+                        arity = (arity * 10) + (descriptor[index] - '0');
+                        index++;
+                        digits++;
+                    }
+
+                    if (digits == 0)
+                    {
+                        arity = 0;
+                        return -1;
+                    }
+
+                    continue;
+                }
+
+                index++;
+            }
+
+            arity = 0;
+            return -1;
+        }
+
+        private static int SkipList(string descriptor, int index)
+        {
+            if (index >= descriptor.Length || descriptor[index] != '(')
+                return -1;
+
+            index++;
+            while (index < descriptor.Length && descriptor[index] != ')')
+            {
+                index = SkipDescriptor(descriptor, index);
+                if (index < 0)
+                    return -1;
+            }
+
+            return index < descriptor.Length ? index + 1 : -1;
         }
 
         internal static string? GetStringNamed(AttributeData? attribute, string name)

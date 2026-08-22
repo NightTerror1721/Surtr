@@ -16,6 +16,7 @@ namespace Surtr.Interop
         FieldSetter,
         PropertyGetter,
         PropertySetter,
+        DelegateInvoke,
     }
 
     /// <summary>The per-member dispatch record the reflection fallback embeds in a generated shim.</summary>
@@ -27,6 +28,7 @@ namespace Surtr.Interop
         internal bool IsStatic;
         internal SurtrClassReference ResultDescriptor;
         internal SurtrClassReference[] Parameters = Array.Empty<SurtrClassReference>();
+        internal Delegate? DelegateValue;
     }
 
     /// <summary>The statically-reachable table of reflection dispatch records.</summary>
@@ -129,6 +131,20 @@ namespace Surtr.Interop
                     object? value = SurtrMarshaler.ToClr(runtime, args.GetValue(slot.IsStatic ? 0 : 1), parameter.ParameterType, slot.ResultDescriptor);
                     slot.Method!.Invoke(target, new[] { value });
                     return SurtrValue.Null;
+                }
+
+                case ReflectionMemberKind.DelegateInvoke:
+                {
+                    var delegateType = slot.DelegateValue!.GetType();
+                    var invoke = delegateType.GetMethod("Invoke")!;
+                    var parameters = invoke.GetParameters();
+                    var clrArguments = new object?[parameters.Length];
+
+                    for (int i = 0; i < parameters.Length; i++)
+                        clrArguments[i] = SurtrMarshaler.ToClr(runtime, args.GetValue(i), parameters[i].ParameterType, slot.Parameters[i]);
+
+                    object? result = invoke.Invoke(slot.DelegateValue, clrArguments);
+                    return SurtrMarshaler.ToSurtr(runtime, result, slot.ResultDescriptor);
                 }
 
                 default:

@@ -83,10 +83,25 @@ miembro.
 ## AOT / IL2CPP
 
 El camino del generador emite shims estáticos y los enlaza con
-`SurtrNativeEntryPoint.FromFunctionPointer(&shim)` (sin reflection). Requiere
-`<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` en el proyecto consumidor (igual que `Surtr.Stdlib`).
-El fallback por reflexión emite shims con `AssemblyBuilder` y **no es AOT-safe**: úsalo solo donde el
-generador no esté disponible.
+`SurtrNativeEntryPoint.FromFunctionPointer(&shim)` (sin reflection). **Requiere
+`<AllowUnsafeBlocks>true</AllowUnsafeBlocks>` en el proyecto consumidor** (en Unity, la casilla
+"Allow unsafe code" del Assembly Definition donde estén los tipos decorados) — el DLL del generador
+en sí no usa `unsafe` y solo corre en compilación. El fallback por reflexión emite shims con
+`AssemblyBuilder` y **no es AOT-safe**: úsalo solo donde el generador no esté disponible.
+
+## Diagnostics del generador
+
+| Id | Severidad | Situación |
+|---|---|---|
+| `SURTRINTEROP001` | Warning | miembro no expuesto (operador sin equivalente, `ref`/`in`, abstract, indexador multidim, genérico abierto) |
+| `SURTRINTEROP002` | Error | descriptor Surtr mal formado en `TypeDescriptor`/`ReturnDescriptor` |
+| `SURTRINTEROP003` | Error | `TypeArguments` no coincide con la aridad del genérico |
+| `SURTRINTEROP004` | Error | tipo `static` no puede ser un tipo nativo |
+
+## Guía de uso
+
+La guía completa (modos, opciones, semántica, operadores/`<=>`, registro, nomenclatura) está en
+`docs/Guia-Interop-Surtr-Csharp.md`.
 
 ## Decisiones de diseño
 

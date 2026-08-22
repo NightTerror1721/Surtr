@@ -31,7 +31,7 @@ namespace Surtr.Interop.SourceGenerator
                 return;
 
             var compilation = context.Compilation;
-            var typeSymbols = new List<INamedTypeSymbol>();
+            var attributed = new List<INamedTypeSymbol>();
 
             foreach (var candidate in receiver.Candidates)
             {
@@ -40,24 +40,68 @@ namespace Surtr.Interop.SourceGenerator
                     continue;
 
                 if (GeneratorSupport.FindAttribute(symbol, GeneratorSupport.NativeTypeAttribute) is not null)
-                    typeSymbols.Add(symbol);
+                    attributed.Add(symbol);
             }
 
-            if (typeSymbols.Count == 0)
+            if (attributed.Count == 0)
                 return;
 
-            var builder = new StringBuilder();
+            // Expand closed generic forms and report unsupported members as warnings.
+            var typeSymbols = new List<INamedTypeSymbol>();
+            foreach (var type in attributed)
+            {
+                foreach (var expanded in ExpandClosedForms(type, context))
+                    typeSymbols.Add(expanded);
+
+                ValidateType(context, type);
+                ReportWarnings(context, type);
+            }
+
+            context.AddSource("SurtrGenerated.Bindings.g.cs", SourceText.From(EmitBindings(typeSymbols), Encoding.UTF8));
 
             foreach (var type in typeSymbols)
             {
                 var source = EmitType(type);
-                builder.AppendLine(source);
-
                 var hint = "SurtrGenerated." + Sanitize(type.ToDisplayString()) + ".g.cs";
                 context.AddSource(hint, SourceText.From(source, Encoding.UTF8));
             }
+        }
 
-            context.AddSource("SurtrGenerated.Bindings.g.cs", SourceText.From(EmitBindings(typeSymbols), Encoding.UTF8));
+        /// <summary>
+        /// Yields the type symbols to emit: a non-generic type as itself, a generic type once per
+        /// closed form named in its <c>TypeArguments</c>. An open generic with no closed form is
+        /// skipped with a warning.
+        /// </summary>
+        private static IEnumerable<INamedTypeSymbol> ExpandClosedForms(INamedTypeSymbol type, GeneratorExecutionContext context)
+        {
+            if (!type.IsGenericType)
+            {
+                yield return type;
+                yield break;
+            }
+
+            var attribute = GeneratorSupport.FindAttribute(type, GeneratorSupport.NativeTypeAttribute)!;
+            var typeArguments = ReadTypeArguments(attribute);
+
+            if (typeArguments.Count == 0)
+            {
+                context.ReportDiagnostic(Diagnostic.Create(
+                    SurtrDiagnostics.UnsupportedMember,
+                    type.Locations.FirstOrDefault(),
+                    type.Name,
+                    type.ContainingNamespace.ToDisplayString(),
+                    "open generic types are not exposed; add TypeArguments for each closed form"));
+
+                yield break;
+            }
+
+            if (typeArguments.Count != type.Arity)
+            {
+                // Reported as an error by ValidateType; just do not construct the broken form.
+                yield break;
+            }
+
+            yield return type.Construct(typeArguments.ToArray());
         }
 
         private static string EmitBindings(List<INamedTypeSymbol> types)
@@ -93,8 +137,9 @@ namespace Surtr.Interop.SourceGenerator
         {
             var attribute = GeneratorSupport.FindAttribute(type, GeneratorSupport.NativeTypeAttribute)!;
             int policy = GeneratorSupport.GetIntNamed(attribute, "NamingPolicy") ?? GeneratorSupport.PolicyDefault;
-            string name = GeneratorSupport.GetStringNamed(attribute, "Name")
+            string adaptedName = GeneratorSupport.GetStringNamed(attribute, "Name")
                 ?? GeneratorSupport.Apply(type.Name, policy, isMember: false);
+            string name = type.Arity > 0 ? adaptedName + "`" + type.Arity : adaptedName;
             string? module = GeneratorSupport.GetStringNamed(attribute, "Module");
             string fullName = module is null ? name : module + ":" + name;
 
@@ -171,16 +216,24 @@ namespace Surtr.Interop.SourceGenerator
             var methods = new List<IMethodSymbol>();
             var fields = new List<IFieldSymbol>();
             var properties = new List<IPropertySymbol>();
+            var comparisons = new List<IMethodSymbol>();
 
-            foreach (var constructor in type.InstanceConstructors.Where(static c => c.DeclaredAccessibility == Accessibility.Public && !c.IsStatic))
+            foreach (var constructor in type.InstanceConstructors.Where(static c => c.DeclaredAccessibility == Accessibility.Public && !c.IsStatic && !HasRefIn(c)))
                 methods.Add(constructor);
 
             foreach (var method in type.GetMembers().OfType<IMethodSymbol>())
             {
+                if (IsCompareTo(method) && method.DeclaredAccessibility == Accessibility.Public)
+                {
+                    comparisons.Add(method);
+                    continue;
+                }
+
                 if (method.MethodKind == MethodKind.Ordinary
                     && method.DeclaredAccessibility == Accessibility.Public
-                    && GeneratorSupport.FindAttribute(method, GeneratorSupport.NativeIgnoreAttribute) is null
-                    && (GeneratorSupport.FindAttribute(method, GeneratorSupport.NativeMethodAttribute) is { } m && !IsExposeFalse(m) ? true : true))
+                    && !method.IsAbstract
+                    && !HasRefIn(method)
+                    && GeneratorSupport.FindAttribute(method, GeneratorSupport.NativeIgnoreAttribute) is null)
                 {
                     methods.Add(method);
                 }
@@ -212,11 +265,24 @@ namespace Surtr.Interop.SourceGenerator
             foreach (var method in methods)
                 descriptors.Add(EmitMethod(builder, type, method, policy, indent));
 
+            foreach (var comparison in comparisons)
+                descriptors.Add(EmitComparison(builder, type, comparison, policy, indent));
+
             foreach (var field in fields)
                 descriptors.Add(EmitField(builder, type, field, policy, indent));
 
             foreach (var property in properties)
                 descriptors.Add(EmitProperty(builder, type, property, policy, indent));
+
+            foreach (var indexer in type.GetMembers().OfType<IPropertySymbol>().Where(static p => p.IsIndexer && p.DeclaredAccessibility == Accessibility.Public))
+                descriptors.AddRange(EmitIndexer(builder, type, indexer, policy, indent));
+
+            foreach (var op in type.GetMembers().OfType<IMethodSymbol>().Where(static m => m.MethodKind == MethodKind.UserDefinedOperator && m.DeclaredAccessibility == Accessibility.Public))
+            {
+                var emitted = EmitOperator(builder, type, op, policy, indent);
+                if (emitted is not null)
+                    descriptors.Add(emitted);
+            }
 
             EmitRegistration(builder, type, policy, descriptors, indent);
         }
@@ -256,6 +322,8 @@ namespace Surtr.Interop.SourceGenerator
             descriptor.Append("new NativeMethodDescriptor { Name = \"" + name + "\"");
             descriptor.Append(", IsStatic = " + (method.IsStatic ? "true" : "false"));
             descriptor.Append(", IsConstructor = " + (method.MethodKind == MethodKind.Constructor ? "true" : "false"));
+            descriptor.Append(", IsVirtual = " + (method.IsVirtual ? "true" : "false"));
+            descriptor.Append(", IsOverride = " + (method.IsOverride ? "true" : "false"));
             descriptor.Append(", ReturnDescriptor = \"" + returnDescriptor + "\"");
             descriptor.Append(", Parameters = new NativeParameterDescriptor[] { " + string.Join(", ", parameters) + " }");
             descriptor.Append(", EntryPoint = SurtrNativeEntryPoint.FromFunctionPointer(&" + shimName + ")");
@@ -441,10 +509,144 @@ namespace Surtr.Interop.SourceGenerator
             return "new NativePropertyDescriptor { Name = \"" + name + "\", IsStatic = " + (isStatic ? "true" : "false") + ", HasGetter = " + (hasGetter ? "true" : "false") + ", HasSetter = " + (hasSetter ? "true" : "false") + ", TypeDescriptor = \"" + typeDescriptor + "\", Getter = " + (hasGetter ? "SurtrNativeEntryPoint.FromFunctionPointer(&" + getterShim + ")" : "default") + ", Setter = " + (hasSetter ? "SurtrNativeEntryPoint.FromFunctionPointer(&" + setterShim + ")" : "default") + " }";
         }
 
+        private static string? EmitOperator(StringBuilder builder, INamedTypeSymbol type, IMethodSymbol method, int policy, string indent)
+        {
+            var attribute = GeneratorSupport.FindAttribute(method, GeneratorSupport.NativeMethodAttribute);
+            string returnDescriptor = GeneratorSupport.GetStringNamed(attribute, "ReturnDescriptor") ?? GeneratorSupport.MapType(method.ReturnType);
+
+            string? operatorName = GeneratorSupport.MapOperator(method.Name, method.Parameters.Length, returnDescriptor);
+            if (operatorName is null)
+                return null; // unmapped -> a warning is reported by ReportWarnings
+
+            string shimName = "__SurtrInvoke_" + type.Name + "_" + method.Name + "_" + method.Parameters.Length;
+            string typeName = type.ToDisplayString();
+
+            builder.AppendLine(indent + GeneratedCodeAttribute);
+            builder.AppendLine(indent + "private static SurtrValue " + shimName + "(SurtrCallArguments args)");
+            builder.AppendLine(indent + "{");
+
+            var arguments = new List<string>();
+            int argIndex = 0;
+            foreach (var parameter in method.Parameters)
+            {
+                builder.AppendLine(indent + "    var " + parameter.Name + " = " + ToClrExpression(parameter.Type, argIndex) + ";");
+                arguments.Add(parameter.Name);
+                argIndex++;
+            }
+
+            string call = OperatorExpression(method, arguments, typeName);
+            builder.AppendLine(indent + "    return " + (method.ReturnsVoid ? "SurtrValue.Null" : ToSurtrExpression(method.ReturnType, call)) + ";");
+            builder.AppendLine(indent + "}");
+            builder.AppendLine();
+
+            var parameters = new List<string>();
+            foreach (var parameter in method.Parameters)
+            {
+                string paramName = GeneratorSupport.GetStringNamed(GeneratorSupport.FindAttribute(parameter, GeneratorSupport.NativeParameterAttribute), "Name")
+                    ?? GeneratorSupport.Apply(parameter.Name, policy, isMember: true);
+                string paramDescriptor = GeneratorSupport.GetStringNamed(GeneratorSupport.FindAttribute(parameter, GeneratorSupport.NativeParameterAttribute), "TypeDescriptor")
+                    ?? GeneratorSupport.MapType(parameter.Type);
+                parameters.Add("new NativeParameterDescriptor { Name = \"" + paramName + "\", TypeDescriptor = \"" + paramDescriptor + "\" }");
+            }
+
+            return "new NativeMethodDescriptor { Name = \"" + operatorName + "\", IsStatic = true, ReturnDescriptor = \"" + returnDescriptor + "\", Parameters = new NativeParameterDescriptor[] { " + string.Join(", ", parameters) + " }, EntryPoint = SurtrNativeEntryPoint.FromFunctionPointer(&" + shimName + ") }";
+        }
+
+        private static IEnumerable<string> EmitIndexer(StringBuilder builder, INamedTypeSymbol type, IPropertySymbol indexer, int policy, string indent)
+        {
+            var result = new List<string>();
+
+            if (indexer.Parameters.Length != 1)
+                return result; // Surtr's operator[] is one-dimensional
+
+            string typeName = type.ToDisplayString();
+            string selfDescriptor = GeneratorSupport.MapType(type);
+            string elementDescriptor = GeneratorSupport.MapType(indexer.Type);
+            var indexParameter = indexer.Parameters[0];
+            string indexDescriptor = GeneratorSupport.MapType(indexParameter.Type);
+            string indexName = indexParameter.Name;
+
+            if (indexer.GetMethod is { DeclaredAccessibility: Accessibility.Public })
+            {
+                string shimName = "__SurtrIndexGet_" + type.Name;
+                builder.AppendLine(indent + GeneratedCodeAttribute);
+                builder.AppendLine(indent + "private static SurtrValue " + shimName + "(SurtrCallArguments args)");
+                builder.AppendLine(indent + "{");
+                builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
+                builder.AppendLine(indent + "    var " + indexName + " = " + ToClrExpression(indexParameter.Type, 1) + ";");
+                builder.AppendLine(indent + "    return " + ToSurtrExpression(indexer.Type, "__target[" + indexName + "]") + ";");
+                builder.AppendLine(indent + "}");
+                builder.AppendLine();
+
+                result.Add("new NativeMethodDescriptor { Name = \"op_[]\", IsStatic = true, ReturnDescriptor = \"" + elementDescriptor + "\", Parameters = new NativeParameterDescriptor[] { new NativeParameterDescriptor { Name = \"self\", TypeDescriptor = \"" + selfDescriptor + "\" }, new NativeParameterDescriptor { Name = \"" + indexName + "\", TypeDescriptor = \"" + indexDescriptor + "\" } }, EntryPoint = SurtrNativeEntryPoint.FromFunctionPointer(&" + shimName + ") }");
+            }
+
+            if (indexer.SetMethod is { DeclaredAccessibility: Accessibility.Public })
+            {
+                string shimName = "__SurtrIndexSet_" + type.Name;
+                builder.AppendLine(indent + GeneratedCodeAttribute);
+                builder.AppendLine(indent + "private static SurtrValue " + shimName + "(SurtrCallArguments args)");
+                builder.AppendLine(indent + "{");
+                builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
+                builder.AppendLine(indent + "    var " + indexName + " = " + ToClrExpression(indexParameter.Type, 1) + ";");
+                builder.AppendLine(indent + "    var __value = " + ToClrExpression(indexer.Type, 2) + ";");
+                builder.AppendLine(indent + "    __target[" + indexName + "] = __value;");
+                builder.AppendLine(indent + "    return SurtrValue.Null;");
+                builder.AppendLine(indent + "}");
+                builder.AppendLine();
+
+                result.Add("new NativeMethodDescriptor { Name = \"op_[]\", IsStatic = true, ReturnDescriptor = \"V\", Parameters = new NativeParameterDescriptor[] { new NativeParameterDescriptor { Name = \"self\", TypeDescriptor = \"" + selfDescriptor + "\" }, new NativeParameterDescriptor { Name = \"" + indexName + "\", TypeDescriptor = \"" + indexDescriptor + "\" }, new NativeParameterDescriptor { Name = \"value\", TypeDescriptor = \"" + elementDescriptor + "\" } }, EntryPoint = SurtrNativeEntryPoint.FromFunctionPointer(&" + shimName + ") }");
+            }
+
+            return result;
+        }
+
+        private static string EmitComparison(StringBuilder builder, INamedTypeSymbol type, IMethodSymbol method, int policy, string indent)
+        {
+            string typeName = type.ToDisplayString();
+            string shimName = "__SurtrComparison_" + type.Name;
+            var parameter = method.Parameters[0];
+            string parameterDescriptor = GeneratorSupport.MapType(parameter.Type);
+            string parameterName = GeneratorSupport.Apply(parameter.Name, policy, isMember: true);
+
+            builder.AppendLine(indent + GeneratedCodeAttribute);
+            builder.AppendLine(indent + "private static SurtrValue " + shimName + "(SurtrCallArguments args)");
+            builder.AppendLine(indent + "{");
+            builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
+            builder.AppendLine(indent + "    var " + parameter.Name + " = " + ToClrExpression(parameter.Type, 1) + ";");
+            builder.AppendLine(indent + "    return SurtrValue.CreateInt((int)(__target.CompareTo(" + parameter.Name + ")));");
+            builder.AppendLine(indent + "}");
+            builder.AppendLine();
+
+            return "new NativeMethodDescriptor { Name = \"op_<=\u003e\", IsStatic = false, ReturnDescriptor = \"I\", Parameters = new NativeParameterDescriptor[] { new NativeParameterDescriptor { Name = \"" + parameterName + "\", TypeDescriptor = \"" + parameterDescriptor + "\" } }, EntryPoint = SurtrNativeEntryPoint.FromFunctionPointer(&" + shimName + ") }";
+        }
+
+        private static bool IsCompareTo(IMethodSymbol method)
+            => method.Name == "CompareTo"
+               && !method.IsStatic
+               && method.Parameters.Length == 1
+               && method.ReturnType.SpecialType == SpecialType.System_Int32
+               && ImplementsComparable(method.ContainingType);
+
+        private static bool ImplementsComparable(INamedTypeSymbol type)
+        {
+            foreach (var interfaceType in type.AllInterfaces)
+            {
+                if (interfaceType.ToDisplayString() == "System.IComparable"
+                    || (interfaceType.IsGenericType && interfaceType.OriginalDefinition.ToDisplayString() == "System.IComparable<T>"))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private static void EmitRegistration(StringBuilder builder, INamedTypeSymbol type, int policy, List<string> descriptors, string indent)
         {
             var attribute = GeneratorSupport.FindAttribute(type, GeneratorSupport.NativeTypeAttribute)!;
-            string name = GeneratorSupport.GetStringNamed(attribute, "Name") ?? GeneratorSupport.Apply(type.Name, policy, isMember: false);
+            string adaptedName = GeneratorSupport.GetStringNamed(attribute, "Name") ?? GeneratorSupport.Apply(type.Name, policy, isMember: false);
+            string name = type.Arity > 0 ? adaptedName + "`" + type.Arity : adaptedName;
             string? module = GeneratorSupport.GetStringNamed(attribute, "Module");
             string fullName = module is null ? name : module + ":" + name;
             string kind = type.TypeKind == TypeKind.Struct ? "NativeTypeKind.Struct" : "NativeTypeKind.Class";
@@ -457,6 +659,10 @@ namespace Surtr.Interop.SourceGenerator
             builder.AppendLine(indent + "        FullName = \"" + fullName + "\",");
             builder.AppendLine(indent + "        Name = \"" + name + "\",");
             builder.AppendLine(indent + "        Kind = " + kind + ",");
+
+            if (type.Arity > 0)
+                builder.AppendLine(indent + "        TypeArguments = new string[] { " + string.Join(", ", type.TypeArguments.Select(static a => "\"" + GeneratorSupport.MapType(a) + "\"")) + " },");
+
             builder.AppendLine(indent + "        Members = new NativeMemberDescriptor[] { " + string.Join(", ", descriptors) + " },");
             builder.AppendLine(indent + "    };");
             builder.AppendLine(indent + "    return SurtrBridge.Register(runtime, d);");
@@ -505,7 +711,7 @@ namespace Surtr.Interop.SourceGenerator
         }
 
         private static string OutDeclaration(IParameterSymbol parameter)
-            => parameter.Type.ToDisplayString() + " " + parameter.Name;
+            => parameter.Type.ToDisplayString() + " " + parameter.Name + ";";
 
         private static string ToClrExpression(ITypeSymbol type, int index)
         {
@@ -530,6 +736,9 @@ namespace Surtr.Interop.SourceGenerator
 
             if (type.TypeKind == TypeKind.Enum)
                 return "SurtrEnums.ToClr<" + type.ToDisplayString() + ">(args.Runtime, args.GetValue(" + index + "))";
+
+            if (type.TypeKind == TypeKind.Delegate)
+                return "(" + type.ToDisplayString() + ")SurtrDelegateMarshal.ToClr(args.Runtime, args.GetValue(" + index + "), typeof(" + type.ToDisplayString() + "))";
 
             return "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(" + index + "))!.TargetAs<" + type.ToDisplayString() + ">()!";
         }
@@ -569,6 +778,9 @@ namespace Surtr.Interop.SourceGenerator
             if (type.TypeKind == TypeKind.Enum)
                 return "SurtrEnums.ToSurtr(args.Runtime, " + expression + ")";
 
+            if (type.TypeKind == TypeKind.Delegate)
+                return "SurtrDelegateMarshal.ToSurtr(args.Runtime, " + expression + ", SurtrClassReference.FromDescriptor(\"" + GeneratorSupport.MapType(type) + "\"))";
+
             return "SurtrValue.CreateReference(args.Runtime.WrapNative(" + expression + ").GetSurtrReference())";
         }
 
@@ -582,6 +794,178 @@ namespace Surtr.Interop.SourceGenerator
 
             return false;
         }
+
+        /// <summary>Reports warnings for members the generator deliberately leaves out.</summary>
+        /// <summary>Reports errors for genuinely invalid registrations: static types, arity mismatches, and malformed descriptors.</summary>
+        private static void ValidateType(GeneratorExecutionContext context, INamedTypeSymbol type)
+        {
+            string container = type.ContainingNamespace.ToDisplayString();
+            var location = type.Locations.FirstOrDefault();
+
+            if (type.IsStatic)
+            {
+                context.ReportDiagnostic(Diagnostic.Create(SurtrDiagnostics.StaticType, location, type.Name));
+                return;
+            }
+
+            var attribute = GeneratorSupport.FindAttribute(type, GeneratorSupport.NativeTypeAttribute);
+            if (attribute is not null && type.IsGenericType)
+            {
+                var typeArguments = ReadTypeArguments(attribute);
+                if (typeArguments.Count > 0 && typeArguments.Count != type.Arity)
+                    context.ReportDiagnostic(Diagnostic.Create(SurtrDiagnostics.ArityMismatch, location, type.Name, typeArguments.Count, type.Arity));
+            }
+
+            foreach (var member in type.GetMembers())
+            {
+                var attributeString = GeneratorSupport.GetStringNamed(
+                    GeneratorSupport.FindAttribute(member, GeneratorSupport.NativeMethodAttribute),
+                    "ReturnDescriptor")
+                    ?? GeneratorSupport.GetStringNamed(GeneratorSupport.FindAttribute(member, GeneratorSupport.NativeFieldAttribute), "TypeDescriptor")
+                    ?? GeneratorSupport.GetStringNamed(GeneratorSupport.FindAttribute(member, GeneratorSupport.NativePropertyAttribute), "TypeDescriptor");
+
+                if (attributeString is not null && !GeneratorSupport.IsWellFormedDescriptor(attributeString))
+                    context.ReportDiagnostic(Diagnostic.Create(SurtrDiagnostics.InvalidDescriptor, member.Locations.FirstOrDefault(), member.Name, container, attributeString));
+
+                if (member is IMethodSymbol method)
+                {
+                    foreach (var parameter in method.Parameters)
+                    {
+                        var parameterDescriptor = GeneratorSupport.GetStringNamed(
+                            GeneratorSupport.FindAttribute(parameter, GeneratorSupport.NativeParameterAttribute),
+                            "TypeDescriptor");
+
+                        if (parameterDescriptor is not null && !GeneratorSupport.IsWellFormedDescriptor(parameterDescriptor))
+                            context.ReportDiagnostic(Diagnostic.Create(SurtrDiagnostics.InvalidDescriptor, parameter.Locations.FirstOrDefault(), method.Name, container, parameterDescriptor));
+                    }
+                }
+            }
+        }
+
+        private static List<ITypeSymbol> ReadTypeArguments(AttributeData attribute)
+        {
+            var typeArguments = new List<ITypeSymbol>();
+
+            foreach (var pair in attribute.NamedArguments)
+            {
+                if (pair.Key != "TypeArguments" || pair.Value.Kind != TypedConstantKind.Array)
+                    continue;
+
+                foreach (var value in pair.Value.Values)
+                {
+                    if (value.Value is ITypeSymbol argument)
+                        typeArguments.Add(argument);
+                }
+            }
+
+            return typeArguments;
+        }
+
+        private static void ReportWarnings(GeneratorExecutionContext context, INamedTypeSymbol type)
+        {
+            string container = type.ContainingNamespace.ToDisplayString();
+
+            foreach (var method in type.GetMembers().OfType<IMethodSymbol>())
+            {
+                if (method.DeclaredAccessibility != Accessibility.Public)
+                    continue;
+
+                if (method.MethodKind == MethodKind.UserDefinedOperator
+                    && GeneratorSupport.MapOperator(method.Name, method.Parameters.Length, GeneratorSupport.MapType(method.ReturnType)) is null)
+                {
+                    context.ReportDiagnostic(Diagnostic.Create(
+                        SurtrDiagnostics.UnsupportedMember,
+                        method.Locations.FirstOrDefault(),
+                        method.Name,
+                        container,
+                        "no Surtr operator has an equivalent"));
+                }
+
+                if (method.MethodKind is MethodKind.Ordinary or MethodKind.Constructor && HasRefIn(method))
+                {
+                    context.ReportDiagnostic(Diagnostic.Create(
+                        SurtrDiagnostics.UnsupportedMember,
+                        method.Locations.FirstOrDefault(),
+                        method.Name,
+                        container,
+                        "ref/in parameters have no Surtr equivalent"));
+                }
+
+                if (method.IsAbstract)
+                {
+                    context.ReportDiagnostic(Diagnostic.Create(
+                        SurtrDiagnostics.UnsupportedMember,
+                        method.Locations.FirstOrDefault(),
+                        method.Name,
+                        container,
+                        "abstract methods have no host body to expose"));
+                }
+            }
+
+            foreach (var indexer in type.GetMembers().OfType<IPropertySymbol>())
+            {
+                if (indexer.IsIndexer && indexer.Parameters.Length != 1)
+                {
+                    context.ReportDiagnostic(Diagnostic.Create(
+                        SurtrDiagnostics.UnsupportedMember,
+                        indexer.Locations.FirstOrDefault(),
+                        indexer.Name,
+                        container,
+                        "multi-dimensional indexers have no Surtr operator[] equivalent"));
+                }
+            }
+        }
+
+        /// <summary>
+        /// Renders the C# expression a user-defined operator evaluates to, since an operator method
+        /// cannot be called by its CLR name in source.
+        /// </summary>
+        private static string OperatorExpression(IMethodSymbol method, List<string> arguments, string typeName)
+        {
+            string binary = "(" + arguments[0] + " " + OperatorToken(method.Name) + " " + arguments[1] + ")";
+            string unary = "(" + OperatorToken(method.Name) + arguments[0] + ")";
+
+            switch (method.Name)
+            {
+                case "op_Explicit":
+                    return "(" + method.ReturnType.ToDisplayString() + ")(" + arguments[0] + ")";
+
+                case "op_UnaryNegation":
+                case "op_LogicalNot":
+                case "op_OnesComplement":
+                case "op_Increment":
+                case "op_Decrement":
+                    return unary;
+
+                default:
+                    return binary;
+            }
+        }
+
+        private static string OperatorToken(string csharpName) => csharpName switch
+        {
+            "op_Addition" => "+",
+            "op_Subtraction" => "-",
+            "op_Multiply" => "*",
+            "op_Division" => "/",
+            "op_Modulus" => "%",
+            "op_BitwiseAnd" => "&",
+            "op_BitwiseOr" => "|",
+            "op_ExclusiveOr" => "^",
+            "op_LeftShift" => "<<",
+            "op_RightShift" => ">>",
+            "op_UnsignedRightShift" => ">>>",
+            "op_UnaryNegation" => "-",
+            "op_LogicalNot" => "!",
+            "op_OnesComplement" => "~",
+            "op_Increment" => "++",
+            "op_Decrement" => "--",
+            "op_Equality" => "==",
+            _ => "+",
+        };
+
+        private static bool HasRefIn(IMethodSymbol method)
+            => method.Parameters.Any(static p => p.RefKind == RefKind.Ref || p.RefKind == RefKind.In);
 
         private static string Sanitize(string name)
         {

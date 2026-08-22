@@ -49,7 +49,7 @@ namespace Surtr.Interop
 
             if (type.IsEnum)
             {
-                var attribute = type.GetCustomAttribute<SurtrNativeTypeAttribute>();
+                var attribute = TypeAttribute(type);
                 return SurtrClassReference.Native(attribute is null ? type.Name : FullNameOf(type, attribute, policy));
             }
 
@@ -59,11 +59,23 @@ namespace Surtr.Interop
                 return MapClosure(invoke, policy);
             }
 
-            var typeAttribute = type.GetCustomAttribute<SurtrNativeTypeAttribute>();
+            var typeAttribute = TypeAttribute(type);
             if (typeAttribute is not null)
                 return SurtrClassReference.Native(FullNameOf(type, typeAttribute, policy));
 
             return SurtrClassReference.Native("surtr:native");
+        }
+
+        /// <summary>The type's own <see cref="SurtrNativeTypeAttribute"/>, without inherited ones.</summary>
+        private static SurtrNativeTypeAttribute? TypeAttribute(Type type)
+        {
+            foreach (var attribute in type.GetCustomAttributes(typeof(SurtrNativeTypeAttribute), inherit: false))
+            {
+                if (attribute is SurtrNativeTypeAttribute typed)
+                    return typed;
+            }
+
+            return null;
         }
 
         /// <summary>

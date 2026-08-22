@@ -30,6 +30,16 @@ namespace Sample
         public int Count;
 
         public string Label { get; set; } = ""x"";
+
+        public static Calculator operator +(Calculator a, Calculator b) => a;
+
+        public static bool operator true(Calculator a) => true;
+
+        public static bool operator false(Calculator a) => false;
+
+        public void AddRef(ref int x) { }
+
+        public bool TryGet(out int value) { value = 42; return true; }
     }
 
     [SurtrNativeType]
@@ -112,6 +122,83 @@ namespace Sample
             var all = string.Join("\n", result.Results.SelectMany(static r => r.GeneratedSources).Select(static g => g.SourceText.ToString()));
             Assert.Contains("SurtrNativeEntryPoint.FromFunctionPointer", all);
             Assert.Contains("SurtrBridge.Register", all);
+        }
+
+        [Fact]
+        public void Generator_MapsOperatorsAndFoldsOut()
+        {
+            RunGenerator(out var result);
+
+            var all = string.Join("\n", result.Results.SelectMany(static r => r.GeneratedSources).Select(static g => g.SourceText.ToString()));
+            Assert.Contains("\"op_+\"", all);
+            Assert.Contains("T(BI)", all); // TryGet's folded return: (bool, int)
+        }
+
+        [Fact]
+        public void Generator_ReportsWarningsForUnsupportedMembers()
+        {
+            RunGenerator(out var result);
+
+            var diagnostics = result.Diagnostics
+                .Where(static d => d.Id == "SURTRINTEROP001")
+                .ToList();
+
+            Assert.Contains(diagnostics, static d => d.GetMessage().Contains("op_True"));
+            Assert.Contains(diagnostics, static d => d.GetMessage().Contains("AddRef"));
+        }
+
+        private const string InvalidSource = @"
+using Surtr.Interop.Attributes;
+
+namespace Sample
+{
+    [SurtrNativeType]
+    public class Broken
+    {
+        [SurtrNativeField(TypeDescriptor = ""NOT_A_DESCRIPTOR"")]
+        public int X;
+
+        public int Bad([SurtrNativeParameter(TypeDescriptor = ""X"")] int p) => p;
+    }
+
+    [SurtrNativeType(TypeArguments = new[] { typeof(int) })]
+    public class WrongArity<T, U>
+    {
+    }
+
+    [SurtrNativeType]
+    public static class StaticOnly
+    {
+        public static int Value;
+    }
+}
+";
+
+        [Fact]
+        public void Generator_ReportsErrorsForInvalidConfigurations()
+        {
+            var references = AppDomain.CurrentDomain.GetAssemblies()
+                .Where(static a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location))
+                .Select(static a => (MetadataReference)MetadataReference.CreateFromFile(a.Location))
+                .ToList();
+            references.Add(MetadataReference.CreateFromFile(typeof(Surtr.Runtime.SurtrRuntime).Assembly.Location));
+            references.Add(MetadataReference.CreateFromFile(typeof(Surtr.Interop.SurtrBridge).Assembly.Location));
+            references.Add(MetadataReference.CreateFromFile(typeof(Surtr.Interop.Attributes.SurtrNativeTypeAttribute).Assembly.Location));
+
+            var syntaxTree = CSharpSyntaxTree.ParseText(InvalidSource);
+            var compilation = CSharpCompilation.Create(
+                "Sample",
+                new[] { syntaxTree },
+                references,
+                new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true));
+
+            GeneratorDriver driver = CSharpGeneratorDriver.Create(new SurtrSourceGenerator());
+            var output = driver.RunGeneratorsAndUpdateCompilation(compilation, out _, out _);
+            var diagnostics = output.GetRunResult().Diagnostics.ToList();
+
+            Assert.Contains(diagnostics, static d => d.Id == "SURTRINTEROP002"); // invalid descriptor
+            Assert.Contains(diagnostics, static d => d.Id == "SURTRINTEROP003"); // arity mismatch
+            Assert.Contains(diagnostics, static d => d.Id == "SURTRINTEROP004"); // static type
         }
     }
 }

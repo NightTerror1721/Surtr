@@ -21,6 +21,9 @@ namespace Surtr.Interop
             if (value is null)
                 return SurtrValue.Null;
 
+            if (value is Delegate delegateValue)
+                return SurtrDelegateMarshal.ToSurtr(runtime, delegateValue, descriptor);
+
             var code = descriptor.TypeCode;
 
             switch (code)
@@ -70,6 +73,9 @@ namespace Surtr.Interop
         {
             if (value.IsNullReference)
                 return null;
+
+            if (typeof(Delegate).IsAssignableFrom(clrType) && clrType != typeof(Delegate) && clrType != typeof(MulticastDelegate))
+                return SurtrDelegateMarshal.ToClr(runtime, value, clrType);
 
             if (value.IsReference)
             {

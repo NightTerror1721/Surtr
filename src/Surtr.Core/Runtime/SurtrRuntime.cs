@@ -1185,8 +1185,9 @@ namespace Surtr.Runtime
         /// </remarks>
         /// <param name="fullName">The name its descriptor carries, for example <c>UnityEngine:GameObject</c>.</param>
         /// <param name="baseClass">The native class it extends, if any.</param>
+        /// <param name="typeArguments">The descriptors of a closed generic construction, if any.</param>
         /// <exception cref="InvalidOperationException">A native class with that full name is already declared.</exception>
-        public SurtrClass DefineNativeClass(string fullName, SurtrClass? baseClass = null)
+        public SurtrClass DefineNativeClass(string fullName, SurtrClass? baseClass = null, SurtrClassReference[]? typeArguments = null)
         {
             if (_context.NativeClasses.ContainsKey(fullName))
                 throw new InvalidOperationException($"A native class named '{fullName}' is already declared.");
@@ -1194,7 +1195,9 @@ namespace Surtr.Runtime
             if (baseClass is not null && baseClass.TypeCode != SurtrValueTypeCode.Native)
                 throw new ArgumentException($"'{baseClass.Name}' is not a native class.", nameof(baseClass));
 
-            var reference = SurtrClassReference.Native(fullName);
+            var reference = typeArguments is null || typeArguments.Length == 0
+                ? SurtrClassReference.Native(fullName)
+                : SurtrClassReference.ConstructedNative(fullName, typeArguments);
             SurtrClassReference.TrySplitFullName(fullName, out _, out string typePath);
 
             var declared = new SurtrClass(
@@ -1226,13 +1229,16 @@ namespace Surtr.Runtime
         /// <see cref="FinishNativeClass"/> links the class.
         /// </remarks>
         /// <param name="fullName">The name its descriptor carries, for example <c>Game:LogLevel</c>.</param>
+        /// <param name="typeArguments">The descriptors of a closed generic construction, if any.</param>
         /// <exception cref="InvalidOperationException">A native class with that full name is already declared.</exception>
-        public SurtrClass DefineNativeEnum(string fullName)
+        public SurtrClass DefineNativeEnum(string fullName, SurtrClassReference[]? typeArguments = null)
         {
             if (_context.NativeClasses.ContainsKey(fullName))
                 throw new InvalidOperationException($"A native class named '{fullName}' is already declared.");
 
-            var reference = SurtrClassReference.Native(fullName);
+            var reference = typeArguments is null || typeArguments.Length == 0
+                ? SurtrClassReference.Native(fullName)
+                : SurtrClassReference.ConstructedNative(fullName, typeArguments);
             SurtrClassReference.TrySplitFullName(fullName, out _, out string typePath);
 
             var declared = new SurtrClass(

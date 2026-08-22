@@ -40,7 +40,7 @@ namespace Surtr.Interop
         {
             SurtrClass? baseClass = ResolveBase(runtime, descriptor);
 
-            var declared = runtime.DefineNativeClass(descriptor.FullName, baseClass);
+            var declared = runtime.DefineNativeClass(descriptor.FullName, baseClass, TypeArguments(descriptor));
 
             foreach (var member in descriptor.Members)
                 AddMember(runtime, declared, member);
@@ -51,7 +51,7 @@ namespace Surtr.Interop
 
         private static SurtrClass RegisterEnum(SurtrRuntime runtime, NativeTypeDescriptor descriptor)
         {
-            var declared = runtime.DefineNativeEnum(descriptor.FullName);
+            var declared = runtime.DefineNativeEnum(descriptor.FullName, TypeArguments(descriptor));
 
             Type enumType = typeof(void);
             var entries = new List<KeyValuePair<object, SurtrRef>>(descriptor.EnumCases.Length);
@@ -85,6 +85,18 @@ namespace Surtr.Interop
                     $"Base type '{descriptor.BaseType}' of '{descriptor.FullName}' is not registered; register base types first.");
 
             return baseClass;
+        }
+
+        private static SurtrClassReference[]? TypeArguments(NativeTypeDescriptor descriptor)
+        {
+            if (descriptor.TypeArguments is null || descriptor.TypeArguments.Length == 0)
+                return null;
+
+            var arguments = new SurtrClassReference[descriptor.TypeArguments.Length];
+            for (int i = 0; i < arguments.Length; i++)
+                arguments[i] = SurtrClassReference.FromDescriptor(descriptor.TypeArguments[i]);
+
+            return arguments;
         }
 
         private static void AddMember(SurtrRuntime runtime, SurtrClass declared, NativeMemberDescriptor member)
@@ -134,7 +146,7 @@ namespace Surtr.Interop
                 method.Name,
                 method.IsVirtual ? SurtrMethodDispatch.Virtual : SurtrMethodDispatch.Direct,
                 method.IsConstructor ? SurtrMethodRole.Constructor : SurtrMethodRole.Normal,
-                isOverride: false,
+                isOverride: method.IsOverride,
                 returnType,
                 parameters.ToArray(),
                 method.IsStatic,

@@ -22,22 +22,31 @@ namespace Surtr.Interop
             if (type is null)
                 throw new ArgumentNullException(nameof(type));
 
-            var attribute = type.GetCustomAttribute<SurtrNativeTypeAttribute>()
+            var attribute = TypeAttribute(type)
                 ?? throw new InvalidOperationException($"'{type.FullName}' is not marked [SurtrNativeType].");
 
             var effectivePolicy = attribute.NamingPolicy ?? scopePolicy;
-            string name = attribute.Name ?? SurtrNaming.Apply(type.Name, effectivePolicy, SurtrNameKind.Type);
+
+            string stripped = StripArity(type.Name);
+            string adaptedName = attribute.Name ?? SurtrNaming.Apply(stripped, effectivePolicy, SurtrNameKind.Type);
+            string mangledName = type.IsGenericType
+                ? SurtrClassReference.MangleArity(adaptedName, type.GetGenericArguments().Length)
+                : adaptedName;
+
             string? module = attribute.Module;
-            string fullName = module is null ? name : module + ":" + name;
+            string fullName = module is null ? mangledName : module + ":" + mangledName;
 
             var descriptor = new NativeTypeDescriptor
             {
                 FullName = fullName,
                 Module = module,
-                Name = name,
+                Name = mangledName,
                 Description = attribute.Description,
                 Kind = type.IsEnum ? NativeTypeKind.Enum : type.IsValueType ? NativeTypeKind.Struct : NativeTypeKind.Class,
                 BaseType = GetBaseTypeDescriptor(type, effectivePolicy),
+                TypeArguments = type.IsGenericType
+                    ? type.GetGenericArguments().Select(t => SurtrTypeMapper.Map(t, effectivePolicy).Descriptor).ToArray()
+                    : Array.Empty<string>(),
             };
 
             if (descriptor.Kind == NativeTypeKind.Enum)
@@ -47,8 +56,19 @@ namespace Surtr.Interop
                 return descriptor;
             }
 
-            descriptor.Members = ScanMembers(type, effectivePolicy);
+            descriptor.Members = ScanMembers(type, effectivePolicy, SurtrClassReference.Native(fullName));
             return descriptor;
+        }
+
+        private static SurtrNativeTypeAttribute? TypeAttribute(Type type)
+        {
+            foreach (var attribute in type.GetCustomAttributes(typeof(SurtrNativeTypeAttribute), inherit: false))
+            {
+                if (attribute is SurtrNativeTypeAttribute typed)
+                    return typed;
+            }
+
+            return null;
         }
 
         private static string? GetBaseTypeDescriptor(Type type, SurtrNamingPolicy policy)
@@ -57,11 +77,11 @@ namespace Surtr.Interop
             if (baseType is null || baseType == typeof(object) || baseType == typeof(ValueType) || baseType == typeof(Enum))
                 return null;
 
-            var attribute = baseType.GetCustomAttribute<SurtrNativeTypeAttribute>();
+            var attribute = TypeAttribute(baseType);
             return attribute is null ? null : SurtrTypeMapper.FullNameOf(baseType, attribute, policy);
         }
 
-        private static NativeMemberDescriptor[] ScanMembers(Type type, SurtrNamingPolicy policy)
+        private static NativeMemberDescriptor[] ScanMembers(Type type, SurtrNamingPolicy policy, SurtrClassReference selfDescriptor)
         {
             var members = new List<NativeMemberDescriptor>();
 
@@ -73,8 +93,28 @@ namespace Surtr.Interop
 
             foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
             {
-                if (method.IsSpecialName)
+                if (method.IsAbstract)
                     continue;
+
+                // IComparable.CompareTo is the one non-operator C# member with a Surtr operator
+                // equivalent: its three-way int is exactly Surtr's `operator<=>`, from which Surtr
+                // derives <, <=, >, >= and <=> itself.
+                if (IsCompareTo(method))
+                {
+                    if (ScanComparison(method, policy) is { } comparison)
+                        members.Add(comparison);
+                    continue;
+                }
+
+                if (method.IsSpecialName)
+                {
+                    if (SurtrOperatorMapper.IsOperator(method.Name))
+                    {
+                        if (ScanOperator(method, policy) is { } op)
+                            members.Add(op);
+                    }
+                    continue;
+                }
 
                 if (ScanMethod(method, policy, isConstructor: false) is { } exposed)
                     members.Add(exposed);
@@ -88,7 +128,9 @@ namespace Surtr.Interop
 
             foreach (var property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
             {
-                if (ScanProperty(property, policy) is { } exposed)
+                if (property.GetIndexParameters().Length > 0)
+                    members.AddRange(ScanIndexer(property, policy, selfDescriptor));
+                else if (ScanProperty(property, policy) is { } exposed)
                     members.Add(exposed);
             }
 
@@ -159,10 +201,171 @@ namespace Surtr.Interop
                 Visibility = attribute?.Visibility ?? SurtrInteropVisibility.Public,
                 IsStatic = isStatic,
                 IsConstructor = isConstructor,
+                IsVirtual = method is MethodInfo virtualMethod && virtualMethod.IsVirtual,
+                IsOverride = method is MethodInfo overrideMethod && overrideMethod.GetBaseDefinition() != overrideMethod,
                 ReturnDescriptor = returnDescriptor.Descriptor,
                 Parameters = surtrParameters.ToArray(),
                 EntryPoint = SurtrReflectionInvoker.Create(slot),
             };
+        }
+
+        private static bool IsCompareTo(MethodInfo method)
+            => method.Name == "CompareTo"
+               && !method.IsStatic
+               && method.GetParameters().Length == 1
+               && method.ReturnType == typeof(int)
+               && (typeof(IComparable).IsAssignableFrom(method.DeclaringType!)
+                   || method.DeclaringType!.GetInterfaces().Any(static i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IComparable<>)));
+
+        private static NativeMethodDescriptor? ScanComparison(MethodInfo method, SurtrNamingPolicy policy)
+        {
+            var ignore = method.GetCustomAttribute<SurtrNativeIgnoreAttribute>();
+            var attribute = method.GetCustomAttribute<SurtrNativeMethodAttribute>();
+            if (ignore is not null || (attribute is not null && !attribute.Expose))
+                return null;
+
+            var parameter = method.GetParameters()[0];
+            var parameterDescriptor = SurtrTypeMapper.Map(parameter.ParameterType, policy);
+
+            return new NativeMethodDescriptor
+            {
+                Name = "op_<=>",
+                Visibility = attribute?.Visibility ?? SurtrInteropVisibility.Public,
+                IsStatic = false,
+                IsVirtual = method.IsVirtual,
+                IsOverride = method.GetBaseDefinition() != method,
+                ReturnDescriptor = SurtrClassReference.Integer.Descriptor,
+                Parameters = new[]
+                {
+                    new NativeParameterDescriptor { Name = parameter.Name ?? "other", TypeDescriptor = parameterDescriptor.Descriptor },
+                },
+                EntryPoint = SurtrReflectionInvoker.Create(new ReflectionMemberSlot
+                {
+                    Kind = ReflectionMemberKind.Method,
+                    Method = method,
+                    IsStatic = false,
+                    ResultDescriptor = SurtrClassReference.Integer,
+                    Parameters = new[] { parameterDescriptor },
+                }),
+            };
+        }
+
+        private static NativeMethodDescriptor? ScanOperator(MethodInfo method, SurtrNamingPolicy policy)
+        {
+            var ignore = method.GetCustomAttribute<SurtrNativeIgnoreAttribute>();
+            var attribute = method.GetCustomAttribute<SurtrNativeMethodAttribute>();
+            if (ignore is not null || (attribute is not null && !attribute.Expose))
+                return null;
+
+            var parameters = method.GetParameters();
+            var returnDescriptor = attribute?.ReturnDescriptor is { } declared
+                ? SurtrClassReference.FromDescriptor(declared)
+                : SurtrTypeMapper.Map(method.ReturnType, policy);
+
+            string? operatorName = SurtrOperatorMapper.Map(method.Name, parameters.Length, returnDescriptor.Descriptor);
+            if (operatorName is null)
+                return null; // no Surtr equivalent (the generator emits a warning)
+
+            var fullDescriptors = new SurtrClassReference[parameters.Length];
+            var surtrParameters = new List<NativeParameterDescriptor>();
+
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                var parameter = parameters[i];
+                var parameterAttribute = parameter.GetCustomAttribute<SurtrNativeParameterAttribute>();
+                var descriptor = parameterAttribute?.TypeDescriptor is { } d
+                    ? SurtrClassReference.FromDescriptor(d)
+                    : SurtrTypeMapper.Map(parameter.ParameterType, policy);
+
+                fullDescriptors[i] = descriptor;
+                surtrParameters.Add(new NativeParameterDescriptor
+                {
+                    Name = parameterAttribute?.Name ?? SurtrNaming.Apply(parameter.Name, policy, SurtrNameKind.Member),
+                    Description = parameterAttribute?.Description,
+                    TypeDescriptor = descriptor.Descriptor,
+                });
+            }
+
+            return new NativeMethodDescriptor
+            {
+                Name = operatorName,
+                Visibility = attribute?.Visibility ?? SurtrInteropVisibility.Public,
+                IsStatic = true,
+                ReturnDescriptor = returnDescriptor.Descriptor,
+                Parameters = surtrParameters.ToArray(),
+                EntryPoint = SurtrReflectionInvoker.Create(new ReflectionMemberSlot
+                {
+                    Kind = ReflectionMemberKind.Method,
+                    Method = method,
+                    IsStatic = true,
+                    ResultDescriptor = returnDescriptor,
+                    Parameters = fullDescriptors,
+                }),
+            };
+        }
+
+        private static IEnumerable<NativeMethodDescriptor> ScanIndexer(PropertyInfo property, SurtrNamingPolicy policy, SurtrClassReference selfDescriptor)
+        {
+            var indexParameters = property.GetIndexParameters();
+            if (indexParameters.Length != 1)
+                yield break; // Surtr's operator[] is one-dimensional
+
+            var elementDescriptor = SurtrTypeMapper.Map(property.PropertyType, policy);
+            var indexDescriptor = SurtrTypeMapper.Map(indexParameters[0].ParameterType, policy);
+            string indexName = indexParameters[0].Name ?? "index";
+
+            if (property.GetMethod is { } getter && getter.IsPublic)
+            {
+                yield return new NativeMethodDescriptor
+                {
+                    Name = "op_[]",
+                    IsStatic = true,
+                    ReturnDescriptor = elementDescriptor.Descriptor,
+                    Parameters = new[]
+                    {
+                        new NativeParameterDescriptor { Name = "self", TypeDescriptor = selfDescriptor.Descriptor },
+                        new NativeParameterDescriptor { Name = indexName, TypeDescriptor = indexDescriptor.Descriptor },
+                    },
+                    EntryPoint = SurtrReflectionInvoker.Create(new ReflectionMemberSlot
+                    {
+                        Kind = ReflectionMemberKind.Method,
+                        Method = getter,
+                        IsStatic = false,
+                        ResultDescriptor = elementDescriptor,
+                        Parameters = new[] { indexDescriptor },
+                    }),
+                };
+            }
+
+            if (property.SetMethod is { } setter && setter.IsPublic)
+            {
+                yield return new NativeMethodDescriptor
+                {
+                    Name = "op_[]",
+                    IsStatic = true,
+                    ReturnDescriptor = SurtrClassReference.Void.Descriptor,
+                    Parameters = new[]
+                    {
+                        new NativeParameterDescriptor { Name = "self", TypeDescriptor = selfDescriptor.Descriptor },
+                        new NativeParameterDescriptor { Name = indexName, TypeDescriptor = indexDescriptor.Descriptor },
+                        new NativeParameterDescriptor { Name = "value", TypeDescriptor = elementDescriptor.Descriptor },
+                    },
+                    EntryPoint = SurtrReflectionInvoker.Create(new ReflectionMemberSlot
+                    {
+                        Kind = ReflectionMemberKind.Method,
+                        Method = setter,
+                        IsStatic = false,
+                        ResultDescriptor = SurtrClassReference.Void,
+                        Parameters = new[] { indexDescriptor, elementDescriptor },
+                    }),
+                };
+            }
+        }
+
+        private static string StripArity(string name)
+        {
+            int marker = name.IndexOf(SurtrClassReference.ArityMarker);
+            return marker < 0 ? name : name.Substring(0, marker);
         }
 
         private static SurtrClassReference BuildReturnDescriptor(

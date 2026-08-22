@@ -95,6 +95,9 @@ namespace Surtr.Interop
         /// <summary>Whether the method dispatches through the vtable.</summary>
         public bool IsVirtual;
 
+        /// <summary>Whether the method overrides a virtual member of a base native class.</summary>
+        public bool IsOverride;
+
         /// <summary>The host entry point that executes the body.</summary>
         public SurtrNativeEntryPoint EntryPoint;
 
