@@ -87,12 +87,22 @@ static     switch    throw     true      try       typeof      var      virtual
 while
 ```
 
+And a sixth line, because the list keeps growing and `export` joined §2.1's imports:
+
+```
+export
+```
+
 Four words are **contextual**, not reserved (§3.2): `this`, `super`, `value` and `attribute` mean
 something specific only where they are legal, and remain usable as ordinary identifiers everywhere
 else. `this` and `super` are recognized by position, inside a member body; `value` and `attribute`
 are recognized by what follows them — `value` by the `class` that makes it a `value class`
 declaration (§2.9) rather than the incoming value in a property's `set` accessor, and `attribute`
 by the `class` that makes it an `attribute class` declaration (§11) rather than a plain identifier.
+
+`module` is contextual the same way, in one place: directly after `import` (or `export import`) it
+names a whole-module import (§2.1), and everywhere else it remains an ordinary identifier — a
+`moduleof(no.such.module)` path is unaffected.
 
 The list is deliberately short — it holds only what the grammar actually branches on. Notable
 absences, each for a reason already decided above: no `new` (§5.5), no `object` (there is no root
@@ -150,55 +160,60 @@ Source files use the **`.surtr`** extension. It's unambiguous — nothing else c
 typed once, when the file is created.
 
 There is no `module` header line in source. A file's module path is derived by the compiler from
-its location relative to a configured project source root: directories map to path segments
-joined by `.` (e.g. `Ogame/core/Entity.surtr` → module `Ogame.core`), the same way Go derives a
-package from its containing directory. Every declaration in the file belongs to that module
-automatically — no redundant line to keep in sync with the folder, and it matches the
-`modulePath:typeName` shape the descriptor grammar already commits to. Multiple files in the same
-directory contribute to the same module. The exact source-root configuration is a compiler/CLI
-concern, not a syntax concern — revisit once the front end and its project format exist.
+its location relative to a configured project source root: its directories map to path segments
+joined by `.`, and the file's own name (without the `.surtr` extension) is the final segment —
+`Ogame/core/Entity.surtr` is module `Ogame.core.Entity`. **A module is a file**, so every `.surtr`
+file is its own module no matter how many sit in one directory, and an `import` names a module by
+spelling exactly those segments. This keeps nothing to sync with the folder and already has the
+`modulePath:typeName` shape the descriptor grammar commits to — a fully qualified reference to a
+type repeats the file name (`Ogame.core.Entity.Entity`), because the module path ends where the
+type name begins. The exact source-root configuration is a compiler/CLI concern, not a syntax
+concern — revisit once the front end and its project format exist.
 
 Another module's declarations come into scope through an `import` statement at the top of the
 file, above any declarations:
 
 ```
-import Ogame.core.Entity;
-import Ogame.core.*;
-import Ogame.core as Core;
-import Ogame.core.{Entity, Vec2};
-import Ogame.core;
+import Ogame.core.Entity;                 // a module: the file Ogame/core/Entity.surtr
+import Ogame.core.*;                      // every module under the directory Ogame/core/
+import Ogame.core.Entity as Core;         // alias one module (one file)
+import Ogame.core.Shapes.{Entity, Vec2};  // selected names from one file's module
+import Ogame.core;                        // a directory with files inside: same as Ogame.core.*
 ```
 
-A named import brings exactly that one type into unqualified scope; a wildcard import
-(`ModulePath.*`) brings every top-level declaration in that module into scope at once. Either way,
-a name can still be written fully qualified (`Ogame.core.Entity`) even without importing it — the
-import is convenience, not a requirement to reference something. A colliding name pulled in from
-two imports is a compile error at the point of use, not at the `import` line itself.
+A named import brings that one module's declarations into unqualified scope; a wildcard import
+(`ModulePath.*`) does the same for every module under that directory prefix. Either way, a name can
+still be written fully qualified even without importing it — the import is convenience, not a
+requirement to reference something. A colliding name pulled in from two imports is a compile error
+at the point of use, not at the `import` line itself.
 
-**A wildcard import also reaches every submodule nested under that path, recursively.** A module is
-a directory (this section's opening), so `Ogame.core` and `Ogame.core.geometry` are two different
-modules, not one containing the other — without this, `import Ogame.core.*;` would silently miss
-anything declared one directory deeper. `Ogame.core.*` brings in `Ogame.core`'s own declarations
-if it has any, *and* every declaration from `Ogame.core.geometry`, `Ogame.core.geometry.solid`, and
-so on at any depth, unified into the same scope a same-level wildcard would populate — a directory
-that holds only subdirectories and no `.surtr` files of its own works exactly the same way, since
-there is nothing special about the exact path matching a real module versus only its descendants
-doing so. A name collision between two submodules, or between a submodule and the directory's own
-declarations, is diagnosed the same way as any other wildcard collision: at the point of use.
+**A wildcard import reaches every module whose path sits under the named prefix, recursively.** A
+module is a file (this section's opening), so `Ogame.core.Entity` and `Ogame.core.geometry.Hull`
+are different modules; `import Ogame.core.*;` names the *directory* prefix and brings in every
+module that starts with `Ogame.core.` — `Ogame.core.Entity`, `Ogame.core.Vec2`,
+`Ogame.core.geometry.Hull`, and so on at any depth, unified into the same scope a same-level
+wildcard would populate — a directory that holds only subdirectories and no `.surtr` files of its
+own works exactly the same way, since there is nothing special about the exact path matching a real
+module versus only its descendants doing so. A name collision between two such modules is diagnosed
+the same way as any other wildcard collision: at the point of use.
 
 **`import ModulePath;` with nothing after it — no type, no `*`, no `as`, no `{}` — is equivalent to
-`import ModulePath.*;` when `ModulePath` is itself a real module.** A named import and this form
+`import ModulePath.*;` when `ModulePath` is a real module (a file) or a directory prefix with
+modules under it.** A named import and this form
 share one syntax (`import` followed by a dotted path and nothing else); which one a given line is
 comes down to whether anything is left over to be a type name. Resolution tries the longest
 possible module prefix first: if the whole path already names a module — directly, or only through
-submodules nested under it, exactly as a wildcard's own resolution does — that wins outright and
-the line behaves as the wildcard form over that path, submodules and module-level functions/
-variables included. Only when the whole path does *not* resolve as a module does the shorter
-prefix-plus-trailing-type reading get a chance, exactly as `import Ogame.core.Entity;` already
-works. This also settles the one case where both readings could apply — a module `Ogame.core` and
-a type named `core` declared directly in module `Ogame`, say: the longest prefix, `Ogame.core` as
-a module, wins, the same way a longer module prefix always wins over a shorter one plus a trailing
-type name.
+modules nested under the directory prefix, exactly as a wildcard's own resolution does — that wins
+outright and the line behaves as the wildcard form over that path, nested modules and module-level
+functions/variables included. Only when the whole path does *not* resolve as a module does the
+shorter prefix-plus-trailing-type reading get a chance — `import Ogame.core.Entity;` is itself a
+whole-path module (the file), so it resolves whole, and the trailing-type reading only applies to a
+path like `import Ogame.core.Extra;` where no module `Ogame.core.Extra` exists but a type `Extra`
+lives in module `Ogame.core`. This also settles the one case where both readings could apply — a
+file `Ogame/core.surtr` declaring a type `Entity` (module `Ogame.core`), and a file
+`Ogame/core/Entity.surtr` (module `Ogame.core.Entity`), say: the longest prefix, `Ogame.core.Entity`
+as a module, wins, the same way a longer module prefix always wins over a shorter one plus a
+trailing type name.
 
 **`import ModulePath as Name;` aliases a whole module** rather than bringing anything into
 unqualified scope — `Name` itself resolves nowhere on its own, only qualified: `Core.Entity` reads
@@ -214,12 +229,71 @@ module is a compile error at the `import` line itself, unlike a colliding named/
 an alias has no import of its own to shadow, so there is nothing for the second one to lose to.
 
 **`import ModulePath.{A, B};` is a named import repeated**, written once instead of once per name —
-`import Ogame.core.{Entity, Vec2};` brings exactly `Entity` and `Vec2` into unqualified scope, the
-same two declarations `import Ogame.core.Entity; import Ogame.core.Vec2;` would. It reaches the
+`import Ogame.core.Shapes.{Entity, Vec2};` brings exactly `Entity` and `Vec2` into unqualified
+scope, the same two declarations `import Ogame.core.Shapes.Entity; import Ogame.core.Shapes.Vec2;`
+would — a module being a file, both names must live in that one file's module. It reaches the
 same surface a single named import already does (a module's top-level types) and no more: a name
 left off the list is not reachable unqualified, and — like a plain named import — it does not
 reach a module-level function or variable, only a type. The braced form exists purely to avoid
 repeating `import ModulePath.` once per name; nothing about what a name resolves to changes.
+
+**A named or selective import can also name a module-level member.** A module being a container of
+members (§2.5), the name a named import spells — or one listed in a selective import — need not be
+a type at all. If it is not a type but the module declares a module-level function, variable or
+property of that name, the import brings exactly that member into unqualified scope:
+
+```
+import Ogame.math.Math.add;          // the module-level function `add`
+import Ogame.math.Math.{add, sub};   // exactly these two functions, nothing else
+```
+
+Nothing else from the module leaks in: a selective import that names `add` does not make `sub`
+reachable, exactly as a selective import of types leaves unlisted siblings unreachable. Whether a
+listed name resolves as a type or as a member is per name, so a list may mix both.
+
+**`import module ModulePath;` brings a whole module's surface** — its types and its module-level
+members alike — the same reach a wildcard over exactly that one module would have, but **without
+recursing into submodules**. `module` is a contextual keyword that only means this directly after
+`import`; elsewhere it stays an ordinary identifier (`moduleof` is unaffected). This is the
+explicit way to say "this one file, all of it":
+
+```
+import module Ogame.math.Math;   // Math.surtr's types, functions and variables, no submodules
+```
+
+`import ModulePath;` with nothing after it already resolves to this form when the whole path names
+a module, so `import module` is the explicit spelling of the same intent.
+
+**`export import ...` re-exports what it imports as the importing module's own surface.** The
+`export` prefix turns any import — named, selective, wildcard, or whole-module — into a re-export:
+in addition to bringing the names into the importing module's own scope, the importing module now
+exposes them as if it had declared them. A consumer that imports the re-exporter reaches them, both
+unqualified and qualified through the re-exporter:
+
+```
+export import module Ogame.core.graphics.Mesh;   // Index.surtr aggregates a submodule
+export import module Ogame.core.graphics.Shaders;
+
+// Another module, importing the aggregator:
+import Ogame.core.Index;          // brings Mesh, Shaders and their members into scope
+import Ogame.core.Index as G;     // G.Mesh, G.Shaders reachable qualified
+```
+
+The re-export is **transitive**: if the re-exported module re-exports others, a consumer of the
+re-exporter sees the whole chain. It is also **not a widening**: a re-export only widens who can
+*name* a symbol, never who can access it — a module-level member that the declaring module kept
+`internal` stays inaccessible to a consumer of the re-exporter, exactly as if it had imported the
+declaring module directly. Re-export is a compile-time facade over the same symbols, never a copy:
+nothing is emitted twice, and the runtime knows nothing about it.
+
+**The source provider.** A module that no source file in the project handed over up front can still
+be resolved by an *embedding host* through an `ISourceProvider` supplied when the project is built —
+the compiler asks the provider for the module's text on demand when an `import` names it, rather
+than requiring the whole tree to be enumerated up front. A host that keeps source in memory, in a
+database, or behind a network call implements that interface; the CLI's directory-scanning build is
+just the default filesystem-backed provider. This is a compiler/CLI concern (§2.1's opening), not
+a syntax concern: the language itself spells `import` the same way regardless of where the source
+lives.
 
 ### 2.2 Classes
 
@@ -875,8 +949,11 @@ Two decisions the heuristic makes that are worth spelling out:
 
 - **A constructor is never spliced.** What runs on construction is not its body alone but the chain
   and the initializers the emitter prepends to it, so a splice would silently skip the base's
-  construction. A `super(...)` call names exactly such a body, and the cost heuristic or a stray
-  `inline` must not get it there.
+  construction. A `super(...)` call names exactly such a body, and the cost heuristic must not get it
+  there. Because a splice is *impossible* rather than merely unattractive, `forceinline` could not
+  fail silently, so writing `inline` or `forceinline` on a constructor is rejected at the
+  declaration — `InvalidModifier` — never ignored. A `value class` constructor is still spliced by
+  its own dedicated path (it has no chain to skip), with or without the keyword.
 - **A property read honours `inline` and the heuristic on its getter.** Auto-properties go further:
   both accessors are one instruction — a field load and a field store — so both always lower to the
   backing field at the call site wherever the access is proven non-virtual — `Direct` dispatch,
@@ -1027,7 +1104,7 @@ common path cheap.
 
 **The built-in collections really do implement it**, rather than being iterable by compiler
 privilege alone — `array`, `string`, `tuple`, `dict` and `range` each declare `IIterable<T>` and
-hand back an `iterator`. Without that the interface would be a promise only user code could keep,
+hand back an `Iterator`. Without that the interface would be a promise only user code could keep,
 and `let xs: IIterable<int> = ints;` would not link. The lowering above still applies to every one
 of them: satisfying the contract is what makes the type system whole, not what a loop does.
 
@@ -1750,7 +1827,7 @@ are right-associative, everything else is left-associative):
 | 15 | `* / %` | multiplicative |
 | 16 | `as` `as?` | cast |
 | 17 | `! - ~ ++ --` (prefix) | unary not / negate / bitwise-not / pre-inc/dec, right-associative |
-| 18 (highest) | `++ --` (postfix) `.` `?.` `!!` `()` `[]` | postfix inc/dec, member access, call, index |
+| 18 (highest) | `++ --` (postfix) `.` `?.` `!!` `()` `[]` `throw` | postfix inc/dec, member access, call, index; `throw` as an expression is primary (§9.1) |
 
 `&&`/`||` short-circuit as usual. `++`/`--` exist in both prefix and postfix form with the
 conventional C-family semantics (prefix evaluates to the updated value, postfix to the value
@@ -1826,7 +1903,13 @@ supplies one — an annotation, a parameter type, or a declared return type. Whe
 is an error rather than a deferred decision: inferring it from a later use would need backtracking
 inference, and the diagnostics that produces when it fails are famously hard to read.
 
-The same target-typing rule is what lets lambda parameters go unannotated (§8). Annotation is
+The same target-typing rule is what lets lambda parameters go unannotated (§8). It also reaches
+generics (§6) in two directions: a generic *call* whose return type is annotated
+(`let b: Box<int> = makeBox();`) infers its type arguments from that target, and a generic
+*construction* passed as an argument (`take(Box())` with `take(b: Box<int>)`) is deferred to the
+parameter it lands in and bound against it, exactly as a deferred lambda is.
+
+Annotation is
 mandatory in exactly three places, all of them cases where there is nothing to infer *from*: a
 member's declared type and return type (a signature is the contract, so it is always written out),
 a parameter, and a `let`/`var` with no initializer.
@@ -1917,6 +2000,30 @@ of a concrete need for it.
 happen to share a name, the way `Result<T>` and `Result<T, E>` want to be. This is Java's one real
 absence in this area, and it costs nothing to have: the arity is mangled into the name the runtime
 sees, which no lookup path has to know about.
+
+**A static member of a generic class is reached through a construction.** `Box<int>.prop`,
+`Box<int>.make(...)` — the type arguments select the construction, which is what substitutes a
+member whose signature mentions `T`:
+
+```
+class Box<T> {
+    static empty: Box<T> => ...;      // `Box<int>.empty` is a `Box<int>`
+    static fun of(items: T...): Box<T> => ...;
+}
+
+let b = Box<int>.of(1, 2, 3);        // `of`'s `T` is `int` here
+```
+
+The **open form** writes empty slots instead of types — `Box<>.prop` (one), `Box<,>.prop` (two),
+`Box<,,>.prop` (three) — counting one per comma, C#-style. It names the declaration itself rather
+than a construction, and is valid only for a static member whose own type does not mention the
+type's parameters: `static var count: int` works as `Box<>.count`, while `static empty: Box<T>`
+does not, since it would hand back a `Box<T>` with `T` unsubstituted. Because generics are erased,
+a generic class has exactly **one** set of statics — one class, one table, one body — shared by
+every construction, so `Box<>.count` and `Box<int>.count` read the same slot.
+
+A bare `Box.prop` without angle brackets is not legal: the arity is part of the name, so an access
+that names the type must state it.
 
 **A nested type does not see its container's type parameters** — the static-nested rule, not the
 inner-class one. Nesting (§2.6) is qualification, so a type declared inside `Box<T>` is reached as
@@ -2135,7 +2242,37 @@ let f = (x) => x * 2;                          // error: nothing determines x's 
 let g = (x: int) => x * 2;                     // fine
 ```
 
-A lambda's return type is always inferred from its body and is never written.
+A lambda's return type is inferred from its body when nothing names it, and may be written: a
+`:` between the parameters and the `=>`, exactly as a function declaration writes it:
+
+```
+let f = (): int => 42;                          // f: () -> int, from the annotation alone
+let g = (x: int): float => x;                   // g: (int) -> float; the body widens to float
+let h: () -> IIterator<T> = (): IIterator<T> => ArrayIterator<T>(...);
+```
+
+The written return type is the lambda's own declaration, authoritative exactly as a function's
+`: Ret` is: the body binds against it, so `(): float => 1` is `() -> float`, not `() -> int`, and a
+body the declared type cannot reach is an error. Where a target type also exists, the two must
+agree — the conversion at the use site settles that. Writing it matters most for a zero-parameter
+lambda: it has no parameter to carry a target-supplied type, so without a written return type its
+only option is the target — which is why `Sequence<U>(() => MapIterator<T, U>(...))`
+resolves the lambda against the constructor's `() -> IIterator<U>`.
+
+**A function may do the same.** The `: Ret` of a `fun` is optional when the body can settle it:
+the return type is inferred from the body's `return` statements, and a body with none is `void` —
+
+```
+fun add(a: int, b: int) => a + b;               // : int, from the body
+fun give() { return 7; }                        // : int
+fun say() { print("hi"); }                      // : void
+```
+
+Three places still have to write it, because there is no body to read from or a contract to match:
+a bodyless method (`abstract`, `native`, an interface member) has nothing to infer from; an
+`override` and an interface implementation must reproduce the signature they replace, which an
+inferred one cannot be checked against. A recursive call (where the body's own type never settles)
+or `return`s of different types are also reported and demand the annotation.
 
 **A closure is called wherever it is kept**, because it is a value and where a value lives says
 nothing about how it is used. A local, a parameter, a field, a property and a module-level variable
@@ -2245,6 +2382,39 @@ catch.
 `SurtrBytecodeMethodInfo.Handlers` (so entering `try` costs nothing), and `finally` is emitted by
 the compiler on every exit path plus a catch-all that runs it and re-raises — there's no
 `Leave`/`EndFinally` opcode because the source-to-bytecode lowering does that work instead.
+
+### 9.1 `throw` as an expression, and `never`
+
+`throw` is an expression as well as a statement. Its type is `never`, the bottom type: no value
+ever has it, but it is assignable to *every* type, which is what lets a throw stand in any
+expression slot without contributing to the surrounding type. Two examples:
+
+```
+fun require(condition: bool): void {
+    if (!condition)
+        throw InvalidOperationException("require failed");
+}
+
+fun firstOrFail(values: int[], fallback: int): int {
+    return values.length > 0 ? values[0] : throw IndexOutOfRangeException("empty");
+}
+
+// A lambda body may be a throw:
+let explode = (): int => throw InvalidOperationException("never returns");
+
+// `??` accepts a throw on its right:
+fun guarded(value: int?): int => value ?? throw NullReferenceException("value");
+```
+
+Because `never` is a bottom type, the branches of `?:` and `??` and the arms of a switch-expression
+join the same way: a branch that throws contributes nothing, and the whole expression takes the
+other branch's type. A body that only throws satisfies a `never` return type without a `return`, and
+the flow analysis joins the branches of a conditional so the code after `x = c ? 1 : throw E;` is
+still reachable.
+
+`never` is legal only as a return type — it names a function that never completes — and as the
+implicit type of a throw expression. It is not a value type: a variable cannot be declared of it
+in any way that reads one back, since no value ever has that type.
 
 ---
 
@@ -2479,7 +2649,7 @@ Surtr.
 generator: it is a shape the compiler can pattern-match and lower into a plain indexed loop for the
 cases §4.2 lists, which a generator-based protocol would not be.
 
-The cursor the built-ins hand back is a single `iterator` class covering all five sources, the same
+The cursor the built-ins hand back is a single `Iterator` class covering all five sources, the same
 way one `array` class covers every element type. It also carries a `reset()`, which is
 *not* on `IIterator<T>`: rewinding is meaningful for a cursor over a snapshot and meaningless for
 one over a stream, so it stays off the contract a user class has to satisfy.
@@ -2622,7 +2792,7 @@ one), so its `descriptor` is `null` and `genericArguments()` is empty, rather th
   to a module, not a type, so there is nothing for this to point at.
 - `attributes(): Attribute[]` — every `Runtime`-retention attribute written on this member.
 
-Declaring a bare `Type()`/`Member()` is rejected, the same way `iterator()` is: neither declares a
+Declaring a bare `Type()`/`Member()` is rejected, the same way `Iterator()` is: neither declares a
 constructor, so `Type.of`/`Type.get`/`Type.tryGet` (and, for `Member`, only ever reading one back
 off a `Type.members()`/`Module.members()` call) are the only ways to get one. `members()` reports
 each declaration once, under the shape a reader of the source would recognize: an auto-property's
@@ -2700,10 +2870,10 @@ the alias first, exactly as a qualified type name already does — `moduleof(Cor
   same way a synthesised constructor appears as `ctor` on `Type.members()`. Deliberately separate
   from `classes()`/`interfaces()`, which already cover the module's types on their own.
 - `submodules(): Module[]` — every module loaded in the running program whose path sits strictly
-  under this one's, since a module is a directory (§2.1): `Ogame.core` and `Ogame.core.geometry`
-  are different modules, not one nested in the other, and this is `submodules()`'s way of walking
-  from a parent to what is nested under it at runtime, the same relationship a directory wildcard
-  import already walks at compile time.
+  under this one's, since a module is a file (§2.1): `Ogame.core.Entity` and
+  `Ogame.core.Entity.Inner` are different modules, not one nested in the other, and this is
+  `submodules()`'s way of walking from a parent to what is nested under it at runtime, the same
+  relationship a directory wildcard import already walks at compile time.
 - `Module.get(path: string): Module` / `Module.tryGet(path: string): Module?` — finds an already
   loaded module by its full path, dynamically, from a `string` computed at run time rather than a
   path written in source. `get` throws `KeyNotFoundException` if no module is loaded under that

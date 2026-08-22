@@ -59,6 +59,10 @@ namespace Surtr.Compiler.CodeGen
         private readonly Dictionary<TypeSymbol, SurtrClassReference> _cache =
             new Dictionary<TypeSymbol, SurtrClassReference>();
 
+        // The boxed form of a value class, likewise stable for the whole emission.
+        private readonly Dictionary<NamedTypeSymbol, SurtrClassReference> _boxedForms =
+            new Dictionary<NamedTypeSymbol, SurtrClassReference>();
+
         /// <summary>The descriptor for a type, as the runtime will store it.</summary>
         /// <exception cref="InvalidOperationException">
         /// The type is an error type, or a <c>value class</c> whose wrapped field was never bound.
@@ -108,9 +112,12 @@ namespace Surtr.Compiler.CodeGen
             if (valueClass.TypeKind != TypeSymbolKind.ValueClass)
                 throw new ArgumentException("Only a value class has a boxed form distinct from its descriptor.", nameof(valueClass));
 
+            if (_boxedForms.TryGetValue(valueClass, out var cached))
+                return cached;
+
             var builder = new StringBuilder();
             AppendNamed(builder, valueClass, SurtrClassReference.SymbolObject);
-            return SurtrClassReference.FromDescriptor(builder.ToString());
+            return _boxedForms[valueClass] = SurtrClassReference.FromDescriptor(builder.ToString());
         }
 
         private void Append(StringBuilder builder, TypeSymbol type)
@@ -223,6 +230,12 @@ namespace Surtr.Compiler.CodeGen
                 case SpecialType.String: builder.Append(SurtrClassReference.SymbolString); return;
                 case SpecialType.Range: builder.Append(SurtrClassReference.SymbolRange); return;
                 case SpecialType.Void: builder.Append(SurtrClassReference.SymbolVoid); return;
+
+                // `never` produces a value that never arrives: the call site must balance a result
+                // (a `return fail()` reads one), but the body always throws before producing it.
+                // Erased is the one reference representation a value of any type can stand in for.
+                case SpecialType.Never: builder.Append(SurtrClassReference.SymbolErased); return;
+
                 case SpecialType.Unknown: builder.Append(SurtrClassReference.SymbolErased); return;
             }
 

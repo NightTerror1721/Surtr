@@ -1,6 +1,7 @@
 #nullable enable
 
 using Surtr.Compiler.Diagnostics;
+using System;
 using System.Collections.Generic;
 using Surtr.Compiler.Syntax.Ast;
 
@@ -543,7 +544,7 @@ namespace Surtr.Compiler.Syntax
 
                 IReadOnlyList<ArgumentSyntax> arguments = reader.Check(TokenType.LeftParen)
                     ? ParseArgumentList()
-                    : new List<ArgumentSyntax>();
+                    : Array.Empty<ArgumentSyntax>();
 
                 cases.Add(new EnumCaseSyntax(SpanFrom(start), name, arguments, caseDoc));
 
@@ -716,12 +717,15 @@ namespace Surtr.Compiler.Syntax
             IReadOnlyList<TypeParameterSyntax> typeParameters = ParseTypeParameterList();
             IReadOnlyList<ParameterSyntax> parameters = ParseParameterList();
 
-            reader.Expect(TokenType.Colon, "':' before the return type");
-            TypeSyntax returnType = ParseType();
+            // §8: the return type may be omitted and inferred from the body, exactly as a lambda's
+            // may — `fun add(a: int, b: int) => a + b` needs no `: int`.
+            TypeSyntax? returnType = reader.Match(TokenType.Colon) ? ParseType() : null;
 
             // No body means abstract, native, or an interface member — all signature-only (§2.3).
             // An arrow body (§3.3) is sugar for a block holding one statement — a `return` for a
-            // value-returning method, an expression statement for a `void` one.
+            // value-returning method, an expression statement for a `void` one. Without a written
+            // return type the body is a value's until inference says otherwise, so it is desugared
+            // to a `return`.
             BlockStatementSyntax? body = null;
             if (reader.Check(TokenType.FatArrow))
             {
@@ -744,6 +748,18 @@ namespace Surtr.Compiler.Syntax
         private DeclarationSyntax ParseConstructor(SourceLocation start, IReadOnlyList<string> docComment,
             IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers)
         {
+            if (modifiers.Inline != InlineModifier.None)
+            {
+                // §3.6: a constructor is never spliced - what runs is not its body alone but the
+                // chain and the initializers the emitter prepends to it - so the cost heuristic or
+                // a stray `inline` must not get it there. Forceinline must not fall back silently,
+                // so the modifier is rejected outright rather than ignored.
+                throw reader.Error(
+                    SurtrDiagnosticCode.InvalidModifier,
+                    "A constructor is never inlined; 'inline'/'forceinline' is not written on one.",
+                    start);
+            }
+
             reader.Advance();
             IReadOnlyList<ParameterSyntax> parameters = ParseParameterList();
 
@@ -941,7 +957,7 @@ namespace Surtr.Compiler.Syntax
             reader.Expect(TokenType.RightParen, "')' after the condition");
 
             IReadOnlyList<DeclarationSyntax> then = ParseDeclarationGroup();
-            IReadOnlyList<DeclarationSyntax> otherwise = new List<DeclarationSyntax>();
+            IReadOnlyList<DeclarationSyntax> otherwise = Array.Empty<DeclarationSyntax>();
 
             if (reader.Match(TokenType.KeywordElse))
             {

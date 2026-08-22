@@ -70,6 +70,22 @@ namespace Surtr.Runtime.Classes
         internal SurtrMethodInfo[] MethodTable;
 
         /// <summary>
+        /// Monomorphic call-site cache for <c>InvokeInterface</c>, indexed by the declared method's
+        /// entry in <see cref="MethodTable"/>. Each slot holds the receiver class the site last
+        /// resolved for and the method that produced, so a call that keeps seeing one receiver
+        /// class skips resolution entirely: one array load plus one reference compare instead of
+        /// the open-addressed interface probe and its two extra indirections. Lazily allocated on
+        /// the first interface call, because most chunks never make one. Memoization is sound
+        /// because a class's interface dispatch tables are complete once linking finishes, before
+        /// any of its code can run, and never change afterwards - so resolution of
+        /// <c>(declared method, receiver class)</c> is a pure function the cache can cache forever.
+        /// Chunks and tables belong to one runtime and are never shared, so there is nothing to
+        /// invalidate. (Virtual dispatch resolves through a single vtable load and gains nothing
+        /// from a cache, which is why only interfaces get one.)
+        /// </summary>
+        internal SurtrVirtualCallSite[]? InterfaceCallCache;
+
+        /// <summary>
         /// Module access table: the other modules this one calls into, indexed by the
         /// <c>moduleIdx</c> immediate of <c>CallModule</c>.
         /// </summary>
@@ -170,5 +186,16 @@ namespace Surtr.Runtime.Classes
 
             _disposed = true;
         }
+    }
+
+    /// <summary>
+    /// One monomorphic-cache slot: the receiver class a call site last resolved for, and the
+    /// method that resolution produced. Both halves are set together on a miss and read together
+    /// on a hit, so the pair never observes a torn state.
+    /// </summary>
+    internal struct SurtrVirtualCallSite
+    {
+        internal SurtrClass? Expected;
+        internal SurtrMethodInfo? Method;
     }
 }

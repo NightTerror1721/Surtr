@@ -141,6 +141,14 @@ namespace Surtr.LanguageServer.Workspace
                         items.Add(item);
                 }
 
+                // A module alias reaches the aggregator's re-exported types too (§2.1): `Alias.Type`
+                // names a type the module re-exported exactly as one it declared.
+                foreach (var aliasedType in aliasedModule.ReExportedTypes)
+                {
+                    if (MemberItem(aliasedType, includeStatics: true) is CompletionItem item)
+                        items.Add(item);
+                }
+
                 return new CompletionList { IsIncomplete = false, Items = items };
             }
 
@@ -218,10 +226,30 @@ namespace Surtr.LanguageServer.Workspace
             foreach (string path in ImportedModules(snapshot, filePath, module))
             {
                 if (binder.Modules.TryGetValue(path, out ModuleSymbol? imported))
+                {
                     result.Add(imported);
+
+                    // A module re-exports others as its own surface (§2.1): its re-exported
+                    // modules' members and extensions are reachable from a consumer exactly as its
+                    // own are, so follow the re-export chain transitively.
+                    AddReExports(imported, result);
+                }
             }
 
             return result;
+        }
+
+        /// <summary>Adds a module's transitive re-exports to the list, as their member surface is reachable from a consumer of the re-exporter.</summary>
+        private static void AddReExports(ModuleSymbol reExporter, List<ModuleSymbol> result)
+        {
+            foreach (var reExported in reExporter.ReExportedModules)
+            {
+                if (result.Contains(reExported.Module))
+                    continue;
+
+                result.Add(reExported.Module);
+                AddReExports(reExported.Module, result);
+            }
         }
 
         /// <summary>Whatever an expression may name in the module, in the current scope.</summary>
@@ -297,6 +325,29 @@ namespace Surtr.LanguageServer.Workspace
                 foreach (var type in foreign.Types)
                 {
                     if (MemberItem(type, includeStatics: true) is CompletionItem item)
+                        Add(item);
+                }
+
+                // §2.5 makes a module a container of members, so a wildcard or whole-module import
+                // brings its functions and variables into bare-name scope too — offer them here.
+                foreach (var method in foreign.Methods)
+                {
+                    if (method.Role == MethodRole.Normal && !method.IsSynthetic && !method.Name.StartsWith("op_", StringComparison.Ordinal))
+                    {
+                        if (MemberItem(method, includeStatics: true) is CompletionItem item)
+                            Add(item);
+                    }
+                }
+
+                foreach (var field in foreign.Fields)
+                {
+                    if (MemberItem(field, includeStatics: true) is CompletionItem item)
+                        Add(item);
+                }
+
+                foreach (var property in foreign.Properties)
+                {
+                    if (MemberItem(property, includeStatics: true) is CompletionItem item)
                         Add(item);
                 }
             }
@@ -1519,6 +1570,17 @@ namespace Surtr.LanguageServer.Workspace
 
             foreach (var import in unit.Syntax.Imports)
             {
+                if (import.IsModule)
+                {
+                    // `import module X.Y;` (§2.1) brings a whole module's surface — the same reach
+                    // a wildcard over exactly that one module would.
+                    string modulePath = string.Join(".", import.Path);
+                    if (modulePath != current.Path && binder.Modules.ContainsKey(modulePath))
+                        result.Add(modulePath);
+
+                    continue;
+                }
+
                 if (!import.IsWildcard)
                     continue;
 

@@ -21,12 +21,12 @@ private value class ReadOnlyCollection<T> : IReadOnlyCollection<T>
 {
     private let _col: IReadOnlyCollection<T>;
 
-    public inline constructor(collection: IReadOnlyCollection<T>)
+    public constructor(collection: IReadOnlyCollection<T>)
     {
         this._col = collection;
     }
 
-    public inline constructor(collection: ICollection<T>)
+    public constructor(collection: ICollection<T>)
     {
         this._col = collection;
     }

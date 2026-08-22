@@ -404,7 +404,7 @@ re-resolución, y la identidad de un overload concreto queda fijada en el propio
 **API resultante** (documentada en `Language-Syntax.md` §11):
 - `Type.of(value: unknown): Type` — única forma de obtener uno; ni `Type()` ni `Member()` son
   invocables desde Surtr porque ninguna de las dos clases declara constructor (mismo mecanismo
-  que ya impedía `iterator()`).
+  que ya impedía `Iterator()`).
 - `Type.name`, `Type.baseType` (null en la raíz), `Type.members(): Member[]`,
   `Type.attributes(): Attribute[]`.
 - `Member.name`, `Member.kind` (string: field/property/method/class/enum/interface),

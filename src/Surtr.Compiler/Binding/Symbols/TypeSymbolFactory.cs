@@ -38,9 +38,12 @@ namespace Surtr.Compiler.Binding.Symbols
         private readonly Dictionary<string, ErrorTypeSymbol> _errors =
             new Dictionary<string, ErrorTypeSymbol>(StringComparer.Ordinal);
 
+        private readonly TypeSubstitution _empty;
+
         /// <summary>Creates a factory with the built-in types already interned.</summary>
         public TypeSymbolFactory()
         {
+            _empty = new TypeSubstitution(this, map: null);
             BuiltInModule = new ModuleSymbol("surtr");
 
             Int = Special("int", SpecialType.Int);
@@ -51,6 +54,7 @@ namespace Surtr.Compiler.Binding.Symbols
             Range = Special("range", SpecialType.Range);
             Void = Special("void", SpecialType.Void);
             Unknown = Special("unknown", SpecialType.Unknown);
+            Never = Special("never", SpecialType.Never);
 
             ErrorType = new ErrorTypeSymbol("?");
         }
@@ -81,6 +85,9 @@ namespace Surtr.Compiler.Binding.Symbols
 
         /// <summary>The <c>unknown</c> type (§5.10), which shares the erased representation.</summary>
         public NamedTypeSymbol Unknown { get; }
+
+        /// <summary>The <c>never</c> bottom type (§9): assignable to every type, produced by a <c>throw</c>.</summary>
+        public NamedTypeSymbol Never { get; }
 
         /// <summary>The type an unresolvable type reference binds to.</summary>
         public ErrorTypeSymbol ErrorType { get; }
@@ -175,8 +182,11 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>Starts a substitution that will intern whatever it rebuilds through this factory.</summary>
         public TypeSubstitutionBuilder BeginSubstitution() => new TypeSubstitutionBuilder(this);
 
-        /// <summary>A substitution that replaces nothing.</summary>
-        public TypeSubstitution EmptySubstitution() => TypeSubstitution.Empty(this);
+        /// <summary>
+        /// A substitution that replaces nothing. One shared instance per factory: a substitution
+        /// is immutable once built, so the empty one is safe to hand out from everywhere.
+        /// </summary>
+        public TypeSubstitution EmptySubstitution() => _empty;
 
         private NamedTypeSymbol Special(string name, SpecialType specialType)
             => new NamedTypeSymbol(name, TypeSymbolKind.Class, BuiltInModule, containingType: null, specialType);

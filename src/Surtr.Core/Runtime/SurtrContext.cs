@@ -65,8 +65,8 @@ namespace Surtr.Runtime
         internal Dictionary<string, SurtrString> InternedStrings;
 
         /// <summary>
-        /// Text-to-object table backing <see cref="SurtrRuntime.GetOrCreateTypeValue"/>, so
-        /// <c>typeof</c> and <c>Type.of</c> alike return the one shared <c>Type</c> value for a
+        /// Text-to-object table backing <see cref="SurtrRuntime.GetOrCreateTypeValue(SurtrTypeInfo)"/>,
+        /// so <c>typeof</c> and <c>Type.of</c> alike return the one shared <c>Type</c> value for a
         /// given class or interface within this runtime.
         /// </summary>
         /// <remarks>
@@ -78,7 +78,8 @@ namespace Surtr.Runtime
         internal Dictionary<SurtrTypeInfo, SurtrTypeValue> TypeValueCache;
 
         /// <summary>
-        /// Text-to-object table backing <see cref="SurtrRuntime.GetOrCreateTypeValue"/> for
+        /// Text-to-object table backing
+        /// <see cref="SurtrRuntime.GetOrCreateTypeValue(SurtrTypeInfo, SurtrClassReference)"/> for
         /// <em>constructed</em> generics — <c>typeof(Box&lt;int&gt;)</c> and
         /// <c>Type.get("Obox:Box`1;I")</c> — so one construction is one <c>Type</c> value, distinct
         /// from every other construction of the same class.
@@ -98,6 +99,19 @@ namespace Surtr.Runtime
         /// </summary>
         /// <remarks>Keyed by reference identity, the same reasoning as <see cref="TypeValueCache"/>.</remarks>
         internal Dictionary<SurtrModule, SurtrModuleValue> ModuleValueCache;
+
+        /// <summary>
+        /// Method-to-closure table backing <see cref="SurtrRuntime.GetOrCreateFunctionValue"/>, so
+        /// every evaluation of a zero-capture lambda - and every host call that creates one - hands
+        /// back the one shared <c>SurtrClosure</c> for that method within this runtime instead of
+        /// allocating a fresh object on the heap.
+        /// </summary>
+        /// <remarks>
+        /// Keyed by reference identity, the same reasoning as <see cref="TypeValueCache"/>. Lives
+        /// here rather than on the metadata because the metadata is process-wide and shared across
+        /// runtimes, while the entity registry a <see cref="SurtrClosure"/> is registered in is not.
+        /// </remarks>
+        internal Dictionary<SurtrMethodInfo, SurtrClosure> FunctionValueCache;
 
         /// <summary>
         /// Entities kept alive regardless of reachability, as raw reference values ready to hand
@@ -153,6 +167,10 @@ namespace Surtr.Runtime
             EntityRegistry = default;
             EntityRegistry.Initialize(initialEntityCapacity);
 
+            // The runtime collects on its own by default. A host that wants the old, purely manual
+            // behaviour calls SurtrRuntime.ConfigureGc(SurtrGcPolicy.Manual).
+            EntityRegistry.ConfigurePolicy(SurtrGcPolicy.Automatic);
+
             Modules = new Dictionary<string, SurtrModule>(StringComparer.Ordinal);
             NativeClasses = new Dictionary<string, SurtrClass>(StringComparer.Ordinal);
             NativeBodies = new Dictionary<string, SurtrNativeEntryPoint>(StringComparer.Ordinal);
@@ -161,6 +179,7 @@ namespace Surtr.Runtime
             TypeValueCache = new Dictionary<SurtrTypeInfo, SurtrTypeValue>();
             ConstructedTypeValueCache = new Dictionary<string, SurtrTypeValue>(StringComparer.Ordinal);
             ModuleValueCache = new Dictionary<SurtrModule, SurtrModuleValue>();
+            FunctionValueCache = new Dictionary<SurtrMethodInfo, SurtrClosure>();
 
             Roots = new SurtrRawValue[InitialRootCapacity];
             RootCount = 0;
@@ -281,6 +300,7 @@ namespace Surtr.Runtime
             InternedStrings?.Clear();
             TypeValueCache?.Clear();
             ModuleValueCache?.Clear();
+            FunctionValueCache?.Clear();
             Roots = Array.Empty<SurtrRawValue>();
             RootCount = 0;
 

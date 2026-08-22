@@ -83,9 +83,9 @@ namespace Surtr.Compiler.Compilation
         }
 
         /// <summary>
-        /// Creates a source file with an explicit module path, used where §2.1's directory
-        /// derivation cannot name the module — the stdlib's one-module-per-file layout, whose
-        /// module name ends in the file name.
+        /// Creates a source file with an explicit module path, used where §2.1's location
+        /// derivation cannot name the module — a file whose directory or name is not a legal
+        /// identifier segment, or whose module a caller wants to pin outright.
         /// </summary>
         /// <param name="path">Where the file lives, used for diagnostics.</param>
         /// <param name="text">Its contents.</param>
@@ -137,16 +137,22 @@ namespace Surtr.Compiler.Compilation
         private readonly Dictionary<string, BuildConstant> _buildConstants =
             new Dictionary<string, BuildConstant>(StringComparer.Ordinal);
 
-        /// <summary>Creates a project.</summary>
+        private readonly ISourceProvider _sourceProvider;
+
+        /// <summary>Creates a project with a custom source provider.</summary>
         /// <param name="sourceRoot">The directory module paths are derived relative to.</param>
         /// <param name="rootModulePath">
-        /// What the source root itself is called. Empty means a file directly at the root belongs
-        /// to no module, which is reported rather than allowed.
+        /// What the source root itself is called, prefixed onto every derived module path.
         /// </param>
-        public SurtrProject(string sourceRoot, string rootModulePath = "")
+        /// <param name="sourceProvider">
+        /// Where a module's source text comes from when a lazy import asks for it. Defaults to a
+        /// <see cref="FileSystemSourceProvider"/> rooted at <paramref name="sourceRoot"/>.
+        /// </param>
+        public SurtrProject(string sourceRoot, string rootModulePath = "", ISourceProvider? sourceProvider = null)
         {
             SourceRoot = sourceRoot ?? throw new ArgumentNullException(nameof(sourceRoot));
             RootModulePath = rootModulePath ?? string.Empty;
+            _sourceProvider = sourceProvider ?? new FileSystemSourceProvider(sourceRoot, rootModulePath ?? string.Empty);
         }
 
         /// <summary>The directory module paths are derived relative to.</summary>
@@ -154,6 +160,12 @@ namespace Surtr.Compiler.Compilation
 
         /// <summary>What the source root itself is called, prefixed onto every derived module path.</summary>
         public string RootModulePath { get; }
+
+        /// <summary>
+        /// Where a module's source comes from when an import names one that was not handed to the
+        /// project up front (§2.1's lazy resolution).
+        /// </summary>
+        public ISourceProvider SourceProvider => _sourceProvider;
 
         /// <summary>The files to compile.</summary>
         public IReadOnlyList<SurtrSourceFile> SourceFiles => _sourceFiles;

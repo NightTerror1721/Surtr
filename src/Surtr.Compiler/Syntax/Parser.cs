@@ -113,7 +113,7 @@ namespace Surtr.Compiler.Syntax
             SourceLocation start = reader.CurrentLocation;
 
             List<ImportSyntax> imports = new List<ImportSyntax>();
-            while (reader.Check(TokenType.KeywordImport))
+            while (reader.Check(TokenType.KeywordImport) || reader.Check(TokenType.KeywordExport))
             {
                 try
                 {
@@ -125,14 +125,14 @@ namespace Surtr.Compiler.Syntax
                 }
             }
 
-            List<DeclarationSyntax> declarations = new List<DeclarationSyntax>();
+            List<DeclarationSyntax>? declarations = null;
             while (!reader.Check(TokenType.EndOfFile))
             {
                 int before = reader.Position;
 
                 try
                 {
-                    declarations.Add(ParseDeclaration());
+                    (declarations ??= new List<DeclarationSyntax>(8)).Add(ParseDeclaration());
                 }
                 catch (SurtrParserException)
                 {
@@ -147,7 +147,7 @@ namespace Surtr.Compiler.Syntax
                 }
             }
 
-            return new CompilationUnitSyntax(SpanFrom(start), imports, declarations);
+            return new CompilationUnitSyntax(SpanFrom(start), imports, (IReadOnlyList<DeclarationSyntax>?)declarations ?? Array.Empty<DeclarationSyntax>());
         }
 
         /// <summary>
@@ -313,7 +313,28 @@ namespace Surtr.Compiler.Syntax
         private ImportSyntax ParseImport()
         {
             SourceLocation start = reader.CurrentLocation;
-            reader.Expect(TokenType.KeywordImport, "'import'");
+
+            bool isExport = false;
+            if (reader.Match(TokenType.KeywordExport))
+            {
+                isExport = true;
+                reader.Expect(TokenType.KeywordImport, "'import' after 'export'");
+            }
+            else
+            {
+                reader.Expect(TokenType.KeywordImport, "'import'");
+            }
+
+            // `module` is a contextual keyword (§2.1): it only means "whole module" directly after
+            // `import`, so it is not reserved and stays a legal identifier everywhere else — a
+            // `moduleof(no.such.module)` path is unaffected.
+            bool isModule = false;
+            if (reader.Current.Type == TokenType.Identifier
+                && reader.Current.Lexeme.Span.SequenceEqual("module".AsSpan()))
+            {
+                isModule = true;
+                reader.Advance();
+            }
 
             List<string> path = new List<string> { reader.ExpectIdentifier("a module or type name") };
             bool wildcard = false;
@@ -341,7 +362,7 @@ namespace Surtr.Compiler.Syntax
                 alias = reader.ExpectIdentifier("a name after 'as'");
 
             reader.Expect(TokenType.Semicolon, "';' after the import");
-            return new ImportSyntax(SpanFrom(start), path, wildcard, alias, members);
+            return new ImportSyntax(SpanFrom(start), path, wildcard, alias, members, isModule, isExport);
         }
 
         /// <summary>The comma-separated names inside <c>import Module.{A, B};</c>'s trailing braces.</summary>
@@ -382,13 +403,13 @@ namespace Surtr.Compiler.Syntax
                 reader.Advance();
 
                 string name = reader.ExpectIdentifier("an attribute name");
-                List<ExpressionSyntax> arguments = new List<ExpressionSyntax>();
+                List<ExpressionSyntax>? arguments = null;
 
                 if (reader.Match(TokenType.LeftParen))
                 {
                     while (!reader.Check(TokenType.RightParen))
                     {
-                        arguments.Add(ParseExpression());
+                        (arguments ??= new List<ExpressionSyntax>(4)).Add(ParseExpression());
                         if (!reader.Match(TokenType.Comma))
                         {
                             break;
@@ -398,8 +419,8 @@ namespace Surtr.Compiler.Syntax
                     reader.Expect(TokenType.RightParen, "')' to close the attribute arguments");
                 }
 
-                attributes ??= new List<AttributeSyntax>();
-                attributes.Add(new AttributeSyntax(SpanFrom(start), name, arguments));
+                attributes ??= new List<AttributeSyntax>(4);
+                attributes.Add(new AttributeSyntax(SpanFrom(start), name, (IReadOnlyList<ExpressionSyntax>?)arguments ?? Array.Empty<ExpressionSyntax>()));
             }
 
             return (IReadOnlyList<AttributeSyntax>?)attributes ?? EmptyAttributes;

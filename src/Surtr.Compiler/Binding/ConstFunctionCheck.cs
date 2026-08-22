@@ -267,6 +267,10 @@ namespace Surtr.Compiler.Binding
                 case BoundTypeTestExpression test:
                     Expression(test.Operand);
                     return;
+
+                case BoundThrowExpression @throw:
+                    Expression(@throw.Value);
+                    return;
             }
         }
         #endregion

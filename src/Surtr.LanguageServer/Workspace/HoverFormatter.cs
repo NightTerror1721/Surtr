@@ -49,10 +49,10 @@ namespace Surtr.LanguageServer.Workspace
                     return FormatProperty(property);
 
                 case LocalSymbol local:
-                    return Fence(local.Name + ": " + local.Type.ToDisplayString()) + Break + "local variable";
+                    return Fence(BindingKeyword(local.IsReadOnly) + local.Name + ": " + local.Type.ToDisplayString()) + Break + "local variable";
 
                 case ParameterSymbol parameter:
-                    return Fence(parameter.Name + ": " + parameter.Type.ToDisplayString()) + Break + "parameter";
+                    return Fence("let " + parameter.Name + ": " + parameter.Type.ToDisplayString()) + Break + "parameter";
 
                 case NamedTypeSymbol type:
                     return FormatType(type);
@@ -303,7 +303,7 @@ namespace Surtr.LanguageServer.Workspace
         private static string FormatField(FieldSymbol field)
         {
             var builder = new StringBuilder();
-            builder.Append(Fence(field.Name + ": " + field.Type.ToDisplayString()));
+            builder.Append(Fence(BindingKeyword(field.IsReadOnly) + field.Name + ": " + field.Type.ToDisplayString()));
 
             var modifiers = new List<string>();
             if (field.IsStatic)
@@ -328,7 +328,7 @@ namespace Surtr.LanguageServer.Workspace
                 accessors.Add("set;");
 
             var builder = new StringBuilder();
-            string declaration = property.Name + ": " + property.Type.ToDisplayString();
+            string declaration = "var " + property.Name + ": " + property.Type.ToDisplayString();
             if (accessors.Count > 0)
                 declaration += " { " + string.Join(" ", accessors) + " }";
 
@@ -418,6 +418,10 @@ namespace Surtr.LanguageServer.Workspace
             string inModule = containing is ModuleSymbol module ? ", in module `" + module.Path + "`" : string.Empty;
             return "extension " + memberWord + " on `" + extensionTarget.ToDisplayString() + "`" + inModule;
         }
+
+        /// <summary>The binding keyword a declaration's card is introduced with — the source keyword the
+        /// TextMate grammar needs to see before <c>name: Type</c> to colour the type at all.</summary>
+        private static string BindingKeyword(bool isReadOnly) => isReadOnly ? "let " : "var ";
 
         /// <summary>Renders a user-written name like <c>op_+</c> back to its source spelling.</summary>
         private static string OperatorSymbol(string name)

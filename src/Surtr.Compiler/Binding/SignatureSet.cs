@@ -125,6 +125,44 @@ namespace Surtr.Compiler.Binding
             return ReferenceEquals(Erase(candidate.ReturnType), Erase(required.ReturnType));
         }
 
+        /// <summary>
+        /// Whether <paramref name="candidate"/> occupies the same vtable slot as
+        /// <paramref name="required"/>, matching what the runtime's <c>SignatureKey</c> will decide:
+        /// name plus erased parameter types, <em>no</em> return type.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <c>SignatureKey</c> (<c>Runtime-Model.md</c> §4.1) deliberately excludes the return type —
+        /// it is what the linker's <c>PlaceInVTable</c> matches an override on, and an override that
+        /// shared only the return with a base slot would still occupy that slot in runtime. So a
+        /// derived member that shares name and parameter shape with a base <c>virtual</c> must be
+        /// told apart here <em>without</em> the return, or the binding would admit two "different"
+        /// methods that the linker then collapses into one slot (and rejects at load).
+        /// </para>
+        /// <para>
+        /// This is deliberately a <em>different</em> question from <see cref="Matches"/>, which keeps
+        /// the return so an interface implementation with the wrong return type is still reported.
+        /// A contract is a promise about the value handed back; a vtable slot is just a place.
+        /// </para>
+        /// </remarks>
+        internal bool MatchesSlot(MethodSymbol candidate, MethodSymbol required)
+        {
+            if (!string.Equals(candidate.Name, required.Name, StringComparison.Ordinal)
+                || candidate.Parameters.Count != required.Parameters.Count)
+            {
+                return false;
+            }
+
+            int first = candidate.Role == MethodRole.Operator && !candidate.IsStatic ? 1 : 0;
+            for (int i = first; i < candidate.Parameters.Count; i++)
+            {
+                if (!ReferenceEquals(Erase(candidate.Parameters[i].Type), Erase(required.Parameters[i].Type)))
+                    return false;
+            }
+
+            return true;
+        }
+
         private TypeSymbol Erase(TypeSymbol type)
         {
             switch (type)

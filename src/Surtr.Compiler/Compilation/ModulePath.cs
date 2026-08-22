@@ -15,13 +15,7 @@ namespace Surtr.Compiler.Compilation
         /// <summary>The file is not under the project's source root.</summary>
         OutsideSourceRoot,
 
-        /// <summary>
-        /// The file sits at the source root and the project declares no root module path, so
-        /// nothing names the module it would belong to.
-        /// </summary>
-        Empty,
-
-        /// <summary>A directory name that is not a legal Surtr identifier, so no import could name it.</summary>
+        /// <summary>A directory or file name that is not a legal Surtr identifier, so no import could name the module it would create.</summary>
         InvalidSegment,
     }
 
@@ -30,15 +24,18 @@ namespace Surtr.Compiler.Compilation
     /// </summary>
     /// <remarks>
     /// <para>
-    /// There is no <c>module</c> header in source: directories map to path segments joined by
-    /// <c>.</c>, relative to the project's source root, the way Go derives a package from its
-    /// directory. Nothing has to be kept in sync with the folder, and the result already has the
-    /// <c>modulePath:typeName</c> shape the descriptor grammar commits to.
+    /// There is no <c>module</c> header in source: a file's path segments (its directories
+    /// relative to the project's source root, plus the file's own name) are joined by <c>.</c>,
+    /// the way Go derives a package from its directory — so <c>Ogame/core/Entity.surtr</c> is
+    /// module <c>Ogame.core.Entity</c>. Each <c>.surtr</c> file is its own module, and an
+    /// <c>import</c> names a module by spelling exactly those segments. Nothing has to be kept in
+    /// sync with the folder, and the result already has the <c>modulePath:typeName</c> shape the
+    /// descriptor grammar commits to.
     /// </para>
     /// <para>
     /// Every segment must be a legal identifier, because an <c>import</c> has to be able to name
-    /// it. A directory called <c>my-module</c> is rejected here rather than producing a module no
-    /// source file could reach.
+    /// it. A directory or file called <c>my-module.surtr</c> is rejected here rather than
+    /// producing a module no source file could reach.
     /// </para>
     /// </remarks>
     public static class ModulePath
@@ -94,12 +91,11 @@ namespace Surtr.Compiler.Compilation
         /// <param name="sourceRoot">The project's source root.</param>
         /// <param name="filePath">The source file.</param>
         /// <param name="rootModulePath">
-        /// What the source root itself is called, prefixed onto every derived path. May be empty,
-        /// in which case a file directly at the root has no module to belong to.
+        /// What the source root itself is called, prefixed onto every derived path. May be empty.
         /// </param>
         /// <param name="modulePath">The derived path, or an empty string on failure.</param>
         /// <param name="offendingSegment">
-        /// The directory name that made this fail, when the status is
+        /// The directory or file name that made this fail, when the status is
         /// <see cref="ModulePathStatus.InvalidSegment"/>.
         /// </param>
         public static ModulePathStatus TryDerive(
@@ -125,6 +121,7 @@ namespace Surtr.Compiler.Compilation
             string relative = file.Substring(root.Length).TrimStart('/');
             int lastSlash = relative.LastIndexOf('/');
             string directories = lastSlash < 0 ? string.Empty : relative.Substring(0, lastSlash);
+            string fileName = Path.GetFileNameWithoutExtension(relative);
 
             var builder = new StringBuilder(rootModulePath);
 
@@ -148,11 +145,80 @@ namespace Surtr.Compiler.Compilation
                 }
             }
 
-            if (builder.Length == 0)
-                return ModulePathStatus.Empty;
+            // A module is a file (§2.1): the file's own name (without extension) is the path's
+            // final segment, so two files in one directory are two different modules and an
+            // `import` can name each of them. It must be writable as an identifier like any other
+            // segment, because an import has to be able to spell it.
+            if (!IsValidSegment(fileName))
+            {
+                offendingSegment = fileName;
+                return ModulePathStatus.InvalidSegment;
+            }
+
+            if (builder.Length > 0)
+                builder.Append(Separator);
+
+            builder.Append(fileName);
 
             modulePath = builder.ToString();
             return ModulePathStatus.Ok;
+        }
+
+        /// <summary>
+        /// Reverses <see cref="TryDerive"/>: given a module path, reconstructs the file path
+        /// (relative to the source root) that would hold it (§2.1). The final segment becomes the
+        /// file name with a <c>.surtr</c> extension, and every segment before it a directory.
+        /// </summary>
+        /// <param name="rootModulePath">What the source root is called, the prefix every derived path carries.</param>
+        /// <param name="modulePath">The dotted module path.</param>
+        /// <returns>
+        /// The relative file path, or <see langword="null"/> when the module path does not carry
+        /// the expected <paramref name="rootModulePath"/> prefix or contains an illegal segment.
+        /// </returns>
+        public static string? TryToFile(string rootModulePath, string modulePath)
+        {
+            if (string.IsNullOrEmpty(modulePath))
+                return null;
+
+            string[] segments = modulePath.Split(Separator);
+            if (segments.Length == 0)
+                return null;
+
+            // The root-module prefix is the source root's own name, which is not a directory on
+            // disk — it only appears in the dotted path. Strip it before mapping segments to files.
+            int start = 0;
+            if (!string.IsNullOrEmpty(rootModulePath))
+            {
+                string[] rootSegments = rootModulePath.Split(Separator);
+                if (segments.Length <= rootSegments.Length)
+                    return null;
+
+                for (int i = 0; i < rootSegments.Length; i++)
+                {
+                    if (!string.Equals(segments[i], rootSegments[i], StringComparison.Ordinal))
+                        return null;
+                }
+
+                start = rootSegments.Length;
+            }
+
+            // Every segment before the last is a directory; the last is the file name. All must be
+            // legal identifiers, matching what TryDerive would have accepted in the first place.
+            for (int i = start; i < segments.Length; i++)
+            {
+                if (!IsValidSegment(segments[i]))
+                    return null;
+            }
+
+            string[] dirs = new string[segments.Length - start - 1];
+            for (int i = start; i < segments.Length - 1; i++)
+                dirs[i - start] = segments[i];
+
+            string fileName = segments[segments.Length - 1] + ".surtr";
+            if (dirs.Length == 0)
+                return fileName;
+
+            return string.Join(Path.DirectorySeparatorChar.ToString(), dirs) + Path.DirectorySeparatorChar + fileName;
         }
 
         private static string NormalizeFile(string path) => Path.GetFullPath(path).Replace('\\', '/');

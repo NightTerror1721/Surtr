@@ -368,8 +368,23 @@ namespace Surtr.VM
             if (frameBase + localCount + method.MaxStackSize > _stackLimit)
                 throw DataStackOverflow();
 
+            // Same fast path as the interpreter's call-entry sequence: ≤16 bytes inline, larger
+            // frames through the vectorised Clear.
             if (localCount > argumentCount)
-                MemOps.Clear(frameBase + argumentCount, (nuint)(localCount - argumentCount) * sizeof(SurtrRawValue));
+            {
+                SurtrRawValue* firstLocal = frameBase + argumentCount;
+                int zeroSlots = localCount - argumentCount;
+                if (zeroSlots <= 2)
+                {
+                    firstLocal[0] = 0;
+                    if (zeroSlots == 2)
+                        firstLocal[1] = 0;
+                }
+                else
+                {
+                    MemOps.Clear(firstLocal, (nuint)zeroSlots * sizeof(SurtrRawValue));
+                }
+            }
 
             var chunk = method.Chunk;
             byte* codeBase = chunk.Code.Pointer;
@@ -1339,10 +1354,9 @@ namespace Surtr.VM
                     current.IP = ip;
                     _sp = sp;
                     var boxed = new SurtrBoxed(SurtrBuiltIns.Integer, SurtrValue.FromRaw(*(sp - 1)));
-                    SurtrRef reference = context.EntityRegistry.Register(boxed);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(boxed, out entities);
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.BoxFloat:
@@ -1350,10 +1364,9 @@ namespace Surtr.VM
                     current.IP = ip;
                     _sp = sp;
                     var boxed = new SurtrBoxed(SurtrBuiltIns.Float, SurtrValue.FromRaw(*(sp - 1)));
-                    SurtrRef reference = context.EntityRegistry.Register(boxed);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(boxed, out entities);
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.BoxBool:
@@ -1361,10 +1374,9 @@ namespace Surtr.VM
                     current.IP = ip;
                     _sp = sp;
                     var boxed = new SurtrBoxed(SurtrBuiltIns.Boolean, SurtrValue.FromRaw(*(sp - 1)));
-                    SurtrRef reference = context.EntityRegistry.Register(boxed);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(boxed, out entities);
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.BoxChar:
@@ -1372,10 +1384,9 @@ namespace Surtr.VM
                     current.IP = ip;
                     _sp = sp;
                     var boxed = new SurtrBoxed(SurtrBuiltIns.Character, SurtrValue.FromRaw(*(sp - 1)));
-                    SurtrRef reference = context.EntityRegistry.Register(boxed);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(boxed, out entities);
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.Unbox:
@@ -1395,10 +1406,9 @@ namespace Surtr.VM
                     _sp = sp;
                     SurtrValue value = SurtrValue.FromRaw(subject);
                     var boxed = new SurtrBoxed(SurtrBuiltIns.ForValue(value), value);
-                    SurtrRef reference = context.EntityRegistry.Register(boxed);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(boxed, out entities);
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.UnboxDynamic:
@@ -1561,11 +1571,10 @@ namespace Surtr.VM
                         joined = string.Create(total, (parts, count), ConcatParts);
                     }
 
-                    SurtrRef reference = context.EntityRegistry.Register(new SurtrString(joined));
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(new SurtrString(joined), out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.StrGet:
@@ -1605,14 +1614,13 @@ namespace Surtr.VM
                     {
                         var items = array.Items;
                         for (int i = 0; i < length; i++)
-                            items[i] = SurtrValue.FromRaw(elementZero);
+                            items[i] = elementZero;
                     }
 
-                    SurtrRef reference = context.EntityRegistry.Register(array);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(array, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.ArrNewX:
@@ -1631,14 +1639,13 @@ namespace Surtr.VM
                     {
                         var items = array.Items;
                         for (int i = 0; i < length; i++)
-                            items[i] = SurtrValue.FromRaw(elementZero);
+                            items[i] = elementZero;
                     }
 
-                    SurtrRef reference = context.EntityRegistry.Register(array);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(array, out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.ArrPack:
@@ -1651,16 +1658,15 @@ namespace Surtr.VM
 
                     var array = new SurtrArray(arrayType, count);
                     array.InitializeLength(count);
-                    SurtrRef reference = context.EntityRegistry.Register(array);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(array, out entities);
 
                     var items = array.Items;
                     sp -= count;
                     for (int i = 0; i < count; i++)
-                        items[i] = SurtrValue.FromRaw(sp[i]);
+                        items[i] = sp[i];
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.ArrLen:
@@ -1680,12 +1686,9 @@ namespace Surtr.VM
                         throw IndexOutOfRange(index, array.Count, "array");
                     }
 
-                    // Two range checks, not one: the explicit trap above, and the CLR's own on the
-                    // managed buffer, which the JIT cannot elide because it compares against
-                    // Items.Length rather than Count. Removing the second needs Unsafe.Add, which
-                    // netstandard2.1 does not carry without a NuGet dependency a Unity host would
-                    // have to ship as well - so it stays until the target framework moves.
-                    *(sp - 1) = array.Items[index].Raw;
+                    // The unmanaged buffer has no CLR bounds check of its own, so the explicit
+                    // trap above is the only range check ArrGet pays.
+                    *(sp - 1) = array.Items[index];
                     goto Dispatch;
                 }
 
@@ -1702,7 +1705,7 @@ namespace Surtr.VM
                         throw IndexOutOfRange(index, array.Count, "array");
                     }
 
-                    array.Items[index] = SurtrValue.FromRaw(value);
+                    array.Items[index] = value;
                     goto Dispatch;
                 }
 
@@ -1714,14 +1717,14 @@ namespace Surtr.VM
                     // Written out rather than calling Add, so the common case - room already
                     // available - is a store and an increment with no call at all.
                     int count = array.Count;
-                    if (count == array.Items.Length)
+                    if (count == array.ItemsCapacity)
                     {
                         current.IP = ip;
                         _sp = sp;
                         array.EnsureCapacity(count + 1);
                     }
 
-                    array.Items[count] = SurtrValue.FromRaw(value);
+                    array.Items[count] = value;
                     array.Count = count + 1;
                     goto Dispatch;
                 }
@@ -1738,11 +1741,11 @@ namespace Surtr.VM
                         throw EmptyArray();
                     }
 
-                    *(sp - 1) = array.Items[last].Raw;
+                    *(sp - 1) = array.Items[last];
 
                     // Blanked, not merely abandoned: a stale reference past Count would keep an
                     // entity alive the moment anything traced beyond the live prefix.
-                    array.Items[last] = SurtrValue.Null;
+                    array.Items[last] = 0;
                     array.Count = last;
                     goto Dispatch;
                 }
@@ -1821,8 +1824,7 @@ namespace Surtr.VM
                     _sp = sp;
 
                     var tuple = new SurtrTuple(tupleType, arity);
-                    SurtrRef reference = context.EntityRegistry.Register(tuple);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(tuple, out entities);
 
                     var elements = tuple.Elements;
                     sp -= arity;
@@ -1830,7 +1832,7 @@ namespace Surtr.VM
                         elements[i] = SurtrValue.FromRaw(sp[i]);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.TupUnpack:
@@ -1895,11 +1897,10 @@ namespace Surtr.VM
                     _sp = sp;
 
                     SurtrRef reference = context.EntityRegistry.Register(
-                        new SurtrDictionary(dictionaryType, comparer, 0));
-                    entities = context.EntityRegistry.Entities;
+                        new SurtrDictionary(dictionaryType, comparer, 0), out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.DictPack:
@@ -1911,8 +1912,7 @@ namespace Surtr.VM
                     _sp = sp;
 
                     var dictionary = new SurtrDictionary(dictionaryType, comparer, count);
-                    SurtrRef reference = context.EntityRegistry.Register(dictionary);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(dictionary, out entities);
 
                     sp -= count * 2;
 
@@ -1938,7 +1938,7 @@ namespace Surtr.VM
                     }
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.DictLen:
@@ -2031,11 +2031,10 @@ namespace Surtr.VM
                     var keys = new SurtrArray(arrayType, dictionary.Count);
                     dictionary.CopyKeysTo(keys);
 
-                    SurtrRef reference = context.EntityRegistry.Register(keys);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(keys, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.DictValues:
@@ -2049,11 +2048,10 @@ namespace Surtr.VM
                     var values = new SurtrArray(arrayType, dictionary.Count);
                     dictionary.CopyValuesTo(values);
 
-                    SurtrRef reference = context.EntityRegistry.Register(values);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(values, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.DictIn:
@@ -2093,11 +2091,17 @@ namespace Surtr.VM
                     current.IP = ip;
                     _sp = sp;
 
-                    SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared));
-                    entities = context.EntityRegistry.Entities;
+                    // Defense in depth: the binder rejects constructing an abstract class in source,
+                    // but raw bytecode (or a frontend without that check) could still ask ObjNew to
+                    // allocate one. An abstract class has no concrete layout to build, so reject it
+                    // here too rather than hand back a half-made instance.
+                    if (declared.IsAbstract)
+                        throw AbstractInstantiation(declared.Name);
+
+                    SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared), out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.ObjNewX:
@@ -2107,11 +2111,13 @@ namespace Surtr.VM
                     current.IP = ip;
                     _sp = sp;
 
-                    SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared));
-                    entities = context.EntityRegistry.Entities;
+                    if (declared.IsAbstract)
+                        throw AbstractInstantiation(declared.Name);
+
+                    SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared), out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
                 #endregion
 
@@ -2175,11 +2181,10 @@ namespace Surtr.VM
                         captures[i] = SurtrValue.FromRaw(sp[i]);
 
                     SurtrRef reference = context.EntityRegistry.Register(
-                        new SurtrClosure(target.ToSignature(), target, captures));
-                    entities = context.EntityRegistry.Entities;
+                        new SurtrClosure(target.ToSignature(), target, captures), out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.NewClosureX:
@@ -2196,11 +2201,37 @@ namespace Surtr.VM
                         captures[i] = SurtrValue.FromRaw(sp[i]);
 
                     SurtrRef reference = context.EntityRegistry.Register(
-                        new SurtrClosure(target.ToSignature(), target, captures));
-                    entities = context.EntityRegistry.Entities;
+                        new SurtrClosure(target.ToSignature(), target, captures), out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
+                }
+
+                case OpCode.NewFunction:
+                {
+                    var target = methodTable[(ip[0] | (ip[1] << 8))];
+                    ip += 2;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    // The one shared closure for the method: nothing to allocate on an evaluation,
+                    // and registering it (on first use) may grow the entity table, hence the
+                    // safepoint below rather than a plain dispatch.
+                    var function = runtime.GetOrCreateFunctionValue(target);
+                    *sp++ = SurtrValue.CreateReference(function.GetSurtrReference()).Raw;
+                    goto Safepoint;
+                }
+
+                case OpCode.NewFunctionX:
+                {
+                    var target = methodTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    ip += 4;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var function = runtime.GetOrCreateFunctionValue(target);
+                    *sp++ = SurtrValue.CreateReference(function.GetSurtrReference()).Raw;
+                    goto Safepoint;
                 }
                 #endregion
 
@@ -2778,33 +2809,61 @@ namespace Surtr.VM
 
                 case OpCode.InvokeInterface:
                 {
-                    var declared = methodTable[(ip[0] | (ip[1] << 8))];
+                    int declaredIndex = ip[0] | (ip[1] << 8);
+                    var declared = methodTable[declaredIndex];
                     ip += 2;
                     pendingArguments = *ip++;
                     pendingResults = *ip++;
 
                     var receiverClass = ((SurtrObject)entities[(SurtrRef)(*(sp - pendingArguments))]!).Class;
-                    var contract = (SurtrInterface)declared.DeclaringType!.ResolvedType!;
 
-                    // Which block of the receiver's dispatch table this contract owns. Written out
-                    // rather than calling SurtrClass.IndexOfInterface, which would be a real call
-                    // from a method this size - the two have to stay in step.
-                    int contractId = contract.InterfaceId;
-                    int indexMask = receiverClass.InterfaceIndexMask;
-                    int probe = contractId & indexMask;
+                    // Monomorphic cache, keyed like the virtual one. The hit path collapses the
+                    // whole open-addressed probe and the two extra indirections into one array load
+                    // and one reference compare; the miss runs the probe and records its result.
+                    var interfaceCache = chunk.InterfaceCallCache;
+                    if (interfaceCache is null)
+                        interfaceCache = chunk.InterfaceCallCache = new SurtrVirtualCallSite[methodTable.Length];
 
-                    while (receiverClass.InterfaceIndexById[probe << 1] != contractId)
-                        probe = (probe + 1) & indexMask;
+                    ref var interfaceSlot = ref interfaceCache[declaredIndex];
+                    if (interfaceSlot.Expected != receiverClass)
+                    {
+                        var contract = (SurtrInterface)declared.DeclaringType!.ResolvedType!;
 
-                    int contractIndex = receiverClass.InterfaceIndexById[(probe << 1) + 1];
+                        // Which block of the receiver's dispatch table this contract owns. Written out
+                        // rather than calling SurtrClass.IndexOfInterface, which would be a real call
+                        // from a method this size - the two have to stay in step.
+                        int contractId = contract.InterfaceId;
+                        int indexMask = receiverClass.InterfaceIndexMask;
 
-                    // One extra indirection over a virtual call: the interface's block in the
-                    // class's dispatch table maps the contract's slot onto a vtable index, so an
-                    // override reached through the vtable applies here for free.
-                    int vtableSlot = receiverClass.InterfaceMethodSlots[
-                        receiverClass.InterfaceSlotOffsets[contractIndex] + declared.VTableSlot];
+                        // A receiver whose class implements no interface has an empty interface-dispatch
+                        // table (`InterfaceIndexMask` == -1). Indexing it below would read past the end
+                        // of the `SurtrNativeArray` and trip the debug assertion; surface it as a cast
+                        // failure instead, so a bad `InvokeInterface` is a diagnosable Surtr exception
+                        // rather than a memory-safety crash.
+                        if (indexMask < 0)
+                            throw InvalidCast(receiverClass.Name, contract.Name);
 
-                    pendingMethod = receiverClass.VirtualMethods[vtableSlot];
+                        int probe = contractId & indexMask;
+
+                        while (receiverClass.InterfaceIndexById[probe << 1] != contractId)
+                            probe = (probe + 1) & indexMask;
+
+                        int contractIndex = receiverClass.InterfaceIndexById[(probe << 1) + 1];
+
+                        // One extra indirection over a virtual call: the interface's block in the
+                        // class's dispatch table maps the contract's slot onto a vtable index, so an
+                        // override reached through the vtable applies here for free.
+                        int vtableSlot = receiverClass.InterfaceMethodSlots[
+                            receiverClass.InterfaceSlotOffsets[contractIndex] + declared.VTableSlot];
+
+                        pendingMethod = receiverClass.VirtualMethods[vtableSlot];
+                        interfaceSlot = new SurtrVirtualCallSite { Expected = receiverClass, Method = pendingMethod };
+                    }
+                    else
+                    {
+                        pendingMethod = interfaceSlot.Method!;
+                    }
+
                     pendingClosure = null;
                     goto InvokeResolved;
                 }
@@ -2975,11 +3034,10 @@ namespace Surtr.VM
                     _sp = sp;
 
                     var boxed = new SurtrBoxed(declared, SurtrValue.FromRaw(*(sp - 1)));
-                    SurtrRef reference = context.EntityRegistry.Register(boxed);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(boxed, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.BoxAsX:
@@ -2990,11 +3048,10 @@ namespace Surtr.VM
                     _sp = sp;
 
                     var boxed = new SurtrBoxed(declared, SurtrValue.FromRaw(*(sp - 1)));
-                    SurtrRef reference = context.EntityRegistry.Register(boxed);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(boxed, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
                 #endregion
 
@@ -3006,11 +3063,10 @@ namespace Surtr.VM
 
                     sp--;
                     var range = new SurtrRange((int)*(sp - 1), (int)*sp, inclusive: false);
-                    SurtrRef reference = context.EntityRegistry.Register(range);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(range, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
 
                 case OpCode.RangeNewInclusive:
@@ -3020,11 +3076,10 @@ namespace Surtr.VM
 
                     sp--;
                     var range = new SurtrRange((int)*(sp - 1), (int)*sp, inclusive: true);
-                    SurtrRef reference = context.EntityRegistry.Register(range);
-                    entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(range, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Dispatch;
+                    goto Safepoint;
                 }
                 #endregion
 
@@ -3033,6 +3088,18 @@ namespace Surtr.VM
                     _sp = sp;
                     throw InvalidOpCode(*(ip - 1));
             }
+
+        // The single safepoint for automatic collection. Every allocation opcode that completed
+        // (its result pushed on the stack) routes here instead of straight to Dispatch, so the
+        // flag is drained by exactly one call site rather than one per opcode. Living after the
+        // switch keeps it off the dispatch hot path entirely - nothing falls through to it.
+        Safepoint:
+            if (context.EntityRegistry.GcPending)
+            {
+                _sp = sp;
+                runtime.CollectAtSafepoint();
+            }
+            goto Dispatch;
 
         // ---- Shared call sequences ------------------------------------------------------------
         // Reached by goto, never by a call: the operands arrive in the pending* locals, so every
@@ -3060,6 +3127,15 @@ namespace Surtr.VM
                 _sp = sp;
 
                 entities = context.EntityRegistry.Entities;
+
+
+
+                // The native boundary is the other safepoint for automatic collection: a host body
+                // may have allocated enough to arm the flag, and the machine state is already
+                // published above, so the sweep can run here with a consistent stack.
+                if (context.EntityRegistry.GcPending)
+                    runtime.CollectAtSafepoint();
+
                 goto Dispatch;
             }
 
@@ -3088,8 +3164,24 @@ namespace Surtr.VM
 
                 // Locals above the incoming arguments are zeroed, so a collection can never read a
                 // slot the program has not written and retain whatever the last call left there.
+                // The ≤16-byte case is written out rather than calling MemOps.Clear, whose body is
+                // deliberately too large to inline (it is shared with the vectorised bulk paths):
+                // the call-entry sequence is the hottest frame path and small frames dominate.
                 if (localCount > pendingArguments)
-                    MemOps.Clear(newBase + pendingArguments, (nuint)(localCount - pendingArguments) * sizeof(SurtrRawValue));
+                {
+                    SurtrRawValue* firstLocal = newBase + pendingArguments;
+                    int zeroSlots = localCount - pendingArguments;
+                    if (zeroSlots <= 2)
+                    {
+                        firstLocal[0] = 0;
+                        if (zeroSlots == 2)
+                            firstLocal[1] = 0;
+                    }
+                    else
+                    {
+                        MemOps.Clear(firstLocal, (nuint)zeroSlots * sizeof(SurtrRawValue));
+                    }
+                }
 
                 current.IP = ip;
 
@@ -3172,6 +3264,10 @@ namespace Surtr.VM
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException InvalidCast(string fromName, string toName)
             => new SurtrExecutionException($"A '{fromName}' cannot be cast to '{toName}'.", SurtrBuiltIns.InvalidCastException);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException AbstractInstantiation(string className)
+            => new SurtrExecutionException($"'{className}' is abstract and cannot be instantiated.", SurtrBuiltIns.InvalidOperationException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException InvalidOpCode(byte opCode)

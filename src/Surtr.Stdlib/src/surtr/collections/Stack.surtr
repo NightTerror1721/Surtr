@@ -13,7 +13,7 @@ public class Stack<T> : IStack<T>, ICollection<T>
 {
     private let _items: T[];
 
-    public inline constructor()
+    public constructor()
     {
         this._items = [];
     }

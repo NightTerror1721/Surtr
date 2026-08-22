@@ -465,6 +465,10 @@ namespace Surtr.Compiler.Binding
                     // §8 makes a lambda a value: what it captures is copied here, but its body runs
                     // when something invokes it, which is not at load.
                     return;
+
+                case BoundThrowExpression @throw:
+                    Walk(@throw.Value);
+                    return;
             }
         }
         #endregion

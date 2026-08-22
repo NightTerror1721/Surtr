@@ -380,7 +380,7 @@ namespace Surtr.Runtime
         /// and <c>Module.get</c>/<c>Module.tryGet</c> do.
         /// </summary>
         /// <remarks>
-        /// Same caching and rooting as <see cref="GetOrCreateTypeValue"/>: created and permanently
+        /// Same caching and rooting as <see cref="GetOrCreateTypeValue(SurtrTypeInfo)"/>: created and permanently
         /// rooted the first time this runtime is asked about <paramref name="wrapped"/>, and the
         /// cached object returned on every call after that - see
         /// <see cref="SurtrContext.ModuleValueCache"/>.
@@ -409,12 +409,46 @@ namespace Surtr.Runtime
         /// <exception cref="ArgumentException"><paramref name="method"/> has no body.</exception>
         public SurtrClosure NewClosure(SurtrMethodInfo method, SurtrValue[]? upValues = null, SurtrClassReference typeReference = default)
         {
+            // A closure with nothing to capture is a pure function, so the stateless fast path and
+            // the capturing one meet here: with no upvalues and no custom type, the host gets the
+            // one shared closure for the method (see GetOrCreateFunctionValue), the same value
+            // every zero-capture lambda in the language resolves to. A caller that explicitly
+            // passes captures - or a custom type - still gets a fresh object, exactly as before.
+            if ((upValues is null || upValues.Length == 0) && !typeReference.IsValid)
+                return GetOrCreateFunctionValue(method);
+
             var value = new SurtrClosure(
                 typeReference.IsValid ? typeReference : method.ToSignature(),
                 method,
                 upValues ?? Array.Empty<SurtrValue>());
 
             _context.EntityRegistry.Register(value);
+            return value;
+        }
+
+        /// <summary>
+        /// Returns the one shared <c>SurtrClosure</c> for a method within this runtime - the value
+        /// every evaluation of that method as a zero-capture function resolves to.
+        /// </summary>
+        /// <remarks>
+        /// Creates, registers and permanently roots it the first time this runtime is asked about
+        /// <paramref name="method"/>, and returns the cached object on every call after that - see
+        /// <see cref="SurtrContext.FunctionValueCache"/>. Rooted for the same reason a
+        /// <see cref="SurtrTypeValue"/> is: the cache dictionary itself is never traced, so an
+        /// entry the collector could otherwise reclaim would leave a stale id behind, and the cache
+        /// is bounded by how many distinct zero-capture methods a program actually uses, so rooting
+        /// every entry for the runtime's lifetime is cheap rather than a leak.
+        /// </remarks>
+        /// <exception cref="ArgumentException"><paramref name="method"/> has no body.</exception>
+        public SurtrClosure GetOrCreateFunctionValue(SurtrMethodInfo method)
+        {
+            if (_context.FunctionValueCache.TryGetValue(method, out var existing))
+                return existing;
+
+            var value = new SurtrClosure(method.ToSignature(), method, Array.Empty<SurtrValue>());
+            SurtrRef reference = _context.EntityRegistry.Register(value);
+            _context.FunctionValueCache.Add(method, value);
+            _context.AddRoot(SurtrValue.CreateReference(reference).Raw);
             return value;
         }
 
@@ -1283,6 +1317,37 @@ namespace Surtr.Runtime
             => _context.RemoveRoot(SurtrValue.CreateReference(entity.GetSurtrReference()).Raw);
 
         /// <summary>
+        /// Replaces the policy the collector runs under.
+        /// </summary>
+        /// <remarks>
+        /// A runtime collects on its own by default; pass <see cref="SurtrGcPolicy.Manual"/> to
+        /// restore the purely host-driven behaviour. The policy is folded at configuration time, so
+        /// a manual runtime's allocation path costs no more than it ever did. See
+        /// <see cref="SurtrGcPolicy"/>.
+        /// </remarks>
+        public void ConfigureGc(in SurtrGcPolicy policy)
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(SurtrRuntime));
+
+            _context.EntityRegistry.ConfigurePolicy(policy);
+        }
+
+        /// <summary>The policy this runtime's collector currently runs under.</summary>
+        public SurtrGcPolicy GcPolicy
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _context.EntityRegistry.Policy;
+        }
+
+        /// <summary>How many entities were registered since the last collection.</summary>
+        public long AllocationsSinceLastCollection
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _context.EntityRegistry.AllocationsSinceLastCollection;
+        }
+
+        /// <summary>
         /// Collects unreachable objects, tracing from the host globals and the explicit roots.
         /// </summary>
         /// <remarks>
@@ -1345,11 +1410,55 @@ namespace Surtr.Runtime
                 fullCollection);
         }
 
+        /// <summary>
+        /// Runs the collection a policy has asked for, at a machine safepoint.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The interpreter's only job on its hot path is to arm a flag (see
+        /// <see cref="SurtrEntityRegistry.GcPending"/>); the sweep itself is deferred here, to a
+        /// native boundary or the dispatch backstop, where the machine has already published its
+        /// stack top and every value the program is using is on the stack. That is the same
+        /// contract <see cref="Collect(bool)"/> relies on, so a policy-driven sweep is a plain
+        /// call into it with the full/nursery choice the policy's <see cref="SurtrGcPolicy.NurseryFrequency"/>
+        /// dictates.
+        /// </para>
+        /// <para>
+        /// Cold by construction: it is only reached once the pending flag is armed, so keeping the
+        /// body out of the dispatch loop's register allocation is free.
+        /// </para>
+        /// </remarks>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        internal void CollectAtSafepoint()
+        {
+            ref SurtrEntityRegistry registry = ref _context.EntityRegistry;
+            if (!registry.GcPending)
+                return;
+
+            // The sweep drains the flag and resets the allocation counter, so a single call covers
+            // both the threshold that armed it and the pressure behind a nested arm.
+            Collect(registry.ShouldCollectFull());
+        }
+
         /// <summary>Statistics about the collections this runtime has run.</summary>
         public long TotalCollections
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _context.EntityRegistry.TotalCollections;
+        }
+
+        /// <summary>How many of the collections this runtime has run were full sweeps.</summary>
+        public long TotalFullCollections
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _context.EntityRegistry.TotalFullCollections;
+        }
+
+        /// <summary>How many of the collections this runtime has run were nursery sweeps.</summary>
+        public long TotalNurseryCollections
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _context.EntityRegistry.TotalNurseryCollections;
         }
 
         /// <summary>How long the most recent collection took.</summary>

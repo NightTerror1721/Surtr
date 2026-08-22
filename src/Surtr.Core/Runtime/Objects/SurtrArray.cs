@@ -2,6 +2,7 @@
 
 using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
+using Surtr.Runtime.Utilities;
 using System;
 using System.Runtime.CompilerServices;
 
@@ -12,20 +13,19 @@ namespace Surtr.Runtime.Objects
     /// </summary>
     /// <remarks>
     /// <para>
-    /// It behaves like a list - it grows and shrinks - but the storage underneath is always one
-    /// flat <see cref="SurtrValue"/><c>[]</c> plus a count, never a <c>List&lt;T&gt;</c>. A
+    /// It behaves like a list - it grows and shrinks - but the storage underneath is one flat
+    /// unmanaged <see cref="SurtrRawValue"/> buffer plus a count, never a <c>List&lt;T&gt;</c>. A
     /// <c>List&lt;T&gt;</c> would add a second object to chase on every element access and would
     /// hide the buffer behind an indexer with its own bounds check on top of the array's, and
     /// <c>ArrGet</c>/<c>ArrSet</c> are among the hottest instructions in the set. With the buffer
-    /// exposed, an element access is one load off <see cref="Items"/>.
+    /// exposed as a pointer, an element access is one load off <see cref="Items"/> with no CLR
+    /// bounds check at all, and the buffer itself is invisible to the CLR GC - only the shell
+    /// object is managed.
     /// </para>
     /// <para>
-    /// The buffer is managed rather than a <c>SurtrNativeArray</c>. An array is a collectable
-    /// value, and the entity registry sweeps by dropping its reference to an object - there is no
-    /// finalization hook - so an unmanaged buffer owned by a collectable object would leak on
-    /// every collection. Every collectable object in this namespace holds its values in a managed
-    /// array for that reason; the unmanaged arrays belong to metadata, which is disposed
-    /// explicitly.
+    /// The buffer is unmanaged (<see cref="Items"/>), which requires the lifecycle hook the other
+    /// collectable objects use: <see cref="ReleaseBuffer"/> frees it when the registry releases the
+    /// array (a sweep or an explicit <see cref="SurtrEntityRegistry.Release"/>), so nothing leaks.
     /// </para>
     /// <para>
     /// Elements carry no per-element type. Surtr is statically typed, so the compiler already
@@ -39,15 +39,18 @@ namespace Surtr.Runtime.Objects
     /// <see cref="VisitReferences"/> tests tags.
     /// </para>
     /// </remarks>
-    public sealed class SurtrArray : SurtrObject
+    public sealed unsafe class SurtrArray : SurtrObject, ISurtrNativeBufferOwner
     {
         private const int MinimumCapacity = 4;
 
         /// <summary>
         /// The backing buffer. Only the first <see cref="Count"/> entries are live; the rest is
-        /// slack and must not be read.
+        /// slack and must not be read. Null while the array has never held an element.
         /// </summary>
-        internal SurtrValue[] Items;
+        internal SurtrRawValue* Items;
+
+        /// <summary>How many entries <see cref="Items"/> has room for.</summary>
+        internal int ItemsCapacity;
 
         /// <summary>How many entries of <see cref="Items"/> are live.</summary>
         internal int Count;
@@ -57,7 +60,8 @@ namespace Surtr.Runtime.Objects
         internal SurtrArray(SurtrClassReference typeReference, int capacity) : base(SurtrBuiltIns.Array)
         {
             _typeReference = typeReference;
-            Items = capacity > 0 ? new SurtrValue[capacity] : Array.Empty<SurtrValue>();
+            Items = SurtrValueBufferPool.Rent(capacity, out int rentedCapacity);
+            ItemsCapacity = rentedCapacity;
             Count = 0;
         }
 
@@ -72,7 +76,7 @@ namespace Surtr.Runtime.Objects
         public int Capacity
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => Items.Length;
+            get => ItemsCapacity;
         }
 
         /// <summary>Whether the array holds no elements.</summary>
@@ -99,11 +103,13 @@ namespace Surtr.Runtime.Objects
             get => _typeReference.IsValid ? _typeReference.GetArrayElementType() : default;
         }
 
-        /// <summary>Reads an element. The caller is responsible for the range check.</summary>
-        public ref SurtrValue this[int index]
+        /// <summary>Reads or writes an element. The caller is responsible for the range check.</summary>
+        public SurtrValue this[int index]
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
-            get => ref Items[index];
+            get => SurtrValue.FromRaw(Items[index]);
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            set => Items[index] = value.Raw;
         }
 
         /// <summary>Whether <paramref name="index"/> addresses a live element.</summary>
@@ -116,10 +122,10 @@ namespace Surtr.Runtime.Objects
         public void Add(SurtrValue value)
         {
             int count = Count;
-            if (count == Items.Length)
+            if (count == ItemsCapacity)
                 Grow(count + 1);
 
-            Items[count] = value;
+            Items[count] = value.Raw;
             Count = count + 1;
         }
 
@@ -131,12 +137,12 @@ namespace Surtr.Runtime.Objects
             if (last < 0)
                 throw new InvalidOperationException("Cannot remove the last element of an empty array.");
 
-            SurtrValue value = Items[last];
+            SurtrValue value = SurtrValue.FromRaw(Items[last]);
 
             // Cleared, not just abandoned: a stale reference in the slack would keep an entity
             // alive if anything ever traced past Count, and null is the cheap way to be sure it
             // cannot.
-            Items[last] = SurtrValue.Null;
+            Items[last] = 0;
             Count = last;
             return value;
         }
@@ -149,13 +155,13 @@ namespace Surtr.Runtime.Objects
             if ((uint)index > (uint)count)
                 throw new ArgumentOutOfRangeException(nameof(index), index, "Insertion index is outside the array.");
 
-            if (count == Items.Length)
+            if (count == ItemsCapacity)
                 Grow(count + 1);
 
             if (index < count)
-                Array.Copy(Items, index, Items, index + 1, count - index);
+                MemOps.Move(Items + index, Items + index + 1, (nuint)(count - index) * sizeof(SurtrRawValue));
 
-            Items[index] = value;
+            Items[index] = value.Raw;
             Count = count + 1;
         }
 
@@ -169,9 +175,9 @@ namespace Surtr.Runtime.Objects
 
             int last = count - 1;
             if (index < last)
-                Array.Copy(Items, index + 1, Items, index, last - index);
+                MemOps.Move(Items + index + 1, Items + index, (nuint)(last - index) * sizeof(SurtrRawValue));
 
-            Items[last] = SurtrValue.Null;
+            Items[last] = 0;
             Count = last;
         }
 
@@ -180,7 +186,8 @@ namespace Surtr.Runtime.Objects
         {
             // Only the live prefix needs clearing; everything past Count was already blanked when
             // it stopped being live.
-            Array.Clear(Items, 0, Count);
+            if (Count > 0)
+                MemOps.Clear(Items, (nuint)Count * sizeof(SurtrRawValue));
             Count = 0;
         }
 
@@ -193,7 +200,7 @@ namespace Surtr.Runtime.Objects
 
             while (low < high)
             {
-                SurtrValue swap = items[low];
+                SurtrRawValue swap = items[low];
                 items[low] = items[high];
                 items[high] = swap;
                 low++;
@@ -210,7 +217,8 @@ namespace Surtr.Runtime.Objects
             if ((uint)length > (uint)Count)
                 throw new ArgumentOutOfRangeException(nameof(length), length, "Truncation length is outside the array.");
 
-            Array.Clear(Items, length, Count - length);
+            if (length < Count)
+                MemOps.Clear(Items + length, (nuint)(Count - length) * sizeof(SurtrRawValue));
             Count = length;
         }
 
@@ -223,7 +231,7 @@ namespace Surtr.Runtime.Objects
         /// Internal and unguarded: the only caller is the allocation path, which has just built the
         /// object and is about to hand it to bytecode that indexes it. Growing the buffer here is
         /// exactly the same work <c>Add</c> would do element by element, minus the per-element
-        /// branch, and the new slots come back zeroed by <see cref="Array.Resize"/>.
+        /// branch, and the new slots come back zeroed by the grow.
         /// </para>
         /// <para>
         /// A zeroed slot carries no tag, so it is not a float, an int, or a reference in the strict
@@ -235,8 +243,8 @@ namespace Surtr.Runtime.Objects
         /// </remarks>
         internal void InitializeLength(int length)
         {
-            if (length > Items.Length)
-                Array.Resize(ref Items, length);
+            if (length > ItemsCapacity)
+                Grow(length);
 
             Count = length;
         }
@@ -244,18 +252,50 @@ namespace Surtr.Runtime.Objects
         /// <summary>Makes room for at least <paramref name="capacity"/> elements without changing the length.</summary>
         public void EnsureCapacity(int capacity)
         {
-            if (capacity > Items.Length)
+            if (capacity > ItemsCapacity)
                 Grow(capacity);
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private void Grow(int required)
         {
-            int capacity = Items.Length == 0 ? MinimumCapacity : Items.Length * 2;
+            int capacity = ItemsCapacity == 0 ? MinimumCapacity : ItemsCapacity * 2;
             if (capacity < required)
                 capacity = required;
 
-            Array.Resize(ref Items, capacity);
+            // Class-aligned, so Return can pool the buffer by its exact size: the pool reuses a
+            // returned buffer for any rent within the same power-of-two class, and a buffer whose
+            // capacity was not class-sized would be handed out for more slots than it holds.
+            capacity = Pow2Ceil(capacity);
+
+            int oldCapacity = ItemsCapacity;
+            Items = MemOps.Reallocate(Items, (nuint)capacity);
+            ItemsCapacity = capacity;
+
+            // ReallocHGlobal does not zero the grown region; zero it so the new slots read as the
+            // neutral element (null/0/0.0) exactly like Array.Resize used to guarantee.
+            if (oldCapacity < capacity)
+                MemOps.Clear(Items + oldCapacity, (nuint)(capacity - oldCapacity) * sizeof(SurtrRawValue));
+        }
+
+        /// <summary>The smallest power of two at least <paramref name="value"/>.</summary>
+        private static int Pow2Ceil(int value)
+        {
+            int result = 1;
+            while (result < value)
+                result <<= 1;
+            return result;
+        }
+
+        /// <summary>Returns the unmanaged buffer to the pool. Idempotent; called by the registry on release.</summary>
+        public void ReleaseBuffer()
+        {
+            if (Items != null)
+            {
+                SurtrValueBufferPool.Return(Items, ItemsCapacity);
+                Items = null;
+                ItemsCapacity = 0;
+            }
         }
         #endregion
 
@@ -277,7 +317,7 @@ namespace Surtr.Runtime.Objects
 
             for (int i = 0; i < count; i++)
             {
-                if (comparer.ValuesEqual(items[i], value))
+                if (comparer.ValuesEqual(SurtrValue.FromRaw(items[i]), value))
                     return i;
             }
 
@@ -307,7 +347,7 @@ namespace Surtr.Runtime.Objects
             int count = Count;
 
             for (int i = 0; i < count; i++)
-                marker.Mark(items[i]);
+                marker.Mark(SurtrValue.FromRaw(items[i]));
         }
     }
 }

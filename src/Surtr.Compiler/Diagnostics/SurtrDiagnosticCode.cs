@@ -440,11 +440,27 @@ namespace Surtr.Compiler.Diagnostics
         InvalidExtensionReceiver = 3063,
 
         /// <summary>
-        /// A member's own visibility inside an <c>extension</c> block (§15.2) is wider than the
+        /// A method's own visibility inside an <c>extension</c> block (§15.2) is wider than the
         /// block's — a member may narrow the block's visibility or leave it unwritten to inherit it,
         /// never widen it.
         /// </summary>
         ExtensionMemberVisibilityTooWide = 3064,
+
+        /// <summary>
+        /// A method omits its return type (§8) where nothing can infer it: a method with no body
+        /// (<c>abstract</c>, <c>native</c>, an interface member) has nothing to infer from, and an
+        /// <c>override</c> or interface implementation must match the contract's signature, which
+        /// cannot be checked against an inferred one.
+        /// </summary>
+        ReturnTypeRequired = 3065,
+
+        /// <summary>
+        /// An <c>enum</c> or <c>singleton</c> declares type parameters (§6). An enum's cases are a
+        /// fixed set of ordinals and a singleton has exactly one instance created at module load, so
+        /// neither has anything a type argument could select; a generic declaration would be a
+        /// degenerate type that cannot be named by its arity and could even be "constructed".
+        /// </summary>
+        InvalidGenericDeclaration = 3066,
 
         #endregion
 

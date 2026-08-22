@@ -113,5 +113,80 @@ namespace Surtr.Tests.VM
             var callerMethod = builder.Build(callerModule, localCount: 0, maxStackSize: 16);
             Assert.Equal(1003, runtime.Invoke(callerMethod).AsInt);
         }
+
+        [Fact]
+        public void NewFunction_ThenInvokeClosure_CallsThroughToTheMethod()
+        {
+            using var runtime = new SurtrRuntime();
+            var targetModule = new SurtrModule("target");
+            var target = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(42)
+                .Op(OpCode.ReturnValue)
+                .Build(targetModule, localCount: 0, maxStackSize: 4);
+
+            var callerModule = new SurtrModule("caller");
+            var builder = new BytecodeBuilder();
+            int methodIndex = builder.AddMethod(target);
+
+            builder
+                .Op(OpCode.NewFunction).I16(methodIndex)
+                .Op(OpCode.InvokeClosure).U8(0).U8(1)
+                .Op(OpCode.ReturnValue);
+
+            var callerMethod = builder.Build(callerModule, localCount: 0, maxStackSize: 8);
+            Assert.Equal(42, runtime.Invoke(callerMethod).AsInt);
+        }
+
+        [Fact]
+        public void NewFunctionX_UsesAFourByteMethodIndex()
+        {
+            using var runtime = new SurtrRuntime();
+            var targetModule = new SurtrModule("target");
+            var target = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(7)
+                .Op(OpCode.ReturnValue)
+                .Build(targetModule, localCount: 0, maxStackSize: 4);
+
+            var callerModule = new SurtrModule("caller");
+            var builder = new BytecodeBuilder();
+            int methodIndex = builder.AddMethod(target);
+
+            builder
+                .Op(OpCode.NewFunctionX).I32(methodIndex)
+                .Op(OpCode.InvokeClosure).U8(0).U8(1)
+                .Op(OpCode.ReturnValue);
+
+            var callerMethod = builder.Build(callerModule, localCount: 0, maxStackSize: 8);
+            Assert.Equal(7, runtime.Invoke(callerMethod).AsInt);
+        }
+
+        [Fact]
+        public void EveryEvaluationOfNewFunction_ReturnsTheSameReference()
+        {
+            using var runtime = new SurtrRuntime();
+            var targetModule = new SurtrModule("target");
+            var target = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(1)
+                .Op(OpCode.ReturnValue)
+                .Build(targetModule, localCount: 0, maxStackSize: 4);
+
+            var callerModule = new SurtrModule("caller");
+            var builder = new BytecodeBuilder();
+            int methodIndex = builder.AddMethod(target);
+
+            builder
+                .Op(OpCode.NewFunction).I16(methodIndex)
+                .Op(OpCode.ReturnValue);
+
+            var callerMethod = builder.Build(callerModule, localCount: 0, maxStackSize: 8);
+
+            // The opcode hands back the one shared closure for the method, so two evaluations - in
+            // two separate runs - are the same value. That is the referential transparency that
+            // makes a zero-capture lambda an ordinary function.
+            SurtrValue first = runtime.Invoke(callerMethod);
+            SurtrValue second = runtime.Invoke(callerMethod);
+            Assert.True(first.IsReference);
+            Assert.Equal(first.Raw, second.Raw);
+        }
     }
 }

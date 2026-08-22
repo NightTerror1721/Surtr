@@ -27,6 +27,9 @@ namespace Surtr.Compiler.Utilities
         /// <summary>Total number of elements in the underlying buffer.</summary>
         internal int Length => buffer.Length;
 
+        /// <summary>The underlying buffer as a span, for a subclass that needs raw element access.</summary>
+        protected ReadOnlySpan<T> Elements => buffer.Span;
+
         /// <summary>True once <see cref="Position"/> has reached the end of the buffer.</summary>
         internal bool IsAtEnd => Position >= buffer.Length;
 

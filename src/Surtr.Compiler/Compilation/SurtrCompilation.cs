@@ -7,7 +7,9 @@ using Surtr.Compiler.Syntax;
 using Surtr.Compiler.Syntax.Ast;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace Surtr.Compiler.Compilation
 {
@@ -24,14 +26,17 @@ namespace Surtr.Compiler.Compilation
         /// <summary>The file it came from.</summary>
         public SurtrSourceFile File { get; }
 
-        /// <summary>The module it belongs to, derived from where it lives (§2.1).</summary>
+        /// <summary>
+        /// The module it belongs to, derived from where it lives (§2.1): its directories under the
+        /// source root plus its own file name.
+        /// </summary>
         public string ModulePath { get; }
 
         /// <summary>Its syntax tree.</summary>
         public CompilationUnitSyntax Syntax { get; }
     }
 
-    /// <summary>Every file in one directory, which is to say one module's source.</summary>
+    /// <summary>One parsed source file, which is to say one module's source (§2.1: a module is a file).</summary>
     public sealed class SurtrSourceModule
     {
         private readonly List<SurtrSourceUnit> _units = new List<SurtrSourceUnit>();
@@ -41,7 +46,7 @@ namespace Surtr.Compiler.Compilation
         /// <summary>The module's dotted path.</summary>
         public string Path { get; }
 
-        /// <summary>The files contributing to it.</summary>
+        /// <summary>The files contributing to it — always exactly one, since a module is a file.</summary>
         public IReadOnlyList<SurtrSourceUnit> Units => _units;
 
         internal void Add(SurtrSourceUnit unit) => _units.Add(unit);
@@ -63,12 +68,14 @@ namespace Surtr.Compiler.Compilation
     /// with the project.
     /// </para>
     /// </remarks>
-    public sealed class SurtrCompilation : IDisposable
+    public sealed class SurtrCompilation : IDisposable, IModuleResolver
     {
         private readonly Dictionary<string, SurtrSourceModule> _modules =
             new Dictionary<string, SurtrSourceModule>(StringComparer.Ordinal);
 
         private readonly List<SurtrSourceModule> _ordered = new List<SurtrSourceModule>();
+
+        private readonly ISourceProvider _sourceProvider;
 
         private SurtrCompilation(SurtrProject project)
         {
@@ -77,6 +84,7 @@ namespace Surtr.Compiler.Compilation
             Dependencies = new ModuleDependencyGraph();
             TypeFactory = new TypeSymbolFactory();
             Importer = new MetadataImporter(TypeFactory);
+            _sourceProvider = project.SourceProvider;
         }
 
         /// <summary>The project this was created from.</summary>
@@ -177,143 +185,261 @@ namespace Surtr.Compiler.Compilation
 
         private void ParseSources()
         {
-            foreach (var file in Project.SourceFiles)
+            var files = Project.SourceFiles;
+
+            // Parsing a file is independent of every other: derive its module, lex it, parse it —
+            // the only shared state is read-only. Each file parses into its own bag and its own slot,
+            // and the results merge back in file order, which keeps diagnostic report order exactly
+            // what the sequential path produced. Bind, the dependency graph and emit stay sequential.
+            var results = new FileParseResult[files.Count];
+            Parallel.For(0, files.Count, i =>
             {
-                // A file that names its own module is the exception, not the rule — the stdlib's
-                // one-module-per-file layout, whose module name ends in the file name — so the
-                // ordinary §2.1 directory derivation applies only where no module was given.
-                string modulePath;
-                if (file.ModulePath is not null)
-                {
-                    modulePath = file.ModulePath;
-                }
-                else
-                {
-                    var status = ModulePath.TryDerive(
-                        Project.SourceRoot,
-                        file.Path,
-                        Project.RootModulePath,
-                        out modulePath,
-                        out string offendingSegment);
+                results[i] = ParseFile(files[i]);
+            });
 
-                    if (status != ModulePathStatus.Ok)
-                    {
-                        ReportModulePath(file, status, offendingSegment);
-                        continue;
-                    }
-                }
+            for (int i = 0; i < results.Length; i++)
+                MergeParseResult(results[i]);
+        }
 
-                // One bag for the whole project: the lexer and parser report into the same place
-                // everything after them does, so a caller checks once.
-                var parser = new Parser(SurtrSourceBuffer.FromString(file.Text, file.Path), Diagnostics);
-                var syntax = parser.ParseCompilationUnit();
-
-                if (!_modules.TryGetValue(modulePath, out var module))
-                {
-                    module = new SurtrSourceModule(modulePath);
-                    _modules.Add(modulePath, module);
-                }
-
-                module.Add(new SurtrSourceUnit(file, modulePath, syntax));
+        private readonly struct FileParseResult
+        {
+            internal FileParseResult(
+                SurtrSourceFile file,
+                string modulePath,
+                CompilationUnitSyntax? syntax,
+                SurtrDiagnosticBag bag,
+                ModulePathStatus status,
+                string offendingSegment)
+            {
+                File = file;
+                ModulePath = modulePath;
+                Syntax = syntax;
+                Bag = bag;
+                Status = status;
+                OffendingSegment = offendingSegment;
             }
+
+            internal SurtrSourceFile File { get; }
+            internal string ModulePath { get; }
+            internal CompilationUnitSyntax? Syntax { get; }
+            internal SurtrDiagnosticBag Bag { get; }
+            internal ModulePathStatus Status { get; }
+            internal string OffendingSegment { get; }
+        }
+
+        /// <summary>The whole per-file front end, isolated so it can run on any thread.</summary>
+        private FileParseResult ParseFile(SurtrSourceFile file)
+        {
+            string? modulePath = file.ModulePath;
+            ModulePathStatus status = ModulePathStatus.Ok;
+            string offendingSegment = string.Empty;
+
+            // A file that names its own module overrides §2.1's derivation from its location.
+            if (modulePath is null)
+            {
+                status = ModulePath.TryDerive(
+                    Project.SourceRoot,
+                    file.Path,
+                    Project.RootModulePath,
+                    out modulePath,
+                    out offendingSegment);
+            }
+
+            var bag = new SurtrDiagnosticBag();
+            CompilationUnitSyntax? syntax = null;
+
+            if (status == ModulePathStatus.Ok && ModulePath.IsValid(modulePath))
+            {
+                var parser = new Parser(SurtrSourceBuffer.FromString(file.Text, file.Path), bag);
+                syntax = parser.ParseCompilationUnit();
+            }
+
+            return new FileParseResult(file, modulePath, syntax, bag, status, offendingSegment);
+        }
+
+        /// <summary>Folds one file's parallel result into the compilation, in the sequential path's reporting order.</summary>
+        private void MergeParseResult(in FileParseResult result)
+        {
+            if (result.Status != ModulePathStatus.Ok)
+            {
+                ReportModulePath(result.File, result.Status, result.OffendingSegment);
+                return;
+            }
+
+            if (!ModulePath.IsValid(result.ModulePath))
+            {
+                // An explicit module path that is not a legal dotted path cannot be named by an
+                // import and is not something to keep around.
+                Diagnostics.ReportError(
+                    SurtrDiagnosticCode.InvalidModulePath,
+                    $"'{result.ModulePath}' is not a legal module path.",
+                    result.File.Path,
+                    span: default);
+                return;
+            }
+
+            if (result.Bag.Count > 0)
+                Diagnostics.AddRange(result.Bag);
+
+            if (result.Syntax is null)
+                return;
+
+            if (!_modules.TryGetValue(result.ModulePath, out var module))
+            {
+                module = new SurtrSourceModule(result.ModulePath);
+                _modules.Add(result.ModulePath, module);
+            }
+
+            module.Add(new SurtrSourceUnit(result.File, result.ModulePath, result.Syntax));
+        }
+
+        /// <summary>Parses one source text into the compilation's module set, creating the module if needed.</summary>
+        private void ParseSourceInto(string modulePath, string sourcePath, string text)
+        {
+            if (!ModulePath.IsValid(modulePath))
+            {
+                // An explicit module path that is not a legal dotted path cannot be named by an
+                // import and is not something to keep around.
+                Diagnostics.ReportError(
+                    SurtrDiagnosticCode.InvalidModulePath,
+                    $"'{modulePath}' is not a legal module path.",
+                    sourcePath,
+                    span: default);
+                return;
+            }
+
+            // One bag for the whole project: the lexer and parser report into the same place
+            // everything after them does, so a caller checks once.
+            var parser = new Parser(SurtrSourceBuffer.FromString(text, sourcePath), Diagnostics);
+            var syntax = parser.ParseCompilationUnit();
+
+            if (!_modules.TryGetValue(modulePath, out var module))
+            {
+                module = new SurtrSourceModule(modulePath);
+                _modules.Add(modulePath, module);
+            }
+
+            module.Add(new SurtrSourceUnit(new SurtrSourceFile(sourcePath, text, modulePath), modulePath, syntax));
         }
 
         private void BuildDependencyGraph()
         {
-            foreach (var module in _modules.Values)
+            // A module resolved lazily through a provider joins `_modules` while the graph is being
+            // built, so the walk runs to a fixed point: each pass processes every module not yet
+            // processed, and a pass that loaded new modules starts another. The set grows only from
+            // provider loads, so it always terminates.
+            var processed = new HashSet<string>(StringComparer.Ordinal);
+
+            while (true)
             {
-                Dependencies.AddModule(module.Path);
+                SurtrSourceModule[] batch = _modules.Values.ToArray();
+                bool loadedNew = false;
 
-                foreach (var unit in module.Units)
+                foreach (var module in batch)
                 {
-                    foreach (var import in unit.Syntax.Imports)
+                    if (!processed.Add(module.Path))
+                        continue;
+
+                    ProcessModuleImports(module);
+
+                    // Processing a module may have loaded more through its imports; the next pass
+                    // picks them up. Detected cheaply: a fresh count means new modules joined.
+                    loadedNew |= _modules.Count > batch.Length;
+                }
+
+                if (!loadedNew)
+                    break;
+            }
+        }
+
+        private void ProcessModuleImports(SurtrSourceModule module)
+        {
+            Dependencies.AddModule(module.Path);
+
+            foreach (var unit in module.Units)
+            {
+                foreach (var import in unit.Syntax.Imports)
+                {
+                    if (import.IsWildcard)
                     {
-                        if (import.IsWildcard)
+                        // A directory wildcard (§2.1, Fase 9) may resolve to the exact module,
+                        // to one or more submodules nested under it, or both at once - so it
+                        // gets its own resolution instead of `TryResolveImport`'s one-target
+                        // shape, and one dependency edge per module it actually matched.
+                        string prefix = Prefix(import.Path, import.Path.Count);
+                        bool matchedAny = false;
+
+                        if (KnowsModule(prefix))
                         {
-                            // A directory wildcard (§2.1, Fase 9) may resolve to the exact module,
-                            // to one or more submodules nested under it, or both at once - so it
-                            // gets its own resolution instead of `TryResolveImport`'s one-target
-                            // shape, and one dependency edge per module it actually matched.
-                            string prefix = Prefix(import.Path, import.Path.Count);
-                            bool matchedAny = false;
-
-                            if (KnowsModule(prefix))
-                            {
-                                Dependencies.AddDependency(module.Path, prefix);
-                                matchedAny = true;
-                            }
-
-                            foreach (string nested in ModulesUnderPrefix(prefix))
-                            {
-                                Dependencies.AddDependency(module.Path, nested);
-                                matchedAny = true;
-                            }
-
-                            if (!matchedAny)
-                            {
-                                Diagnostics.ReportError(
-                                    SurtrDiagnosticCode.UnresolvedImport,
-                                    $"No module provides '{string.Join(".", import.Path)}'.",
-                                    unit.File.Path,
-                                    import.Span);
-                            }
-
-                            continue;
+                            Dependencies.AddDependency(module.Path, prefix);
+                            matchedAny = true;
                         }
 
-                        if (import.Alias is null && import.Members is null)
+                        foreach (string nested in ModulesUnderPrefix(prefix))
                         {
-                            // A path that resolves entirely as a module - or has submodules
-                            // nested under it, even without a module of its own - is the longest
-                            // possible module prefix, so it wins over any shorter prefix + type
-                            // name `TryResolveImport` would try (§2.1: `import ModulePath;` is
-                            // then equivalent to `import ModulePath.*;`), and may match several
-                            // modules at once exactly like a wildcard does - so it gets the same
-                            // multi-edge resolution instead of `TryResolveImport`'s one-target
-                            // shape.
-                            string wholePath = Prefix(import.Path, import.Path.Count);
-                            bool matchedWhole = false;
-
-                            if (KnowsModule(wholePath))
-                            {
-                                Dependencies.AddDependency(module.Path, wholePath);
-                                matchedWhole = true;
-                            }
-
-                            foreach (string nested in ModulesUnderPrefix(wholePath))
-                            {
-                                Dependencies.AddDependency(module.Path, nested);
-                                matchedWhole = true;
-                            }
-
-                            if (matchedWhole)
-                                continue;
+                            Dependencies.AddDependency(module.Path, nested);
+                            matchedAny = true;
                         }
 
-                        if (!TryResolveImport(import, out string target))
+                        if (!matchedAny)
                         {
                             Diagnostics.ReportError(
                                 SurtrDiagnosticCode.UnresolvedImport,
                                 $"No module provides '{string.Join(".", import.Path)}'.",
                                 unit.File.Path,
                                 import.Span);
-
-                            continue;
                         }
 
-                        Dependencies.AddDependency(module.Path, target);
+                        continue;
                     }
+
+                    if (import.Alias is null && import.Members is null)
+                    {
+                        // A path that resolves entirely as a module - or has submodules
+                        // nested under it, even without a module of its own - is the longest
+                        // possible module prefix, so it wins over any shorter prefix + type
+                        // name `TryResolveImport` would try (§2.1: `import ModulePath;` is
+                        // then equivalent to `import ModulePath.*;`), and may match several
+                        // modules at once exactly like a wildcard does - so it gets the same
+                        // multi-edge resolution instead of `TryResolveImport`'s one-target
+                        // shape.
+                        string wholePath = Prefix(import.Path, import.Path.Count);
+                        bool matchedWhole = false;
+
+                        if (KnowsModule(wholePath))
+                        {
+                            Dependencies.AddDependency(module.Path, wholePath);
+                            matchedWhole = true;
+                        }
+
+                        foreach (string nested in ModulesUnderPrefix(wholePath))
+                        {
+                            Dependencies.AddDependency(module.Path, nested);
+                            matchedWhole = true;
+                        }
+
+                        if (matchedWhole)
+                            continue;
+                    }
+
+                    if (!TryResolveImport(import, out string target))
+                    {
+                        Diagnostics.ReportError(
+                            SurtrDiagnosticCode.UnresolvedImport,
+                            $"No module provides '{string.Join(".", import.Path)}'.",
+                            unit.File.Path,
+                            import.Span);
+
+                        continue;
+                    }
+
+                    Dependencies.AddDependency(module.Path, target);
                 }
             }
         }
 
-        /// <summary>
-        /// Every module in this compilation whose path sits strictly under <paramref name="prefix"/>
-        /// - what makes a directory wildcard (§2.1, Fase 9) reach a submodule a plain exact-match
-        /// lookup never would, since a module is a directory (`ModulePath.cs`) and `a.b` is a
-        /// different directory from `a`, not a member of it.
-        /// </summary>
-        private IEnumerable<string> ModulesUnderPrefix(string prefix)
+        /// <inheritdoc/>
+        public IEnumerable<string> ModulesUnderPrefix(string prefix)
         {
             string dotted = prefix + ModulePath.Separator;
             foreach (string path in _modules.Keys)
@@ -374,8 +500,56 @@ namespace Surtr.Compiler.Compilation
             return builder.ToString();
         }
 
-        private bool KnowsModule(string modulePath)
-            => _modules.ContainsKey(modulePath) || Importer.KnowsModule(modulePath);
+        /// <inheritdoc/>
+        public bool KnowsModule(string modulePath)
+        {
+            if (_modules.ContainsKey(modulePath) || Importer.KnowsModule(modulePath))
+                return true;
+
+            // Lazy resolution (§2.1's provider seam): a module the project did not hand over up
+            // front may still be reachable through the source provider, which parses it on demand
+            // and joins it to the compilation. This is what lets an `import` resolve a module that
+            // was never enumerated up front - an embedding host's in-memory tree, say.
+            return TryGetSourceModule(modulePath) is not null;
+        }
+
+        /// <summary>
+        /// The parsed source module for a path, loading it through the project's
+        /// <see cref="ISourceProvider"/> on first use when it is not already in the compilation.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// This is the lazy-loading seam: an <c>import</c> that names a module the project did not
+        /// hand over up front can still resolve, provided some provider can supply its source. The
+        /// module is parsed and joined to the compilation's module set, so everything after — the
+        /// dependency graph, the binder — sees it exactly as it would a module discovered up front.
+        /// </para>
+        /// <para>
+        /// Calling this may add a module and, through it, more imports; the dependency graph is
+        /// append-only, so the new module's own dependencies are discovered when the graph is next
+        /// asked to order. The caller is responsible for triggering that recompute after a
+        /// successful load.
+        /// </para>
+        /// </remarks>
+        /// <param name="modulePath">The dotted module path (§2.1).</param>
+        /// <returns>The parsed module, or <see langword="null"/> when no provider supplies it.</returns>
+        public SurtrSourceModule? TryGetSourceModule(string modulePath)
+        {
+            if (_modules.TryGetValue(modulePath, out var existing))
+                return existing;
+
+            if (Importer.KnowsModule(modulePath))
+                return null;
+
+            if (!_sourceProvider.TryGetSource(modulePath, out string text, out string diagnosticPath))
+                return null;
+
+            ParseSourceInto(modulePath, diagnosticPath, text);
+
+            Dependencies.AddModule(modulePath);
+            RefreshLoadOrder();
+            return _modules.TryGetValue(modulePath, out var loaded) ? loaded : null;
+        }
 
         private void Order()
         {
@@ -427,11 +601,7 @@ namespace Surtr.Compiler.Compilation
                 ModulePathStatus.OutsideSourceRoot =>
                     $"'{file.Path}' is not under the source root '{Project.SourceRoot}', so nothing gives it a module.",
 
-                ModulePathStatus.Empty =>
-                    $"'{file.Path}' sits at the source root and the project declares no root module path, "
-                        + "so there is no module for it to belong to.",
-
-                _ => $"The directory '{offendingSegment}' is not a legal identifier, "
+                _ => $"The segment '{offendingSegment}' is not a legal identifier, "
                         + "so no import could ever name the module it would create.",
             };
 

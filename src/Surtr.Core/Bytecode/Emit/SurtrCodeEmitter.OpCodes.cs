@@ -3,6 +3,7 @@
 using Surtr.Runtime.Classes;
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 
 namespace Surtr.Bytecode.Emit
 {
@@ -92,6 +93,7 @@ namespace Surtr.Bytecode.Emit
             CheckRange(resultCount, 0, 1, op, "retCount");
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int MethodIndex(SurtrMethodToken token)
         {
             if (!token.IsValid)
@@ -99,6 +101,7 @@ namespace Surtr.Bytecode.Emit
             return token.Index;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int FieldIndex(SurtrFieldToken token)
         {
             if (!token.IsValid)
@@ -106,6 +109,7 @@ namespace Surtr.Bytecode.Emit
             return token.Index;
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int ConstantIndex(SurtrConstantToken token)
         {
             if (!token.IsValid)
@@ -765,6 +769,39 @@ namespace Surtr.Bytecode.Emit
             _code.Add((byte)OpCode.NewClosureX);
             AppendI32(_code, index);
             _code.Add((byte)upValueCount);
+            return this;
+        }
+
+        /// <summary>Emits <see cref="OpCode.NewFunction"/>.</summary>
+        /// <param name="function">The lambda's body, an entry in the method access table.</param>
+        public SurtrCodeEmitter NewFunction(SurtrMethodToken function)
+        {
+            ThrowIfFinished();
+
+            int index = MethodIndex(function);
+            CheckRange(index, 0, ushort.MaxValue, OpCode.NewFunction, "functionIdx");
+
+            Track(0, 1);
+
+            _code.Add((byte)OpCode.NewFunction);
+            _code.Add((byte)index);
+            _code.Add((byte)(index >> 8));
+            return this;
+        }
+
+        /// <summary>Emits <see cref="OpCode.NewFunctionX"/>.</summary>
+        /// <param name="function">The lambda's body, an entry in the method access table.</param>
+        public SurtrCodeEmitter NewFunctionX(SurtrMethodToken function)
+        {
+            ThrowIfFinished();
+
+            int index = MethodIndex(function);
+            CheckRange(index, 0, int.MaxValue, OpCode.NewFunctionX, "functionIdx");
+
+            Track(0, 1);
+
+            _code.Add((byte)OpCode.NewFunctionX);
+            AppendI32(_code, index);
             return this;
         }
 

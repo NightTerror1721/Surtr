@@ -30,9 +30,6 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>Whether this substitution replaces nothing.</summary>
         public bool IsEmpty => _map is null || _map.Count == 0;
 
-        /// <summary>A substitution that replaces nothing.</summary>
-        public static TypeSubstitution Empty(TypeSymbolFactory factory) => new TypeSubstitution(factory, null);
-
         /// <summary>Applies this substitution to <paramref name="type"/>.</summary>
         public TypeSymbol Apply(TypeSymbol type) => IsEmpty ? type : type.Substitute(this);
 

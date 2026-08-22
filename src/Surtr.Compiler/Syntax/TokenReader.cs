@@ -62,7 +62,21 @@ namespace Surtr.Compiler.Syntax
         }
 
         /// <summary>The type of the token at the current position.</summary>
-        internal TokenType CurrentType => Current.Type;
+        internal TokenType CurrentType => PeekType(0);
+
+        /// <summary>
+        /// The type of the token <paramref name="offset"/> slots ahead, without copying the whole
+        /// <see cref="Token"/> — the type is one byte, the token is ~64. The parser's lookahead and
+        /// the type-argument scans read types far more often than whole tokens, so this is the read
+        /// they take.
+        /// </summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        internal TokenType PeekType(int offset)
+        {
+            var span = Elements;
+            int index = Position + offset;
+            return (uint)index < (uint)span.Length ? span[index].Type : default;
+        }
 
         /// <summary>Where the current token starts.</summary>
         internal SourceLocation CurrentLocation => Current.Location;
@@ -90,7 +104,7 @@ namespace Surtr.Compiler.Syntax
         /// </summary>
         /// <param name="offset">How far ahead to look.</param>
         /// <param name="type">The type to test for.</param>
-        internal bool CheckAt(int offset, TokenType type) => Peek(offset).Type == type;
+        internal bool CheckAt(int offset, TokenType type) => PeekType(offset) == type;
 
         /// <summary>Consumes the current token if it is of the given type, and says whether it did.</summary>
         /// <param name="type">The type to match.</param>

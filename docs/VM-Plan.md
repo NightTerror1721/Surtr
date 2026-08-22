@@ -590,7 +590,7 @@ call and no iterator object, for the shapes it can prove: an inline range, a sta
 `array`/`tuple`/`dict`, and any `sealed` type.
 
 Closing §3.1 made the general path cheaper and did not remove the need for the special cases. The
-built-ins now genuinely implement `IIterable<T>` — one shared `iterator` class walks all five, and
+built-ins now genuinely implement `IIterable<T>` — one shared `Iterator` class walks all five, and
 a dict yields `(K, V)` pairs over a snapshot of its keys — so the contract holds for an `int[]` as
 much as for a user collection, while a compiled loop over one still touches none of it.
 

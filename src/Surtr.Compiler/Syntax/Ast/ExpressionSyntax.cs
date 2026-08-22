@@ -393,6 +393,12 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>The parameters. A parameter's type may be absent when a target type supplies it (§5.9).</summary>
         public IReadOnlyList<ParameterSyntax> Parameters { get; }
 
+        /// <summary>
+        /// The written return type, <c>(params): Ret =&gt; body</c> (§8), or <c>null</c> when the
+        /// return type is inferred from the body or taken from a target type.
+        /// </summary>
+        public TypeSyntax? ReturnType { get; }
+
         /// <summary>The body when written as a single expression, otherwise <c>null</c>.</summary>
         public ExpressionSyntax? Body { get; }
 
@@ -402,12 +408,14 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>Initializes a lambda.</summary>
         /// <param name="span">The source the expression covers.</param>
         /// <param name="parameters">The parameters.</param>
+        /// <param name="returnType">The written return type, or <c>null</c>.</param>
         /// <param name="body">The expression body, or <c>null</c>.</param>
         /// <param name="blockBody">The block body, or <c>null</c>.</param>
-        public LambdaExpressionSyntax(SourceSpan span, IReadOnlyList<ParameterSyntax> parameters, ExpressionSyntax? body, BlockStatementSyntax? blockBody)
+        public LambdaExpressionSyntax(SourceSpan span, IReadOnlyList<ParameterSyntax> parameters, TypeSyntax? returnType, ExpressionSyntax? body, BlockStatementSyntax? blockBody)
             : base(span)
         {
             Parameters = parameters;
+            ReturnType = returnType;
             Body = body;
             BlockBody = blockBody;
         }
@@ -520,6 +528,51 @@ namespace Surtr.Compiler.Syntax.Ast
         {
             Subject = subject;
             Arms = arms;
+        }
+    }
+
+    /// <summary>
+    /// <c>throw</c> as an expression (§9): the thrown value, typed <c>never</c>. Because the type
+    /// is the bottom type it can stand in any expression slot — a branch of <c>?:</c>, the right
+    /// operand of <c>??</c>, a lambda body — without contributing to the surrounding type.
+    /// </summary>
+    public sealed class ThrowExpressionSyntax : ExpressionSyntax
+    {
+        /// <summary>The thrown value.</summary>
+        public ExpressionSyntax Value { get; }
+
+        /// <summary>Initializes a throw expression.</summary>
+        /// <param name="span">The source the expression covers.</param>
+        /// <param name="value">The thrown value.</param>
+        public ThrowExpressionSyntax(SourceSpan span, ExpressionSyntax value) : base(span)
+        {
+            Value = value;
+        }
+    }
+
+    /// <summary>
+    /// A generic type name in expression position, written to reach a <em>static</em> member of a
+    /// generic class: <c>Box&lt;int&gt;.prop</c>, <c>Box&lt;&gt;.prop</c>, <c>Box&lt;,&gt;.make()</c>.
+    /// The type arguments select the construction; an empty slot (<see cref="WildcardTypeSyntax"/>)
+    /// names the open type of that arity, whose statics are shared by every construction.
+    /// </summary>
+    public sealed class GenericNameExpressionSyntax : ExpressionSyntax
+    {
+        /// <summary>The name, before the type arguments.</summary>
+        public string Name { get; }
+
+        /// <summary>The type arguments; each slot may be a <see cref="WildcardTypeSyntax"/>.</summary>
+        public IReadOnlyList<TypeSyntax> TypeArguments { get; }
+
+        /// <summary>Initializes a generic name in expression position.</summary>
+        /// <param name="span">The source the name covers.</param>
+        /// <param name="name">The name.</param>
+        /// <param name="typeArguments">The type arguments, which may hold wildcards.</param>
+        public GenericNameExpressionSyntax(SourceSpan span, string name, IReadOnlyList<TypeSyntax> typeArguments)
+            : base(span)
+        {
+            Name = name;
+            TypeArguments = typeArguments;
         }
     }
 }

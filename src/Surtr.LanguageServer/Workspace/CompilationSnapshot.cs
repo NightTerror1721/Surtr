@@ -19,6 +19,8 @@ namespace Surtr.LanguageServer.Workspace
         /// <summary>The snapshot a workspace holds before its first successful build.</summary>
         public static readonly CompilationSnapshot Empty = new CompilationSnapshot(null, null, new List<SurtrDiagnostic>());
 
+        private readonly Dictionary<string, Surtr.Compiler.Compilation.SurtrSourceUnit> _unitsByPath;
+
         internal CompilationSnapshot(
             Surtr.Compiler.Compilation.SurtrCompilation? compilation,
             Binder? binder,
@@ -27,6 +29,21 @@ namespace Surtr.LanguageServer.Workspace
             Compilation = compilation;
             Binder = binder;
             Diagnostics = diagnostics;
+
+            // Index the units by normalized path once, so UnitFor is a dictionary lookup rather
+            // than a GetFullPath-per-unit linear scan on every request.
+            _unitsByPath = new Dictionary<string, Surtr.Compiler.Compilation.SurtrSourceUnit>(StringComparer.OrdinalIgnoreCase);
+            if (Compilation is not null)
+            {
+                foreach (var module in Compilation.Modules.Values)
+                {
+                    foreach (var unit in module.Units)
+                    {
+                        if (!_unitsByPath.ContainsKey(unit.File.Path))
+                            _unitsByPath[System.IO.Path.GetFullPath(unit.File.Path)] = unit;
+                    }
+                }
+            }
         }
 
         /// <summary>The compiled workspace, or <see langword="null"/> when it has not been built yet.</summary>
@@ -56,18 +73,9 @@ namespace Surtr.LanguageServer.Workspace
             if (Compilation is null)
                 return null;
 
-            string normalized = System.IO.Path.GetFullPath(filePath);
-
-            foreach (var module in Compilation.Modules.Values)
-            {
-                foreach (var unit in module.Units)
-                {
-                    if (string.Equals(System.IO.Path.GetFullPath(unit.File.Path), normalized, StringComparison.OrdinalIgnoreCase))
-                        return unit;
-                }
-            }
-
-            return null;
+            return _unitsByPath.TryGetValue(System.IO.Path.GetFullPath(filePath), out var unit)
+                ? unit
+                : null;
         }
     }
 
@@ -89,14 +97,22 @@ namespace Surtr.LanguageServer.Workspace
         /// <summary>Indexes a buffer's line starts.</summary>
         public static TextLines Index(string text)
         {
-            var starts = new List<int> { 0 };
+            int count = 1;
             for (int i = 0; i < text.Length; i++)
             {
                 if (text[i] == '\n')
-                    starts.Add(i + 1);
+                    count++;
             }
 
-            return new TextLines(starts.ToArray());
+            var starts = new int[count];
+            int line = 1;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (text[i] == '\n')
+                    starts[line++] = i + 1;
+            }
+
+            return new TextLines(starts);
         }
 
         /// <summary>The absolute offset of an LSP position, clamped to the buffer.</summary>

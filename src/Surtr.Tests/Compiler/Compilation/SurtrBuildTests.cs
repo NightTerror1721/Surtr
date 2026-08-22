@@ -86,7 +86,7 @@ namespace Surtr.Tests.Compiler.Compilation
             Assert.Equal(2, build.Written.Count);
 
             var runtime = Load(build);
-            Assert.Equal(84, runtime.Invoke(Function(runtime, "game.core", "doubled"), SurtrValue.CreateInt(42)).AsInt);
+            Assert.Equal(84, runtime.Invoke(Function(runtime, "game.core.Entity", "doubled"), SurtrValue.CreateInt(42)).AsInt);
         }
 
         /// <summary>§7.4: the build is where a `const if` gets its facts from.</summary>
@@ -104,7 +104,7 @@ namespace Surtr.Tests.Compiler.Compilation
             Assert.False(build.Failed, string.Join("; ", build.Diagnostics.Select(d => d.ToString())));
 
             var runtime = Load(build);
-            var text = runtime.Resolve<SurtrString>(runtime.Invoke(Function(runtime, "game.core", "mode")));
+            var text = runtime.Resolve<SurtrString>(runtime.Invoke(Function(runtime, "game.core.M", "mode")));
 
             Assert.Equal("release", text!.Text);
         }
@@ -129,7 +129,7 @@ namespace Surtr.Tests.Compiler.Compilation
                 "app",
                 ("app.surtrproj",
                     "root = src\nmodule = app\noutput = out\nreference \"" + built.Written[0].Replace('\\', '/') + "\"\n"),
-                ("src/core/M.surtr", "import lib.math.*;\npublic fun run(): int { return square(3); }"));
+                ("src/core/M.surtr", "import lib.math.M;\npublic fun run(): int { return square(3); }"));
 
             var build = SurtrBuild.Run(Path.Combine(application, "app.surtrproj"));
             Assert.False(build.Failed, string.Join("; ", build.Diagnostics.Select(d => d.ToString())));
@@ -142,7 +142,7 @@ namespace Surtr.Tests.Compiler.Compilation
             foreach (string written in build.Written)
                 runtime.LoadModule(SurtrModuleImage.FromBytes(File.ReadAllBytes(written)).Instantiate());
 
-            Assert.Equal(9, runtime.Invoke(Function(runtime, "app.core", "run")).AsInt);
+            Assert.Equal(9, runtime.Invoke(Function(runtime, "app.core.M", "run")).AsInt);
         }
 
         /// <summary>A failed build writes nothing: half a module set is worse than none.</summary>
@@ -161,9 +161,9 @@ namespace Surtr.Tests.Compiler.Compilation
             Assert.False(Directory.Exists(Path.Combine(tree, "out")));
         }
 
-        /// <summary>§2.1: several files in one directory are one module, so they are one image.</summary>
+        /// <summary>§2.1: each file is its own module, so two files in one directory are two images.</summary>
         [Fact]
-        public void OneDirectoryIsOneImage()
+        public void FilesInOneDirectoryAreDistinctImages()
         {
             string tree = Tree(
                 "named",
@@ -174,7 +174,8 @@ namespace Surtr.Tests.Compiler.Compilation
             var build = SurtrBuild.Run(Path.Combine(tree, "p.surtrproj"));
 
             Assert.False(build.Failed, string.Join("; ", build.Diagnostics.Select(d => d.ToString())));
-            Assert.Equal("game.core.surtrc", Path.GetFileName(Assert.Single(build.Written)));
+            var names = build.Written.Select(Path.GetFileName).OrderBy(n => n).ToList();
+            Assert.Equal(new[] { "game.core.A.surtrc", "game.core.B.surtrc" }, names);
         }
 
         [Fact]
@@ -186,7 +187,7 @@ namespace Surtr.Tests.Compiler.Compilation
             Assert.False(build.Failed, string.Join("; ", build.Diagnostics.Select(d => d.ToString())));
 
             var runtime = Load(build);
-            Assert.Equal(5, runtime.Invoke(Function(runtime, "game.core", "run")).AsInt);
+            Assert.Equal(5, runtime.Invoke(Function(runtime, "game.core.M", "run")).AsInt);
         }
 
         [Fact]

@@ -120,6 +120,10 @@ namespace Surtr.LanguageServer
                     OnSemanticTokensFull(message);
                     break;
 
+                case "textDocument/inlayHint":
+                    OnInlayHint(message);
+                    break;
+
                 default:
                     if (message.IsRequest)
                         Fail(message, RpcErrorCodes.MethodNotFound, "Method not implemented: " + message.Method);
@@ -401,6 +405,21 @@ namespace Surtr.LanguageServer
             Reply(message, SemanticTokensProvider.Compute(_workspace.Snapshot, path, text));
         }
 
+        private void OnInlayHint(RpcMessage message)
+        {
+            var parameters = Params<InlayHintParams>(message);
+            if (parameters?.TextDocument is null || _workspace is null)
+            {
+                Reply(message, null);
+                return;
+            }
+
+            string path = Workspace.Workspace.PathFromUri(parameters.TextDocument.Uri);
+            string text = _workspace.CurrentText(path);
+
+            Reply(message, InlayHintProvider.Compute(_workspace.Snapshot, path, text));
+        }
+
         /// <summary>Publishes diagnostics for every file with some, and clears the ones that went quiet.</summary>
         private void PublishAll(IReadOnlyDictionary<string, IReadOnlyList<SurtrDiagnostic>> grouped)
         {
@@ -409,18 +428,29 @@ namespace Surtr.LanguageServer
 
             // Every rebuild publishes for every source file — an empty list is the way a fix is
             // announced, and it is also what first appears in a workspace that compiles clean.
+            // The file list comes from the rebuild itself, so the tree is not walked twice.
             var touched = new HashSet<string>(PathComparer);
-            foreach (string file in _workspace.FindSourceFiles())
+            foreach (string file in _workspace.LastBuildFiles)
                 touched.Add(file);
+
+            if (touched.Count == 0)
+            {
+                foreach (string file in _workspace.FindSourceFiles())
+                    touched.Add(file);
+            }
 
             foreach (string file in touched)
             {
-                string text = _workspace.CurrentText(file);
-                var lines = TextLines.Index(text);
                 var diagnostics = new List<LspDiagnostic>();
 
+                // The text and its line index are only needed to map a diagnostic onto the editor's
+                // lines — a file with nothing to report publishes an empty list without touching the
+                // disk a second time.
                 if (grouped.TryGetValue(file, out var sourceDiagnostics))
                 {
+                    string text = _workspace.CurrentText(file);
+                    var lines = TextLines.Index(text);
+
                     foreach (SurtrDiagnostic source in sourceDiagnostics)
                         diagnostics.Add(ToLsp(source, lines));
                 }

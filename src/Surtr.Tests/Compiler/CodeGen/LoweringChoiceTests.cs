@@ -85,6 +85,117 @@ namespace Surtr.Tests.Compiler.CodeGen
             return string.Join('\n', lines.Skip(start).Take(end - start));
         }
 
+        #region Closure creation
+
+        [Fact]
+        public void AZeroCaptureLambdaIsTheCanonicalFunctionValue()
+        {
+            string code = Disassemble("fun run(n: int): int { let add = (a: int) => a + 1; return add(n); }");
+
+            Assert.Equal(1, Count(code, "NewFunction"));
+            Assert.Equal(0, Count(code, "NewClosure"));
+        }
+
+        [Fact]
+        public void ACapturingLambdaStillBuildsAClosure()
+        {
+            string code = Disassemble("fun run(n: int): int { let base = 10; let add = (a: int) => a + base; return add(n); }");
+
+            Assert.Equal(1, Count(code, "NewClosure"));
+            Assert.Equal(0, Count(code, "NewFunction"));
+        }
+
+        [Fact]
+        public void ADirectMethodGroupBindsStraightToTheTargetMethod()
+        {
+            // A static method whose signature is exactly the closure's is sugar for the function
+            // itself: the value is the canonical function over run2, no $lambda$ wrapper is lifted,
+            // and the module carries only the two declared methods.
+            string code = Disassemble(
+                "fun run2(n: int): int { return n + 1; }\n"
+                + "fun run(n: int): int { let add: (int) -> int = run2; return add(n); }");
+
+            Assert.Equal(1, Count(code, "NewFunction"));
+            Assert.Contains("NewFunction 0 (run2)", code, StringComparison.Ordinal);
+            Assert.DoesNotContain("$lambda$", code, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ADirectMethodGroupWithANonInlinableTargetStillBindsStraight()
+        {
+            // The direct binding is about the value's target, not the body's cost: even a target too
+            // heavy to be inlined into the (now absent) wrapper names the method directly, so an
+            // indirect call pays one frame and one dispatch instead of two of each.
+            string code = Disassemble(
+                "fun run2(n: int): int { var acc = 0; for (var i = 0; i < n; i += 1) { acc += i; } return acc; }\n"
+                + "fun run(n: int): int { let add: (int) -> int = run2; return add(n); }");
+
+            Assert.Equal(1, Count(code, "NewFunction"));
+            Assert.Contains("NewFunction 0 (run2)", code, StringComparison.Ordinal);
+            Assert.DoesNotContain("$lambda$", code, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void AnInstanceMethodGroupStillLiftsAWrapper()
+        {
+            // An instance method group captures the receiver, so the value has to be built over a
+            // synthetic wrapper that closes over it.
+            string code = Disassemble(
+                "class C { public fun m(n: int): int { return n + 1; } }\n"
+                + "fun run(n: int): int { let c = C(); let f: (int) -> int = c.m; return f(n); }");
+
+            Assert.Contains("NewClosure", code, StringComparison.Ordinal);
+            Assert.Contains("$lambda$", code, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void AMethodGroupNeedingCoercionStillLiftsAWrapper()
+        {
+            // The closure returns float but the method returns int: the result needs adapting, so
+            // the synthetic wrapper that performs the conversion survives.
+            string code = Disassemble(
+                "fun run2(n: int): int { return n + 1; }\n"
+                + "fun run(n: int): float { let add: (int) -> float = run2; return add(n); }");
+
+            Assert.Equal(1, Count(code, "NewFunction"));
+            Assert.Contains("$lambda$", code, StringComparison.Ordinal);
+        }
+
+        #endregion
+
+        #region Value class construction
+
+        [Fact]
+        public void AValueClassConstructionWithAnIdentityConstructorEmitsTheArgumentDirectly()
+        {
+            // The canonical value class constructor is `this._f = v;`, so building `W(5)` is the
+            // value 5 itself. It must not be spliced through a temp local: the old path emitted
+            // `PushI8 5; Stl $value$...; Ldl $value$...; ReturnValue` for exactly this shape.
+            string code = Disassemble(
+                "value class W { private let _v: int; public constructor(v: int) { this._v = v; } }\n"
+                + "fun make(): W { return W(5); }");
+
+            Assert.Contains("PushI8 5", code, StringComparison.Ordinal);
+            Assert.DoesNotContain("Stl", code, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void AValueClassConstructionWhoseWrappedValueComputesFromTheParameterStillSplices()
+        {
+            // The identity fast path only fires when the construction is the argument itself. A
+            // body that adapts the value — `this._v = v * 2` — still has to map the parameter onto
+            // a local and splice, and must keep producing the right result.
+            string code = Disassemble(
+                "value class W { private let _v: int; public constructor(v: int) { this._v = v * 2; } }\n"
+                + "fun make(): W { return W(5); }");
+
+            Assert.Contains("PushI8 5", code, StringComparison.Ordinal);
+            Assert.Contains("Mul", code, StringComparison.Ordinal);
+            Assert.Contains("ReturnValue", code, StringComparison.Ordinal);
+        }
+
+        #endregion
+
         #region String concatenation
 
         [Fact]

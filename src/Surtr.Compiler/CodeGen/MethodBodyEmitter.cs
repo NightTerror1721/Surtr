@@ -319,7 +319,7 @@ namespace Surtr.Compiler.CodeGen
 
             Expression(expression);
 
-            if (!expression.Type.IsVoid)
+            if (!expression.Type.IsVoid && !expression.Type.IsNever)
                 Code.Pop();
         }
 
@@ -834,6 +834,13 @@ namespace Surtr.Compiler.CodeGen
         /// The general path, and the only one that allocates. Every call goes through the interface
         /// dispatch table rather than a vtable slot, because the receiver's own class is not what
         /// the loop was written against.
+        /// <para>
+        /// A <c>value class</c> receiver must be boxed first, exactly as <see cref="EmitCall"/>
+        /// boxes one before a call that might resolve through its class: the loop's value is the
+        /// erased field (e.g. <c>Sequence&lt;T&gt;</c>'s closure), which is not an object and has no
+        /// interface table for <c>CallInterface</c> to dispatch on. Boxing to the boxed form makes
+        /// the receiver a real object whose class carries the implemented <c>IIterable&lt;T&gt;</c>.
+        /// </para>
         /// </remarks>
         private void EmitForInIterable(BoundForInStatement loop)
         {
@@ -845,6 +852,7 @@ namespace Surtr.Compiler.CodeGen
             var variable = Declare(loop.Variable);
 
             Expression(loop.Sequence);
+            BoxIfValueClass(loop.Sequence.Type);
             Code.CallInterface(iterate);
             Code.StoreLocal(cursor);
 
@@ -1399,6 +1407,14 @@ namespace Surtr.Compiler.CodeGen
 
                 case BoundSwitchExpression @switch:
                     EmitSwitchExpression(@switch);
+                    return;
+
+                case BoundThrowExpression @throw:
+                    // `throw` as an expression lowers to exactly what the statement form does:
+                    // evaluate the value, then Throw. The flow ends there, and the emitter's
+                    // MarkLabel joins tolerate a branch that falls out into nothing.
+                    Expression(@throw.Value);
+                    Code.Throw();
                     return;
 
                 case BoundNullConditionalExpression conditionalAccess:
@@ -2530,10 +2546,13 @@ case BoundFieldExpression field:
             var receiver = field.Receiver ?? throw Unsupported($"a read of '{field.Field.Name}' with no receiver");
 
             // A value class is its one field, so reading that field off one is the value itself —
-            // there is no instance to load from (§2.9).
+            // there is no instance to load from (§2.9). A field declared against the class's own
+            // type parameter is still an erased slot, so a value that reached it was boxed on the
+            // way in and has to come back out the same way any other erased field does.
             if (receiver.Type.NonNullable.TypeKind == TypeSymbolKind.ValueClass)
             {
                 Expression(receiver);
+                UnerasedFieldResult(field.Field);
                 return;
             }
 
@@ -2620,21 +2639,23 @@ case BoundFieldExpression field:
             EmitResolvedCall(getter, virtualCall: property.IsVirtualGet, discardResult: false);
         }
 
-        /// <summary>Whether <paramref name="property"/> is, by identity, the built-in dictionary's <c>length</c>.</summary>
+        /// <summary>The name a built-in collection's <c>length</c> getter is emitted under.</summary>
+        private const string LengthGetterName = "get_length";
+
         private static bool IsDictionaryLength(PropertySymbol property)
-            => property.Getter is { } getter && IsDictionaryMember(getter, MemberNames.Getter("length"));
+            => property.Getter is { } getter && IsDictionaryMember(getter, LengthGetterName);
 
         /// <summary>Whether <paramref name="property"/> is, by identity, the built-in array's <c>length</c>.</summary>
         private static bool IsArrayLength(PropertySymbol property)
-            => property.Getter is { } getter && IsArrayMember(getter, MemberNames.Getter("length"));
+            => property.Getter is { } getter && IsArrayMember(getter, LengthGetterName);
 
         /// <summary>Whether <paramref name="property"/> is, by identity, the built-in string's <c>length</c>.</summary>
         private static bool IsStringLength(PropertySymbol property)
-            => property.Getter is { } getter && IsStringMember(getter, MemberNames.Getter("length"));
+            => property.Getter is { } getter && IsStringMember(getter, LengthGetterName);
 
         /// <summary>Whether <paramref name="property"/> is, by identity, the built-in tuple's <c>length</c>.</summary>
         private static bool IsTupleLength(PropertySymbol property)
-            => property.Getter is { } getter && IsTupleMember(getter, MemberNames.Getter("length"));
+            => property.Getter is { } getter && IsTupleMember(getter, LengthGetterName);
 
         /// <summary>
         /// Replaces a read of an auto-property by the field load that is its whole body (§3.4, §3.6).
@@ -2756,7 +2777,7 @@ case BoundFieldExpression field:
                 if (_context.Bodies is null || !_context.Bodies.TryGetValue(getter, out var body))
                     return false;
 
-                if (!InlineCost.WorthInline(body, declaredInline: false))
+                if (_context.InlineCostOf(body) > InlineCost.DefaultThreshold)
                     return false;
             }
 
@@ -2814,7 +2835,7 @@ case BoundFieldExpression field:
                 if (_context.Bodies is null || !_context.Bodies.TryGetValue(setter, out var costBody))
                     return false;
 
-                if (!InlineCost.WorthInline(costBody, declaredInline: false))
+                if (_context.InlineCostOf(costBody) > InlineCost.DefaultThreshold)
                     return false;
             }
 
@@ -2943,24 +2964,56 @@ case BoundFieldExpression field:
         {
             if (creation.Constructor is not MethodSymbol constructor)
             {
+                // A value class that declared no constructor was given one by the binder taking the
+                // type of its single field; the binder already converted the one argument against
+                // that field type, so the value to wrap is simply the argument. (The binding
+                // guarantees exactly one argument here — zero or several never reach emission.)
+                if (creation.Arguments.Count == 1)
+                {
+                    Expression(creation.Arguments[0]);
+                    return;
+                }
+
                 throw Unsupported(
                     $"building a '{type.Name}' with no constructor, which leaves nothing to put in the field it wraps");
             }
 
+            // A construction of a generic value class carries the substituted clone (§6), whose
+            // parameters are new symbols and whose body is keyed by the declaration — bodies are
+            // bound once against it, never against a view. So the body and the spliced assignment's
+            // parameters both come from the declaration, and each argument maps onto the
+            // *declaration's* parameter, which is the one the assignment's expression references.
+            var original = constructor.OriginalDefinition ?? constructor;
+
             if (_context.Bodies is null
-                || !_context.Bodies.TryGetValue(constructor, out var body)
+                || !_context.Bodies.TryGetValue(original, out var body)
                 || WrappedValue(body) is not BoundExpression wrapped)
             {
                 throw Unsupported(
                     $"building a '{type.Name}', whose constructor is not a single assignment to the field it wraps");
             }
 
+            // The canonical value-class constructor is `this._field = value;` — the wrapped value is
+            // a direct read of the one parameter. Then the construction *is* the argument, so it is
+            // emitted straight rather than spliced through a temp local: the splice would pay a
+            // `Stl $value$...; Ldl $value$...` round-trip (and a local slot) for a value that is
+            // never used more than once or combined with anything. This is the shape every wrapper
+            // (EntityId, Angle, Sequence<T> over a closure, ...) is written in, so it is the one
+            // that must be free.
+            if (creation.Arguments.Count == 1
+                && wrapped is BoundParameterExpression { Parameter: var read }
+                && ReferenceEquals(read, original.Parameters[0]))
+            {
+                Expression(creation.Arguments[0]);
+                return;
+            }
+
             for (int i = 0; i < creation.Arguments.Count; i++)
             {
-                var slot = _method.DeclareLocal("$value$" + constructor.Parameters[i].Name);
+                var slot = _method.DeclareLocal("$value$" + original.Parameters[i].Name);
                 Expression(creation.Arguments[i]);
                 Code.StoreLocal(slot);
-                _splicedParameters[constructor.Parameters[i]] = slot;
+                _splicedParameters[original.Parameters[i]] = slot;
             }
 
             Expression(wrapped);
@@ -3009,15 +3062,20 @@ case BoundFieldExpression field:
             // but each of these operations also has a dedicated opcode that does the same thing in
             // one dispatch and no frame. Where the callee is one of them, this call site takes the
             // opcode — the member is matched by identity so a user type that happens to declare its
-            // own `remove` is not confused with the built-in's.
-            if (TryEmitDictionaryOperation(call, discardResult))
-                return;
+            // own `remove` is not confused with the built-in's. A local method never is one (its
+            // `ImportedFrom` is null), so the three Try* dispatches are gated on a single
+            // precomputed identity set instead of probing each name against the built-in classes.
+            if (call.Method.ImportedFrom is { } imported && OpcodeableMembers.Value.Contains(imported))
+            {
+                if (TryEmitDictionaryOperation(call, discardResult))
+                    return;
 
-            if (TryEmitArrayOperation(call, discardResult))
-                return;
+                if (TryEmitArrayOperation(call, discardResult))
+                    return;
 
-            if (TryEmitStringOperation(call, discardResult))
-                return;
+                if (TryEmitStringOperation(call, discardResult))
+                    return;
+            }
 
             if (call.Method.IsForceInline)
             {
@@ -3442,6 +3500,30 @@ case BoundFieldExpression field:
                 : null;
 
         /// <summary>
+        /// The built-in members this emitter can lower to a dedicated opcode, keyed by their
+        /// <c>SurtrMethodInfo</c> identity — the same set the <c>Is*Member</c> checks name. Built
+        /// once, so a call site decides in one set lookup whether any of the <c>Try*</c> operations
+        /// could apply.
+        /// </summary>
+        private static readonly Lazy<HashSet<SurtrMethodInfo>> OpcodeableMembers = new(() =>
+        {
+            var members = new HashSet<SurtrMethodInfo>();
+            AddSingleOverloads(members, SurtrBuiltIns.Dictionary, "clear", "get", "set", "containsKey", "remove", "keys", "values");
+            AddSingleOverloads(members, SurtrBuiltIns.Array, "get", "set", "push", "pop", "insert", "removeAt", "clear", "indexOf", "contains");
+            AddSingleOverloads(members, SurtrBuiltIns.String, "charAt");
+            return members;
+        });
+
+        private static void AddSingleOverloads(HashSet<SurtrMethodInfo> members, SurtrClass type, params string[] names)
+        {
+            foreach (var name in names)
+            {
+                if (type.TryGetMethods(name, out var overloads) && overloads.Length == 1)
+                    members.Add(overloads[0]);
+            }
+        }
+
+        /// <summary>
         /// Replaces a call to a <c>const fun</c> with constant arguments by the value it folds to
         /// (§7.2).
         /// </summary>
@@ -3507,7 +3589,7 @@ case BoundFieldExpression field:
                     return false;
             }
 
-            return InlineCost.WorthInline(body, declaredInline: false);
+            return _context.InlineCostOf(body) <= InlineCost.DefaultThreshold;
         }
 
         /// <summary>
@@ -3630,6 +3712,18 @@ case BoundFieldExpression field:
         /// </remarks>
         private void EmitLambda(BoundLambdaExpression lambda)
         {
+            // A direct method-group conversion is sugar for the function itself, so its value can
+            // be built straight over the target method: no $lambda$ wrapper is lifted, an indirect
+            // call through the value dispatches the target directly instead of a synthetic forwarder
+            // that would pay a second frame and a second dispatch, and the value is the canonical
+            // one every site resolving to that method shares. The wrapper path remains the fallback
+            // when the target is not a method of this module (its builder is not reachable here).
+            if (lambda.DirectTarget is { } direct && _context.TryGetBuilder(direct, out var targetBuilder))
+            {
+                Code.NewFunctionFor(targetBuilder);
+                return;
+            }
+
             var closure = (ClosureTypeSymbol)lambda.Type.NonNullable;
 
             var parameters = new SurtrParameterInfo[lambda.Parameters.Count];
@@ -3671,7 +3765,16 @@ case BoundFieldExpression field:
             foreach (var captured in lambda.Captured)
                 LoadCaptured(captured);
 
-            Code.NewClosureFor(lifted, captures.Count + (lambda.CapturesReceiver ? 1 : 0));
+            int captureCount = captures.Count + (lambda.CapturesReceiver ? 1 : 0);
+
+            // A lambda that captures nothing is a pure function: emitting the canonical function
+            // value (NewFunction) hands back the one shared closure for the lifted method instead
+            // of allocating a fresh object per evaluation. The value is still a closure of the
+            // same signature, so it coexists with capturing lambdas under the same type.
+            if (captureCount == 0)
+                Code.NewFunctionFor(lifted);
+            else
+                Code.NewClosureFor(lifted, captureCount);
         }
 
         /// <summary>The symbol a lifted body is emitted against, for its parameters and its name.</summary>

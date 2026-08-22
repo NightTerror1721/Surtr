@@ -364,7 +364,7 @@ What exists in `src/Surtr.Compiler` today: `Syntax/` holds the source buffer, th
 
 **`src/Surtr.Run` is `surtrc`'s other half** — `surtr run <path> <module.path> <function> [args...]` loads `.surtrc` images into a real `SurtrRuntime` and calls into them, the way `java` runs what `javac` produced. It references `Surtr.Core` alone; running a compiled artifact needs none of the front end. `§2.5` is why the function name is mandatory rather than defaulted — Surtr has no `main`, so a host is expected to name whatever it wants called, and this is the smallest host that does that from a shell. `<path>` is a single `.surtrc` file or a directory of them, searched recursively; `ModuleSet.Load` loads the whole set with a retry-until-fixed-point pass rather than computing a load order up front, since an image carries no dependency list until `Instantiate()` gives it a type handle table — a pass that loads nothing is reported rather than looped on forever, and covers a genuine cycle the same way a missing reference is. A CLI argument has no declared type, so `ArgumentBinding` converts it against the parameter's own metadata — the four primitives, a string, and `null` for anything that can hold one — and refuses anything else outright rather than guessing; a trailing varargs parameter absorbs whatever text is left over into a packed array, `NewArray`/`Add` built by hand since there is no compiler here to emit `ArrPack`. `EntryPoint.Resolve` only matches an overload by argument count, deliberately not §3.5's resolution — it fills no parameter default, since doing that honestly needs a folded constant this tool has no compile step to produce. What a call returns is read back through its own `toString()` where one exists (every built-in already declares it, for the same reason string interpolation reaches for it), and a bare `<ClassName>` where none does, since there is no root type to inherit one from. `surtr list <path>` is the discovery command a "no `main`" language needs: every module-level function, by name and shape, so a caller of `run` knows what to write.
 
-**A module is a directory, not a declaration** (`Language-Syntax.md` §2.1). `Compilation/ModulePath.cs` derives one from a file's location relative to the project's source root, and rejects a directory whose name is not a legal identifier — no `import` could name the module it would create. `ModuleDependencyGraph` accumulates edges rather than computing them once, because imports are known at parse time but a fully-qualified name with no import is an edge only the binder discovers; a cycle is a hard error naming the whole loop, since static initializers run eagerly at load in dependency order and a cycle has no order to pick.
+**A module is a file, not a declaration** (`Language-Syntax.md` §2.1). `Compilation/ModulePath.cs` derives one from a file's location relative to the project's source root — its directories plus the file's own name — and rejects a directory or file whose name is not a legal identifier, since no `import` could name the module it would create. `ModuleDependencyGraph` accumulates edges rather than computing them once, because imports are known at parse time but a fully-qualified name with no import is an edge only the binder discovers; a cycle is a hard error naming the whole loop, since static initializers run eagerly at load in dependency order and a cycle has no order to pick.
 
 **Two naming conventions are ABI and are already fixed**, because a name goes into a real table and travels in the image. An overloaded operator is its own symbol behind `op_` (`op_+`, `op_<=>`, `op_[]`, `op_-u` for the unary form) — unspellable in source, so nothing has to be reserved to protect it; `operator as` is `op_as` in the binder and gains its target's descriptor only at emit (`op_as$Ogame.core:Vec3;`), since a signature key excludes the return and two conversions from one source type would otherwise collide. A synthetic member is `$category$context[$index]` — `$lambda$move$0`, `$backing$health`, `$bridge$compareTo$0` — one rule, a leading `$` means the compiler made it. Property accessors are deliberately *not* in that scheme: `get_x`/`set_x` are what `SurtrTypeLinker` looks for. See `OperatorNames` and `SyntheticNames`, and `docs/Compiler-Plan.md` §6 for the value-class boxing sites.
 
@@ -392,3 +392,48 @@ The VM opcode suites in `src/Surtr.Tests/VM` predate the emitter and still use t
 - Every `.cs` file starts with `#nullable enable`, even though `Nullable` is already `enable` at the project level via `Directory.Build.props`. This is intentional and non-negotiable — don't remove it as "redundant".
 - No `ImplicitUsings` — write out every `using` directive explicitly in each file (see above).
 - Any documentation of a type, method, property, or field must use `///` XML doc comments (`<summary>`, `<remarks>`, `<param>`, etc.), never a plain `//` block sitting above the declaration — that's what lets Visual Studio's IntelliSense pick it up. This is about *format*, not coverage: it doesn't mandate documenting every member. Plain `//` comments are still the right tool for a short, non-obvious implementation note *inside* a method body (a specific line or block), since those aren't documenting a declaration and `///` can't attach to arbitrary statements anyway.
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **Surtr** (8753 symbols, 35554 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+
+> Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
+
+## Always Do
+
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
+- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- When exploring unfamiliar code, use `query({search_query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
+- For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source→sink flows; needs `analyze --pdg`).
+
+## Never Do
+
+- NEVER edit a function, class, or method without first running `impact` on it.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
+- NEVER commit changes without running `detect_changes()` to check affected scope.
+
+## Resources
+
+| Resource | Use for |
+|----------|---------|
+| `gitnexus://repo/Surtr/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/Surtr/clusters` | All functional areas |
+| `gitnexus://repo/Surtr/processes` | All execution flows |
+| `gitnexus://repo/Surtr/process/{name}` | Step-by-step execution trace |
+
+## CLI
+
+| Task | Read this skill file |
+|------|---------------------|
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+
+<!-- gitnexus:end -->

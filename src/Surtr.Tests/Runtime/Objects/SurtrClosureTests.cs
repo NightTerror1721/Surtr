@@ -97,6 +97,56 @@ namespace Surtr.Tests.Runtime.Objects
         }
 
         [Fact]
+        public void GetOrCreateFunctionValue_ReturnsTheSameClosureForTheSameMethod()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+            var method = NativeMethod(module, parameterCount: 0);
+
+            var first = runtime.GetOrCreateFunctionValue(method);
+            var second = runtime.GetOrCreateFunctionValue(method);
+
+            Assert.Same(first, second);
+            Assert.Equal(0, first.UpValueCount);
+        }
+
+        [Fact]
+        public void GetOrCreateFunctionValue_DistinguishesMethodsByIdentity()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+            var first = NativeMethod(module, parameterCount: 0);
+            var second = NativeMethod(module, parameterCount: 0);
+
+            Assert.NotSame(runtime.GetOrCreateFunctionValue(first), runtime.GetOrCreateFunctionValue(second));
+        }
+
+        [Fact]
+        public void NewClosure_WithNoUpValues_ReturnsTheCanonicalFunctionValue()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+            var method = NativeMethod(module, parameterCount: 0);
+
+            // A closure with nothing to capture is a function: the host-created form and the
+            // language's zero-capture lambda resolve to the same shared value.
+            Assert.Same(runtime.GetOrCreateFunctionValue(method), runtime.NewClosure(method));
+        }
+
+        [Fact]
+        public void NewClosure_WithUpValues_IsStillAFreshObject()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+            var method = NativeMethod(module, parameterCount: 0);
+
+            var capture = runtime.NewClosure(method, new[] { SurtrValue.CreateInt(1) });
+
+            Assert.Equal(1, capture.UpValueCount);
+            Assert.NotSame(runtime.GetOrCreateFunctionValue(method), capture);
+        }
+
+        [Fact]
         public void VisitReferences_KeepsOnlyReferenceTypedUpValuesAlive()
         {
             using var runtime = new SurtrRuntime();

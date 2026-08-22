@@ -191,6 +191,9 @@ namespace Surtr.Compiler.CodeGen
                 case BoundNullAssertExpression assertion:
                     return EstimateExpression(assertion.Operand) + 1;
 
+                case BoundThrowExpression @throw:
+                    return EstimateExpression(@throw.Value) + 1;
+
                 case BoundClosureInvocationExpression invocation:
                 {
                     int total = 4 + EstimateExpression(invocation.Callee);

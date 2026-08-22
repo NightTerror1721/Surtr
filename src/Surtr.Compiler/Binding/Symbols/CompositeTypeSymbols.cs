@@ -15,8 +15,10 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>The element type.</summary>
         public TypeSymbol ElementType { get; }
 
+        private string? _name;
+
         /// <inheritdoc/>
-        public override string Name => ToDisplayString();
+        public override string Name => _name ??= ToDisplayString();
 
         /// <inheritdoc/>
         public override TypeSymbolKind TypeKind => TypeSymbolKind.Array;
@@ -59,8 +61,10 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>The value type.</summary>
         public TypeSymbol ValueType { get; }
 
+        private string? _name;
+
         /// <inheritdoc/>
-        public override string Name => ToDisplayString();
+        public override string Name => _name ??= ToDisplayString();
 
         /// <inheritdoc/>
         public override TypeSymbolKind TypeKind => TypeSymbolKind.Dictionary;
@@ -99,8 +103,10 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>The element types, in order.</summary>
         public IReadOnlyList<TypeSymbol> ElementTypes { get; }
 
+        private string? _name;
+
         /// <inheritdoc/>
-        public override string Name => ToDisplayString();
+        public override string Name => _name ??= ToDisplayString();
 
         /// <inheritdoc/>
         public override TypeSymbolKind TypeKind => TypeSymbolKind.Tuple;
@@ -166,8 +172,10 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>The return type. This is the one position where <c>void</c> is legal.</summary>
         public TypeSymbol ReturnType { get; }
 
+        private string? _name;
+
         /// <inheritdoc/>
-        public override string Name => ToDisplayString();
+        public override string Name => _name ??= ToDisplayString();
 
         /// <inheritdoc/>
         public override TypeSymbolKind TypeKind => TypeSymbolKind.Closure;

@@ -4,6 +4,7 @@ using Surtr.Bytecode;
 using Surtr.Runtime;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
+using Surtr.VM;
 
 namespace Surtr.Tests.VM
 {
@@ -57,6 +58,39 @@ namespace Surtr.Tests.VM
             builder.Op(OpCode.ObjNewX).I32(typeIndex).Op(OpCode.IsNotNull).Op(OpCode.ReturnValue);
 
             Assert.True(Run(runtime, module, builder).AsBool);
+        }
+
+        [Fact]
+        public void ObjNew_RejectsAnAbstractClass()
+        {
+            // The binder already refuses to construct an abstract class in source, but raw bytecode
+            // could still ask ObjNew to allocate one. Defense in depth: the VM must reject it with a
+            // Surtr exception rather than hand back a half-made instance.
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+            var type = VmMetadataHelpers.DefineClass(module, "AbstractShape", isAbstract: true);
+            SurtrTypeLinker.LinkModule(module);
+
+            var builder = new BytecodeBuilder();
+            int typeIndex = builder.AddType(VmMetadataHelpers.HandleFor(module, type));
+            builder.Op(OpCode.ObjNew).I16(typeIndex).Op(OpCode.ReturnValue);
+
+            Assert.Throws<SurtrExecutionException>(() => Run(runtime, module, builder));
+        }
+
+        [Fact]
+        public void ObjNewX_RejectsAnAbstractClass()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+            var type = VmMetadataHelpers.DefineClass(module, "AbstractShape", isAbstract: true);
+            SurtrTypeLinker.LinkModule(module);
+
+            var builder = new BytecodeBuilder();
+            int typeIndex = builder.AddType(VmMetadataHelpers.HandleFor(module, type));
+            builder.Op(OpCode.ObjNewX).I32(typeIndex).Op(OpCode.ReturnValue);
+
+            Assert.Throws<SurtrExecutionException>(() => Run(runtime, module, builder));
         }
 
         [Fact]

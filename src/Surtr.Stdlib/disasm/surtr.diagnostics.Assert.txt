@@ -1,0 +1,32 @@
+module surtr.diagnostics.Assert
+  constants: 0   types: 1   fields: 0   methods: 3   modules: 0
+
+  type table:
+    #0  surtr.diagnostics.Assert:AssertionException
+
+  method table:
+    #0  surtr.diagnostics.Assert:AssertionException.ctor(string) -> void
+    #1  assert(bool, string) -> void
+    #2  surtr:Exception.ctor(string) -> void
+
+[public] static assert(condition: bool, message: string = "Assertion failed."): void
+  ; entry 0, locals 2, stack 3, code 0000..0011
+    0000  Ldl0
+    0001  Inv
+    0002  JPZ +11 -> L0 (0010)
+    0005  ObjNew 0 (surtr.diagnostics.Assert:AssertionException)
+    0008  Dup
+    0009  Ldl1
+    000A  InvokeSpecial 0 (ctor) args=2 ret=0
+    000F  Throw
+  L0:
+    0010  ReturnVoid
+
+class AssertionException : surtr:Exception  [public]
+
+  [public] ctor (message: string = "Assertion failed."): void
+    ; entry 1, locals 2, stack 2, code 0011..0019
+      0011  Ldl0
+      0012  Ldl1
+      0013  InvokeSpecial 2 (ctor) args=2 ret=0
+      0018  ReturnVoid

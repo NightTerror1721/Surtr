@@ -486,6 +486,13 @@ namespace Surtr.LanguageServer.Workspace
             string name = symbolOrType switch
             {
                 TypeSymbol type => type.Name,
+
+                // A constructor is written as its class's name (`Vec2(1.0, 2.0)`), never as its
+                // symbol name ("ctor"), so the hover anchor must be compared against the type it
+                // constructs for the constructor to claim it.
+                MethodSymbol method when method.Role == MethodRole.Constructor =>
+                    method.ContainingType?.Name ?? method.Name,
+
                 Symbol symbol => symbol.Name,
                 _ => string.Empty,
             };
@@ -660,7 +667,7 @@ namespace Surtr.LanguageServer.Workspace
                 if (parameter.Span.Contains(position))
                 {
                     string typeText = parameter.Type is null ? "unknown" : TextOf(text, parameter.Type.Span);
-                    string label = parameter.Name + ": " + typeText + (parameter.IsVarargs ? " ..." : string.Empty);
+                    string label = "let " + parameter.Name + ": " + typeText + (parameter.IsVarargs ? " ..." : string.Empty);
                     return new Hit
                     {
                         Markdown = "```surtr\n" + label + "\n```\n\nparameter of " + ShortName(declaration) + ".",
@@ -980,13 +987,14 @@ namespace Surtr.LanguageServer.Workspace
 
             string name = named.Path[named.Path.Count - 1];
 
-            // Built-ins get a label without needing a declaration.
+            // Built-ins get a label without needing a declaration. BuiltInLabel already fences the
+            // type's own name, so re-fencing the written source text here would show the type twice.
             string? builtIn = HoverFormatter.BuiltInLabel(name);
             if (builtIn is not null)
             {
                 return new Hit
                 {
-                    Markdown = "```surtr\n" + TextOf(text, typeSyntax.Span) + "\n```\n\n" + builtIn,
+                    Markdown = builtIn,
                     AnchorStart = anchor.Span.Start.Position,
                     AnchorLength = anchor.Span.Length,
                 };
@@ -1081,6 +1089,21 @@ namespace Surtr.LanguageServer.Workspace
                 if (import.Alias is not null)
                     continue;
 
+                if (import.IsModule)
+                {
+                    // `import module X.Y;` (§2.1) brings a whole module's surface, the way a
+                    // wildcard over exactly that one module would.
+                    string modulePath = string.Join(".", import.Path);
+                    if (modulePath != current.Path && binder.Modules.TryGetValue(modulePath, out var whole))
+                    {
+                        var wholeTypes = whole.FindTypes(name);
+                        if (wholeTypes.Count > 0)
+                            return wholeTypes;
+                    }
+
+                    continue;
+                }
+
                 if (import.IsWildcard)
                 {
                     string importedPath = string.Join(".", import.Path);
@@ -1131,6 +1154,17 @@ namespace Surtr.LanguageServer.Workspace
                         if (candidates.Count > 0)
                             return candidates;
                     }
+                }
+
+                // `import ModulePath;` with nothing after it resolves as a whole module when the
+                // full path names one (§2.1) — the same wildcard surface as `import ModulePath.*;`,
+                // re-exports included. The binder treats this as a module, so the resolver must too.
+                string wholePath = string.Join(".", import.Path);
+                if (wholePath != current.Path && binder.Modules.TryGetValue(wholePath, out var wholeModule))
+                {
+                    var wholeTypes = wholeModule.FindTypes(name);
+                    if (wholeTypes.Count > 0)
+                        return wholeTypes;
                 }
             }
 

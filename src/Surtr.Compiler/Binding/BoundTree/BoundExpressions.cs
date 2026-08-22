@@ -546,13 +546,15 @@ namespace Surtr.Compiler.Binding.BoundTree
             IReadOnlyList<ParameterSymbol> parameters,
             BoundStatement body,
             IReadOnlyList<Symbol> captured,
-            bool capturesReceiver)
+            bool capturesReceiver,
+            MethodSymbol? directTarget = null)
             : base(syntax, type)
         {
             Parameters = parameters;
             Body = body;
             Captured = captured;
             CapturesReceiver = capturesReceiver;
+            DirectTarget = directTarget;
         }
 
         /// <summary>Its parameters.</summary>
@@ -578,6 +580,19 @@ namespace Surtr.Compiler.Binding.BoundTree
         /// anything else.
         /// </remarks>
         public bool CapturesReceiver { get; }
+
+        /// <summary>
+        /// The method this lambda is a direct method-group conversion of, or <c>null</c> for a
+        /// lambda written by hand.
+        /// </summary>
+        /// <remarks>
+        /// A method group whose conversion is exact — a static target whose parameter and return
+        /// types are exactly the closure's — is sugar for "the function itself", so its function
+        /// value can be built straight over the target instead of lifting a synthetic
+        /// <c>$lambda$</c> forwarding method. The emitter skips the lift when this is set and the
+        /// target's method builder is reachable.
+        /// </remarks>
+        public MethodSymbol? DirectTarget { get; }
     }
 
     /// <summary>An array literal.</summary>
@@ -801,5 +816,22 @@ namespace Surtr.Compiler.Binding.BoundTree
 
         /// <summary>The arms, in order.</summary>
         public IReadOnlyList<BoundSwitchArm> Arms { get; }
+    }
+
+    /// <summary>
+    /// A <c>throw</c> in expression position. Typed <c>never</c> — the bottom type — so it is
+    /// assignable to whatever the surrounding expression needs and contributes nothing to a
+    /// <c>?:</c>, <c>??</c> or switch-expression's common type.
+    /// </summary>
+    public sealed class BoundThrowExpression : BoundExpression
+    {
+        internal BoundThrowExpression(SyntaxNode syntax, BoundExpression value, TypeSymbol type)
+            : base(syntax, type)
+        {
+            Value = value;
+        }
+
+        /// <summary>The thrown value.</summary>
+        public BoundExpression Value { get; }
     }
 }

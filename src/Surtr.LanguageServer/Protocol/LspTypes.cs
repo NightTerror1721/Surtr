@@ -117,6 +117,9 @@ namespace Surtr.LanguageServer.Protocol
         public object? CodeActionProvider { get; set; }
 
         public SemanticTokensOptions? SemanticTokensProvider { get; set; }
+
+        /// <summary>Offered without a resolve step: a hint's label is final the moment it is sent.</summary>
+        public object InlayHintProvider { get; set; } = true;
     }
 
     /// <summary>What the server offers for <c>textDocument/semanticTokens</c>.</summary>
@@ -149,6 +152,38 @@ namespace Surtr.LanguageServer.Protocol
     public sealed class SemanticTokens
     {
         public List<int> Data { get; set; } = new List<int>();
+    }
+
+    /// <summary>Parameters of <c>textDocument/inlayHint</c>.</summary>
+    public sealed class InlayHintParams
+    {
+        public TextDocumentIdentifier TextDocument { get; set; } = new TextDocumentIdentifier();
+
+        public Range Range { get; set; }
+    }
+
+    /// <summary>One grey inlay hint (LSP 3.17), placed at a character position.</summary>
+    public sealed class InlayHint
+    {
+        public Position Position { get; set; }
+
+        /// <summary>The text to render. A plain string or a list of labelled parts; both serialize fine.</summary>
+        public object Label { get; set; } = string.Empty;
+
+        /// <summary>Whether this is a type hint (<see cref="InlayHintKinds.Type"/>) or a parameter hint (<see cref="InlayHintKinds.Parameter"/>).</summary>
+        public int? Kind { get; set; }
+
+        public bool? PaddingLeft { get; set; }
+
+        public bool? PaddingRight { get; set; }
+    }
+
+    /// <summary>Standard LSP inlay-hint kinds, by their protocol numbers.</summary>
+    public static class InlayHintKinds
+    {
+        public const int Type = 1;
+
+        public const int Parameter = 2;
     }
 
     /// <summary>What the server offers for <c>textDocument/completion</c>.</summary>

@@ -556,8 +556,8 @@ namespace Surtr.Tests.Compiler.Binding
             AssertNoErrors(compilation);
 
             var binder = compilation.Bind();
-            Assert.Contains(binder.Modules["game.core"].Types, t => t.Name == "Verbose");
-            Assert.DoesNotContain(binder.Modules["game.core"].Types, t => t.Name == "Quiet");
+            Assert.Contains(binder.Modules["game.core.Test"].Types, t => t.Name == "Verbose");
+            Assert.DoesNotContain(binder.Modules["game.core.Test"].Types, t => t.Name == "Quiet");
         }
 
         [Fact]
@@ -578,7 +578,7 @@ namespace Surtr.Tests.Compiler.Binding
                 ("Platform", BuildConstant.String("IL2CPP")));
 
             AssertNoErrors(compilation);
-            Assert.Contains(compilation.Bind().Modules["game.core"].Types, t => t.Name == "Native");
+            Assert.Contains(compilation.Bind().Modules["game.core.Test"].Types, t => t.Name == "Native");
         }
 
         [Fact]
@@ -597,7 +597,7 @@ namespace Surtr.Tests.Compiler.Binding
                 + "const if (Threshold > 5) {\n  class Big { }\n}");
 
             AssertNoErrors(compilation);
-            Assert.Contains(compilation.Bind().Modules["game.core"].Types, t => t.Name == "Big");
+            Assert.Contains(compilation.Bind().Modules["game.core.Test"].Types, t => t.Name == "Big");
         }
 
         [Fact]
@@ -608,7 +608,7 @@ namespace Surtr.Tests.Compiler.Binding
                 + "const Threshold: int = 10;");
 
             AssertNoErrors(compilation);
-            Assert.Contains(compilation.Bind().Modules["game.core"].Types, t => t.Name == "Big");
+            Assert.Contains(compilation.Bind().Modules["game.core.Test"].Types, t => t.Name == "Big");
         }
 
         [Fact]

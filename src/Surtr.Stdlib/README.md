@@ -66,7 +66,7 @@ it is core object-model machinery, not library content:
 | Core interfaces `IIterable<T>`/`IIterator<T>`/`IComparable<T>`/`IEquatable<T>` | `Surtr.Core`'s `SurtrStandardLibrary.DeclareCoreInterfaces` |
 | Collection members (`array`/`tuple`/`dict`/`closure`), incl. `array.sort` | `Surtr.Core`'s `SurtrCompositeBuiltIns` |
 | String members, incl. `string.format` | `Surtr.Core`'s `SurtrStringBuiltIn` |
-| `iterator` cursor | `Surtr.Core`'s `SurtrIteratorBuiltIns` |
+| `Iterator` cursor | `Surtr.Core`'s `SurtrIteratorBuiltIns` |
 | `Math`'s trig/float operations (`sin`, `cos`, `sqrt`, `pow`, `log`, `floor`, `hypot`, …) | **this project**'s `Native/SurtrMathNative.cs`, bound to `surtr.math.Math`'s `native fun` declarations by link name |
 
 `Math` is the one member of that list that is *not* core object-model content — it needs C# only

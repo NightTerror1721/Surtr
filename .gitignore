@@ -431,3 +431,6 @@ FodyWeavers.xsd
 # Scratch workspace for language-server experiments
 docs/tmp/
 
+
+# Local per-machine Claude Code settings (permissions for this user's paths)
+.claude/settings.local.json

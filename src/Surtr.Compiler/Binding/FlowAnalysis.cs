@@ -90,7 +90,7 @@ namespace Surtr.Compiler.Binding
             var analysis = new FlowAnalysis(diagnostics, sourceName, method);
             analysis.Statement(body);
 
-            if (analysis._reachable && !method.ReturnType.IsVoid && !method.ReturnType.IsError)
+            if (analysis._reachable && !method.ReturnType.IsVoid && !method.ReturnType.IsNever && !method.ReturnType.IsError)
             {
                 diagnostics.ReportError(
                     SurtrDiagnosticCode.NotAllPathsReturn,
@@ -428,9 +428,33 @@ namespace Surtr.Compiler.Binding
                     return;
 
                 case BoundConditionalExpression conditional:
-                    Expression(conditional.Condition);
-                    Expression(conditional.WhenTrue);
-                    Expression(conditional.WhenFalse);
+                    {
+                        Expression(conditional.Condition);
+
+                        // The branches join like an `if`: a throw in one branch must not mark the
+                        // code after the conditional unreachable, and only what both branches
+                        // assign is assigned after.
+                        var before = new HashSet<LocalSymbol>(_assigned);
+
+                        Expression(conditional.WhenTrue);
+                        var afterTrue = new HashSet<LocalSymbol>(_assigned);
+                        bool trueReachable = _reachable;
+
+                        _assigned.Clear();
+                        _assigned.UnionWith(before);
+                        _reachable = true;
+
+                        Expression(conditional.WhenFalse);
+                        bool falseReachable = _reachable;
+
+                        _assigned.IntersectWith(afterTrue);
+                        _reachable = trueReachable || falseReachable;
+                        return;
+                    }
+
+                case BoundThrowExpression @throw:
+                    Expression(@throw.Value);
+                    _reachable = false;
                     return;
 
                 case BoundCallExpression call:
@@ -524,14 +548,44 @@ namespace Surtr.Compiler.Binding
                 case BoundSwitchExpression @switch:
                 {
                     Expression(@switch.Subject);
+
+                    // Arms join like an `if`: a throw in one arm must not mark the code after
+                    // the switch unreachable, and only what every arm assigns is assigned after.
+                    var before = new HashSet<LocalSymbol>(_assigned);
+                    HashSet<LocalSymbol>? after = null;
+                    bool anyReachable = false;
+
                     foreach (var arm in @switch.Arms)
                     {
                         foreach (var value in arm.Values)
                             Expression(value);
 
                         Expression(arm.Result);
+
+                        if (after is null)
+                            after = new HashSet<LocalSymbol>(_assigned);
+                        else
+                            after.IntersectWith(_assigned);
+
+                        anyReachable = anyReachable || _reachable;
+
+                        _assigned.Clear();
+                        _assigned.UnionWith(before);
+                        _reachable = true;
                     }
 
+                    if (after is null)
+                    {
+                        _assigned.Clear();
+                        _assigned.UnionWith(before);
+                    }
+                    else
+                    {
+                        _assigned.Clear();
+                        _assigned.UnionWith(after);
+                    }
+
+                    _reachable = anyReachable;
                     return;
                 }
 

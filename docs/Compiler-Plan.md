@@ -113,11 +113,11 @@ for the layer: three pairs the type checker must separate, all collapsing at emi
 
 ### How it came out
 
-* **`ModulePath`** derives a module from where a file lives (§2.1): directories become segments,
-  prefixed by the project's `RootModulePath`. Every segment must be a legal identifier, because an
-  `import` has to be able to name it — a directory called `my-module` is rejected here rather than
-  producing a module no source file could reach. A file at the root with no root module path is
-  rejected too: an empty path would produce descriptors like `:Entity`.
+* **`ModulePath`** derives a module from where a file lives (§2.1): directories become segments
+  plus the file's own name as the final one, prefixed by the project's `RootModulePath`. Every
+  segment must be a legal identifier, because an `import` has to be able to name it — a directory
+  or file called `my-module` is rejected here rather than producing a module no source file could
+  reach.
 * **`SurtrProject`** carries what is not source — source root, referenced images and modules, host
   types, and the build constants `const if` reads (§7.4).
 * **`ModuleDependencyGraph`** accumulates rather than being computed once. Imports declare most
@@ -150,6 +150,33 @@ parameter's position, and a constructed generic's arguments.
 * Import is lazy per type and cached by metadata identity, so a large host surface is not paid for
   on every compile.
 * An imported symbol and a source symbol are indistinguishable to the binder, which is the point.
+
+### Source providers and lazy module resolution
+
+`SurtrProject` now carries an `ISourceProvider` — the seam where a module's source text comes from
+when an `import` names a module the project did not hand over up front. The default is a
+`FileSystemSourceProvider` rooted at the source root; an embedding host (Unity's asset database,
+an in-memory tree, a network call) implements the interface instead. `SurtrCompilation` implements
+`IModuleResolver` over that: `KnowsModule` falls through to the provider, and
+`TryGetSourceModule` parses a provider-supplied module on demand and joins it to the compilation's
+module set. Because a lazy load can add a module while the dependency graph is being built, the
+graph's construction runs to a fixed point — each pass processes every module not yet processed,
+and a pass that loaded new modules starts another. `SurtrCompilation` exposes this resolution
+surface as `IModuleResolver`, which the binder's module lookups go through.
+
+### Re-export (`export import`) and whole-module imports (`import module`)
+
+`import module X.Y;` imports a whole module's surface (types and module-level members) without
+recursing into submodules, and the `export` prefix on any import re-exposes what it brings in as
+the importing module's own surface. Re-exports are modeled on `ModuleSymbol`:
+`ReExportedModules` carries the re-exported modules (with an optional member filter for a
+named/selective member re-export), and `ReExportedTypes` carries the re-exported types — kept
+apart from `Types` so `ModuleEmitter` still emits only what a module truly declares, while
+`FindTypes` and the import scopes see both. `Binder.BindImports` records direct re-exports, and a
+post-pass (`ApplyReExports`) computes their transitive closure, folds re-exported types into each
+aggregator's surface, and extends each consumer's member-import list so `import Aggregator.*`
+reaches everything the aggregator re-exported. Re-export never widens accessibility and never
+duplicates emitted code — it is a compile-time facade over the same symbols.
 
 ---
 
@@ -962,7 +989,14 @@ method, and reading a member off a type parameter were all errors — §6's own
   applicability, specificity, the argument conversions and the call's type are then all decided
   against concrete types, and nothing downstream knows a type parameter was involved. Resolving
   against the open signature instead would ask whether an `int` converts to a `T`, which has no
-  answer.
+  answer. A generic method also infers from its **expected return type** (`let b: Box<int> =
+  makeBox();` fills `T` from the target even though no argument mentions it), unified in the same
+  pass so an argument wins when both name a parameter.
+* **A construction without its own inference source is deferred to the winning parameter.** `take(Box())`
+  with `take(b: Box<int>)` binds the construction against the parameter it lands in — target typing
+  in argument position, exactly how a deferred lambda's parameters are typed. A construction whose
+  own argument already infers (<c>Box(5.0)</c>) re-binds against the parameter too, so
+  <c>take(Box(5.0))</c> against <c>Box&lt;float&gt;</c> takes the target's type.
 * **`TypeInference` is one mechanism for both**, a structural walk with first-binding-wins and no
   lattice. Two answers for one parameter is a refusal rather than a widening — §3.5's "no silent pick"
   applied to inference.
@@ -1002,6 +1036,49 @@ Three consequences worth keeping:
   that its parameters have no types — pointing at the lambda rather than at the call that is wrong.
 * A lambda whose parameters *are* written is bound eagerly as before, so nothing about the existing
   path moved.
+
+Two extensions the mechanism needed once the stdlib's `Sequence` grew real bodies:
+
+* **A zero-parameter lambda is deferred too** — it has no parameter to carry the target-supplied
+  type, so its only type information is its return, which has to come from the target. Eager
+  binding inferred the concrete return (`MapIterator<T, U>`) and no closure conversion widens that
+  to the `() -> IIterator<U>` the constructor declares, so `Sequence<U>(() => MapIterator<T, U>(...))`
+  reported *"No constructor takes these arguments"*.
+* **A lambda may write its return type**, `(params): Ret => body` (§8), which pins the lambda's
+  own type so a zero-parameter lambda no longer depends on a target to exist at all. A written
+  return type is authoritative over the body (the body binds against it), so it is only deferred
+  when it is absent — `NeedsTargetType` asks for a written return type before it defers.
+
+### 10.1e A function's return type inferred from its body
+
+§8 lets a lambda omit its return type and have the body settle it; once the lambda had the written
+form, the natural question was why a `fun` could not too. It can now: `fun add(a: int, b: int) => a + b`
+omits the `: int`, and the binder reads it back off the body's `return` statements — none at all
+means `void`, several mean they have to agree.
+
+The pipeline is where the design lives. Return types are needed *during* the member phase — an
+override or an interface implementation is compared against its contract by signature, return
+included — but bodies do not bind until `BindBodies`. So `InferReturnTypes` runs a *speculative*
+body bind for each omitted one (a throwaway `BodyBinder` whose diagnostics are discarded, the same
+trick the binder's own `Speculative` uses) at the end of `Bind()`, just before the obligation
+checks, so the signature comparisons see concrete answers. A **fixpoint** because one inferred
+function may call another whose own type is inferred too: `fun f() => g()` cannot know it returns
+`int` until `g` has, so the loop re-tries whoever still could not decide until no one can.
+
+Three things still have to write it, and each is enforced where it is knowable:
+
+* **A bodyless method** (`abstract`, `native`, an interface member) has nothing to infer from —
+  reported in `BindMethodReturnType` (`Binder.cs`).
+* **An `override`** must reproduce the signature it replaces — also reported in
+  `BindMethodReturnType`, from the `override` modifier alone.
+* **An interface implementation** must reproduce the contract's signature — reported by
+  `InferReturnTypes`'s obligation walk, which keeps the offending member out of the inference
+  fixpoint and out of `CheckObligation`'s signature comparison (which would otherwise add a
+  misleading mismatch on top of an empty return).
+
+Recursion is the inference's blind spot: `fun fact(n) => fact(n - 1)` reads its own call's return,
+which is not settled yet, so the body cannot settle it either — the function is reported with
+`CannotInferType` and the annotation demanded, which is the honest answer.
 
 Found alongside it and fixed: **a field or property holding a closure could not be invoked**. A local
 or parameter could, and where the closure is kept says nothing about how it is called (§8) — a

@@ -10,6 +10,7 @@ using Surtr.Compiler.Syntax.Ast;
 using Surtr.Runtime.BuiltIns;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Surtr.Compiler.Binding
 {
@@ -46,8 +47,19 @@ namespace Surtr.Compiler.Binding
         private readonly Dictionary<string, Scope> _moduleScopes = new Dictionary<string, Scope>(StringComparer.Ordinal);
         private readonly Dictionary<string, Scope> _importScopes = new Dictionary<string, Scope>(StringComparer.Ordinal);
 
-        private readonly Dictionary<string, List<ModuleSymbol>> _importedModules =
-            new Dictionary<string, List<ModuleSymbol>>(StringComparer.Ordinal);
+        private readonly Dictionary<string, List<ImportedModule>> _importedModules =
+            new Dictionary<string, List<ImportedModule>>(StringComparer.Ordinal);
+
+        // Modules a module re-exports (`export import module X.Y;`, §2.1): a consumer that
+        // imports the re-exporting module sees these too. Accumulated during BindImports, handed
+        // to `ModuleSymbol.ReExportedModules` once every import is bound.
+        private readonly Dictionary<string, List<ImportedModule>> _reExportedModules =
+            new Dictionary<string, List<ImportedModule>>(StringComparer.Ordinal);
+
+        // Types a module re-exports by name (`export import X.Y;`, `export import X.{A,B}`, §2.1),
+        // folded into the re-exporting module's own `Types` once every import is bound.
+        private readonly Dictionary<string, List<NamedTypeSymbol>> _reExportedTypes =
+            new Dictionary<string, List<NamedTypeSymbol>>(StringComparer.Ordinal);
 
         // Accumulated across every `extension` block bound for a module — at module level and
         // nested inside a class alike (§15) — then handed to `ModuleSymbol.ExtensionMethods` once,
@@ -59,6 +71,11 @@ namespace Surtr.Compiler.Binding
             new Dictionary<string, List<PropertySymbol>>(StringComparer.Ordinal);
 
         private readonly List<BodyBinding> _bodies = new List<BodyBinding>();
+
+        // Methods whose declaration omitted the return type (§8) — the body is to infer it from.
+        // A method may also be *added* here and yet never infer (recursion, conflicting returns),
+        // which InferReturnTypes reports at the end of its pass.
+        private readonly HashSet<MethodSymbol> _inferReturnTypes = new HashSet<MethodSymbol>();
         private readonly List<InitializerBinding> _initializers = new List<InitializerBinding>();
         private readonly List<DefaultBinding> _defaults = new List<DefaultBinding>();
         private readonly List<BoundFieldInitializer> _boundInitializers = new List<BoundFieldInitializer>();
@@ -217,6 +234,7 @@ namespace Surtr.Compiler.Binding
             _globalScope.TryDeclare("range", _factory.Range);
             _globalScope.TryDeclare("void", _factory.Void);
             _globalScope.TryDeclare("unknown", _factory.Unknown);
+            _globalScope.TryDeclare("never", _factory.Never);
 
             // §13: the standard library is imported implicitly - `surtr` is in scope in every file
             // with no `import` line, which is what lets `Exception` and `IComparable<T>` be written
@@ -271,6 +289,11 @@ namespace Surtr.Compiler.Binding
             // an imported one rather than racing it.
             foreach (var sourceModule in _compilation.Modules.Values)
                 BindImports(sourceModule);
+
+            // Re-exports fold into a module's own surface only after every import of every module
+            // is bound: an aggregator's Types are complete before anything consumes them, and the
+            // member-import lists grow with the transitive re-exports of what each module imports.
+            ApplyReExports();
         }
 
         private void DeclareMember(
@@ -409,7 +432,21 @@ namespace Surtr.Compiler.Binding
 
             if (syntax.TypeParameters.Count > 0)
             {
-                if (syntax.TypeParameters.Count > 10)
+                // An enum's cases are a fixed set of ordinals and a singleton has exactly one
+                // instance created at module load, so neither has anything a type argument could
+                // select. A generic declaration would be a degenerate type that cannot be named by
+                // its arity and could even be "constructed" (§6, §2.4, §2.8). Report it and skip
+                // creating the parameters so the symbol stays non-generic and unconstructable.
+                if (syntax.Kind is TypeDeclarationKind.Enum or TypeDeclarationKind.Singleton)
+                {
+                    string kindWord = syntax.Kind == TypeDeclarationKind.Enum ? "enum" : "singleton";
+                    _diagnostics.ReportError(
+                        SurtrDiagnosticCode.InvalidGenericDeclaration,
+                        $"'{syntax.Name}' is a {kindWord}; only one of it exists, so it cannot declare type parameters.",
+                        sourceName,
+                        syntax.TypeParameters[0].Span);
+                }
+                else if (syntax.TypeParameters.Count > 10)
                 {
                     _diagnostics.ReportError(
                         SurtrDiagnosticCode.TooManyTypeParameters,
@@ -419,11 +456,14 @@ namespace Surtr.Compiler.Binding
                         syntax.Span);
                 }
 
-                var parameters = new TypeParameterSymbol[syntax.TypeParameters.Count];
-                for (int i = 0; i < parameters.Length; i++)
-                    parameters[i] = _factory.DeclareTypeParameter(syntax.TypeParameters[i].Name, symbol, i);
+                if (syntax.Kind is not (TypeDeclarationKind.Enum or TypeDeclarationKind.Singleton))
+                {
+                    var parameters = new TypeParameterSymbol[syntax.TypeParameters.Count];
+                    for (int i = 0; i < parameters.Length; i++)
+                        parameters[i] = _factory.DeclareTypeParameter(syntax.TypeParameters[i].Name, symbol, i);
 
-                symbol.SetTypeParameters(parameters);
+                    symbol.SetTypeParameters(parameters);
+                }
             }
 
             // Arity is part of identity, so a duplicate is a name *and* an arity that already
@@ -537,13 +577,42 @@ namespace Surtr.Compiler.Binding
         private void BindImports(SurtrSourceModule sourceModule)
         {
             var scope = _importScopes[sourceModule.Path];
-            var imported = new List<ModuleSymbol>();
+            var imported = new List<ImportedModule>();
             _importedModules.Add(sourceModule.Path, imported);
+
+            var reExported = new List<ImportedModule>();
+            _reExportedModules.Add(sourceModule.Path, reExported);
+
+            var reExportedTypes = new List<NamedTypeSymbol>();
+            _reExportedTypes.Add(sourceModule.Path, reExportedTypes);
 
             foreach (var unit in sourceModule.Units)
             {
                 foreach (var import in unit.Syntax.Imports)
                 {
+                    // `import module X.Y;` names a whole module and brings its full surface — types
+                    // and module-level members alike — exactly as a wildcard over that one module
+                    // would, but without recursing into submodules. It is the explicit way to say
+                    // "this file, all of it".
+                    if (import.IsModule)
+                    {
+                        if (TryGetModuleSymbol(Join(import.Path, import.Path.Count), out var whole))
+                        {
+                            ImportModuleSurface(scope, imported, whole);
+                            ReExport(import, sourceModule, reExported, whole);
+                        }
+                        else
+                        {
+                            ReportAt(
+                                unit.File.Path,
+                                import.Span,
+                                SurtrDiagnosticCode.UnresolvedImport,
+                                $"No module provides '{string.Join(ModulePath.Separator.ToString(), import.Path)}'.");
+                        }
+
+                        continue;
+                    }
+
                     if (import.IsWildcard)
                     {
                         // A directory wildcard (§2.1, Fase 9) reaches the exact module if it
@@ -553,10 +622,16 @@ namespace Surtr.Compiler.Binding
                         string wildcardPath = Join(import.Path, import.Path.Count);
 
                         if (TryGetModuleSymbol(wildcardPath, out var module))
+                        {
                             ImportWildcardModule(scope, imported, module);
+                            ReExport(import, sourceModule, reExported, module);
+                        }
 
                         foreach (var nested in ModulesUnderPrefix(wildcardPath))
+                        {
                             ImportWildcardModule(scope, imported, nested);
+                            ReExport(import, sourceModule, reExported, nested);
+                        }
 
                         continue;
                     }
@@ -565,14 +640,18 @@ namespace Surtr.Compiler.Binding
                     // split below, there is no trailing type name to peel off the end.
                     if (import.Alias is not null)
                     {
-                        if (TryGetModuleSymbol(Join(import.Path, import.Path.Count), out var aliased)
-                            && !scope.TryDeclareModuleAlias(import.Alias, aliased))
+                        if (TryGetModuleSymbol(Join(import.Path, import.Path.Count), out var aliased))
                         {
-                            ReportAt(
-                                unit.File.Path,
-                                import.Span,
-                                SurtrDiagnosticCode.DuplicateModuleAlias,
-                                $"'{import.Alias}' is already used as a module alias in this module.");
+                            ReExport(import, sourceModule, reExported, aliased);
+
+                            if (!scope.TryDeclareModuleAlias(import.Alias, aliased))
+                            {
+                                ReportAt(
+                                    unit.File.Path,
+                                    import.Span,
+                                    SurtrDiagnosticCode.DuplicateModuleAlias,
+                                    $"'{import.Alias}' is already used as a module alias in this module.");
+                            }
                         }
 
                         continue;
@@ -585,10 +664,33 @@ namespace Surtr.Compiler.Binding
                     {
                         if (TryGetModuleSymbol(Join(import.Path, import.Path.Count), out var listed))
                         {
+                            bool anyMember = false;
+                            var only = new List<string>();
+
                             foreach (var memberName in import.Members)
                             {
+                                bool brought = false;
                                 foreach (var type in listed.FindTypes(memberName))
+                                {
                                     scope.AddCandidate(type.Name, type);
+                                    ReExportType(import, reExportedTypes, type);
+                                    brought = true;
+                                }
+
+                                // §2.1's broader member import: a name that is not a type may still
+                                // be a module-level function, variable or property, and a selective
+                                // import brings exactly that member — not the whole module.
+                                if (!brought && ModuleDeclaresMember(listed, memberName))
+                                {
+                                    only.Add(memberName);
+                                    anyMember = true;
+                                }
+                            }
+
+                            if (anyMember)
+                            {
+                                ImportMembers(scope, imported, listed, only);
+                                ReExportMembers(import, sourceModule, reExported, listed, only);
                             }
                         }
 
@@ -606,12 +708,14 @@ namespace Surtr.Compiler.Binding
                     if (TryGetModuleSymbol(wholePath, out var wholeModule))
                     {
                         ImportWildcardModule(scope, imported, wholeModule);
+                        ReExport(import, sourceModule, reExported, wholeModule);
                         matchedWhole = true;
                     }
 
                     foreach (var nested in ModulesUnderPrefix(wholePath))
                     {
                         ImportWildcardModule(scope, imported, nested);
+                        ReExport(import, sourceModule, reExported, nested);
                         matchedWhole = true;
                     }
 
@@ -625,8 +729,23 @@ namespace Surtr.Compiler.Binding
                         if (!TryGetModuleSymbol(Join(import.Path, split), out var module))
                             continue;
 
-                        foreach (var type in module.FindTypes(import.Path[split]))
+                        string name = import.Path[split];
+                        bool brought = false;
+
+                        foreach (var type in module.FindTypes(name))
+                        {
                             scope.AddCandidate(type.Name, type);
+                            ReExportType(import, reExportedTypes, type);
+                            brought = true;
+                        }
+
+                        // §2.1's broader member import: a named import that does not name a type may
+                        // name a module-level function, variable or property instead.
+                        if (!brought && ModuleDeclaresMember(module, name))
+                        {
+                            ImportMembers(scope, imported, module, new List<string> { name });
+                            ReExportMembers(import, sourceModule, reExported, module, new List<string> { name });
+                        }
 
                         break;
                     }
@@ -634,26 +753,284 @@ namespace Surtr.Compiler.Binding
             }
         }
 
+        /// <summary>Whether a module declares a module-level member (function, variable or property) of this name.</summary>
+        /// <remarks>
+        /// Read from the module's own units rather than from <see cref="ModuleSymbol.Methods"/>,
+        /// <see cref="ModuleSymbol.Fields"/> or <see cref="ModuleSymbol.Properties"/>: imports bind
+        /// before the member phase fills those, so the source declarations are the only complete
+        /// answer at this point.
+        /// </remarks>
+        private bool ModuleDeclaresMember(ModuleSymbol module, string name)
+        {
+            if (!_compilation.Modules.TryGetValue(module.Path, out var sourceModule))
+                return false;
+
+            foreach (var unit in sourceModule.Units)
+            {
+                foreach (var declaration in unit.Syntax.Declarations)
+                {
+                    switch (declaration)
+                    {
+                        case FieldDeclarationSyntax field when string.Equals(field.Name, name, StringComparison.Ordinal):
+                        case PropertyDeclarationSyntax property when string.Equals(property.Name, name, StringComparison.Ordinal):
+                        case MethodDeclarationSyntax method when string.Equals(method.Name, name, StringComparison.Ordinal):
+                            return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Imports selected members of a module — the unit of a named or selective import that
+        /// names a module-level function, variable or property, §2.1. The module joins the
+        /// member-import list filtered to exactly those names, so nothing else from it leaks into
+        /// bare-name resolution.
+        /// </summary>
+        private static void ImportMembers(Scope scope, List<ImportedModule> imported, ModuleSymbol module, IReadOnlyList<string> only)
+        {
+            foreach (var name in only)
+            {
+                foreach (var type in module.FindTypes(name))
+                    scope.AddCandidate(type.Name, type);
+            }
+
+            AddImported(imported, module, only);
+        }
+
+        private static void AddImported(List<ImportedModule> imported, ModuleSymbol module, IReadOnlyList<string>? only)
+        {
+            for (int i = 0; i < imported.Count; i++)
+            {
+                if (!ReferenceEquals(imported[i].Module, module))
+                    continue;
+
+                // A module already brought in whole never narrows; a filtered entry merges names.
+                if (imported[i].Only is null || only is null)
+                    return;
+
+                var merged = new HashSet<string>(imported[i].Only, StringComparer.Ordinal);
+                foreach (var name in only)
+                    merged.Add(name);
+
+                imported[i] = new ImportedModule(module, new List<string>(merged));
+                return;
+            }
+
+            imported.Add(only is null
+                ? new ImportedModule(module)
+                : new ImportedModule(module, new List<string>(only)));
+        }
+
+        /// <summary>
+        /// Records a module as re-exported by the importing module when the import carries
+        /// <c>export</c> (§2.1): the module's types join the re-exporting module's own
+        /// <see cref="ModuleSymbol.Types"/> (so <c>Aggregator.Type</c> works), and the module
+        /// itself is tracked so its module-level members become reachable to a consumer of the
+        /// re-exporter.
+        /// </summary>
+        private void ReExport(
+            ImportSyntax import,
+            SurtrSourceModule sourceModule,
+            List<ImportedModule> reExported,
+            ModuleSymbol target)
+        {
+            if (!import.IsExport)
+                return;
+
+            AddImported(reExported, target, only: null);
+
+            // A consumer of the re-exporter can reach the re-exported module's members, so the
+            // re-exporter depends on it for load order, exactly as if it had imported it outright.
+            _compilation.Dependencies.AddDependency(sourceModule.Path, target.Path);
+        }
+
+        /// <summary>Records selected members of a module as re-exported, the member form of <see cref="ReExport"/>.</summary>
+        private void ReExportMembers(
+            ImportSyntax import,
+            SurtrSourceModule sourceModule,
+            List<ImportedModule> reExported,
+            ModuleSymbol target,
+            IReadOnlyList<string> only)
+        {
+            if (!import.IsExport)
+                return;
+
+            AddImported(reExported, target, only);
+            _compilation.Dependencies.AddDependency(sourceModule.Path, target.Path);
+        }
+
+        /// <summary>Records one type re-exported by name, folded into the re-exporter's own types.</summary>
+        private static void ReExportType(ImportSyntax import, List<NamedTypeSymbol> reExportedTypes, NamedTypeSymbol type)
+        {
+            if (!import.IsExport)
+                return;
+
+            if (!reExportedTypes.Contains(type))
+                reExportedTypes.Add(type);
+        }
+
+        /// <summary>
+        /// Imports one module's whole surface — types into the scope and the module into the
+        /// member-import list — the unit of <c>import module X.Y;</c>.
+        /// </summary>
+        private static void ImportModuleSurface(Scope scope, List<ImportedModule> imported, ModuleSymbol module)
+        {
+            AddTypesToScope(scope, module);
+
+            AddImported(imported, module, only: null);
+        }
+
+        /// <summary>
+        /// Folds what a module re-exported into its own surface: its re-exported modules' types and
+        /// its by-name re-exported types join <see cref="ModuleSymbol.Types"/>, and the re-exported
+        /// modules are recorded on <see cref="ModuleSymbol.ReExportedModules"/>. Runs once, after
+        /// every module's imports are bound, so an aggregator's surface is complete before anything
+        /// consumes it.
+        /// </summary>
+        private void ApplyReExports()
+        {
+            // The transitive closure of what each module re-exports, walked from the direct
+            // re-exports BindImports recorded: if B re-exports A and A re-exports D, then B
+            // re-exports D too — a consumer of B sees everything A and D expose, at any depth.
+            // A re-export filtered to some members stays filtered; only a whole-module re-export
+            // extends through the re-exported module's own re-exports.
+            var closure = new Dictionary<string, List<ImportedModule>>(StringComparer.Ordinal);
+
+            foreach (var module in _modules.Values)
+            {
+                var reExported = _reExportedModules.TryGetValue(module.Path, out var direct)
+                    ? direct
+                    : (IReadOnlyList<ImportedModule>)Array.Empty<ImportedModule>();
+
+                var visited = new HashSet<ModuleSymbol>();
+                var result = new List<ImportedModule>();
+                VisitReExports(reExported, visited, result);
+                closure.Add(module.Path, result);
+
+                module.ReExportedModules = result;
+            }
+
+            // Collect the types each module re-exports — of every module it re-exports whole, plus
+            // the ones it re-exported by name. Kept apart from Types so the emitter still sees only
+            // the types this module truly declares; FindTypes and the import scopes see both.
+            foreach (var module in _modules.Values)
+            {
+                var types = new List<NamedTypeSymbol>();
+
+                foreach (var reExportedModule in closure[module.Path])
+                {
+                    foreach (var type in reExportedModule.Module.Types)
+                    {
+                        if (!types.Contains(type))
+                            types.Add(type);
+                    }
+                }
+
+                if (_reExportedTypes.TryGetValue(module.Path, out var byName))
+                {
+                    foreach (var type in byName)
+                    {
+                        if (!types.Contains(type))
+                            types.Add(type);
+                    }
+                }
+
+                module.ReExportedTypes = types;
+            }
+
+            // A module that imports the re-exporter sees its re-exported surface too, exactly as if the
+            // re-exporter had declared it: the re-exported types join the consumer's import scope,
+            // and the re-exported modules join its member-import list. This is what makes
+            // `import Aggregator.*` reach the types and module-level members of everything the
+            // aggregator re-exported. Runs after ReExportedTypes/ReExportedModules are populated,
+            // so a consumer's own BindImports (which ran earlier) never saw them yet.
+            foreach (var module in _modules.Values)
+            {
+                if (!_importedModules.TryGetValue(module.Path, out var imported))
+                    continue;
+
+                var scope = _importScopes[module.Path];
+
+                foreach (var directImport in new List<ImportedModule>(imported))
+                {
+                    if (!closure.TryGetValue(directImport.Module.Path, out var reExported))
+                        continue;
+
+                    // A consumer that only brought some of the re-exporter's members still reaches
+                    // every re-exported member; the filter applies to the re-exporter itself, not
+                    // to what it re-exports.
+                    foreach (var reExportedModule in reExported)
+                    {
+                        if (directImport.Only is not null
+                            && reExportedModule.Only is not null
+                            && !directImport.Only.Intersect(reExportedModule.Only).Any())
+                            continue;
+
+                        AddImported(imported, reExportedModule.Module, reExportedModule.Only);
+                    }
+
+                    // The re-exporter's re-exported types become reachable unqualified from the
+                    // consumer, exactly as the re-exporter's own types already are.
+                    if (directImport.Only is null)
+                    {
+                        foreach (var type in directImport.Module.ReExportedTypes)
+                            scope.AddCandidate(type.Name, type);
+                    }
+                }
+            }
+        }
+
+        private static void VisitReExports(
+            IReadOnlyList<ImportedModule> modules,
+            HashSet<ModuleSymbol> visited,
+            List<ImportedModule> result)
+        {
+            foreach (var imported in modules)
+            {
+                if (!visited.Add(imported.Module))
+                    continue;
+
+                result.Add(imported);
+
+                // Only a whole-module re-export extends through the re-exported module's own
+                // re-exports; a filtered one names the members directly and stops here.
+                if (imported.Only is null)
+                    VisitReExports(imported.Module.ReExportedModules, visited, result);
+            }
+        }
+
         /// <summary>The modules a wildcard import brought into scope, whose members are reachable unqualified.</summary>
-        private IReadOnlyList<ModuleSymbol> ImportedBy(ModuleSymbol module)
+        private IReadOnlyList<ImportedModule> ImportedBy(ModuleSymbol module)
             => _importedModules.TryGetValue(module.Path, out var imported)
                 ? imported
-                : (IReadOnlyList<ModuleSymbol>)Array.Empty<ModuleSymbol>();
+                : (IReadOnlyList<ImportedModule>)Array.Empty<ImportedModule>();
 
         private bool TryGetModuleSymbol(string modulePath, out ModuleSymbol module)
             => _modules.TryGetValue(modulePath, out module!)
                 || _compilation.Importer.TryGetModuleSymbol(modulePath, out module!);
 
         /// <summary>Brings one module's types and members into scope for a wildcard import, the exact module or one nested under it.</summary>
-        private static void ImportWildcardModule(Scope scope, List<ModuleSymbol> imported, ModuleSymbol module)
+        private static void ImportWildcardModule(Scope scope, List<ImportedModule> imported, ModuleSymbol module)
+        {
+            AddTypesToScope(scope, module);
+
+            // §2.5 makes a module a container of members, so a wildcard import brings its
+            // functions and variables in too — not only its types.
+            AddImported(imported, module, only: null);
+        }
+
+        /// <summary>Adds a module's own types and its re-exported types to a scope, as import candidates.</summary>
+        private static void AddTypesToScope(Scope scope, ModuleSymbol module)
         {
             foreach (var type in module.Types)
                 scope.AddCandidate(type.Name, type);
 
-            // §2.5 makes a module a container of members, so a wildcard import brings its
-            // functions and variables in too — not only its types.
-            if (!imported.Contains(module))
-                imported.Add(module);
+            // Re-exported types are visible to a consumer of the re-exporter exactly as its own
+            // are: `import Aggregator.*` brings them in unqualified.
+            foreach (var type in module.ReExportedTypes)
+                scope.AddCandidate(type.Name, type);
         }
 
         /// <summary>
@@ -737,6 +1114,11 @@ namespace Surtr.Compiler.Binding
             EnterContext(null, null);
             BindConstraints();
 
+            // Before the hierarchy checks, because those compare return types against a contract:
+            // a method that omitted its own is inferred from its body here, so an override or an
+            // interface implementation that *does* declare one is compared against something real.
+            InferReturnTypes();
+
             // After every type has its members, because the question is about a base class's, and
             // nothing says a base is bound before what extends it.
             foreach (var binding in _declared)
@@ -793,11 +1175,12 @@ namespace Surtr.Compiler.Binding
         /// instead of silently hiding it.
         /// </summary>
         /// <remarks>
-        /// Matched on the same full, return-included signature <see cref="CheckObligation"/> already
-        /// uses for an interface obligation (<see cref="SignatureSet.Matches"/>) rather than the
-        /// looser name-plus-count <see cref="Overridden"/> uses for the sealed check above, so two
-        /// overloads that merely share a name and arity are not mistaken for one hiding the other.
-        /// Only a <c>Direct</c>-dispatch base member is exempt - it has no vtable slot to begin with,
+        /// Matched on the same erased name-plus-parameter <see cref="SignatureSet.MatchesSlot"/> the
+        /// runtime's <c>SignatureKey</c> uses to place vtable slots (return type deliberately
+        /// excluded — a derived member sharing the slot must say so), rather than the looser
+        /// name-plus-count <see cref="Overridden"/> uses for the sealed check above, so two overloads
+        /// that merely share a name and arity are not mistaken for one hiding the other. Only a
+        /// <c>Direct</c>-dispatch base member is exempt - it has no vtable slot to begin with,
         /// so nothing is silently lost by not overriding it.
         /// </remarks>
         private void CheckOverrideRequired(TypeBinding binding)
@@ -816,7 +1199,7 @@ namespace Surtr.Compiler.Binding
                     foreach (var candidate in walk.Members)
                     {
                         if (candidate is MethodSymbol { Dispatch: MethodDispatch.Virtual or MethodDispatch.Abstract } virtualCandidate
-                            && _signatures.Matches(method, virtualCandidate))
+                            && _signatures.MatchesSlot(method, virtualCandidate))
                         {
                             hidden = virtualCandidate;
                             break;
@@ -932,6 +1315,13 @@ namespace Surtr.Compiler.Binding
                     $"'{symbol.Name}' does not implement '{contract.Name}.{required.Name}'; "
                         + $"implement it, or declare '{symbol.Name}' abstract.");
             }
+
+            // §8: a member with no return type was reported by InferReturnTypes — either its declaration
+            // omitted one and the contract check there kept it out of inference, or the inference
+            // failed. Comparing its empty return against the contract's would only add a second,
+            // misleading mismatch on top, so the signature check is skipped for it.
+            if (found.ReturnType.IsError)
+                return;
 
             var substituted = MemberLookup.SubstituteMethod(required, contract.SubstitutionFromArguments(_factory));
             if (!_signatures.Matches(substituted, found))
@@ -1826,7 +2216,10 @@ namespace Surtr.Compiler.Binding
 
                 extMethod.ExtensionTargetType = target;
 
-                extMethod.ReturnType = _resolver.Resolve(method.ReturnType, methodScope, sourceName);
+                if (method.ReturnType is not null)
+                    extMethod.ReturnType = _resolver.Resolve(method.ReturnType, methodScope, sourceName);
+                else
+                    _inferReturnTypes.Add(extMethod);
                 extMethod.Parameters = BindParameters(method.Parameters, extMethod, methodScope, sourceName);
 
                 // An instance extension's receiver — `obj.method()` is bound against it — is an
@@ -2102,6 +2495,264 @@ namespace Surtr.Compiler.Binding
             {
                 ReportAt(sourceName, span, SurtrDiagnosticCode.BuildConstantShadowed,
                     $"The build defines '{name}', so a module member cannot take that name.");
+            }
+        }
+        #endregion
+
+        #region Phase 2.5 - inferred return types
+        /// <summary>
+        /// Fills in the return types a declaration omitted (§8) by binding each body's and reading
+        /// the type back off its <c>return</c> statements.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Run between the member phase and the obligation checks: an <c>override</c> or an
+        /// interface implementation that <em>does</em> declare its return type is compared against
+        /// the contract by signature, which needs this pass's answers to be real before that runs.
+        /// </para>
+        /// <para>
+        /// A fixpoint, not a single pass, because one inferred function may call another whose own
+        /// return type is inferred too: <c>fun f() =&gt; g()</c> cannot know it returns <c>int</c>
+        /// until <c>g</c> has, so the loop re-tries whoever still could not decide until no one
+        /// can. The body is bound speculatively — a throwaway <see cref="BodyBinder"/> whose
+        /// diagnostics are discarded, exactly like the binder's own <c>Speculative</c> — so the
+        /// real body pass later reports everything once. A body that itself has errors is left
+        /// alone (the real pass reports them); a body that binds cleanly but whose returns do not
+        /// agree, or that reaches a recursive call whose own type is still unresolved, is reported
+        /// here for writing the type instead.
+        /// </para>
+        /// </remarks>
+        private void InferReturnTypes()
+        {
+            var errored = new HashSet<MethodSymbol>();
+            var contracted = new HashSet<MethodSymbol>();
+
+            // An interface implementation is a contract, so its return type cannot be inferred from
+            // the body the way an ordinary method's can — the signature has to be the contract's,
+            // which means it has to be written. A class member that answers an obligation with no
+            // written return type is reported here, before the inference runs, and kept out of it.
+            foreach (var binding in _declared)
+            {
+                var symbol = binding.Symbol;
+                if (symbol.TypeKind == TypeSymbolKind.Interface || !symbol.IsDefinition)
+                    continue;
+
+                var visited = new HashSet<NamedTypeSymbol>();
+                var contracts = new List<NamedTypeSymbol>();
+                CollectInterfaces(symbol, visited, contracts);
+
+                foreach (var contract in contracts)
+                {
+                    foreach (var member in contract.Members)
+                    {
+                        if (member is not MethodSymbol { Dispatch: MethodDispatch.Abstract } required)
+                            continue;
+
+                        EnforceDeclaredContractReturn(binding, symbol, contract, required, contracted);
+                    }
+                }
+
+                for (var ancestor = symbol.BaseType; ancestor is not null; ancestor = SubstitutedBase(ancestor))
+                {
+                    foreach (var member in ancestor.Members)
+                    {
+                        if (member is MethodSymbol { Dispatch: MethodDispatch.Abstract } required)
+                            EnforceDeclaredContractReturn(binding, symbol, ancestor, required, contracted);
+                    }
+                }
+            }
+
+            bool progressed = true;
+
+            while (progressed)
+            {
+                progressed = false;
+
+                foreach (var body in _bodies)
+                {
+                    var method = body.Method;
+                    if (!_inferReturnTypes.Contains(method) || errored.Contains(method) || contracted.Contains(method)
+                        || !method.ReturnType.IsError)
+                        continue;
+
+                    switch (TryInferReturnType(body, out TypeSymbol inferred))
+                    {
+                        case ReturnInference.Inferred:
+                            method.ReturnType = inferred;
+                            progressed = true;
+                            break;
+
+                        case ReturnInference.BodyError:
+                            errored.Add(method);
+                            break;
+
+                        case ReturnInference.CannotInfer:
+                            break;
+                    }
+                }
+            }
+
+            foreach (var body in _bodies)
+            {
+                var method = body.Method;
+                if (!_inferReturnTypes.Contains(method) || errored.Contains(method) || contracted.Contains(method)
+                    || !method.ReturnType.IsError)
+                    continue;
+
+                ReportAt(
+                    body.SourceName,
+                    body.Syntax.Span,
+                    SurtrDiagnosticCode.CannotInferType,
+                    $"Cannot infer the return type of '{method.Name}'; write it after the ':'.");
+            }
+        }
+
+        /// <summary>
+        /// Reports one obligation a class answers with a member that omits its return type, and
+        /// keeps that member out of inference.
+        /// </summary>
+        private void EnforceDeclaredContractReturn(
+            TypeBinding binding,
+            NamedTypeSymbol symbol,
+            NamedTypeSymbol contract,
+            MethodSymbol required,
+            HashSet<MethodSymbol> contracted)
+        {
+            var found = FindMember(symbol, required.Name, required.Parameters.Count);
+            if (found is null || !found.ReturnType.IsError)
+                return;
+
+            Report(
+                SurtrDiagnosticCode.ReturnTypeRequired,
+                binding,
+                binding.Syntax.Span,
+                $"'{symbol.Name}.{found.Name}' implements '{contract.Name}.{required.Name}', so its return type cannot be inferred; write it after the ':'.");
+
+            contracted.Add(found);
+        }
+
+        private enum ReturnInference
+        {
+            Inferred,
+            BodyError,
+            CannotInfer,
+        }
+
+        /// <summary>Binds one body speculatively and reads what it returns.</summary>
+        private ReturnInference TryInferReturnType(BodyBinding body, out TypeSymbol inferred)
+        {
+            inferred = _factory.Void;
+
+            EnterContext(body.Module, body.ContainingType);
+
+            var binder = new BodyBinder(
+                _factory,
+                _resolver,
+                Conversions,
+                MemberLookup,
+                OverloadResolution,
+                Constants,
+                _diagnostics,
+                body.SourceName,
+                body.Scope,
+                body.Module,
+                body.ContainingType,
+                body.Method,
+                ImportedBy(body.Module));
+
+            int before = _diagnostics.Count;
+            var bound = binder.BindBody(body.Syntax);
+            if (_diagnostics.Count > before)
+            {
+                _diagnostics.TruncateTo(before);
+                return ReturnInference.BodyError;
+            }
+
+            var types = new List<TypeSymbol>();
+            CollectReturnTypes(bound, types);
+
+            if (types.Count == 0)
+            {
+                inferred = _factory.Void;
+                return ReturnInference.Inferred;
+            }
+
+            TypeSymbol? agreed = null;
+            foreach (var type in types)
+            {
+                if (agreed is null)
+                {
+                    agreed = type;
+                    continue;
+                }
+
+                if (!ReferenceEquals(agreed, type))
+                    return ReturnInference.CannotInfer;
+            }
+
+            if (agreed is null || agreed.IsError)
+                return ReturnInference.CannotInfer;
+
+            inferred = agreed;
+            return ReturnInference.Inferred;
+        }
+
+        /// <summary>
+        /// Collects every <c>return</c> statement a body can take, for inference. Statements only:
+        /// an expression holds no <c>return</c> except inside a lambda, and a lambda's is its own —
+        /// not this function's — so the walk stops at statements and never enters expressions.
+        /// </summary>
+        private void CollectReturnTypes(BoundNode? node, List<TypeSymbol> types)
+        {
+            if (node is null)
+                return;
+
+            switch (node)
+            {
+                case BoundReturnStatement @return:
+                    types.Add(@return.Value?.Type ?? _factory.Void);
+                    return;
+
+                case BoundBlockStatement block:
+                    foreach (var statement in block.Statements)
+                        CollectReturnTypes(statement, types);
+                    return;
+
+                case BoundIfStatement @if:
+                    CollectReturnTypes(@if.Then, types);
+                    CollectReturnTypes(@if.Else, types);
+                    return;
+
+                case BoundWhileStatement @while:
+                    CollectReturnTypes(@while.Body, types);
+                    return;
+
+                case BoundForStatement @for:
+                    CollectReturnTypes(@for.Body, types);
+                    return;
+
+                case BoundForInStatement forIn:
+                    CollectReturnTypes(forIn.Body, types);
+                    return;
+
+                case BoundSwitchStatement @switch:
+                    foreach (var section in @switch.Sections)
+                    {
+                        foreach (var statement in section.Statements)
+                            CollectReturnTypes(statement, types);
+                    }
+                    return;
+
+                case BoundTryStatement @try:
+                    CollectReturnTypes(@try.Body, types);
+                    foreach (var clause in @try.Catches)
+                        CollectReturnTypes(clause.Body, types);
+                    CollectReturnTypes(@try.Finally, types);
+                    return;
+
+                case BoundLabeledStatement labeled:
+                    CollectReturnTypes(labeled.Statement, types);
+                    return;
             }
         }
         #endregion
@@ -3031,7 +3682,7 @@ namespace Surtr.Compiler.Binding
             };
 
             BindTypeParameters(method, syntax.TypeParameters, scope, binding.SourceName);
-            method.ReturnType = _resolver.Resolve(syntax.ReturnType, scope, binding.SourceName);
+            BindMethodReturnType(method, syntax, scope, binding.SourceName);
             method.Parameters = BindParameters(syntax.Parameters, method, scope, binding.SourceName);
             RecordBody(method, syntax.Body, scope, binding.Module, owner, binding.SourceName);
             RecordAttributes(method, syntax.Attributes, binding.Scope, binding.SourceName);
@@ -3056,11 +3707,46 @@ namespace Surtr.Compiler.Binding
             };
 
             BindTypeParameters(method, syntax.TypeParameters, scope, sourceName);
-            method.ReturnType = _resolver.Resolve(syntax.ReturnType, scope, sourceName);
+            BindMethodReturnType(method, syntax, scope, sourceName);
             method.Parameters = BindParameters(syntax.Parameters, method, scope, sourceName);
             RecordBody(method, syntax.Body, scope, owner, containingType: null, sourceName);
             RecordAttributes(method, syntax.Attributes, scope, sourceName);
             return method;
+        }
+
+        /// <summary>
+        /// Resolves a method's return type, or records that the body is to infer it (§8).
+        /// </summary>
+        /// <remarks>
+        /// An omitted return type is inferred from the body — exactly as a lambda's is — but only
+        /// where there is a body to infer from and a signature the method owns. A bodyless method
+        /// (<c>abstract</c>, <c>native</c>, an interface member) has nothing to infer from, and an
+        /// <c>override</c> must match the contract it replaces, which cannot be checked against an
+        /// inferred one; both have to write it.
+        /// </remarks>
+        private void BindMethodReturnType(MethodSymbol method, MethodDeclarationSyntax syntax, Scope scope, string sourceName)
+        {
+            if (syntax.ReturnType is not null)
+            {
+                method.ReturnType = _resolver.Resolve(syntax.ReturnType, scope, sourceName);
+                return;
+            }
+
+            if (syntax.Dispatch == DispatchModifier.Override)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.ReturnTypeRequired,
+                    $"'{method.Name}' overrides a member, so its return type cannot be inferred; write it after the ':'.");
+                return;
+            }
+
+            if (syntax.Body is null)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.ReturnTypeRequired,
+                    $"'{method.Name}' has no body to infer a return type from; write it after the ':'.");
+                return;
+            }
+
+            _inferReturnTypes.Add(method);
         }
 
         private MethodSymbol BindConstructor(

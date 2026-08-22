@@ -1,6 +1,7 @@
 #nullable enable
 
 using Surtr.Compiler.Diagnostics;
+using System;
 using System.Collections.Generic;
 using Surtr.Compiler.Syntax.Ast;
 
@@ -271,7 +272,7 @@ namespace Surtr.Compiler.Syntax
         /// of the type argument list it was never trying to be.
         /// </para>
         /// </remarks>
-        private bool LooksLikeTypeArgumentList()
+        private (bool isGenericCall, bool isMemberAccess) LooksLikeTypeArgumentList()
         {
             const int Limit = 256;
 
@@ -279,7 +280,7 @@ namespace Surtr.Compiler.Syntax
 
             for (int offset = 0; offset < Limit; offset++)
             {
-                switch (reader.Peek(offset).Type)
+                switch (reader.PeekType(offset))
                 {
                     case TokenType.Less:
                         depth++;
@@ -291,7 +292,7 @@ namespace Surtr.Compiler.Syntax
                     {
                         // Maximal munch hands back `>>` and `>>>` whole, and in a nested list they
                         // close two and three levels — the same split ConsumeTypeArgumentClose makes.
-                        depth -= reader.Peek(offset).Type switch
+                        depth -= reader.PeekType(offset) switch
                         {
                             TokenType.Greater => 1,
                             TokenType.ShiftRight => 2,
@@ -302,7 +303,13 @@ namespace Surtr.Compiler.Syntax
                             break;
 
                         // A list that closes more angles than it opened was never one.
-                        return depth == 0 && reader.Peek(offset + 1).Type == TokenType.LeftParen;
+                        // After the close comes a `(` (a generic call), or — for the member-access
+                        // form — a `.`/`?.` (a generic name reaching a static member). Both facts are
+                        // answered by the same scan, so a postfix `<` pays for it exactly once.
+                        var following = reader.PeekType(offset + 1);
+                        return (
+                            depth == 0 && (following == TokenType.LeftParen || following == TokenType.Dot || following == TokenType.QuestionDot),
+                            depth == 0 && (following == TokenType.Dot || following == TokenType.QuestionDot));
                     }
 
                     // Everything a type can be written with: a name, a qualification, a separator,
@@ -322,11 +329,11 @@ namespace Surtr.Compiler.Syntax
                         break;
 
                     default:
-                        return false;
+                        return (false, false);
                 }
             }
 
-            return false;
+            return (false, false);
         }
 
         /// <summary>Parses calls, indexing, member access, postfix increment and <c>!!</c>.</summary>
@@ -366,12 +373,31 @@ namespace Surtr.Compiler.Syntax
                 // `pick<int>(1, 2)` — a call with its type arguments written out (§6). Only taken
                 // when the tokens really close a type argument list and a `(` follows, so
                 // `a < b` stays a comparison.
-                if (reader.Check(TokenType.Less) && LooksLikeTypeArgumentList())
+                if (reader.Check(TokenType.Less))
                 {
-                    var typeArguments = ParseTypeArgumentList();
-                    var arguments = ParseArgumentList();
-                    expression = new CallExpressionSyntax(SpanFrom(expression.Span.Start), expression, typeArguments, arguments);
-                    continue;
+                    var (isGenericCall, isMemberAccess) = LooksLikeTypeArgumentList();
+
+                    if (isGenericCall)
+                    {
+                        // `Box<int>.prop` / `Box<,>.make()` — a generic name reaching a static member.
+                        // The member access branch below consumes the `.`; the generic name is the
+                        // receiver it hangs off.
+                        if (isMemberAccess)
+                        {
+                            var nameArguments = ParseWildcardTypeArgumentList();
+
+                            if (expression is IdentifierExpressionSyntax named)
+                            {
+                                expression = new GenericNameExpressionSyntax(SpanFrom(named.Span.Start), named.Name, nameArguments);
+                                continue;
+                            }
+                        }
+
+                        var typeArguments = ParseTypeArgumentList();
+                        var arguments = ParseArgumentList();
+                        expression = new CallExpressionSyntax(SpanFrom(expression.Span.Start), expression, typeArguments, arguments);
+                        continue;
+                    }
                 }
 
                 if (reader.Check(TokenType.LeftBracket))
@@ -416,7 +442,8 @@ namespace Surtr.Compiler.Syntax
         {
             reader.Expect(TokenType.LeftParen, "'(' to open the arguments");
 
-            List<ArgumentSyntax> arguments = new List<ArgumentSyntax>();
+            // Lazy: `f()` is the most common call shape of all, and it needs no list at all.
+            List<ArgumentSyntax>? arguments = null;
             while (!reader.Check(TokenType.RightParen))
             {
                 SourceLocation start = reader.CurrentLocation;
@@ -431,7 +458,7 @@ namespace Surtr.Compiler.Syntax
                 }
 
                 ExpressionSyntax argumentValue = ParseExpression();
-                arguments.Add(new ArgumentSyntax(SpanFrom(start), name, argumentValue));
+                (arguments ??= new List<ArgumentSyntax>(4)).Add(new ArgumentSyntax(SpanFrom(start), name, argumentValue));
 
                 if (!reader.Match(TokenType.Comma))
                 {
@@ -440,7 +467,7 @@ namespace Surtr.Compiler.Syntax
             }
 
             reader.Expect(TokenType.RightParen, "')' to close the arguments");
-            return arguments;
+            return (IReadOnlyList<ArgumentSyntax>?)arguments ?? Array.Empty<ArgumentSyntax>();
         }
 
         /// <summary>Parses the atoms: literals, names, and the bracketed forms.</summary>
@@ -479,6 +506,13 @@ namespace Surtr.Compiler.Syntax
 
                 case TokenType.LeftParen:
                     return IsLambdaAhead() ? ParseLambda() : ParseParenthesizedOrTuple();
+
+                case TokenType.KeywordThrow:
+                    // `throw` as an expression (§9): the thrown value is whatever the full
+                    // expression grammar produces (`throw a + b` throws `a + b`), and the result
+                    // is typed `never`, which lets it sit in `?:`, `??` and lambda bodies.
+                    reader.Advance();
+                    return new ThrowExpressionSyntax(SpanFrom(start), ParseExpression());
 
                 case TokenType.Identifier:
                     // `this` and `super` are contextual (§3.2), so they arrive as identifiers.
@@ -875,9 +909,18 @@ namespace Surtr.Compiler.Syntax
         /// grouping or a tuple, by scanning balanced parentheses for a following <c>=&gt;</c>.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// The two forms are identical up to the closing paren — <c>(a, b)</c> is a tuple and
         /// <c>(a, b) =&gt; a + b</c> a lambda — so no bounded lookahead settles it. Scanning is
         /// cheap because a parameter list is short and the scan never nests into another one.
+        /// </para>
+        /// <para>
+        /// A return-annotated lambda <c>(a, b): Ret =&gt; a + b</c> adds the <c>:</c> a function
+        /// declaration uses after its parameter list (§8), so the lambda reads exactly like the
+        /// <c>fun</c> it is an anonymous form of. The <c>:</c> can only follow the closing paren
+        /// here — it is not a postfix operator — so the scan treats it as the introduction of a
+        /// return type and keeps going for the <c>=&gt;</c> that ends it.
+        /// </para>
         /// </remarks>
         private bool IsLambdaAhead()
         {
@@ -896,7 +939,17 @@ namespace Surtr.Compiler.Syntax
                     case TokenType.RightParen:
                         if (--depth == 0)
                         {
-                            return reader.Peek(offset + 1).Type == TokenType.FatArrow;
+                            TokenType after = reader.Peek(offset + 1).Type;
+
+                            if (after == TokenType.FatArrow)
+                                return true;
+
+                            // `(params): Ret => ...`: skip the return type, which can itself nest
+                            // (a closure return, a generic construction), to the `=>` that ends it.
+                            if (after == TokenType.Colon)
+                                return LambdaReturnTypeEndsWithFatArrow(offset + 2);
+
+                            return false;
                         }
                         break;
 
@@ -906,7 +959,76 @@ namespace Surtr.Compiler.Syntax
             }
         }
 
-        /// <summary>Parses <c>(params) =&gt; expr</c> and <c>(params) =&gt; { ... }</c> (§8).</summary>
+        /// <summary>
+        /// Whether the return type that starts at <paramref name="offset"/> — right after the
+        /// lambda's <c>(params):</c> — is followed by the <c>=&gt;</c> that ends the lambda.
+        /// </summary>
+        /// <remarks>
+        /// A return type is scanned rather than parsed because this runs in lookahead, where the
+        /// reader cannot be advanced. The depth a composite type opens — parentheses for a tuple or
+        /// closure, brackets for an array, braces for a dict, angle brackets for a construction — is
+        /// tracked so that a nested <c>=&gt;</c> is not mistaken for the lambda's own, and the
+        /// lexer's <c>&gt;&gt;</c>/<c>&gt;&gt;&gt;</c> close two or three angle brackets at once.
+        /// Only the <c>=&gt;</c> at depth zero counts. A <c>:</c> at depth zero ends the scan the
+        /// other way: the return type cannot contain one (a dict type keeps its own <c>:</c> inside
+        /// braces), so a bare one is a ternary or a dict separator after a parenthesized expression
+        /// — <c>cond ? (x) : (y) =&gt; z</c> and <c>{ (x): (y) =&gt; z }</c> are not lambdas.
+        /// </remarks>
+        private bool LambdaReturnTypeEndsWithFatArrow(int offset)
+        {
+            int depth = 0;
+
+            for (int i = offset; ; i++)
+            {
+                TokenType type = reader.Peek(i).Type;
+
+                switch (type)
+                {
+                    case TokenType.LeftParen:
+                    case TokenType.LeftBracket:
+                    case TokenType.LeftBrace:
+                    case TokenType.Less:
+                        depth++;
+                        break;
+
+                    case TokenType.RightParen:
+                    case TokenType.RightBracket:
+                    case TokenType.RightBrace:
+                    case TokenType.Greater:
+                        if (--depth < 0)
+                            return false;
+                        break;
+
+                    case TokenType.ShiftRight:
+                        if ((depth -= 2) < 0)
+                            return false;
+                        break;
+
+                    case TokenType.UnsignedShiftRight:
+                        if ((depth -= 3) < 0)
+                            return false;
+                        break;
+
+                    case TokenType.FatArrow:
+                        return depth == 0;
+
+                    case TokenType.Colon:
+                        if (depth == 0)
+                            return false;
+                        break;
+
+                    case TokenType.EndOfFile:
+                        return false;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Parses <c>(params) =&gt; expr</c>, <c>(params) =&gt; { ... }</c> and the return-annotated
+        /// forms <c>(params): Ret =&gt; expr</c>/<c>{ ... }</c> (§8). The <c>:</c> is the same colon a
+        /// function declaration uses after its parameter list, so the lambda reads exactly like the
+        /// <c>fun</c> it is an anonymous form of.
+        /// </summary>
         private ExpressionSyntax ParseLambda()
         {
             SourceLocation start = reader.CurrentLocation;
@@ -929,16 +1051,18 @@ namespace Surtr.Compiler.Syntax
             }
 
             reader.Expect(TokenType.RightParen, "')' to close the lambda parameters");
+
+            TypeSyntax? returnType = reader.Match(TokenType.Colon) ? ParseType() : null;
             reader.Expect(TokenType.FatArrow, "'=>' in the lambda");
 
             if (reader.Check(TokenType.LeftBrace))
             {
                 BlockStatementSyntax lambdaBody = ParseBlock();
-                return new LambdaExpressionSyntax(SpanFrom(start), parameters, null, lambdaBody);
+                return new LambdaExpressionSyntax(SpanFrom(start), parameters, returnType, null, lambdaBody);
             }
 
             ExpressionSyntax lambdaResult = ParseExpression();
-            return new LambdaExpressionSyntax(SpanFrom(start), parameters, lambdaResult, null);
+            return new LambdaExpressionSyntax(SpanFrom(start), parameters, returnType, lambdaResult, null);
         }
 
         /// <summary>Parses the expression form of <c>switch</c> (§4.3).</summary>

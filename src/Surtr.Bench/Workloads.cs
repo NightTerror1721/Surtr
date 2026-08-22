@@ -252,6 +252,34 @@ namespace Surtr.Bench
                 return acc;
             }
 
+            // Creates a fresh zero-capture lambda every iteration: the workload that measures
+            // closure *creation* cost. `closures` above creates one and only measures invocation.
+            fun closureCreate(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) {
+                    let add = (a: int) => a + 1;
+                    acc = (acc + add(i)) % 100000007;
+                }
+                return acc;
+            }
+
+            // Invokes through a method group (a named function obtained as a value) whose target is
+            // too heavy to be inlined into the synthetic wrapper (any loop beats the inliner's
+            // budget of 2) yet does almost no work per call. That makes the per-call cost dominated
+            // by the invocation itself, so the frame and second dispatch the wrapper adds show up
+            // as a real signal.
+            fun accumulate(n: int): int {
+                var acc = n;
+                for (var i = 0; i < 1; i += 1) { acc = acc + i; }
+                return acc;
+            }
+            fun methodGroupInvoke(n: int): int {
+                let add: (int) -> int = accumulate;
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) { acc = (acc + add(i)) % 100000007; }
+                return acc;
+            }
+
             fun methodCalls(n: int): int {
                 let a = Adder(7);
                 var acc: int = 0;
@@ -436,6 +464,65 @@ namespace Surtr.Bench
                 }
                 return acc;
             }
+
+            // A closure capturing a mutable object and mutating it through the capture: the
+            // environment the compiler allocates for the closure plus the upvalue dereference per
+            // call. The closures case captures nothing and measures only invocation.
+            fun closureCapture(n: int): int {
+                let cap = Cell(0, 0);
+                let bump = (x: int): int => {
+                    cap.a = (cap.a + x) % 100000007;
+                    return cap.a;
+                };
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) { acc = (acc + bump(i)) % 100000007; }
+                return acc;
+            }
+
+            native fun hostSin(value: float): float;
+            native fun hostCos(value: float): float;
+            native fun hostSqrt(value: float): float;
+
+            // Float calls across the host boundary — the per-op cost of a native float function,
+            // which floatLoop's pure arithmetic never touches. The recurrence contracts (the acc
+            // term decays by a quarter each step) so the three engines' last-bit differences cannot
+            // grow past the tolerance the harness verifies with.
+            fun mathFns(n: int): float {
+                var acc: float = 0.5;
+                for (var i = 0; i < n; i += 1) {
+                    acc = acc * 0.25 + hostSin(acc) * 0.5 + hostCos(acc * 0.5) * 0.25 + hostSqrt(1.0 + acc * acc) * 0.1;
+                }
+                return acc;
+            }
+
+            // Allocate n objects and keep a quarter alive in an array: the one workload in the
+            // suite that promotes survivors instead of dropping everything by the end of the run.
+            // The kept column is the interesting figure here, not the timing.
+            fun retainedObjects(n: int): int {
+                let keep: Cell[] = [];
+                for (var i = 0; i < n; i += 1) {
+                    let c = Cell(i, i * 3);
+                    if (i % 4 == 0) { keep.push(c); }
+                }
+                var acc: int = 0;
+                for (var i = 0; i < keep.length; i += 1) { acc = (acc + keep[i].a) % 100000007; }
+                return acc;
+            }
+
+            // String transforms through the native members — substring and replace — which
+            // allocate a fresh string per call. stringOps only reads length and equality; this is
+            // the allocation side of the same feature.
+            fun stringTransform(n: int): int {
+                let s: string = "the quick brown fox jumps over the lazy dog";
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) {
+                    let sub = s.substring(i % 10, 8);
+                    acc = (acc + sub.length) % 100000007;
+                    let rep = s.replace("the", "a");
+                    acc = (acc + rep.length) % 100000007;
+                }
+                return acc;
+            }
             """;
 
         /// <summary>The equivalent Lua chunk, loaded once into one MoonSharp script.</summary>
@@ -575,6 +662,27 @@ namespace Surtr.Bench
 
             function closures(n)
                 local add = function(a) return a + 1 end
+                local acc = 0
+                for i = 0, n - 1 do acc = (acc + add(i)) % 100000007 end
+                return acc
+            end
+
+            function closureCreate(n)
+                local acc = 0
+                for i = 0, n - 1 do
+                    local add = function(a) return a + 1 end
+                    acc = (acc + add(i)) % 100000007
+                end
+                return acc
+            end
+
+            function accumulate(n)
+                local acc = n
+                for i = 0, 0 do acc = acc + i end
+                return acc
+            end
+            function methodGroupInvoke(n)
+                local add = accumulate
                 local acc = 0
                 for i = 0, n - 1 do acc = (acc + add(i)) % 100000007 end
                 return acc
@@ -760,6 +868,48 @@ namespace Surtr.Bench
                 end
                 return acc
             end
+
+            function closureCapture(n)
+                local cap = {a = 0}
+                local function bump(x)
+                    cap.a = (cap.a + x) % 100000007
+                    return cap.a
+                end
+                local acc = 0
+                for i = 0, n - 1 do acc = (acc + bump(i)) % 100000007 end
+                return acc
+            end
+
+            function mathFns(n)
+                local acc = 0.5
+                for i = 0, n - 1 do
+                    acc = acc * 0.25 + math.sin(acc) * 0.5 + math.cos(acc * 0.5) * 0.25 + math.sqrt(1.0 + acc * acc) * 0.1
+                end
+                return acc
+            end
+
+            function retainedObjects(n)
+                local keep = {}
+                for i = 0, n - 1 do
+                    local c = {a = i, b = i * 3}
+                    if i % 4 == 0 then keep[#keep + 1] = c end
+                end
+                local acc = 0
+                for i = 1, #keep do acc = (acc + keep[i].a) % 100000007 end
+                return acc
+            end
+
+            function stringTransform(n)
+                local s = "the quick brown fox jumps over the lazy dog"
+                local acc = 0
+                for i = 0, n - 1 do
+                    local sub = string.sub(s, (i % 10) + 1, (i % 10) + 8)
+                    acc = (acc + #sub) % 100000007
+                    local rep = string.gsub(s, "the", "a")
+                    acc = (acc + #rep) % 100000007
+                end
+                return acc
+            end
             """;
 
         private const long Modulus = 100000007;
@@ -769,6 +919,7 @@ namespace Surtr.Bench
             new Workload("fib", 24, WorkloadKind.Int, "recursive calls, frame setup", Fib),
             new Workload("intLoop", 1000000, WorkloadKind.Int, "integer arithmetic and branching", IntLoop),
             new Workload("floatLoop", 1000000, WorkloadKind.Float, "float arithmetic, NaN-boxed", baselineFloat: FloatLoop),
+            new Workload("mathFns", 100000, WorkloadKind.Float, "float calls across the native boundary", baselineFloat: MathFns),
             new Workload("arrayFill", 50000, WorkloadKind.Int, "array growth via push", ArrayFill),
             new Workload("arrayIndex", 300000, WorkloadKind.Int, "ArrGet/ArrSet on a sized array", ArrayIndex),
             new Workload("dictOps", 30000, WorkloadKind.Int, "int-keyed dict, specialised store", DictOps),
@@ -777,7 +928,11 @@ namespace Surtr.Bench
             new Workload("stringConcat", 1200, WorkloadKind.Int, "pairwise StrCat, quadratic by nature", StringConcat),
             new Workload("stringInterp", 100000, WorkloadKind.Int, "n-ary StrCat from interpolation", StringInterp),
             new Workload("stringOps", 300000, WorkloadKind.Int, "length and text equality", StringOps),
+            new Workload("stringTransform", 100000, WorkloadKind.Int, "substring/replace native calls, allocating per call", StringTransform),
             new Workload("closures", 300000, WorkloadKind.Int, "closure invocation", Closures),
+            new Workload("closureCreate", 300000, WorkloadKind.Int, "zero-capture closure creation per iteration", ClosureCreate),
+            new Workload("methodGroupInvoke", 300000, WorkloadKind.Int, "invocation through a method-group value, non-inlinable target", MethodGroupInvoke),
+            new Workload("closureCapture", 300000, WorkloadKind.Int, "closure environment + upvalue read/write", ClosureCapture),
             new Workload("methodCalls", 300000, WorkloadKind.Int, "direct instance dispatch", MethodCalls),
             new Workload("virtualCalls", 300000, WorkloadKind.Int, "vtable dispatch", VirtualCalls),
             new Workload("interfaceCalls", 300000, WorkloadKind.Int, "interfaceId table dispatch", InterfaceCalls),
@@ -790,6 +945,7 @@ namespace Surtr.Bench
             new Workload("valueClass", 300000, WorkloadKind.Int, "value class, erased to its field", ValueClass),
             new Workload("generics", 300000, WorkloadKind.Int, "erased slot: box in, cast out", Generics),
             new Workload("allocation", 300000, WorkloadKind.Int, "object allocation and collection", Allocation),
+            new Workload("retainedObjects", 100000, WorkloadKind.Int, "allocating with survivors kept alive", RetainedObjects),
             new Workload("switchDense", 300000, WorkloadKind.Int, "Switch jump table", SwitchDense),
             new Workload("typeTest", 300000, WorkloadKind.Int, "InstanceOf and CastOrNull", TypeTest),
             new Workload("nullable", 300000, WorkloadKind.Int, "nullable primitive, absent tag", Nullable),
@@ -987,6 +1143,40 @@ namespace Surtr.Bench
         private static long Closures(long n)
         {
             Func<long, long> add = a => a + 1;
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+                acc = (acc + add(i)) % Modulus;
+            return acc;
+        }
+
+        private static long ClosureCreate(long n)
+        {
+            // A non-capturing lambda is a single cached delegate in C#, so the closure is created
+            // once by the compiler and the loop only calls it — the same ideal the Surtr fast path
+            // targets. The baseline measures the call, and the byte counters expose what each
+            // engine's closure-creation path really allocates.
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+            {
+                Func<long, long> add = a => a + 1;
+                acc = (acc + add(i)) % Modulus;
+            }
+            return acc;
+        }
+
+        private static long Accumulate(long n)
+        {
+            long acc = n;
+            for (long i = 0; i < 1; i++)
+                acc += i;
+            return acc;
+        }
+
+        private static long MethodGroupInvoke(long n)
+        {
+            // The C# compiler binds a method group to the delegate pointing straight at the method
+            // (ldftn), no forwarding stub — the behaviour the Surtr direct binding replicates.
+            Func<long, long> add = Accumulate;
             long acc = 0;
             for (long i = 0; i < n; i++)
                 acc = (acc + add(i)) % Modulus;
@@ -1213,6 +1403,60 @@ namespace Surtr.Bench
             {
                 var t = (i, i + 1);
                 acc = (acc + t.Item1 + t.Item2) % Modulus;
+            }
+            return acc;
+        }
+
+        // A local function capturing a mutable holder and mutating it through the capture, the C#
+        // shape closest to what Surtr's closureCapture does. The JIT may keep the holder in a
+        // register and fuse the capture away entirely — that is C#'s honest answer and is left alone.
+        private static long ClosureCapture(long n)
+        {
+            var cap = new Cell(0, 0);
+            Func<long, long> bump = x =>
+            {
+                cap.A = (cap.A + x) % Modulus;
+                return cap.A;
+            };
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+                acc = (acc + bump(i)) % Modulus;
+            return acc;
+        }
+
+        private static double MathFns(long n)
+        {
+            double acc = 0.5;
+            for (long i = 0; i < n; i++)
+                acc = acc * 0.25 + Math.Sin(acc) * 0.5 + Math.Cos(acc * 0.5) * 0.25 + Math.Sqrt(1.0 + acc * acc) * 0.1;
+            return acc;
+        }
+
+        private static long RetainedObjects(long n)
+        {
+            var keep = new List<Cell>();
+            for (long i = 0; i < n; i++)
+            {
+                var c = new Cell(i, i * 3);
+                if (i % 4 == 0)
+                    keep.Add(c);
+            }
+            long acc = 0;
+            for (int i = 0; i < keep.Count; i++)
+                acc = (acc + keep[i].A) % Modulus;
+            return acc;
+        }
+
+        private static long StringTransform(long n)
+        {
+            const string s = "the quick brown fox jumps over the lazy dog";
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+            {
+                string sub = s.Substring((int)(i % 10), 8);
+                acc = (acc + sub.Length) % Modulus;
+                string rep = s.Replace("the", "a");
+                acc = (acc + rep.Length) % Modulus;
             }
             return acc;
         }
