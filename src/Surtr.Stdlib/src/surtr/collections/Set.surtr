@@ -245,6 +245,11 @@ public class Set<T> : ReadOnlySet<T>, ISet<T>
             if (right.contains(item))
                 result.add(item);
         }
+        for (item in right)
+        {
+            if (left.contains(item))
+                result.add(item);
+        }
         return result;
     }
     operator &(left: IReadOnlySet<T>, right: Set<T>): Set<T>
@@ -255,6 +260,30 @@ public class Set<T> : ReadOnlySet<T>, ISet<T>
             if (right.contains(item))
                 result.add(item);
         }
+        for (item in right)
+        {
+            if (left.contains(item))
+                result.add(item);
+        }
+        return result;
+    }
+
+    operator |(left: Set<T>, right: IReadOnlySet<T>): Set<T>
+    {
+        let result = Set<T>(left);
+        for (item in right)
+            result.add(item);
+        for (item in left)
+            result.add(item);
+        return result;
+    }
+    operator |(left: IReadOnlySet<T>, right: Set<T>): Set<T>
+    {
+        let result = Set<T>(right);
+        for (item in left)
+            result.add(item);
+        for (item in right)
+            result.add(item);
         return result;
     }
 }
