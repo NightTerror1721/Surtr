@@ -2124,9 +2124,30 @@ namespace Surtr.VM
                 #region Field Operations
                 case OpCode.FieldGet:
                 {
-                    int slot = fieldTable[(ip[0] | (ip[1] << 8))].SlotIndex;
+                    var field = fieldTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
 
+                    if (field is SurtrNativeFieldInfo nativeField)
+                    {
+                        // A native field's value lives in the host: the receiver (still on the
+                        // stack) is argument 0, and the getter answers the value in its place. The
+                        // native boundary can allocate, so state is published and the registry
+                        // pointer reloaded exactly as the call path does.
+                        current.IP = ip;
+                        _sp = sp;
+
+                        SurtrValue nativeResult = nativeField.Getter
+                            .Invoke(new SurtrCallArguments(runtime, sp - 1, 1));
+                        *(sp - 1) = nativeResult.Raw;
+
+                        entities = context.EntityRegistry.Entities;
+                        if (context.EntityRegistry.GcPending)
+                            runtime.CollectAtSafepoint();
+
+                        goto Dispatch;
+                    }
+
+                    int slot = field.SlotIndex;
                     var instance = (SurtrInstance)entities[(SurtrRef)(*(sp - 1))]!;
                     *(sp - 1) = instance.Fields[slot].Raw;
                     goto Dispatch;
@@ -2134,9 +2155,29 @@ namespace Surtr.VM
 
                 case OpCode.FieldSet:
                 {
-                    int slot = fieldTable[(ip[0] | (ip[1] << 8))].SlotIndex;
+                    var field = fieldTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
 
+                    if (field is SurtrNativeFieldInfo nativeField)
+                    {
+                        // Receiver and value are contiguous on the stack: arguments 0 and 1.
+                        current.IP = ip;
+                        _sp = sp;
+
+                        nativeField.Setter
+                            .Invoke(new SurtrCallArguments(runtime, sp - 2, 2));
+
+                        sp -= 2;
+                        _sp = sp;
+
+                        entities = context.EntityRegistry.Entities;
+                        if (context.EntityRegistry.GcPending)
+                            runtime.CollectAtSafepoint();
+
+                        goto Dispatch;
+                    }
+
+                    int slot = field.SlotIndex;
                     SurtrRawValue value = *--sp;
                     var instance = (SurtrInstance)entities[(SurtrRef)(*--sp)]!;
                     instance.Fields[slot] = SurtrValue.FromRaw(value);
@@ -2144,26 +2185,112 @@ namespace Surtr.VM
                 }
 
                 case OpCode.StaticFieldGet:
+                {
+                    var field = fieldTable[(ip[0] | (ip[1] << 8))];
+                    ip += 2;
+
+                    if (field is SurtrNativeFieldInfo nativeField)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+
+                        SurtrValue nativeResult = nativeField.Getter
+                            .Invoke(new SurtrCallArguments(runtime, sp, 0));
+                        *sp++ = nativeResult.Raw;
+                        _sp = sp;
+
+                        entities = context.EntityRegistry.Entities;
+                        if (context.EntityRegistry.GcPending)
+                            runtime.CollectAtSafepoint();
+
+                        goto Dispatch;
+                    }
+
                     // One indirect load: the linker resolved the slot's address when its owner was
                     // laid out, so nothing here tests whether the owner is a class or a module.
-                    *sp++ = *fieldTable[(ip[0] | (ip[1] << 8))].StaticAddress;
-                    ip += 2;
+                    *sp++ = *field.StaticAddress;
                     goto Dispatch;
+                }
 
                 case OpCode.StaticFieldGetX:
-                    *sp++ = *fieldTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].StaticAddress;
+                {
+                    var field = fieldTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     ip += 4;
+
+                    if (field is SurtrNativeFieldInfo nativeField)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+
+                        SurtrValue nativeResult = nativeField.Getter
+                            .Invoke(new SurtrCallArguments(runtime, sp, 0));
+                        *sp++ = nativeResult.Raw;
+                        _sp = sp;
+
+                        entities = context.EntityRegistry.Entities;
+                        if (context.EntityRegistry.GcPending)
+                            runtime.CollectAtSafepoint();
+
+                        goto Dispatch;
+                    }
+
+                    *sp++ = *field.StaticAddress;
                     goto Dispatch;
+                }
 
                 case OpCode.StaticFieldSet:
-                    *fieldTable[(ip[0] | (ip[1] << 8))].StaticAddress = *--sp;
+                {
+                    var field = fieldTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
+
+                    if (field is SurtrNativeFieldInfo nativeField)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+
+                        nativeField.Setter
+                            .Invoke(new SurtrCallArguments(runtime, sp - 1, 1));
+
+                        sp -= 1;
+                        _sp = sp;
+
+                        entities = context.EntityRegistry.Entities;
+                        if (context.EntityRegistry.GcPending)
+                            runtime.CollectAtSafepoint();
+
+                        goto Dispatch;
+                    }
+
+                    *field.StaticAddress = *--sp;
                     goto Dispatch;
+                }
 
                 case OpCode.StaticFieldSetX:
-                    *fieldTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].StaticAddress = *--sp;
+                {
+                    var field = fieldTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     ip += 4;
+
+                    if (field is SurtrNativeFieldInfo nativeField)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+
+                        nativeField.Setter
+                            .Invoke(new SurtrCallArguments(runtime, sp - 1, 1));
+
+                        sp -= 1;
+                        _sp = sp;
+
+                        entities = context.EntityRegistry.Entities;
+                        if (context.EntityRegistry.GcPending)
+                            runtime.CollectAtSafepoint();
+
+                        goto Dispatch;
+                    }
+
+                    *field.StaticAddress = *--sp;
                     goto Dispatch;
+                }
                 #endregion
 
                 #region Closure Operations

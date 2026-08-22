@@ -38,6 +38,7 @@
     <ProjectReference Include="..\Surtr.Compiler\Surtr.Compiler.csproj" />
     <ProjectReference Include="..\Surtr.LanguageServer\Surtr.LanguageServer.csproj" />
     <ProjectReference Include="..\Surtr.Stdlib\Surtr.Stdlib.csproj" />
+    <ProjectReference Include="..\Surtr.Interop\Surtr.Interop.csproj" />
   </ItemGroup>
 
 </Project>

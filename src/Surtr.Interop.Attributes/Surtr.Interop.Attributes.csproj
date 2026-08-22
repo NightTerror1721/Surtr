@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>Surtr.Interop.Attributes</RootNamespace>
+    <AssemblyName>Surtr.Interop.Attributes</AssemblyName>
+
+    <!-- Deliberately dependency-free: this assembly carries only the declarative attributes
+         (plus the naming policy and visibility enums they mention), so host/Unity code can
+         decorate its types by referencing this project alone, without pulling in Surtr.Core. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

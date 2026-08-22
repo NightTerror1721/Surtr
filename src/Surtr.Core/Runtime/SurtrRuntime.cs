@@ -48,6 +48,12 @@ namespace Surtr.Runtime
         private long _pendingInstructionBudget;
         private bool _disposed;
 
+        // Native enum case instances awaiting their static slot, keyed by declaring class. Filled by
+        // DefineNativeEnumCase (before linking, when AddEnumCase is legal) and drained by
+        // FinishNativeClass (after linking, when the case fields' static addresses exist).
+        private readonly Dictionary<SurtrClass, Dictionary<string, SurtrNativeObject>> _nativeEnumCases =
+            new Dictionary<SurtrClass, Dictionary<string, SurtrNativeObject>>();
+
         /// <summary>Creates and initializes a runtime with the default heap capacity.</summary>
         public SurtrRuntime() : this(DefaultEntityCapacity) { }
 
@@ -1208,11 +1214,142 @@ namespace Surtr.Runtime
             return declared;
         }
 
+        /// <summary>
+        /// Declares a native enum: the Surtr-side face of a host enum, as a sealed class with a
+        /// fixed set of named static instances.
+        /// </summary>
+        /// <remarks>
+        /// Mirrors <see cref="DefineNativeClass"/> but builds the class with <c>isEnum: true</c>, so
+        /// it carries <see cref="SurtrClass.EnumCases"/> and an exhaustive <c>switch</c> over it
+        /// compiles to a dense jump table. Cases are added with
+        /// <see cref="DefineNativeEnumCase(SurtrClass, string, SurtrNativeObject)"/> before
+        /// <see cref="FinishNativeClass"/> links the class.
+        /// </remarks>
+        /// <param name="fullName">The name its descriptor carries, for example <c>Game:LogLevel</c>.</param>
+        /// <exception cref="InvalidOperationException">A native class with that full name is already declared.</exception>
+        public SurtrClass DefineNativeEnum(string fullName)
+        {
+            if (_context.NativeClasses.ContainsKey(fullName))
+                throw new InvalidOperationException($"A native class named '{fullName}' is already declared.");
+
+            var reference = SurtrClassReference.Native(fullName);
+            SurtrClassReference.TrySplitFullName(fullName, out _, out string typePath);
+
+            var declared = new SurtrClass(
+                typePath,
+                SurtrValueTypeCode.Native,
+                reference,
+                baseType: null,
+                isAbstract: false,
+                SurtrVisibility.Public,
+                declaringType: null,
+                isSealed: true,
+                isEnum: true);
+
+            _context.NativeClasses.Add(fullName, declared);
+            TypeHandle(reference);
+            return declared;
+        }
+
+        /// <summary>
+        /// Declares one case of a native enum, backed by a cached instance.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The ordinal follows declaration order, the same rule a source enum's cases follow. The
+        /// supplied <paramref name="instance"/> must be a registered <see cref="SurtrNativeObject"/>
+        /// wrapping the host enum value; its reference is written into the case's static field when
+        /// <see cref="FinishNativeClass"/> links the enum.
+        /// </para>
+        /// </remarks>
+        /// <exception cref="ArgumentException"><paramref name="enumClass"/> is not an enum.</exception>
+        /// <exception cref="InvalidOperationException">The enum is already built.</exception>
+        public SurtrEnumCaseInfo DefineNativeEnumCase(SurtrClass enumClass, string name, SurtrNativeObject instance)
+        {
+            if (enumClass is null)
+                throw new ArgumentNullException(nameof(enumClass));
+
+            if (!enumClass.IsEnum)
+                throw new ArgumentException($"'{enumClass.Name}' is not an enum and cannot declare enum cases.", nameof(enumClass));
+
+            if (instance is null)
+                throw new ArgumentNullException(nameof(instance));
+
+            var selfHandle = TypeHandle(enumClass.SelfReference);
+            var field = new SurtrFieldInfo(name, selfHandle, isStatic: true, isReadOnly: true, SurtrVisibility.Public, selfHandle);
+            var caseInfo = enumClass.AddEnumCase(field);
+
+            if (!_nativeEnumCases.TryGetValue(enumClass, out var cases))
+            {
+                cases = new Dictionary<string, SurtrNativeObject>(StringComparer.Ordinal);
+                _nativeEnumCases.Add(enumClass, cases);
+            }
+
+            cases[name] = instance;
+            return caseInfo;
+        }
+
+        /// <summary>
+        /// Declares a native field: a field whose value lives in the host, reached through native
+        /// getter and setter entry points rather than a Surtr slot.
+        /// </summary>
+        /// <remarks>
+        /// The getter receives the receiver (for an instance field) and returns the value; the setter
+        /// receives the receiver and the value. A static native field's entry points receive no
+        /// receiver. A read-only field's setter is ignored and replaced with a throwing stub.
+        /// </remarks>
+        /// <exception cref="InvalidOperationException">A native class with that full name is already declared.</exception>
+        public SurtrNativeFieldInfo DefineNativeField(
+            SurtrClass nativeClass,
+            string name,
+            SurtrClassReference fieldType,
+            SurtrNativeEntryPoint getter,
+            SurtrNativeEntryPoint setter,
+            bool isStatic = false,
+            bool isReadOnly = false,
+            SurtrVisibility visibility = SurtrVisibility.Public)
+        {
+            if (nativeClass is null)
+                throw new ArgumentNullException(nameof(nativeClass));
+
+            var field = new SurtrNativeFieldInfo(
+                name,
+                TypeHandle(fieldType),
+                isStatic,
+                isReadOnly,
+                visibility,
+                TypeHandle(nativeClass.SelfReference),
+                getter,
+                setter);
+
+            nativeClass.AddField(field);
+            return field;
+        }
+
         /// <summary>Links a native class, freezing its tables so instances can be created.</summary>
         public void FinishNativeClass(SurtrClass nativeClass)
         {
             RetryHostHandles();
             SurtrTypeLinker.LinkClass(nativeClass, ref _context.NextInterfaceId);
+            SealNativeEnumCases(nativeClass);
+        }
+
+        /// <summary>
+        /// Writes each pending native enum case's cached instance into its static field, now that
+        /// linking has laid the static storage out and resolved every field address.
+        /// </summary>
+        private void SealNativeEnumCases(SurtrClass enumClass)
+        {
+            if (!_nativeEnumCases.TryGetValue(enumClass, out var cases))
+                return;
+
+            foreach (var pair in cases)
+            {
+                if (enumClass.TryGetField(pair.Key, out var field))
+                    *field.StaticAddress = SurtrValue.CreateReference(pair.Value.GetSurtrReference()).Raw;
+            }
+
+            _nativeEnumCases.Remove(enumClass);
         }
 
         /// <summary>Looks up a host-declared native class by its full name.</summary>

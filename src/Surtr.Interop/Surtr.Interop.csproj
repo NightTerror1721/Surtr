@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <RootNamespace>Surtr.Interop</RootNamespace>
+    <AssemblyName>Surtr.Interop</AssemblyName>
+
+    <!-- The bridge takes function-pointer addresses of generated static shims, the same managed
+         convention Surtr.Core's own built-ins use. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Surtr.Core\Surtr.Core.csproj" />
+    <ProjectReference Include="..\Surtr.Interop.Attributes\Surtr.Interop.Attributes.csproj" />
+  </ItemGroup>
+
+</Project>
