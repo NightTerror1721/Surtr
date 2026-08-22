@@ -87,7 +87,7 @@ namespace Surtr.Runtime.Objects
         /// </summary>
         /// <remarks>
         /// Derived from the id watermark and the free list rather than kept as a counter, so
-        /// <see cref="Register"/> pays nothing for it: ids are handed out from the free list first
+        /// <see cref="Register(SurtrRuntimeEntity?)"/> pays nothing for it: ids are handed out from the free list first
         /// and from <c>_nextId</c> only when that is empty, which makes everything below the
         /// watermark either live or free and nothing else. Id 0 is the null reference and is never
         /// handed out, hence the -1.
@@ -148,14 +148,31 @@ namespace Surtr.Runtime.Objects
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public SurtrRef Register(SurtrRuntimeEntity? entity)
+            => Register(entity, out _);
+
+        /// <summary>
+        /// Registers <paramref name="entity"/> and reports whether the entity array was replaced
+        /// in the process. Callers that cache <see cref="Entities"/> locally - the interpreter
+        /// does - can skip the reload when <paramref name="resized"/> is false, because the only
+        /// operation that replaces the array is <see cref="ExpandCapacity"/>.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public SurtrRef Register(SurtrRuntimeEntity? entity, out bool resized)
         {
             if (entity is null)
+            {
+                resized = false;
                 return SurtrValue.NullRef;
+            }
 
             if (entity.SurtrRef != SurtrValue.NullRef)
+            {
+                resized = false;
                 return entity.SurtrRef;
+            }
 
             SurtrRef newId;
+            resized = false;
             if (_freeCount > 0)
             {
                 _freeCount--;
@@ -165,7 +182,10 @@ namespace Surtr.Runtime.Objects
             {
                 newId = _nextId++;
                 if (newId >= _capacity)
+                {
                     ExpandCapacity();
+                    resized = true;
+                }
             }
 
             Entities[newId] = entity;
@@ -187,7 +207,7 @@ namespace Surtr.Runtime.Objects
 
         /// <summary>Replaces the policy the collector runs under, folding its thresholds for the hot path.</summary>
         /// <remarks>
-        /// Folding keeps <see cref="Register"/> to a single always-false compare in
+        /// Folding keeps <see cref="Register(SurtrRuntimeEntity?)"/> to a single always-false compare in
         /// <see cref="SurtrGcMode.Manual"/>: the allocation threshold becomes
         /// <see cref="long.MaxValue"/> and the live-entity threshold becomes <c>0</c>. Manual mode
         /// never arms the pending flag this way; capacity growth still does, but with the live
