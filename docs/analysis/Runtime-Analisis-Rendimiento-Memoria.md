@@ -67,10 +67,10 @@ Implementado: `SurtrGcPolicy` (Manual/Automatic, umbral de asignaciones, umbral 
 - **Propuesta:** tabla open-addressed con claves/valores `SurtrRawValue` crudos en un solo buffer unmanaged (cero objetos por inserción, cero interface calls). Fast path por identidad de `SurtrString` para claves string. Requiere el mismo hook de ciclo de vida que (A).
 - **Riesgo:** reimplementar un hash table correcta (rehash, borrado con tombstones, factor de carga) es trabajo fino; empezar por la vía de claves string.
 
-### D. [MEDIO-ALTO] Abaratar el registro y el deref de entidades
+### D. [MEDIO-ALTO] Abaratar el registro y el deref de entidades — HECHO (2026-08-22)
 
 - Cada sitio de asignación hace `new X()` → `Register` (3 escrituras) → recarga `entities = context.EntityRegistry.Entities` (18+ sitios). Son ~5-8 instrucciones de libro por asignación.
-- **Propuesta:** que `Register` exponga un patrón que evite la recarga en los sitios calientes (p. ej. devolver el id y usar una sobrecarga que reasigne local si creció), o convertir el deref `entities[id]` en un acceso sin bounds check del CLR cuando las entidades vayan a un arena unmanaged (se funde con A).
+- **Implementado:** `Register(entity, out SurtrRuntimeEntity?[] entities)` devuelve el array directamente (siempre asignado, tras cualquier `ExpandCapacity`). El load del campo `Entities` se comparte (CSE) con el `Entities[newId] = entity` que ya hacía el propio `Register`, así que el camino caliente paga un mov de registro y **cero branches** frente al `if (resized)` anterior. A/B medido: `allocation` −8 %, `tuples` −9 % (los deltas grandes de intLoop/methodCalls/arrayIndex en esa sesión eran ruido de layout).
 
 ### E. [MEDIO] Orden de los `case` del dispatch por frecuencia — DESCARTADO
 
@@ -141,7 +141,7 @@ Internar resultados cortos o usar un `SurtrString` "vista" sobre un buffer; mant
 1. **~~GC automático con políticas~~ HECHO (2026-08-22)** — ver `Registry-GC-Politicas.md` §9.
 2. **~~Buffers de objetos en `SurtrNativeArray`~~ HECHO para `SurtrArray` (2026-08-22)** — hook `ISurtrNativeBufferOwner` + pool thread-local; tuplas/closures/instancias quedan en managed tras medir regresiones de creación (ver §2.A).
 3. **Diccionario open-addressed unmanaged** (impacto alto, esfuerzo alto). **Diferido**: depende del hook de ciclo de vida de la fase 2; la especialización `{int:V}` ya cubre el caso caliente.
-4. **Abaratar `Register` + recarga de `entities`** — HECHO (2026-08-22): `Register(entity, out bool resized)`; los 22 sitios de la VM solo recargan si la tabla creció.
+4. **Abaratar `Register` + recarga de `entities`** — HECHO (2026-08-22): `Register(entity, out entities)` devuelve el array por out (sin branch); `allocation`/`tuples` −8/9 %.
 5. **Inline cache monomórfico** — HECHO para interfaces (2026-08-22), `interfaceCalls` −38 %. El virtual no se beneficia (una sola carga de vtable).
 6. **Caché de boxes pequeños + reorden de `case`** — AMBOS DESCARTADOS (2026-08-22): identidad de referencia por boxing (contrato de lenguaje) y jump table keyed por valor (el orden es irrelevante).
 7. **Internado de `StrCat`** — DESCARTADO (2026-08-22): el internado con enraizado permanente choca con el GC automático (ver §2.G).
