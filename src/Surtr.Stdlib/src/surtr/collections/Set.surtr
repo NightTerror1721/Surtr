@@ -1,0 +1,260 @@
+import surtr.collections.Collection;
+
+public interface IReadOnlySet<T> : IReadOnlyCollection<T>
+{
+    isEmpty: bool { get; }
+
+    fun isSubsetOf(other: IReadOnlySet<T>): bool;
+    fun isSupersetOf(other: IReadOnlySet<T>): bool;
+    fun isProperSupersetOf(other: IReadOnlySet<T>): bool;
+    fun isProperSubsetOf(other: IReadOnlySet<T>): bool;
+
+    fun overlaps(other: IReadOnlySet<T>): bool;
+    fun equals(other: IReadOnlySet<T>): bool;
+}
+
+public interface ISet<T> : IReadOnlySet<T>, ICollection<T>
+{
+    isEmpty: bool { get; }
+
+    fun unionWith(other: ISet<T>): void;
+    fun intersectWith(other: ISet<T>): void;
+    fun exceptWith(other: ISet<T>): void;
+    fun symmetricExceptWith(other: ISet<T>): void;
+}
+
+public class ReadOnlySet<T> : IReadOnlySet<T>
+{
+    protected let _dict: {T: bool};
+
+    public constructor()
+    {
+        _dict = {};
+    }
+
+    public constructor(collection: IIterable<T>)
+    {
+        _dict = {};
+        for (item in collection)
+            _dict[item] = true;
+    }
+
+    public constructor(items: T...)
+    {
+        for (item in items)
+            _dict[item] = true;
+    }
+
+    public inline length: int => _dict.length;
+    public inline isEmpty: bool => _dict.length == 0;
+
+    public inline fun contains(item : T): bool
+    {
+        return _dict.containsKey(item);
+    }
+
+    public fun isSubsetOf(other : IReadOnlySet<T>): bool
+    {
+        for (item in this)
+        {
+            if (!other.contains(item))
+                return false;
+        }
+        return true;
+    }
+
+    public fun isSupersetOf(other : IReadOnlySet<T>): bool
+    {
+        for (item in other)
+        {
+            if (!contains(item))
+                return false;
+        }
+        return true;
+    }
+
+    public fun isProperSupersetOf(other : IReadOnlySet<T>): bool
+    {
+        if (length <= other.length)
+            return false;
+        return isSupersetOf(other);
+    }
+    
+    public fun isProperSubsetOf(other : IReadOnlySet<T>): bool
+    {
+        if (length >= other.length)
+            return false;
+        return isSubsetOf(other);
+    }
+
+    public fun overlaps(other : IReadOnlySet<T>): bool
+    {
+        for (item in this)
+        {
+            if (other.contains(item))
+                return true;
+        }
+        return false;
+    }
+
+    public fun equals(other : IReadOnlySet<T>): bool
+    {
+        if (length != other.length)
+            return false;
+        return isSubsetOf(other);
+    }
+    
+    public fun copyTo(array : T[], arrayIndex : int): void
+    {
+        if (arrayIndex < 0 || arrayIndex >= array.length)
+            throw IndexOutOfRangeException("arrayIndex is out of range.");
+        if (array.length - arrayIndex < length)
+            throw ArgumentException("The number of elements in the source set is greater than the available space from arrayIndex to the end of the destination array.");
+
+        var i = arrayIndex;
+        for (item in this)
+        {
+            array[i] = item;
+            i += 1;
+        }
+    }
+
+    public inline fun iterate(): IIterator<T>
+    {
+        return Iterator(_dict);
+    }
+
+    private sealed class Iterator<T> : IIterator<T>
+    {
+        private var _items: T[];
+        private var _index: int;
+
+        public constructor(dict: {T: bool})
+        {
+            _items = dict.keys();
+            _index = -1;
+        }
+
+        public current: T
+        {
+            get
+            {
+                if (_index < 0 || _index >= _items.length)
+                    throw InvalidOperationException("Iterator is not at a valid position.");
+                return _items[_index];
+            }
+        }
+
+        public fun moveNext(): bool
+        {
+            if (_index + 1 < _items.length)
+            {
+                _index += 1;
+                return true;
+            }
+            return false;
+        }
+    }
+}
+
+public class Set<T> : ReadOnlySet<T>, ISet<T>
+{
+    public inline isReadOnly: bool => false;
+
+    public constructor() : super() {}
+
+    public constructor(collection: IIterable<T>) : super(collection) {}
+
+    public constructor(items: T...) : super(items) {}
+
+    public static inline fun of(): Set<T> => Set<T>();
+    public static inline fun of(item: T): Set<T> => Set<T>(item);
+    public static inline fun of(item1: T, item2: T): Set<T> => Set<T>(item1, item2);
+    public static inline fun of(item1: T, item2: T, item3: T): Set<T> => Set<T>(item1, item2, item3);
+    //public static inline fun of(items: T...): Set<T> => Set<T>(items);
+
+    public inline fun add(item: T): void
+    {
+        _dict[item] = true;
+    }
+
+    public inline fun remove(item: T): bool
+    {
+        return _dict.remove(item);
+    }
+
+    public inline fun clear(): void
+    {
+        _dict.clear();
+    }
+
+    public inline fun unionWith(other : ISet<T>): void
+    {
+        for (item in other)
+            add(item);
+    }
+
+    public fun intersectWith(other : ISet<T>): void
+    {
+        let toRemove = dict<T, bool>();
+        for (item in this)
+        {
+            if (!other.contains(item))
+                toRemove[item] = true;
+        }
+        for (item in toRemove)
+            remove(item[0]);
+    }
+
+    public fun exceptWith(other : ISet<T>): void
+    {
+        let toRemove = dict<T, bool>();
+        for (item in other)
+        {
+            if (contains(item))
+                toRemove[item] = true;
+        }
+        for (item in toRemove)
+            remove(item[0]);
+    }
+
+    public fun symmetricExceptWith(other : ISet<T>): void
+    {
+        let selected = dict<T, bool>();
+        for (item in other)
+        {
+            if (contains(item))
+                selected[item] = false;
+            else
+                selected[item] = true;
+        }
+        for (item in selected)
+        {
+            if (item[1] == false)
+                remove(item[0]);
+            else
+                add(item[0]);
+        }
+    }
+
+    operator &(left: Set<T>, right: IReadOnlySet<T>): Set<T>
+    {
+        let result = Set<T>();
+        for (item in left)
+        {
+            if (right.contains(item))
+                result.add(item);
+        }
+        return result;
+    }
+    operator &(left: IReadOnlySet<T>, right: Set<T>): Set<T>
+    {
+        let result = Set<T>();
+        for (item in left)
+        {
+            if (right.contains(item))
+                result.add(item);
+        }
+        return result;
+    }
+}
