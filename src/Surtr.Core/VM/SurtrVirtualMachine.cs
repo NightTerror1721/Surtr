@@ -1354,8 +1354,7 @@ namespace Surtr.VM
                     current.IP = ip;
                     _sp = sp;
                     var boxed = new SurtrBoxed(SurtrBuiltIns.Integer, SurtrValue.FromRaw(*(sp - 1)));
-                    SurtrRef reference = context.EntityRegistry.Register(boxed, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(boxed, out entities);
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
                 }
@@ -1365,8 +1364,7 @@ namespace Surtr.VM
                     current.IP = ip;
                     _sp = sp;
                     var boxed = new SurtrBoxed(SurtrBuiltIns.Float, SurtrValue.FromRaw(*(sp - 1)));
-                    SurtrRef reference = context.EntityRegistry.Register(boxed, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(boxed, out entities);
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
                 }
@@ -1376,8 +1374,7 @@ namespace Surtr.VM
                     current.IP = ip;
                     _sp = sp;
                     var boxed = new SurtrBoxed(SurtrBuiltIns.Boolean, SurtrValue.FromRaw(*(sp - 1)));
-                    SurtrRef reference = context.EntityRegistry.Register(boxed, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(boxed, out entities);
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
                 }
@@ -1387,8 +1384,7 @@ namespace Surtr.VM
                     current.IP = ip;
                     _sp = sp;
                     var boxed = new SurtrBoxed(SurtrBuiltIns.Character, SurtrValue.FromRaw(*(sp - 1)));
-                    SurtrRef reference = context.EntityRegistry.Register(boxed, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(boxed, out entities);
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
                 }
@@ -1410,8 +1406,7 @@ namespace Surtr.VM
                     _sp = sp;
                     SurtrValue value = SurtrValue.FromRaw(subject);
                     var boxed = new SurtrBoxed(SurtrBuiltIns.ForValue(value), value);
-                    SurtrRef reference = context.EntityRegistry.Register(boxed, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(boxed, out entities);
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
                 }
@@ -1576,8 +1571,7 @@ namespace Surtr.VM
                         joined = string.Create(total, (parts, count), ConcatParts);
                     }
 
-                    SurtrRef reference = context.EntityRegistry.Register(new SurtrString(joined), out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(new SurtrString(joined), out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -1623,8 +1617,7 @@ namespace Surtr.VM
                             items[i] = elementZero;
                     }
 
-                    SurtrRef reference = context.EntityRegistry.Register(array, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(array, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -1649,8 +1642,7 @@ namespace Surtr.VM
                             items[i] = elementZero;
                     }
 
-                    SurtrRef reference = context.EntityRegistry.Register(array, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(array, out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -1666,8 +1658,7 @@ namespace Surtr.VM
 
                     var array = new SurtrArray(arrayType, count);
                     array.InitializeLength(count);
-                    SurtrRef reference = context.EntityRegistry.Register(array, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(array, out entities);
 
                     var items = array.Items;
                     sp -= count;
@@ -1833,8 +1824,7 @@ namespace Surtr.VM
                     _sp = sp;
 
                     var tuple = new SurtrTuple(tupleType, arity);
-                    SurtrRef reference = context.EntityRegistry.Register(tuple, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(tuple, out entities);
 
                     var elements = tuple.Elements;
                     sp -= arity;
@@ -1907,8 +1897,7 @@ namespace Surtr.VM
                     _sp = sp;
 
                     SurtrRef reference = context.EntityRegistry.Register(
-                        new SurtrDictionary(dictionaryType, comparer, 0), out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                        new SurtrDictionary(dictionaryType, comparer, 0), out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -1923,8 +1912,7 @@ namespace Surtr.VM
                     _sp = sp;
 
                     var dictionary = new SurtrDictionary(dictionaryType, comparer, count);
-                    SurtrRef reference = context.EntityRegistry.Register(dictionary, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(dictionary, out entities);
 
                     sp -= count * 2;
 
@@ -2043,8 +2031,7 @@ namespace Surtr.VM
                     var keys = new SurtrArray(arrayType, dictionary.Count);
                     dictionary.CopyKeysTo(keys);
 
-                    SurtrRef reference = context.EntityRegistry.Register(keys, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(keys, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -2061,8 +2048,7 @@ namespace Surtr.VM
                     var values = new SurtrArray(arrayType, dictionary.Count);
                     dictionary.CopyValuesTo(values);
 
-                    SurtrRef reference = context.EntityRegistry.Register(values, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(values, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -2112,8 +2098,7 @@ namespace Surtr.VM
                     if (declared.IsAbstract)
                         throw AbstractInstantiation(declared.Name);
 
-                    SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared), out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared), out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -2129,8 +2114,7 @@ namespace Surtr.VM
                     if (declared.IsAbstract)
                         throw AbstractInstantiation(declared.Name);
 
-                    SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared), out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared), out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -2197,8 +2181,7 @@ namespace Surtr.VM
                         captures[i] = SurtrValue.FromRaw(sp[i]);
 
                     SurtrRef reference = context.EntityRegistry.Register(
-                        new SurtrClosure(target.ToSignature(), target, captures), out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                        new SurtrClosure(target.ToSignature(), target, captures), out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -2218,8 +2201,7 @@ namespace Surtr.VM
                         captures[i] = SurtrValue.FromRaw(sp[i]);
 
                     SurtrRef reference = context.EntityRegistry.Register(
-                        new SurtrClosure(target.ToSignature(), target, captures), out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                        new SurtrClosure(target.ToSignature(), target, captures), out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -3025,8 +3007,7 @@ namespace Surtr.VM
                     _sp = sp;
 
                     var boxed = new SurtrBoxed(declared, SurtrValue.FromRaw(*(sp - 1)));
-                    SurtrRef reference = context.EntityRegistry.Register(boxed, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(boxed, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -3040,8 +3021,7 @@ namespace Surtr.VM
                     _sp = sp;
 
                     var boxed = new SurtrBoxed(declared, SurtrValue.FromRaw(*(sp - 1)));
-                    SurtrRef reference = context.EntityRegistry.Register(boxed, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(boxed, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -3056,8 +3036,7 @@ namespace Surtr.VM
 
                     sp--;
                     var range = new SurtrRange((int)*(sp - 1), (int)*sp, inclusive: false);
-                    SurtrRef reference = context.EntityRegistry.Register(range, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(range, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -3070,8 +3049,7 @@ namespace Surtr.VM
 
                     sp--;
                     var range = new SurtrRange((int)*(sp - 1), (int)*sp, inclusive: true);
-                    SurtrRef reference = context.EntityRegistry.Register(range, out bool resized);
-                    if (resized) entities = context.EntityRegistry.Entities;
+                    SurtrRef reference = context.EntityRegistry.Register(range, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;

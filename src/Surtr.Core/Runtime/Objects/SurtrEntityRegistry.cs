@@ -151,28 +151,30 @@ namespace Surtr.Runtime.Objects
             => Register(entity, out _);
 
         /// <summary>
-        /// Registers <paramref name="entity"/> and reports whether the entity array was replaced
-        /// in the process. Callers that cache <see cref="Entities"/> locally - the interpreter
-        /// does - can skip the reload when <paramref name="resized"/> is false, because the only
-        /// operation that replaces the array is <see cref="ExpandCapacity"/>.
+        /// Registers <paramref name="entity"/> and hands back the current entity array through
+        /// <paramref name="entities"/>. Callers that cache <see cref="Entities"/> locally - the
+        /// interpreter does - take it straight from here instead of reloading it separately: the
+        /// only operation that replaces the array is <see cref="ExpandCapacity"/>, and the
+        /// assignment happens after that call, so the out value is always the array the entity
+        /// just landed in. The load is shared with the <c>Entities[newId] = entity</c> store, so
+        /// on the hot path this costs a register move, not a second memory access.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public SurtrRef Register(SurtrRuntimeEntity? entity, out bool resized)
+        public SurtrRef Register(SurtrRuntimeEntity? entity, out SurtrRuntimeEntity?[] entities)
         {
             if (entity is null)
             {
-                resized = false;
+                entities = Entities;
                 return SurtrValue.NullRef;
             }
 
             if (entity.SurtrRef != SurtrValue.NullRef)
             {
-                resized = false;
+                entities = Entities;
                 return entity.SurtrRef;
             }
 
             SurtrRef newId;
-            resized = false;
             if (_freeCount > 0)
             {
                 _freeCount--;
@@ -182,12 +184,12 @@ namespace Surtr.Runtime.Objects
             {
                 newId = _nextId++;
                 if (newId >= _capacity)
-                {
                     ExpandCapacity();
-                    resized = true;
-                }
             }
 
+            // After any expansion: the array this entity just landed in is the one the caller
+            // should cache. The JIT can share this load with the store below.
+            entities = Entities;
             Entities[newId] = entity;
             entity.SurtrRef = newId;
 
