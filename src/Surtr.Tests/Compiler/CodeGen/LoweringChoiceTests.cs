@@ -163,6 +163,39 @@ namespace Surtr.Tests.Compiler.CodeGen
 
         #endregion
 
+        #region Value class construction
+
+        [Fact]
+        public void AValueClassConstructionWithAnIdentityConstructorEmitsTheArgumentDirectly()
+        {
+            // The canonical value class constructor is `this._f = v;`, so building `W(5)` is the
+            // value 5 itself. It must not be spliced through a temp local: the old path emitted
+            // `PushI8 5; Stl $value$...; Ldl $value$...; ReturnValue` for exactly this shape.
+            string code = Disassemble(
+                "value class W { private let _v: int; public constructor(v: int) { this._v = v; } }\n"
+                + "fun make(): W { return W(5); }");
+
+            Assert.Contains("PushI8 5", code, StringComparison.Ordinal);
+            Assert.DoesNotContain("Stl", code, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void AValueClassConstructionWhoseWrappedValueComputesFromTheParameterStillSplices()
+        {
+            // The identity fast path only fires when the construction is the argument itself. A
+            // body that adapts the value — `this._v = v * 2` — still has to map the parameter onto
+            // a local and splice, and must keep producing the right result.
+            string code = Disassemble(
+                "value class W { private let _v: int; public constructor(v: int) { this._v = v * 2; } }\n"
+                + "fun make(): W { return W(5); }");
+
+            Assert.Contains("PushI8 5", code, StringComparison.Ordinal);
+            Assert.Contains("Mul", code, StringComparison.Ordinal);
+            Assert.Contains("ReturnValue", code, StringComparison.Ordinal);
+        }
+
+        #endregion
+
         #region String concatenation
 
         [Fact]

@@ -2993,6 +2993,21 @@ case BoundFieldExpression field:
                     $"building a '{type.Name}', whose constructor is not a single assignment to the field it wraps");
             }
 
+            // The canonical value-class constructor is `this._field = value;` — the wrapped value is
+            // a direct read of the one parameter. Then the construction *is* the argument, so it is
+            // emitted straight rather than spliced through a temp local: the splice would pay a
+            // `Stl $value$...; Ldl $value$...` round-trip (and a local slot) for a value that is
+            // never used more than once or combined with anything. This is the shape every wrapper
+            // (EntityId, Angle, Sequence<T> over a closure, ...) is written in, so it is the one
+            // that must be free.
+            if (creation.Arguments.Count == 1
+                && wrapped is BoundParameterExpression { Parameter: var read }
+                && ReferenceEquals(read, original.Parameters[0]))
+            {
+                Expression(creation.Arguments[0]);
+                return;
+            }
+
             for (int i = 0; i < creation.Arguments.Count; i++)
             {
                 var slot = _method.DeclareLocal("$value$" + original.Parameters[i].Name);
