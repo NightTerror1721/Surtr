@@ -2803,42 +2803,61 @@ namespace Surtr.VM
 
                 case OpCode.InvokeInterface:
                 {
-                    var declared = methodTable[(ip[0] | (ip[1] << 8))];
+                    int declaredIndex = ip[0] | (ip[1] << 8);
+                    var declared = methodTable[declaredIndex];
                     ip += 2;
                     pendingArguments = *ip++;
                     pendingResults = *ip++;
 
                     var receiverClass = ((SurtrObject)entities[(SurtrRef)(*(sp - pendingArguments))]!).Class;
-                    var contract = (SurtrInterface)declared.DeclaringType!.ResolvedType!;
 
-                    // Which block of the receiver's dispatch table this contract owns. Written out
-                    // rather than calling SurtrClass.IndexOfInterface, which would be a real call
-                    // from a method this size - the two have to stay in step.
-                    int contractId = contract.InterfaceId;
-                    int indexMask = receiverClass.InterfaceIndexMask;
+                    // Monomorphic cache, keyed like the virtual one. The hit path collapses the
+                    // whole open-addressed probe and the two extra indirections into one array load
+                    // and one reference compare; the miss runs the probe and records its result.
+                    var interfaceCache = chunk.InterfaceCallCache;
+                    if (interfaceCache is null)
+                        interfaceCache = chunk.InterfaceCallCache = new SurtrVirtualCallSite[methodTable.Length];
 
-                    // A receiver whose class implements no interface has an empty interface-dispatch
-                    // table (`InterfaceIndexMask` == -1). Indexing it below would read past the end
-                    // of the `SurtrNativeArray` and trip the debug assertion; surface it as a cast
-                    // failure instead, so a bad `InvokeInterface` is a diagnosable Surtr exception
-                    // rather than a memory-safety crash.
-                    if (indexMask < 0)
-                        throw InvalidCast(receiverClass.Name, contract.Name);
+                    ref var interfaceSlot = ref interfaceCache[declaredIndex];
+                    if (interfaceSlot.Expected != receiverClass)
+                    {
+                        var contract = (SurtrInterface)declared.DeclaringType!.ResolvedType!;
 
-                    int probe = contractId & indexMask;
+                        // Which block of the receiver's dispatch table this contract owns. Written out
+                        // rather than calling SurtrClass.IndexOfInterface, which would be a real call
+                        // from a method this size - the two have to stay in step.
+                        int contractId = contract.InterfaceId;
+                        int indexMask = receiverClass.InterfaceIndexMask;
 
-                    while (receiverClass.InterfaceIndexById[probe << 1] != contractId)
-                        probe = (probe + 1) & indexMask;
+                        // A receiver whose class implements no interface has an empty interface-dispatch
+                        // table (`InterfaceIndexMask` == -1). Indexing it below would read past the end
+                        // of the `SurtrNativeArray` and trip the debug assertion; surface it as a cast
+                        // failure instead, so a bad `InvokeInterface` is a diagnosable Surtr exception
+                        // rather than a memory-safety crash.
+                        if (indexMask < 0)
+                            throw InvalidCast(receiverClass.Name, contract.Name);
 
-                    int contractIndex = receiverClass.InterfaceIndexById[(probe << 1) + 1];
+                        int probe = contractId & indexMask;
 
-                    // One extra indirection over a virtual call: the interface's block in the
-                    // class's dispatch table maps the contract's slot onto a vtable index, so an
-                    // override reached through the vtable applies here for free.
-                    int vtableSlot = receiverClass.InterfaceMethodSlots[
-                        receiverClass.InterfaceSlotOffsets[contractIndex] + declared.VTableSlot];
+                        while (receiverClass.InterfaceIndexById[probe << 1] != contractId)
+                            probe = (probe + 1) & indexMask;
 
-                    pendingMethod = receiverClass.VirtualMethods[vtableSlot];
+                        int contractIndex = receiverClass.InterfaceIndexById[(probe << 1) + 1];
+
+                        // One extra indirection over a virtual call: the interface's block in the
+                        // class's dispatch table maps the contract's slot onto a vtable index, so an
+                        // override reached through the vtable applies here for free.
+                        int vtableSlot = receiverClass.InterfaceMethodSlots[
+                            receiverClass.InterfaceSlotOffsets[contractIndex] + declared.VTableSlot];
+
+                        pendingMethod = receiverClass.VirtualMethods[vtableSlot];
+                        interfaceSlot = new SurtrVirtualCallSite { Expected = receiverClass, Method = pendingMethod };
+                    }
+                    else
+                    {
+                        pendingMethod = interfaceSlot.Method!;
+                    }
+
                     pendingClosure = null;
                     goto InvokeResolved;
                 }
