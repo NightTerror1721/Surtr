@@ -1,6 +1,7 @@
 # Informe: Análisis de rendimiento y memoria del runtime de Surtr.Core
 
 > **Fecha:** 2026-08-22
+> **Actualización (2026-08-22):** la recomendación B (GC automático con políticas) quedó **implementada** el mismo día — ver `Registry-GC-Politicas.md` §9. Las secciones que la citan como pendiente están corregidas.
 > **Alcance:** `Surtr.Core` (netstandard2.1, `AllowUnsafeBlocks`), el runtime, el VM y los objetos.
 > **Método:** lectura profunda del intérprete (`SurtrVirtualMachine.cs`, 3.244 líneas), la representación de valores (`SurtrValue.cs`), el registry (`SurtrEntityRegistry.cs`), la memoria no administrada (`MemOps.cs`, `SurtrNativeArray.cs`) y los planes `docs/VM-Plan.md` / `docs/Runtime-Model.md`.
 
@@ -23,7 +24,7 @@
 1. **Cada objeto Surtr = 2 asignaciones CLR.** El objeto (`SurtrArray`, `SurtrInstance`, `SurtrTuple`, `SurtrClosure`) + su array de respaldo `SurtrValue[]` gestionado (`SurtrArray.cs:50,60`; `SurtrInstance.cs:29,33`; `SurtrTuple.cs:40,53`). Todo vive en el heap del CLR y es rastreado también por el GC del CLR.
 2. **`ArrGet`/`ArrSet` pagan doble bounds check** — el trap explícito (`:1676-1681`) + el del CLR sobre el array gestionado (`:1683-1688`).
 3. **El diccionario es el `Dictionary<TKey,TValue>` del BCL** (`SurtrDictionary.cs:58,65`). La vía general paga un interface call no devirtualizable por operación. `dictString` sigue a ~6,4× del baseline C# (VM-Plan §3.5).
-4. **No hay GC automático.** `Collect` solo lo invoca el host (`SurtrRuntime.cs:1300-1346`). Un script largo infla el registro hasta el siguiente `Collect`; `ExpandCapacity` (`SurtrEntityRegistry.cs:367-386`) hace `Array.Resize` + 3 realloc HGlobal.
+4. **~~No hay GC automático.~~ HECHO (2026-08-22):** `SurtrGcPolicy` + safepoints implementados; ver `Registry-GC-Politicas.md` §9. `ExpandCapacity` (`SurtrEntityRegistry.cs:455-482`) sigue haciendo `Array.Resize` + 3 realloc HGlobal, pero ahora arma la bandera de colección cuando el umbral de entidades vivas está activo.
 5. **Coste no nulo por `Register`:** 3 escrituras de estado + recarga del local `entities` en la VM tras cada asignación (18+ sitios).
 6. **Sin inline cache en `InvokeVirtual`/`InvokeInterface`** (deref del receptor + carga de vtable, `:2759-2760`; sonda open-addressed para interfaces, `:2813-2818`).
 7. **1 salto indirecto por instrucción** (~2-3 ciclos solo el salto, con ~221 opcodes la predicción no es perfecta).
@@ -51,9 +52,9 @@
 - **Beneficios:** 1 sola asignación por objeto; cero bounds checks CLR en `ArrGet`/`ArrSet`; `ArrNew` rellena con `MemOps.Fill/Clear` vectorizado (`MemOps.cs:91-128`); el collector no rastrea esos arrays; el GC del CLR deja de ver el tráfico.
 - **Riesgo:** las entidades dejan de ser "solo managed" — la tabla `Entities` ya es managed y no puede moverse a unmanaged mientras contenga referencias CLR (el collector necesita `VisitReferences` virtual). Diseño mixto: objeto managed "cáscara" + buffer unmanaged.
 
-### B. [ALTO] GC automático (ver documento dedicado `Registry-GC-Politicas.md`)
+### B. ~~[ALTO] GC automático~~ — HECHO (2026-08-22)
 
-Hoy `Collect` es solo del host; `Register` no cuenta nada. Un umbral de asignaciones en `Register` (rama fría NoInlining) que arme una colección de nursery en el siguiente safepoint ya tiene el nursery construido (`_ages`, `_totalNurseryCollections`).
+Implementado: `SurtrGcPolicy` (Manual/Automatic, umbral de asignaciones, umbral de entidades vivas, frecuencia de nursery), bandera `GcPending` armada en `Register` (1 compare plegado en Manual), safepoint único tras el dispatch + frontera nativa en el VM, API `SurtrRuntime.ConfigureGc`, default `Automatic`. Detalles y medición A/B en `Registry-GC-Politicas.md` §9.
 
 ### C. [ALTO] Diccionario propio open-addressed sobre un buffer unmanaged
 
@@ -130,8 +131,8 @@ Internar resultados cortos o usar un `SurtrString` "vista" sobre un buffer; mant
 
 ## 5. Recomendaciones priorizadas
 
-1. **GC automático con políticas** (impacto alto, esfuerzo bajo-medio, riesgo contenido) — ver documento dedicado.
-2. **Buffers de objetos en `SurtrNativeArray` + registro de buffers coleccionables** (impacto crítico, esfuerzo alto, riesgo medio).
+1. **~~GC automático con políticas~~ HECHO (2026-08-22)** — ver `Registry-GC-Politicas.md` §9.
+2. **Buffers de objetos en `SurtrNativeArray` + registro de buffers coleccionables** (impacto crítico, esfuerzo alto, riesgo medio). Desbloqueado por B: el sweep de `CollectGarbage` es un punto único donde colgar el hook de liberación.
 3. **Diccionario open-addressed unmanaged** (impacto alto, esfuerzo alto).
 4. **Abaratar `Register` + recarga de `entities`** (impacto medio-alto, esfuerzo bajo).
 5. **Inline cache monomórfico** para virtuales/interfaces (impacto medio, esfuerzo medio).
