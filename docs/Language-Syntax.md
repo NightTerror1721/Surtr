@@ -2474,6 +2474,18 @@ dimension) is exposed as `let` and can only change on the host's own terms, whil
 state (`TimeScale`) can be exposed as `var`. There is no third form — state a host does not want
 Surtr to see simply is not declared.
 
+The **C# interop bridge** (`src/Surtr.Interop`) is a host library layered on top of this, not a new
+language feature. It scans CLR types marked `[SurtrNativeType]` (from `Surtr.Interop.Attributes`) and
+declares their members directly against the runtime: a CLR **field** becomes a *native field*
+(`SurtrNativeFieldInfo`, a host-owned field read/written through `FieldGet`/`FieldSet` entry points —
+see `Runtime-Model.md` §5.5), a CLR **enum** becomes a *native enum* (`SurtrRuntime.DefineNativeEnum`
+with one cached object per value), and a CLR **property** or **method** becomes a native property or
+method. The bridge can generate the link code at compile time (the `Surtr.Interop.SourceGenerator`
+Roslyn analyzer, AOT-safe function-pointer shims) or scan by reflection at runtime as a fallback. See
+`src/Surtr.Interop/README.md`. The source-level `native let`/`native var` above and a bridge-declared
+native field are distinct mechanisms: the former is a compiler lowering to an accessor pair, the
+latter is a runtime-level field the bridge owns.
+
 ---
 
 ## 11. Attributes and annotations
