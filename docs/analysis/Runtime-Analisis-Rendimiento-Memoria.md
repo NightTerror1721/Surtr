@@ -67,21 +67,21 @@ Implementado: `SurtrGcPolicy` (Manual/Automatic, umbral de asignaciones, umbral 
 - Cada sitio de asignación hace `new X()` → `Register` (3 escrituras) → recarga `entities = context.EntityRegistry.Entities` (18+ sitios). Son ~5-8 instrucciones de libro por asignación.
 - **Propuesta:** que `Register` exponga un patrón que evite la recarga en los sitios calientes (p. ej. devolver el id y usar una sobrecarga que reasigne local si creció), o convertir el deref `entities[id]` en un acceso sin bounds check del CLR cuando las entidades vayan a un arena unmanaged (se funde con A).
 
-### E. [MEDIO] Orden de los `case` del dispatch por frecuencia
+### E. [MEDIO] Orden de los `case` del dispatch por frecuencia — DESCARTADO
 
-Con 221 targets, la predicción de saltos indirectos falla parcialmente. Reordenar los `case` por frecuencia favorece la jump table. Bajo IL2CPP el switch C++ se compila igualmente a jump table (VM-Plan §1.1). Es el único grado de libertad restante del dispatch (computed goto y threaded code no son expresables en C#).
+Con 221 targets, la predicción de saltos indirectos falla parcialmente. **Evaluado y descartado (2026-08-22):** el switch de `Run` compila a una única jump table indexada por el valor del opcode (IL verificado: 1 instrucción `switch`), donde el orden de los `case` en el fuente es irrelevante. El único efecto orden-dependiente sería la localidad I-cache de los cuerpos de los `case`, que necesita un perfil de frecuencia por opcode que el benchmark no produce (solo por workload). Reordenar ~220 `case` a ciegas por un beneficio estimado <1-2 % es riesgo sin retorno medible.
 
-### F. [MEDIO] Inline cache monomórfico en `InvokeVirtual`/`InvokeInterface`
+### F. [MEDIO] Inline cache monomórfico en `InvokeVirtual`/`InvokeInterface` — HECHO (solo interfaces)
 
-1 entrada por call site: comparar `receiver.Class` contra la clase esperada con una sola carga; si acierta, saltar deref/indirecto. Requiere un opcode variante o un campo por call site. El benchmark `virtualCalls`/`interfaceCalls` ya existe para medirlo (VM-Plan §5 lo lista como pendiente).
+1 entrada por call site: comparar `receiver.Class` contra la clase esperada con una sola carga; si acierta, saltar deref/indirecto. **Implementado (2026-08-22):** caché per-chunk indexada por el método declarado, perezosa, solo para `InvokeInterface` — el virtual resuelve con una sola carga de vtable y el caché le añadía instrucciones sin quitar nada (medido: `virtualCalls` sin cambio neto). Resultado: `interfaceCalls` −38 % (9,21 → 5,72 ms). Requiere vtables/tablas de interfaz inmutables post-link, lo que el linker garantiza.
 
 ### G. [MEDIO] Strings: `StrCat` asigna CLR string + `SurtrString` (2 objetos)
 
 Internar resultados cortos o usar un `SurtrString` "vista" sobre un buffer; mantener el `string.Concat` vectorizado del CLR (no reimplementar).
 
-### H. [MEDIO] Caché de boxes para ints pequeños (−128..127)
+### H. [MEDIO] Caché de boxes para ints pequeños (−128..127) — DESCARTADO
 
-`BoxInt` etc. = `new SurtrBoxed` + `Register` (`:1337-1346`). Caché de `SurtrBoxed` pre-registrados e inmutables (seguro por contenido — `SurtrBoxed.cs:31-34`), estilo CLR.
+`BoxInt` etc. = `new SurtrBoxed` + `Register` (`:1337-1346`). **Evaluado y descartado (2026-08-22):** el contrato del lenguaje da **identidad de referencia por boxing** — dos `BoxInt 5` deben ser referencias distintas (tests `BoxInt_ProducesALiveReferenceEachTime`, `REQ_OfTwoDistinctBoxes_IsFalse_EvenWithEqualContent`, `RNE_OfTwoDistinctBoxes_IsTrue`, `JPRNE_BranchesOnDistinctReferences_EvenWithEqualContent`). Compartir un box cacheado los haría iguales por referencia. Además pre-registrar los boxes contaminaría el contador de asignaciones del GC y desplazaría el espacio de ids. El objetivo (boxing más barato) se cubre con la Fase A (arena unmanaged) sin tocar la semántica.
 
 ### I. [BAJO] Puesta a cero de locales en la entrada de frame
 
@@ -133,9 +133,9 @@ Internar resultados cortos o usar un `SurtrString` "vista" sobre un buffer; mant
 
 1. **~~GC automático con políticas~~ HECHO (2026-08-22)** — ver `Registry-GC-Politicas.md` §9.
 2. **Buffers de objetos en `SurtrNativeArray` + registro de buffers coleccionables** (impacto crítico, esfuerzo alto, riesgo medio). Desbloqueado por B: el sweep de `CollectGarbage` es un punto único donde colgar el hook de liberación.
-3. **Diccionario open-addressed unmanaged** (impacto alto, esfuerzo alto).
-4. **Abaratar `Register` + recarga de `entities`** (impacto medio-alto, esfuerzo bajo).
-5. **Inline cache monomórfico** para virtuales/interfaces (impacto medio, esfuerzo medio).
-6. **Caché de boxes pequeños + reorden de `case`** (impacto medio, esfuerzo bajo).
+3. **Diccionario open-addressed unmanaged** (impacto alto, esfuerzo alto). **Diferido**: depende del hook de ciclo de vida de la fase 2; la especialización `{int:V}` ya cubre el caso caliente.
+4. **Abaratar `Register` + recarga de `entities`** — HECHO (2026-08-22): `Register(entity, out bool resized)`; los 22 sitios de la VM solo recargan si la tabla creció.
+5. **Inline cache monomórfico** — HECHO para interfaces (2026-08-22), `interfaceCalls` −38 %. El virtual no se beneficia (una sola carga de vtable).
+6. **Caché de boxes pequeños + reorden de `case`** — AMBOS DESCARTADOS (2026-08-22): identidad de referencia por boxing (contrato de lenguaje) y jump table keyed por valor (el orden es irrelevante).
 
 Todo esto asume que el objetivo es un runtime "lo más rápido y veloz posible, consumiendo el mínimo de memoria, delegando lo que se pueda al mundo no administrado" — la dirección que el propio código ya marca en `MemOps`, `SurtrNativeArray` y el registry.
