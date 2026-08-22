@@ -101,6 +101,19 @@ namespace Surtr.Runtime
         internal Dictionary<SurtrModule, SurtrModuleValue> ModuleValueCache;
 
         /// <summary>
+        /// Method-to-closure table backing <see cref="SurtrRuntime.GetOrCreateFunctionValue"/>, so
+        /// every evaluation of a zero-capture lambda - and every host call that creates one - hands
+        /// back the one shared <c>SurtrClosure</c> for that method within this runtime instead of
+        /// allocating a fresh object on the heap.
+        /// </summary>
+        /// <remarks>
+        /// Keyed by reference identity, the same reasoning as <see cref="TypeValueCache"/>. Lives
+        /// here rather than on the metadata because the metadata is process-wide and shared across
+        /// runtimes, while the entity registry a <see cref="SurtrClosure"/> is registered in is not.
+        /// </remarks>
+        internal Dictionary<SurtrMethodInfo, SurtrClosure> FunctionValueCache;
+
+        /// <summary>
         /// Entities kept alive regardless of reachability, as raw reference values ready to hand
         /// to the collector.
         /// </summary>
@@ -166,6 +179,7 @@ namespace Surtr.Runtime
             TypeValueCache = new Dictionary<SurtrTypeInfo, SurtrTypeValue>();
             ConstructedTypeValueCache = new Dictionary<string, SurtrTypeValue>(StringComparer.Ordinal);
             ModuleValueCache = new Dictionary<SurtrModule, SurtrModuleValue>();
+            FunctionValueCache = new Dictionary<SurtrMethodInfo, SurtrClosure>();
 
             Roots = new SurtrRawValue[InitialRootCapacity];
             RootCount = 0;
@@ -286,6 +300,7 @@ namespace Surtr.Runtime
             InternedStrings?.Clear();
             TypeValueCache?.Clear();
             ModuleValueCache?.Clear();
+            FunctionValueCache?.Clear();
             Roots = Array.Empty<SurtrRawValue>();
             RootCount = 0;
 

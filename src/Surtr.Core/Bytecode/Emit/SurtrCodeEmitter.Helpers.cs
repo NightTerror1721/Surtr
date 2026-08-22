@@ -708,6 +708,14 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter NewClosureFor(SurtrMethodBuilder function, int upValueCount)
             => NewClosureFor(function is null ? throw new ArgumentNullException(nameof(function)) : function.Token, upValueCount);
 
+        /// <summary>Builds the canonical zero-capture function value for <paramref name="function"/>, in the narrowest encoding that reaches it.</summary>
+        public SurtrCodeEmitter NewFunctionFor(SurtrMethodToken function)
+            => MethodIndex(function) <= ushort.MaxValue ? NewFunction(function) : NewFunctionX(function);
+
+        /// <summary>Builds the canonical zero-capture function value for a method declared on this builder.</summary>
+        public SurtrCodeEmitter NewFunctionFor(SurtrMethodBuilder function)
+            => NewFunctionFor(function is null ? throw new ArgumentNullException(nameof(function)) : function.Token);
+
         private SurtrCodeEmitter EmitCall(
             SurtrMethodToken token,
             bool moduleLevel,

@@ -2005,5 +2005,31 @@ namespace Surtr.Bytecode
         /// </remarks>
         RangeNewInclusive = 0xDC,
         #endregion
+
+
+        #region Function Operations
+        /// <summary>
+        /// Builds the canonical zero-capture function value for the method at <c>functionIdx</c>.
+        /// </summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) functionIdx(2)</c> - 3 bytes.<br/>
+        /// Stack: <c>... -&gt; ..., ref</c><br/>
+        /// Notes: the value is the one shared <c>SurtrClosure</c> for that method within this
+        /// runtime - created, cached and rooted the first time any site asks - so nothing is
+        /// allocated on the heap for an evaluation. It is the same type a capturing closure over
+        /// the same signature has (it is a <c>SurtrClosure</c>), which is what lets a lambda that
+        /// captures nothing coexist with one that does under one type. The compiler emits this only
+        /// when the lambda is stateless; a body that captures anything still goes through
+        /// <see cref="NewClosure"/>.
+        /// </remarks>
+        NewFunction = 0xE7,
+
+        /// <summary>Builds a canonical function value using a 4-byte function index.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) functionIdx(4)</c> - 5 bytes.<br/>
+        /// Stack: <c>... -&gt; ..., ref</c>
+        /// </remarks>
+        NewFunctionX = 0xE8,
+        #endregion
     }
 }

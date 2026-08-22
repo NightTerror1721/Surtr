@@ -772,6 +772,39 @@ namespace Surtr.Bytecode.Emit
             return this;
         }
 
+        /// <summary>Emits <see cref="OpCode.NewFunction"/>.</summary>
+        /// <param name="function">The lambda's body, an entry in the method access table.</param>
+        public SurtrCodeEmitter NewFunction(SurtrMethodToken function)
+        {
+            ThrowIfFinished();
+
+            int index = MethodIndex(function);
+            CheckRange(index, 0, ushort.MaxValue, OpCode.NewFunction, "functionIdx");
+
+            Track(0, 1);
+
+            _code.Add((byte)OpCode.NewFunction);
+            _code.Add((byte)index);
+            _code.Add((byte)(index >> 8));
+            return this;
+        }
+
+        /// <summary>Emits <see cref="OpCode.NewFunctionX"/>.</summary>
+        /// <param name="function">The lambda's body, an entry in the method access table.</param>
+        public SurtrCodeEmitter NewFunctionX(SurtrMethodToken function)
+        {
+            ThrowIfFinished();
+
+            int index = MethodIndex(function);
+            CheckRange(index, 0, int.MaxValue, OpCode.NewFunctionX, "functionIdx");
+
+            Track(0, 1);
+
+            _code.Add((byte)OpCode.NewFunctionX);
+            AppendI32(_code, index);
+            return this;
+        }
+
         #endregion
 
         #region Upvalue Operations

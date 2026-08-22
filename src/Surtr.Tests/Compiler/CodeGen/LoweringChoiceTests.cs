@@ -85,6 +85,38 @@ namespace Surtr.Tests.Compiler.CodeGen
             return string.Join('\n', lines.Skip(start).Take(end - start));
         }
 
+        #region Closure creation
+
+        [Fact]
+        public void AZeroCaptureLambdaIsTheCanonicalFunctionValue()
+        {
+            string code = Disassemble("fun run(n: int): int { let add = (a: int) => a + 1; return add(n); }");
+
+            Assert.Equal(1, Count(code, "NewFunction"));
+            Assert.Equal(0, Count(code, "NewClosure"));
+        }
+
+        [Fact]
+        public void ACapturingLambdaStillBuildsAClosure()
+        {
+            string code = Disassemble("fun run(n: int): int { let base = 10; let add = (a: int) => a + base; return add(n); }");
+
+            Assert.Equal(1, Count(code, "NewClosure"));
+            Assert.Equal(0, Count(code, "NewFunction"));
+        }
+
+        [Fact]
+        public void AMethodGroupConvertedToAValueIsAFunctionWhenItCapturesNothing()
+        {
+            string code = Disassemble(
+                "fun run2(n: int): int { return n + 1; }\n"
+                + "fun run(n: int): int { let add: (int) -> int = run2; return add(n); }");
+
+            Assert.Equal(1, Count(code, "NewFunction"));
+        }
+
+        #endregion
+
         #region String concatenation
 
         [Fact]

@@ -3738,7 +3738,16 @@ case BoundFieldExpression field:
             foreach (var captured in lambda.Captured)
                 LoadCaptured(captured);
 
-            Code.NewClosureFor(lifted, captures.Count + (lambda.CapturesReceiver ? 1 : 0));
+            int captureCount = captures.Count + (lambda.CapturesReceiver ? 1 : 0);
+
+            // A lambda that captures nothing is a pure function: emitting the canonical function
+            // value (NewFunction) hands back the one shared closure for the lifted method instead
+            // of allocating a fresh object per evaluation. The value is still a closure of the
+            // same signature, so it coexists with capturing lambdas under the same type.
+            if (captureCount == 0)
+                Code.NewFunctionFor(lifted);
+            else
+                Code.NewClosureFor(lifted, captureCount);
         }
 
         /// <summary>The symbol a lifted body is emitted against, for its parameters and its name.</summary>

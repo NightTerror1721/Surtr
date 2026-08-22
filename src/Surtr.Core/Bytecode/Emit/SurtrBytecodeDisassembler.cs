@@ -1089,6 +1089,16 @@ namespace Surtr.Bytecode.Emit
                     builder.Append(" upvalues=").Append(chunk.Code[operand + 4]).AppendLine();
                     return operand + 5;
 
+                case OpCode.NewFunction:
+                    AppendMethodName(builder, chunk, ReadU16(chunk, operand));
+                    builder.AppendLine();
+                    return operand + 2;
+
+                case OpCode.NewFunctionX:
+                    AppendMethodName(builder, chunk, ReadI32(chunk, operand));
+                    builder.AppendLine();
+                    return operand + 4;
+
                 // ---- branches ----------------------------------------------------------------
                 case OpCode.JPZ:
                 case OpCode.JPNZ:

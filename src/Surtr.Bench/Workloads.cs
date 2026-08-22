@@ -252,6 +252,17 @@ namespace Surtr.Bench
                 return acc;
             }
 
+            // Creates a fresh zero-capture lambda every iteration: the workload that measures
+            // closure *creation* cost. `closures` above creates one and only measures invocation.
+            fun closureCreate(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) {
+                    let add = (a: int) => a + 1;
+                    acc = (acc + add(i)) % 100000007;
+                }
+                return acc;
+            }
+
             fun methodCalls(n: int): int {
                 let a = Adder(7);
                 var acc: int = 0;
@@ -639,6 +650,15 @@ namespace Surtr.Bench
                 return acc
             end
 
+            function closureCreate(n)
+                local acc = 0
+                for i = 0, n - 1 do
+                    local add = function(a) return a + 1 end
+                    acc = (acc + add(i)) % 100000007
+                end
+                return acc
+            end
+
             function methodCalls(n)
                 local a = Adder.new(7)
                 local acc = 0
@@ -881,6 +901,7 @@ namespace Surtr.Bench
             new Workload("stringOps", 300000, WorkloadKind.Int, "length and text equality", StringOps),
             new Workload("stringTransform", 100000, WorkloadKind.Int, "substring/replace native calls, allocating per call", StringTransform),
             new Workload("closures", 300000, WorkloadKind.Int, "closure invocation", Closures),
+            new Workload("closureCreate", 300000, WorkloadKind.Int, "zero-capture closure creation per iteration", ClosureCreate),
             new Workload("closureCapture", 300000, WorkloadKind.Int, "closure environment + upvalue read/write", ClosureCapture),
             new Workload("methodCalls", 300000, WorkloadKind.Int, "direct instance dispatch", MethodCalls),
             new Workload("virtualCalls", 300000, WorkloadKind.Int, "vtable dispatch", VirtualCalls),
@@ -1095,6 +1116,21 @@ namespace Surtr.Bench
             long acc = 0;
             for (long i = 0; i < n; i++)
                 acc = (acc + add(i)) % Modulus;
+            return acc;
+        }
+
+        private static long ClosureCreate(long n)
+        {
+            // A non-capturing lambda is a single cached delegate in C#, so the closure is created
+            // once by the compiler and the loop only calls it — the same ideal the Surtr fast path
+            // targets. The baseline measures the call, and the byte counters expose what each
+            // engine's closure-creation path really allocates.
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+            {
+                Func<long, long> add = a => a + 1;
+                acc = (acc + add(i)) % Modulus;
+            }
             return acc;
         }
 

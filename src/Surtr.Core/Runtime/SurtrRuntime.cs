@@ -409,12 +409,46 @@ namespace Surtr.Runtime
         /// <exception cref="ArgumentException"><paramref name="method"/> has no body.</exception>
         public SurtrClosure NewClosure(SurtrMethodInfo method, SurtrValue[]? upValues = null, SurtrClassReference typeReference = default)
         {
+            // A closure with nothing to capture is a pure function, so the stateless fast path and
+            // the capturing one meet here: with no upvalues and no custom type, the host gets the
+            // one shared closure for the method (see GetOrCreateFunctionValue), the same value
+            // every zero-capture lambda in the language resolves to. A caller that explicitly
+            // passes captures - or a custom type - still gets a fresh object, exactly as before.
+            if ((upValues is null || upValues.Length == 0) && !typeReference.IsValid)
+                return GetOrCreateFunctionValue(method);
+
             var value = new SurtrClosure(
                 typeReference.IsValid ? typeReference : method.ToSignature(),
                 method,
                 upValues ?? Array.Empty<SurtrValue>());
 
             _context.EntityRegistry.Register(value);
+            return value;
+        }
+
+        /// <summary>
+        /// Returns the one shared <c>SurtrClosure</c> for a method within this runtime - the value
+        /// every evaluation of that method as a zero-capture function resolves to.
+        /// </summary>
+        /// <remarks>
+        /// Creates, registers and permanently roots it the first time this runtime is asked about
+        /// <paramref name="method"/>, and returns the cached object on every call after that - see
+        /// <see cref="SurtrContext.FunctionValueCache"/>. Rooted for the same reason a
+        /// <see cref="SurtrTypeValue"/> is: the cache dictionary itself is never traced, so an
+        /// entry the collector could otherwise reclaim would leave a stale id behind, and the cache
+        /// is bounded by how many distinct zero-capture methods a program actually uses, so rooting
+        /// every entry for the runtime's lifetime is cheap rather than a leak.
+        /// </remarks>
+        /// <exception cref="ArgumentException"><paramref name="method"/> has no body.</exception>
+        public SurtrClosure GetOrCreateFunctionValue(SurtrMethodInfo method)
+        {
+            if (_context.FunctionValueCache.TryGetValue(method, out var existing))
+                return existing;
+
+            var value = new SurtrClosure(method.ToSignature(), method, Array.Empty<SurtrValue>());
+            SurtrRef reference = _context.EntityRegistry.Register(value);
+            _context.FunctionValueCache.Add(method, value);
+            _context.AddRoot(SurtrValue.CreateReference(reference).Raw);
             return value;
         }
 

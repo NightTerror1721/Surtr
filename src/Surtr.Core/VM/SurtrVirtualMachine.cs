@@ -2206,6 +2206,33 @@ namespace Surtr.VM
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
                 }
+
+                case OpCode.NewFunction:
+                {
+                    var target = methodTable[(ip[0] | (ip[1] << 8))];
+                    ip += 2;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    // The one shared closure for the method: nothing to allocate on an evaluation,
+                    // and registering it (on first use) may grow the entity table, hence the
+                    // safepoint below rather than a plain dispatch.
+                    var function = runtime.GetOrCreateFunctionValue(target);
+                    *sp++ = SurtrValue.CreateReference(function.GetSurtrReference()).Raw;
+                    goto Safepoint;
+                }
+
+                case OpCode.NewFunctionX:
+                {
+                    var target = methodTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    ip += 4;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var function = runtime.GetOrCreateFunctionValue(target);
+                    *sp++ = SurtrValue.CreateReference(function.GetSurtrReference()).Raw;
+                    goto Safepoint;
+                }
                 #endregion
 
                 #region Upvalue Operations
