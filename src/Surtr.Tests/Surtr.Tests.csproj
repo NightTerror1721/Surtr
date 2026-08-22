@@ -39,6 +39,11 @@
     <ProjectReference Include="..\Surtr.LanguageServer\Surtr.LanguageServer.csproj" />
     <ProjectReference Include="..\Surtr.Stdlib\Surtr.Stdlib.csproj" />
     <ProjectReference Include="..\Surtr.Interop\Surtr.Interop.csproj" />
+    <ProjectReference Include="..\Surtr.Interop.SourceGenerator\Surtr.Interop.SourceGenerator.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
   </ItemGroup>
 
 </Project>

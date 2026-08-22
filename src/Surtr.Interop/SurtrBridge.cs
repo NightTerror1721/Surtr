@@ -27,6 +27,46 @@ namespace Surtr.Interop
             => SurtrTypeMaterializer.Register(runtime, descriptor);
 
         /// <summary>
+        /// Scans one CLR type (marked <see cref="SurtrNativeTypeAttribute"/>) and registers it.
+        /// </summary>
+        public static SurtrClass Register<T>(SurtrRuntime runtime)
+            => Register(runtime, SurtrReflectionScanner.Scan(typeof(T), DefaultNamingPolicy));
+
+        /// <summary>
+        /// Registers a type under a specific module path, overriding the descriptor's own module.
+        /// Native types are runtime-global (see <see cref="Register"/>), so "module" here is a naming
+        /// scope: the type's full name becomes <c>modulePath:name</c>, which is how Surtr source
+        /// qualifies it and how two same-named types in different modules stay distinct.
+        /// </summary>
+        public static SurtrClass RegisterIntoModule(SurtrRuntime runtime, string modulePath, NativeTypeDescriptor descriptor)
+        {
+            if (modulePath is null)
+                throw new ArgumentNullException(nameof(modulePath));
+
+            if (descriptor is null)
+                throw new ArgumentNullException(nameof(descriptor));
+
+            if (string.Equals(descriptor.Module, modulePath, StringComparison.Ordinal))
+                return Register(runtime, descriptor);
+
+            var scoped = new NativeTypeDescriptor
+            {
+                FullName = modulePath + ":" + descriptor.Name,
+                Module = modulePath,
+                Name = descriptor.Name,
+                Description = descriptor.Description,
+                Kind = descriptor.Kind,
+                BaseType = descriptor.BaseType,
+                TypeArguments = descriptor.TypeArguments,
+                Members = descriptor.Members,
+                EnumCases = descriptor.EnumCases,
+                EnumValues = descriptor.EnumValues,
+            };
+
+            return Register(runtime, scoped);
+        }
+
+        /// <summary>
         /// Materializes every descriptor into <paramref name="runtime"/>, enums and base types first
         /// so type handles resolve in dependency order.
         /// </summary>
