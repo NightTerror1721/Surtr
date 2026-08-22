@@ -368,8 +368,23 @@ namespace Surtr.VM
             if (frameBase + localCount + method.MaxStackSize > _stackLimit)
                 throw DataStackOverflow();
 
+            // Same fast path as the interpreter's call-entry sequence: ≤16 bytes inline, larger
+            // frames through the vectorised Clear.
             if (localCount > argumentCount)
-                MemOps.Clear(frameBase + argumentCount, (nuint)(localCount - argumentCount) * sizeof(SurtrRawValue));
+            {
+                SurtrRawValue* firstLocal = frameBase + argumentCount;
+                int zeroSlots = localCount - argumentCount;
+                if (zeroSlots <= 2)
+                {
+                    firstLocal[0] = 0;
+                    if (zeroSlots == 2)
+                        firstLocal[1] = 0;
+                }
+                else
+                {
+                    MemOps.Clear(firstLocal, (nuint)zeroSlots * sizeof(SurtrRawValue));
+                }
+            }
 
             var chunk = method.Chunk;
             byte* codeBase = chunk.Code.Pointer;
@@ -3128,8 +3143,24 @@ namespace Surtr.VM
 
                 // Locals above the incoming arguments are zeroed, so a collection can never read a
                 // slot the program has not written and retain whatever the last call left there.
+                // The ≤16-byte case is written out rather than calling MemOps.Clear, whose body is
+                // deliberately too large to inline (it is shared with the vectorised bulk paths):
+                // the call-entry sequence is the hottest frame path and small frames dominate.
                 if (localCount > pendingArguments)
-                    MemOps.Clear(newBase + pendingArguments, (nuint)(localCount - pendingArguments) * sizeof(SurtrRawValue));
+                {
+                    SurtrRawValue* firstLocal = newBase + pendingArguments;
+                    int zeroSlots = localCount - pendingArguments;
+                    if (zeroSlots <= 2)
+                    {
+                        firstLocal[0] = 0;
+                        if (zeroSlots == 2)
+                            firstLocal[1] = 0;
+                    }
+                    else
+                    {
+                        MemOps.Clear(firstLocal, (nuint)zeroSlots * sizeof(SurtrRawValue));
+                    }
+                }
 
                 current.IP = ip;
 
