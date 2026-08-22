@@ -75,9 +75,11 @@ Con 221 targets, la predicción de saltos indirectos falla parcialmente. **Evalu
 
 1 entrada por call site: comparar `receiver.Class` contra la clase esperada con una sola carga; si acierta, saltar deref/indirecto. **Implementado (2026-08-22):** caché per-chunk indexada por el método declarado, perezosa, solo para `InvokeInterface` — el virtual resuelve con una sola carga de vtable y el caché le añadía instrucciones sin quitar nada (medido: `virtualCalls` sin cambio neto). Resultado: `interfaceCalls` −38 % (9,21 → 5,72 ms). Requiere vtables/tablas de interfaz inmutables post-link, lo que el linker garantiza.
 
-### G. [MEDIO] Strings: `StrCat` asigna CLR string + `SurtrString` (2 objetos)
+### G. [MEDIO] Strings: `StrCat` asigna CLR string + `SurtrString` (2 objetos) — DESCARTADO
 
 Internar resultados cortos o usar un `SurtrString` "vista" sobre un buffer; mantener el `string.Concat` vectorizado del CLR (no reimplementar).
+
+**Evaluado y descartado (2026-08-22):** internar con `InternString` enraiza permanentemente (contrato ya existente para literales), lo que para resultados computados cortos **lucha contra el GC automático** — `stringInterp` produce 100k strings distintas ≤16 chars; internarlas pasaría `kept` de 2 a 100k (retención ilimitada). Una caché acotada (FIFO enraizada rotatoria) solo ayuda a patrones de concatenación repetitiva que ningún workload del bench ejercita (`stringConcat` es cuadrático, sus resultados crecen y no quedan cortos). El coste real de `stringInterp` lo ataca la Fase A (menos objetos CLR por asignación), no el internado.
 
 ### H. [MEDIO] Caché de boxes para ints pequeños (−128..127) — DESCARTADO
 
@@ -137,5 +139,6 @@ Internar resultados cortos o usar un `SurtrString` "vista" sobre un buffer; mant
 4. **Abaratar `Register` + recarga de `entities`** — HECHO (2026-08-22): `Register(entity, out bool resized)`; los 22 sitios de la VM solo recargan si la tabla creció.
 5. **Inline cache monomórfico** — HECHO para interfaces (2026-08-22), `interfaceCalls` −38 %. El virtual no se beneficia (una sola carga de vtable).
 6. **Caché de boxes pequeños + reorden de `case`** — AMBOS DESCARTADOS (2026-08-22): identidad de referencia por boxing (contrato de lenguaje) y jump table keyed por valor (el orden es irrelevante).
+7. **Internado de `StrCat`** — DESCARTADO (2026-08-22): el internado con enraizado permanente choca con el GC automático (ver §2.G).
 
 Todo esto asume que el objetivo es un runtime "lo más rápido y veloz posible, consumiendo el mínimo de memoria, delegando lo que se pueda al mundo no administrado" — la dirección que el propio código ya marca en `MemOps`, `SurtrNativeArray` y el registry.
