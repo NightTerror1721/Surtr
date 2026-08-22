@@ -230,7 +230,7 @@ namespace Surtr.Compiler.Compilation
         /// <summary>The whole per-file front end, isolated so it can run on any thread.</summary>
         private FileParseResult ParseFile(SurtrSourceFile file)
         {
-            string modulePath = file.ModulePath;
+            string? modulePath = file.ModulePath;
             ModulePathStatus status = ModulePathStatus.Ok;
             string offendingSegment = string.Empty;
 

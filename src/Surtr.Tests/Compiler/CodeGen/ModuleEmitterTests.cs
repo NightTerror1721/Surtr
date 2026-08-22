@@ -252,7 +252,8 @@ using var compilation = Reject(
                 "import module game.math.Math;\nfun run(): Module { return moduleof(game.math.Math); }",
                 ("/game/math/Math.surtr", "public fun add(a: int, b: int): int { return a + b; }"));
 
-            Assert.NotNull(runtime.Invoke(Function(runtime, "game.core.Test", "run"), Array.Empty<SurtrValue>()));
+            var module = runtime.Invoke(Function(runtime, "game.core.Test", "run"), Array.Empty<SurtrValue>());
+            Assert.False(module.IsNullReference);
         }
         #endregion
 

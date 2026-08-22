@@ -2639,7 +2639,7 @@ case BoundFieldExpression field:
             EmitResolvedCall(getter, virtualCall: property.IsVirtualGet, discardResult: false);
         }
 
-        /// <summary>Whether <paramref name="property"/> is, by identity, the built-in dictionary's <c>length</c>.</summary>
+        /// <summary>The name a built-in collection's <c>length</c> getter is emitted under.</summary>
         private const string LengthGetterName = "get_length";
 
         private static bool IsDictionaryLength(PropertySymbol property)

@@ -3626,7 +3626,13 @@ namespace Surtr.Compiler.Binding
                         return false;
                     }
 
-                    ordered = new[] { Convert(arguments[0], type.UnderlyingType, written[0].Span) };
+                    // A deferred lambda or construction leaves its slot null until overload
+                    // resolution supplies the target type; bind it against the field's type here,
+                    // exactly as a deferred argument is filled in for a declared constructor.
+                    var value = arguments[0]
+                        ?? BindExpression(written[0].Value, type.UnderlyingType);
+
+                    ordered = new[] { Convert(value, type.UnderlyingType, written[0].Span) };
                     return true;
                 }
 

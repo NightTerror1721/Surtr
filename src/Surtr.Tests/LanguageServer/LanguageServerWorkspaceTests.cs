@@ -990,7 +990,7 @@ namespace Surtr.Tests.LanguageServer
 
             Assert.NotNull(hit);
             Assert.Contains("primitive type", hit!.Markdown);
-            Assert.Equal(1, CountOccurrences(hit.Markdown, "```surtr"));
+            Assert.Equal(1, CountOccurrences(hit!.Markdown!, "```surtr"));
         }
 
         [Fact]
