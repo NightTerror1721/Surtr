@@ -3697,6 +3697,18 @@ case BoundFieldExpression field:
         /// </remarks>
         private void EmitLambda(BoundLambdaExpression lambda)
         {
+            // A direct method-group conversion is sugar for the function itself, so its value can
+            // be built straight over the target method: no $lambda$ wrapper is lifted, an indirect
+            // call through the value dispatches the target directly instead of a synthetic forwarder
+            // that would pay a second frame and a second dispatch, and the value is the canonical
+            // one every site resolving to that method shares. The wrapper path remains the fallback
+            // when the target is not a method of this module (its builder is not reachable here).
+            if (lambda.DirectTarget is { } direct && _context.TryGetBuilder(direct, out var targetBuilder))
+            {
+                Code.NewFunctionFor(targetBuilder);
+                return;
+            }
+
             var closure = (ClosureTypeSymbol)lambda.Type.NonNullable;
 
             var parameters = new SurtrParameterInfo[lambda.Parameters.Count];

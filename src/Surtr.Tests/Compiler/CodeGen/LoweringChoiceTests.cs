@@ -106,13 +106,59 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         [Fact]
-        public void AMethodGroupConvertedToAValueIsAFunctionWhenItCapturesNothing()
+        public void ADirectMethodGroupBindsStraightToTheTargetMethod()
         {
+            // A static method whose signature is exactly the closure's is sugar for the function
+            // itself: the value is the canonical function over run2, no $lambda$ wrapper is lifted,
+            // and the module carries only the two declared methods.
             string code = Disassemble(
                 "fun run2(n: int): int { return n + 1; }\n"
                 + "fun run(n: int): int { let add: (int) -> int = run2; return add(n); }");
 
             Assert.Equal(1, Count(code, "NewFunction"));
+            Assert.Contains("NewFunction 0 (run2)", code, StringComparison.Ordinal);
+            Assert.DoesNotContain("$lambda$", code, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ADirectMethodGroupWithANonInlinableTargetStillBindsStraight()
+        {
+            // The direct binding is about the value's target, not the body's cost: even a target too
+            // heavy to be inlined into the (now absent) wrapper names the method directly, so an
+            // indirect call pays one frame and one dispatch instead of two of each.
+            string code = Disassemble(
+                "fun run2(n: int): int { var acc = 0; for (var i = 0; i < n; i += 1) { acc += i; } return acc; }\n"
+                + "fun run(n: int): int { let add: (int) -> int = run2; return add(n); }");
+
+            Assert.Equal(1, Count(code, "NewFunction"));
+            Assert.Contains("NewFunction 0 (run2)", code, StringComparison.Ordinal);
+            Assert.DoesNotContain("$lambda$", code, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void AnInstanceMethodGroupStillLiftsAWrapper()
+        {
+            // An instance method group captures the receiver, so the value has to be built over a
+            // synthetic wrapper that closes over it.
+            string code = Disassemble(
+                "class C { public fun m(n: int): int { return n + 1; } }\n"
+                + "fun run(n: int): int { let c = C(); let f: (int) -> int = c.m; return f(n); }");
+
+            Assert.Contains("NewClosure", code, StringComparison.Ordinal);
+            Assert.Contains("$lambda$", code, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void AMethodGroupNeedingCoercionStillLiftsAWrapper()
+        {
+            // The closure returns float but the method returns int: the result needs adapting, so
+            // the synthetic wrapper that performs the conversion survives.
+            string code = Disassemble(
+                "fun run2(n: int): int { return n + 1; }\n"
+                + "fun run(n: int): float { let add: (int) -> float = run2; return add(n); }");
+
+            Assert.Equal(1, Count(code, "NewFunction"));
+            Assert.Contains("$lambda$", code, StringComparison.Ordinal);
         }
 
         #endregion

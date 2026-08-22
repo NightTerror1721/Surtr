@@ -263,6 +263,23 @@ namespace Surtr.Bench
                 return acc;
             }
 
+            // Invokes through a method group (a named function obtained as a value) whose target is
+            // too heavy to be inlined into the synthetic wrapper (any loop beats the inliner's
+            // budget of 2) yet does almost no work per call. That makes the per-call cost dominated
+            // by the invocation itself, so the frame and second dispatch the wrapper adds show up
+            // as a real signal.
+            fun accumulate(n: int): int {
+                var acc = n;
+                for (var i = 0; i < 1; i += 1) { acc = acc + i; }
+                return acc;
+            }
+            fun methodGroupInvoke(n: int): int {
+                let add: (int) -> int = accumulate;
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) { acc = (acc + add(i)) % 100000007; }
+                return acc;
+            }
+
             fun methodCalls(n: int): int {
                 let a = Adder(7);
                 var acc: int = 0;
@@ -659,6 +676,18 @@ namespace Surtr.Bench
                 return acc
             end
 
+            function accumulate(n)
+                local acc = n
+                for i = 0, 0 do acc = acc + i end
+                return acc
+            end
+            function methodGroupInvoke(n)
+                local add = accumulate
+                local acc = 0
+                for i = 0, n - 1 do acc = (acc + add(i)) % 100000007 end
+                return acc
+            end
+
             function methodCalls(n)
                 local a = Adder.new(7)
                 local acc = 0
@@ -902,6 +931,7 @@ namespace Surtr.Bench
             new Workload("stringTransform", 100000, WorkloadKind.Int, "substring/replace native calls, allocating per call", StringTransform),
             new Workload("closures", 300000, WorkloadKind.Int, "closure invocation", Closures),
             new Workload("closureCreate", 300000, WorkloadKind.Int, "zero-capture closure creation per iteration", ClosureCreate),
+            new Workload("methodGroupInvoke", 300000, WorkloadKind.Int, "invocation through a method-group value, non-inlinable target", MethodGroupInvoke),
             new Workload("closureCapture", 300000, WorkloadKind.Int, "closure environment + upvalue read/write", ClosureCapture),
             new Workload("methodCalls", 300000, WorkloadKind.Int, "direct instance dispatch", MethodCalls),
             new Workload("virtualCalls", 300000, WorkloadKind.Int, "vtable dispatch", VirtualCalls),
@@ -1131,6 +1161,25 @@ namespace Surtr.Bench
                 Func<long, long> add = a => a + 1;
                 acc = (acc + add(i)) % Modulus;
             }
+            return acc;
+        }
+
+        private static long Accumulate(long n)
+        {
+            long acc = n;
+            for (long i = 0; i < 1; i++)
+                acc += i;
+            return acc;
+        }
+
+        private static long MethodGroupInvoke(long n)
+        {
+            // The C# compiler binds a method group to the delegate pointing straight at the method
+            // (ldftn), no forwarding stub — the behaviour the Surtr direct binding replicates.
+            Func<long, long> add = Accumulate;
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+                acc = (acc + add(i)) % Modulus;
             return acc;
         }
 

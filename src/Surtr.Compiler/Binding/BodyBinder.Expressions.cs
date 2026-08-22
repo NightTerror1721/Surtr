@@ -341,8 +341,42 @@ namespace Surtr.Compiler.Binding
                 parameterTypes[i] = parameters[i].Type;
 
             return new BoundLambdaExpression(
-                syntax, _factory.Closure(parameterTypes, closure.ReturnType), parameters, body, frame.Captures, frame.CapturesReceiver);
+                syntax, _factory.Closure(parameterTypes, closure.ReturnType), parameters, body, frame.Captures, frame.CapturesReceiver,
+                IsDirectMethodGroup(closure, method) ? method : null);
         }
+
+        /// <summary>
+        /// Whether a method group may bind straight to the target method, without lifting a
+        /// synthetic <c>$lambda$</c> forwarding wrapper.
+        /// </summary>
+        /// <remarks>
+        /// C# and Java both point the function value at the target method directly — a delegate's
+        /// <c>ldftn</c>, a method reference's method handle — and nothing the wrapper adds is needed
+        /// when the conversion is exact: a static target whose parameter and return types are
+        /// exactly the closure's needs no argument or result adaptation, and the closure is
+        /// zero-capture, so the canonical function value can be built over the target itself. Any
+        /// other method group — an instance method (receiver capture), a virtual dispatch, a
+        /// generic or native body, or a signature needing coercion — keeps the wrapper, which is
+        /// where the adaptation happens.
+        /// </remarks>
+        private bool IsDirectMethodGroup(ClosureTypeSymbol closure, MethodSymbol method)
+        {
+            if (!method.IsStatic || method.TypeParameters.Count != 0)
+                return false;
+
+            for (int i = 0; i < method.Parameters.Count; i++)
+            {
+                if (!IsSameType(closure.ParameterTypes[i], method.Parameters[i].Type))
+                    return false;
+            }
+
+            return IsSameType(closure.ReturnType, method.ReturnType);
+        }
+
+        /// <summary>Whether two type symbols are the same type. The factory interns types, so reference equality is the fast path.</summary>
+        private bool IsSameType(TypeSymbol first, TypeSymbol second)
+            => ReferenceEquals(first, second)
+                || (_conversions.IsAssignable(first, second) && _conversions.IsAssignable(second, first));
 
         /// <summary>
         /// Reads a symbol as the enclosing condition proved it to be, rather than as it was
