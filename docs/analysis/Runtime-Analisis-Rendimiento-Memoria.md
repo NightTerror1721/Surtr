@@ -21,8 +21,8 @@
 
 ### 1.2 Lo que hoy es caro o lento
 
-1. **Cada objeto Surtr = 2 asignaciones CLR.** El objeto (`SurtrArray`, `SurtrInstance`, `SurtrTuple`, `SurtrClosure`) + su array de respaldo `SurtrValue[]` gestionado (`SurtrArray.cs:50,60`; `SurtrInstance.cs:29,33`; `SurtrTuple.cs:40,53`). Todo vive en el heap del CLR y es rastreado también por el GC del CLR.
-2. **`ArrGet`/`ArrSet` pagan doble bounds check** — el trap explícito (`:1676-1681`) + el del CLR sobre el array gestionado (`:1683-1688`).
+1. **Cada objeto Surtr = 2 asignaciones CLR (menos `SurtrArray`).** El objeto (`SurtrInstance`, `SurtrTuple`, `SurtrClosure`) + su array de respaldo `SurtrValue[]` gestionado (`SurtrInstance.cs:29,33`; `SurtrTuple.cs:40,53`). `SurtrArray` ya no: su buffer es unmanaged (`SurtrArray.cs:47-49`) — 1 sola asignación CLR. Todo lo demás vive en el heap del CLR y es rastreado también por el GC del CLR.
+2. **~~`ArrGet`/`ArrSet` pagan doble bounds check~~ — ELIMINADO para arrays (2026-08-22):** el buffer unmanaged no tiene bounds check CLR; solo queda el trap explícito (`SurtrVirtualMachine.cs:1691-1696`).
 3. **El diccionario es el `Dictionary<TKey,TValue>` del BCL** (`SurtrDictionary.cs:58,65`). La vía general paga un interface call no devirtualizable por operación. `dictString` sigue a ~6,4× del baseline C# (VM-Plan §3.5).
 4. **~~No hay GC automático.~~ HECHO (2026-08-22):** `SurtrGcPolicy` + safepoints implementados; ver `Registry-GC-Politicas.md` §9. `ExpandCapacity` (`SurtrEntityRegistry.cs:455-482`) sigue haciendo `Array.Resize` + 3 realloc HGlobal, pero ahora arma la bandera de colección cuando el umbral de entidades vivas está activo.
 5. **Coste no nulo por `Register`:** 3 escrituras de estado + recarga del local `entities` en la VM tras cada asignación (18+ sitios).
@@ -44,13 +44,13 @@
 
 ## 2. Cuellos de botella y oportunidades, por impacto esperado
 
-### A. [CRÍTICO] Representación de objetos: mover los buffers de respaldo a memoria no administrada
+### A. [CRÍTICO] Representación de objetos: mover los buffers de respaldo a memoria no administrada — HECHO (2026-08-22, alcance: `SurtrArray`)
 
 - **Hoy:** `SurtrArray.Items`, `SurtrInstance.Fields`, `SurtrTuple.Elements` son `SurtrValue[]` gestionados. Cada array/instancia/tupla = **2 objetos CLR**, doble bounds check en `ArrGet`/`ArrSet`, y el GC del CLR ve todo el tráfico.
-- **Bloqueante conocido** (documentado en `SurtrArray.cs:22-29`): un buffer unmanaged propiedad de un objeto coleccionable se filtraría en cada colección porque el sweep no tiene hook de finalización.
-- **Propuesta:** mover los buffers a `SurtrNativeArray<SurtrRawValue>` (puntero + longitud). Cerrar el hueco de ciclo de vida con **un registro de buffers coleccionables en el contexto**: una lista por contexto que `CollectGarbage` drena al liberar la entidad (`SurtrEntityRegistry.cs:239-318`). La entidad, al ser recogida, devuelve su buffer a un *pool* o lo libera.
-- **Beneficios:** 1 sola asignación por objeto; cero bounds checks CLR en `ArrGet`/`ArrSet`; `ArrNew` rellena con `MemOps.Fill/Clear` vectorizado (`MemOps.cs:91-128`); el collector no rastrea esos arrays; el GC del CLR deja de ver el tráfico.
-- **Riesgo:** las entidades dejan de ser "solo managed" — la tabla `Entities` ya es managed y no puede moverse a unmanaged mientras contenga referencias CLR (el collector necesita `VisitReferences` virtual). Diseño mixto: objeto managed "cáscara" + buffer unmanaged.
+- **Implementado (2026-08-22):** `SurtrArray.Items` ahora es un buffer unmanaged (`SurtrRawValue*` + `ItemsCapacity`), liberado por el sweep a través del hook `ISurtrNativeBufferOwner` (interface + `ReleaseBuffer` en `Release`/sweep/`Dispose` del registry) y reutilizado por `SurtrValueBufferPool` (pool thread-local por clases de tamaño, presupuesto acotado por clase). Un solo objeto CLR por array, cero bounds checks CLR en `ArrGet`/`ArrSet`, el collector no rastrea el buffer.
+- **Medido:** memoria managed de los workloads de array −100 % (de 1.0M/4.2K a 56 B por run); `sortArray` −23 %; `arrayFill`/`arrayIndex` −20-30 % en la mayoría de binarios (ruido de layout JIT del switch dificulta deltas por-workload estables).
+- **Alcance reducido tras medir:** `SurtrTuple`, `SurtrClosure` y `SurtrInstance` **quedan en managed**. El coste por objeto del buffer unmanaged (rent/return + puesta a cero) regresó la creación masiva de objetos (`tuples` +19 %, `allocation` +8-13 %, `retainedObjects` +14 % con spreads fiables) incluso con pool lock-free/thread-local; las instancias ganan `fieldAccess` pero pierden `allocation`/`retainedObjects`. Se eligió el subconjunto sin regresiones fiables: solo arrays.
+- **Bloqueante original resuelto por B:** el sweep de `CollectGarbage` es el punto único donde el hook de liberación cierra el hueco de ciclo de vida.
 
 ### B. ~~[ALTO] GC automático~~ — HECHO (2026-08-22)
 
@@ -134,7 +134,7 @@ Internar resultados cortos o usar un `SurtrString` "vista" sobre un buffer; mant
 ## 5. Recomendaciones priorizadas
 
 1. **~~GC automático con políticas~~ HECHO (2026-08-22)** — ver `Registry-GC-Politicas.md` §9.
-2. **Buffers de objetos en `SurtrNativeArray` + registro de buffers coleccionables** (impacto crítico, esfuerzo alto, riesgo medio). Desbloqueado por B: el sweep de `CollectGarbage` es un punto único donde colgar el hook de liberación.
+2. **~~Buffers de objetos en `SurtrNativeArray`~~ HECHO para `SurtrArray` (2026-08-22)** — hook `ISurtrNativeBufferOwner` + pool thread-local; tuplas/closures/instancias quedan en managed tras medir regresiones de creación (ver §2.A).
 3. **Diccionario open-addressed unmanaged** (impacto alto, esfuerzo alto). **Diferido**: depende del hook de ciclo de vida de la fase 2; la especialización `{int:V}` ya cubre el caso caliente.
 4. **Abaratar `Register` + recarga de `entities`** — HECHO (2026-08-22): `Register(entity, out bool resized)`; los 22 sitios de la VM solo recargan si la tabla creció.
 5. **Inline cache monomórfico** — HECHO para interfaces (2026-08-22), `interfaceCalls` −38 %. El virtual no se beneficia (una sola carga de vtable).
