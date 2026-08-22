@@ -77,6 +77,33 @@ namespace Surtr.Runtime.Classes
         internal int InstanceSlotCount;
 
         /// <summary>
+        /// Whether instances of this class live inline as one or more value slots rather than
+        /// behind a reference: a multi-field <c>value class</c>, once the language grows one.
+        /// </summary>
+        /// <remarks>
+        /// A value type has no identity of its own - two copies of the same value are
+        /// indistinguishable, which is why <c>===</c> is meaningless on it and why equality is
+        /// structural (see <see cref="Objects.SurtrValueComparer"/>). Where its type is statically
+        /// known it occupies <see cref="FlattenedSlotWidth"/> contiguous slots in whatever holds
+        /// it; where it flows into a reference-typed slot it boxes into an ordinary
+        /// <see cref="Objects.SurtrInstance"/> of this very class, whose field slots receive the
+        /// value verbatim.
+        /// </remarks>
+        internal bool IsValueType;
+
+        /// <summary>
+        /// How many slots one inline value of this class occupies: the sum of its instance fields'
+        /// own widths, with nested value types flattened. One for every non-value class.
+        /// </summary>
+        /// <remarks>
+        /// Computed at link time by <see cref="SurtrTypeLinker"/>; negative until then, since zero
+        /// is a legitimate width for a field-less value type. The cap lives with the linker - a
+        /// call's <c>argsCount</c> immediate is one byte wide, so nothing wider than 254 slots can
+        /// ever be passed or returned.
+        /// </remarks>
+        internal int FlattenedSlotWidth = -1;
+
+        /// <summary>
         /// Which instance slots hold a <see cref="SurtrRef"/>, in ascending order.
         /// </summary>
         /// <remarks>

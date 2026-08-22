@@ -482,6 +482,7 @@ namespace Surtr.Bytecode.Image
             writer.Write(type.IsAbstract);
             writer.Write(type.IsSealed);
             writer.Write(type.IsEnum);
+            writer.Write(type.IsValueType);
 
             writer.Write(type.BaseType is null ? NoIndex : Intern(state, type.BaseType.Reference.Descriptor));
 

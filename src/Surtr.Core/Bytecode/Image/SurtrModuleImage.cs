@@ -108,8 +108,18 @@ namespace Surtr.Bytecode.Image
         /// version 5 reader would read the extra counts as the bytecode fields, so it is refused
         /// like every other older format.
         /// </para>
+        /// <para>
+        /// Version 7 exists in the record as the release the opcode set's free values resumed
+        /// from; it changed no layout.
+        /// </para>
+        /// <para>
+        /// Version 8 adds one boolean per class - <c>IsValueType</c>, written after the enum
+        /// flag - which tells the linker to lay the class out as a flattened value block rather
+        /// than one slot per field. A version 7 reader would read the flag byte as the first byte
+        /// of the base-type index, so it is refused like every other older format.
+        /// </para>
         /// </remarks>
-        internal const ushort FormatVersion = 7;
+        internal const ushort FormatVersion = 8;
 
         private readonly byte[] _bytes;
         private readonly string _path;

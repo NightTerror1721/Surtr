@@ -284,6 +284,69 @@ namespace Surtr.VM
             return CallClosure(closure, arguments.Length);
         }
 
+        /// <summary>
+        /// Calls <paramref name="method"/> and copies its result slots into
+        /// <paramref name="destination"/>.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The host-facing shape of a multi-slot return. A single-value method is answered the
+        /// ordinary way - one slot in <paramref name="destination"/> - while a method that ended
+        /// through <see cref="OpCode.ReturnValues"/> leaves its block on the data stack at the
+        /// entry frame's base, which this reads, copies out and releases.
+        /// </para>
+        /// <para>
+        /// How many slots came back is read off the stack pointer rather than out of shared state:
+        /// a run ending in <see cref="OpCode.ReturnValues"/> leaves <c>sp</c> exactly one result
+        /// block above the frame base, and every other return leaves it at the frame base. Both
+        /// facts survive nesting untouched - an inner re-entrant run unwinds completely before the
+        /// outer one resumes - so no per-run bookkeeping is needed.
+        /// </para>
+        /// </remarks>
+        /// <param name="method">The bytecode or native method to call.</param>
+        /// <param name="arguments">
+        /// The arguments to push, receiver included for an instance method.
+        /// </param>
+        /// <param name="destination">
+        /// Receives the result slots. Sized by the caller from the callee's declared result width;
+        /// never more than that width is written.
+        /// </param>
+        /// <returns>How many slots were written.</returns>
+        internal int CallForResults(SurtrMethodInfo method, ReadOnlySpan<SurtrValue> arguments, Span<SurtrRawValue> destination)
+        {
+            if (method is null)
+                throw new ArgumentNullException(nameof(method));
+
+            for (int i = 0; i < arguments.Length; i++)
+                Push(arguments[i]);
+
+            SurtrRawValue* resultBase = _sp - arguments.Length;
+            int entryDepth = _frameCount;
+
+            SurtrValue single = Call(method, arguments.Length);
+
+            // A single-slot result came back as the ordinary return value with the stack pointer
+            // back at the frame base - true for a native call as well, whose wrapper resets sp
+            // over its arguments before answering.
+            if (_sp == resultBase)
+            {
+                if (destination.Length > 0)
+                    destination[0] = single.Raw;
+
+                return 1;
+            }
+
+            int slotCount = (int)(_sp - resultBase);
+            if (slotCount > destination.Length)
+                slotCount = destination.Length;
+
+            for (int i = 0; i < slotCount; i++)
+                destination[i] = resultBase[i];
+
+            _sp = resultBase;
+            return slotCount;
+        }
+
         /// <summary>Drops everything on both stacks, for a host recovering from an uncaught exception.</summary>
         /// <summary>
         /// How many more instructions this machine may execute before it raises, or <c>0</c> for
@@ -3091,6 +3154,54 @@ namespace Surtr.VM
                     _sp = sp;
                     goto LoadFrame;
                 }
+
+                case OpCode.ReturnValues:
+                {
+                    // The result is a contiguous block sitting at the top of the operand stack.
+                    // The copy walks backwards because the destination (the frame base, below the
+                    // whole operand stack) can overlap the source whenever the block is wider than
+                    // the returning method's local count - backwards is the safe direction for
+                    // every destination-below-source move, overlap or not.
+                    int slotCount = *ip++;
+                    SurtrRawValue* source = sp - slotCount;
+
+                    int depth = _frameCount - 1;
+                    ref SurtrCallFrame finished = ref frames[depth];
+
+                    sp = finished.Base;
+                    int expected = finished.ExpectedResults;
+
+                    finished.Chunk = null;
+                    finished.Method = null;
+                    finished.Closure = null;
+                    roots[depth + 1] = 0;
+                    _frameCount = depth;
+
+                    if (depth == entryDepth)
+                    {
+                        // A run ending here hands results to the host, which reads them off the
+                        // stack through CallForResults rather than through this single-value
+                        // return - hence the sentinel instead of one slot.
+                        if (expected != 0)
+                        {
+                            for (int i = slotCount - 1; i >= 0; i--) sp[i] = source[i];
+                            sp += slotCount;
+                        }
+
+                        _sp = sp;
+                        if (budgeted) _stepsRemaining = steps;
+                        return SurtrValue.Null;
+                    }
+
+                    if (expected != 0)
+                    {
+                        for (int i = slotCount - 1; i >= 0; i--) sp[i] = source[i];
+                        sp += slotCount;
+                    }
+
+                    _sp = sp;
+                    goto LoadFrame;
+                }
                 #endregion
 
                 #region Nullable Primitive Operations
@@ -3179,6 +3290,91 @@ namespace Surtr.VM
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
+                }
+                #endregion
+
+                #region Value Type Operations
+                case OpCode.LoadValueLocal:
+                {
+                    SurtrRawValue* source = frameBase + (ip[0] | (ip[1] << 8));
+                    int slotCount = ip[2];
+                    ip += 3;
+
+                    for (int i = 0; i < slotCount; i++)
+                        *sp++ = source[i];
+
+                    goto Dispatch;
+                }
+
+                case OpCode.StoreValueLocal:
+                {
+                    SurtrRawValue* destination = frameBase + (ip[0] | (ip[1] << 8));
+                    int slotCount = ip[2];
+                    ip += 3;
+
+                    // The block being stored sits on the operand stack, which begins at
+                    // frameBase + LocalCount, and the destination range ends at or before that -
+                    // the compiler sized the local to hold it - so a forward copy never overlaps.
+                    sp -= slotCount;
+                    for (int i = 0; i < slotCount; i++)
+                        destination[i] = sp[i];
+
+                    goto Dispatch;
+                }
+
+                case OpCode.LoadLocalField:
+                {
+                    int index = ip[0] | (ip[1] << 8);
+                    int offset = ip[2] | (ip[3] << 8);
+                    ip += 4;
+
+                    *sp++ = frameBase[index + offset];
+                    goto Dispatch;
+                }
+
+                case OpCode.StoreLocalField:
+                {
+                    int index = ip[0] | (ip[1] << 8);
+                    int offset = ip[2] | (ip[3] << 8);
+                    ip += 4;
+
+                    sp--;
+                    frameBase[index + offset] = *sp;
+                    goto Dispatch;
+                }
+
+                case OpCode.BoxValue:
+                {
+                    var declared = typeTable[(ip[0] | (ip[1] << 8))].ResolvedClass!;
+                    int slotCount = ip[2];
+                    ip += 3;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    // The box is an ordinary instance whose field slots receive the stack slots
+                    // verbatim, so every path that walks instances already walks a boxed value.
+                    var box = new SurtrInstance(declared);
+                    var fields = box.Fields;
+
+                    SurtrRef reference = context.EntityRegistry.Register(box, out entities);
+
+                    sp -= slotCount;
+                    for (int i = 0; i < slotCount; i++)
+                        fields[i] = SurtrValue.FromRaw(sp[i]);
+
+                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Safepoint;
+                }
+
+                case OpCode.UnboxValue:
+                {
+                    int slotCount = *ip++;
+                    var fields = ((SurtrInstance)entities[(SurtrRef)(*--sp)]!).Fields;
+
+                    for (int i = 0; i < slotCount; i++)
+                        *sp++ = fields[i].Raw;
+
+                    goto Dispatch;
                 }
                 #endregion
 

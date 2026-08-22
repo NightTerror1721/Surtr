@@ -1161,6 +1161,119 @@ namespace Surtr.Bytecode.Emit
             return this;
         }
 
+        /// <summary>Emits <see cref="OpCode.ReturnValues"/>.</summary>
+        /// <param name="slots">
+        /// How many contiguous slots the method returns - the flattened width of its declared
+        /// return type. At least two: a one-slot result keeps using <see cref="ReturnValue"/>.
+        /// </param>
+        public SurtrCodeEmitter ReturnValues(int slots)
+        {
+            if (slots < 2 || slots > byte.MaxValue)
+                throw new ArgumentException($"A multi-slot return carries between 2 and {byte.MaxValue} slots, not {slots}.", nameof(slots));
+
+            Track(slots, 0);
+            _code.Add((byte)OpCode.ReturnValues);
+            _code.Add((byte)slots);
+            EndFlow();
+            return this;
+        }
+
+        #endregion
+
+        #region Value Type Operations
+
+        /// <summary>Emits <see cref="OpCode.LoadValueLocal"/>.</summary>
+        /// <param name="localIndex">First slot of the local range holding the value.</param>
+        /// <param name="slots">How many slots wide the value is; at least two.</param>
+        public SurtrCodeEmitter LoadValueLocal(int localIndex, int slots)
+        {
+            CheckRange(localIndex, 0, ushort.MaxValue, OpCode.LoadValueLocal, "localIdx");
+
+            if (slots < 2 || slots > byte.MaxValue)
+                throw new ArgumentException($"A multi-slot load moves between 2 and {byte.MaxValue} slots, not {slots}.", nameof(slots));
+
+            Track(0, slots);
+            _code.Add((byte)OpCode.LoadValueLocal);
+            _code.Add((byte)localIndex);
+            _code.Add((byte)(localIndex >> 8));
+            _code.Add((byte)slots);
+            return this;
+        }
+
+        /// <summary>Emits <see cref="OpCode.StoreValueLocal"/>.</summary>
+        public SurtrCodeEmitter StoreValueLocal(int localIndex, int slots)
+        {
+            CheckRange(localIndex, 0, ushort.MaxValue, OpCode.StoreValueLocal, "localIdx");
+
+            if (slots < 2 || slots > byte.MaxValue)
+                throw new ArgumentException($"A multi-slot store moves between 2 and {byte.MaxValue} slots, not {slots}.", nameof(slots));
+
+            Track(slots, 0);
+            _code.Add((byte)OpCode.StoreValueLocal);
+            _code.Add((byte)localIndex);
+            _code.Add((byte)(localIndex >> 8));
+            _code.Add((byte)slots);
+            return this;
+        }
+
+        /// <summary>Emits <see cref="OpCode.LoadLocalField"/>.</summary>
+        /// <param name="localIndex">First slot of the local range holding the value.</param>
+        /// <param name="offset">
+        /// Absolute slot offset of the field inside the frame - local index plus the field's own
+        /// offset within the value's flattened layout, already summed by the compiler.
+        /// </param>
+        public SurtrCodeEmitter LoadLocalField(int localIndex, int offset)
+        {
+            CheckRange(localIndex, 0, ushort.MaxValue, OpCode.LoadLocalField, "localIdx");
+            CheckRange(offset, 0, ushort.MaxValue, OpCode.LoadLocalField, "offset");
+
+            Track(0, 1);
+            _code.Add((byte)OpCode.LoadLocalField);
+            _code.Add((byte)localIndex);
+            _code.Add((byte)(localIndex >> 8));
+            _code.Add((byte)offset);
+            _code.Add((byte)(offset >> 8));
+            return this;
+        }
+
+        /// <summary>Emits <see cref="OpCode.StoreLocalField"/>.</summary>
+        public SurtrCodeEmitter StoreLocalField(int localIndex, int offset)
+        {
+            CheckRange(localIndex, 0, ushort.MaxValue, OpCode.StoreLocalField, "localIdx");
+            CheckRange(offset, 0, ushort.MaxValue, OpCode.StoreLocalField, "offset");
+
+            Track(1, 0);
+            _code.Add((byte)OpCode.StoreLocalField);
+            _code.Add((byte)localIndex);
+            _code.Add((byte)(localIndex >> 8));
+            _code.Add((byte)offset);
+            _code.Add((byte)(offset >> 8));
+            return this;
+        }
+
+        /// <summary>Emits <see cref="OpCode.BoxValue"/>.</summary>
+        /// <param name="type">The value class to box as, whose layout receives the stack slots.</param>
+        /// <param name="slots">How many contiguous slots the box receives; at least two.</param>
+        public SurtrCodeEmitter BoxValue(SurtrTypeToken type, int slots)
+        {
+            if (slots < 2 || slots > byte.MaxValue)
+                throw new ArgumentException($"A value-type box holds between 2 and {byte.MaxValue} slots, not {slots}.", nameof(slots));
+
+            return WithTypeAnd(OpCode.BoxValue, type, slots, 1, byte.MaxValue, slots, 1, "slotCount");
+        }
+
+        /// <summary>Emits <see cref="OpCode.UnboxValue"/>.</summary>
+        public SurtrCodeEmitter UnboxValue(int slots)
+        {
+            if (slots < 2 || slots > byte.MaxValue)
+                throw new ArgumentException($"A value-type unbox yields between 2 and {byte.MaxValue} slots, not {slots}.", nameof(slots));
+
+            Track(1, slots);
+            _code.Add((byte)OpCode.UnboxValue);
+            _code.Add((byte)slots);
+            return this;
+        }
+
         #endregion
     }
 }

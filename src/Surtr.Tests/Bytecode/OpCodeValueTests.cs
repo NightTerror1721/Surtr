@@ -83,7 +83,9 @@ namespace Surtr.Tests.Bytecode
             (OpCode.GetTypeOfValue, 0xDF), (OpCode.LoadModule, 0xE0), (OpCode.LoadModuleX, 0xE1),
             (OpCode.LoadCurrentModule, 0xE2), (OpCode.BoxDynamic, 0xE3), (OpCode.DynEQ, 0xE4),
             (OpCode.DynNE, 0xE5), (OpCode.UnboxDynamic, 0xE6), (OpCode.NewFunction, 0xE7),
-            (OpCode.NewFunctionX, 0xE8)
+            (OpCode.NewFunctionX, 0xE8), (OpCode.ReturnValues, 0xE9), (OpCode.LoadValueLocal, 0xEA),
+            (OpCode.StoreValueLocal, 0xEB), (OpCode.LoadLocalField, 0xEC), (OpCode.StoreLocalField, 0xED),
+            (OpCode.BoxValue, 0xEE), (OpCode.UnboxValue, 0xEF)
         };
 
         [Fact]

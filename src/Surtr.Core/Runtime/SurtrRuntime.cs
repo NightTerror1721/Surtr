@@ -1425,6 +1425,58 @@ namespace Surtr.Runtime
             => VirtualMachine.CallClosure(closure, arguments);
 
         /// <summary>
+        /// Calls a method and copies every slot of its result into <paramref name="results"/>.
+        /// </summary>
+        /// <remarks>
+        /// The multi-slot shape of <see cref="Invoke(SurtrMethodInfo, ReadOnlySpan{SurtrValue})"/>:
+        /// a method whose declared return type occupies more than one slot answers through here,
+        /// one slot per element, deepest field first - the same order the callee's
+        /// <c>ReturnValues</c> writes them. A single-value or void method works too, answering one
+        /// or zero slots, so a host written against this overload never needs the other form.
+        /// </remarks>
+        /// <returns>
+        /// <see langword="false"/> only when the method's result does not fit
+        /// <paramref name="results"/>; the call still ran.
+        /// </returns>
+        /// <exception cref="VM.SurtrExecutionException">The call trapped, or raised an exception nothing caught.</exception>
+        public bool TryInvoke(SurtrMethodInfo method, ReadOnlySpan<SurtrValue> arguments, Span<SurtrValue> results)
+        {
+            int slotCount = ResultSlotCount(method);
+            if (slotCount == 0)
+            {
+                VirtualMachine.Call(method, arguments);
+                return true;
+            }
+
+            if (results.Length < slotCount)
+                return false;
+
+            Span<SurtrRawValue> raw = slotCount <= 32 ? stackalloc SurtrRawValue[slotCount] : new SurtrRawValue[slotCount];
+            VirtualMachine.CallForResults(method, arguments, raw);
+
+            for (int i = 0; i < slotCount; i++)
+                results[i] = SurtrValue.FromRaw(raw[i]);
+
+            return true;
+        }
+
+        /// <summary>
+        /// How many data-stack slots one call to <paramref name="method"/> leaves behind: zero for
+        /// void, the flattened width of a value-type return, one for everything else.
+        /// </summary>
+        private static int ResultSlotCount(SurtrMethodInfo method)
+        {
+            if (method.ReturnType.Reference.TypeCode.IsVoid)
+                return 0;
+
+            var resolved = method.ReturnType.ResolvedType;
+            if (resolved is SurtrClass { IsValueType: true } valueClass && valueClass.FlattenedSlotWidth > 1)
+                return valueClass.FlattenedSlotWidth;
+
+            return 1;
+        }
+
+        /// <summary>
         /// Discards whatever a failed call left on the interpreter's stacks.
         /// </summary>
         /// <remarks>

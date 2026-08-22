@@ -578,6 +578,7 @@ namespace Surtr.Bytecode.Image
             bool isAbstract = reader.ReadBoolean();
             bool isSealed = reader.ReadBoolean();
             bool isEnum = reader.ReadBoolean();
+            bool isValueType = reader.ReadBoolean();
 
             string? baseDescriptor = state.OptionalText();
 
@@ -605,6 +606,10 @@ namespace Surtr.Bytecode.Image
                 declaringType,
                 isSealed && !isEnum,
                 isEnum);
+
+            // Before linking: the linker reads it to decide between the ordinary one-slot-per-
+            // field layout and the flattened value layout.
+            type.IsValueType = isValueType;
 
             if (!selfHandle.IsResolved)
                 selfHandle.Resolve(type);

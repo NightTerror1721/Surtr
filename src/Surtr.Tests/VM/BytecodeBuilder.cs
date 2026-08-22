@@ -297,7 +297,8 @@ namespace Surtr.Tests.VM
             SurtrMethodRole role = SurtrMethodRole.Normal,
             bool isOverride = false,
             SurtrParameterInfo[]? parameters = null,
-            string name = "test")
+            string name = "test",
+            SurtrClassReference? returnType = null)
         {
             foreach (var patch in _patches)
             {
@@ -326,14 +327,17 @@ namespace Surtr.Tests.VM
             chunk.MethodTable = _methodTable.ToArray();
             chunk.ModuleTable = _moduleTable.ToArray();
 
-            var returnType = module.TypeHandles.GetOrAdd(SurtrClassReference.Void);
+            // Declared void unless the test says otherwise: the interpreter never reads a
+            // method's return type, but the host boundary (ResultSlotCount) does, so a test
+            // exercising TryInvoke has to declare what its body actually returns.
+            var resolvedReturnType = module.TypeHandles.GetOrAdd(returnType ?? SurtrClassReference.Void);
 
             return new SurtrBytecodeMethodInfo(
                 name,
                 dispatch,
                 role,
                 isOverride,
-                returnType,
+                resolvedReturnType,
                 parameters ?? Array.Empty<SurtrParameterInfo>(),
                 isStatic: false,
                 SurtrVisibility.Public,

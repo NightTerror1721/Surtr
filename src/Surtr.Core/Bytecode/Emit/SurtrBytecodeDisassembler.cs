@@ -1009,8 +1009,22 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.UpValueGet:
                 case OpCode.StrCat:
                 case OpCode.PushAbsent:
+                case OpCode.ReturnValues:
+                case OpCode.UnboxValue:
                     builder.Append(' ').Append(chunk.Code[operand]).AppendLine();
                     return operand + 1;
+
+                case OpCode.LoadValueLocal:
+                case OpCode.StoreValueLocal:
+                    builder.Append(' ').Append(ReadU16(chunk, operand))
+                           .Append(" x").Append(chunk.Code[operand + 2]).AppendLine();
+                    return operand + 3;
+
+                case OpCode.LoadLocalField:
+                case OpCode.StoreLocalField:
+                    builder.Append(' ').Append(ReadU16(chunk, operand))
+                           .Append('+').Append(ReadU16(chunk, operand + 2)).AppendLine();
+                    return operand + 4;
 
                 case OpCode.IncLocal:
                     builder.Append(' ').Append(chunk.Code[operand])
@@ -1065,6 +1079,11 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.TupPack:
                     AppendTypeName(builder, chunk, ReadU16(chunk, operand));
                     builder.Append(" count=").Append(chunk.Code[operand + 2]).AppendLine();
+                    return operand + 3;
+
+                case OpCode.BoxValue:
+                    AppendTypeName(builder, chunk, ReadU16(chunk, operand));
+                    builder.Append(" x").Append(chunk.Code[operand + 2]).AppendLine();
                     return operand + 3;
 
                 // ---- field access table ------------------------------------------------------

@@ -988,6 +988,75 @@ namespace Surtr.Bytecode
         #endregion
 
 
+        #region Value Type Operations
+        /// <summary>Copies a multi-slot value out of a local range onto the operand stack.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) localIdx(2) n(1)</c> - 4 bytes.<br/>
+        /// Stack: <c>... -&gt; ..., s1, ..., sn</c><br/>
+        /// Notes: the whole block moves; nothing is resolved and no tag is inspected. What a load
+        /// of a variable whose declared type occupies more than one slot lowers to - a one-slot
+        /// type keeps using <see cref="Ldl"/> and its dedicated forms. The count travels in the
+        /// instruction so the interpreter never resolves a type to move bytes.
+        /// </remarks>
+        LoadValueLocal = 0xEA,
+
+        /// <summary>Pops a multi-slot value into a local range.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) localIdx(2) n(1)</c> - 4 bytes.<br/>
+        /// Stack: <c>..., s1, ..., sn -&gt; ...</c><br/>
+        /// Notes: the mirror of <see cref="LoadValueLocal"/>, and what an assignment to such a
+        /// variable lowers to - copying the block is exactly the copy-on-assignment semantics of
+        /// a value type.
+        /// </remarks>
+        StoreValueLocal = 0xEB,
+
+        /// <summary>Reads one slot at a fixed offset inside a local range.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) localIdx(2) offset(2)</c> - 5 bytes.<br/>
+        /// Stack: <c>... -&gt; ..., value</c><br/>
+        /// Notes: what reading one field of a multi-slot local lowers to - <c>v.x</c> reads slot
+        /// <c>local + 0</c> without moving the rest of the value anywhere. The offset is absolute
+        /// within the frame (local index plus field offset, already summed by the compiler), so
+        /// the read is one indexed load off the frame base.
+        /// </remarks>
+        LoadLocalField = 0xEC,
+
+        /// <summary>Writes one slot at a fixed offset inside a local range.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) localIdx(2) offset(2)</c> - 5 bytes.<br/>
+        /// Stack: <c>..., value -&gt; ...</c><br/>
+        /// Notes: the write side of <see cref="LoadLocalField"/>. In practice only the compiler's
+        /// constructor splice emits it - fields of a value class are <c>let</c>, so assignment is
+        /// construction - but the opcode itself does not care who writes or when.
+        /// </remarks>
+        StoreLocalField = 0xED,
+
+        /// <summary>Boxes a multi-slot value on top of the stack as an instance of its class.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) typeIdx(2) n(1)</c> - 4 bytes.<br/>
+        /// Stack: <c>..., s1, ..., sn -&gt; ..., ref</c><br/>
+        /// Notes: what a value type flowing into a reference-typed slot boxes through. The box is
+        /// an ordinary instance of the named class whose field slots receive the <c>n</c> stack
+        /// slots verbatim - which is why every existing path that walks instances (field access,
+        /// virtual dispatch, the collector through the class's reference-slot map) already knows
+        /// how to walk a boxed value. Allocates, so it routes through the safepoint like every
+        /// other allocation opcode.
+        /// </remarks>
+        BoxValue = 0xEE,
+
+        /// <summary>Copies the field slots of a boxed value back onto the operand stack.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) n(1)</c> - 2 bytes.<br/>
+        /// Stack: <c>..., ref -&gt; ..., s1, ..., sn</c><br/>
+        /// Notes: the mirror of <see cref="BoxValue"/>. The count is an immediate because the
+        /// compiler knows the subject's layout statically; the receiver itself is not re-checked -
+        /// a cast to the value type has already run by the time this executes, exactly as
+        /// <see cref="Unbox"/> assumes its subject is a box.
+        /// </remarks>
+        UnboxValue = 0xEF,
+        #endregion
+
+
         #region Type Tests and Casts
         /// <summary>Tests whether the top value is an instance of the type at <c>typeIdx</c>.</summary>
         /// <remarks>
@@ -1624,6 +1693,20 @@ namespace Surtr.Bytecode
         /// packing them into a tuple first, since there is no multi-value return instruction.
         /// </remarks>
         ReturnValue = 0xB5,
+
+        /// <summary>Returns from the current function with several contiguous values.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) n(1)</c> - 2 bytes.<br/>
+        /// Stack: <c>..., s1, ..., sn -&gt; ...</c><br/>
+        /// Notes: pops <c>n</c> contiguous slots and writes them at the frame base when the caller
+        /// asked for a result (the call's <c>retCount</c> immediate != 0); discards them
+        /// otherwise. What a method whose declared return type occupies more than one slot returns:
+        /// the callee emits its own result slot count, so neither the call site nor the frame
+        /// protocol changes - <c>retCount</c> still answers zero or one <em>results</em>, and the
+        /// width of that one result is a fact about the callee's type. A one-slot return keeps
+        /// using <see cref="ReturnValue"/>, and returning nothing stays <see cref="ReturnVoid"/>.
+        /// </remarks>
+        ReturnValues = 0xE9,
         #endregion
 
 
