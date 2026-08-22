@@ -82,6 +82,16 @@ namespace Surtr.Runtime.Classes
 
             foreach (var field in module.Fields)
             {
+                // A module-level native field is not a real static: its value is the host's, and
+                // StaticFieldGet/StaticFieldSet reach it through entry points, so it gets no slot
+                // here (mirror of BuildFieldLayout). In practice the compiler lowers a module-level
+                // `native let` to a property, but AddField is public, so keep the guard for parity.
+                if (field is SurtrNativeFieldInfo)
+                {
+                    field.MarkBuilt();
+                    continue;
+                }
+
                 if (!field.IsStatic)
                     throw new InvalidOperationException(
                         $"Module-level variable '{module.Path}.{field.Name}' must be static; a module has no instances for an instance field to belong to.");
@@ -336,6 +346,15 @@ namespace Surtr.Runtime.Classes
 
             foreach (var field in type.Fields)
             {
+                // A native field owns no slot and no storage: its value lives in the host, and
+                // FieldGet/FieldSet reach it through entry points. It is built here (so it is
+                // frozen and legal to index in the field table) but contributes nothing to layout.
+                if (field is SurtrNativeFieldInfo)
+                {
+                    field.MarkBuilt();
+                    continue;
+                }
+
                 if (field.IsStatic)
                 {
                     field.SlotIndex = staticFields.Count;

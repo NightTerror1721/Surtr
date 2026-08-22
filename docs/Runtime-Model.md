@@ -26,6 +26,7 @@ SurtrRuntimeEntity
 ├── SurtrModule ................. the only top-level container
 └── SurtrMemberInfo ............. anything declared inside a module or a type
     ├── SurtrFieldInfo
+    │   └── SurtrNativeFieldInfo  a host-owned field (getter/setter entry points)
     ├── SurtrPropertyInfo
     ├── SurtrMethodInfo
     │   ├── SurtrBytecodeMethodInfo
@@ -329,6 +330,29 @@ discards it.
 loaded, by whichever runtime is loading it, through `SurtrRuntime.DefineNativeBody`. That is what
 lets a module carrying native members travel in an image. Until it is bound it points at a body that
 *reports the mistake* rather than at null.
+
+### 5.5 Native fields and native enums (host bridge)
+
+Two host-facing runtime extensions mirror the native-method story for state and for enums.
+
+**Native fields.** `SurtrNativeFieldInfo : SurtrFieldInfo` is a field whose value lives in the host,
+reached through native getter and setter entry points instead of a Surtr slot. It owns no slot in the
+instance layout and no static storage — the linker (`BuildFieldLayout`) skips it — and
+`FieldGet`/`FieldSet`/`StaticFieldGet`/`StaticFieldSet` recognize it and route the read or write
+through the entry points. This is the C# bridge's counterpart of a host field, exposed as a real
+Surtr *field* (not lowered to an accessor pair the way a source-level `native let`/`native var` is —
+see `Language-Syntax.md` §10; the language has no native-field spelling, only the bridge does). The
+getter receives the receiver as argument 0; the setter receives the receiver and the value; a static
+native field's entry points receive no receiver. Declared with
+`SurtrRuntime.DefineNativeField(...)`.
+
+**Native enums.** `SurtrRuntime.DefineNativeEnum(fullName)` builds a `SurtrClass` with `isEnum: true`
+(the native counterpart of a source enum), and `DefineNativeEnumCase(class, name, instance)` adds one
+case backed by a cached, rooted `SurtrNativeObject` wrapping the boxed host value. The cached objects
+are wired into the case fields' static storage when `FinishNativeClass` links the enum, so `MyEnum.A`
+in Surtr resolves to the one shared object and an exhaustive `switch` compiles to a dense jump table.
+The C# bridge caches one object per value (the CLR does not cache boxed enums), keyed by underlying
+value, so marshaling is O(1) with no boxing per call.
 
 ---
 

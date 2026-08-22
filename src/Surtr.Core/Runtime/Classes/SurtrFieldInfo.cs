@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 namespace Surtr.Runtime.Classes
 {
     /// <summary>Metadata for a field declared in a module or a class.</summary>
-    public sealed unsafe class SurtrFieldInfo : SurtrMemberInfo
+    public unsafe class SurtrFieldInfo : SurtrMemberInfo
     {
         private readonly SurtrTypeHandle _fieldType;
         private readonly bool _readOnly;

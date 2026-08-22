@@ -252,6 +252,8 @@ The frame's own slots, and the densest family in the set — local access is the
 
 Instance fields reach their storage through a slot index resolved when the declaring type was linked, so a read is an offset into the instance rather than a name lookup. Statics are a separate pair rather than a flag on the same opcode, because folding them together would put a static/instance test on one of the hottest instructions in the set — and a module-level variable is a static of its module, reaching its storage the same way.
 
+A **native field** (a `SurtrNativeFieldInfo`, declared by the host bridge, not by Surtr source) has no slot and no static storage; each of the six opcodes below first tests the field table entry and, when it is native, calls the field's getter or setter entry point instead of touching a slot. The test is a single type check on the entry the opcode already loaded, so the ordinary field path is unchanged.
+
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
 | `0x30` | `FieldGet` | `opcode(1) fieldIdx(2)` · 3 bytes | `..., obj -> ..., value` | Reads an instance field. The field table entry carries the slot index, so the read is a direct offset into the instance rather than a name lookup. A null receiver hits the CLR null check and surfaces as `NullReferenceException`. |
