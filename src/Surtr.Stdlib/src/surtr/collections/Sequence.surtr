@@ -14,29 +14,37 @@ public value class Sequence<T> : IIterable<T>
     
     public static fun of(elements: T...): Sequence<T> => Sequence<T>(() => ArrayIterator<T>(elements));
 
-    public fun map<U>(mapper : (T) -> U): Sequence<U> => Sequence<U>(() => MapIterator<T, U>(_provider(), mapper));
+    public inline fun map<U>(mapper : (T) -> U): Sequence<U> => Sequence<U>(() => MapIterator<T, U>(_provider(), mapper));
     
-    public fun flatMap<U>(mapper : (T) -> Sequence<U>): Sequence<U> => Sequence<U>(() => FlatMapIterator<T, U>(_provider(), mapper));
+    public inline fun flatMap<U>(mapper : (T) -> Sequence<U>): Sequence<U> => Sequence<U>(() => FlatMapIterator<T, U>(_provider(), mapper));
 
-    public fun filter(predicate : (T) -> bool): Sequence<T> => Sequence<T>(() => FilterIterator<T>(_provider(), predicate));
+    public inline fun filter(predicate : (T) -> bool): Sequence<T> => Sequence<T>(() => FilterIterator<T>(_provider(), predicate));
 
-    public fun take(count : int): Sequence<T> => Sequence<T>(() => TakeIterator<T>(_provider(), count));
+    public inline fun take(count : int): Sequence<T> => Sequence<T>(() => TakeIterator<T>(_provider(), count));
 
-    public fun skip(count : int): Sequence<T> => Sequence<T>(() => SkipIterator<T>(_provider(), count));
+    public inline fun skip(count : int): Sequence<T> => Sequence<T>(() => SkipIterator<T>(_provider(), count));
 
-    public fun distinct(): Sequence<T> => Sequence<T>(() => DistinctIterator<T>(_provider()));
+    public inline fun distinct(): Sequence<T> => Sequence<T>(() => DistinctIterator<T>(_provider()));
 
-    public fun sorted(comparator : (T, T) -> int): Sequence<T> => Sequence<T>(() => SortedIterator<T>(_provider(), comparator));
+    public inline fun sorted(comparator : (T, T) -> int): Sequence<T> => Sequence<T>(() => SortedIterator<T>(_provider(), comparator));
 
-    public fun chain(other : Sequence<T>): Sequence<T> => Sequence<T>(() => ChainIterator<T>(_provider(), other._provider()));
+    public inline fun chain(other : Sequence<T>): Sequence<T> => Sequence<T>(() => ChainIterator<T>(_provider(), other._provider()));
 
-    public fun zip<U>(other : Sequence<U>): Sequence<(T, U)> => Sequence<(T, U)>(() => ZipIterator<T, U>(_provider(), other._provider()));
+    public inline fun zip<U>(other : Sequence<U>): Sequence<(T, U)> => Sequence<(T, U)>(() => ZipIterator<T, U>(_provider(), other._provider()));
 
-    public fun enumerate(): Sequence<(int, T)> => Sequence<(int, T)>(() => EnumerateIterator<T>(_provider()));
+    public inline fun enumerate(): Sequence<(int, T)> => Sequence<(int, T)>(() => EnumerateIterator<T>(_provider()));
 
-    public fun reverse(): Sequence<T> => Sequence<T>(() => ReverseIterator<T>(_provider()));
+    public inline fun reverse(): Sequence<T> => Sequence<T>(() => ReverseIterator<T>(_provider()));
 
-    public fun cast<U>(): Sequence<U> => Sequence<U>(() => CastIterator<T, U>(_provider()));
+    public inline fun cast<U>(): Sequence<U> => Sequence<U>(() => CastIterator<T, U>(_provider()));
+
+    public inline fun safeCast<U>(): Sequence<U> => Sequence<U>(() => SafeCastIterator<T, U>(_provider()));
+
+    public inline fun takeWhile(predicate: (T) -> bool): Sequence<T> => Sequence<T>(() => TakeWhileIterator<T>(_provider(), predicate));
+
+    public inline fun skipWhile(predicate: (T) -> bool): Sequence<T> => Sequence<T>(() => SkipWhileIterator<T>(_provider(), predicate));
+
+    public inline fun onEach(action: (T) -> void): Sequence<T> => Sequence<T>(() => OnEachIterator<T>(_provider(), action));
 
 
     public fun forEach(action : (T) -> void): void
@@ -53,6 +61,14 @@ public value class Sequence<T> : IIterable<T>
         while (iter.moveNext())
             result = reducer(result, iter.current);
         return result;
+    }
+
+    public fun firstOrNull(): T?
+    {
+        var iter = _provider();
+        if (iter.moveNext())
+            return iter.current;
+        return null;
     }
 
     public fun firstOrNull(predicate : (T) -> bool): T?
@@ -121,6 +137,7 @@ class FilterIterator<T> : IIterator<T>
 {
     private let _source: IIterator<T>;
     private let _predicate: (T) -> bool;
+    private var _valid: bool = false;
 
     public constructor(source: IIterator<T>, predicate: (T) -> bool)
     {
@@ -128,15 +145,27 @@ class FilterIterator<T> : IIterator<T>
         this._predicate = predicate;
     }
 
-    public inline current: T => _source.current;
+    public current: T
+    {
+        get
+        {
+            if (!_valid)
+                throw InvalidOperationException("No current element. Call moveNext() first.");
+            return _source.current;
+        }
+    }
 
-    public fun moveNext(): bool
+    public inline fun moveNext(): bool
     {
         while (_source.moveNext())
         {
             if (_predicate(_source.current))
+            {
+                _valid = true;
                 return true;
+            }
         }
+        _valid = false;
         return false;
     }
 }
@@ -145,6 +174,7 @@ class MapIterator<T, U> : IIterator<U>
 {
     private let _source: IIterator<T>;
     private let _mapper: (T) -> U;
+    private var _valid: bool = false;
 
     public constructor(source: IIterator<T>, mapper: (T) -> U)
     {
@@ -152,11 +182,25 @@ class MapIterator<T, U> : IIterator<U>
         this._mapper = mapper;
     }
 
-    public inline current: U => _mapper(_source.current);
+    public current: U
+    {
+        get
+        {
+            if (!_valid)
+                throw InvalidOperationException("No current element. Call moveNext() first.");
+            return _mapper(_source.current);
+        }
+    }
 
     public inline fun moveNext(): bool
     {
-        return _source.moveNext();
+        if (_source.moveNext())
+        {
+            _valid = true;
+            return true;
+        }
+        _valid = false;
+        return false;
     }
 }
 
@@ -182,7 +226,7 @@ class FlatMapIterator<T, U> : IIterator<U>
         }
     }
 
-    public fun moveNext(): bool
+    public inline fun moveNext(): bool
     {
         while (true)
         {
@@ -202,6 +246,7 @@ class TakeIterator<T> : IIterator<T>
     private let _source: IIterator<T>;
     private let _count: int;
     private var _taken: int = 0;
+    private var _valid: bool = false;
 
     public constructor(source: IIterator<T>, count: int)
     {
@@ -209,16 +254,30 @@ class TakeIterator<T> : IIterator<T>
         this._count = count;
     }
 
-    public inline current: T => _source.current;
-
-    public fun moveNext(): bool
+    public current: T
     {
-        if (_taken >= _count) return false;
+        get
+        {
+            if (!_valid)
+                throw InvalidOperationException("No current element. Call moveNext() first.");
+            return _source.current;
+        }
+    }
+
+    public inline fun moveNext(): bool
+    {
+        if (_taken >= _count)
+        {
+            _valid = false;
+            return false;
+        }
         if (_source.moveNext())
         {
             _taken++;
+            _valid = true;
             return true;
         }
+        _valid = false;
         return false;
     }
 }
@@ -228,6 +287,7 @@ class SkipIterator<T> : IIterator<T>
     private let _source: IIterator<T>;
     private let _count: int;
     private var _skipped: int = 0;
+    private var _valid: bool = false;
 
     public constructor(source: IIterator<T>, count: int)
     {
@@ -235,13 +295,27 @@ class SkipIterator<T> : IIterator<T>
         this._count = count;
     }
 
-    public inline current: T => _source.current;
+    public current: T
+    {
+        get
+        {
+            if (!_valid)
+                throw InvalidOperationException("No current element. Call moveNext() first.");
+            return _source.current;
+        }
+    }
 
-    public fun moveNext(): bool
+    public inline fun moveNext(): bool
     {
         while (_skipped < _count && _source.moveNext())
             _skipped++;
-        return _source.moveNext();
+        if (_source.moveNext())
+        {
+            _valid = true;
+            return true;
+        }
+        _valid = false;
+        return false;
     }
 }
 
@@ -249,24 +323,35 @@ class DistinctIterator<T> : IIterator<T>
 {
     private let _source: IIterator<T>;
     private let _seen: {T: bool} = {};
+    private var _valid: bool = false;
 
     public constructor(source: IIterator<T>)
     {
         this._source = source;
     }
 
-    public inline current: T => _source.current;
+    public current: T
+    {
+        get
+        {
+            if (!_valid)
+                throw InvalidOperationException("No current element. Call moveNext() first.");
+            return _source.current;
+        }
+    }
 
-    public fun moveNext(): bool
+    public inline fun moveNext(): bool
     {
         while (_source.moveNext())
         {
             if (!_seen.containsKey(_source.current))
             {
                 _seen[_source.current] = true;
+                _valid = true;
                 return true;
             }
         }
+        _valid = false;
         return false;
     }
 }
@@ -275,6 +360,7 @@ class SortedIterator<T> : IIterator<T>
 {
     private let _sortedItems: T[];
     private var _index: int = -1;
+    private var _valid: bool = false;
 
     public constructor(source: IIterator<T>, comparator: (T, T) -> int)
     {
@@ -291,19 +377,21 @@ class SortedIterator<T> : IIterator<T>
     {
         get
         {
-            if (_index < 0 || _index >= _sortedItems.length)
-                throw InvalidOperationException("Iterator is out of bounds.");
+            if (!_valid)
+                throw InvalidOperationException("No current element. Call moveNext() first.");
             return _sortedItems[_index];
         }
     }
 
-    public fun moveNext(): bool
+    public inline fun moveNext(): bool
     {
         if (_index + 1 < _sortedItems.length)
         {
             _index++;
+            _valid = true;
             return true;
         }
+        _valid = false;
         return false;
     }
 }
@@ -313,6 +401,7 @@ class ChainIterator<T> : IIterator<T>
     private let _first: IIterator<T>;
     private let _second: IIterator<T>;
     private var _usingFirst: bool = true;
+    private var _valid: bool = false;
 
     public constructor(first: IIterator<T>, second: IIterator<T>)
     {
@@ -324,6 +413,8 @@ class ChainIterator<T> : IIterator<T>
     {
         get
         {
+            if (!_valid)
+                throw InvalidOperationException("No current element. Call moveNext() first.");
             if (_usingFirst)
                 return _first.current;
             else
@@ -331,16 +422,25 @@ class ChainIterator<T> : IIterator<T>
         }
     }
 
-    public fun moveNext(): bool
+    public inline fun moveNext(): bool
     {
         if (_usingFirst)
         {
             if (_first.moveNext())
+            {
+                _valid = true;
                 return true;
+            }
             else
                 _usingFirst = false;
         }
-        return _second.moveNext();
+        if (_second.moveNext())
+        {
+            _valid = true;
+            return true;
+        }
+        _valid = false;
+        return false;
     }
 }
 
@@ -348,6 +448,7 @@ class ZipIterator<T, U> : IIterator<(T, U)>
 {
     private let _first: IIterator<T>;
     private let _second: IIterator<U>;
+    private var _valid: bool = false;
 
     public constructor(first: IIterator<T>, second: IIterator<U>)
     {
@@ -355,15 +456,33 @@ class ZipIterator<T, U> : IIterator<(T, U)>
         this._second = second;
     }
 
-    public inline current: (T, U) => (_first.current, _second.current);
+    public current: (T, U)
+    {
+        get
+        {
+            if (!_valid)
+                throw InvalidOperationException("No current element. Call moveNext() first.");
+            return (_first.current, _second.current);
+        }
+    }
 
-    public inline fun moveNext(): bool => _first.moveNext() && _second.moveNext();
+    public inline fun moveNext(): bool
+    {
+        if (_first.moveNext() && _second.moveNext())
+        {
+            _valid = true;
+            return true;
+        }
+        _valid = false;
+        return false;
+    }
 }
 
 class EnumerateIterator<T> : IIterator<(int, T)>
 {
     private let _source: IIterator<T>;
     private var _index: int = -1;
+    private var _valid: bool = false;
 
     public constructor(source: IIterator<T>)
     {
@@ -374,19 +493,21 @@ class EnumerateIterator<T> : IIterator<(int, T)>
     {
         get
         {
-            if (_index < 0)
+            if (!_valid)
                 throw InvalidOperationException("No current element. Call moveNext() first.");
             return (_index, _source.current);
         }
     }
 
-    public fun moveNext(): bool
+    public inline fun moveNext(): bool
     {
         if (_source.moveNext())
         {
             _index++;
+            _valid = true;
             return true;
         }
+        _valid = false;
         return false;
     }
 }
@@ -395,6 +516,7 @@ class ReverseIterator<T> : IIterator<T>
 {
     private let _items: T[];
     private var _index: int;
+    private var _valid: bool = false;
 
     public constructor(source: IIterator<T>)
     {
@@ -411,19 +533,21 @@ class ReverseIterator<T> : IIterator<T>
     {
         get
         {
-            if (_index < 0 || _index >= _items.length)
-                throw InvalidOperationException("Iterator is out of bounds.");
+            if (!_valid)
+                throw InvalidOperationException("No current element. Call moveNext() first.");
             return _items[_index];
         }
     }
 
-    public fun moveNext(): bool
+    public inline fun moveNext(): bool
     {
         if (_index > 0)
         {
             _index--;
+            _valid = true;
             return true;
         }
+        _valid = false;
         return false;
     }
 }
@@ -431,15 +555,196 @@ class ReverseIterator<T> : IIterator<T>
 class CastIterator<T, U> : IIterator<U>
 {
     private let _source: IIterator<T>;
+    private var _valid: bool = false;
 
     public constructor(source: IIterator<T>)
     {
         this._source = source;
     }
 
-    public inline current: U => _source.current as U;
+    public current: U
+    {
+        get
+        {
+            if (!_valid)
+                throw InvalidOperationException("No current element. Call moveNext() first.");
+            return _source.current as U;
+        }
+    }
 
-    public inline fun moveNext(): bool => _source.moveNext();
+    public inline fun moveNext(): bool
+    {
+        if (_source.moveNext())
+        {
+            _valid = true;
+            return true;
+        }
+        _valid = false;
+        return false;
+    }
+}
+
+class SafeCastIterator<T, U> : IIterator<U>
+{
+    private let _source: IIterator<T>;
+    private var _valid: bool = false;
+
+    public constructor(source: IIterator<T>)
+    {
+        this._source = source;
+    }
+
+    public current: U
+    {
+        get
+        {
+            if (!_valid)
+                throw InvalidOperationException("No current element. Call moveNext() first.");
+            return _source.current as? U ?? throw InvalidCastException("Element is not of type U.");
+        }
+    }
+
+    public inline fun moveNext(): bool
+    {
+        if (_source.moveNext())
+        {
+            _valid = true;
+            return true;
+        }
+        _valid = false;
+        return false;
+    }
+}
+
+class TakeWhileIterator<T> : IIterator<T>
+{
+    private let _source: IIterator<T>;
+    private let _predicate: (T) -> bool;
+    private var _stopped: bool = false;
+    private var _valid: bool = false;
+
+    public constructor(source: IIterator<T>, predicate: (T) -> bool)
+    {
+        this._source = source;
+        this._predicate = predicate;
+    }
+
+    public current: T
+    {
+        get
+        {
+            if (!_valid)
+                throw InvalidOperationException("No current element. Call moveNext() first.");
+            return _source.current;
+        }
+    }
+
+    public inline fun moveNext(): bool
+    {
+        if (_stopped)
+        {
+            _valid = false;
+            return false;
+        }
+        if (_source.moveNext())
+        {
+            if (_predicate(_source.current))
+            {
+                _valid = true;
+                return true;
+            }
+            else
+            {
+                _stopped = true;
+                _valid = false;
+                return false;
+            }
+        }
+        _valid = false;
+        return false;
+    }
+}
+
+class SkipWhileIterator<T> : IIterator<T>
+{
+    private let _source: IIterator<T>;
+    private let _predicate: (T) -> bool;
+    private var _skipping: bool = true;
+    private var _valid: bool = false;
+
+    public constructor(source: IIterator<T>, predicate: (T) -> bool)
+    {
+        this._source = source;
+        this._predicate = predicate;
+    }
+
+    public current: T
+    {
+        get
+        {
+            if (!_valid)
+                throw InvalidOperationException("No current element. Call moveNext() first.");
+            return _source.current;
+        }
+    }
+
+    public inline fun moveNext(): bool
+    {
+        while (_source.moveNext())
+        {
+            if (_skipping)
+            {
+                if (!_predicate(_source.current))
+                {
+                    _skipping = false;
+                    _valid = true;
+                    return true;
+                }
+            }
+            else
+            {
+                _valid = true;
+                return true;
+            }
+        }
+        _valid = false;
+        return false;
+    }
+}
+
+class OnEachIterator<T> : IIterator<T>
+{
+    private let _source: IIterator<T>;
+    private let _action: (T) -> void;
+    private var _valid: bool = false;
+
+    public constructor(source: IIterator<T>, action: (T) -> void)
+    {
+        this._source = source;
+        this._action = action;
+    }
+
+    public current: T
+    {
+        get
+        {
+            if (!_valid)
+                throw InvalidOperationException("No current element. Call moveNext() first.");
+            return _source.current;
+        }
+    }
+
+    public inline fun moveNext(): bool
+    {
+        if (_source.moveNext())
+        {
+            _action(_source.current);
+            _valid = true;
+            return true;
+        }
+        _valid = false;
+        return false;
+    }
 }
 
 class ArrayIterator<T> : IIterator<T>
@@ -462,7 +767,7 @@ class ArrayIterator<T> : IIterator<T>
         }
     }
 
-    public fun moveNext(): bool
+    public inline fun moveNext(): bool
     {
         if (_index + 1 < _array.length)
         {
@@ -485,16 +790,16 @@ class SingleIterator<T> : IIterator<T>
 
     public inline current: T => _value;
 
-    public fun moveNext(): bool
-    {
-        if (!_hasMoved)
+    public inline fun moveNext(): bool
         {
-            _hasMoved = true;
-            return true;
+            if (!_hasMoved)
+            {
+                _hasMoved = true;
+                return true;
+            }
+            return false;
         }
-        return false;
     }
-}
 
 class EmptyIterator<T> : IIterator<T>
 {
