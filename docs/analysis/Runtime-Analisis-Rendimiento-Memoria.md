@@ -2,6 +2,11 @@
 
 > **Fecha:** 2026-08-22
 > **Actualización (2026-08-22):** la recomendación B (GC automático con políticas) quedó **implementada** el mismo día — ver `Registry-GC-Politicas.md` §9. Las secciones que la citan como pendiente están corregidas.
+>
+> **Estado del plan de mejoras (2026-08-22, tras implementación + bench A/B):**
+> - **HECHO:** B (GC automático, ya estaba), D (Register con `out bool resized`), I (puesta a cero de locales ≤16 B inline), F (inline cache para `InvokeInterface`, `interfaceCalls` −32 %), A (buffers de array unmanaged + pool, memoria de arrays −100 % bytes managed).
+> - **DESCARTADO con evidencia:** E (jump table keyed por valor, el orden es irrelevante), H (identidad de referencia por boxing), G (el internado enraizado choca con el GC).
+> - **Medición:** el switch gigante de `Run` es hipersensible al layout JIT entre binarios (±30-40 % de ruido por-workload); los deltas fiables son los consistentes entre todos los binarios (arriba). Suite: 2438 tests en verde.
 > **Alcance:** `Surtr.Core` (netstandard2.1, `AllowUnsafeBlocks`), el runtime, el VM y los objetos.
 > **Método:** lectura profunda del intérprete (`SurtrVirtualMachine.cs`, 3.244 líneas), la representación de valores (`SurtrValue.cs`), el registry (`SurtrEntityRegistry.cs`), la memoria no administrada (`MemOps.cs`, `SurtrNativeArray.cs`) y los planes `docs/VM-Plan.md` / `docs/Runtime-Model.md`.
 
