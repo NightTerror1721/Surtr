@@ -48,6 +48,15 @@ namespace Surtr.Compiler.Binding
         private readonly Dictionary<string, ModuleSymbol> _moduleSymbols =
             new Dictionary<string, ModuleSymbol>(StringComparer.Ordinal);
 
+        /// <summary>
+        /// The module paths whose <see cref="ModuleSymbol"/> has had its surface imported. Kept
+        /// apart from <see cref="_moduleSymbols"/> because that dictionary also holds
+        /// containing-module shells, which are empty by design until this importer - or nothing -
+        /// fills them.
+        /// </summary>
+        private readonly Dictionary<string, ModuleSymbol> _completedModules =
+            new Dictionary<string, ModuleSymbol>(StringComparer.Ordinal);
+
         /// <summary>Creates an importer that interns everything it builds through one factory.</summary>
         public MetadataImporter(TypeSymbolFactory factory)
         {
@@ -111,15 +120,29 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>Imports a whole module: its types and its module-level members.</summary>
+        /// <remarks>
+        /// Completing is keyed by path and idempotent, and it has to be: a containing-module shell
+        /// (<see cref="ModuleSymbolFor"/>) may already sit under this path, created while some
+        /// other module's metadata was being read - a base class, an interface a nested class
+        /// implements, anything whose descriptor names this module. That shell is deliberately
+        /// empty, and returning it as if it were an imported surface silently stripped every
+        /// built-in name out of the global scope (§13's implicit <c>surtr</c> import reads exactly
+        /// this method). Completion fills the shell in place, so one path keeps one
+        /// <see cref="ModuleSymbol"/> instance and every type interned against it gains the
+        /// members.
+        /// </remarks>
         public ModuleSymbol ImportModule(SurtrModule module)
         {
-            if (_moduleSymbols.TryGetValue(module.Path, out var cached))
-                return cached;
+            if (module is null)
+                throw new ArgumentNullException(nameof(module));
 
             AddModule(module);
 
-            var symbol = new ModuleSymbol(module.Path);
-            _moduleSymbols.Add(module.Path, symbol);
+            if (_completedModules.TryGetValue(module.Path, out var completed))
+                return completed;
+
+            var symbol = ModuleSymbolFor(module.Path);
+            _completedModules.Add(module.Path, symbol);
 
             var types = new List<NamedTypeSymbol>();
             foreach (var type in module.Classes)
