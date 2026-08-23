@@ -1692,6 +1692,24 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
+        /// Every interface <paramref name="type"/> owes an answer to, transitively: the ones it
+        /// names, its base chain's, and each interface's own extensions — substituted the way the
+        /// construction reads them.
+        /// </summary>
+        /// <remarks>
+        /// The emitter's bridge synthesis walks this list per obligation, so a member written
+        /// without <c>override</c> gets its erased-signature bridge for <em>every</em> contract
+        /// that requires it, however many interface levels up that requirement lives.
+        /// </remarks>
+        internal IReadOnlyList<NamedTypeSymbol> AllInterfacesOf(NamedTypeSymbol type)
+        {
+            var visited = new HashSet<NamedTypeSymbol>();
+            var contracts = new List<NamedTypeSymbol>();
+            CollectInterfaces(type, visited, contracts);
+            return contracts;
+        }
+
+        /// <summary>
         /// Whether making <paramref name="candidate"/> the base of <paramref name="symbol"/> would
         /// close a loop, which is the same question <c>SurtrBuildState.Linking</c> answers at load
         /// — asked here so it can be pointed at a span.

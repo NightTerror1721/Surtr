@@ -165,6 +165,19 @@ namespace Surtr.Compiler.Binding.Symbols
             internal set => Definition._interfaces = value;
         }
 
+        private readonly HashSet<string> _bridgeKeys = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// The erased slot keys this type's own synthesized bridges fill (§3.3), recorded by the
+        /// emitter as it defines them. A subclass consults its ancestors' sets to know an
+        /// interface obligation is already answered by inheritance and must not be bridged again.
+        /// </summary>
+        public IReadOnlyCollection<string> BridgeKeys => _bridgeKeys;
+
+        internal void AddBridgeKey(string key) => _bridgeKeys.Add(key);
+
+        internal bool HasBridgeKey(string key) => _bridgeKeys.Contains(key);
+
         /// <summary>
         /// The single field a <c>value class</c> wraps (§2.9), or <see langword="null"/> for every
         /// other kind. This is what the type erases to where its type is statically known.

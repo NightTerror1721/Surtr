@@ -1321,7 +1321,12 @@ namespace Surtr.Compiler.CodeGen
         {
             var owner = emission.Symbol;
 
-            foreach (var contract in owner.Interfaces)
+            // One bridge per erased slot key: two contracts redeclaring the same member shape
+            // (`ISet.isEmpty` over `IReadOnlySet.isEmpty`) are one vtable slot, and the dispatch
+            // tables key on exactly this string.
+            var bridgedKeys = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var contract in _binder.AllInterfacesOf(owner))
             {
                 var open = contract.Definition.Members;
                 var closed = _binder.MemberLookup.MembersOf(contract);
@@ -1329,6 +1334,9 @@ namespace Surtr.Compiler.CodeGen
                 for (int i = 0; i < open.Count && i < closed.Count; i++)
                 {
                     if (open[i] is not MethodSymbol declared || closed[i] is not MethodSymbol wanted)
+                        continue;
+
+                    if (!bridgedKeys.Add(SlotKey(declared)))
                         continue;
 
                     if (!NeedsBridge(owner, declared, wanted, out var target))
@@ -1361,6 +1369,24 @@ namespace Surtr.Compiler.CodeGen
             target = null!;
 
             string slot = SlotKey(declared);
+
+            // An ancestor may already answer this slot: either it declares a virtual member of the
+            // same erased shape, or the emitter gave one a bridge when IT was emitted (recorded on
+            // the ancestor's symbol — imported ancestors carry their bridges as ordinary virtual
+            // metadata instead). Either way the slot is filled by inheritance, and a second bridge
+            // here would collide with the inherited vtable entry at load.
+            for (var walk = owner.BaseType; walk is not null; walk = walk.BaseType)
+            {
+                if (walk.Definition.HasBridgeKey(slot))
+                    return false;
+
+                foreach (var inherited in _binder.MemberLookup.FindMethods(walk, wanted.Name))
+                {
+                    if (SlotKey(inherited) == slot && inherited.Dispatch != MethodDispatch.Direct)
+                        return false;
+                }
+            }
+
             string wantedKey = SlotKey(wanted);
 
             foreach (var candidate in _binder.MemberLookup.FindMethods(owner, wanted.Name))
@@ -1420,6 +1446,9 @@ namespace Surtr.Compiler.CodeGen
 
             var code = bridge.Code;
             code.LoadLocal(bridge.Receiver);
+
+            // Record the slot so subclasses inherit the answer instead of re-bridging it.
+            owner.Definition.AddBridgeKey(SlotKey(declared));
 
             // The bridge is Virtual, so a value class receiver arrives boxed at this slot exactly
             // as it does for any other interface-dispatched call on one (Â§6.3) â€” the same test
