@@ -1,8 +1,9 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Interop.Attributes;
 using Surtr.Runtime.Classes;
 using System;
+using System.Reflection;
 
 namespace Surtr.Interop
 {
@@ -12,7 +13,10 @@ namespace Surtr.Interop
         /// <summary>A class.</summary>
         Class = 0,
 
-        /// <summary>A struct, boxed into a regular Surtr class.</summary>
+        /// <summary>
+        /// A struct: boxed into a regular Surtr class by default, or laid out as an inline value
+        /// type when <see cref="NativeTypeDescriptor.IsInline"/> is set.
+        /// </summary>
         Struct = 1,
 
         /// <summary>An enum, exposed as a Surtr enum (sealed class with named cases).</summary>
@@ -62,6 +66,28 @@ namespace Surtr.Interop
         /// <see cref="NativeTypeKind.Enum"/>; the materializer caches one object per value.
         /// </summary>
         public object[] EnumValues = Array.Empty<object>();
+
+        /// <summary>
+        /// Whether a <see cref="NativeTypeKind.Struct"/> is exposed as an inline value type rather
+        /// than boxed into an ordinary class.
+        /// </summary>
+        /// <remarks>
+        /// Set from <c>[SurtrNativeType(Inline = true)]</c>. When it is on, the type's storage is
+        /// Surtr's: <see cref="NativeValueFieldDescriptor"/> entries in <see cref="Members"/> claim
+        /// real slots in declaration order, and the CLR struct is rebuilt from them only when a
+        /// native member needs one.
+        /// </remarks>
+        public bool IsInline;
+
+        /// <summary>
+        /// The CLR type this descriptor was scanned from, when it is an inline value type.
+        /// </summary>
+        /// <remarks>
+        /// The marshaler needs the runtime <see cref="Type"/> to rebuild a struct out of slots, and
+        /// a descriptor is otherwise pure data with no CLR handle in it. Null for everything the
+        /// marshaler never has to reconstruct.
+        /// </remarks>
+        public Type? ClrType;
     }
 
     /// <summary>Base metadata for one exposed member.</summary>
@@ -119,6 +145,27 @@ namespace Surtr.Interop
 
         /// <summary>The host entry point that writes the field.</summary>
         public SurtrNativeEntryPoint Setter;
+    }
+
+    /// <summary>
+    /// One field of an inline value type: a real slot in the type's block, not an accessor pair
+    /// into host code.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to <see cref="NativeFieldDescriptor"/>, and the opposite trade. A native
+    /// field owns no slot and reads through entry points, which is right when the CLR object is the
+    /// storage. A value field <em>is</em> the storage, so reading it costs one slot access and no
+    /// transition - which is the whole reason to expose a struct inline. Fields claim their slots
+    /// in the order they appear in <see cref="NativeTypeDescriptor.Members"/>, and that is the
+    /// order the marshaler rebuilds the CLR struct in.
+    /// </remarks>
+    public sealed class NativeValueFieldDescriptor : NativeMemberDescriptor
+    {
+        /// <summary>The Surtr field type descriptor.</summary>
+        public string TypeDescriptor = string.Empty;
+
+        /// <summary>The CLR field this slot mirrors, which the marshaler reads and writes.</summary>
+        public FieldInfo? Field;
     }
 
     /// <summary>One exposed property, backed by native accessor entry points.</summary>

@@ -38,12 +38,56 @@ namespace Surtr.Interop
 
         private static SurtrClass RegisterClass(SurtrRuntime runtime, NativeTypeDescriptor descriptor)
         {
+            if (descriptor.IsInline)
+                return RegisterValueClass(runtime, descriptor);
+
             SurtrClass? baseClass = ResolveBase(runtime, descriptor);
 
             var declared = runtime.DefineNativeClass(descriptor.FullName, baseClass, TypeArguments(descriptor));
 
             foreach (var member in descriptor.Members)
                 AddMember(runtime, declared, member);
+
+            runtime.FinishNativeClass(declared);
+            return declared;
+        }
+
+        /// <summary>
+        /// Materializes a struct exposed with <c>Inline = true</c> as a Surtr value class: a run of
+        /// contiguous slots that Surtr owns, rather than a proxy around a CLR instance.
+        /// </summary>
+        /// <remarks>
+        /// The storage fields go on first and in descriptor order, because that order <em>is</em>
+        /// the layout - it decides which slot each field takes, and the marshaler rebuilds the CLR
+        /// struct by walking the same sequence. Everything else the type exposes (methods,
+        /// properties, statics, operators) is added afterwards exactly as it is on an ordinary
+        /// native class; only where the data lives is different.
+        /// </remarks>
+        private static SurtrClass RegisterValueClass(SurtrRuntime runtime, NativeTypeDescriptor descriptor)
+        {
+            // A value type has no identity to inherit through, so a base is not merely unused here
+            // - it cannot exist. The linker refuses one outright; saying so at registration points
+            // at the declaration rather than at the link.
+            if (descriptor.BaseType is not null)
+            {
+                throw new InvalidOperationException(
+                    $"Inline value type '{descriptor.FullName}' cannot extend '{descriptor.BaseType}': "
+                    + "a value type has no identity to inherit through.");
+            }
+
+            var declared = runtime.DefineNativeValueClass(descriptor.FullName, TypeArguments(descriptor));
+
+            foreach (var member in descriptor.Members)
+            {
+                if (member is NativeValueFieldDescriptor field)
+                    runtime.DefineValueField(declared, field.Name, SurtrClassReference.FromDescriptor(field.TypeDescriptor), Visibility(field.Visibility));
+            }
+
+            foreach (var member in descriptor.Members)
+            {
+                if (member is not NativeValueFieldDescriptor)
+                    AddMember(runtime, declared, member);
+            }
 
             runtime.FinishNativeClass(declared);
             return declared;

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Interop.Attributes;
 using Surtr.Runtime.Classes;
@@ -56,8 +56,85 @@ namespace Surtr.Interop
                 return descriptor;
             }
 
-            descriptor.Members = ScanMembers(type, effectivePolicy, SurtrClassReference.Native(fullName));
+            if (attribute.Inline && descriptor.Kind == NativeTypeKind.Struct)
+            {
+                descriptor.IsInline = true;
+                descriptor.ClrType = type;
+            }
+            else if (attribute.Inline)
+            {
+                throw new InvalidOperationException(
+                    $"'{type.FullName}' is marked Inline, but only a struct has an inline value representation.");
+            }
+
+            descriptor.Members = ScanMembers(type, effectivePolicy, SurtrClassReference.Native(fullName), descriptor.IsInline);
+
+            if (descriptor.IsInline && !descriptor.Members.Any(static m => m is NativeValueFieldDescriptor))
+            {
+                throw new InvalidOperationException(
+                    $"'{type.FullName}' is marked Inline but exposes no instance field, so it has no slots to be. "
+                    + "An inline value type is its fields.");
+            }
+
             return descriptor;
+        }
+
+        /// <summary>
+        /// Fills in the inline layouts a dispatch record needs to walk its arguments by width.
+        /// </summary>
+        /// <remarks>
+        /// Without these the invoker maps parameter <c>i</c> to slot <c>i</c>, which is right only
+        /// while every argument is one slot wide. A parameter, a receiver or a result typed as an
+        /// inline struct occupies its whole block, so each one that does carries the layout that
+        /// rebuilds it. Computed once here, at scan time, rather than per call.
+        /// </remarks>
+        private static ReflectionMemberSlot WithLayouts(ReflectionMemberSlot slot, MethodBase method, SurtrNamingPolicy policy)
+        {
+            if (!slot.IsStatic && method.DeclaringType is { } owner)
+                slot.ReceiverLayout = SurtrValueLayout.For(owner, policy);
+
+            var parameters = method.GetParameters();
+            var layouts = new SurtrValueLayout?[parameters.Length];
+            bool any = slot.ReceiverLayout is not null;
+
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                if (parameters[i].IsOut || parameters[i].ParameterType.IsByRef)
+                    continue;
+
+                layouts[i] = SurtrValueLayout.For(parameters[i].ParameterType, policy);
+                any |= layouts[i] is not null;
+            }
+
+            if (any)
+                slot.ParameterLayouts = layouts;
+
+            if (method is MethodInfo info)
+                slot.ResultLayout = SurtrValueLayout.For(info.ReturnType, policy);
+
+            return slot;
+        }
+
+        /// <summary>
+        /// Whether a field of <paramref name="fieldType"/> can live in an inline block.
+        /// </summary>
+        /// <remarks>
+        /// A Surtr primitive occupies one slot and needs no indirection; another inline struct
+        /// folds its own slots into the run. Everything else - a string, an array, a class, a
+        /// boxed struct - is a reference to something the CLR struct owns, and reconstructing that
+        /// struct out of slots would mean deciding who owns the referent. Refused rather than
+        /// half-exposed, which is what the v1 scope buys.
+        /// </remarks>
+        private static bool IsInlineFieldType(Type fieldType, SurtrNamingPolicy policy)
+        {
+            var code = SurtrTypeMapper.Map(fieldType, policy).TypeCode;
+            if (code is SurtrValueTypeCode.Integer or SurtrValueTypeCode.Float
+                or SurtrValueTypeCode.Boolean or SurtrValueTypeCode.Character)
+            {
+                return true;
+            }
+
+            return fieldType.IsValueType && !fieldType.IsEnum && TypeAttribute(fieldType) is { Inline: true };
         }
 
         private static SurtrNativeTypeAttribute? TypeAttribute(Type type)
@@ -81,12 +158,22 @@ namespace Surtr.Interop
             return attribute is null ? null : SurtrTypeMapper.FullNameOf(baseType, attribute, policy);
         }
 
-        private static NativeMemberDescriptor[] ScanMembers(Type type, SurtrNamingPolicy policy, SurtrClassReference selfDescriptor)
+        private static NativeMemberDescriptor[] ScanMembers(Type type, SurtrNamingPolicy policy, SurtrClassReference selfDescriptor, bool inline)
         {
             var members = new List<NativeMemberDescriptor>();
 
             foreach (var constructor in type.GetConstructors(BindingFlags.Public | BindingFlags.Instance))
             {
+                // An inline value type's constructor is deliberately not exposed. A Surtr
+                // constructor is reached by allocating first and running the body against the new
+                // instance as its receiver, and an inline value has nothing to allocate and no
+                // receiver to fill - it *is* its result. Wiring that means a construction protocol
+                // this layer does not have yet (see the note in ScanMembers' own remarks), and a
+                // static factory covers it exactly: a static method returning the struct already
+                // works, and returns the block flat.
+                if (inline)
+                    continue;
+
                 if (ScanMethod(constructor, policy, isConstructor: true) is { } ctor)
                     members.Add(ctor);
             }
@@ -122,6 +209,17 @@ namespace Surtr.Interop
 
             foreach (var field in type.GetFields(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
             {
+                // An inline type's *instance* fields are its storage, so they become real slots
+                // rather than accessor pairs. A static one is not part of any block - it belongs to
+                // the type, not to a value of it - so it keeps the ordinary native-field shape.
+                if (inline && !field.IsStatic)
+                {
+                    if (ScanValueField(type, field, policy) is { } slot)
+                        members.Add(slot);
+
+                    continue;
+                }
+
                 if (ScanField(field, policy) is { } exposed)
                     members.Add(exposed);
             }
@@ -185,14 +283,17 @@ namespace Surtr.Interop
 
             var returnDescriptor = BuildReturnDescriptor(method, attribute, memberPolicy, outDescriptors);
 
-            var slot = new ReflectionMemberSlot
-            {
-                Kind = ReflectionMemberKind.Method,
-                Method = method as MethodInfo,
-                IsStatic = isStatic,
-                ResultDescriptor = returnDescriptor,
-                Parameters = fullDescriptors,
-            };
+            var slot = WithLayouts(
+                new ReflectionMemberSlot
+                {
+                    Kind = ReflectionMemberKind.Method,
+                    Method = method as MethodInfo,
+                    IsStatic = isStatic,
+                    ResultDescriptor = returnDescriptor,
+                    Parameters = fullDescriptors,
+                },
+                method,
+                memberPolicy);
 
             return new NativeMethodDescriptor
             {
@@ -239,14 +340,17 @@ namespace Surtr.Interop
                 {
                     new NativeParameterDescriptor { Name = parameter.Name ?? "other", TypeDescriptor = parameterDescriptor.Descriptor },
                 },
-                EntryPoint = SurtrReflectionInvoker.Create(new ReflectionMemberSlot
-                {
-                    Kind = ReflectionMemberKind.Method,
-                    Method = method,
-                    IsStatic = false,
-                    ResultDescriptor = SurtrClassReference.Integer,
-                    Parameters = new[] { parameterDescriptor },
-                }),
+                EntryPoint = SurtrReflectionInvoker.Create(WithLayouts(
+                    new ReflectionMemberSlot
+                    {
+                        Kind = ReflectionMemberKind.Method,
+                        Method = method,
+                        IsStatic = false,
+                        ResultDescriptor = SurtrClassReference.Integer,
+                        Parameters = new[] { parameterDescriptor },
+                    },
+                    method,
+                    policy)),
             };
         }
 
@@ -293,14 +397,17 @@ namespace Surtr.Interop
                 IsStatic = true,
                 ReturnDescriptor = returnDescriptor.Descriptor,
                 Parameters = surtrParameters.ToArray(),
-                EntryPoint = SurtrReflectionInvoker.Create(new ReflectionMemberSlot
-                {
-                    Kind = ReflectionMemberKind.Method,
-                    Method = method,
-                    IsStatic = true,
-                    ResultDescriptor = returnDescriptor,
-                    Parameters = fullDescriptors,
-                }),
+                EntryPoint = SurtrReflectionInvoker.Create(WithLayouts(
+                    new ReflectionMemberSlot
+                    {
+                        Kind = ReflectionMemberKind.Method,
+                        Method = method,
+                        IsStatic = true,
+                        ResultDescriptor = returnDescriptor,
+                        Parameters = fullDescriptors,
+                    },
+                    method,
+                    policy)),
             };
         }
 
@@ -427,6 +534,51 @@ namespace Surtr.Interop
             };
         }
 
+        /// <summary>
+        /// Scans one instance field of an inline value type into the slot it becomes.
+        /// </summary>
+        /// <remarks>
+        /// A field the host asked to ignore is refused rather than skipped: skipping it would drop
+        /// a slot out of the middle of the block, and the CLR struct could no longer be rebuilt
+        /// from what is left. An inline type is all of its fields or none of them.
+        /// </remarks>
+        private static NativeValueFieldDescriptor? ScanValueField(Type owner, FieldInfo field, SurtrNamingPolicy policy)
+        {
+            var ignore = field.GetCustomAttribute<SurtrNativeIgnoreAttribute>();
+            var attribute = field.GetCustomAttribute<SurtrNativeFieldAttribute>();
+
+            if (ignore is not null || (attribute is not null && !attribute.Expose))
+            {
+                throw new InvalidOperationException(
+                    $"'{owner.FullName}.{field.Name}' cannot be hidden: '{owner.FullName}' is an inline value type, "
+                    + "so every instance field is one of its slots and dropping one would leave the CLR struct "
+                    + "impossible to rebuild.");
+            }
+
+            var memberPolicy = attribute?.NamingPolicy ?? policy;
+
+            var typeReference = attribute?.TypeDescriptor is { } declared
+                ? SurtrClassReference.FromDescriptor(declared)
+                : SurtrTypeMapper.Map(field.FieldType, memberPolicy);
+
+            if (attribute?.TypeDescriptor is null && !IsInlineFieldType(field.FieldType, memberPolicy))
+            {
+                throw new InvalidOperationException(
+                    $"'{owner.FullName}.{field.Name}' is a '{field.FieldType.Name}', which has no inline representation. "
+                    + "An inline value type's fields must be Surtr primitives or other structs exposed with Inline = true.");
+            }
+
+            return new NativeValueFieldDescriptor
+            {
+                Name = attribute?.Name ?? SurtrNaming.Apply(field.Name, memberPolicy, SurtrNameKind.Member),
+                Description = attribute?.Description,
+                Visibility = attribute?.Visibility ?? SurtrInteropVisibility.Public,
+                IsStatic = false,
+                TypeDescriptor = typeReference.Descriptor,
+                Field = field,
+            };
+        }
+
         private static NativePropertyDescriptor? ScanProperty(PropertyInfo property, SurtrNamingPolicy policy)
         {
             var ignore = property.GetCustomAttribute<SurtrNativeIgnoreAttribute>();
@@ -457,10 +609,10 @@ namespace Surtr.Interop
             };
 
             if (hasGetter)
-                descriptor.Getter = SurtrReflectionInvoker.Create(new ReflectionMemberSlot { Kind = ReflectionMemberKind.PropertyGetter, Method = property.GetMethod, IsStatic = isStatic, ResultDescriptor = typeReference });
+                descriptor.Getter = SurtrReflectionInvoker.Create(WithLayouts(new ReflectionMemberSlot { Kind = ReflectionMemberKind.PropertyGetter, Method = property.GetMethod, IsStatic = isStatic, ResultDescriptor = typeReference }, property.GetMethod!, memberPolicy));
 
             if (hasSetter)
-                descriptor.Setter = SurtrReflectionInvoker.Create(new ReflectionMemberSlot { Kind = ReflectionMemberKind.PropertySetter, Method = property.SetMethod, IsStatic = isStatic, ResultDescriptor = typeReference });
+                descriptor.Setter = SurtrReflectionInvoker.Create(WithLayouts(new ReflectionMemberSlot { Kind = ReflectionMemberKind.PropertySetter, Method = property.SetMethod, IsStatic = isStatic, ResultDescriptor = typeReference }, property.SetMethod!, memberPolicy));
 
             return descriptor;
         }

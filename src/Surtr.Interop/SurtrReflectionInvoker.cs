@@ -29,6 +29,25 @@ namespace Surtr.Interop
         internal SurtrClassReference ResultDescriptor;
         internal SurtrClassReference[] Parameters = Array.Empty<SurtrClassReference>();
         internal Delegate? DelegateValue;
+
+        /// <summary>
+        /// The receiver's inline layout, when the member is declared on a struct exposed with
+        /// <c>Inline = true</c>. Null for a static member and for an ordinary native class.
+        /// </summary>
+        /// <remarks>
+        /// An inline receiver is not a reference the registry can resolve - it is the block itself,
+        /// sitting in the argument slots - so it has to be rebuilt rather than looked up.
+        /// </remarks>
+        internal SurtrValueLayout? ReceiverLayout;
+
+        /// <summary>
+        /// Per-parameter inline layouts, parallel to <see cref="Parameters"/>. An entry is null
+        /// where the parameter takes a single slot, which is the usual case.
+        /// </summary>
+        internal SurtrValueLayout?[] ParameterLayouts = Array.Empty<SurtrValueLayout?>();
+
+        /// <summary>The result's inline layout, when the member returns an inline struct.</summary>
+        internal SurtrValueLayout? ResultLayout;
     }
 
     /// <summary>The statically-reachable table of reflection dispatch records.</summary>
@@ -119,13 +138,33 @@ namespace Surtr.Interop
 
                 case ReflectionMemberKind.PropertyGetter:
                 {
-                    object? target = slot.IsStatic ? null : Receiver(args, 0);
+                    object? target = ReceiverOf(args, slot);
                     object? value = slot.Method!.Invoke(target, null);
+
+                    // An inline result is its own flat block, the same as a method's.
+                    if (slot.ResultLayout is { } layout)
+                    {
+                        var block = new SurtrValue[layout.Width];
+                        layout.Write(runtime, value!, block, 0);
+                        return args.Return(block);
+                    }
+
                     return args.Return(SurtrMarshaler.ToSurtr(runtime, value, slot.ResultDescriptor));
                 }
 
                 case ReflectionMemberKind.PropertySetter:
                 {
+                    // A setter on an inline receiver writes to a copy that is discarded the moment
+                    // this returns, so it cannot exist: an inline value's fields are read-only, and
+                    // the scanner never declares one. Guarded here because the invoker is reached
+                    // through a raw function pointer and a wrong slot would fail silently.
+                    if (slot.ReceiverLayout is not null)
+                    {
+                        throw new InvalidOperationException(
+                            "An inline value type has no writable member: a write would land on a copy that is "
+                            + "discarded when the call returns.");
+                    }
+
                     object? target = slot.IsStatic ? null : Receiver(args, 0);
                     var parameter = slot.Method!.GetParameters()[0];
                     object? value = SurtrMarshaler.ToClr(runtime, args.GetValue(slot.IsStatic ? 0 : 1), parameter.ParameterType, slot.ResultDescriptor);
@@ -159,7 +198,10 @@ namespace Surtr.Interop
             var parameters = method.GetParameters();
             var clrArguments = new object?[parameters.Length];
 
-            int offset = slot.IsStatic ? 0 : 1;
+            // An argument is not necessarily a slot: a parameter typed as an inline struct occupies
+            // its whole block, so the walk advances by each parameter's width rather than by one.
+            // The receiver is the same - an inline one takes its block's width off the front.
+            int at = slot.IsStatic ? 0 : slot.ReceiverLayout?.Width ?? 1;
 
             for (int i = 0; i < parameters.Length; i++)
             {
@@ -167,11 +209,23 @@ namespace Surtr.Interop
                 if (parameter.IsOut || parameter.ParameterType.IsByRef)
                     continue;
 
-                clrArguments[i] = SurtrMarshaler.ToClr(runtime, args.GetValue(i + offset), parameter.ParameterType, slot.Parameters[i]);
+                var layout = i < slot.ParameterLayouts.Length ? slot.ParameterLayouts[i] : null;
+
+                if (layout is null)
+                {
+                    clrArguments[i] = SurtrMarshaler.ToClr(runtime, args.GetValue(at), parameter.ParameterType, slot.Parameters[i]);
+                    at += 1;
+                }
+                else
+                {
+                    clrArguments[i] = layout.Read(runtime, args, at);
+                    at += layout.Width;
+                }
             }
 
-            object? receiver = slot.IsStatic ? null : Receiver(args, 0);
-            object? result = method.Invoke(receiver, clrArguments);
+            // An inline receiver is the block in the argument slots, not a reference the registry
+            // can resolve, so it is rebuilt rather than looked up.
+            object? result = method.Invoke(ReceiverOf(args, slot), clrArguments);
 
             int outCount = 0;
             for (int i = 0; i < parameters.Length; i++)
@@ -181,7 +235,18 @@ namespace Surtr.Interop
             }
 
             if (outCount == 0)
+            {
+                // An inline result is written as its own flat block: the declared return is a value
+                // type, so `ResultSlotCount` is its width and the caller copies that many slots.
+                if (slot.ResultLayout is { } resultLayout)
+                {
+                    var block = new SurtrValue[resultLayout.Width];
+                    resultLayout.Write(runtime, result!, block, 0);
+                    return args.Return(block);
+                }
+
                 return args.Return(SurtrMarshaler.ToSurtr(runtime, result, slot.ResultDescriptor));
+            }
 
             bool voidReturn = method.ReturnType == typeof(void);
 
@@ -235,6 +300,20 @@ namespace Surtr.Interop
             // the stack happened to hold. Every input was read above, before this first write, which
             // is what the in-place convention requires.
             return args.Return(elements);
+        }
+
+        /// <summary>
+        /// The receiver a member runs against: an inline value type's is rebuilt from the block in
+        /// the argument slots, everything else's is resolved as an entity.
+        /// </summary>
+        private static object? ReceiverOf(SurtrCallArguments args, ReflectionMemberSlot slot)
+        {
+            if (slot.IsStatic)
+                return null;
+
+            return slot.ReceiverLayout is { } layout
+                ? layout.Read(args.Runtime, args, 0)
+                : Receiver(args, 0);
         }
 
         private static object? Receiver(SurtrCallArguments args, int index)

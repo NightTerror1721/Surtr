@@ -14,7 +14,7 @@ lo medido, `benchmark_report.md` §4.
 | 4 — Campos value-type en línea | hecha, con la matriz de GC completa |
 | 5 — La tupla como value type | hecha; `SurtrTuple` retenido como forma boxeada |
 | 5b — Destructuring de tuplas | añadida sobre la marcha (`Language-Syntax.md` §4.5) |
-| 6 — Periféricos | solo el ítem 2 (nativos multi-retorno), rediseñado a convenio in-place con una sola firma. Los otros cinco siguen sin hacer, cada uno independiente |
+| 6 — Periféricos | ítems 1 y 2 hechos. El 2 (nativos multi-retorno) se rediseñó a convenio in-place con una sola firma; el 1 (marshaler de structs CLR) llegó después como `[SurtrNativeType(Inline = true)]`, con `SurtrRuntime.DefineNativeValueClass` en el runtime y `SurtrValueLayout` en el bridge — ver `docs/Guia-Interop-Surtr-Csharp.md` §5.1. Los otros cuatro siguen sin hacer, cada uno independiente |
 | 7 — Validación y documentación | hecha: cuatro casos de bench nuevos con el A/B `vec2Math`/`vec2Class`, auditoría de GC bajo recolección automática, `Opcodes.md`/`Runtime-Model.md`/`Module-Format.md`/`Language-Syntax.md`/`VM-Plan.md`/`README`/`CLAUDE.md`, y pase de humo LSP |
 
 Tres huecos se dejaron abiertos a propósito, y los tres se rechazan con un error claro en lugar de
