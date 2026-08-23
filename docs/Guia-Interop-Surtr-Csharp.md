@@ -225,10 +225,15 @@ funciona: un metodo estatico que devuelve el struct entrega el bloque plano, com
 ejemplo. (El agujero de fondo es mas amplio que los tipos inline: un constructor de una clase nativa
 tampoco encaja hoy en el protocolo asignar-y-luego-inicializar.)
 
-**Coste.** La ruta de reflexion asigna una caja por struct y por llamada, porque es la unica forma
-sobre la que la reflexion puede escribir un campo. Es el precio del fallback, no del modelo: leer un
-campo desde Surtr no pasa por ahi en absoluto, y el generador de codigo fuente emite conversiones
-tipadas que no pagan esa caja.
+**Coste, y por que las dos rutas no cuestan lo mismo.** Leer un campo desde Surtr no cruza la
+frontera en ningun caso — es una lectura de slot. La diferencia esta en llamar a un miembro nativo:
+
+- **Generador** (recomendado): reconstruye el bloque con un *object initializer* tipado —
+  `new Vector3 { X = (float)args.GetFloat(0), Y = ..., Z = ... }` — y escribe el resultado con
+  `WriteResult` campo a campo. Sin boxing y sin reflexion. Un struct anidado se expande en el mismo
+  inicializador, en su propio offset, asi que un `Bounds` se lee de un unico tramo de seis slots.
+- **Fallback por reflexion**: asigna una caja por struct y por llamada, porque es la unica forma
+  sobre la que `FieldInfo.SetValue` puede escribir. Es el precio del fallback, no del modelo.
 
 ## 6. Operadores, indexadores y comparación
 

@@ -218,8 +218,15 @@ namespace Surtr.Interop.SourceGenerator
             var properties = new List<IPropertySymbol>();
             var comparisons = new List<IMethodSymbol>();
 
-            foreach (var constructor in type.InstanceConstructors.Where(static c => c.DeclaredAccessibility == Accessibility.Public && !c.IsStatic && !HasRefIn(c)))
-                methods.Add(constructor);
+            // An inline value type's constructor is deliberately not exposed, matching the
+            // reflection scanner: a Surtr constructor allocates first and runs against the new
+            // instance as its receiver, and an inline value has nothing to allocate and no
+            // receiver to fill - it *is* its result. A static factory covers the case exactly.
+            if (!InlineLayout.IsInline(type))
+            {
+                foreach (var constructor in type.InstanceConstructors.Where(static c => c.DeclaredAccessibility == Accessibility.Public && !c.IsStatic && !HasRefIn(c)))
+                    methods.Add(constructor);
+            }
 
             foreach (var method in type.GetMembers().OfType<IMethodSymbol>())
             {
@@ -268,8 +275,21 @@ namespace Surtr.Interop.SourceGenerator
             foreach (var comparison in comparisons)
                 descriptors.Add(EmitComparison(builder, type, comparison, policy, indent));
 
+            bool inline = InlineLayout.IsInline(type);
+
             foreach (var field in fields)
+            {
+                // An inline type's instance fields are its storage, so they become real slots
+                // rather than accessor pairs - no shim is emitted for them at all. A static one is
+                // not part of any block and keeps the ordinary native-field shape.
+                if (inline && !field.IsStatic)
+                {
+                    descriptors.Add(EmitValueField(type, field, policy));
+                    continue;
+                }
+
                 descriptors.Add(EmitField(builder, type, field, policy, indent));
+            }
 
             foreach (var property in properties)
                 descriptors.Add(EmitProperty(builder, type, property, policy, indent));
@@ -340,9 +360,19 @@ namespace Surtr.Interop.SourceGenerator
             builder.AppendLine(indent + "private static int " + shimName + "(SurtrCallArguments args)");
             builder.AppendLine(indent + "{");
 
+            var receiverLayout = method.IsStatic ? null : InlineLayout.For(type);
+
             string targetExpr;
             if (method.IsStatic)
                 targetExpr = typeName;
+            else if (receiverLayout is not null)
+            {
+                // An inline receiver is the block in the argument slots, not a reference to
+                // resolve: it is rebuilt with an object initializer, which is typed and allocates
+                // nothing - the whole advantage of the generated path over the fallback.
+                builder.AppendLine(indent + "    var __target = " + ReadBlock(receiverLayout, 0) + ";");
+                targetExpr = "__target";
+            }
             else
             {
                 builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
@@ -350,7 +380,10 @@ namespace Surtr.Interop.SourceGenerator
             }
 
             var arguments = new List<string>();
-            int argIndex = method.IsStatic ? 0 : 1;
+
+            // An argument is not necessarily a slot: a parameter typed as an inline struct occupies
+            // its whole block, so the walk advances by width rather than by one.
+            int argIndex = method.IsStatic ? 0 : receiverLayout?.Width ?? 1;
 
             foreach (var parameter in method.Parameters)
             {
@@ -364,10 +397,36 @@ namespace Surtr.Interop.SourceGenerator
                     continue;
                 }
 
-                string clr = ToClrExpression(parameter.Type, argIndex);
-                builder.AppendLine(indent + "    var " + parameter.Name + " = " + clr + ";");
+                var parameterLayout = InlineLayout.For(parameter.Type);
+
+                if (parameterLayout is not null)
+                {
+                    builder.AppendLine(indent + "    var " + parameter.Name + " = " + ReadBlock(parameterLayout, argIndex) + ";");
+                    arguments.Add(parameter.Name);
+                    argIndex += parameterLayout.Width;
+                    continue;
+                }
+
+                builder.AppendLine(indent + "    var " + parameter.Name + " = " + ToClrExpression(parameter.Type, argIndex) + ";");
                 arguments.Add(parameter.Name);
                 argIndex++;
+            }
+
+            bool hasOut = method.Parameters.Any(static p => p.RefKind == RefKind.Out);
+            var resultLayout = method.MethodKind == MethodKind.Constructor ? null : InlineLayout.For(method.ReturnType);
+
+            if (!hasOut && resultLayout is not null)
+            {
+                // An inline result is written as its own flat block: the declared return is a value
+                // type, so `ResultSlotCount` is its width and the caller copies that many slots.
+                // Computed into a local first, because the results alias the arguments and every
+                // input has to be read before the first write.
+                builder.AppendLine(indent + "    var __result = " + targetExpr + "." + method.Name + "(" + string.Join(", ", arguments) + ");");
+                WriteBlock(builder, resultLayout, "__result", 0, indent);
+                builder.AppendLine(indent + "    return " + resultLayout.Width + ";");
+                builder.AppendLine(indent + "}");
+                builder.AppendLine();
+                return;
             }
 
             string returnExpr;
@@ -378,7 +437,6 @@ namespace Surtr.Interop.SourceGenerator
             else
                 returnExpr = ToSurtrExpression(method.ReturnType, targetExpr + "." + method.Name + "(" + string.Join(", ", arguments) + ")");
 
-            bool hasOut = method.Parameters.Any(static p => p.RefKind == RefKind.Out);
             if (!hasOut)
             {
                 builder.AppendLine(indent + "    return args.Return(" + returnExpr + ");");
@@ -390,6 +448,51 @@ namespace Surtr.Interop.SourceGenerator
 
             builder.AppendLine(indent + "}");
             builder.AppendLine();
+        }
+
+        /// <summary>
+        /// An expression rebuilding an inline struct from the <paramref name="offset"/>-th slot on.
+        /// </summary>
+        /// <remarks>
+        /// An object initializer over the public fields, so the whole read is one typed expression
+        /// with no boxing and no reflection. A nested inline field expands into its own initializer
+        /// at the right offset, which is what keeps a <c>Bounds</c> one flat run of six slots
+        /// rather than two references.
+        /// </remarks>
+        private static string ReadBlock(InlineLayout layout, int offset)
+        {
+            var parts = new List<string>(layout.Slots.Length);
+            int at = offset;
+
+            foreach (var slot in layout.Slots)
+            {
+                parts.Add(slot.Field.Name + " = " + (slot.Nested is null
+                    ? ToClrExpression(slot.Field.Type, at)
+                    : ReadBlock(slot.Nested, at)));
+
+                at += slot.Width;
+            }
+
+            return "new " + layout.Type.ToDisplayString() + " { " + string.Join(", ", parts) + " }";
+        }
+
+        /// <summary>
+        /// Writes an inline struct held in <paramref name="source"/> into the slots from
+        /// <paramref name="offset"/> on.
+        /// </summary>
+        private static void WriteBlock(StringBuilder builder, InlineLayout layout, string source, int offset, string indent)
+        {
+            int at = offset;
+
+            foreach (var slot in layout.Slots)
+            {
+                if (slot.Nested is null)
+                    builder.AppendLine(indent + "    args.WriteResult(" + at + ", " + ToSurtrExpression(slot.Field.Type, source + "." + slot.Field.Name) + ");");
+                else
+                    WriteBlock(builder, slot.Nested, source + "." + slot.Field.Name, at, indent);
+
+                at += slot.Width;
+            }
         }
 
         private static void EmitOutReturn(StringBuilder builder, IMethodSymbol method, string targetExpr, List<string> arguments, string indent)
@@ -473,6 +576,21 @@ namespace Surtr.Interop.SourceGenerator
             return "new NativeFieldDescriptor { Name = \"" + name + "\", IsStatic = " + (field.IsStatic ? "true" : "false") + ", ReadOnly = " + (readOnly ? "true" : "false") + ", TypeDescriptor = \"" + typeDescriptor + "\", Getter = SurtrNativeEntryPoint.FromFunctionPointer(&" + getterShim + "), Setter = " + (readOnly ? "default" : "SurtrNativeEntryPoint.FromFunctionPointer(&" + setterShim + ")") + " }";
         }
 
+        /// <summary>
+        /// One storage field of an inline value type. No shim: the slot <em>is</em> the storage, so
+        /// reading it from Surtr never enters host code and there is nothing to dispatch to.
+        /// </summary>
+        private static string EmitValueField(INamedTypeSymbol type, IFieldSymbol field, int policy)
+        {
+            var attribute = GeneratorSupport.FindAttribute(field, GeneratorSupport.NativeFieldAttribute);
+            int memberPolicy = GeneratorSupport.GetIntNamed(attribute, "NamingPolicy") ?? policy;
+            string name = GeneratorSupport.GetStringNamed(attribute, "Name") ?? GeneratorSupport.Apply(field.Name, memberPolicy, isMember: true);
+            string typeDescriptor = GeneratorSupport.GetStringNamed(attribute, "TypeDescriptor") ?? GeneratorSupport.MapType(field.Type);
+
+            return "new NativeValueFieldDescriptor { Name = \"" + name + "\", TypeDescriptor = \"" + typeDescriptor
+                   + "\", Field = typeof(" + type.ToDisplayString() + ").GetField(\"" + field.Name + "\") }";
+        }
+
         private static string EmitProperty(StringBuilder builder, INamedTypeSymbol type, IPropertySymbol property, int policy, string indent)
         {
             var attribute = GeneratorSupport.FindAttribute(property, GeneratorSupport.NativePropertyAttribute);
@@ -482,8 +600,13 @@ namespace Surtr.Interop.SourceGenerator
 
             string typeName = type.ToDisplayString();
             bool hasGetter = property.GetMethod is { DeclaredAccessibility: Accessibility.Public };
-            bool hasSetter = property.SetMethod is { DeclaredAccessibility: Accessibility.Public };
             bool isStatic = (property.GetMethod ?? property.SetMethod)?.IsStatic ?? false;
+
+            // A setter on an inline receiver would write to a copy that is discarded the moment the
+            // shim returns, so an inline value type has no writable instance member at all. A static
+            // property is not part of any block and keeps its setter.
+            bool hasSetter = property.SetMethod is { DeclaredAccessibility: Accessibility.Public }
+                             && (isStatic || !InlineLayout.IsInline(type));
 
             string getterShim = "__SurtrPropGet_" + type.Name + "_" + property.Name;
             string setterShim = "__SurtrPropSet_" + type.Name + "_" + property.Name;
@@ -493,10 +616,30 @@ namespace Surtr.Interop.SourceGenerator
                 builder.AppendLine(indent + GeneratedCodeAttribute);
                 builder.AppendLine(indent + "private static int " + getterShim + "(SurtrCallArguments args)");
                 builder.AppendLine(indent + "{");
-                string target = isStatic ? typeName : "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!";
+                var getterReceiver = isStatic ? null : InlineLayout.For(type);
+                string target = isStatic
+                    ? typeName
+                    : getterReceiver is not null
+                        ? ReadBlock(getterReceiver, 0)
+                        : "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!";
+
                 if (!isStatic)
                     builder.AppendLine(indent + "    var __target = " + target + ";");
-                builder.AppendLine(indent + "    return args.Return(" + ToSurtrExpression(property.Type, (isStatic ? typeName : "__target") + "." + property.Name) + ");");
+
+                string source = (isStatic ? typeName : "__target") + "." + property.Name;
+                var getterResult = InlineLayout.For(property.Type);
+
+                if (getterResult is not null)
+                {
+                    builder.AppendLine(indent + "    var __result = " + source + ";");
+                    WriteBlock(builder, getterResult, "__result", 0, indent);
+                    builder.AppendLine(indent + "    return " + getterResult.Width + ";");
+                }
+                else
+                {
+                    builder.AppendLine(indent + "    return args.Return(" + ToSurtrExpression(property.Type, source) + ");");
+                }
+
                 builder.AppendLine(indent + "}");
                 builder.AppendLine();
             }
@@ -539,13 +682,36 @@ namespace Surtr.Interop.SourceGenerator
             int argIndex = 0;
             foreach (var parameter in method.Parameters)
             {
+                // An operand typed as an inline struct is its whole block, so the walk advances by
+                // width. `a + b` over a three-slot value is six slots in, not two.
+                var operandLayout = InlineLayout.For(parameter.Type);
+                if (operandLayout is not null)
+                {
+                    builder.AppendLine(indent + "    var " + parameter.Name + " = " + ReadBlock(operandLayout, argIndex) + ";");
+                    arguments.Add(parameter.Name);
+                    argIndex += operandLayout.Width;
+                    continue;
+                }
+
                 builder.AppendLine(indent + "    var " + parameter.Name + " = " + ToClrExpression(parameter.Type, argIndex) + ";");
                 arguments.Add(parameter.Name);
                 argIndex++;
             }
 
             string call = OperatorExpression(method, arguments, typeName);
-            builder.AppendLine(indent + "    return args.Return(" + (method.ReturnsVoid ? "SurtrValue.Null" : ToSurtrExpression(method.ReturnType, call)) + ");");
+            var operatorResultLayout = InlineLayout.For(method.ReturnType);
+
+            if (operatorResultLayout is not null)
+            {
+                builder.AppendLine(indent + "    var __result = " + call + ";");
+                WriteBlock(builder, operatorResultLayout, "__result", 0, indent);
+                builder.AppendLine(indent + "    return " + operatorResultLayout.Width + ";");
+            }
+            else
+            {
+                builder.AppendLine(indent + "    return args.Return(" + (method.ReturnsVoid ? "SurtrValue.Null" : ToSurtrExpression(method.ReturnType, call)) + ");");
+            }
+
             builder.AppendLine(indent + "}");
             builder.AppendLine();
 
@@ -669,6 +835,14 @@ namespace Surtr.Interop.SourceGenerator
             builder.AppendLine(indent + "        FullName = \"" + fullName + "\",");
             builder.AppendLine(indent + "        Name = \"" + name + "\",");
             builder.AppendLine(indent + "        Kind = " + kind + ",");
+
+            // An inline struct's storage is Surtr's, so the descriptor says so and carries the CLR
+            // type the marshaler would need if anything ever fell back to reflection for it.
+            if (InlineLayout.IsInline(type))
+            {
+                builder.AppendLine(indent + "        IsInline = true,");
+                builder.AppendLine(indent + "        ClrType = typeof(" + type.ToDisplayString() + "),");
+            }
 
             if (type.Arity > 0)
                 builder.AppendLine(indent + "        TypeArguments = new string[] { " + string.Join(", ", type.TypeArguments.Select(static a => "\"" + GeneratorSupport.MapType(a) + "\"")) + " },");

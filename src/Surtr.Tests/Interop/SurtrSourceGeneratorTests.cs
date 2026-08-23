@@ -224,5 +224,179 @@ namespace Sample
             Assert.Contains(diagnostics, static d => d.Id == "SURTRINTEROP003"); // arity mismatch
             Assert.Contains(diagnostics, static d => d.Id == "SURTRINTEROP004"); // static type
         }
+    
+        #region Inline value types
+
+        private const string InlineSource = @"
+using Surtr.Interop.Attributes;
+
+namespace Sample
+{
+    [SurtrNativeType(Module = ""unity"", Name = ""Vector3"", Inline = true)]
+    public struct Vector3
+    {
+        public float X;
+        public float Y;
+        public float Z;
+
+        public Vector3(float x, float y, float z) { X = x; Y = y; Z = z; }
+
+        public float SqrMagnitude() => (X * X) + (Y * Y) + (Z * Z);
+
+        public Vector3 Halved => new Vector3(X / 2f, Y / 2f, Z / 2f);
+
+        public static Vector3 operator +(Vector3 a, Vector3 b) => new Vector3(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
+    }
+
+    [SurtrNativeType(Module = ""unity"", Name = ""Bounds"", Inline = true)]
+    public struct Bounds
+    {
+        public Vector3 Center;
+        public Vector3 Extents;
+
+        public float Volume() => 8f * Extents.X * Extents.Y * Extents.Z;
+    }
+}
+";
+
+        private static string RunInlineGenerator()
+        {
+            var syntaxTree = CSharpSyntaxTree.ParseText(InlineSource);
+
+            // Named explicitly rather than swept out of the AppDomain: the assemblies the generated
+            // code needs are only loaded if something in this test already touched them, and the
+            // compile assertion below is worthless against a reference set that happens to be
+            // missing the very types it should be checking.
+            var required = new[]
+            {
+                typeof(SurtrNativeTypeAttribute).Assembly,
+                typeof(SurtrBridge).Assembly,
+                typeof(Surtr.Runtime.SurtrRuntime).Assembly,
+                typeof(object).Assembly,
+            };
+
+            var references = AppDomain.CurrentDomain.GetAssemblies()
+                .Concat(required)
+                .Where(static a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location))
+                .Select(static a => a.Location)
+                .Distinct()
+                .Select(static location => MetadataReference.CreateFromFile(location))
+                .Cast<MetadataReference>()
+                .ToList();
+
+            var compilation = CSharpCompilation.Create(
+                "SampleInlineAssembly",
+                new[] { syntaxTree },
+                references,
+                new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true));
+
+            GeneratorDriver driver = CSharpGeneratorDriver.Create(new SurtrSourceGenerator());
+            driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out var output, out _);
+
+            // The generated shims have to *compile*, not merely read right: every assertion below
+            // is over text, and text can be plausible and still not be C#. This is what would catch
+            // an initializer naming a field that is not there, or a block written at the wrong
+            // arity. Reference-resolution errors are filtered out - this test compiles against
+            // whatever the test host happens to have loaded, not against a real project.
+            var errors = output.GetDiagnostics()
+                .Where(static d => d.Severity == DiagnosticSeverity.Error)
+                .Where(static d => d.Id is not ("CS0006" or "CS0012" or "CS0246" or "CS0234"))
+                .ToList();
+
+            Assert.True(
+                errors.Count == 0,
+                "Generated code did not compile: " + string.Join("; ", errors.Select(static e => e.ToString())));
+
+            return string.Join(
+                "\n",
+                driver.GetRunResult().Results.SelectMany(static r => r.GeneratedSources).Select(static g => g.SourceText.ToString()));
+        }
+
+        /// <summary>
+        /// An inline struct's fields become storage slots, so the generator emits no accessor shim
+        /// for them at all - the descriptor is the whole declaration.
+        /// </summary>
+        [Fact]
+        public void Generator_EmitsStorageSlotsForAnInlineStruct()
+        {
+            var all = RunInlineGenerator();
+
+            Assert.Contains("IsInline = true", all);
+            Assert.Contains("new NativeValueFieldDescriptor { Name = \"x\"", all);
+            Assert.Contains("new NativeValueFieldDescriptor { Name = \"z\"", all);
+
+            // No accessor pair for a field that is now a slot.
+            Assert.DoesNotContain("__SurtrFieldGet_Vector3_X", all);
+            Assert.DoesNotContain("__SurtrFieldSet_Vector3_X", all);
+        }
+
+        /// <summary>
+        /// A receiver is rebuilt from the block with a typed object initializer - no boxing, no
+        /// reflection, no proxy to resolve. That is the generated path's whole advantage.
+        /// </summary>
+        [Fact]
+        public void Generator_RebuildsAnInlineReceiverWithATypedInitializer()
+        {
+            var all = RunInlineGenerator();
+
+            Assert.Contains("var __target = new Sample.Vector3 { X = (float)args.GetFloat(0), Y = (float)args.GetFloat(1), Z = (float)args.GetFloat(2) };", all);
+
+            // The old shape resolved a proxy; an inline receiver never does.
+            Assert.DoesNotContain("Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<Sample.Vector3>()", all);
+        }
+
+        /// <summary>
+        /// An operator over two blocks reads its second operand at slot 3, not slot 1: arguments
+        /// advance by width. Its result is written as a flat block of three.
+        /// </summary>
+        [Fact]
+        public void Generator_WalksOperatorOperandsByWidthAndWritesTheResultFlat()
+        {
+            var all = RunInlineGenerator();
+
+            Assert.Contains("var a = new Sample.Vector3 { X = (float)args.GetFloat(0), Y = (float)args.GetFloat(1), Z = (float)args.GetFloat(2) };", all);
+            Assert.Contains("var b = new Sample.Vector3 { X = (float)args.GetFloat(3), Y = (float)args.GetFloat(4), Z = (float)args.GetFloat(5) };", all);
+
+            Assert.Contains("args.WriteResult(0, SurtrValue.CreateFloat((double)(__result.X)));", all);
+            Assert.Contains("args.WriteResult(2, SurtrValue.CreateFloat((double)(__result.Z)));", all);
+            Assert.Contains("return 3;", all);
+        }
+
+        /// <summary>A nested inline struct expands into the same flat run, at its own offset.</summary>
+        [Fact]
+        public void Generator_ExpandsANestedBlockIntoOneFlatRun()
+        {
+            var all = RunInlineGenerator();
+
+            // Bounds is two Vector3s: Center at 0..2, Extents at 3..5, all in one initializer.
+            Assert.Contains(
+                "var __target = new Sample.Bounds { Center = new Sample.Vector3 { X = (float)args.GetFloat(0), Y = (float)args.GetFloat(1), Z = (float)args.GetFloat(2) }, "
+                + "Extents = new Sample.Vector3 { X = (float)args.GetFloat(3), Y = (float)args.GetFloat(4), Z = (float)args.GetFloat(5) } };",
+                all);
+        }
+
+        /// <summary>
+        /// A property returning another inline struct answers its own flat block, and an inline
+        /// type gets no setter at all - a write would land on a copy the shim then discards.
+        /// </summary>
+        [Fact]
+        public void Generator_EmitsAnInlinePropertyGetterAndNoSetter()
+        {
+            var all = RunInlineGenerator();
+
+            Assert.Contains("__SurtrPropGet_Vector3_Halved", all);
+            Assert.DoesNotContain("__SurtrPropSet_Vector3_Halved", all);
+        }
+
+        /// <summary>A constructor is not exposed on an inline type, matching the reflection scanner.</summary>
+        [Fact]
+        public void Generator_ExposesNoConstructorForAnInlineStruct()
+        {
+            var all = RunInlineGenerator();
+
+            Assert.DoesNotContain("__SurtrInvoke_Vector3_ctor", all);
+        }
+
+        #endregion
     }
 }
