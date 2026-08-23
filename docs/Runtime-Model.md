@@ -297,12 +297,27 @@ contiguous raw slots** everywhere the VM moves values, so a method's *arity* and
 footprint* are two different numbers, and the metadata carries both:
 
 * **`ArgumentSlotCount`** — how many stack slots a call site must leave for the arguments,
-  **receiver included**. It is `ParameterCount + 1` for an ordinary instance method; a signature
-  carrying value types overrides it with the sum of their flattened widths. The receiver is in the
-  count without exception: the frame base is `sp - argsCount` for every kind of call, and that one
-  subtraction is only correct if the receiver is counted. Metadata read back from an image falls
-  through to the declared form when the writer left the sentinel intact, so the count is derived
-  rather than trusted blindly.
+  **receiver included**: the sum of every argument's flattened width, which comes to
+  `ParameterCount + 1` for an ordinary instance method and more as soon as a value type appears.
+  The receiver is in the count without exception: the frame base is `sp - argsCount` for every kind
+  of call, and that one subtraction is only correct if the receiver is counted. An instance method
+  **on** a multi-field value class receives its block unboxed, so the receiver contributes that
+  block's width rather than one reference — the same rule the compiler's `ApplyValueLayout`
+  applies, and the two have to agree or a call emitted against the metadata would not match the
+  frame the callee expects. A varargs parameter is one slot whatever its element type, since the
+  caller packs the surplus into an array. Metadata read back from an image falls through to this
+  derived form when the writer left the sentinel intact, so the count is derived rather than
+  trusted blindly.
+
+  The width is **computed on every read rather than cached**, because it consults
+  `SurtrTypeHandle.ResolvedType`: before its module's handles resolve there is no layout to read,
+  so an unresolved value class falls back to one slot, and a value cached at construction would
+  freeze that fallback forever. It costs nothing to derive it — **nothing on the execution path
+  reads it**, since the interpreter takes `argsCount` from the instruction; the only consumer is
+  the emitter, deciding what to write into a call site. That is also why this being wrong for
+  native methods went unnoticed for so long: a compiled method overrides the property with the
+  width its emitter computed, so only a *host-declared* native over a multi-field value class was
+  mis-sized, and nothing crashed at the point the mistake was made.
 * **`ResultSlotCount`** — how many operand-stack slots one call leaves behind: zero for `void`, the
   flattened width for a tuple (from its descriptor) or a multi-field value class (from its linked
   layout), and one for everything else.

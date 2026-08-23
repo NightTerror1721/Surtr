@@ -436,10 +436,70 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>
         /// How many stack slots a call site must leave for this method's arguments, receiver
-        /// included. One per argument by default; a method whose signature carries value types
-        /// overrides this with the sum of their flattened widths.
+        /// included: the sum of every argument's flattened width.
         /// </summary>
-        public virtual int ArgumentSlotCount => ParameterCount + (DeclaringType is not null && !IsStatic ? 1 : 0);
+        /// <remarks>
+        /// <para>
+        /// One slot per argument for everything that is not an inline value, which is why this
+        /// used to be a bare <c>ParameterCount + 1</c>. That answer was only ever right because
+        /// nothing but a compiled method could carry a value type, and a compiled one overrides
+        /// this with the width its emitter computed. A <b>native</b> method never did, so a host
+        /// declaring one that takes a multi-field <c>value class</c> got a count short by the
+        /// difference and every call site emitted against it was mis-sized.
+        /// </para>
+        /// <para>
+        /// Derived rather than stored, and deliberately not cached: it reads
+        /// <see cref="SurtrTypeHandle.ResolvedType"/>, so the answer only becomes final once the
+        /// module's handles are resolved, and a value cached before that would freeze the
+        /// unresolved fallback forever. Nothing on the execution path reads it - the interpreter
+        /// takes <c>argsCount</c> from the instruction - so this is emit-time work only.
+        /// </para>
+        /// <para>
+        /// The receiver follows the same rule the compiler applies in <c>ModuleEmitter</c>: an
+        /// instance method on a multi-field value class receives its block unboxed, so the
+        /// receiver is that block's width rather than one reference.
+        /// </para>
+        /// </remarks>
+        public virtual int ArgumentSlotCount
+        {
+            get
+            {
+                int slots = DeclaringType is not null && !IsStatic ? SlotWidthOf(DeclaringType) : 0;
+
+                for (int i = 0; i < _parameters.Length; i++)
+                {
+                    // A varargs parameter is one slot whatever its element type: the caller packs
+                    // the surplus into an array and an array is a reference.
+                    slots += _parameters[i].IsVarargs ? 1 : SlotWidthOf(_parameters[i].ParameterType);
+                }
+
+                return slots;
+            }
+        }
+
+        /// <summary>
+        /// How many contiguous slots a value of <paramref name="handle"/>'s type occupies.
+        /// </summary>
+        /// <remarks>
+        /// A tuple answers from its descriptor alone; a value class needs its linked layout, so an
+        /// unresolved handle falls back to one slot rather than guessing. Everything else - every
+        /// primitive and every reference - is one slot by definition.
+        /// </remarks>
+        private static int SlotWidthOf(SurtrTypeHandle handle)
+        {
+            var reference = handle.Reference;
+
+            if (reference.TypeCode == SurtrValueTypeCode.Tuple)
+                return Math.Max(reference.GetTupleFlattenedSlotWidth(), 1);
+
+            if (handle.ResolvedType is SurtrClass { IsValueType: true } valueClass
+                && valueClass.FlattenedSlotWidth > 1)
+            {
+                return valueClass.FlattenedSlotWidth;
+            }
+
+            return 1;
+        }
 
         /// <summary>
         /// How many operand-stack slots one call to this method leaves behind: zero for void, the
