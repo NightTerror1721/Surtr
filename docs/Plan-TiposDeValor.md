@@ -1,6 +1,31 @@
 # Plan: tipos de valor multi-slot (`value class` generalizado) y retorno multi-slot
 
-**Estado: planificación — nada de este documento está implementado.** Investigación a fondo sobre el
+**Estado: cerrado — fases 0 a 7 implementadas, medidas y documentadas.** Lo que sigue es el plan
+tal como se escribió, conservado como el registro de por qué cada decisión se tomó así. Para el
+estado actual del código, la referencia es `docs/VM-Plan.md` §4.11 (cerrada como resuelta), y para
+lo medido, `benchmark_report.md` §4.
+
+| Fase | Estado |
+|---|---|
+| 0 — Red de seguridad y especificación | hecha |
+| 1 — Retorno multi-slot end-to-end | hecha (`ReturnValues = 0xE9`) |
+| 2 — Runtime de value types | hecha (opcodes `0xEA`–`0xF3`, formato de imagen v8) |
+| 3 — `value class` multi-campo end-to-end | hecha |
+| 4 — Campos value-type en línea | hecha, con la matriz de GC completa |
+| 5 — La tupla como value type | hecha; `SurtrTuple` retenido como forma boxeada |
+| 5b — Destructuring de tuplas | añadida sobre la marcha (`Language-Syntax.md` §4.5) |
+| 6 — Periféricos | solo el ítem 2 (nativos multi-retorno), rediseñado a convenio in-place con una sola firma. Los otros cinco siguen sin hacer, cada uno independiente |
+| 7 — Validación y documentación | hecha: cuatro casos de bench nuevos con el A/B `vec2Math`/`vec2Class`, auditoría de GC bajo recolección automática, `Opcodes.md`/`Runtime-Model.md`/`Module-Format.md`/`Language-Syntax.md`/`VM-Plan.md`/`README`/`CLAUDE.md`, y pase de humo LSP |
+
+Tres huecos se dejaron abiertos a propósito, y los tres se rechazan con un error claro en lugar de
+compilarse mal: capturar un valor multi-slot en línea dentro de una lambda (necesita su propio
+diseño), `for-in` sobre una tupla cruda desde fuente (el binder tipa la variable `unknown` y la
+gramática no admite anotación ahí), y patrones anidados dentro de un destructuring (v1 solo admite
+nombres planos).
+
+---
+
+Investigación a fondo sobre el
 runtime real (`SurtrVirtualMachine`, modelo de valores, registry/GC, linker de layouts, emisor,
 descriptores, imagen `.surtrc`, interop y frontera nativa) para determinar si es viable introducir
 tipos de valor que ocupen **uno o más slots** — en lugar de ser referencias a objetos del heap — y un
