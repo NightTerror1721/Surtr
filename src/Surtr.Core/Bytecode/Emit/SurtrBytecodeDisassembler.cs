@@ -1097,6 +1097,14 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.StaticFieldSetX:
                     return AppendFieldOperand(builder, chunk, operand, ReadI32(chunk, operand), 4);
 
+                case OpCode.LoadValueField:
+                case OpCode.StoreValueField:
+                case OpCode.LoadValueStatic:
+                case OpCode.StoreValueStatic:
+                    AppendFieldName(builder, chunk, ReadU16(chunk, operand));
+                    builder.Append(" x").Append(chunk.Code[operand + 2]).AppendLine();
+                    return operand + 3;
+
                 // ---- closures ----------------------------------------------------------------
                 case OpCode.NewClosure:
                     AppendMethodName(builder, chunk, ReadU16(chunk, operand));
@@ -1327,6 +1335,14 @@ namespace Surtr.Bytecode.Emit
 
             builder.AppendLine();
             return operand + width;
+        }
+
+        private static void AppendFieldName(StringBuilder builder, SurtrChunk chunk, int index)
+        {
+            builder.Append(' ').Append(index);
+
+            if ((uint)index < (uint)chunk.FieldTable.Length && chunk.FieldTable[index] is { } field)
+                builder.Append(" (").Append(field.Name).Append(')');
         }
 
         private static void AppendMethodName(StringBuilder builder, SurtrChunk chunk, int index)

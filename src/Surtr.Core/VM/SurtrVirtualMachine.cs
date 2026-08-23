@@ -3158,17 +3158,18 @@ namespace Surtr.VM
                 case OpCode.ReturnValues:
                 {
                     // The result is a contiguous block sitting at the top of the operand stack.
-                    // The copy walks backwards because the destination (the frame base, below the
-                    // whole operand stack) can overlap the source whenever the block is wider than
-                    // the returning method's local count - backwards is the safe direction for
-                    // every destination-below-source move, overlap or not.
+                    // The destination (the frame base, below the whole operand stack) can overlap
+                    // the source whenever the block was built on fewer slots than it is wide, so
+                    // the copy direction follows the overlap: ascending when the destination sits
+                    // at or below the source - each read then happens before the slot it names is
+                    // overwritten - and descending for the mirror case above it.
                     int slotCount = *ip++;
                     SurtrRawValue* source = sp - slotCount;
 
                     int depth = _frameCount - 1;
                     ref SurtrCallFrame finished = ref frames[depth];
 
-                    sp = finished.Base;
+                    SurtrRawValue* destination = finished.Base;
                     int expected = finished.ExpectedResults;
 
                     finished.Chunk = null;
@@ -3177,26 +3178,30 @@ namespace Surtr.VM
                     roots[depth + 1] = 0;
                     _frameCount = depth;
 
+                    if (expected != 0)
+                    {
+                        if (destination <= source)
+                        {
+                            for (int i = 0; i < slotCount; i++)
+                                destination[i] = source[i];
+                        }
+                        else
+                        {
+                            for (int i = slotCount - 1; i >= 0; i--)
+                                destination[i] = source[i];
+                        }
+                    }
+
+                    sp = expected != 0 ? destination + slotCount : destination;
+
                     if (depth == entryDepth)
                     {
                         // A run ending here hands results to the host, which reads them off the
                         // stack through CallForResults rather than through this single-value
                         // return - hence the sentinel instead of one slot.
-                        if (expected != 0)
-                        {
-                            for (int i = slotCount - 1; i >= 0; i--) sp[i] = source[i];
-                            sp += slotCount;
-                        }
-
                         _sp = sp;
                         if (budgeted) _stepsRemaining = steps;
                         return SurtrValue.Null;
-                    }
-
-                    if (expected != 0)
-                    {
-                        for (int i = slotCount - 1; i >= 0; i--) sp[i] = source[i];
-                        sp += slotCount;
                     }
 
                     _sp = sp;
@@ -3373,6 +3378,62 @@ namespace Surtr.VM
 
                     for (int i = 0; i < slotCount; i++)
                         *sp++ = fields[i].Raw;
+
+                    goto Dispatch;
+                }
+
+                case OpCode.LoadValueField:
+                {
+                    int slotCount = ip[2];
+                    var fields = ((SurtrInstance)entities[(SurtrRef)(*--sp)]!).Fields;
+                    int slot = fieldTable[(ip[0] | (ip[1] << 8))].SlotIndex;
+                    ip += 3;
+
+                    // The receiver is gone; its block takes its place. No allocation, so no
+                    // safepoint - the same contract LoadValueLocal moves under.
+                    for (int i = 0; i < slotCount; i++)
+                        *sp++ = fields[slot + i].Raw;
+
+                    goto Dispatch;
+                }
+
+                case OpCode.StoreValueField:
+                {
+                    int slotCount = ip[2];
+                    sp -= slotCount;
+                    var instance = (SurtrInstance)entities[(SurtrRef)(*(sp - 1))]!;
+                    var fields = instance.Fields;
+                    int slot = fieldTable[(ip[0] | (ip[1] << 8))].SlotIndex;
+                    ip += 3;
+
+                    for (int i = 0; i < slotCount; i++)
+                        fields[slot + i] = SurtrValue.FromRaw(sp[i]);
+
+                    sp--;
+                    goto Dispatch;
+                }
+
+                case OpCode.LoadValueStatic:
+                {
+                    int slotCount = ip[2];
+                    SurtrRawValue* source = fieldTable[(ip[0] | (ip[1] << 8))].StaticAddress;
+                    ip += 3;
+
+                    for (int i = 0; i < slotCount; i++)
+                        *sp++ = source[i];
+
+                    goto Dispatch;
+                }
+
+                case OpCode.StoreValueStatic:
+                {
+                    int slotCount = ip[2];
+                    sp -= slotCount;
+                    SurtrRawValue* destination = fieldTable[(ip[0] | (ip[1] << 8))].StaticAddress;
+                    ip += 3;
+
+                    for (int i = 0; i < slotCount; i++)
+                        destination[i] = sp[i];
 
                     goto Dispatch;
                 }

@@ -6,6 +6,7 @@ using Surtr.Bytecode.Image;
 using Surtr.Runtime;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
+using Surtr.Runtime.Utilities;
 using System;
 
 namespace Surtr.Tests.VM
@@ -372,6 +373,193 @@ namespace Surtr.Tests.VM
             Assert.False(type.IsValueType);
             Assert.Equal(-1, type.FlattenedSlotWidth);
             Assert.Equal(2, type.InstanceSlotCount);
+        }
+
+        #endregion
+
+        #region Inline fields
+
+        /// <summary>
+        /// An ordinary class whose field holds a two-slot value type: the field claims consecutive
+        /// slots, the holder's instance grows by the value's whole width, and the inner string's
+        /// absolute slot lands in both reference maps.
+        /// </summary>
+        [Fact]
+        public void TheLinker_FlattensAValueTypeField_IntoTheHoldersLayout()
+        {
+            var module = new SurtrModule("layout");
+
+            var inner = VmMetadataHelpers.DefineClass(module, "Inner");
+            inner.IsValueType = true;
+            inner.AddField(VmMetadataHelpers.Field(module, "n", SurtrClassReference.Integer));
+            inner.AddField(VmMetadataHelpers.Field(module, "s", SurtrClassReference.String));
+
+            var holder = VmMetadataHelpers.DefineClass(module, "Holder");
+            var count = VmMetadataHelpers.Field(module, "count", SurtrClassReference.Integer);
+            var tag = VmMetadataHelpers.Field(module, "tag", inner.SelfReference);
+            var label = VmMetadataHelpers.Field(module, "label", SurtrClassReference.String);
+            holder.AddField(count);
+            holder.AddField(tag);
+            holder.AddField(label);
+
+            var origin = VmMetadataHelpers.Field(module, "origin", inner.SelfReference, isStatic: true);
+            holder.AddField(origin);
+
+            VmMetadataHelpers.HandleFor(module, inner);
+            VmMetadataHelpers.HandleFor(module, holder);
+
+            SurtrTypeLinker.LinkModule(module);
+
+            Assert.Equal(2, inner.FlattenedSlotWidth);
+            Assert.Equal(new[] { 1 }, ToArray(inner.ReferenceSlots)); // inner.s, relative to the block
+
+            // count keeps slot 0; the inline value owns slots 1-2; label follows at 3.
+            Assert.Equal(0, count.SlotIndex);
+            Assert.Equal(1, tag.SlotIndex);
+            Assert.Equal(3, label.SlotIndex);
+            Assert.Equal(4, holder.InstanceSlotCount);
+            Assert.Equal(new[] { 2, 3 }, ToArray(holder.ReferenceSlots)); // tag.s shifted by the field's base, then label
+
+            // The static claims the same width in its own storage, its string tracked too.
+            Assert.Equal(0, origin.SlotIndex);
+            Assert.Equal(2, holder.StaticStorage.Length);
+            Assert.Equal(new[] { 1 }, ToArray(holder.ReferenceStaticSlots));
+        }
+
+        [Fact]
+        public void ModuleLevelGlobals_ClaimAValueTypesWholeWidth()
+        {
+            var module = new SurtrModule("globals");
+
+            var inner = VmMetadataHelpers.DefineClass(module, "Inner");
+            inner.IsValueType = true;
+            inner.AddField(VmMetadataHelpers.Field(module, "n", SurtrClassReference.Integer));
+            inner.AddField(VmMetadataHelpers.Field(module, "s", SurtrClassReference.String));
+
+            var home = VmMetadataHelpers.Field(module, "home", inner.SelfReference, isStatic: true);
+            var name = VmMetadataHelpers.Field(module, "name", SurtrClassReference.String, isStatic: true);
+            module.AddField(home);
+            module.AddField(name);
+
+            VmMetadataHelpers.HandleFor(module, inner);
+
+            SurtrTypeLinker.LinkModule(module);
+
+            Assert.Equal(0, home.SlotIndex);
+            Assert.Equal(2, name.SlotIndex);
+            Assert.Equal(3, module.StaticStorage.Length);
+            Assert.Equal(new[] { 1, 2 }, ToArray(module.ReferenceStaticSlots));
+        }
+
+        [Fact]
+        public void StoreThenLoadValueField_MovesABlockThroughAnInstance()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+            var (vec2, _, _) = DefineVec2(module);
+            var holder = VmMetadataHelpers.DefineClass(module, "Holder");
+            var position = VmMetadataHelpers.Field(module, "position", vec2.SelfReference);
+            holder.AddField(position);
+
+            // Both handles the module mentions resolve before the layout walk runs.
+            VmMetadataHelpers.HandleFor(module, vec2);
+            VmMetadataHelpers.HandleFor(module, holder);
+            SurtrTypeLinker.LinkModule(module);
+
+            var builder = new BytecodeBuilder();
+            int holderTypeIndex = builder.AddType(VmMetadataHelpers.HandleFor(module, holder));
+            int fieldIndex = builder.AddField(position);
+
+            builder
+                .Op(OpCode.ObjNew).I16(holderTypeIndex)
+                .Op(OpCode.Stl).I16(0)
+                .Op(OpCode.Ldl).I16(0)
+                .Op(OpCode.PushI32).I32(7)
+                .LoadFloat(2.5)
+                .Op(OpCode.StoreValueField).I16(fieldIndex).U8(2)
+                .Op(OpCode.Ldl).I16(0)
+                .Op(OpCode.LoadValueField).I16(fieldIndex).U8(2)
+                .Op(OpCode.ReturnValues).U8(2);
+
+            var method = builder.Build(module, localCount: 1, maxStackSize: 8, returnType: vec2.SelfReference);
+
+            var results = new SurtrValue[2];
+            Assert.True(runtime.TryInvoke(method, ReadOnlySpan<SurtrValue>.Empty, results));
+            Assert.Equal(7, results[0].AsInt);
+            Assert.Equal(2.5, results[1].AsFloat);
+        }
+
+        [Fact]
+        public void ASubSlotOfAnInlineField_ReadsAtItsAbsolutePosition()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+            var (vec2, _, _) = DefineVec2(module);
+            var holder = VmMetadataHelpers.DefineClass(module, "Holder");
+            var position = VmMetadataHelpers.Field(module, "position", vec2.SelfReference);
+            holder.AddField(position);
+            VmMetadataHelpers.HandleFor(module, vec2);
+            VmMetadataHelpers.HandleFor(module, holder);
+            SurtrTypeLinker.LinkModule(module);
+
+            var builder = new BytecodeBuilder();
+            int holderTypeIndex = builder.AddType(VmMetadataHelpers.HandleFor(module, holder));
+            int fieldIndex = builder.AddField(position);
+
+            // Store the block, load it back, drop the second slot, and answer the first.
+            builder
+                .Op(OpCode.ObjNew).I16(holderTypeIndex)
+                .Op(OpCode.Stl).I16(0)
+                .Op(OpCode.Ldl).I16(0)
+                .Op(OpCode.PushI32).I32(7)
+                .LoadFloat(2.5)
+                .Op(OpCode.StoreValueField).I16(fieldIndex).U8(2)
+                .Op(OpCode.Ldl).I16(0)
+                .Op(OpCode.LoadValueField).I16(fieldIndex).U8(2)
+                .Op(OpCode.Pop)
+                .Op(OpCode.ReturnValue);
+
+            Assert.Equal(7, Run(runtime, module, builder, localCount: 1).AsInt);
+        }
+
+        [Fact]
+        public void StoreThenLoadValueStatic_MovesABlockThroughStaticStorage()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("test");
+            var (vec2, _, _) = DefineVec2(module);
+            var holder = VmMetadataHelpers.DefineClass(module, "Holder");
+            var origin = VmMetadataHelpers.Field(module, "origin", vec2.SelfReference, isStatic: true);
+            holder.AddField(origin);
+            VmMetadataHelpers.HandleFor(module, vec2);
+            VmMetadataHelpers.HandleFor(module, holder);
+            SurtrTypeLinker.LinkModule(module);
+
+            var builder = new BytecodeBuilder();
+            int fieldIndex = builder.AddField(origin);
+
+            builder
+                .Op(OpCode.PushI32).I32(11)
+                .LoadFloat(1.5)
+                .Op(OpCode.StoreValueStatic).I16(fieldIndex).U8(2)
+                .Op(OpCode.LoadValueStatic).I16(fieldIndex).U8(2)
+                .Op(OpCode.ReturnValues).U8(2);
+
+            var method = builder.Build(module, localCount: 0, maxStackSize: 8, returnType: vec2.SelfReference);
+
+            var results = new SurtrValue[2];
+            Assert.True(runtime.TryInvoke(method, ReadOnlySpan<SurtrValue>.Empty, results));
+            Assert.Equal(11, results[0].AsInt);
+            Assert.Equal(1.5, results[1].AsFloat);
+        }
+
+        private static int[] ToArray(SurtrNativeArray<int> slots)
+        {
+            var values = new int[slots.Length];
+            for (int i = 0; i < values.Length; i++)
+                values[i] = slots[i];
+
+            return values;
         }
 
         #endregion

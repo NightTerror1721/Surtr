@@ -178,6 +178,21 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Writes a static field or module-level variable, naming it directly.</summary>
         public SurtrCodeEmitter StoreStaticField(SurtrFieldInfo field) => StoreStaticField(_module.Field(field));
 
+        /// <summary>
+        /// Reads an instance field whose declared type is a multi-field value class, pushing the
+        /// field's whole inline block.
+        /// </summary>
+        public SurtrCodeEmitter LoadValueField(SurtrFieldInfo field, int slots) => LoadValueField(_module.Field(field), slots);
+
+        /// <summary>Writes an instance field whose declared type is a multi-field value class.</summary>
+        public SurtrCodeEmitter StoreValueField(SurtrFieldInfo field, int slots) => StoreValueField(_module.Field(field), slots);
+
+        /// <summary>Reads a static or module-level field holding an inline value.</summary>
+        public SurtrCodeEmitter LoadValueStatic(SurtrFieldInfo field, int slots) => LoadValueStatic(_module.Field(field), slots);
+
+        /// <summary>Writes a static or module-level field holding an inline value.</summary>
+        public SurtrCodeEmitter StoreValueStatic(SurtrFieldInfo field, int slots) => StoreValueStatic(_module.Field(field), slots);
+
         #endregion
 
         #region Types, allocation and casts

@@ -1274,6 +1274,65 @@ namespace Surtr.Bytecode.Emit
             return this;
         }
 
+        /// <summary>Emits <see cref="OpCode.LoadValueField"/>.</summary>
+        /// <param name="field">The field whose declared type is a multi-field value class.</param>
+        /// <param name="slots">How many slots wide the field's inline block is; at least two.</param>
+        public SurtrCodeEmitter LoadValueField(SurtrFieldToken field, int slots)
+        {
+            if (slots < 2 || slots > byte.MaxValue)
+                throw new ArgumentException($"A multi-slot field load moves between 2 and {byte.MaxValue} slots, not {slots}.", nameof(slots));
+
+            Track(1, slots);
+            _code.Add((byte)OpCode.LoadValueField);
+            _code.Add((byte)FieldIndex(field));
+            _code.Add((byte)(FieldIndex(field) >> 8));
+            _code.Add((byte)slots);
+            return this;
+        }
+
+        /// <summary>Emits <see cref="OpCode.StoreValueField"/>.</summary>
+        public SurtrCodeEmitter StoreValueField(SurtrFieldToken field, int slots)
+        {
+            if (slots < 2 || slots > byte.MaxValue)
+                throw new ArgumentException($"A multi-slot field store moves between 2 and {byte.MaxValue} slots, not {slots}.", nameof(slots));
+
+            // The receiver travels below the block: both leave the stack together.
+            Track(slots + 1, 0);
+            _code.Add((byte)OpCode.StoreValueField);
+            _code.Add((byte)FieldIndex(field));
+            _code.Add((byte)(FieldIndex(field) >> 8));
+            _code.Add((byte)slots);
+            return this;
+        }
+
+        /// <summary>Emits <see cref="OpCode.LoadValueStatic"/>.</summary>
+        public SurtrCodeEmitter LoadValueStatic(SurtrFieldToken field, int slots)
+        {
+            if (slots < 2 || slots > byte.MaxValue)
+                throw new ArgumentException($"A multi-slot static load moves between 2 and {byte.MaxValue} slots, not {slots}.", nameof(slots));
+
+            Track(0, slots);
+            _code.Add((byte)OpCode.LoadValueStatic);
+            _code.Add((byte)FieldIndex(field));
+            _code.Add((byte)(FieldIndex(field) >> 8));
+            _code.Add((byte)slots);
+            return this;
+        }
+
+        /// <summary>Emits <see cref="OpCode.StoreValueStatic"/>.</summary>
+        public SurtrCodeEmitter StoreValueStatic(SurtrFieldToken field, int slots)
+        {
+            if (slots < 2 || slots > byte.MaxValue)
+                throw new ArgumentException($"A multi-slot static store moves between 2 and {byte.MaxValue} slots, not {slots}.", nameof(slots));
+
+            Track(slots, 0);
+            _code.Add((byte)OpCode.StoreValueStatic);
+            _code.Add((byte)FieldIndex(field));
+            _code.Add((byte)(FieldIndex(field) >> 8));
+            _code.Add((byte)slots);
+            return this;
+        }
+
         #endregion
     }
 }

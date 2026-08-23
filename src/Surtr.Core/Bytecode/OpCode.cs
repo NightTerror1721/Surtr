@@ -1054,6 +1054,49 @@ namespace Surtr.Bytecode
         /// <see cref="Unbox"/> assumes its subject is a box.
         /// </remarks>
         UnboxValue = 0xEF,
+
+        /// <summary>Copies a multi-slot value out of an instance's flattened field block.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) fieldIdx(2) n(1)</c> - 4 bytes.<br/>
+        /// Stack: <c>..., obj -&gt; ..., s1, ..., sn</c><br/>
+        /// Notes: what reading a field whose declared type is a multi-field value class lowers to
+        /// (<c>enemy.position</c>). The field's own slot index is where the block starts inside
+        /// the instance - the linker flattened nested value types into consecutive slots, so the
+        /// copy is one indexed base plus a run. Reading one sub-slot of that value keeps using
+        /// <see cref="FieldGet"/> at the summed absolute slot; this moves the whole block.
+        /// </remarks>
+        LoadValueField = 0xF0,
+
+        /// <summary>Pops a receiver and a multi-slot value into an instance's flattened field block.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) fieldIdx(2) n(1)</c> - 4 bytes.<br/>
+        /// Stack: <c>..., obj, s1, ..., sn -&gt; ...</c><br/>
+        /// Notes: the write side of <see cref="LoadValueField"/>, and what every assignment to such
+        /// a field lowers to - including the constructor splice, which is the only writer a
+        /// <c>let</c> field ever gets. Copying the block is the value type's copy-on-assignment
+        /// semantics showing at its storage boundary.
+        /// </remarks>
+        StoreValueField = 0xF1,
+
+        /// <summary>Copies a multi-slot value out of a static's flattened storage.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) fieldIdx(2) n(1)</c> - 4 bytes.<br/>
+        /// Stack: <c>... -&gt; ..., s1, ..., sn</c><br/>
+        /// Notes: the static counterpart of <see cref="LoadValueField"/>. A static whose declared
+        /// type is a multi-field value class owns <c>n</c> consecutive slots in its owner's static
+        /// storage, addressed from the slot the linker bound - so the read is one indirect base
+        /// plus a run, exactly what <see cref="StaticFieldGet"/> does for one slot.
+        /// </remarks>
+        LoadValueStatic = 0xF2,
+
+        /// <summary>Pops a multi-slot value into a static's flattened storage.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) fieldIdx(2) n(1)</c> - 4 bytes.<br/>
+        /// Stack: <c>..., s1, ..., sn -&gt; ...</c><br/>
+        /// Notes: the write side of <see cref="LoadValueStatic"/> - what an assignment to such a
+        /// static, and the static initializer that seeds it, both lower to.
+        /// </remarks>
+        StoreValueStatic = 0xF3,
         #endregion
 
 

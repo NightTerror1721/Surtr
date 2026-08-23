@@ -761,6 +761,12 @@ namespace Surtr.Compiler.CodeGen
                 }
 
                 context.Declare(method, constructor);
+
+                // A constructor's signature carries value types like any other callee's: a
+                // creation site counts slots from this builder, so a VT parameter has to claim
+                // its flattened width here or every such call site lands one slot short.
+                ApplyValueLayout(constructor, method);
+
                 emission.Methods.Add((method, constructor));
                 emission.Constructors.Add((method, constructor));
                 return;

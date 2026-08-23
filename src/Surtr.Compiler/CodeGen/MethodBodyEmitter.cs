@@ -320,7 +320,20 @@ namespace Surtr.Compiler.CodeGen
             Expression(expression);
 
             if (!expression.Type.IsVoid && !expression.Type.IsNever)
-                Code.Pop();
+            {
+                // A discarded value occupies its whole inline width: popping one slot of a
+                // two-slot block would strand the rest under whatever runs next.
+                if (TryMultiSlotWidth(expression.Type, out int width))
+                {
+                    var scratch = _method.DeclareLocals("$discard", width);
+                    _slotWidthsByIndex[scratch.Index] = width;
+                    Code.StoreValueLocal(scratch.Index, width);
+                }
+                else
+                {
+                    Code.Pop();
+                }
+            }
         }
 
         private void EmitLocalDeclaration(BoundLocalDeclarationStatement declaration)
@@ -2572,21 +2585,33 @@ namespace Surtr.Compiler.CodeGen
                     EmitStoreLocal(ParameterSlot(parameter.Parameter));
                     return;
 
-case BoundFieldExpression field:
+                case BoundFieldExpression field:
                 {
                     var info = Field(field.Field);
 
                     if (field.Field.IsStatic)
                     {
                         value();
-                        Code.StoreStaticField(info);
+
+                        // A static holding an inline value receives the whole block; the storage
+                        // underneath is the widened range the linker laid out.
+                        if (TryMultiSlotWidth(field.Field.Type, out int staticWidth))
+                            Code.StoreValueStatic(info, staticWidth);
+                        else
+                            Code.StoreStaticField(info);
+
                         return;
                     }
 
                     var receiver = field.Receiver ?? throw Unsupported($"a write to '{field.Field.Name}' with no receiver");
                     Expression(receiver);
                     value();
-                    Code.StoreField(info);
+
+                    if (TryMultiSlotWidth(field.Field.Type, out int width))
+                        Code.StoreValueField(info, width);
+                    else
+                        Code.StoreField(info);
+
                     return;
                 }
 
@@ -2650,6 +2675,24 @@ case BoundFieldExpression field:
             Code.MarkLabel(end);
         }
 
+        /// <summary>
+        /// Whether this type occupies more than one frame slot inline - a multi-field value class -
+        /// and if so, its flattened width.
+        /// </summary>
+        private static bool TryMultiSlotWidth(TypeSymbol type, out int width)
+        {
+            if (type.NonNullable is NamedTypeSymbol named
+                && ValueTypeLayout.IsMultiField(named)
+                && ValueTypeLayout.TryGet(named, out var layout, out _))
+            {
+                width = layout.Width;
+                return true;
+            }
+
+            width = 0;
+            return false;
+        }
+
         private void EmitFieldRead(BoundFieldExpression field)
         {
             var info = Field(field.Field);
@@ -2657,8 +2700,14 @@ case BoundFieldExpression field:
             if (field.Field.IsStatic)
             {
                 // An enum case is exactly this: a static, read-only field of the enum's own type
-                // holding the one instance its static initializer built.
-                Code.LoadStaticField(info);
+                // holding the one instance its static initializer built. A static whose declared
+                // type is an inline value reads its whole block instead, from the widened storage
+                // the linker gave it.
+                if (TryMultiSlotWidth(field.Field.Type, out int staticWidth))
+                    Code.LoadValueStatic(info, staticWidth);
+                else
+                    Code.LoadStaticField(info);
+
                 UnerasedFieldResult(field.Field);
                 return;
             }
@@ -2701,8 +2750,16 @@ case BoundFieldExpression field:
                 return;
             }
 
+            // A field whose declared type is a multi-field value class holds the value inline:
+            // reading it moves the whole block out of the instance (or static storage) rather
+            // than lifting one slot through a boxed reference. Sub-slot reads of that block go
+            // back through the receiver branch above, which sums the absolute offset.
             Expression(receiver);
-            Code.LoadField(info);
+            if (TryMultiSlotWidth(field.Field.Type, out int fieldWidth))
+                Code.LoadValueField(info, fieldWidth);
+            else
+                Code.LoadField(info);
+
             UnerasedFieldResult(field.Field);
         }
 
