@@ -20,6 +20,7 @@ namespace Surtr.Runtime.Classes
         private readonly int _codeOffset;
         private readonly int _localCount;
         private readonly int _maxStackSize;
+        private readonly int _argumentSlotCount;
         private SurtrExceptionHandler[] _handlers = System.Array.Empty<SurtrExceptionHandler>();
 
         internal SurtrBytecodeMethodInfo(
@@ -40,13 +41,15 @@ namespace Surtr.Runtime.Classes
             string[]? genericParameters = null,
             string[][]? genericConstraints = null,
             bool isExtension = false,
-            bool isBridge = false)
+            bool isBridge = false,
+            int argumentSlotCount = -1)
             : base(name, SurtrMethodImplKind.Bytecode, dispatch, role, isOverride, returnType, parameters, isStatic, visibility, declaringType, isSealed, genericParameters, genericConstraints, isExtension, isBridge)
         {
             _chunk = chunk;
             _entryIndex = entryIndex;
             _localCount = localCount;
             _maxStackSize = maxStackSize;
+            _argumentSlotCount = argumentSlotCount >= 0 ? argumentSlotCount : parameters.Length;
 
             // Snapshot the offset instead of indexing the chunk on every call. The table is
             // fixed once the loader has built it, so this can never drift.
@@ -80,6 +83,13 @@ namespace Surtr.Runtime.Classes
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _maxStackSize;
         }
+
+        /// <summary>
+        /// How many stack slots a call site leaves for this method's arguments, receiver
+        /// included - value-type parameters occupy their flattened width, so this is the sum of
+        /// those widths rather than a plain parameter count.
+        /// </summary>
+        public override int ArgumentSlotCount => _argumentSlotCount;
 
         /// <summary>The byte offset into the chunk's code where this method's body starts.</summary>
         internal int CodeOffset

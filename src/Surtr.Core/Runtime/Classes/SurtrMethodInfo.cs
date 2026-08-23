@@ -435,6 +435,13 @@ namespace Surtr.Runtime.Classes
         }
 
         /// <summary>
+        /// How many stack slots a call site leaves for this method's arguments, receiver
+        /// included. One per argument by default; a method whose signature carries value types
+        /// overrides this with the sum of their flattened widths.
+        /// </summary>
+        public virtual int ArgumentSlotCount => _parameters.Length;
+
+        /// <summary>
         /// How many arguments a call site must supply: the leading run of parameters that have
         /// neither a default nor the varargs mark.
         /// </summary>

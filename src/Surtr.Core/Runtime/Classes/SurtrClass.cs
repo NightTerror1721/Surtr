@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Objects;
 using Surtr.Runtime.Utilities;
@@ -89,7 +89,8 @@ namespace Surtr.Runtime.Classes
         /// <see cref="Objects.SurtrInstance"/> of this very class, whose field slots receive the
         /// value verbatim.
         /// </remarks>
-        internal bool IsValueType;
+        /// <summary>Public so a host or the compiler's module builder can flag a class as a value type before linking.</summary>
+        public bool IsValueType { get; set; }
 
         /// <summary>
         /// How many slots one inline value of this class occupies: the sum of its instance fields'
@@ -223,12 +224,12 @@ namespace Surtr.Runtime.Classes
         /// <param name="declaringType">The type this class is nested in, or <see langword="null"/> at module level.</param>
         /// <param name="isSealed">
         /// Whether nothing may extend this class. Mutually exclusive with
-        /// <paramref name="isAbstract"/>, per <c>Language-Syntax.md</c> §2.2 - a class that cannot
+        /// <paramref name="isAbstract"/>, per <c>Language-Syntax.md</c> Â§2.2 - a class that cannot
         /// be instantiated and cannot be extended could never have an instance.
         /// </param>
         /// <param name="isEnum">
         /// Whether this class is an enum: a sealed class with a fixed set of named static
-        /// instances (<c>Language-Syntax.md</c> §2.4). Implies <paramref name="isSealed"/>.
+        /// instances (<c>Language-Syntax.md</c> Â§2.4). Implies <paramref name="isSealed"/>.
         /// </param>
         public SurtrClass(
             string name,
@@ -346,7 +347,7 @@ namespace Surtr.Runtime.Classes
         /// </summary>
         /// <remarks>
         /// The ordinal is what makes an exhaustive <c>switch</c> over an enum
-        /// (<c>Language-Syntax.md</c> §4.3) compile to a dense jump table: the cases are instances,
+        /// (<c>Language-Syntax.md</c> Â§4.3) compile to a dense jump table: the cases are instances,
         /// so without one the keys would be references and there would be nothing to index on.
         /// </remarks>
         public ReadOnlySpan<SurtrEnumCaseInfo> EnumCases
@@ -500,7 +501,7 @@ namespace Surtr.Runtime.Classes
         /// <exception cref="InvalidOperationException">The class is already built.</exception>
         /// <exception cref="ArgumentException">
         /// A member with the same signature is already declared. Two members differing only in
-        /// return type land here too, which is what <c>Language-Syntax.md</c> §3.5's first rule
+        /// return type land here too, which is what <c>Language-Syntax.md</c> Â§3.5's first rule
         /// asks for - no call site could choose between them.
         /// </exception>
         public void AddMethod(SurtrMethodInfo method)
