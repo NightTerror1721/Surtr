@@ -218,10 +218,31 @@ namespace Surtr.Interop.SourceGenerator
             var properties = new List<IPropertySymbol>();
             var comparisons = new List<IMethodSymbol>();
 
-            // An inline value type's constructor is deliberately not exposed, matching the
-            // reflection scanner: a Surtr constructor allocates first and runs against the new
-            // instance as its receiver, and an inline value has nothing to allocate and no
-            // receiver to fill - it *is* its result. A static factory covers the case exactly.
+            // A static factory marked [SurtrNativeConstructor] plays the constructor role for an
+            // inline value type, which cannot expose instance constructors at all - its value is
+            // its own result. Marked separately so the ordinary-method walk below skips them:
+            // registering the same method twice would collide in the class's member tables.
+            var factoryConstructors = new HashSet<IMethodSymbol>();
+            if (InlineLayout.IsInline(type))
+            {
+                foreach (var candidate in type.GetMembers().OfType<IMethodSymbol>())
+                {
+                    if (candidate.MethodKind == MethodKind.Ordinary
+                        && candidate.IsStatic
+                        && candidate.DeclaredAccessibility == Accessibility.Public
+                        && candidate.Parameters.All(static p => p.RefKind == RefKind.None)
+                        && ReferenceEquals(candidate.ReturnType, type)
+                        && GeneratorSupport.FindAttribute(candidate, GeneratorSupport.NativeConstructorAttribute) is not null)
+                    {
+                        factoryConstructors.Add(candidate);
+                        methods.Add(candidate);
+                    }
+                }
+            }
+
+            // An inline value type has no instance constructors to expose: its value is its own
+            // result, and [SurtrNativeConstructor] factories above play that role. An ordinary
+            // native class keeps them - they cross the wire as instance factories, no receiver.
             if (!InlineLayout.IsInline(type))
             {
                 foreach (var constructor in type.InstanceConstructors.Where(static c => c.DeclaredAccessibility == Accessibility.Public && !c.IsStatic && !HasRefIn(c)))
@@ -230,6 +251,9 @@ namespace Surtr.Interop.SourceGenerator
 
             foreach (var method in type.GetMembers().OfType<IMethodSymbol>())
             {
+                if (factoryConstructors.Contains(method))
+                    continue;
+
                 if (IsCompareTo(method) && method.DeclaredAccessibility == Accessibility.Public)
                 {
                     comparisons.Add(method);
@@ -270,7 +294,7 @@ namespace Surtr.Interop.SourceGenerator
             var descriptors = new List<string>();
 
             foreach (var method in methods)
-                descriptors.Add(EmitMethod(builder, type, method, policy, indent));
+                descriptors.Add(EmitMethod(builder, type, method, policy, indent, asConstructor: method.MethodKind == MethodKind.Constructor || factoryConstructors.Contains(method)));
 
             foreach (var comparison in comparisons)
                 descriptors.Add(EmitComparison(builder, type, comparison, policy, indent));
@@ -307,16 +331,19 @@ namespace Surtr.Interop.SourceGenerator
             EmitRegistration(builder, type, policy, descriptors, indent);
         }
 
-        private static string EmitMethod(StringBuilder builder, INamedTypeSymbol type, IMethodSymbol method, int policy, string indent)
+        private static string EmitMethod(StringBuilder builder, INamedTypeSymbol type, IMethodSymbol method, int policy, string indent, bool asConstructor)
         {
             var attribute = GeneratorSupport.FindAttribute(method, GeneratorSupport.NativeMethodAttribute);
             int memberPolicy = GeneratorSupport.GetIntNamed(attribute, "NamingPolicy") ?? policy;
-            string name = method.MethodKind == MethodKind.Constructor
+            string name = asConstructor
                 ? "ctor"
                 : GeneratorSupport.GetStringNamed(attribute, "Name") ?? GeneratorSupport.Apply(method.Name, memberPolicy, isMember: true);
 
-            string shimName = "__SurtrInvoke_" + type.Name + "_" + (method.MethodKind == MethodKind.Constructor ? "ctor" : method.Name) + "_" + method.Parameters.Length;
-            EmitMethodShim(builder, type, method, shimName, indent);
+            // A real constructor's shim is named after the type; a factory keeps its own name so
+            // the two cannot collide when both exist on one inline type.
+            string shimName = "__SurtrInvoke_" + type.Name + "_"
+                + (method.MethodKind == MethodKind.Constructor ? "ctor" : method.Name) + "_" + method.Parameters.Length;
+            EmitMethodShim(builder, type, method, shimName, indent, asConstructor);
 
             var parameters = new List<string>();
             int argIndex = method.IsStatic ? 0 : 1;
@@ -341,10 +368,14 @@ namespace Surtr.Interop.SourceGenerator
             var descriptor = new StringBuilder();
             descriptor.Append("new NativeMethodDescriptor { Name = \"" + name + "\"");
             descriptor.Append(", IsStatic = " + (method.IsStatic ? "true" : "false"));
-            descriptor.Append(", IsConstructor = " + (method.MethodKind == MethodKind.Constructor ? "true" : "false"));
+            descriptor.Append(", IsConstructor = " + (asConstructor ? "true" : "false"));
             descriptor.Append(", IsVirtual = " + (method.IsVirtual ? "true" : "false"));
             descriptor.Append(", IsOverride = " + (method.IsOverride ? "true" : "false"));
-            descriptor.Append(", ReturnDescriptor = \"" + returnDescriptor + "\"");
+            descriptor.Append(", ReturnDescriptor = \"" + (asConstructor
+                ? // A constructor's result is the instance it creates: the return names the class,
+                  // which is what makes `ArgumentSlotCount` treat it as a receiverless factory.
+                  GeneratorSupport.MapType(type)
+                : returnDescriptor) + "\"");
             descriptor.Append(", Parameters = new NativeParameterDescriptor[] { " + string.Join(", ", parameters) + " }");
             descriptor.Append(", EntryPoint = SurtrNativeEntryPoint.FromFunctionPointer(&" + shimName + ")");
             descriptor.Append(" }");
@@ -352,7 +383,7 @@ namespace Surtr.Interop.SourceGenerator
             return descriptor.ToString();
         }
 
-        private static void EmitMethodShim(StringBuilder builder, INamedTypeSymbol type, IMethodSymbol method, string shimName, string indent)
+        private static void EmitMethodShim(StringBuilder builder, INamedTypeSymbol type, IMethodSymbol method, string shimName, string indent, bool asConstructor)
         {
             string typeName = type.ToDisplayString();
 
@@ -360,10 +391,13 @@ namespace Surtr.Interop.SourceGenerator
             builder.AppendLine(indent + "private static int " + shimName + "(SurtrCallArguments args)");
             builder.AppendLine(indent + "{");
 
-            var receiverLayout = method.IsStatic ? null : InlineLayout.For(type);
+            // A constructor - real or factory - has no receiver on the wire: its parameters start
+            // at slot 0 and the new instance is written over that same slot.
+            bool wireStatic = method.IsStatic || asConstructor;
+            var receiverLayout = wireStatic ? null : InlineLayout.For(type);
 
             string targetExpr;
-            if (method.IsStatic)
+            if (wireStatic)
                 targetExpr = typeName;
             else if (receiverLayout is not null)
             {
@@ -375,7 +409,7 @@ namespace Surtr.Interop.SourceGenerator
             }
             else
             {
-                builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
+                builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">();");
                 targetExpr = "__target";
             }
 
@@ -383,7 +417,7 @@ namespace Surtr.Interop.SourceGenerator
 
             // An argument is not necessarily a slot: a parameter typed as an inline struct occupies
             // its whole block, so the walk advances by width rather than by one.
-            int argIndex = method.IsStatic ? 0 : receiverLayout?.Width ?? 1;
+            int argIndex = wireStatic ? 0 : receiverLayout?.Width ?? 1;
 
             foreach (var parameter in method.Parameters)
             {
@@ -413,7 +447,12 @@ namespace Surtr.Interop.SourceGenerator
             }
 
             bool hasOut = method.Parameters.Any(static p => p.RefKind == RefKind.Out);
-            var resultLayout = method.MethodKind == MethodKind.Constructor ? null : InlineLayout.For(method.ReturnType);
+            bool realConstructor = asConstructor && !method.IsStatic;
+
+            // A factory keeps its inline result layout - the struct it returns travels as its flat
+            // block, exactly what construction syntax expects to find. A real constructor's
+            // "result" is the wrapped reference written by the tail below, not a block.
+            var resultLayout = realConstructor ? null : InlineLayout.For(method.ReturnType);
 
             if (!hasOut && resultLayout is not null)
             {
@@ -430,7 +469,7 @@ namespace Surtr.Interop.SourceGenerator
             }
 
             string returnExpr;
-            if (method.MethodKind == MethodKind.Constructor)
+            if (realConstructor)
                 returnExpr = "SurtrValue.CreateReference(args.Runtime.WrapNative(new " + typeName + "(" + string.Join(", ", arguments) + ")).GetSurtrReference())";
             else if (method.ReturnsVoid)
                 returnExpr = "SurtrValue.Null";

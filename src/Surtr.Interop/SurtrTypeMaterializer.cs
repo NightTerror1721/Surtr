@@ -193,7 +193,11 @@ namespace Surtr.Interop
                 isOverride: method.IsOverride,
                 returnType,
                 parameters.ToArray(),
-                method.IsStatic,
+                // A constructor is never static on the Surtr side - source reaches it by naming
+                // the type, not through the type - even though its entry point follows the
+                // static-shaped wire (no receiver; the instance is the result). The metadata
+                // guard against static constructors is about source semantics, not wire shape.
+                isStatic: method.IsStatic && !method.IsConstructor,
                 Visibility(method.Visibility),
                 declaringType,
                 method.EntryPoint,

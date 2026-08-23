@@ -285,6 +285,13 @@ namespace Surtr.Bytecode.Emit
         }
 
         /// <summary>Declares a constructor whose body is a host function.</summary>
+        /// <remarks>
+        /// The constructor crosses the wire as an <em>instance factory</em>: no receiver, its
+        /// parameters from slot 0, and the newly created instance written over that same slot -
+        /// which is why its declared return names this class rather than <c>V</c>. A native class's
+        /// instance is the object its host constructor creates; there is nothing for
+        /// <c>ObjNew</c> to allocate and no receiver to run against.
+        /// </remarks>
         public SurtrNativeMethodInfo DefineNativeConstructor(
             SurtrNativeEntryPoint entryPoint,
             SurtrParameterInfo[]? parameters = null,
@@ -294,7 +301,7 @@ namespace Surtr.Bytecode.Emit
         {
             var method = new SurtrNativeMethodInfo(
                 name, SurtrMethodDispatch.Direct, SurtrMethodRole.Constructor, false,
-                _module.TypeHandle(SurtrClassReference.Void),
+                _selfHandle,
                 parameters ?? Array.Empty<SurtrParameterInfo>(),
                 false, visibility, _selfHandle, entryPoint, false, linkName);
 
@@ -303,6 +310,11 @@ namespace Surtr.Bytecode.Emit
         }
 
         /// <summary>Declares a constructor whose body the loading runtime will supply, by name.</summary>
+        /// <remarks>
+        /// Instance-factory wire shape, like <see cref="DefineNativeConstructor(SurtrNativeEntryPoint, SurtrParameterInfo[], SurtrVisibility, string, string?)"/>:
+        /// the return names this class, and the loading runtime publishes a body that answers the
+        /// new instance over slot 0.
+        /// </remarks>
         public SurtrNativeMethodInfo DeclareNativeConstructor(
             string linkName,
             SurtrParameterInfo[]? parameters = null,
@@ -311,7 +323,7 @@ namespace Surtr.Bytecode.Emit
         {
             var method = new SurtrNativeMethodInfo(
                 name, SurtrMethodDispatch.Direct, SurtrMethodRole.Constructor, false,
-                _module.TypeHandle(SurtrClassReference.Void),
+                _selfHandle,
                 parameters ?? Array.Empty<SurtrParameterInfo>(),
                 false, visibility, _selfHandle, linkName);
 

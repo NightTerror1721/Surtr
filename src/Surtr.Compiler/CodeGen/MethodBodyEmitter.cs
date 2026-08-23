@@ -3322,6 +3322,24 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
+            // An instance-factory constructor - every native class's - creates the object itself:
+            // no receiver crosses the wire, its parameters start at slot 0, and the new reference
+            // comes back over that same slot. There is nothing for ObjNew to allocate and no
+            // receiver to run a body against, so the call is flat and its result is the
+            // expression's value. The metadata-level convention is "a constructor whose return
+            // names its class rather than void", which at symbol level is Role plus a non-void
+            // return.
+            if (creation.Constructor is { } factory
+                && factory.Role == MethodRole.Constructor
+                && !factory.ReturnType.IsVoid)
+            {
+                foreach (var argument in creation.Arguments)
+                    Expression(argument);
+
+                EmitResolvedCall(factory, virtualCall: false, discardResult: false);
+                return;
+            }
+
             Code.NewObject(Descriptors.Emit(type));
 
             if (creation.Constructor is null)

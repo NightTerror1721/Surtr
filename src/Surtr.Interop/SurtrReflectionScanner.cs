@@ -180,6 +180,16 @@ namespace Surtr.Interop
 
             foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly))
             {
+                // An inline value type has no instance constructors of its own on the wire - what
+                // plays that role is a static factory marked [SurtrNativeConstructor], which Surtr
+                // source reaches with construction syntax exactly as if it were one.
+                var constructorAttribute = method.GetCustomAttribute<SurtrNativeConstructorAttribute>();
+                if (constructorAttribute is not null)
+                {
+                    members.Add(ScanFactoryConstructor(type, method, policy, constructorAttribute));
+                    continue;
+                }
+
                 if (method.IsAbstract)
                     continue;
 
@@ -235,9 +245,59 @@ namespace Surtr.Interop
             return members.ToArray();
         }
 
-        private static NativeMethodDescriptor? ScanMethod(MethodBase method, SurtrNamingPolicy policy, bool isConstructor)
+        /// <summary>
+        /// Exposes a static factory as the constructor an inline value type cannot otherwise have.
+        /// </summary>
+        /// <remarks>
+        /// The wire shape is the native-construction convention: no receiver, parameters from slot
+        /// 0, the result written over slot 0. For an inline type the result is the struct itself,
+        /// so it travels as its flat block - which is exactly what the ordinary static-method path
+        /// already produces for a struct return, so the descriptor differs from one only in
+        /// <c>IsConstructor</c>, which is what makes Surtr source reach it with construction
+        /// syntax. Anything but a public static method returning its own inline-declared struct is
+        /// refused here rather than half-exposed.
+        /// </remarks>
+        private static NativeMethodDescriptor ScanFactoryConstructor(
+            Type type,
+            MethodInfo method,
+            SurtrNamingPolicy policy,
+            SurtrNativeConstructorAttribute attribute)
         {
+            var typeAttribute = TypeAttribute(type);
+            if (typeAttribute is null || !typeAttribute.Inline)
+                throw new InvalidOperationException(
+                    $"[SurtrNativeConstructor] on '{type.Name}.{method.Name}' is invalid: the attribute is exclusive to types declared [SurtrNativeType(Inline = true)].");
+
+            if (!method.IsStatic)
+                throw new InvalidOperationException(
+                    $"[SurtrNativeConstructor] on '{type.Name}.{method.Name}' is invalid: only a static method can be exposed as the constructor of an inline value type.");
+
+            if (method.ReturnType != type)
+                throw new InvalidOperationException(
+                    $"[SurtrNativeConstructor] on '{type.Name}.{method.Name}' is invalid: a factory must return its own declaring type.");
+
+            foreach (var parameter in method.GetParameters())
+            {
+                if (parameter.IsOut || parameter.ParameterType.IsByRef)
+                    throw new InvalidOperationException(
+                        $"[SurtrNativeConstructor] on '{type.Name}.{method.Name}' is invalid: a factory's result is its return value, so it cannot take out or ref parameters.");
+            }
+
             var ignore = method.GetCustomAttribute<SurtrNativeIgnoreAttribute>();
+            if (ignore is not null)
+                throw new InvalidOperationException(
+                    $"[SurtrNativeConstructor] on '{type.Name}.{method.Name}' is invalid: the method is also [SurtrNativeIgnore].");
+
+            var descriptor = ScanMethod(method, policy, isConstructor: true)
+                ?? throw new InvalidOperationException(
+                    $"[SurtrNativeConstructor] on '{type.Name}.{method.Name}' could not be scanned.");
+
+            descriptor.Description = attribute.Description;
+            return descriptor;
+        }
+
+        private static NativeMethodDescriptor? ScanMethod(MethodBase method, SurtrNamingPolicy policy, bool isConstructor)
+        {            var ignore = method.GetCustomAttribute<SurtrNativeIgnoreAttribute>();
             var attribute = method.GetCustomAttribute<SurtrNativeMethodAttribute>();
             if (ignore is not null || (attribute is not null && !attribute.Expose))
                 return null;
@@ -281,13 +341,16 @@ namespace Surtr.Interop
                 });
             }
 
-            var returnDescriptor = BuildReturnDescriptor(method, attribute, memberPolicy, outDescriptors);
+            var returnDescriptor = isConstructor
+                ? SurtrTypeMapper.Map(method.DeclaringType!, memberPolicy)
+                : BuildReturnDescriptor(method, attribute, memberPolicy, outDescriptors);
 
             var slot = WithLayouts(
                 new ReflectionMemberSlot
                 {
-                    Kind = ReflectionMemberKind.Method,
+                    Kind = isConstructor ? ReflectionMemberKind.Constructor : ReflectionMemberKind.Method,
                     Method = method as MethodInfo,
+                    Constructor = method as ConstructorInfo,
                     IsStatic = isStatic,
                     ResultDescriptor = returnDescriptor,
                     Parameters = fullDescriptors,

@@ -217,13 +217,23 @@ registrarlo despues del que contiene, el mismo orden que ya necesita una clase b
 | Ocultar un campo con `[SurtrNativeIgnore]` | Dejaria un hueco en mitad del bloque y el struct CLR ya no se podria reconstruir. Un tipo inline son todos sus campos o ninguno. |
 | Un struct sin campos de instancia | Un tipo de valor inline *es* sus campos; uno sin ninguno no es nada. |
 | `Inline = true` sobre una clase o un enum | Solo un struct tiene representacion inline que pedir. |
+| `[SurtrNativeConstructor]` fuera de un struct inline, sobre un método de instancia, o con `out`/`ref` | El rol constructor de un tipo inline es exclusivamente una fábrica estática que devuelve el propio struct; cualquier otra colocación se rechaza al escanear. |
 
-**No se expone el constructor.** Un constructor de Surtr se alcanza asignando primero y ejecutando
-el cuerpo contra la instancia nueva como receptor; un valor inline no tiene nada que asignar ni
-receptor que rellenar — *es* su resultado. Una **fabrica estatica** cubre el caso exactamente y ya
-funciona: un metodo estatico que devuelve el struct entrega el bloque plano, como `Vector3.Of` en el
-ejemplo. (El agujero de fondo es mas amplio que los tipos inline: un constructor de una clase nativa
-tampoco encaja hoy en el protocolo asignar-y-luego-inicializar.)
+**Constructores: la convención de fábrica de instancias.** Un constructor de Surtr se alcanza
+asignando primero y ejecutando el cuerpo contra la instancia nueva como receptor; un valor inline
+no tiene nada que asignar ni receptor que rellenar — *es* su resultado. Por eso:
+
+- **Struct inline**: los constructores de instancia no se exponen. El rol lo juega un **método
+  estático marcado `[SurtrNativeConstructor]`** que devuelva el propio struct — exclusivo de tipos
+  `Inline = true`, sin parámetros `out`/`ref`. Surtr source lo alcanza con sintaxis de
+  construcción (`let v = Vector3.One();`) y recibe el bloque plano, exactamente como cualquier
+  valor inline. Sin el atributo, el método estático sigue expuesto como método ordinario.
+- **Clase nativa**: los constructores públicos de instancia **sí se exponen**, cruzando el wire
+  como una *fábrica de instancias*: sin receptor, parámetros desde el slot 0, y el nuevo objeto —
+  envuelto y registrado por el runtime — escrito sobre ese mismo slot. Es la misma forma que
+  cualquier método estático nativo, reconocible en metadatos porque su retorno nombra a la propia
+  clase en lugar de `V`. Desde fuente, `let g = Gauge(5);` construye el objeto CLR real; no hay
+  ningún `ObjNew` de por medio.
 
 **Coste, y por que las dos rutas no cuestan lo mismo.** Leer un campo desde Surtr no cruza la
 frontera en ningun caso — es una lectura de slot. La diferencia esta en llamar a un miembro nativo:

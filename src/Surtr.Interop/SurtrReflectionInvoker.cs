@@ -12,6 +12,7 @@ namespace Surtr.Interop
     internal enum ReflectionMemberKind
     {
         Method,
+        Constructor,
         FieldGetter,
         FieldSetter,
         PropertyGetter,
@@ -24,6 +25,13 @@ namespace Surtr.Interop
     {
         internal ReflectionMemberKind Kind;
         internal MethodInfo? Method;
+
+        /// <summary>
+        /// The instance constructor, for a slot exposing one. A <see cref="ConstructorInfo"/> is
+        /// not a <see cref="MethodInfo"/>, which is why it cannot ride in <see cref="Method"/> -
+        /// and why the first cut of this slot left constructors null-dereferencing at invoke.
+        /// </summary>
+        internal ConstructorInfo? Constructor;
         internal FieldInfo? Field;
         internal bool IsStatic;
         internal SurtrClassReference ResultDescriptor;
@@ -186,9 +194,76 @@ namespace Surtr.Interop
                     return args.Return(SurtrMarshaler.ToSurtr(runtime, result, slot.ResultDescriptor));
                 }
 
+                case ReflectionMemberKind.Constructor:
+                    return InvokeConstructorSlot(args, slot);
+
                 default:
                     return InvokeMethodSlot(args, slot);
             }
+        }
+
+        /// <summary>
+        /// Invokes a constructor slot: an instance factory with no receiver on the wire. Its
+        /// parameters start at slot 0, and the new instance is written over that same slot - the
+        /// in-place convention every other native body follows.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Two shapes reach here. A real CLR constructor arrives as a
+        /// <see cref="ReflectionMemberSlot.Constructor"/>; the object it builds is a reference
+        /// type, so it is wrapped - <c>SurtrRuntime.WrapNative</c> registers it and hands back its
+        /// entity id - and that reference is the answer. A static factory exposed with
+        /// <see cref="Surtr.Interop.Attributes.SurtrNativeConstructorAttribute"/> on an inline
+        /// value type arrives as a <see cref="ReflectionMemberSlot.Method"/> whose result is the
+        /// struct itself: the result is the flat block, written like any inline result.
+        /// </para>
+        /// <para>
+        /// Every input is read before the first write, which the local
+        /// <c>clrArguments</c> array guarantees: nothing aliases the argument slots until the
+        /// single write at the end.
+        /// </para>
+        /// </remarks>
+        private static int InvokeConstructorSlot(SurtrCallArguments args, ReflectionMemberSlot slot)
+        {
+            var runtime = args.Runtime;
+            MethodBase create = (MethodBase?)slot.Constructor ?? slot.Method!;
+            var parameters = create.GetParameters();
+            var clrArguments = new object?[parameters.Length];
+
+            int at = 0;
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                var layout = i < slot.ParameterLayouts.Length ? slot.ParameterLayouts[i] : null;
+
+                if (layout is null)
+                {
+                    clrArguments[i] = SurtrMarshaler.ToClr(runtime, args.GetValue(at), parameters[i].ParameterType, slot.Parameters[i]);
+                    at += 1;
+                }
+                else
+                {
+                    clrArguments[i] = layout.Read(runtime, args, at);
+                    at += layout.Width;
+                }
+            }
+
+            // A ConstructorInfo answers Invoke(parameters) - there is no instance to run against,
+            // which is the whole point; a factory is an ordinary static MethodInfo.
+            object? created = slot.Constructor is { } constructor
+                ? constructor.Invoke(clrArguments)
+                : create.Invoke(null, clrArguments);
+
+            // An inline factory's result is the struct itself: the declared return is the value
+            // type, `ResultSlotCount` is its width, and the caller copies that many slots.
+            if (slot.ResultLayout is { } resultLayout)
+            {
+                var block = new SurtrValue[resultLayout.Width];
+                resultLayout.Write(runtime, created!, block, 0);
+                return args.Return(block);
+            }
+
+            var wrapped = runtime.WrapNative(created);
+            return args.Return(SurtrValue.CreateReference(wrapped.GetSurtrReference()));
         }
 
         private static int InvokeMethodSlot(SurtrCallArguments args, ReflectionMemberSlot slot)

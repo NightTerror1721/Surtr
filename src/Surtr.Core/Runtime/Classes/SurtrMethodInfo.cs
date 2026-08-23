@@ -459,12 +459,22 @@ namespace Surtr.Runtime.Classes
         /// instance method on a multi-field value class receives its block unboxed, so the
         /// receiver is that block's width rather than one reference.
         /// </para>
+        /// <para>
+        /// A <b>native constructor</b> has no receiver at all: its entry point is an instance
+        /// factory, reading its parameters from slot 0 and answering the new object over that same
+        /// slot. The convention is recognisable from metadata alone - a constructor whose return
+        /// names its own class rather than <c>V</c> - and every compiled constructor stays on the
+        /// old shape (<c>ObjNew</c> allocates, the body runs against the new instance as receiver,
+        /// the return is <c>V</c>).
+        /// </para>
         /// </remarks>
         public virtual int ArgumentSlotCount
         {
             get
             {
-                int slots = DeclaringType is not null && !IsStatic ? SlotWidthOf(DeclaringType) : 0;
+                int slots = DeclaringType is not null && !IsStatic && !IsInstanceFactoryConstructor
+                    ? SlotWidthOf(DeclaringType)
+                    : 0;
 
                 for (int i = 0; i < _parameters.Length; i++)
                 {
@@ -476,6 +486,14 @@ namespace Surtr.Runtime.Classes
                 return slots;
             }
         }
+
+        /// <summary>
+        /// Whether this constructor creates its own instance instead of running against one
+        /// <c>ObjNew</c> allocated: the native-construction convention, recognisable by its return
+        /// naming the class it builds.
+        /// </summary>
+        public bool IsInstanceFactoryConstructor
+            => _role == SurtrMethodRole.Constructor && _returnType.Reference.TypeCode != SurtrValueTypeCode.Void;
 
         /// <summary>
         /// How many contiguous slots a value of <paramref name="handle"/>'s type occupies.

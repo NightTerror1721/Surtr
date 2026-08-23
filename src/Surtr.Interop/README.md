@@ -58,6 +58,12 @@ Ambas vías convergen en el mismo `NativeTypeDescriptor` y pasan por el mismo ma
   getter/setter públicos.
 - **`SurtrNativeParameterAttribute`** (parámetro): `Name`, `Description`, `TypeDescriptor`.
 - **`SurtrNativeIgnoreAttribute`**: atajo a `Expose = false`.
+- **`SurtrNativeConstructorAttribute`** (método estático, exclusivo de structs `Inline = true`):
+  expone la fábrica como el constructor del tipo — Surtr source la alcanza con sintaxis de
+  construcción y recibe el bloque plano. Los constructores de instancia de una **clase** nativa se
+  exponen solos, como fábricas de instancias: sin receptor, parámetros desde el slot 0, y el nuevo
+  objeto envuelto escrito sobre ese mismo slot (su retorno en metadatos nombra a la clase, no
+  `V`).
 
 Un tipo con `[SurtrNativeType]` expone **todos sus miembros públicos** con valores derivados de la
 firma C#; los atributos de miembro solo sobrescriben. `TypeDescriptor`/`ReturnDescriptor` aceptan el

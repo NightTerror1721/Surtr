@@ -25,6 +25,10 @@ namespace Sample
     [SurtrNativeType]
     public class Calculator
     {
+        public Calculator(int seed) { Seed = seed; }
+
+        public int Seed;
+
         public int Add(int a, int b) => a + b;
 
         public int Count;
@@ -239,9 +243,14 @@ namespace Sample
         public float Y;
         public float Z;
 
+        public float SqrMagnitude() => (X * X) + (Y * Y) + (Z * Z);
+
+        // Never exposed on an inline type - kept because the generated shims build receivers with
+        // it where a test fixture wants a real constructor to exist.
         public Vector3(float x, float y, float z) { X = x; Y = y; Z = z; }
 
-        public float SqrMagnitude() => (X * X) + (Y * Y) + (Z * Z);
+        [SurtrNativeConstructor(Description = ""the unit vector"")]
+        public static Vector3 One() => new Vector3 { X = 1f, Y = 1f, Z = 1f };
 
         public Vector3 Halved => new Vector3(X / 2f, Y / 2f, Z / 2f);
 
@@ -388,13 +397,51 @@ namespace Sample
             Assert.DoesNotContain("__SurtrPropSet_Vector3_Halved", all);
         }
 
-        /// <summary>A constructor is not exposed on an inline type, matching the reflection scanner.</summary>
+        /// <summary>
+        /// A static factory marked [SurtrNativeConstructor] plays the constructor role for an
+        /// inline value type: it registers under <c>ctor</c> with the factory wire shape, and its
+        /// result is written as the struct's own flat block - what construction syntax expects to
+        /// find. The instance constructor that used to sit in this fixture is gone for good: an
+        /// inline type has nothing to allocate and no receiver to fill.
+        /// </summary>
         [Fact]
-        public void Generator_ExposesNoConstructorForAnInlineStruct()
+        public void Generator_ExposesAMarkedFactoryAsTheInlineConstructor()
         {
             var all = RunInlineGenerator();
 
+            Assert.Contains("__SurtrInvoke_Vector3_One_0", all);
+            Assert.Contains("Name = \"ctor\", IsStatic = true, IsConstructor = true", all);
+            Assert.Contains("__result = Sample.Vector3.One();", all);
+            Assert.Contains("return 3;", all);
+
+            // No instance constructor is emitted for an inline type.
             Assert.DoesNotContain("__SurtrInvoke_Vector3_ctor", all);
+        }
+
+        /// <summary>
+        /// A native class constructor crosses the wire as an instance factory: its descriptor
+        /// carries <c>IsConstructor = true</c> and names the class as its return - which is what
+        /// makes every call site count its arguments without a receiver - and its shim builds the
+        /// CLR object and answers the wrapped reference over slot 0, reading no receiver of its
+        /// own.
+        /// </summary>
+        [Fact]
+        public void Generator_ExposesAClassConstructorAsAnInstanceFactory()
+        {
+            RunGenerator(out var result);
+
+            var all = string.Join("\n", result.Results.SelectMany(static r => r.GeneratedSources).Select(static g => g.SourceText.ToString()));
+
+            Assert.Contains("__SurtrInvoke_Calculator_ctor_1", all);
+            Assert.Contains("Name = \"ctor\"", all);
+            Assert.Contains("IsConstructor = true", all);
+            Assert.Contains("WrapNative(new Sample.Calculator(", all);
+
+            // No receiver read in the ctor shim: parameters start at slot 0.
+            var ctorShim = all.Substring(all.IndexOf("__SurtrInvoke_Calculator_ctor_1(SurtrCallArguments args)", StringComparison.Ordinal));
+            ctorShim = ctorShim.Substring(0, ctorShim.IndexOf("}", StringComparison.Ordinal));
+            Assert.DoesNotContain("GetValue(0)", ctorShim);
+            Assert.Contains("GetInt(0)", ctorShim);
         }
 
         #endregion
