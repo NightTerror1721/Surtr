@@ -355,9 +355,30 @@ debajo del 5 %, así que los números de §4 sí se pueden citar.
 **Lo que sigue costando.**
 
 1. **El boxing de genéricos.** `generics` a 29.5x y 32 MB es el peor resultado, por diseño: es el
-   precio del borrado. Los tipos de valor son ahora la alternativa para quien no quiera pagarlo.
-2. **El despacho virtual y de interfaz** siguen a ~10x de C#. Una caché en línea sobre
-   `InvokeVirtual` es la candidata obvia si el perfilado muestra sitios monomórficos dominando.
+   precio del borrado. Descompuesto contra la misma suite: cada iteración registra dos objetos (el
+   `SurtrBoxed` del argumento que cruza el slot borrado y la instancia de `Box<int>`, ~106 B CLR
+   contando el array `Fields` de la instancia), mientras que la vuelta (`Cast` + `Unbox`) no asigna nada — el emisor
+   ya baja la lectura del resultado sustituido como unbox, no como caja nueva. La pregunta era si
+   hay algo que hacer sin romper el trato de Java, y la respuesta medida es que el coste no está en
+   ninguna pieza prescindible: internar cajas pequeñas cambia identidad de referencias observable
+   (`R`), y reificar contradice lo asentado en `docs/Compiler-Plan.md` §8. Los tipos de valor son
+   la alternativa para quien no quiera pagarlo, y ya existen. El único constante reducible que se
+   ha identificado es el array secundario `Fields` de cada `SurtrInstance` (una segunda asignación
+   CLR por instancia, también pagada en `allocation` y `vec2Class`): incrustarlo inline para N
+   pequeño lo quitaría, al precio de bifurcar el layout que hoy leen `FieldGet`, el trazado del
+   colector y el indexador `ref`. Solo con evidencia de perfilado; no es boxing, es instanciación.
+2. **El despacho virtual y de interfaz** siguen a ~10x de C#. La caché en línea sobre
+   `InvokeVirtual` **se probó y se retiró**: A/B sobre la misma build con una caché monomórfica
+   gemela de la de interfaz (`SurtrChunk.VirtualCallCache`), tres corridas por variante en el sitio
+   más favorable posible — `virtualCalls`, receptor monomórfico por construcción — no separa las
+   dos distribuciones (6.5 ms base contra 6.7 ms con caché; dispersión entre corridas ±4 %). La
+   razón ya estaba escrita junto a `InterfaceCallCache`: resolver un virtual son dos cargas
+   dependientes (`Class.VirtualMethods[slot]`), y la caché cambia una de ellas por una comparación
+   más una carga, añadiendo el test nulo y la indexación del propio array de caché. En interfaz la
+   jugada compensó porque el camino que se saltaba era una sonda open-addressing; aquí no había
+   nada que saltarse. Cerrada con medición; el techo de *cualquier* mejora de resolución es el
+   delta `virtualCalls − methodCalls` (~6 ns/llamada) y ese techo lo fija el protocolo de frame
+   que viene detrás, no la resolución.
 3. **La llamada sigue costando lo que costaba.** Los tipos de valor quitan la asignación, no el
    protocolo de frame — que es la razón de que `vec2Math` esté a 62.9x de un C# que mantiene el
    `struct` en registros.

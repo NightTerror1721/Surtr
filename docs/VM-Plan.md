@@ -1050,11 +1050,26 @@ hash-then-`SwitchLookup`-then-`StrEQ`; the enum half landed as a reference-compa
 than the dense table this plan predicted, for the reason recorded in §4.16 — the ordinal is
 metadata about the case, not a field on its instance, so there is nothing to `FieldGet`.
 
-**Phase 5 — measure, then optimise.** Not before. §3.5 is **done**: the dictionary's per-key
-interface call is gone for `{int: V}`, measured at a third off both dict workloads. Remaining
-candidates: §3.1, §3.2, and an inline cache on `InvokeVirtual` if profiling shows monomorphic call
-sites dominating. All local changes; none disturbs the frame protocol. §4.5 raises the priority of
-§3.1, since `for-in`'s general path goes through interface dispatch.
+**Phase 5 — measure, then optimise.** Not before. Two of the three candidates are now settled by
+measurement rather than argument:
+
+- **§3.5 is done**: the dictionary's per-key interface call is gone for `{int: V}`, measured at a
+  third off both dict workloads. **§3.1 is done** (closed in place: the open-addressed
+  `interfaceId → index` table plus the monomorphic call-site cache on `InvokeInterface`).
+- **The inline cache on `InvokeVirtual` was tried and rejected** (August 2026). A/B against the
+  same build with a monomorphic cache twin of the interface one, three runs per variant on the most
+  favourable site there is — `virtualCalls`, monomorphic receiver by construction — does not
+  separate the distributions (6.5 ms base vs 6.7 ms cached; ±4 % run-to-run spread). Resolution is
+  two dependent loads (`Class.VirtualMethods[slot]`); the cache trades one for a compare plus a
+  load and adds a null test and its own array indexing, where the interface cache had an
+  open-addressed probe to skip and this has nothing. The ceiling on any resolution improvement is
+  the `virtualCalls − methodCalls` delta (~6 ns/call), and that ceiling is set by the frame
+  protocol behind it, not by resolution. Recorded in `benchmark_report.md` §8.
+- **§3.2 remains**, blocked on netstandard2.1 not carrying `Unsafe.Add` without a NuGet dependency
+  a Unity host would also ship. Revisit if the target framework moves.
+
+None of what landed disturbs the frame protocol. §4.5 raised the priority of §3.1, since `for-in`'s
+general path goes through interface dispatch — which is why §3.1 went first, back when it was open.
 
 **Phase 6 — diagnostics.** Frames already carry enough for a stack trace (method, chunk, saved
 `IP`), and the handler search already walks them. `SurtrThrownException` does not yet include one.
