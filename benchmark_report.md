@@ -363,10 +363,13 @@ debajo del 5 %, así que los números de §4 sí se pueden citar.
    ninguna pieza prescindible: internar cajas pequeñas cambia identidad de referencias observable
    (`R`), y reificar contradice lo asentado en `docs/Compiler-Plan.md` §8. Los tipos de valor son
    la alternativa para quien no quiera pagarlo, y ya existen. El único constante reducible que se
-   ha identificado es el array secundario `Fields` de cada `SurtrInstance` (una segunda asignación
-   CLR por instancia, también pagada en `allocation` y `vec2Class`): incrustarlo inline para N
-   pequeño lo quitaría, al precio de bifurcar el layout que hoy leen `FieldGet`, el trazado del
-   colector y el indexador `ref`. Solo con evidencia de perfilado; no es boxing, es instanciación.
+   había identificado era el array secundario `Fields` de cada `SurtrInstance` (una segunda
+   asignación CLR por instancia): **medido su techo y cerrado**. Un proxy CLR puro con las mismas
+   formas de celda y el mismo bucle que la suite da **~1.0 ns/iteración para 1 campo y ~0.9 ns
+   para 2** — la asignación pequeña de arrays en .NET 8 es casi gratis y la desreferencia extra
+   tampoco se paga. Incrustar los slots inline recuperaría como mucho ese 2 % de `allocation`,
+   al precio de bifurcar el layout que hoy leen `FieldGet`, el trazado del colector y el indexador
+   `ref`. Cerrado con medición; no re-proponer sin una plataforma donde asignar sea caro otra vez.
 2. **El despacho virtual y de interfaz** siguen a ~10x de C#. La caché en línea sobre
    `InvokeVirtual` **se probó y se retiró**: A/B sobre la misma build con una caché monomórfica
    gemela de la de interfaz (`SurtrChunk.VirtualCallCache`), tres corridas por variante en el sitio
