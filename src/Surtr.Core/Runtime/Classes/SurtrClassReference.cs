@@ -633,6 +633,36 @@ namespace Surtr.Runtime.Classes
         public SurtrClassReference[] GetTupleElementTypes()
             => ReadList(Descriptor, 2, out _);
 
+        /// <summary>
+        /// How many data-stack slots one value of this tuple occupies inline: the sum of its
+        /// elements' own widths, nested tuples flattened. Zero for the empty tuple - it has no
+        /// block to occupy anything.
+        /// </summary>
+        /// <remarks>
+        /// Purely a descriptor walk: every element counts one slot except a nested tuple, which
+        /// recurses. Class-typed elements count one whether they are ordinary references or value
+        /// classes, because without resolved metadata there is nothing to consult - and the
+        /// compiler-side layouts that do know never come through here.
+        /// </remarks>
+        public int GetTupleFlattenedSlotWidth()
+        {
+            const int maxSlots = 254;
+            int total = 0;
+
+            foreach (var element in GetTupleElementTypes())
+            {
+                total += element.TypeCode == SurtrValueTypeCode.Tuple
+                    ? element.GetTupleFlattenedSlotWidth()
+                    : 1;
+
+                if (total > maxSlots)
+                    throw new InvalidOperationException(
+                        $"The tuple '{Descriptor}' flattens to more than {maxSlots} slots.");
+            }
+
+            return total;
+        }
+
         /// <summary>The parameter types of a closure reference, in order. Only meaningful when <see cref="TypeCode"/> is <see cref="SurtrValueTypeCode.Closure"/>.</summary>
         public SurtrClassReference[] GetClosureParameterTypes()
             => ReadList(Descriptor, 2, out _);

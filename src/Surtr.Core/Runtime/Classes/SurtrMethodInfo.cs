@@ -435,11 +435,43 @@ namespace Surtr.Runtime.Classes
         }
 
         /// <summary>
-        /// How many stack slots a call site leaves for this method's arguments, receiver
+        /// How many stack slots a call site must leave for this method's arguments, receiver
         /// included. One per argument by default; a method whose signature carries value types
         /// overrides this with the sum of their flattened widths.
         /// </summary>
         public virtual int ArgumentSlotCount => ParameterCount + (DeclaringType is not null && !IsStatic ? 1 : 0);
+
+        /// <summary>
+        /// How many operand-stack slots one call to this method leaves behind: zero for void, the
+        /// flattened width of an inline return - a tuple, by its own descriptor; a value type, by
+        /// its linked layout - and one for everything else.
+        /// </summary>
+        /// <remarks>
+        /// Not the call opcode's <c>retCount</c> immediate: that stays the frame protocol's 0/1
+        /// gate (D6). The block's width rides the callee's declared type, which is what both the
+        /// caller's stack accounting and the host boundary read.
+        /// </remarks>
+        public virtual int ResultSlotCount
+        {
+            get
+            {
+                var reference = _returnType.Reference;
+
+                if (reference.TypeCode.IsVoid)
+                    return 0;
+
+                if (reference.TypeCode == SurtrValueTypeCode.Tuple)
+                    return Math.Max(reference.GetTupleFlattenedSlotWidth(), 1);
+
+                if (_returnType.ResolvedType is SurtrClass { IsValueType: true } valueClass
+                    && valueClass.FlattenedSlotWidth > 1)
+                {
+                    return valueClass.FlattenedSlotWidth;
+                }
+
+                return 1;
+            }
+        }
 
         /// <summary>
         /// How many arguments a call site must supply: the leading run of parameters that have

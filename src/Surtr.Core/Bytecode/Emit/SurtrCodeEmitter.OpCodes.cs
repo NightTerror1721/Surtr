@@ -65,14 +65,20 @@ namespace Surtr.Bytecode.Emit
         }
 
         /// <summary>An opcode carrying a method index of <paramref name="indexWidth"/> bytes, then an argument and a result count.</summary>
-        private SurtrCodeEmitter WithCall(OpCode op, int methodIndex, int indexWidth, int argumentCount, int resultCount)
+        /// <remarks>
+        /// <paramref name="resultCount"/> is what the instruction encodes - the frame protocol's
+        /// 0/1 gate. <paramref name="resultSlots"/>, when given, is how many slots the tracker
+        /// credits instead: a call whose callee returns an inline block leaves several slots even
+        /// though the encoded answer stays one.
+        /// </remarks>
+        private SurtrCodeEmitter WithCall(OpCode op, int methodIndex, int indexWidth, int argumentCount, int resultCount, int resultSlots = -1)
         {
             ThrowIfFinished();
 
             CheckRange(methodIndex, 0, indexWidth == 2 ? ushort.MaxValue : int.MaxValue, op, "methodIdx");
             CheckArgumentCounts(op, argumentCount, resultCount);
 
-            Track(argumentCount, resultCount);
+            Track(argumentCount, resultSlots < 0 ? resultCount : resultSlots);
 
             _code.Add((byte)op);
             for (int i = 0; i < indexWidth; i++)
@@ -1026,15 +1032,15 @@ namespace Surtr.Bytecode.Emit
         #region Call Operations
 
         /// <summary>Emits <see cref="OpCode.CallLocalModule"/>.</summary>
-        public SurtrCodeEmitter CallLocalModule(SurtrMethodToken function, int argumentCount, int resultCount)
-            => WithCall(OpCode.CallLocalModule, MethodIndex(function), 2, argumentCount, resultCount);
+        public SurtrCodeEmitter CallLocalModule(SurtrMethodToken function, int argumentCount, int resultCount, int resultSlots = -1)
+            => WithCall(OpCode.CallLocalModule, MethodIndex(function), 2, argumentCount, resultCount, resultSlots);
 
         /// <summary>Emits <see cref="OpCode.CallLocalModuleX"/>.</summary>
-        public SurtrCodeEmitter CallLocalModuleX(SurtrMethodToken function, int argumentCount, int resultCount)
-            => WithCall(OpCode.CallLocalModuleX, MethodIndex(function), 4, argumentCount, resultCount);
+        public SurtrCodeEmitter CallLocalModuleX(SurtrMethodToken function, int argumentCount, int resultCount, int resultSlots = -1)
+            => WithCall(OpCode.CallLocalModuleX, MethodIndex(function), 4, argumentCount, resultCount, resultSlots);
 
         /// <summary>Emits <see cref="OpCode.CallModule"/>.</summary>
-        public SurtrCodeEmitter CallModule(SurtrExternalMethodToken target, int argumentCount, int resultCount)
+        public SurtrCodeEmitter CallModule(SurtrExternalMethodToken target, int argumentCount, int resultCount, int resultSlots = -1)
         {
             ThrowIfFinished();
 
@@ -1045,7 +1051,7 @@ namespace Surtr.Bytecode.Emit
             CheckRange(target.FunctionIndex, 0, ushort.MaxValue, OpCode.CallModule, "functionIdx");
             CheckArgumentCounts(OpCode.CallModule, argumentCount, resultCount);
 
-            Track(argumentCount, resultCount);
+            Track(argumentCount, resultSlots < 0 ? resultCount : resultSlots);
 
             _code.Add((byte)OpCode.CallModule);
             _code.Add((byte)target.ModuleIndex);
@@ -1058,7 +1064,7 @@ namespace Surtr.Bytecode.Emit
         }
 
         /// <summary>Emits <see cref="OpCode.CallModuleX"/>.</summary>
-        public SurtrCodeEmitter CallModuleX(SurtrExternalMethodToken target, int argumentCount, int resultCount)
+        public SurtrCodeEmitter CallModuleX(SurtrExternalMethodToken target, int argumentCount, int resultCount, int resultSlots = -1)
         {
             ThrowIfFinished();
 
@@ -1067,7 +1073,7 @@ namespace Surtr.Bytecode.Emit
 
             CheckArgumentCounts(OpCode.CallModuleX, argumentCount, resultCount);
 
-            Track(argumentCount, resultCount);
+            Track(argumentCount, resultSlots < 0 ? resultCount : resultSlots);
 
             _code.Add((byte)OpCode.CallModuleX);
             AppendI32(_code, target.ModuleIndex);
@@ -1085,30 +1091,25 @@ namespace Surtr.Bytecode.Emit
         /// <param name="method">The call target, an entry in the method access table.</param>
         /// <param name="argumentCount">Every incoming slot, the receiver included.</param>
         /// <param name="resultCount">0 or 1: the frame protocol writes back at most one value.</param>
-        public SurtrCodeEmitter InvokeVirtual(SurtrMethodToken method, int argumentCount, int resultCount)
-            => WithCall(OpCode.InvokeVirtual, MethodIndex(method), 2, argumentCount, resultCount);
+        /// <param name="resultSlots">Tracker width for a callee returning an inline block.</param>
+        public SurtrCodeEmitter InvokeVirtual(SurtrMethodToken method, int argumentCount, int resultCount, int resultSlots = -1)
+            => WithCall(OpCode.InvokeVirtual, MethodIndex(method), 2, argumentCount, resultCount, resultSlots);
 
         /// <summary>Emits <see cref="OpCode.InvokeSpecial"/>.</summary>
-        /// <param name="method">The call target, an entry in the method access table.</param>
-        /// <param name="argumentCount">Every incoming slot, the receiver included.</param>
-        /// <param name="resultCount">0 or 1: the frame protocol writes back at most one value.</param>
-        public SurtrCodeEmitter InvokeSpecial(SurtrMethodToken method, int argumentCount, int resultCount)
-            => WithCall(OpCode.InvokeSpecial, MethodIndex(method), 2, argumentCount, resultCount);
+        public SurtrCodeEmitter InvokeSpecial(SurtrMethodToken method, int argumentCount, int resultCount, int resultSlots = -1)
+            => WithCall(OpCode.InvokeSpecial, MethodIndex(method), 2, argumentCount, resultCount, resultSlots);
 
         /// <summary>Emits <see cref="OpCode.InvokeStatic"/>.</summary>
-        public SurtrCodeEmitter InvokeStatic(SurtrMethodToken method, int argumentCount, int resultCount)
-            => WithCall(OpCode.InvokeStatic, MethodIndex(method), 2, argumentCount, resultCount);
+        public SurtrCodeEmitter InvokeStatic(SurtrMethodToken method, int argumentCount, int resultCount, int resultSlots = -1)
+            => WithCall(OpCode.InvokeStatic, MethodIndex(method), 2, argumentCount, resultCount, resultSlots);
 
         /// <summary>Emits <see cref="OpCode.InvokeStaticX"/>.</summary>
-        public SurtrCodeEmitter InvokeStaticX(SurtrMethodToken method, int argumentCount, int resultCount)
-            => WithCall(OpCode.InvokeStaticX, MethodIndex(method), 4, argumentCount, resultCount);
+        public SurtrCodeEmitter InvokeStaticX(SurtrMethodToken method, int argumentCount, int resultCount, int resultSlots = -1)
+            => WithCall(OpCode.InvokeStaticX, MethodIndex(method), 4, argumentCount, resultCount, resultSlots);
 
         /// <summary>Emits <see cref="OpCode.InvokeInterface"/>.</summary>
-        /// <param name="method">The call target, an entry in the method access table.</param>
-        /// <param name="argumentCount">Every incoming slot, the receiver included.</param>
-        /// <param name="resultCount">0 or 1: the frame protocol writes back at most one value.</param>
-        public SurtrCodeEmitter InvokeInterface(SurtrMethodToken method, int argumentCount, int resultCount)
-            => WithCall(OpCode.InvokeInterface, MethodIndex(method), 2, argumentCount, resultCount);
+        public SurtrCodeEmitter InvokeInterface(SurtrMethodToken method, int argumentCount, int resultCount, int resultSlots = -1)
+            => WithCall(OpCode.InvokeInterface, MethodIndex(method), 2, argumentCount, resultCount, resultSlots);
 
         /// <summary>Emits <see cref="OpCode.InvokeClosure"/>.</summary>
         /// <param name="argumentCount">

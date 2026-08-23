@@ -1410,11 +1410,53 @@ namespace Surtr.Runtime
         /// </remarks>
         /// <exception cref="VM.SurtrExecutionException">The call trapped, or raised an exception nothing caught.</exception>
         public SurtrValue Invoke(SurtrMethodInfo method, params SurtrValue[] arguments)
-            => VirtualMachine.Call(method, arguments ?? Array.Empty<SurtrValue>());
+            => Invoke(method, (ReadOnlySpan<SurtrValue>)(arguments ?? Array.Empty<SurtrValue>()));
 
         /// <summary>Calls a Surtr method with arguments the caller already has in a span.</summary>
+        /// <remarks>
+        /// This is the boundary where the two representations meet. The callee's frame counts
+        /// slots - a parameter whose type stores inline claims its whole width - while the host
+        /// speaks one <see cref="SurtrValue"/> per argument; and the same in reverse for the
+        /// result. Both directions translate here: inline arguments arrive as the boxed form the
+        /// host holds and are flattened into their blocks before the call, and an inline result
+        /// comes back boxed rather than leaving the data stack dirty.
+        /// </remarks>
         public SurtrValue Invoke(SurtrMethodInfo method, ReadOnlySpan<SurtrValue> arguments)
-            => VirtualMachine.Call(method, arguments);
+        {
+            int slotCount = ResultSlotCount(method);
+
+            if (!HasInlineParameters(method) && slotCount <= 1)
+                return VirtualMachine.Call(method, arguments);
+
+            Span<SurtrRawValue> results = slotCount <= 32
+                ? stackalloc SurtrRawValue[slotCount]
+                : new SurtrRawValue[slotCount];
+
+            VirtualMachine.CallForResults(method, FlattenArguments(method, arguments), results);
+
+            if (slotCount <= 1)
+                return slotCount == 0 ? SurtrValue.Null : SurtrValue.FromRaw(results[0]);
+
+            // A value-class result boxes into an ordinary instance of its own class; a tuple
+            // result re-packs into the SurtrTuple the host can resolve. Either way the caller
+            // gets one value back, exactly as it would have before values stored inline.
+            if (method.ReturnType.ResolvedType is SurtrClass { IsValueType: true } valueClass)
+            {
+                var instance = NewInstance(valueClass);
+                for (int i = 0; i < slotCount; i++)
+                    instance[i] = SurtrValue.FromRaw(results[i]);
+
+                return SurtrValue.CreateReference(instance.GetSurtrReference());
+            }
+
+            var elements = new SurtrValue[slotCount];
+            for (int i = 0; i < slotCount; i++)
+                elements[i] = SurtrValue.FromRaw(results[i]);
+
+            var tuple = new SurtrTuple(method.ReturnType.Reference, elements);
+            _context.EntityRegistry.Register(tuple);
+            return SurtrValue.CreateReference(tuple.GetSurtrReference());
+        }
 
         /// <summary>Calls a closure and returns its result.</summary>
         public SurtrValue InvokeClosure(SurtrClosure closure, params SurtrValue[] arguments)
@@ -1462,18 +1504,132 @@ namespace Surtr.Runtime
 
         /// <summary>
         /// How many data-stack slots one call to <paramref name="method"/> leaves behind: zero for
-        /// void, the flattened width of a value-type return, one for everything else.
+        /// void, the flattened width of an inline return (a value type or a tuple), one for
+        /// everything else.
         /// </summary>
-        private static int ResultSlotCount(SurtrMethodInfo method)
+        private static int ResultSlotCount(SurtrMethodInfo method) => method.ResultSlotCount;
+
+        /// <summary>
+        /// Whether any declared parameter stores inline - which is what makes the host's one
+        /// <c>SurtrValue</c>-per-argument shape need translating before a call.
+        /// </summary>
+        private static bool HasInlineParameters(SurtrMethodInfo method)
         {
-            if (method.ReturnType.Reference.TypeCode.IsVoid)
-                return 0;
+            foreach (var parameter in method.Parameters)
+            {
+                if (parameter.IsVarargs)
+                    continue;
 
-            var resolved = method.ReturnType.ResolvedType;
-            if (resolved is SurtrClass { IsValueType: true } valueClass && valueClass.FlattenedSlotWidth > 1)
-                return valueClass.FlattenedSlotWidth;
+                var reference = parameter.ParameterType.Reference;
+                if (reference.TypeCode == SurtrValueTypeCode.Tuple && SlotWidthOf(reference) > 0)
+                    return true;
 
-            return 1;
+                if (parameter.ParameterType.ResolvedType is SurtrClass { IsValueType: true } value
+                    && value.FlattenedSlotWidth > 1)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Translates the host's boxed argument values into the slot layout the callee's frame
+        /// counts: every inline parameter's packed value is flattened into its consecutive slots.
+        /// The receiver of an instance method is never translated - it is an ordinary object.
+        /// </summary>
+        private SurtrValue[] FlattenArguments(SurtrMethodInfo method, ReadOnlySpan<SurtrValue> arguments)
+        {
+            bool hasReceiver = !method.IsStatic && method.DeclaringType is not null;
+            var flat = new List<SurtrValue>(arguments.Length + 4);
+
+            for (int i = 0; i < arguments.Length; i++)
+            {
+                int parameterIndex = hasReceiver ? i - 1 : i;
+
+                if (parameterIndex < 0 || parameterIndex >= method.Parameters.Length)
+                {
+                    flat.Add(arguments[i]);
+                    continue;
+                }
+
+                var parameter = method.Parameters[parameterIndex];
+                if (parameter.IsVarargs || !TryFlattenInline(parameter.ParameterType, arguments[i], flat))
+                    flat.Add(arguments[i]);
+            }
+
+            return flat.ToArray();
+        }
+
+        /// <summary>
+        /// Flattens one boxed inline value into its slots, answering whether it did. Anything not
+        /// storing inline - or not actually holding the boxed form - passes through untouched.
+        /// </summary>
+        private bool TryFlattenInline(SurtrTypeHandle type, SurtrValue value, List<SurtrValue> flat)
+        {
+            var reference = type.Reference;
+
+            if (reference.TypeCode == SurtrValueTypeCode.Tuple && Resolve<SurtrTuple>(value) is SurtrTuple tuple)
+            {
+                var elements = reference.GetTupleElementTypes();
+                for (int i = 0; i < elements.Length && i < tuple.Length; i++)
+                {
+                    if (!TryFlattenReference(elements[i], tuple[i], flat))
+                        flat.Add(tuple[i]);
+                }
+
+                return true;
+            }
+
+            if (type.ResolvedType is SurtrClass { IsValueType: true, FlattenedSlotWidth: > 1 } valueClass
+                && Resolve<SurtrInstance>(value) is SurtrInstance instance)
+            {
+                for (int i = 0; i < valueClass.FlattenedSlotWidth && i < instance.SlotCount; i++)
+                    flat.Add(instance[i]);
+
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>The element form of <see cref="TryFlattenInline"/>, driven by a bare descriptor.</summary>
+        private bool TryFlattenReference(SurtrClassReference reference, SurtrValue value, List<SurtrValue> flat)
+        {
+            if (reference.TypeCode == SurtrValueTypeCode.Tuple && Resolve<SurtrTuple>(value) is SurtrTuple nested)
+            {
+                var elements = reference.GetTupleElementTypes();
+                for (int i = 0; i < elements.Length && i < nested.Length; i++)
+                {
+                    if (!TryFlattenReference(elements[i], nested[i], flat))
+                        flat.Add(nested[i]);
+                }
+
+                return true;
+            }
+
+            // A class-typed element only widens the block when its linked layout says so; without
+            // a resolved handle there is nothing to consult, and one slot is the safe answer.
+            return false;
+        }
+
+        /// <summary>The flattened width of a tuple descriptor: the sum of its elements' own widths.</summary>
+        private static int SlotWidthOf(SurtrClassReference reference)
+        {
+            const int maxSlots = 254;
+            int total = 0;
+
+            foreach (var element in reference.GetTupleElementTypes())
+            {
+                total += element.TypeCode == SurtrValueTypeCode.Tuple ? SlotWidthOf(element) : 1;
+
+                if (total > maxSlots)
+                    throw new InvalidOperationException(
+                        $"The tuple '{reference.Descriptor}' flattens to more than {maxSlots} slots.");
+            }
+
+            return total;
         }
 
         /// <summary>

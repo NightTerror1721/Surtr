@@ -722,6 +722,17 @@ namespace Surtr.Compiler.CodeGen
             var variable = Declare(loop.Variable);
 
             Expression(loop.Sequence);
+
+            // A tuple sequence is a block now, but the walk indexes it dynamically - and the
+            // frame has no addressing mode for a dynamic offset into a local range. Packing once
+            // at loop entry buys the whole indexed walk on the boxed form, whose elements the
+            // collector already follows.
+            if (kind == SurtrIterationKind.Tuple
+                && loop.Sequence.Type.NonNullable is TupleTypeSymbol { ElementTypes.Count: > 0 } tuple)
+            {
+                Code.PackTuple(Descriptors.Emit(tuple), ValueTypeLayout.WidthOfType(tuple));
+            }
+
             EmitStoreLocal(source);
             Code.LoadInt(0);
             EmitStoreLocal(index);
@@ -739,6 +750,10 @@ namespace Surtr.Compiler.CodeGen
             EmitLoadLocal(source);
             EmitLoadLocal(index);
             Element(kind);
+            // An element read off a collection's own storage arrives as the boxed form when its
+            // type stores inline - the collection keeps one reference per element - so the
+            // walk's variable, which holds the value itself, unpacks it.
+            UnpackIfMultiSlot(loop.Variable.Type);
             EmitStoreLocal(variable);
 
             PushLoop(step, end);
@@ -827,7 +842,11 @@ namespace Surtr.Compiler.CodeGen
 
             EmitLoadLocal(key);
             EmitLoadLocal(value);
-            Code.PackTuple(Descriptors.Emit(pair), 2);
+
+            // The pair is a value now: loading key then value lays out exactly the flattened
+            // block, so storing it into the loop variable's own range - wider than one slot,
+            // which is what makes this a block store rather than a pack - needs nothing else.
+            // No object per iteration any more.
             EmitStoreLocal(variable);
 
             PushLoop(step, end);
@@ -1611,10 +1630,11 @@ namespace Surtr.Compiler.CodeGen
                 case ConversionKind.ImplicitReference:
                     // §6.3: a value class is erased to its field, so reaching a slot that holds a
                     // reference — an interface it implements — is where it becomes a real object.
-                    // A primitive reaching a contract it satisfies is the same story: the
-                    // interface dispatch goes through the receiver's vtable, which only an object
-                    // has, so the raw int becomes its boxed form first.
-                    if (!BoxIfValueClass(from))
+                    // A tuple reaching one packs into its boxed form the same way. A primitive
+                    // reaching a contract it satisfies is the same story: the interface dispatch
+                    // goes through the receiver's vtable, which only an object has, so the raw
+                    // int becomes its boxed form first.
+                    if (!BoxIfMultiSlot(from))
                         Code.Box(TypeCodeOf(from));
 
                     return;
@@ -1626,8 +1646,9 @@ namespace Surtr.Compiler.CodeGen
 
                 case ConversionKind.ImplicitErasure:
                     // §1.11's first obligation: a value reaching a slot that only holds a reference
-                    // has to become one. Box emits nothing for a reference already.
-                    if (!BoxIfValueClass(from))
+                    // has to become one - packed, for an inline value; boxed, for everything else.
+                    // Box emits nothing for a reference already.
+                    if (!BoxIfMultiSlot(from))
                         Code.Box(TypeCodeOf(from));
 
                     return;
@@ -1660,18 +1681,24 @@ namespace Surtr.Compiler.CodeGen
             if (bare.SpecialType == SpecialType.Unknown || bare.TypeKind == TypeSymbolKind.TypeParameter)
                 return;
 
-            if (bare.TypeKind == TypeSymbolKind.ValueClass)
+            if (TryMultiSlotWidth(bare, out int unboxWidth))
             {
-                if ((NamedTypeSymbol)bare is { } valueBare && ValueTypeLayout.IsMultiField(valueBare))
+                if (bare is TupleTypeSymbol)
                 {
-                    if (!ValueTypeLayout.TryGet(valueBare, out var unboxLayout, out var unboxError))
-                        throw Unsupported(unboxError!);
-
-                    Code.CastTo(Descriptors.Emit(valueBare));
-                    Code.UnboxValue(unboxLayout.Width);
+                    // The value crossed the boundary as the boxed form the calling site packed;
+                    // there is no class to cast to - a tuple's shape lives in its descriptor -
+                    // so the unpack itself is the whole check.
+                    Code.TupUnpack(unboxWidth);
                     return;
                 }
 
+                Code.CastTo(Descriptors.Emit(bare));
+                Code.UnboxValue(unboxWidth);
+                return;
+            }
+
+            if (bare.TypeKind == TypeSymbolKind.ValueClass)
+            {
                 Code.CastTo(Descriptors.EmitBoxedForm((NamedTypeSymbol)bare));
                 Code.Unbox();
                 return;
@@ -1681,6 +1708,62 @@ namespace Surtr.Compiler.CodeGen
 
             if (bare.IsPrimitive && !bare.IsVoid)
                 Code.Unbox();
+        }
+
+        /// <summary>
+        /// Boxes a tuple value as the <see cref="Surtr.Runtime.Objects.SurtrTuple"/> it presents as
+        /// wherever a slot holds one reference, and says whether it did.
+        /// </summary>
+        /// <remarks>
+        /// The boxed-form half of the tuple boundary (§5.5 as lowered): a block reaching an array
+        /// element, a dictionary key, an erased parameter or any other one-reference slot packs
+        /// into the ordinary tuple object, whose comparer and collector already work. The mirror
+        /// read side is <see cref="UnpackIfTuple"/>.
+        /// </remarks>
+        private bool BoxIfTuple(TypeSymbol type)
+        {
+            if (type.NonNullable is not TupleTypeSymbol tuple || tuple.ElementTypes.Count == 0)
+                return false;
+
+            Code.PackTuple(Descriptors.Emit(tuple), SlotCountOfType(tuple));
+            return true;
+        }
+
+        /// <summary>
+        /// Boxes whatever this type stores inline - a tuple or a multi-field value class - before
+        /// it crosses into a one-reference slot. Answers whether anything was emitted.
+        /// </summary>
+        private bool BoxIfMultiSlot(TypeSymbol type)
+            => BoxIfValueClass(type) || BoxIfTuple(type);
+
+        /// <summary>The mirror of <see cref="BoxIfTuple"/>: turns a packed reference back into its block.</summary>
+        private bool UnpackIfTuple(TypeSymbol type)
+        {
+            if (type.NonNullable is not TupleTypeSymbol tuple || tuple.ElementTypes.Count == 0)
+                return false;
+
+            Code.TupUnpack(SlotCountOfType(tuple));
+            return true;
+        }
+
+        /// <summary>
+        /// Unboxes whatever this type stores inline - the mirror of <see cref="BoxIfMultiSlot"/>
+        /// on the way back out of a one-reference slot.
+        /// </summary>
+        private bool UnpackIfMultiSlot(TypeSymbol type)
+        {
+            if (UnpackIfTuple(type))
+                return true;
+
+            if (type.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } valueClass
+                && ValueTypeLayout.IsMultiField(valueClass)
+                && ValueTypeLayout.TryGet(valueClass, out var layout, out _))
+            {
+                Code.UnboxValue(layout.Width);
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -2317,14 +2400,22 @@ namespace Surtr.Compiler.CodeGen
         private void EmitValueClassEquality(BoundBinaryExpression binary)
         {
             if (binary.Operator is BinaryOperator.ReferenceEqual or BinaryOperator.ReferenceNotEqual)
-                throw Unsupported("'===' over a value class: a value has no identity to compare (use '==')");
+                throw Unsupported("'===' over a value: a value has no identity to compare (use '==')");
 
             var valueType = SlotCountOfType(binary.Left.Type) > 1
                 ? binary.Left.Type.NonNullable
                 : binary.Right.Type.NonNullable;
 
             if (valueType is not NamedTypeSymbol named)
+            {
+                if (valueType is TupleTypeSymbol)
+                {
+                    EmitTupleEquality(binary, (TupleTypeSymbol)valueType);
+                    return;
+                }
+
                 throw Unsupported($"comparing values of '{binary.Left.Type.ToDisplayString()}'");
+            }
 
             if (!ValueTypeLayout.TryGet(named, out var layout, out var layoutError))
                 throw Unsupported(layoutError!);
@@ -2379,6 +2470,112 @@ namespace Surtr.Compiler.CodeGen
 
             if (binary.Operator is BinaryOperator.NotEqual)
                 Code.Inv();
+        }
+
+        /// <summary>
+        /// Structural equality between two tuples: slot by slot against each element's own family,
+        /// recursing through nested tuples and value classes exactly as the flattened layout lays
+        /// them out.
+        /// </summary>
+        /// <remarks>
+        /// Same verdict-temp shape the value-class walk uses, so every path reaches the join at
+        /// depth zero over one bool. An element that is itself inline compares recursively before
+        /// the chain may short-circuit - the nesting is flat storage, so the recursion is an
+        /// inlined walk over consecutive slots, never a call.
+        /// </remarks>
+        private void EmitTupleEquality(BoundBinaryExpression binary, TupleTypeSymbol tuple)
+        {
+            int width = ValueTypeLayout.WidthOfType(tuple);
+            int leftBase = EnsureLocalRange(binary.Left, width);
+            int rightBase = EnsureLocalRange(binary.Right, width);
+
+            var verdict = _method.DeclareLocal("$eq");
+
+            var unequal = Code.NewLabel();
+            var done = Code.NewLabel();
+
+            int offset = 0;
+            for (int i = 0; i < tuple.ElementTypes.Count; i++)
+            {
+                var elementType = tuple.ElementTypes[i];
+                bool last = i == tuple.ElementTypes.Count - 1;
+
+                // Leaves exactly one bool on the stack, whether it compared a single slot or
+                // walked a nested block's own elements.
+                EmitSlotCompare(leftBase + offset, rightBase + offset, elementType, unequal);
+
+                if (!last)
+                {
+                    Code.JumpIfFalse(unequal);
+                }
+                else
+                {
+                    EmitStoreLocal(verdict);
+                    Code.Jump(done);
+                }
+
+                offset += ValueTypeLayout.WidthOfType(elementType);
+            }
+
+            Code.MarkLabel(unequal);
+            Code.LoadInt(0);
+            Code.Convert(SurtrValueTypeCode.Integer, SurtrValueTypeCode.Boolean);
+            EmitStoreLocal(verdict);
+
+            Code.MarkLabel(done);
+            EmitLoadLocal(verdict);
+
+            if (binary.Operator is BinaryOperator.NotEqual)
+                Code.Inv();
+        }
+
+        /// <summary>
+        /// Emits one slot-or-block comparison, leaving its bool on the stack. Answers whether the
+        /// comparison was a nested structural walk (which manages its own branches internally and
+        /// still leaves exactly one bool).
+        /// </summary>
+        private bool EmitSlotCompare(int leftSlot, int rightSlot, TypeSymbol elementType, SurtrLabel unequal)
+        {
+            if (TryMultiSlotWidth(elementType, out int elementWidth))
+            {
+                if (elementType.NonNullable is TupleTypeSymbol nested)
+                {
+                    int offset = 0;
+                    for (int i = 0; i < nested.ElementTypes.Count; i++)
+                    {
+                        var inner = nested.ElementTypes[i];
+                        EmitSlotCompare(leftSlot + offset, rightSlot + offset, inner, unequal);
+                        Code.JumpIfFalse(unequal);
+                        offset += ValueTypeLayout.WidthOfType(inner);
+                    }
+
+                    Code.LoadInt(1);
+                    Code.Convert(SurtrValueTypeCode.Integer, SurtrValueTypeCode.Boolean);
+                    return true;
+                }
+
+                // A nested multi-field value class compares with the same per-field rule its own
+                // == would use: one Compare per field, all of them against their families.
+                if (elementType.NonNullable is NamedTypeSymbol valueClass && ValueTypeLayout.TryGet(valueClass, out var layout, out _))
+                {
+                    for (int i = 0; i < layout.Fields.Length; i++)
+                    {
+                        Code.LoadValueLocal(leftSlot + layout.Offsets[i], layout.FieldWidths[i]);
+                        Code.LoadValueLocal(rightSlot + layout.Offsets[i], layout.FieldWidths[i]);
+                        Code.Compare(SurtrComparison.Equal, TypeCodeOf(layout.Fields[i].Type));
+                        Code.JumpIfFalse(unequal);
+                    }
+
+                    Code.LoadInt(1);
+                    Code.Convert(SurtrValueTypeCode.Integer, SurtrValueTypeCode.Boolean);
+                    return true;
+                }
+            }
+
+            Code.LoadLocalField(leftSlot, 0);
+            Code.LoadLocalField(rightSlot, 0);
+            Code.Compare(SurtrComparison.Equal, TypeCodeOf(elementType));
+            return false;
         }
 
         private void EmitUnary(BoundUnaryExpression unary)
@@ -2644,6 +2841,8 @@ namespace Surtr.Compiler.CodeGen
                     Expression(index.Index);
                     value();
                     UnboxIfStillErased(index.Type);
+                    // One-reference storage keeps an inline value boxed.
+                    BoxIfMultiSlot(index.Type);
 
                     var owner = index.Target.Type.NonNullable;
                     if (owner.TypeKind == TypeSymbolKind.Array)
@@ -2676,22 +2875,11 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Whether this type occupies more than one frame slot inline - a multi-field value class -
-        /// and if so, its flattened width.
+        /// Whether this type occupies more than one frame slot inline - a multi-field value class
+        /// or a non-empty tuple - and if so, its flattened width.
         /// </summary>
         private static bool TryMultiSlotWidth(TypeSymbol type, out int width)
-        {
-            if (type.NonNullable is NamedTypeSymbol named
-                && ValueTypeLayout.IsMultiField(named)
-                && ValueTypeLayout.TryGet(named, out var layout, out _))
-            {
-                width = layout.Width;
-                return true;
-            }
-
-            width = 0;
-            return false;
-        }
+            => ValueTypeLayout.IsInlineType(type, out width) && width > 1;
 
         private void EmitFieldRead(BoundFieldExpression field)
         {
@@ -2817,7 +3005,17 @@ namespace Surtr.Compiler.CodeGen
 
             if (IsTupleLength(property.Property))
             {
-                Expression(property.Receiver!);
+                var receiver = property.Receiver ?? throw Unsupported($"a read of 'tuple.{property.Property.Name}' with no receiver");
+
+                // A tuple's arity is static at every well-typed site: fold it into the
+                // instruction instead of dispatching to the boxed form's own length.
+                if (receiver.Type.NonNullable is TupleTypeSymbol typed)
+                {
+                    Code.LoadInt(typed.ElementTypes.Count);
+                    return;
+                }
+
+                Expression(receiver);
                 Code.TupLen();
                 return;
             }
@@ -3515,13 +3713,19 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private void EmitCollectionOperand(BoundExpression argument)
         {
+            // An operand storing inline cannot cross into the collection's one-reference storage
+            // raw: it packs once pushed. The type that decides is the operand's OWN - the
+            // collection's members are declared against their bare G0/K/V parameters, so the
+            // conversion sitting on top usually reads 'unknown' by the time it reaches here.
             if (argument is BoundConversionExpression { Conversion.Kind: ConversionKind.ImplicitErasure } conversion)
             {
                 Expression(conversion.Operand);
+                BoxIfMultiSlot(conversion.Operand.Type);
                 return;
             }
 
             Expression(argument);
+            BoxIfMultiSlot(argument.Type);
             UnboxIfStillErased(argument.Type);
         }
 
@@ -3557,7 +3761,10 @@ namespace Surtr.Compiler.CodeGen
                 if (discardResult)
                     Code.Pop();
                 else
+                {
+                    UnpackIfMultiSlot(call.Method.ReturnType);
                     BoxIfStillErased(call.Method.ReturnType);
+                }
                 return true;
             }
 
@@ -3632,7 +3839,10 @@ namespace Surtr.Compiler.CodeGen
                 if (discardResult)
                     Code.Pop();
                 else
+                {
+                    UnpackIfMultiSlot(call.Method.ReturnType);
                     BoxIfStillErased(call.Method.ReturnType);
+                }
                 return true;
             }
 
@@ -3659,6 +3869,8 @@ namespace Surtr.Compiler.CodeGen
                 Code.ArrPop();
                 if (discardResult)
                     Code.Pop();
+                else
+                    UnpackIfMultiSlot(call.Method.ReturnType);
                 return true;
             }
 
@@ -4035,7 +4247,15 @@ namespace Surtr.Compiler.CodeGen
                 next++;
 
             foreach (var captured in lambda.Captured)
+            {
+                // An upvalue is one slot; an inline value is several. Capturing one would need
+                // the packed form at the capture point and an unpack on every read inside - a
+                // design of its own, deferred rather than approximated.
+                if (IsInlineCaptured(captured))
+                    throw Unsupported($"a lambda capturing '{captured.Name}', whose type stores inline as several slots");
+
                 captures[captured] = next++;
+            }
 
             // The lifted body is emitted now rather than queued: it has its own builder and its own
             // instruction stream, so nothing about the caller's is disturbed by recursing.
@@ -4094,16 +4314,41 @@ namespace Surtr.Compiler.CodeGen
             }
         }
 
+        /// <summary>Whether a captured symbol's type stores inline as more than one slot.</summary>
+        private static bool IsInlineCaptured(Symbol captured)
+            => captured switch
+            {
+                LocalSymbol local => ValueTypeLayout.IsInlineType(local.Type, out _),
+                ParameterSymbol parameter => ValueTypeLayout.IsInlineType(parameter.Type, out _),
+                _ => false,
+            };
+
         private void EmitIndexRead(BoundIndexExpression index)
         {
             var target = index.Target.Type.NonNullable;
 
             // §5.3 makes a tuple index a constant — the binder folds it and hands back a literal —
-            // so it belongs in the instruction rather than on the stack.
-            if (target.TypeKind == TypeSymbolKind.Tuple && index.Index is BoundLiteralExpression { Value: long ordinal })
+            // so it belongs in the instruction rather than on the stack. The tuple itself is a
+            // block now: spill its base into a frame range (free when it already lives in one)
+            // and read the element at its own flattened offset, exactly as a value-class field
+            // read does.
+            if (target is TupleTypeSymbol constantTuple && index.Index is BoundLiteralExpression { Value: long ordinal })
             {
-                Expression(index.Target);
-                Code.TupleElement((int)ordinal);
+                if (!ValueTypeLayout.IsInlineType(constantTuple, out int tupleWidth) || ordinal < 0 || ordinal >= constantTuple.ElementTypes.Count)
+                    throw Unsupported($"an index {ordinal} into '{constantTuple.ToDisplayString()}'");
+
+                int baseSlot = EnsureLocalRange(index.Target, tupleWidth);
+
+                int offset = 0;
+                for (int i = 0; i < ordinal; i++)
+                    offset += ValueTypeLayout.WidthOfType(constantTuple.ElementTypes[i]);
+
+                var elementType = constantTuple.ElementTypes[(int)ordinal];
+                if (TryMultiSlotWidth(elementType, out int elementWidth))
+                    Code.LoadValueLocal(baseSlot + offset, elementWidth);
+                else
+                    Code.LoadLocalField(baseSlot, offset);
+
                 BoxIfStillErased(index.Type);
                 return;
             }
@@ -4113,9 +4358,20 @@ namespace Surtr.Compiler.CodeGen
 
             switch (target.TypeKind)
             {
-                case TypeSymbolKind.Array: Code.ArrGet(); BoxIfStillErased(index.Type); return;
-                case TypeSymbolKind.Dictionary: Code.DictGet(); BoxIfStillErased(index.Type); return;
-                case TypeSymbolKind.Tuple: Code.TupGet(); BoxIfStillErased(index.Type); return;
+                case TypeSymbolKind.Array:
+                    Code.ArrGet();
+                    UnpackIfMultiSlot(index.Type);
+                    BoxIfStillErased(index.Type);
+                    return;
+                case TypeSymbolKind.Dictionary:
+                    Code.DictGet();
+                    UnpackIfMultiSlot(index.Type);
+                    BoxIfStillErased(index.Type);
+                    return;
+                case TypeSymbolKind.Tuple:
+                    Code.TupGet();
+                    BoxIfStillErased(index.Type);
+                    return;
             }
 
             if (target.SpecialType == SpecialType.String)
@@ -4182,6 +4438,8 @@ namespace Surtr.Compiler.CodeGen
             {
                 Expression(element);
                 UnboxIfStillErased(element.Type);
+                // An element storing inline crosses into one-reference storage: it packs.
+                BoxIfMultiSlot(element.Type);
             }
 
             // One immediate carries both the descriptor the object keeps and the element family its
@@ -4189,15 +4447,35 @@ namespace Surtr.Compiler.CodeGen
             Code.PackArray(Descriptors.Emit(array.Type.NonNullable), array.Elements.Count);
         }
 
+        /// <summary>
+        /// Builds a tuple: every element evaluates straight onto the operand stack, in order,
+        /// leaving exactly the block one tuple value occupies.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Nothing is packed here any more. A tuple is a value type (§5.5 as lowered): its
+        /// elements <em>are</em> the value's slots, so the literal is the block - the same shape
+        /// every multi-field construction already leaves behind. Where the value meets a slot that
+        /// holds one reference - an array element, a dict key, an erased parameter - the boundary
+        /// boxes it (<see cref="BoxIfTuple"/>), which is what keeps <see cref="Surtr.Runtime.Objects.SurtrTuple"/>
+        /// alive as the boxed form.
+        /// </para>
+        /// </remarks>
         private void EmitTupleLiteral(BoundTupleLiteralExpression tuple)
         {
+            // The empty tuple has no block to leave behind - its width is the one slot of the
+            // boxed form - so it packs exactly as it always did.
+            if (tuple.Elements.Count == 0)
+            {
+                Code.PackTuple(Descriptors.Emit(tuple.Type.NonNullable), 0);
+                return;
+            }
+
             foreach (var element in tuple.Elements)
             {
                 Expression(element);
                 UnboxIfStillErased(element.Type);
             }
-
-            Code.PackTuple(Descriptors.Emit(tuple.Type.NonNullable), tuple.Elements.Count);
         }
 
         private void EmitDictLiteral(BoundDictLiteralExpression dictionary)
@@ -4206,8 +4484,10 @@ namespace Surtr.Compiler.CodeGen
             {
                 Expression(entry.Key);
                 UnboxIfStillErased(entry.Key.Type);
+                BoxIfMultiSlot(entry.Key.Type);
                 Expression(entry.Value);
                 UnboxIfStillErased(entry.Value.Type);
+                BoxIfMultiSlot(entry.Value.Type);
             }
 
             Code.PackDictionary(Descriptors.Emit(dictionary.Type.NonNullable), dictionary.Entries.Count);
@@ -4312,17 +4592,26 @@ namespace Surtr.Compiler.CodeGen
             var elementType = ((ArrayTypeSymbol)creation.Type.NonNullable).ElementType;
             var conversions = creation.ElementConversions!;
 
-            var slot = _method.DeclareLocal("$collect");
-            Expression(creation.Source);
-            EmitStoreLocal(slot);
+            // The source is a block; spill it into a range so each element can be read at its
+            // own flattened offset.
+            int slot = EnsureLocalRange(creation.Source, ValueTypeLayout.WidthOfType(tupleType));
 
             // Element 0 first, ..., element N-1 last: ArrPack pops in the same order EmitArrayLiteral
             // already pushes for a written literal, "the deepest popped value becomes element 0."
             for (int i = 0; i < conversions.Count; i++)
             {
-                EmitLoadLocal(slot);
-                Code.TupleElement(i);
-                EmitConversionTail(conversions[i], tupleType.ElementTypes[i], elementType);
+                int offset = 0;
+                for (int e = 0; e < i; e++)
+                    offset += ValueTypeLayout.WidthOfType(tupleType.ElementTypes[e]);
+
+                var sourceElement = tupleType.ElementTypes[i];
+                if (TryMultiSlotWidth(sourceElement, out int elementWidth))
+                    Code.LoadValueLocal(slot + offset, elementWidth);
+                else
+                    Code.LoadLocalField(slot, offset);
+
+                EmitConversionTail(conversions[i], sourceElement, elementType);
+                BoxIfMultiSlot(elementType);
             }
 
             Code.PackArray(type, conversions.Count);
@@ -4360,10 +4649,18 @@ namespace Surtr.Compiler.CodeGen
                 EmitLoadLocal(slot);
                 Code.LoadInt(i);
                 Code.ArrGet();
-                EmitConversionTail(conversions[i], ((ArrayTypeSymbol)creation.Source!.Type.NonNullable).ElementType, tupleType.ElementTypes[i]);
+
+                var targetElement = tupleType.ElementTypes[i];
+
+                // The array's own storage keeps one reference per element - an inline value sits
+                // there boxed - so the slot this element will occupy in the block gets the value
+                // itself.
+                UnpackIfMultiSlot(targetElement);
+
+                EmitConversionTail(conversions[i], ((ArrayTypeSymbol)creation.Source!.Type.NonNullable).ElementType, targetElement);
             }
 
-            Code.PackTuple(type, conversions.Count);
+            // No pack: the elements just pushed ARE the resulting value's block.
         }
 
         /// <summary>
@@ -4816,14 +5113,8 @@ namespace Surtr.Compiler.CodeGen
             }
         }
 
-        /// <summary>How many slots one value of this type occupies inline: its flattened width when it is a multi-field value class, one otherwise.</summary>
-        private static int SlotCountOfType(TypeSymbol type)
-        {
-            if (type.NonNullable is NamedTypeSymbol named && ValueTypeLayout.IsMultiField(named))
-                return ValueTypeLayout.TryGet(named, out var layout, out _) ? layout.Width : 1;
-
-            return 1;
-        }
+        /// <summary>How many slots one value of this type occupies inline: its flattened width when it is an inline type (multi-field value class or tuple), one otherwise.</summary>
+        private static int SlotCountOfType(TypeSymbol type) => ValueTypeLayout.WidthOfType(type);
 
         /// <summary>Claims a temporary sized to hold a value of this type.</summary>
         private SurtrLocal DeclareTemp(string name, TypeSymbol type)

@@ -423,17 +423,26 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>
         /// How many storage slots one field claims: the flattened width of a multi-field value
-        /// type it holds, or the single slot everything else always occupied.
+        /// type it holds, of a tuple descriptor, or the single slot everything else always
+        /// occupied.
         /// </summary>
         /// <remarks>
         /// A one-field wrapper keeps contributing exactly one slot - erasure means it <em>is</em>
         /// its field wherever the type is statically known, so there is no wider form to lay out.
         /// Only classes flagged as value types by their own layout rule reach the recursive walk,
-        /// which builds the inner value first when declaration order has not already done so.
+        /// which builds the inner value first when declaration order has not already done so. A
+        /// tuple's width comes from its own descriptor - <c>T(I,Ox;)</c> says two slots without
+        /// resolving anything - because a tuple has no class metadata to consult.
         /// </remarks>
         private static int FieldSlotWidth(SurtrFieldInfo field, HashSet<SurtrClass> visiting)
         {
-            if (!field.FieldType.Reference.TypeCode.IsReferenceType)
+            var type = field.FieldType.Reference;
+
+            // A tuple has no class metadata to consult - its descriptor says everything.
+            if (type.TypeCode == SurtrValueTypeCode.Tuple)
+                return TupleSlotWidth(type);
+
+            if (!type.TypeCode.IsReferenceType)
                 return 1;
 
             if (field.FieldType.ResolvedType is SurtrClass { IsValueType: true } value)
@@ -443,6 +452,24 @@ namespace Surtr.Runtime.Classes
             }
 
             return 1;
+        }
+
+        /// <summary>The flattened width of a tuple descriptor: one slot per slot of every element.</summary>
+        private static int TupleSlotWidth(SurtrClassReference tuple)
+        {
+            const int maxSlots = MaxValueTypeSlots;
+            int total = 0;
+
+            foreach (var element in tuple.GetTupleElementTypes())
+            {
+                total += element.TypeCode == SurtrValueTypeCode.Tuple ? TupleSlotWidth(element) : 1;
+
+                if (total > maxSlots)
+                    throw new InvalidOperationException(
+                        $"The tuple '{tuple.Descriptor}' flattens to more than {maxSlots} slots.");
+            }
+
+            return total;
         }
 
         /// <summary>
@@ -617,13 +644,32 @@ namespace Surtr.Runtime.Classes
         }
 
         /// <summary>
-        /// Adds the reference slot one field contributes at its own absolute position: its single
-        /// slot when the field is an ordinary reference, or every shifted inner slot when it holds
-        /// an inline value.
+        /// Adds the reference slots one field contributes at its own absolute position: its single
+        /// slot when the field is an ordinary reference, every shifted inner slot when it holds an
+        /// inline value, and the recursive walk of a tuple's elements when it holds one of those.
         /// </summary>
         private static void CollectReferenceSlots(SurtrFieldInfo field, List<int> collected, HashSet<SurtrClass> visiting)
         {
-            if (!field.FieldType.Reference.TypeCode.IsReferenceType)
+            var type = field.FieldType.Reference;
+            int offset = field.SlotIndex;
+
+            if (type.TypeCode == SurtrValueTypeCode.Tuple)
+            {
+                // Elements arrive as bare descriptors with no resolved handle; a class-typed
+                // element therefore contributes its one reference slot, which is exactly what it
+                // is when it is not a value type.
+                foreach (var element in type.GetTupleElementTypes())
+                {
+                    if (element.TypeCode.IsReferenceType)
+                        collected.Add(offset);
+
+                    offset += element.TypeCode == SurtrValueTypeCode.Tuple ? TupleSlotWidth(element) : 1;
+                }
+
+                return;
+            }
+
+            if (!type.TypeCode.IsReferenceType)
                 return;
 
             if (field.FieldType.ResolvedType is SurtrClass { IsValueType: true } value)
@@ -633,14 +679,13 @@ namespace Surtr.Runtime.Classes
                 // The inner map is relative to the value's own block; the field's slot index is
                 // where that block starts, so the shift is one addition per entry.
                 var inner = value.ReferenceSlots;
-                int offset = field.SlotIndex;
                 for (int i = 0; i < inner.Length; i++)
                     collected.Add(offset + inner[i]);
 
                 return;
             }
 
-            collected.Add(field.SlotIndex);
+            collected.Add(offset);
         }
         #endregion
 

@@ -30,6 +30,57 @@ namespace Surtr.Compiler.CodeGen
         /// <summary>How many slots one inline value may occupy across a call boundary.</summary>
         internal const int MaxSlots = 254;
 
+        /// <summary>
+        /// Whether values of this type live inline as more than one slot - a multi-field value
+        /// class, or a tuple of at least one element - and if so, the value's flattened width.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// This is the one predicate every width decision asks: locals, temporaries, parameters,
+        /// returns, field storage and the equality walk all branch on it, so a type either rides
+        /// the whole inline machinery or stays a single-slot reference.
+        /// </para>
+        /// <para>
+        /// The empty tuple is deliberately excluded: with nothing to flatten there is no block to
+        /// move, and threading a zero-width value through opcodes that all count at least one slot
+        /// would buy nothing over keeping it boxed - an arity-zero <c>TupPack</c> is already free
+        /// of per-element work. A nested tuple flattens into its parent's block exactly as a
+        /// nested value class does; a still-abstract element (<c>G0</c>) contributes its erased
+        /// single slot, which is what crosses erasure boundaries anyway.
+        /// </para>
+        /// </remarks>
+        internal static bool IsInlineType(TypeSymbol type, out int width)
+        {
+            var bare = type.NonNullable;
+
+            if (bare is NamedTypeSymbol named && IsMultiField(named))
+            {
+                width = TryGet(named, out var layout, out _) ? layout.Width : 1;
+                return width > 1;
+            }
+
+            if (bare is TupleTypeSymbol tuple && tuple.ElementTypes.Count > 0)
+            {
+                int total = 0;
+                foreach (var element in tuple.ElementTypes)
+                {
+                    total += WidthOfType(element);
+                    if (total > MaxSlots)
+                        break;
+                }
+
+                width = total;
+                return true;
+            }
+
+            width = 1;
+            return false;
+        }
+
+        /// <summary>How many slots one value of this type occupies inline: its flattened width when it is an inline type, one otherwise.</summary>
+        internal static int WidthOfType(TypeSymbol type)
+            => IsInlineType(type, out int width) ? width : 1;
+
         internal sealed class Layout
         {
             /// <summary>The whole block's width, all nested values flattened.</summary>

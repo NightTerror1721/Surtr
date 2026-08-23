@@ -252,14 +252,21 @@ namespace Surtr.Tests.Compiler.CodeGen
 
         #region Tuples
 
+        /// <summary>
+        /// A tuple is its block now: the constant index folds into an offset read off the frame
+        /// range the value lives in - no boxed-element opcode either direction.
+        /// </summary>
         [Fact]
-        public void ATupleIndexIsAnImmediateRatherThanAPush()
+        public void ATupleIndexReadsTheFrameRangeRatherThanABoxedElement()
         {
             string code = Disassemble(
                 "fun run(): string { let p: (int, string) = (3, \"origin\"); return p[1]; }");
 
-            Assert.Equal(1, Count(code, "TupGetC"));
+            Assert.Equal(0, Count(code, "TupGetC"));
             Assert.Equal(0, Count(code, "TupGet"));
+            Assert.Equal(0, Count(code, "TupPack"));
+            // Element 1 sits at offset 1 of the two-slot block.
+            Assert.Equal(1, Count(code, "LoadLocalField"));
         }
 
         #endregion
@@ -1192,13 +1199,18 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(0, Count(code, "InvokeSpecial"));
         }
 
+        /// <summary>
+        /// A tuple's arity is static at every well-typed site, so its length folds into the
+        /// instruction stream - a constant push, no dispatch and no call.
+        /// </summary>
         [Fact]
-        public void TupleLengthUsesTupLenNotACall()
+        public void TupleLengthFoldsToAConstantNotACallOrADispatch()
         {
             string code = Disassemble("fun run(t: (int, string)): int { return t.length; }");
 
-            Assert.Equal(1, Count(code, "TupLen"));
+            Assert.Equal(0, Count(code, "TupLen"));
             Assert.Equal(0, Count(code, "InvokeSpecial"));
+            Assert.Equal(1, Count(code, "PushI8"));
         }
 
         [Fact]
@@ -1292,17 +1304,19 @@ namespace Surtr.Tests.Compiler.CodeGen
 
         /// <summary>
         /// A tuple's arity is always known at compile time, so array-from-tuple never needs a
-        /// runtime length check — no comparison, no branch, just the reads and the pack. Value
-        /// correctness is <see cref="ModuleEmitterTests.ArrayFromTupleCastReadsEveryElementInOrder"/>.
+        /// runtime length check - no comparison, no branch, just the offset reads off the block
+        /// and the pack. Value correctness is
+        /// <see cref="ModuleEmitterTests.ArrayFromTupleCastReadsEveryElementInOrder"/>.
         /// </summary>
         [Fact]
-        public void ArrayFromTupleCastUsesTupGetCAndArrPackWithNoRuntimeCheck()
+        public void ArrayFromTupleCastUsesOffsetReadsAndArrPackWithNoRuntimeCheck()
         {
             // .get(0), not .length: .length would itself emit an ArrLen unrelated to the
             // construction, muddying the very count this test exists to pin.
             string code = Disassemble("fun run(): int { let a = array<int>((10, 20, 30)); return a.get(0); }");
 
-            Assert.Equal(3, Count(code, "TupGetC"));
+            Assert.Equal(0, Count(code, "TupGetC"));
+            Assert.Equal(3, Count(code, "LoadLocalField"));
             Assert.Equal(1, Count(code, "ArrPack"));
             Assert.Equal(0, Count(code, "ArrLen"));
             Assert.Equal(0, Count(code, "ObjNew"));
@@ -1311,25 +1325,22 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Tuple-from-array is the one cast direction with a runtime fact to check — the array's
-        /// actual length — so exactly one ArrLen precedes the unrolled reads, still with no call.
+        /// Tuple-from-array is the one cast direction with a runtime fact to check - the array's
+        /// actual length - so exactly one ArrLen precedes the unrolled reads. The result needs no
+        /// pack at all: the reads leave the elements as the block the tuple value is.
         /// Value correctness is
         /// <see cref="ModuleEmitterTests.TupleFromArrayCastReadsEveryElementIntoItsSlot"/> and
         /// <see cref="ModuleEmitterTests.TupleFromArrayArityMismatchThrowsInvalidCastException"/>.
         /// </summary>
         [Fact]
-        public void TupleFromArrayCastUsesOneArrLenCheckThenArrGetAndTupPack()
+        public void TupleFromArrayCastUsesOneArrLenCheckThenArrGetAndLeavesTheBlock()
         {
             string code = Disassemble(
                 "fun run(xs: int[]): int { let t = tuple<int, int, int>(xs); return t[0]; }");
 
             Assert.Equal(1, Count(code, "ArrLen"));
             Assert.Equal(3, Count(code, "ArrGet"));
-            Assert.Equal(1, Count(code, "TupPack"));
-            // Neither ObjNew nor InvokeSpecial is asserted away here: the InvalidCastException the
-            // length-mismatch trap raises is a real class instance, so allocating it and calling its
-            // constructor legitimately uses both. What matters is that the tuple itself never does —
-            // TupPack is its only allocation, above.
+            Assert.Equal(0, Count(code, "TupPack"));
         }
 
         #endregion

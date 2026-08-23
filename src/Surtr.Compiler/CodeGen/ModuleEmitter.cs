@@ -866,15 +866,15 @@ namespace Surtr.Compiler.CodeGen
 
             if (anyWide)
                 builder.SetArgumentLayout(receiverWidth, widths);
+
+            // The return width rides the declared type, not the call opcode's 0/1 gate - a
+            // multi-field value class is the one case the descriptor cannot answer.
+            int resultSlots = SlotWidthOf(method.ReturnType);
+            if (!method.ReturnType.IsVoid && resultSlots > 1)
+                builder.SetResultSlots(resultSlots);
         }
 
-        private static int SlotWidthOf(TypeSymbol type)
-        {
-            if (type.NonNullable is NamedTypeSymbol named && ValueTypeLayout.IsMultiField(named))
-                return ValueTypeLayout.TryGet(named, out var layout, out _) ? layout.Width : 1;
-
-            return 1;
-        }
+        private static int SlotWidthOf(TypeSymbol type) => ValueTypeLayout.WidthOfType(type);
 
         /// <summary>
         /// The names and per-parameter constraints of a generic method, in the descriptor form the

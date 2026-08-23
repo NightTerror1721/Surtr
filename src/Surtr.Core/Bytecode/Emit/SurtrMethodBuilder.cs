@@ -76,6 +76,7 @@ namespace Surtr.Bytecode.Emit
         private bool _extension;
         private bool _bridge;
         private int _argumentSlots;
+        private int _resultSlots = 1;
         private int[] _parameterOffsets = Array.Empty<int>();
         private readonly List<string?> _localNames = new List<string?>();
         private readonly List<PendingHandler> _handlers = new List<PendingHandler>();
@@ -120,6 +121,14 @@ namespace Surtr.Bytecode.Emit
             // A module-level function has no receiver even though nothing declares it static in
             // the language: a module is not an object, so there is nothing to be a receiver of.
             _argumentSlots = parameters.Length + (declaringClass is not null && !isStatic ? 1 : 0);
+
+            // Void answers nothing; a tuple return's width is its flattened descriptor; every
+            // other declared type starts at one slot until SetResultSlots says wider.
+            _resultSlots = returnType.TypeCode.IsVoid
+                ? 0
+                : returnType.TypeCode == SurtrValueTypeCode.Tuple
+                    ? returnType.GetTupleFlattenedSlotWidth()
+                    : 1;
 
             for (int i = 0; i < _argumentSlots; i++)
                 _localNames.Add(i == 0 && HasReceiver ? "this" : parameters[i - (HasReceiver ? 1 : 0)].Name);
@@ -230,6 +239,35 @@ namespace Surtr.Bytecode.Emit
         /// </summary>
         /// <remarks>This is the <c>argsCount</c> immediate every call opcode carries.</remarks>
         public int ArgumentSlotCount => _argumentSlots;
+
+        /// <summary>
+        /// How many operand-stack slots one call to this method leaves behind: zero for void, the
+        /// flattened width of an inline return, one for everything else.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Derived from the return descriptor by default, which answers tuples and every
+        /// single-slot type exactly. A multi-field value-class return needs the linked width,
+        /// which only the compiler knows at declaration time - it calls
+        /// <see cref="SetResultSlots"/> to say so.
+        /// </para>
+        /// <para>
+        /// Deliberately not the call opcode's <c>retCount</c> immediate: that stays the frame
+        /// protocol's 0/1 gate (D6), while the block's width rides the callee's declared type,
+        /// which both sides read from here.
+        /// </para>
+        /// </remarks>
+        public int ResultSlotCount => _resultSlots;
+
+        /// <summary>The compiled result width for a method whose return stores inline.</summary>
+        public SurtrMethodBuilder SetResultSlots(int slots)
+        {
+            if (slots < 0)
+                throw new ArgumentOutOfRangeException(nameof(slots), slots, "A result width cannot be negative.");
+
+            _resultSlots = slots;
+            return this;
+        }
 
         /// <summary>How many slots this method's frame needs, arguments included.</summary>
         public int LocalCount => _localNames.Count;

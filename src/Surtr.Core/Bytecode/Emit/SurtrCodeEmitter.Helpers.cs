@@ -631,12 +631,14 @@ namespace Surtr.Bytecode.Emit
             if (callee is null)
                 throw new ArgumentNullException(nameof(callee));
 
-            int arguments = callee.ArgumentSlotCount;
-            int results = discardResult || callee.ReturnTypeReference.TypeCode.IsVoid ? 0 : 1;
+            // The encoded retCount stays the 0/1 gate; the tracker credits the callee's whole
+            // result width, because an inline block occupies every one of its slots.
+            int slots = discardResult ? 0 : callee.ResultSlotCount;
+            int results = Math.Min(slots, 1);
 
             // A method builder always carries a body, and an interface member never can, so this is
             // the one call form that needs no contract test.
-            return EmitCall(callee.Token, callee.IsModuleLevel, callee.IsStatic, false, callee.Dispatch, arguments, results);
+            return EmitCall(callee.Token, callee.IsModuleLevel, callee.IsStatic, false, callee.Dispatch, callee.ArgumentSlotCount, results, slots);
         }
 
         /// <summary>
@@ -657,19 +659,25 @@ namespace Surtr.Bytecode.Emit
             bool moduleLevel = callee.DeclaringType is null;
             bool contract = _module.IsInterfaceMethod(callee);
 
-            int arguments = callee.ArgumentSlotCount;
-            int results = discardResult || callee.ReturnType.Reference.TypeCode.IsVoid ? 0 : 1;
+            int slots = discardResult ? 0 : callee.ResultSlotCount;
+            int results = Math.Min(slots, 1);
 
-            return EmitCall(_module.Method(callee), moduleLevel, callee.IsStatic, contract, callee.Dispatch, arguments, results);
+            return EmitCall(_module.Method(callee), moduleLevel, callee.IsStatic, contract, callee.Dispatch, callee.ArgumentSlotCount, results, slots);
         }
 
         /// <summary>Calls a method through the receiver's virtual method table, whatever the callee declares.</summary>
         public SurtrCodeEmitter CallVirtual(SurtrMethodInfo callee, bool discardResult = false)
-            => InvokeVirtual(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount, ResultsFor(callee, discardResult));
+        {
+            int slots = discardResult ? 0 : callee.ResultSlotCount;
+            return InvokeVirtual(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount, Math.Min(slots, 1), slots);
+        }
 
         /// <summary>Calls a method without virtual dispatch: constructors, and explicit base calls.</summary>
         public SurtrCodeEmitter CallSpecial(SurtrMethodInfo callee, bool discardResult = false)
-            => InvokeSpecial(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount, ResultsFor(callee, discardResult));
+        {
+            int slots = discardResult ? 0 : callee.ResultSlotCount;
+            return InvokeSpecial(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount, Math.Min(slots, 1), slots);
+        }
 
         /// <summary>
         /// Calls a method declared on this builder without virtual dispatch.
@@ -688,13 +696,16 @@ namespace Surtr.Bytecode.Emit
             if (callee.IsStatic || callee.IsModuleLevel)
                 throw new ArgumentException($"'{callee.Name}' is static or module-level and has no receiver to dispatch on.", nameof(callee));
 
-            int results = discardResult || callee.ReturnTypeReference.TypeCode.IsVoid ? 0 : 1;
-            return InvokeSpecial(callee.Token, callee.ArgumentSlotCount, results);
+            int slots = discardResult ? 0 : callee.ResultSlotCount;
+            return InvokeSpecial(callee.Token, callee.ArgumentSlotCount, Math.Min(slots, 1), slots);
         }
 
         /// <summary>Calls a method through an interface contract.</summary>
         public SurtrCodeEmitter CallInterface(SurtrMethodInfo callee, bool discardResult = false)
-            => InvokeInterface(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount, ResultsFor(callee, discardResult));
+        {
+            int slots = discardResult ? 0 : callee.ResultSlotCount;
+            return InvokeInterface(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount, Math.Min(slots, 1), slots);
+        }
 
         /// <summary>Calls a module-level function in another, already-built module.</summary>
         public SurtrCodeEmitter CallExternal(Runtime.Classes.SurtrModule target, SurtrMethodInfo callee, bool discardResult = false)
@@ -704,11 +715,12 @@ namespace Surtr.Bytecode.Emit
 
             var token = _module.ExternalMethod(target, callee);
             int arguments = callee.ArgumentSlotCount;
-            int results = ResultsFor(callee, discardResult);
+            int slots = discardResult ? 0 : callee.ResultSlotCount;
+            int results = Math.Min(slots, 1);
 
             return token.ModuleIndex <= ushort.MaxValue && token.FunctionIndex <= ushort.MaxValue
-                ? CallModule(token, arguments, results)
-                : CallModuleX(token, arguments, results);
+                ? CallModule(token, arguments, results, slots)
+                : CallModuleX(token, arguments, results, slots);
         }
 
         /// <summary>Calls the closure sitting below <paramref name="argumentCount"/> arguments on the stack.</summary>
@@ -738,30 +750,31 @@ namespace Surtr.Bytecode.Emit
             bool contract,
             SurtrMethodDispatch dispatch,
             int arguments,
-            int results)
+            int results,
+            int resultSlots = -1)
         {
             bool wide = MethodIndex(token) > ushort.MaxValue;
 
             if (moduleLevel)
             {
                 return wide
-                    ? CallLocalModuleX(token, arguments, results)
-                    : CallLocalModule(token, arguments, results);
+                    ? CallLocalModuleX(token, arguments, results, resultSlots)
+                    : CallLocalModule(token, arguments, results, resultSlots);
             }
 
             if (contract)
-                return InvokeInterface(token, arguments, results);
+                return InvokeInterface(token, arguments, results, resultSlots);
 
             if (isStatic)
             {
                 return wide
-                    ? InvokeStaticX(token, arguments, results)
-                    : InvokeStatic(token, arguments, results);
+                    ? InvokeStaticX(token, arguments, results, resultSlots)
+                    : InvokeStatic(token, arguments, results, resultSlots);
             }
 
             return dispatch == SurtrMethodDispatch.Direct
-                ? InvokeSpecial(token, arguments, results)
-                : InvokeVirtual(token, arguments, results);
+                ? InvokeSpecial(token, arguments, results, resultSlots)
+                : InvokeVirtual(token, arguments, results, resultSlots);
         }
 
         private static SurtrMethodInfo RequireInstance(SurtrMethodInfo callee)
@@ -774,9 +787,6 @@ namespace Surtr.Bytecode.Emit
 
             return callee;
         }
-
-        private static int ResultsFor(SurtrMethodInfo callee, bool discardResult)
-            => discardResult || callee.ReturnType.Reference.TypeCode.IsVoid ? 0 : 1;
 
         #endregion
     }
