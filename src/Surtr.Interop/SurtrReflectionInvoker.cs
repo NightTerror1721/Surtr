@@ -195,20 +195,46 @@ namespace Surtr.Interop
             }
 
             var elementTypes = slot.ResultDescriptor.GetTupleElementTypes();
+
+            // One element marshals to exactly one slot, so the tuple's flattened width has to equal
+            // its element count for the block written below to be the width the callee declared. A
+            // nested-tuple element breaks that, and only a hand-written ReturnDescriptor can produce
+            // one — so it is refused here rather than silently returning the wrong number of slots.
+            if (elementTypes.Length != slot.ResultDescriptor.GetTupleFlattenedSlotWidth())
+            {
+                throw new InvalidOperationException(
+                    $"The result descriptor '{slot.ResultDescriptor.Descriptor}' flattens to more slots than it has elements; "
+                    + "a native method with out-parameters cannot declare a nested tuple as its result.");
+            }
+
             var elements = new SurtrValue[elementTypes.Length];
             int next = 0;
 
+            // `elements[next++] = f(elementTypes[next])` reads the wrong descriptor: C# sequences the
+            // left-hand index before the right-hand operand, so the increment lands first and every
+            // element was marshalled against its successor's type - the last one indexing past the
+            // end. The increment is its own statement now so the two indices cannot drift apart.
             if (!voidReturn)
-                elements[next++] = SurtrMarshaler.ToSurtr(runtime, result, elementTypes[next]);
+            {
+                elements[next] = SurtrMarshaler.ToSurtr(runtime, result, elementTypes[next]);
+                next++;
+            }
 
             for (int i = 0; i < parameters.Length; i++)
             {
-                if (parameters[i].IsOut)
-                    elements[next++] = SurtrMarshaler.ToSurtr(runtime, clrArguments[i], elementTypes[next]);
+                if (!parameters[i].IsOut)
+                    continue;
+
+                elements[next] = SurtrMarshaler.ToSurtr(runtime, clrArguments[i], elementTypes[next]);
+                next++;
             }
 
-            var tuple = runtime.NewTuple(slot.ResultDescriptor, elements);
-            return args.Return(SurtrValue.CreateReference(tuple.GetSurtrReference()));
+            // Written as a flat block, not as a reference to a packed SurtrTuple. A tuple is a value
+            // type: `ResultSlotCount` is its flattened width, so the caller copies that many slots
+            // back and a single reference in slot 0 would leave the rest of the block as whatever
+            // the stack happened to hold. Every input was read above, before this first write, which
+            // is what the in-place convention requires.
+            return args.Return(elements);
         }
 
         private static object? Receiver(SurtrCallArguments args, int index)

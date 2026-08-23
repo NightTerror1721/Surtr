@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -132,6 +132,30 @@ namespace Sample
             var all = string.Join("\n", result.Results.SelectMany(static r => r.GeneratedSources).Select(static g => g.SourceText.ToString()));
             Assert.Contains("\"op_+\"", all);
             Assert.Contains("T(BI)", all); // TryGet's folded return: (bool, int)
+        }
+
+        /// <summary>
+        /// The shim for a method with out-parameters writes its results as a flat block of slots.
+        /// </summary>
+        /// <remarks>
+        /// It used to pack a <c>SurtrTuple</c> and answer one slot, which was correct until a tuple
+        /// became a value type: <c>ResultSlotCount</c> is the flattened width, so the caller copies
+        /// that many slots back and a lone reference in slot 0 leaves the rest of the block holding
+        /// whatever the stack had there. The reflection fallback had the same defect.
+        /// </remarks>
+        [Fact]
+        public void Generator_WritesOutParameterResultsAsAFlatBlock()
+        {
+            RunGenerator(out var result);
+
+            var all = string.Join("\n", result.Results.SelectMany(static r => r.GeneratedSources).Select(static g => g.SourceText.ToString()));
+
+            Assert.Contains("args.WriteResult(0, __slot0);", all);
+            Assert.Contains("args.WriteResult(1, __slot1);", all);
+            Assert.Contains("return 2;", all);
+
+            // Nothing packs a tuple to answer an out-parameter any more.
+            Assert.DoesNotContain("Runtime.NewTuple", all);
         }
 
         [Fact]

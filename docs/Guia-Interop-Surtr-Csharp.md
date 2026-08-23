@@ -156,6 +156,12 @@ cualifica el nombre, que es como el código Surtr los referencia.
   vía entry points), no propiedades.
 - **`out`**: se pliega al retorno — `void F(out int x)` → `int`; `bool TryGet(out int v)` → tupla
   `(bool, int)`. `ref`/`in` no tienen equivalente y **no se exponen** (warning).
+  La tupla resultante es un **tipo de valor**, así que viaja como un bloque plano de slots: el
+  cuerpo nativo escribe un slot por elemento y devuelve esa cuenta, que es lo que dice
+  `ResultSlotCount`. No es una referencia a un `SurtrTuple` empaquetado — quien llama copia
+  `ResultSlotCount` slots, y una sola referencia en el slot 0 dejaría el resto del bloque con lo
+  que hubiera en la pila. `SurtrRuntime.Invoke` reempaqueta el bloque en un `SurtrTuple` al cruzar
+  hacia el host, así que un llamador C# sigue recibiendo un valor único.
 - **Genéricos**: solo formas cerradas. `typeof(Box<int>)` en reflexión, o `TypeArguments` en el
   atributo para el generador. Un genérico abierto sin forma cerrada se omite (warning).
 - **Delegates**: un parámetro/retorno delegado se mapea a un closure (`L(...)R`). CLR→Surtr envuelve

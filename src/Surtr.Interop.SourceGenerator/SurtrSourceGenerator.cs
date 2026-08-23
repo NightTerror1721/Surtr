@@ -414,9 +414,19 @@ namespace Surtr.Interop.SourceGenerator
             foreach (var p in outParams)
                 elements.Add(ToSurtrExpression(p.Type, p.Name));
 
-            var tupleDescriptor = BuildTupleDescriptor(method);
-            builder.AppendLine(indent + "    var __tuple = args.Runtime.NewTuple(SurtrClassReference.FromDescriptor(\"" + tupleDescriptor + "\"), new SurtrValue[] { " + string.Join(", ", elements) + " });");
-            builder.AppendLine(indent + "    return args.Return(SurtrValue.CreateReference(__tuple.GetSurtrReference()));");
+            // Written as a flat block of slots, not as a reference to a packed SurtrTuple. A tuple
+            // is a value type, so the method's `ResultSlotCount` is its flattened width and the
+            // caller copies that many slots back - a single reference in slot 0 would leave the
+            // rest of the block holding whatever the stack had there. Every conversion runs into a
+            // local first and the writes come after, because a result aliases the arguments and
+            // `WriteResult` cannot tell a stale read from a fresh one.
+            for (int i = 0; i < elements.Count; i++)
+                builder.AppendLine(indent + "    var __slot" + i + " = " + elements[i] + ";");
+
+            for (int i = 0; i < elements.Count; i++)
+                builder.AppendLine(indent + "    args.WriteResult(" + i + ", __slot" + i + ");");
+
+            builder.AppendLine(indent + "    return " + elements.Count + ";");
         }
 
         private static string EmitField(StringBuilder builder, INamedTypeSymbol type, IFieldSymbol field, int policy, string indent)
@@ -694,17 +704,6 @@ namespace Surtr.Interop.SourceGenerator
             if (returnRef is not null)
                 elements.Add(returnRef);
             foreach (var p in outParams)
-                elements.Add(GeneratorSupport.MapType(p.Type));
-
-            return "T(" + string.Join("", elements) + ")";
-        }
-
-        private static string BuildTupleDescriptor(IMethodSymbol method)
-        {
-            var elements = new List<string>();
-            if (!method.ReturnsVoid)
-                elements.Add(GeneratorSupport.MapType(method.ReturnType));
-            foreach (var p in method.Parameters.Where(static p => p.RefKind == RefKind.Out))
                 elements.Add(GeneratorSupport.MapType(p.Type));
 
             return "T(" + string.Join("", elements) + ")";
