@@ -1,6 +1,9 @@
 #nullable enable
 
 using Surtr.Bytecode.Image;
+using Surtr.Compiler.Binding;
+using Surtr.Compiler.CodeGen;
+using Surtr.Compiler.Compilation;
 using Surtr.Runtime;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -212,24 +215,65 @@ namespace Surtr.Tests.Stdlib
         }
 
         /// <summary>
-        /// Selecting <see cref="StdlibModules.Collections"/> alone must still load
-        /// <c>surtr.collections.Stack</c> successfully — <c>Stack.pop()</c>/<c>peek()</c> throw
-        /// <c>InvalidOperationException</c> from <c>surtr.core.Exception</c> (a Surtr-written class,
-        /// not a runtime built-in), so <c>Collections</c> has a real dependency on <c>Core</c> that
-        /// <see cref="SurtrStdlib.LoadInto(SurtrRuntime, IReadOnlyList{SurtrModuleImage}, StdlibModules)"/>
-        /// must pull in on its own rather than leaving the caller to discover the omission as a load
-        /// failure. <c>Math</c> is still excluded - the expansion is specific to the one edge that
-        /// exists, not a blanket "always load Core".
+        /// The categories are independent: <c>Collections</c> alone loads
+        /// <c>surtr.collections.Stack</c>, whose <c>pop()</c>/<c>peek()</c> throw the <em>built-in</em>
+        /// <c>InvalidOperationException</c> - the trap-mapped class every file sees without an
+        /// import - and not a twin declared in <c>surtr.core.Exception</c>. A same-named twin
+        /// would split catch-by-type in two, so a driver compiled against the stdlib images that
+        /// catches the built-in name must take the throw even with <c>surtr.core.Exception</c>
+        /// never loaded. <c>Math</c> stays excluded either way.
         /// </summary>
         [Fact]
-        public void SelectingCollectionsPullsInCoreBecauseStackNeedsItsExceptions()
+        public void SelectingCollectionsLoadsAloneAndStackThrowsTheBuiltInInvalidOperationException()
         {
             using var runtime = new SurtrRuntime();
             SurtrStdlib.LoadInto(runtime, AllImages(), StdlibModules.Collections);
 
             Assert.True(runtime.TryGetModule("surtr.collections.Stack", out _));
-            Assert.True(runtime.TryGetModule("surtr.core.Exception", out _));
+            Assert.False(runtime.TryGetModule("surtr.core.Exception", out _));
             Assert.False(runtime.TryGetModule("surtr.math.Math", out _));
+            Assert.Equal(7, PopEmptyUnderCatch(AllImages(), runtime));
+        }
+
+        /// <summary>
+        /// Compiles and loads a driver over the given images and runs an empty-stack
+        /// <c>pop()</c> under <c>catch (e: InvalidOperationException)</c>. The name binds to
+        /// the built-in class - the driver imports nothing from <c>core</c> - so reaching the
+        /// sentinel proves the throw and the catch name one and the same class. Compiling against
+        /// referenced stdlib images is also what pins the importer fix: a module referenced as an
+        /// image must not strip the implicitly-imported built-in library out of scope.
+        /// </summary>
+        private static int PopEmptyUnderCatch(List<SurtrModuleImage> images, SurtrRuntime runtime)
+        {
+            const string driver =
+                "import surtr.collections.Stack;\n"
+                + "fun popEmpty(): int {\n"
+                + "    let s = Stack<int>();\n"
+                + "    s.push(1);\n"
+                + "    try { s.pop(); s.pop(); }\n"
+                + "    catch (e: InvalidOperationException) { return 7; }\n"
+                + "    return 0;\n"
+                + "}\n";
+
+            var project = new SurtrProject(sourceRoot: ".");
+            project.AddSourceFile("driver.surtr", "driver", driver);
+
+            foreach (var image in images)
+                project.AddReference(image);
+
+            using var compilation = SurtrCompilation.Create(project);
+            var binder = compilation.Bind();
+            binder.BindBodies();
+
+            if (compilation.Diagnostics.HasErrors)
+                throw new InvalidOperationException(
+                    "The stdlib driver does not compile: " + string.Join("; ", compilation.Diagnostics));
+
+            var emitter = new ModuleEmitter(compilation, binder);
+            foreach (var image in emitter.EmitImages())
+                runtime.LoadModule(image);
+
+            return runtime.Invoke(Function(runtime, "driver", "popEmpty")).AsInt;
         }
 
         /// <summary>

@@ -1,9 +1,14 @@
-public class NotSupportedException : Exception
-{
-    public constructor(message: string) : super(message) {}
-}
+// The exception classes beyond the ones SurtrBuiltIns declares - each a constructor and nothing
+// else, the same shape the built-in subclasses have.
+//
+// The trap-mapped set from Language-Syntax §13.3 (IndexOutOfRangeException, KeyNotFound,
+// InvalidOperation, ...) deliberately does NOT live here: the VM raises those as built-in
+// classes, and a second same-named class in this module would split catch-by-type in two -
+// `catch (e: InvalidOperationException)` naming the built-in would never match a throw of a
+// surtr.core.Exception twin. Everything collections/ throws resolves against the built-in name,
+// which is implicitly in scope; this module holds only what has no built-in counterpart.
 
-public class InvalidOperationException : Exception
+public class NotSupportedException : Exception
 {
     public constructor(message: string) : super(message) {}
 }

@@ -1216,8 +1216,14 @@ A method of that name still wins, since that is what a call usually means.
 
 ### 10.2 What is still owed
 
-Not silent — each reports, refuses to compile, or is visibly absent — but each is the specification
-promising something the compiler does not do.
-
-* **The standard library is entirely C#**, where §13.1 puts the exception hierarchy below the root in
-  Surtr — which is also the largest program the compiler has never been asked to compile.
+Nothing. The last item — *"the standard library is entirely C#, where §13.1 puts the exception
+hierarchy below the root in Surtr"* — is closed by `src/Surtr.Stdlib`: the `.surtr` sources there
+are compiled to images by `Surtr.Stdlib.Tool` on every build, embedded in `Surtr.Stdlib.dll`, and
+loaded through `SurtrStdlib.LoadAll`. It is the largest program the compiler compiles, and it
+rebuilds on every solution build, so a compiler regression that stops the stdlib from compiling is
+a broken build, not a silent gap. What stays native is exactly §13.1's dividing line: the VM's own
+object-model machinery and `Math`'s CLR-backed trig/float operations. The trap-mapped exception
+classes stay declared in `Surtr.Core` because the VM raises them; everything expressible over the
+language's own operators is Surtr source. See that project's README for the module table and the
+two traps worth not re-discovering (the built-in `surtr` module cannot be re-declared at load, and
+`InvalidOperationException` must not grow a same-named twin).

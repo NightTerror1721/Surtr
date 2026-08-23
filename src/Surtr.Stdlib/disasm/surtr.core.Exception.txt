@@ -1,19 +1,9 @@
 module surtr.core.Exception
-  constants: 0   types: 0   fields: 0   methods: 3   modules: 0
+  constants: 0   types: 0   fields: 0   methods: 2   modules: 0
 
   method table:
     #0  surtr.core.Exception:NotSupportedException.ctor(string) -> void
-    #1  surtr.core.Exception:InvalidOperationException.ctor(string) -> void
-    #2  surtr:Exception.ctor(string) -> void
-
-class InvalidOperationException : surtr:Exception  [public]
-
-  [public] ctor (message: string): void
-    ; entry 1, locals 2, stack 2, code 0008..0010
-      0008  Ldl0
-      0009  Ldl1
-      000A  InvokeSpecial 2 (ctor) args=2 ret=0
-      000F  ReturnVoid
+    #1  surtr:Exception.ctor(string) -> void
 
 class NotSupportedException : surtr:Exception  [public]
 
@@ -21,5 +11,5 @@ class NotSupportedException : surtr:Exception  [public]
     ; entry 0, locals 2, stack 2, code 0000..0008
       0000  Ldl0
       0001  Ldl1
-      0002  InvokeSpecial 2 (ctor) args=2 ret=0
+      0002  InvokeSpecial 1 (ctor) args=2 ret=0
       0007  ReturnVoid

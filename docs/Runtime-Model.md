@@ -747,13 +747,11 @@ an image carries no dependency list until it is instantiated.
 `All`) lets a sandboxed host load only some of it — `LoadInto(runtime, images, selection)`
 filters by each image's own module path (`surtr.math.Math`'s second segment, `math`, against
 `StdlibModules.Math`) before delegating to the unfiltered overload. Coarse-grained by design, and
-no longer assumed independent: `surtr.collections.Stack` throws `InvalidOperationException`, which
-is declared in the Surtr-written `surtr.core.Exception` module rather than built into the runtime
-(unlike `IndexOutOfRangeException` and the rest of `Language-Syntax.md` §13.3's VM-trap-mapped
-set), so `Collections` has a real, one-way dependency on `Core`. `ExpandDependencies` widens a
-selection for exactly that edge before filtering, rather than leaving a caller to discover the
-omission as a load failure; the fixed-point retry loop is still the backstop for any dependency
-this has not been told about.
+independent: every exception the collections throw is one of the trap-mapped classes the built-in
+`surtr` module declares (`InvalidOperationException` among them — §13.3's set stays built-in
+precisely so a same-named twin can never split catch-by-type in two), and those names are in scope
+in every file without an import, so no category reaches into another. The fixed-point retry loop
+remains as the backstop for any cross-category import a future module adds.
 
 **Drift detection**: `Surtr.Stdlib.Tool` also writes `native-link-names.txt` next to the
 images — the flat, sorted list of every native link name it actually compiled. A test in

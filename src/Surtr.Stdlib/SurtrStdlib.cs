@@ -19,16 +19,13 @@ namespace Surtr.Stdlib
     /// everything <c>Surtr.Stdlib.Tool</c> compiled.
     /// </summary>
     /// <remarks>
-    /// Coarse-grained by design, but no longer assumed independent: <c>surtr.collections.Stack</c>
-    /// throws <c>InvalidOperationException</c>, which â€” unlike <c>IndexOutOfRangeException</c> and
-    /// the rest of <c>Language-Syntax.md</c> Â§13.3's VM-trap-mapped set â€” is declared in the Surtr-
-    /// written <c>surtr.core.Exception</c> module rather than built into the runtime, so
-    /// <c>Collections</c> now has a real, one-way dependency on <c>Core</c>. <see cref="SurtrStdlib"/>'s
-    /// selective <c>LoadInto</c> overload expands for it (<c>ExpandDependencies</c>) rather than
-    /// leaving a selection that a host would reasonably expect to work fail at load time â€” the
-    /// fixed-point retry loop this used to lean on to catch a missing category still runs
-    /// underneath, but only as the backstop for an edge this enum has not been told about, not as
-    /// the answer to one it has.
+    /// Coarse-grained by design, and independent: every exception the collections throw is one of
+    /// the trap-mapped classes the built-in <c>surtr</c> module declares (implicitly in scope in
+    /// every file), so no category reaches into another. A module importing a sibling inside its
+    /// own category (<c>List</c> imports <c>Collection</c>) loads under either flag; the
+    /// fixed-point retry loop underneath <see cref="SurtrStdlib.LoadInto(SurtrRuntime,
+    /// IReadOnlyList{SurtrModuleImage})"/> remains as the backstop for a cross-category import
+    /// this enum has not been told about.
     /// </remarks>
     [Flags]
     public enum StdlibModules
@@ -42,7 +39,10 @@ namespace Surtr.Stdlib
         /// <summary><c>surtr/math/</c> â€” <c>Math</c>, <c>Angle</c>.</summary>
         Math = 1 << 1,
 
-        /// <summary><c>surtr/collections/</c> â€” <c>Collection</c>, <c>List</c>.</summary>
+        /// <summary>
+        /// <c>surtr/collections/</c> â€” <c>Collection</c>, <c>List</c>, <c>Queue</c>,
+        /// <c>Sequence</c>, <c>Set</c>, <c>Stack</c>.
+        /// </summary>
         Collections = 1 << 2,
 
         /// <summary><c>surtr/text/</c> â€” <c>StringBuilder</c>.</summary>
@@ -249,8 +249,6 @@ namespace Surtr.Stdlib
             if (images is null)
                 throw new ArgumentNullException(nameof(images));
 
-            selection = ExpandDependencies(selection);
-
             if (selection == StdlibModules.All)
             {
                 LoadInto(runtime, images);
@@ -265,23 +263,6 @@ namespace Surtr.Stdlib
             }
 
             LoadInto(runtime, selected);
-        }
-
-        /// <summary>
-        /// Widens a selection to whatever other categories it now genuinely needs â€” today just
-        /// <c>Core</c> whenever <c>Collections</c> is picked, since <c>surtr.collections.Stack</c>
-        /// throws <c>InvalidOperationException</c> from <c>surtr.core.Exception</c>, a Surtr-written
-        /// class rather than a runtime built-in. One real edge, encoded directly rather than through
-        /// a general dependency resolver â€” <see cref="SurtrModuleImage"/> carries no reference list
-        /// to walk before a module is instantiated, and building one for a single edge is more
-        /// machinery than the problem has earned.
-        /// </summary>
-        private static StdlibModules ExpandDependencies(StdlibModules selection)
-        {
-            if ((selection & StdlibModules.Collections) != 0)
-                selection |= StdlibModules.Core;
-
-            return selection;
         }
 
         /// <summary>
