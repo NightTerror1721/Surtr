@@ -299,6 +299,90 @@ fun go(): int {
 
         #endregion
 
+        #region Interfaces
+
+        /// <summary>
+        /// A multi-field value class satisfying an interface, the supported shape: the member
+        /// stays <c>Direct</c> and a synthetic bridge occupies the contract's slot (§6.3), unboxing
+        /// the whole width before forwarding - so both the interface call, which boxes with
+        /// <c>BoxValue</c> and crosses one reference slot, and the direct-typed call, which never
+        /// boxes, compute over every field.
+        /// </summary>
+        [Fact]
+        public void AValueClassSatisfyingAnInterfaceAnswersThroughItsBridge()
+        {
+            var runtime = Run(@"
+interface IMeasure {
+    fun lengthSquared(): float;
+}
+
+value class Vec2 : IMeasure {
+    public let x: float;
+    public let y: float;
+
+    public constructor(x: float, y: float) {
+        this.x = x;
+        this.y = y;
+    }
+
+    public fun lengthSquared(): float {
+        return this.x * this.x + this.y * this.y;
+    }
+}
+
+fun throughInterface(): float {
+    let m: IMeasure = Vec2(3.0, 4.0);
+    return m.lengthSquared();
+}
+
+fun direct(): float {
+    let v = Vec2(3.0, 4.0);
+    return v.lengthSquared();
+}
+");
+
+            Assert.Equal(25.0, Float(runtime, "direct"));
+            Assert.Equal(25.0, Float(runtime, "throughInterface"));
+        }
+
+        /// <summary>
+        /// The unsupported shape: an explicitly non-Direct method on a multi-field value class.
+        /// §6.3's boxed-receiver convention exists for single fields only - the box names the class
+        /// and unwraps to the very field the frame holds - while a multi-field box crosses the call
+        /// as one reference slot its callee frame can never agree with, so the construct is refused
+        /// at emit rather than compiled against two disagreeing conventions.
+        /// </summary>
+        [Fact]
+        public void AMultiFieldValueClassDeclaringANonDirectMethod_IsRefused()
+        {
+            BuildFails(@"
+interface IMeasure {
+    fun lengthSquared(): float;
+}
+
+value class Vec2 : IMeasure {
+    public let x: float;
+    public let y: float;
+
+    public constructor(x: float, y: float) {
+        this.x = x;
+        this.y = y;
+    }
+
+    public override fun lengthSquared(): float {
+        return this.x * this.x + this.y * this.y;
+    }
+}
+
+fun throughInterface(): float {
+    let m: IMeasure = Vec2(3.0, 4.0);
+    return m.lengthSquared();
+}
+", "multi-field value class");
+        }
+
+        #endregion
+
         #region Diagnostics
 
         [Fact]

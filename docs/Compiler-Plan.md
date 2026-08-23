@@ -602,6 +602,23 @@ value-class-only fix.
 `LoweringChoiceTests.AValueClassMethodSatisfyingAnInterfaceWithoutOverrideDoesNotBoxOnADirectCall`
 pins it.
 
+The bridge is width-aware: a single-field value class arrives as the `SurtrBoxed` `BoxAs` produced
+and unwraps with `Unbox`; a multi-field one arrives as the `SurtrInstance` `BoxValue` packed and
+unwraps with `UnboxValue` over its whole width, because the body it forwards to claims every field
+slot in its frame.
+`ValueClassEndToEndTests.AValueClassSatisfyingAnInterfaceAnswersThroughItsBridge` pins both sides
+of one multi-field construction.
+
+**Still refused**: an explicitly non-Direct method *declared* on a multi-field value class (an
+`override`, or `virtual` written out). Its own frame would claim the raw width while every call
+site boxes first, and no second entry point exists for a method that is itself the virtual slot —
+so `EmitBody` and `BoxReceiverForCall` refuse the construct with a clear error instead of compiling
+two disagreeing conventions. Giving it one means designing where such a body's field accesses read
+from (through the box reference, or unpacked into its frame at entry), which is open until a
+program actually needs it.
+`ValueClassEndToEndTests.AMultiFieldValueClassDeclaringANonDirectMethod_IsRefused` pins the
+refusal.
+
 Reading one back out of an erased slot is the mirror obligation: a `Cast` to the value class, then
 unwrap. That is the same pair §7 already lists for primitives, applied to one more type.
 

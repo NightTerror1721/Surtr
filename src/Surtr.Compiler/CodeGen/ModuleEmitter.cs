@@ -1454,9 +1454,17 @@ namespace Surtr.Compiler.CodeGen
             // as it does for any other interface-dispatched call on one (Â§6.3) â€” the same test
             // MethodBodyEmitter.LoadReceiver makes for a value class's own virtual-dispatch body,
             // applied here since the bridge plays that same role. The `target` it forwards to keeps
-            // `Direct` dispatch and so expects the unboxed field, never the boxed form.
+            // `Direct` dispatch and so expects the unboxed field, never the boxed form. A
+            // multi-field value class arrives as the SurtrInstance BoxValue packed rather than the
+            // SurtrBoxed BoxAs produced, so its mirror is UnboxValue over the whole width - the
+            // frame the forwarding call enters claims every field slot.
             if (owner.TypeKind == TypeSymbolKind.ValueClass)
-                code.Unbox();
+            {
+                if (ValueTypeLayout.IsMultiField(owner) && ValueTypeLayout.TryGet(owner, out var bridgeLayout, out _))
+                    code.UnboxValue(bridgeLayout.Width);
+                else
+                    code.Unbox();
+            }
 
             for (int i = 0; i < parameters.Length; i++)
             {
@@ -1581,6 +1589,19 @@ namespace Surtr.Compiler.CodeGen
 
                 builder.Code.ReturnVoid();
                 return;
+            }
+
+            // §6.3's boxed-receiver convention exists for a single-field value class only: the box
+            // names the class, the unbox hands the body back the very field its frame holds. A
+            // multi-field value class has none yet - the box crosses the call as one reference slot
+            // while this frame would claim the whole width - so a non-Direct method on one is
+            // refused here rather than compiled against two disagreeing conventions.
+            if (symbol.Dispatch != MethodDispatch.Direct
+                && symbol.ContainingType is NamedTypeSymbol owner
+                && ValueTypeLayout.IsMultiField(owner))
+            {
+                throw new SurtrEmitException(
+                    "a non-Direct method on a multi-field value class has no receiver convention across a call yet");
             }
 
             new MethodBodyEmitter(builder, symbol, context).Emit(body);

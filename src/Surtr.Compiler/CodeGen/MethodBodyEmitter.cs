@@ -1823,6 +1823,17 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private void BoxReceiverForCall(MethodSymbol method, TypeSymbol receiverType)
         {
+            // A multi-field value class's box crosses the call as one reference slot while its
+            // callee frame claims the whole width - the two conventions cannot both hold (§6.3).
+            // Refused at the call site rather than emitted into a mis-sliced frame.
+            if (method.Dispatch != MethodDispatch.Direct
+                && receiverType.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } boxed
+                && ValueTypeLayout.IsMultiField(boxed))
+            {
+                throw Unsupported(
+                    "a non-Direct call whose receiver is a multi-field value class: that receiver convention does not exist yet");
+            }
+
             if (method.Dispatch != MethodDispatch.Direct && !BoxIfValueClass(receiverType))
                 Code.Box(TypeCodeOf(receiverType.NonNullable));
         }
