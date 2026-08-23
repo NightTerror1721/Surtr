@@ -1158,6 +1158,150 @@ namespace Surtr.Tests.LanguageServer
             return decoded;
         }
 
+        #region Value types and destructuring (the phase 7 smoke pass)
+
+        /// <summary>
+        /// A multi-field <c>value class</c> compiles clean through the language server's own
+        /// pipeline, and its fields complete after a dot. The declaration is the shape §2.9 gained
+        /// when value types stopped being single-field wrappers, so the point is that nothing on
+        /// the LSP path assumed the old rule.
+        /// </summary>
+        [Fact]
+        public void AMultiFieldValueClassCompilesCleanAndItsFieldsComplete()
+        {
+            const string source = @"public value class Vec2 {
+    public let x: float;
+    public let y: float;
+    public constructor(x: float, y: float) { this.x = x; this.y = y; }
+    public fun dot(other: Vec2): float { return this.x * other.x + this.y * other.y; }
+}
+public class Holder {
+    public fun run(): float {
+        let v: Vec2 = Vec2(1.0, 2.0);
+        return v.x;
+    }
+}
+";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "A multi-field value class must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int dotEnd = source.IndexOf("v.x;", StringComparison.Ordinal) + "v.".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, path, source, dotEnd);
+            var labels = completion.Items.Select(item => item.Label).ToList();
+
+            Assert.Contains("x", labels);
+            Assert.Contains("y", labels);
+            Assert.Contains("dot", labels);
+        }
+
+        /// <summary>
+        /// Hover on a value-typed local names the value class rather than the field it erases to.
+        /// That distinction is the whole of §2.9: erasure is a runtime representation, and the type
+        /// checker - which is what hover reads - never sees it.
+        /// </summary>
+        [Fact]
+        public void HoverOnAValueTypedLocalNamesTheValueClassNotItsField()
+        {
+            const string source = @"public value class EntityId {
+    public let raw: int;
+    public constructor(raw: int) { this.raw = raw; }
+}
+public class Holder {
+    public fun run(): int {
+        let id: EntityId = EntityId(7);
+        return id.raw;
+    }
+}
+";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int nameOffset = source.IndexOf("id.raw", StringComparison.Ordinal);
+
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, nameOffset);
+
+            Assert.NotNull(hit);
+            Assert.Contains("id: EntityId", hit!.Markdown);
+        }
+
+        /// <summary>
+        /// A destructuring declaration (§4.5) binds real locals, so the names it introduces have to
+        /// hover like any other. This is the case the desugaring exists to make true: nothing
+        /// downstream should be able to tell the difference.
+        /// </summary>
+        [Fact]
+        public void DestructuredNamesAreOrdinaryLocalsToHover()
+        {
+            const string source = @"public class Holder {
+    public fun divmod(a: int, b: int): (int, int) { return (a / b, a % b); }
+    public fun run(): int {
+        let (quotient, remainder) = divmod(17, 5);
+        return quotient + remainder;
+    }
+}
+";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "A destructuring declaration must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int useOffset = source.IndexOf("return quotient", StringComparison.Ordinal) + "return ".Length;
+
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, useOffset);
+
+            Assert.NotNull(hit);
+            Assert.Contains("quotient: int", hit!.Markdown);
+        }
+
+        /// <summary>
+        /// A malformed destructuring reports <c>InvalidDestructuring</c> against the file that
+        /// wrote it, carrying a span. A diagnostic the server cannot place is one no editor can
+        /// underline, so the span is the part that matters here rather than the code.
+        /// </summary>
+        [Fact]
+        public void AMalformedDestructuringIsReportedWithASpanTheEditorCanUnderline()
+        {
+            const string source = @"public class Holder {
+    public fun pair(): (int, int) { return (1, 2); }
+    public fun run(): int {
+        let (a, b, c) = pair();
+        return a + b + c;
+    }
+}
+";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+
+            Assert.True(diagnostics.TryGetValue(path, out var reported) && reported.Count > 0,
+                "Expected the arity mismatch to be reported: " + Describe(diagnostics));
+
+            var invalid = reported.FirstOrDefault(
+                d => d.Code == Surtr.Compiler.Diagnostics.SurtrDiagnosticCode.InvalidDestructuring);
+
+            Assert.True(invalid is not null,
+                "Expected InvalidDestructuring among: " + Describe(diagnostics));
+            Assert.True(invalid!.Span.Length > 0,
+                "The diagnostic must carry a span an editor can underline, not a bare position.");
+        }
+
+        #endregion
+
         private static int CountOccurrences(string text, string needle)
         {
             int count = 0;
