@@ -594,37 +594,62 @@ value class EntityId {
     }
 }
 
+value class Vec2 {
+    public let x: float;
+    public let y: float;
+
+    constructor(x: float, y: float) { this.x = x; this.y = y; }
+
+    public fun add(other: Vec2): Vec2 { return Vec2(this.x + other.x, this.y + other.y); }
+    public fun dot(other: Vec2): float { return this.x * other.x + this.y * other.y; }
+}
+
 fun despawn(id: EntityId): void { ... }
 
 despawn(EntityId(7));
 despawn(7);            // error: an int is not an EntityId
 ```
 
-A `value class` wraps exactly one field. The type checker treats it as **a type of its own**, so an
-`EntityId` and an `int` are not interchangeable — but at runtime it is **erased to the field it
-wraps**, so passing one allocates nothing and costs exactly what passing the underlying value
-costs.
+A `value class` groups one or more fields into **a type of its own**. The type checker keeps it
+apart from anything else — an `EntityId` and an `int` are not interchangeable — and at runtime it
+has **no heap object at all**: a value occupies as many consecutive slots as it has fields, moved
+around by copy wherever it goes. Constructing one, passing one, returning one and storing one in a
+field each cost exactly what moving those slots costs, which for the one-field case is exactly what
+moving the underlying value costs.
 
 This is what a transparent alias (§2.7) deliberately is not, and it is why the "strong alias" idea
 is spelled this way rather than as a second kind of `alias`: expressed as a class it can carry
 methods, implement interfaces, and be constructed, which a bare aliasing form could not.
 
-- **Exactly one field**, declared `let`. A value class with two would have nothing to erase to.
+- **One or more fields, every one declared `let`.** A value is immutable: assignment copies the
+  whole block, so a mutable field would let two copies disagree about a value that has no identity
+  to disagree over. The one-field case is the special one only in its representation — it erases to
+  the field itself and occupies one slot, which is why it existed before the general form did.
 - It may declare methods, properties and a constructor, but **cannot extend or be extended** — it
-  has no room for an instance layout to inherit or add to.
-- Its field may be any type, including another value class.
+  has no room for an instance layout to inherit or add to. It may implement interfaces.
+- A field may be any type, **including another value class**, whose slots are folded into the
+  containing run. A value type that reaches itself, directly or through a cycle, is refused: no
+  finite layout can hold it.
+- A value flattens to at most **254 slots**. A call carries its argument count in one byte of
+  immediate and the receiver takes one of them, so nothing wider could travel.
+- **`===` is refused on a value.** Identity comparison asks which object two references name, and
+  a value has no object and no identity. Equality (`==`) compares the fields.
 
-**Where the erasure stops.** A value class is erased *where the type is statically known*. Flowing
-into a slot that only knows it holds a reference — an erased generic parameter (§6), an `unknown`
-(§5.10), or a variable typed as an interface it implements — it must **box**, exactly as a
-primitive does in the same position, and the boxed form is a real object with a real class. That is
-the same bargain Kotlin's `value class` makes, and it is unavoidable: those slots hold a reference
-by definition, so something has to be the reference.
+**Where the erasure stops.** A value class stays inline *where the type is statically known*.
+Flowing into a slot that only knows it holds a reference — an erased generic parameter (§6), an
+`unknown` (§5.10), a variable typed as an interface it implements, or an element of an array or
+dictionary — it must **box**, exactly as a primitive does in the same position, and the boxed form
+is a real object of that class whose fields receive the slots verbatim. That is the same bargain
+Kotlin's `value class` makes, and it is unavoidable: those slots hold a reference by definition, so
+something has to be the reference.
 
 The practical consequence is that a value class is free in the code that names its type, and costs
-a boxing allocation in the code that does not — so it pays off for ids, quantities and handles
-threaded through concretely-typed code, and pays nothing back if it spends its life inside a
-generic container.
+a boxing allocation in the code that does not — so it pays off for ids, quantities, vectors and
+handles threaded through concretely-typed code, and pays nothing back if it spends its life inside
+a generic container.
+
+**A tuple is a value type too** (§5.3): `(int, float)` is two slots, not an object, and a function
+returning one hands both slots back without allocating. §4.5 covers binding them apart.
 
 ---
 
@@ -1224,6 +1249,38 @@ quite a lot, and forbidding it would push every constructor into inventing a sec
 In practice this comes up mainly for **non-private** fields, since §1.3's `_` prefix on private
 fields means a parameter and the field it initializes rarely collide there — `_name = name;` needs
 no `this.` at all.
+
+### 4.5 Destructuring a tuple
+
+```
+let (quotient, remainder) = divmod(17, 5);
+var (x, y) = origin;
+
+var row = 0;
+var column = 0;
+(row, column) = nextCell();          // the assignment form: existing targets
+```
+
+A tuple can be taken apart into names, in a declaration (`let`/`var`) or as an assignment to
+targets that already exist. Both forms are **pure desugaring** — no bound node of their own and no
+opcode of their own. The value is evaluated **once** into a hidden temporary, and each name reads
+its own element off it by constant index, which is the element access §5.3 already defines. Every
+name is declared exactly like any ordinary local, so scoping, flow analysis, capture and emission
+all work on it unchanged.
+
+- The subject must be a **tuple**, and the pattern must bind **exactly as many names as it has
+  elements**. Anything else is refused rather than filled in or dropped.
+- A declaration's names take the element types; nothing is written, and nothing can be.
+- The assignment form writes anything assignable — a variable, a parameter, a field — and refuses
+  anything else at the element that caused it, rather than failing the whole statement.
+- Evaluating once is a guarantee, not an implementation detail: `(a, b) = f()` calls `f` once.
+
+Because a tuple is a value type (§2.9), nothing here allocates: a function returning `(int, int)`
+hands back two slots and the pattern binds two locals out of them.
+
+**Names only, in this version.** A nested pattern (`let (a, (b, c)) = ...`) is not accepted — the
+inner tuple binds to one name and is taken apart by a second statement. The restriction is about
+the pattern grammar, not the values: a tuple of tuples is an ordinary tuple everywhere else.
 
 ---
 

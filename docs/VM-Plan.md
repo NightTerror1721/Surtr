@@ -737,39 +737,58 @@ to `Sar` and **`Shr` was unreachable from Surtr entirely**. The mapping is now `
 Worth noting while here: `Shl`'s XML doc still says over-wide shift counts "still need a defined
 behaviour", but §1.9 settled that — they mask to `& 31`. The comment is stale, not the behaviour.
 
-### 4.11 Value classes are the one feature that reaches into the object model
+### 4.11 Resolved: value types are inline multi-slot blocks, and the tuple is one of them
 
-`Language-Syntax.md` §2.9 adds `value class`: a single-field wrapper that is a distinct type to the
-compiler and erased to its field at runtime. Everything else in §4 either adds metadata or asks the
-compiler to do more work; this one changes what an instance *is* in some positions and not others,
-which makes it the most invasive of the language additions.
+~~`Language-Syntax.md` §2.9 adds `value class`: a single-field wrapper that is a distinct type to
+the compiler and erased to its field at runtime. Everything else in §4 either adds metadata or asks
+the compiler to do more work; this one changes what an instance *is* in some positions and not
+others, which makes it the most invasive of the language additions. The open design question is
+whether the boxed form can reuse `SurtrBoxed` or needs a sibling.~~ **Stale — built, and
+generalised well past what this section asked for.** `docs/Plan-TiposDeValor.md` is the plan it was
+built to; what landed:
 
-* **Where the static type is known, there is no object.** A `value class EntityId` wrapping an
-  `int` passes as an `int`: no `SurtrInstance`, no entity id, no allocation.
-* **Where it flows into a slot that holds a reference** — an erased generic parameter (§1.11), an
-  `unknown`, or a variable typed as an interface it implements — it must box into a real object
-  with a real `SurtrClass`. That is the same requirement §1.11 already places on primitives, so the
-  machinery exists; what is new is that the *same declared type* is sometimes a bare value and
-  sometimes an object, and the compiler has to know which at every site.
-* Consequently a value class needs a real `SurtrClass` built for it regardless, used only by the
-  boxed form.
+* **A value is `n` contiguous slots, not one.** The single-field case still erases to the field it
+  wraps and occupies one slot exactly as this section described, and every path it already used is
+  untouched. A `value class` with two or more fields flattens to a run of slots — a nested value
+  type's own slots folded into the run — and travels as that run through locals, parameters,
+  returns, instance fields and statics. The linker computes the width (`FlattenedSlotWidth`) and
+  the nested reference-slot map; the cap is 254 slots, because a call carries `argsCount` in one
+  byte and the receiver takes one of them.
+* **The stack needed nothing.** It is untyped 8-byte slots and the collector tests each slot's tag,
+  so a multi-slot value is traced correctly with no change to `CollectGarbage`, no change to the
+  frame protocol, and no change to any existing opcode.
+* **Ten opcodes, all additive** (`0xEA`–`0xF3`, `docs/Opcodes.md`): block copies between the stack
+  and a local range, an instance's field block, or a static's storage, plus `BoxValue`/`UnboxValue`.
+  Reading *one* slot of a value keeps using `Ldl`/`FieldGet`/`StaticFieldGet` at the summed
+  absolute index, so there are no per-field forms.
+* **Multi-slot return is one opcode too.** `ReturnValues` (`0xE9`) pops `n` slots and writes them
+  at the frame base. The call encoding did not change: `retCount` is still the 0/1 gate for
+  *whether* the caller wants the result, and the width rides the callee's `ResultSlotCount`.
+* **The boxed form is an ordinary instance, not `SurtrBoxed`.** The question this section left open
+  is answered by not needing an answer: `BoxValue` allocates a normal `SurtrInstance` of the value
+  class's own `SurtrClass`, whose field slots receive the `n` stack slots verbatim. Field access,
+  virtual dispatch and the collector's reference-slot walk therefore already handle a boxed value,
+  and the comparer question this section raised does not arise — a boxed value is not a
+  `SurtrBoxed` and never compares against one.
+* **The tuple became a value type.** `(int, float)` is two slots inline; `SurtrTuple` is retained
+  as the boxed form for exactly the boundaries that need an object — array and dictionary elements,
+  dictionary keys, erasure slots, and the host boundary, where `SurtrRuntime.Invoke`/`InvokeClosure`
+  flatten arguments on the way in and re-pack results on the way out. Destructuring
+  (`Language-Syntax.md` §4.5) binds a tuple apart with no object anywhere.
+* **The host boundary kept one signature.** A native body is still one
+  `int SurtrNativeFunction(SurtrCallArguments)`; results are written in place over the argument
+  block and the body answers how many slots it wrote, so a multi-slot result needs no second
+  entry-point shape. See `Runtime-Model.md` §5.5.
+* **The format moved once.** `SurtrModuleImage.FormatVersion` is **8**: one `bool` per class
+  (`isValueType`). Widths are recomputed by the linker rather than written, so a nested layout
+  cannot disagree with its own declaration.
 
-The open design question is whether the boxed form can reuse `SurtrBoxed` (which today holds one
-primitive `SurtrValue` and takes its class from the unboxed primitive) or needs a sibling that
-carries the value class's own class instead. `SurtrBoxed` looks close to sufficient, and settling
-that is the first step of implementing the feature.
-
-Two facts move that question further than they look like they do. `SurtrBoxed`'s constructor
-already **takes the class as a parameter** rather than deriving it, so the object side needs
-nothing new — but the **`Box*` opcodes carry no type index**: `BoxInt` and its siblings encode as a
-bare `opcode(1)`, so bytecode has no way to say *which* class to box into. A value class therefore
-needs a boxing opcode that takes a type index, or a different construction path, and that — not the
-object layout — is the first decision.
-
-The second is that `SurtrValueComparer` compares boxes **by content**, so a boxed `EntityId(7)` and
-a boxed `int` 7 would compare equal and hash alike. `Language-Syntax.md` §2.9 makes them distinct
-types, so the comparer has to compare a box's class too, the moment a box can hold something that
-is not a primitive.
+What is deliberately **not** built, and each is independent of the rest: a CLR-struct marshaler in
+`Surtr.Interop`, nullable value types (`VT?`), stride-N array storage (which would rewrite the
+whole `Arr*`/`Dict*` space for a gain nothing has yet asked for), generic value types (which
+contradict one-layout-per-declaration), and a `for-in` that avoids boxing a statically-value-typed
+receiver. Two smaller gaps are refused with a diagnostic rather than mis-compiled: capturing an
+inline multi-slot value in a lambda, and a nested pattern inside a destructuring.
 
 ### 4.12 Parameter metadata stops at name and type
 
@@ -952,7 +971,11 @@ covered by `src/Surtr.Tests`. What landed, in the order it landed:
 3. **§4.3, §4.4 and §4.11 — the value-representation trio.** The absent-primitive tag with the
    float boundary moved to match, `range` as a first-class built-in, and a boxing pair that names
    the class it presents as, with `SurtrValueComparer` comparing a box's class so a boxed value
-   class is not equal to a boxed primitive with the same bits.
+   class is not equal to a boxed primitive with the same bits. §4.11 was later taken much further
+   than it asked for, under `docs/Plan-TiposDeValor.md`: a `value class` is now any number of
+   fields flattened into a run of slots, the tuple is a value type on the same mechanism,
+   `ReturnValues` returns a block, and none of it changed the frame protocol or an existing
+   opcode. §4.11's own text has the whole account.
 4. **§4.14 and §3.3 — binding by name at load.** A per-module native import table, resolved against
    the host's globals when the module loads, so a missing name fails there rather than at the
    instruction that would have reached it, and a compiled module stops depending on one host's

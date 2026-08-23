@@ -8,13 +8,13 @@ documentation on each member; this file is that content laid out for reading, pl
 only make sense across the whole set. `docs/VM-Plan.md` has the *why* behind the interpreter's
 shape, and `docs/Module-Format.md` describes the file these bytes live in.
 
-**225 opcodes are defined, spanning `0x00` through `0xE6`.** Six values inside that span —
+**238 opcodes are defined, spanning `0x00` through `0xF3`.** Six values inside that span —
 `0x2C`–`0x2F` (the old `Ldg`/`LdgX`/`Stg`/`StgX`) and `0xAA`–`0xAB` (the old
 `CallGlobalNative`/`CallGlobalNativeX`) — are **retired**: they used to cover the host-globals
 mechanism, which is gone now that a `native` member (module-level or on a class) is an ordinary
 member reached through the same tables and call opcodes as any other. A retired value is never
 reused — reusing one would make an old module silently execute a different instruction — so those
-six numbers simply have no opcode and never will. The 25 values `0xE7`–`0xFF`, plus the six retired
+six numbers simply have no opcode and never will. The 12 values `0xF4`–`0xFF`, plus the six retired
 ones, are what is free.
 
 ---
@@ -79,7 +79,7 @@ together — a member inserted in the middle renumbered everything after it, sil
 the set used to grow at the tail regardless of family, and why its tail read as a pile of
 afterthoughts.
 
-**A new opcode takes a free value and is filed with its family.** `0xE7` through `0xFF` are
+**A new opcode takes a free value and is filed with its family.** `0xF4` through `0xFF` are
 unassigned. A retired value stays retired rather than being reused, because handing an old number
 to a new instruction would make an existing module execute something else entirely. There are
 golden-value tests over the whole table (`src/Surtr.Tests/Bytecode/OpCodeValueTests.cs`), so
@@ -98,8 +98,14 @@ Six opcodes take `argsCount` and `retCount` immediates, and both mean the same t
 * **`argsCount` counts every incoming stack slot, receiver included.** On an instance call the
   receiver *is* argument 0. That is what makes the callee's frame base `sp - argsCount` for every
   kind of call — one subtraction, no branch — and what makes `Ldl0` read `this`.
-* **`retCount` is 0 or 1.** Several values are returned by packing a tuple. A call site that does
-  not want a result asks for none rather than popping one, so the frame protocol drops it on return.
+* **`retCount` is 0 or 1, and it counts *results*, not slots.** A call site that does not want a
+  result asks for none rather than popping one, so the frame protocol drops it on return. How
+  *wide* the one result is — one slot for every reference and every primitive, `n` for a value
+  type or a tuple — is a fact about the callee's declared return type, not about the call site:
+  the callee ends with `ReturnValues` and emits its own slot count. Nothing in the call encoding
+  changed to allow multi-slot returns, which is the whole reason they could be added without
+  touching a single existing call site. The width itself lives on the method as its
+  `ResultSlotCount`; do not read `retCount` as one.
 * Arguments are **already in place**: the callee's frame starts underneath them and they become its
   locals `0…N-1` without being copied.
 * Stack room is checked **once per call** against the callee's `MaxStackSize`. That is the only
@@ -476,12 +482,13 @@ Every form shares one calling convention: `argsCount` counts every incoming slot
 
 ## Return Operations
 
-Two forms rather than one with a count, because the count is known at every call site and the frame protocol already carries `retCount`. Several values are returned by packing a tuple.
+Three forms, split by how wide the result is rather than by how many results there are — there is only ever one, and whether the call site wants it is what `retCount` answers. `ReturnVoid` returns nothing, `ReturnValue` returns the one-slot case that covers every reference and every primitive, and `ReturnValues` returns a block of `n` contiguous slots for a result whose declared type is wider than one: a multi-field `value class`, or a tuple. The width is a property of the callee, so it travels in the callee's own instruction and no call site had to change to gain multi-slot returns.
 
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
 | `0xB4` | `ReturnVoid` | `opcode(1)` · 1 byte | `... -> ...` | Returns from the current function without a value. Discards the frame; anything left on its operand stack is dropped. |
-| `0xB5` | `ReturnValue` | `opcode(1)` · 1 byte | `..., result -> ...` | Returns from the current function with a single value. Pops one value and hands it to the caller. Returning several values means packing them into a tuple first, since there is no multi-value return instruction. |
+| `0xB5` | `ReturnValue` | `opcode(1)` · 1 byte | `..., result -> ...` | Returns from the current function with a single value. Pops one value and hands it to the caller. A result wider than one slot returns through `ReturnValues` instead; this form is the one-slot case, which is every reference and every primitive. |
+| `0xE9` | `ReturnValues` | `opcode(1) n(1)` · 2 bytes | `..., s1, ..., sn -> ...` | Returns from the current function with several contiguous values. Pops `n` contiguous slots and writes them at the frame base when the caller asked for a result (the call's `retCount` immediate is non-zero); discards them otherwise. What a method whose declared return type occupies more than one slot returns: the callee emits its own result slot count, so neither the call site nor the frame protocol changes — `retCount` still answers zero or one *results*, and the width of that one result is a fact about the callee's type. A one-slot return keeps using `ReturnValue`, and returning nothing stays `ReturnVoid`. |
 
 ## Exception Operations
 
@@ -570,3 +577,33 @@ A range that genuinely escapes into a variable, a parameter or a return. One wri
 |---|---|---|---|---|
 | `0xDB` | `RangeNew` | `opcode(1)` · 1 byte | `..., lo, hi -> ..., ref` | Builds a range from two int bounds, excluding the upper one. Allocates. A range written inline in a `for-in` header must never reach this - the compiler lowers that to a counted loop over two ints - so this is for a range that genuinely escapes into a variable, a parameter or a return. |
 | `0xDC` | `RangeNewInclusive` | `opcode(1)` · 1 byte | `..., lo, hi -> ..., ref` | Builds a range from two int bounds, including the upper one. The `..=` form. A separate opcode rather than an increment at the call site because `hi` may be `int.MaxValue`, where incrementing would wrap. |
+
+## Function Operations
+
+The zero-capture half of the closure family. A lambda that captures nothing has no per-evaluation state, so it does not need a fresh object per evaluation either - the runtime builds one `SurtrClosure` for that method, caches it and roots it, and every site that asks gets the same reference. A body that captures anything still goes through `NewClosure`.
+
+| Value | Opcode | Encoding | Stack | What it does |
+|---|---|---|---|---|
+| `0xE7` | `NewFunction` | `opcode(1) functionIdx(2)` · 3 bytes | `... -> ..., ref` | Builds the canonical zero-capture function value for the method at `functionIdx`. The value is the one shared `SurtrClosure` for that method within this runtime - created, cached and rooted the first time any site asks - so nothing is allocated on the heap for an evaluation. It is the same type a capturing closure over the same signature has, which is what lets a lambda that captures nothing coexist with one that does under one type. The compiler emits this only when the lambda is stateless. |
+| `0xE8` | `NewFunctionX` | `opcode(1) functionIdx(4)` · 5 bytes | `... -> ..., ref` | Builds a canonical function value using a 4-byte function index. |
+
+## Value Type Operations
+
+Everything a value wider than one slot needs, and deliberately nothing more. A multi-slot value is **`n` contiguous slots** wherever it lives - on the operand stack, in a local range, inside an instance's flattened field block, inside a static's storage - so every one of these instructions is a block copy between two of those places, with `n` carried as an immediate. The compiler knows the layout statically, so the interpreter never resolves a type to move bytes.
+
+Three properties make the family this small. **The stack needs no help**: it is already untyped 8-byte slots, so `n` slots pushed are `n` slots, and the collector's tag test already traces each of them correctly with nothing changed. **The layout is flat**: the linker folds a nested value type's slots into consecutive slots of its container, so reaching a sub-field is address arithmetic the compiler already did - which is why reading *one* slot of a multi-slot value keeps using `Ldl`, `FieldGet` and `StaticFieldGet` at the summed absolute index rather than needing forms of its own. And **the boxed form is an ordinary instance**: `BoxValue` produces a normal object of the named class whose field slots take the `n` stack slots verbatim, so field access, virtual dispatch and the collector's reference-slot walk all already know how to handle one.
+
+A one-field `value class` never reaches any of this. It erases to the field it wraps, occupies one slot, and keeps using `Ldl`/`FieldGet`/`BoxAs` exactly as before - which is what made adding the family a purely additive change.
+
+| Value | Opcode | Encoding | Stack | What it does |
+|---|---|---|---|---|
+| `0xEA` | `LoadValueLocal` | `opcode(1) localIdx(2) n(1)` · 4 bytes | `... -> ..., s1, ..., sn` | Copies a multi-slot value out of a local range onto the operand stack. The whole block moves; nothing is resolved and no tag is inspected. What a load of a variable whose declared type occupies more than one slot lowers to - a one-slot type keeps using `Ldl` and its dedicated forms. The count travels in the instruction so the interpreter never resolves a type to move bytes. |
+| `0xEB` | `StoreValueLocal` | `opcode(1) localIdx(2) n(1)` · 4 bytes | `..., s1, ..., sn -> ...` | Pops a multi-slot value into a local range. The mirror of `LoadValueLocal`, and what an assignment to such a variable lowers to - copying the block is exactly the copy-on-assignment semantics of a value type. |
+| `0xEC` | `LoadLocalField` | `opcode(1) localIdx(2) offset(2)` · 5 bytes | `... -> ..., value` | Reads one slot at a fixed offset inside a local range. What reading one field of a multi-slot local lowers to - `v.x` reads slot `local + 0` without moving the rest of the value anywhere. The offset is absolute within the frame (local index plus field offset, already summed by the compiler), so the read is one indexed load off the frame base. |
+| `0xED` | `StoreLocalField` | `opcode(1) localIdx(2) offset(2)` · 5 bytes | `..., value -> ...` | Writes one slot at a fixed offset inside a local range. The write side of `LoadLocalField`. In practice only the compiler's constructor splice emits it - fields of a value class are `let`, so assignment is construction - but the opcode itself does not care who writes or when. |
+| `0xEE` | `BoxValue` | `opcode(1) typeIdx(2) n(1)` · 4 bytes | `..., s1, ..., sn -> ..., ref` | Boxes a multi-slot value on top of the stack as an instance of its class. What a value type flowing into a reference-typed slot boxes through. The box is an ordinary instance of the named class whose field slots receive the `n` stack slots verbatim - which is why every existing path that walks instances (field access, virtual dispatch, the collector through the class's reference-slot map) already knows how to walk a boxed value. Allocates, so it routes through the safepoint like every other allocation opcode. |
+| `0xEF` | `UnboxValue` | `opcode(1) n(1)` · 2 bytes | `..., ref -> ..., s1, ..., sn` | Copies the field slots of a boxed value back onto the operand stack. The mirror of `BoxValue`. The count is an immediate because the compiler knows the subject's layout statically; the receiver itself is not re-checked - a cast to the value type has already run by the time this executes, exactly as `Unbox` assumes its subject is a box. |
+| `0xF0` | `LoadValueField` | `opcode(1) fieldIdx(2) n(1)` · 4 bytes | `..., obj -> ..., s1, ..., sn` | Copies a multi-slot value out of an instance's flattened field block. What reading a field whose declared type is a multi-field value class lowers to (`enemy.position`). The field's own slot index is where the block starts inside the instance - the linker flattened nested value types into consecutive slots, so the copy is one indexed base plus a run. Reading one sub-slot of that value keeps using `FieldGet` at the summed absolute slot; this moves the whole block. |
+| `0xF1` | `StoreValueField` | `opcode(1) fieldIdx(2) n(1)` · 4 bytes | `..., obj, s1, ..., sn -> ...` | Pops a receiver and a multi-slot value into an instance's flattened field block. The write side of `LoadValueField`, and what every assignment to such a field lowers to - including the constructor splice, which is the only writer a `let` field ever gets. Copying the block is the value type's copy-on-assignment semantics showing at its storage boundary. |
+| `0xF2` | `LoadValueStatic` | `opcode(1) fieldIdx(2) n(1)` · 4 bytes | `... -> ..., s1, ..., sn` | Copies a multi-slot value out of a static's flattened storage. The static counterpart of `LoadValueField`. A static whose declared type is a multi-field value class owns `n` consecutive slots in its owner's static storage, addressed from the slot the linker bound - so the read is one indirect base plus a run, exactly what `StaticFieldGet` does for one slot. |
+| `0xF3` | `StoreValueStatic` | `opcode(1) fieldIdx(2) n(1)` · 4 bytes | `..., s1, ..., sn -> ...` | Pops a multi-slot value into a static's flattened storage. The write side of `LoadValueStatic` - what an assignment to such a static, and the static initializer that seeds it, both lower to. |

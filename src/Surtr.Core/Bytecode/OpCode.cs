@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 namespace Surtr.Bytecode
 {
@@ -1732,8 +1732,9 @@ namespace Surtr.Bytecode
         /// <remarks>
         /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
         /// Stack: <c>..., result -&gt; ...</c><br/>
-        /// Notes: pops one value and hands it to the caller. Returning several values means
-        /// packing them into a tuple first, since there is no multi-value return instruction.
+        /// Notes: pops one value and hands it to the caller. A result wider than one slot returns
+        /// through <see cref="ReturnValues"/> instead; this form is the one-slot case, which is
+        /// every reference and every primitive.
         /// </remarks>
         ReturnValue = 0xB5,
 

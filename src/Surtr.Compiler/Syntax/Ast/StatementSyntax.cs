@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System.Collections.Generic;
 
@@ -45,7 +45,7 @@ namespace Surtr.Compiler.Syntax.Ast
     }
 
     /// <summary>
-    /// A destructuring declaration: <c>let (a, b) = value;</c> or <c>var (a, b) = value;</c> (§4.1).
+    /// A destructuring declaration: <c>let (a, b) = value;</c> or <c>var (a, b) = value;</c> (§4.5).
     /// Each name becomes one local, bound to the tuple element at its position.
     /// </summary>
     public sealed class TupleDeclarationStatementSyntax : StatementSyntax

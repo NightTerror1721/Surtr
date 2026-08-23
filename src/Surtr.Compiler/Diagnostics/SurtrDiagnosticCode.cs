@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 namespace Surtr.Compiler.Diagnostics
 {
@@ -469,7 +469,7 @@ namespace Surtr.Compiler.Diagnostics
         InvalidGenericDeclaration = 3066,
 
         /// <summary>
-        /// A destructuring binding (§4.1's <c>let (a, b) = ...</c> and the matching assignment form)
+        /// A destructuring binding (§4.5's <c>let (a, b) = ...</c> and the matching assignment form)
         /// is malformed: the left side is not a tuple of names, the names' count does not match the
         /// value's arity, or the value is not a tuple at all.
         /// </summary>

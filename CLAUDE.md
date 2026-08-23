@@ -21,7 +21,7 @@ This file is the orientation; each of these goes deep on one thing. Read the rel
 |---|---|
 | `docs/Language-Syntax.md` | The surface language, and the reasoning behind each choice. §1.2 is the authoritative reserved word list, §5.7 the operator table. |
 | `docs/Runtime-Model.md` | How classes, methods, properties, enums, interfaces and modules fit together, what linking builds, and what the compiler owes the runtime. |
-| `docs/Opcodes.md` | All 227 opcodes by family, with values, encodings and stack effects. Generated from `OpCode.cs`, which stays the source of truth. |
+| `docs/Opcodes.md` | All 238 opcodes by family, with values, encodings and stack effects. Mirrors `OpCode.cs`, which stays the source of truth. |
 | `docs/Module-Format.md` | The `.surtrc` byte layout, and what is bound at load rather than written. |
 | `docs/VM-Plan.md` | The interpreter's design decisions, the remaining gaps, and the ordered plan. |
 
@@ -114,7 +114,7 @@ For reference, `delegate* unmanaged<...>` does not compile on `netstandard2.1` a
 Because the convention is managed, the parameter can be an ordinary managed type rather than an erased one, and it is:
 
 ```csharp
-delegate SurtrValue SurtrNativeFunction(SurtrCallArguments arguments);
+delegate int SurtrNativeFunction(SurtrCallArguments arguments);
 ```
 
 `SurtrCallArguments` (`Runtime/Classes/SurtrCallArguments.cs`) is a `readonly unsafe ref struct` wrapping a raw `SurtrRawValue*` + length, plus the `SurtrRuntime` the call is running on. Being a `ref struct` is load-bearing, not decorative: it can never be boxed, stored in a field, captured by a lambda, or held across an `await`, so it cannot outlive the stack frame that owns the pointer's memory — the same guarantee `Span<T>` gives a raw pointer, on a domain type with accessor methods instead of a generic indexer.
@@ -128,7 +128,9 @@ Every accessor comes in two tiers, and this is the point of the type over a bare
 
 A host's function body needs **no `unsafe` and no `AllowUnsafeBlocks`** even though `SurtrCallArguments` wraps a pointer internally — none of the checked accessors expose one. The one exception is `Pointer`, an explicit escape hatch: its return type forces the *caller* into their own `unsafe` context to use it, regardless of the struct's own `unsafe` declaration (a type being `unsafe` lets its own members use pointers freely; it grants nothing to callers). `FromDelegate` keeps registration itself unsafe-free too; `FromFunctionPointer(&Method)` needs `unsafe` only at that one line, and remains the AOT/IL2CPP-safe path.
 
-`arguments[0]` is the receiver for instance methods. A method declared to return nothing still returns something down this one signature — by convention `SurtrValue.Null`, which the caller discards.
+`arguments[0]` is the receiver for instance methods. **Results are written in place and the return is a count**: a body overwrites the argument block from slot 0 and answers how many slots it wrote — Lua's multiple-returns bargain. `arguments.Return(value)` is that whole protocol for the single-value case (write slot 0, answer 1); a method declared to return nothing writes nothing and answers 0; a result wider than one slot (a tuple, a multi-field `value class`) is several consecutive slots, so **one entry-point shape still covers every native body** and there is no separate results pointer. The one rule a body must keep is **read every input before the first write** — results alias the arguments, and no checked writer can tell a stale read from a fresh one.
+
+Also on the entry point: it is a `SurtrNativeMethodInfo` like any other, so its `ArgumentSlotCount` already includes the receiver and its `ResultSlotCount` is the declared return's flattened width — neither is the call opcode's `retCount`, which stays the 0/1 gate for whether the caller wants a result at all.
 
 ## Runtime objects
 
@@ -138,13 +140,15 @@ A host's function body needs **no `unsafe` and no `AllowUnsafeBlocks`** even tho
 |---|---|---|
 | `SurtrString` | a CLR `string` + its cached hash | built-in, shared |
 | `SurtrArray` | growable `SurtrValue[]` + count | built-in, shared |
-| `SurtrTuple` | fixed `SurtrValue[]`, immutable | built-in, shared |
+| `SurtrTuple` | fixed `SurtrValue[]`, immutable — the **boxed** form of a tuple, since a tuple is a value type | built-in, shared |
 | `SurtrDictionary` | `Dictionary<SurtrValue, SurtrValue>` under the runtime's comparer — or `Dictionary<int, SurtrValue>` when the key is declared `int` | built-in, shared |
 | `SurtrClosure` | method + captured values, with the dispatch payload copied out flat | built-in, shared |
 | `SurtrBoxed` | one primitive `SurtrValue` | the *same* class the unboxed primitive has |
-| `SurtrInstance` | `SurtrValue[]` field slots | whatever Surtr source declared |
+| `SurtrInstance` | `SurtrValue[]` field slots — also the boxed form of a `value class`, whose fields take the inline slots verbatim | whatever Surtr source declared |
 | `SurtrIterator` | a collection + a position; a dict's keys snapshotted | built-in, shared |
 | `SurtrNativeObject` / `SurtrNativeProxy` | a host CLR object; open for host subclassing | host-declared, or `SurtrBuiltIns.NativeObject` |
+
+**A value type has no row here, and that is the point.** A `value class` and a tuple are `n` contiguous raw slots wherever they live — a local, a parameter, a return, an instance's field block, a static's storage — with no heap object, no entity id and nothing to sweep. A one-field value class is one slot and erases to the field it wraps; a multi-field one is a run, a nested value type's slots folded into it, capped at 254 because a call carries `argsCount` in one byte. They are packed into an object only at the boundaries that hold a reference by definition: array and dictionary **elements**, dictionary **keys**, **erasure** slots (`G0`, `unknown`), an interface-typed variable, and the **host boundary** (`SurtrRuntime.Invoke`/`InvokeClosure` flatten arguments in and re-pack results out). `BoxValue` allocates an ordinary `SurtrInstance`, so field access, dispatch and the collector's reference-slot walk need no special case.
 
 Rules that run through all of them:
 
@@ -182,7 +186,7 @@ A member implementing a generic interface is matched on the **erased** signature
 
 ## The instruction set
 
-`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — **227 opcodes**, `0x00`–`0xE2`, leaving 29 free values in the `byte` space. It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
+`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — **238 opcodes**, `0x00`–`0xF3`, leaving 18 free values in the `byte` space (`0xF4`–`0xFF`, plus the six retired ones). It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
 
 Surtr is a stack machine. Operands come from the evaluation stack; pool indices, jump offsets and argument counts are encoded inline after the opcode byte as little-endian immediates.
 
@@ -216,7 +220,7 @@ Pool indices refer to the tables on the declaring module's `SurtrChunk`. Trap be
 
 - **Two stacks, both fixed size.** The data stack is unmanaged `SurtrRawValue` (the collector scans it through a raw pointer); the call stack is a managed `SurtrCallFrame[]` (a frame holds its chunk, method and closure, which the CLR has to keep alive). Neither grows: a reallocation would dangle every `sp` spilled in a suspended dispatch loop, which is exactly what a re-entrant native call leaves behind.
 - **One `switch`, not a table of function pointers.** A function-pointer table costs a real call per instruction that C# cannot turn into a tail-jump, plus spilling `ip`/`sp`/the frame's pools across it. Everything hot lives in locals of `Execute`, and every opcode body is written out where it is used — never call a helper from the dispatch loop. The two shared call sequences at the bottom are reached by `goto`, not by a call.
-- **One calling convention.** Arguments are already on the stack and the callee's frame starts underneath them, so entering a call copies nothing. `argsCount` counts every incoming slot, **receiver included**, which makes the frame base `sp - argsCount` for every kind of call. `retCount` is 0 or 1. Stack room is checked once per call against the callee's `MaxStackSize` — never per push.
+- **One calling convention.** Arguments are already on the stack and the callee's frame starts underneath them, so entering a call copies nothing. `argsCount` counts every incoming slot, **receiver included**, which makes the frame base `sp - argsCount` for every kind of call. `retCount` is 0 or 1 — it counts *results*, not slots, and asks only whether this call site wants the result at all. How wide that one result is rides the callee's declared type (`SurtrMethodInfo.ResultSlotCount`) and is emitted by the callee through `ReturnValues`, which is how multi-slot returns were added without touching a single call site. Do not read `retCount` as a width. Stack room is checked once per call against the callee's `MaxStackSize` — never per push.
 - **Re-entrancy is the point of the frame protocol.** `sp` and the executing frame's `IP` are published before every transfer into host code, and `Execute(entryDepth)` returns when the depth falls back to where it started, so a native function can call back into the VM and unwind cleanly.
 - **A reference is its 32-bit payload**, not its tag. That makes a zeroed slot and an explicit null the same reference, which is why fresh locals read as null without the VM knowing their declared type. Where the tag *does* matter — a value handed to a native function, or boxed — `ArrNew` fills a fresh array with its element family's correctly tagged zero.
 - **Exceptions are handler tables, not handler opcodes.** `SurtrBytecodeMethodInfo.Handlers` holds protected ranges, so entering a `try` emits nothing and costs nothing; only a raise pays. A Surtr `Throw` never becomes a CLR exception while a handler is in reach — the machine walks its own frames. A VM trap or anything host code throws arrives as a CLR exception, gets wrapped as an object, and goes through the same search; only what nothing catches leaves, as `SurtrThrownException`. **`finally` is the compiler's job**: emit the block on each exit path plus a catch-all that runs it and re-raises, exactly as javac does — that keeps `Leave`/`EndFinally` out of the instruction set.
@@ -294,7 +298,7 @@ Benchmark the VM against MoonSharp and LuaJIT (both Lua) and a C# baseline. Alwa
 dotnet run --project src/Surtr.Bench -c Release
 ```
 
-**30 cases, each written three times over**, and the three must agree on a checksum or the run fails. `--list` prints the catalogue with what each one puts under load. LuaJIT runs through `luajit.native`'s x64 `lua51.dll` (copied to the output by the csproj; the driver is a P/Invoke over the Lua 5.1 C API), and is on by default. `surtrbench --help` lists the flags (`--workload <substring>`, `--iters <n>`, `--warmup <n>`, `--scale <factor>`, `--list`, `--surtr-only`/`--lua-only`/`--luajit-only`/`--baseline-only`, `--no-luajit`, `--csv <path>`). Run with a release build when the .NET 10 preview SDK is the one installed.
+**40 cases, each written three times over**, and the three must agree on a checksum or the run fails. `--list` prints the catalogue with what each one puts under load. LuaJIT runs through `luajit.native`'s x64 `lua51.dll` (copied to the output by the csproj; the driver is a P/Invoke over the Lua 5.1 C API), and is on by default. `surtrbench --help` lists the flags (`--workload <substring>`, `--iters <n>`, `--warmup <n>`, `--scale <factor>`, `--list`, `--surtr-only`/`--lua-only`/`--luajit-only`/`--baseline-only`, `--no-luajit`, `--csv <path>`). Run with a release build when the .NET 10 preview SDK is the one installed.
 
 Four things about the harness are load-bearing, and each was a defect before it was a feature:
 
@@ -324,7 +328,7 @@ The language has three compile-time-only constructs worth knowing about before r
 
 Three absences are deliberate and worth not re-proposing. There is **no `static class`** — a module already is a container of members with no instance (§2.5), so `singleton` (§2.8) exists only for the thing modules genuinely cannot do: implement an interface and be passed as a value. There is **no `any`** — `unknown` (§5.10) holds anything but must be cast before use, and is `SurtrValueTypeCode.Erased` with a surface name, so it costs the runtime nothing. And there are **no user-defined implicit conversions** — `operator as` (§5.6) is explicit-only, because overload resolution already has `int` → `float` as its hard case.
 
-Two type-shaped things are erased but not equivalent: a **type alias** (§2.7) is transparent, so `EntityId` and `int` are interchangeable, while a **`value class`** (§2.9) wraps one field and *is* a distinct type to the compiler, erased to that field at runtime — free where its type is statically known, boxed where it flows into an erased or interface-typed slot. `value` stays a contextual keyword: it is the `class` after it that makes the declaration.
+Two type-shaped things are erased but not equivalent: a **type alias** (§2.7) is transparent, so `EntityId` and `int` are interchangeable, while a **`value class`** (§2.9) groups one or more fields and *is* a distinct type to the compiler, laid out inline at runtime — one field erases to the field itself, several flatten to a run of contiguous slots — free where its type is statically known, boxed where it flows into an erased or interface-typed slot. A tuple is a value type on the same mechanism. `value` stays a contextual keyword: it is the `class` after it that makes the declaration.
 
 What exists in `src/Surtr.Compiler` today: `Syntax/` holds the source buffer, the character reader, the token model, **the lexer**, **the AST** (`Syntax/Ast/`) and **the parser** (`Parser.*.cs`, partial by what each file parses); `Diagnostics/` holds the spans, codes and bag described above. All of it is complete against the spec and covered by `src/Surtr.Tests/Compiler/Syntax`, including `Sample.surtr` — a file exercising every construct in the language, lexed and parsed end to end. `Binding/Symbols/` holds the compiler's own type and symbol model, `CodeGen/DescriptorEmitter.cs` the single gate from it to the runtime's encoding, and `Compilation/` everything that has to be settled before binding — deriving each file's module from where it lives, ordering the modules, and importing referenced metadata through `Binding/MetadataImporter.cs`. `Binding/Binder.cs` runs the first two of the binder's three phases: **declaration** (a symbol per declared type and alias, no signature looked at) and **hierarchy and members** (base types, interfaces and every member signature, resolved against the complete set). Bodies bind onto `Binding/BoundTree/`, `CodeGen/MethodBodyEmitter.cs` turns one into bytecode, and `CodeGen/ModuleEmitter.cs` turns a whole compilation into built modules and images. `CodeGen/EmitContext.cs` is what the two share: which builder or metadata each symbol became.
 
@@ -396,7 +400,7 @@ The VM opcode suites in `src/Surtr.Tests/VM` predate the emitter and still use t
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Surtr** (9216 symbols, 36903 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Surtr** (9409 symbols, 38124 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

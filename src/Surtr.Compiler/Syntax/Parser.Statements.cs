@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Diagnostics;
 using System;
@@ -127,7 +127,7 @@ namespace Surtr.Compiler.Syntax
                 isMutable = reader.CurrentType == TokenType.KeywordVar;
                 reader.Advance();
 
-                // `let (a, b) = value;` - a destructuring declaration (§4.1). A `const` one is
+                // `let (a, b) = value;` - a destructuring declaration (§4.5). A `const` one is
                 // deliberately not recognised: a tuple cannot fold, so the ordinary path's
                 // "expects a variable name" is the honest refusal.
                 if (reader.CurrentType == TokenType.LeftParen)
@@ -142,7 +142,7 @@ namespace Surtr.Compiler.Syntax
             return new LocalDeclarationStatementSyntax(SpanFrom(start), name, type, initializer, isMutable, isConst);
         }
 
-        /// <summary>Parses the name list of <c>let (a, b) = value;</c> (§4.1).</summary>
+        /// <summary>Parses the name list of <c>let (a, b) = value;</c> (§4.5).</summary>
         private StatementSyntax ParseTupleDeclaration(SourceLocation start, bool isMutable)
         {
             reader.Expect(TokenType.LeftParen, "'('");

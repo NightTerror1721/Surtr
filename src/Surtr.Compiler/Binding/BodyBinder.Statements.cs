@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Binding.BoundTree;
 using Surtr.Compiler.Binding.Symbols;
@@ -48,7 +48,7 @@ namespace Surtr.Compiler.Binding
 
         private BoundStatement BindExpressionStatement(ExpressionStatementSyntax syntax)
         {
-            // `(a, b) = value;` - the assignment form of destructuring (§4.1). It is a statement
+            // `(a, b) = value;` - the assignment form of destructuring (§4.5). It is a statement
             // shape, not an expression: the right side is evaluated once into a hidden temporary
             // and each target then reads its element off it.
             if (syntax.Expression is AssignmentExpressionSyntax
@@ -65,7 +65,7 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>
         /// Binds a destructuring declaration: one hidden temporary holds the value, and every
-        /// name becomes an ordinary local reading its own element off it (§4.1).
+        /// name becomes an ordinary local reading its own element off it (§4.5).
         /// </summary>
         /// <remarks>
         /// The lowering is entirely desugaring - no new bound node, no new opcode. The temporary is
