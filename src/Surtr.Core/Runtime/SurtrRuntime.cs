@@ -1218,6 +1218,110 @@ namespace Surtr.Runtime
         }
 
         /// <summary>
+        /// Declares a native <b>value</b> class: the Surtr-side face of a host struct, laid out as
+        /// a run of contiguous slots rather than as a heap object behind a reference.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The difference from <see cref="DefineNativeClass"/> is where the data lives. A native
+        /// class is a <see cref="SurtrNativeObject"/> wrapping a CLR instance, and every member
+        /// access crosses into host code to reach a field of it. A native value class is the other
+        /// way round: <b>Surtr owns the storage</b>. Its fields are real slots declared with
+        /// <see cref="DefineValueField"/>, so reading one is a slot read that never calls the host
+        /// at all, and the CLR struct is rebuilt from those slots only when a native member
+        /// actually needs one. That is what makes a host struct free to pass around - the point of
+        /// mapping <c>Vector3</c> this way rather than boxing it into a proxy.
+        /// </para>
+        /// <para>
+        /// The class is <see cref="SurtrValueTypeCode.Object"/> rather than
+        /// <see cref="SurtrValueTypeCode.Native"/>, and deliberately: the type code describes the
+        /// <em>boxed</em> form, and boxing an inline block produces an ordinary
+        /// <see cref="SurtrInstance"/> holding those same slots - not a proxy around a CLR object
+        /// that the block was never backed by. This is exactly the shape a compiled
+        /// <c>value class</c> has, which is the point: nothing downstream - the linker's layout,
+        /// the collector's reference-slot walk, the boxing opcodes - needs to know the declaration
+        /// came from a host rather than from Surtr source.
+        /// </para>
+        /// <para>
+        /// A value type has no identity to inherit through, so there is no base class parameter;
+        /// <see cref="SurtrTypeLinker"/> refuses one outright. Returned still under construction:
+        /// add its fields, hang its native methods on it, and finish it with
+        /// <see cref="FinishNativeClass"/>, which is what computes the flattened width.
+        /// </para>
+        /// </remarks>
+        /// <param name="fullName">The name its descriptor carries, for example <c>UnityEngine:Vector3</c>.</param>
+        /// <param name="typeArguments">The descriptors of a closed generic construction, if any.</param>
+        /// <exception cref="InvalidOperationException">A native class with that full name is already declared.</exception>
+        public SurtrClass DefineNativeValueClass(string fullName, SurtrClassReference[]? typeArguments = null)
+        {
+            if (_context.NativeClasses.ContainsKey(fullName))
+                throw new InvalidOperationException($"A native class named '{fullName}' is already declared.");
+
+            var reference = typeArguments is null || typeArguments.Length == 0
+                ? SurtrClassReference.Native(fullName)
+                : SurtrClassReference.ConstructedNative(fullName, typeArguments);
+            SurtrClassReference.TrySplitFullName(fullName, out _, out string typePath);
+
+            var declared = new SurtrClass(
+                typePath,
+                SurtrValueTypeCode.Object,
+                reference,
+                baseType: null,
+                isAbstract: false,
+                SurtrVisibility.Public,
+                declaringType: null)
+            {
+                IsValueType = true,
+            };
+
+            _context.NativeClasses.Add(fullName, declared);
+
+            TypeHandle(reference);
+            return declared;
+        }
+
+        /// <summary>
+        /// Declares one storage field of a native value class - a real slot in its inline block,
+        /// not an accessor pair into host code.
+        /// </summary>
+        /// <remarks>
+        /// The counterpart to <see cref="DefineNativeField"/>, and the opposite trade. A native
+        /// field owns no slot and reads through entry points, which is right when the CLR object
+        /// is the storage; a value field <em>is</em> the storage, so reading it costs one slot
+        /// access and no transition. Fields are read-only from Surtr because an inline value is
+        /// immutable (a copy has no identity to write back through), and they claim their slots in
+        /// declaration order - which is the order the marshaler has to rebuild the CLR struct in.
+        /// </remarks>
+        /// <param name="valueClass">A class declared by <see cref="DefineNativeValueClass"/>.</param>
+        /// <param name="name">The field's Surtr name.</param>
+        /// <param name="fieldType">The field's declared type.</param>
+        /// <param name="visibility">How widely the field is visible.</param>
+        /// <exception cref="ArgumentException"><paramref name="valueClass"/> is not a value class.</exception>
+        public SurtrFieldInfo DefineValueField(
+            SurtrClass valueClass,
+            string name,
+            SurtrClassReference fieldType,
+            SurtrVisibility visibility = SurtrVisibility.Public)
+        {
+            if (valueClass is null)
+                throw new ArgumentNullException(nameof(valueClass));
+
+            if (!valueClass.IsValueType)
+                throw new ArgumentException($"'{valueClass.Name}' is not a value class, so it has no inline block to place a field in.", nameof(valueClass));
+
+            var field = new SurtrFieldInfo(
+                name,
+                TypeHandle(fieldType),
+                isStatic: false,
+                isReadOnly: true,
+                visibility,
+                TypeHandle(valueClass.SelfReference));
+
+            valueClass.AddField(field);
+            return field;
+        }
+
+        /// <summary>
         /// Declares a native enum: the Surtr-side face of a host enum, as a sealed class with a
         /// fixed set of named static instances.
         /// </summary>
