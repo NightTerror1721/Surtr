@@ -49,7 +49,12 @@ namespace Surtr.Runtime.Classes
             _entryIndex = entryIndex;
             _localCount = localCount;
             _maxStackSize = maxStackSize;
-            _argumentSlotCount = argumentSlotCount >= 0 ? argumentSlotCount : parameters.Length;
+
+            // The sentinel travels through untouched when nothing was baked: an image carries no
+            // slot count, so ArgumentSlotCount has to fall through to the declared shape rather
+            // than read as a bare parameter count - which would drop an instance method's
+            // receiver and shift every cross-module call site against it by one.
+            _argumentSlotCount = argumentSlotCount;
 
             // Snapshot the offset instead of indexing the chunk on every call. The table is
             // fixed once the loader has built it, so this can never drift.
