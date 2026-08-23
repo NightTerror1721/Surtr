@@ -235,6 +235,13 @@ no tiene nada que asignar ni receptor que rellenar — *es* su resultado. Por es
   clase en lugar de `V`. Desde fuente, `let g = Gauge(5);` construye el objeto CLR real; no hay
   ningún `ObjNew` de por medio.
 
+**Desde fuente Surtr.** Un tipo registrado que el proyecto pasa al compilador vía
+`SurtrProject.AddHostType` queda implícitamente en scope en todos los ficheros - la capa más
+externa, sombreada por cualquier declaración más cercana - así que `let g = Gauge(5);` o
+`let v = Vector3.One();` compilan contra los miembros reales del tipo: la fábrica corre con su
+lógica, los campos se leen como slots del bloque, y las llamadas a métodos son llamadas nativas
+normales.
+
 **Coste, y por que las dos rutas no cuestan lo mismo.** Leer un campo desde Surtr no cruza la
 frontera en ningun caso — es una lectura de slot. La diferencia esta en llamar a un miembro nativo:
 

@@ -243,6 +243,12 @@ namespace Surtr.Compiler.Binding
             var library = _compilation.Importer.ImportModule(SurtrBuiltIns.Module);
             foreach (var type in library.Types)
                 _globalScope.AddCandidate(type.Name, type);
+
+            // Host-declared types (SurtrProject.AddHostType) reach source through no module, so
+            // they join the same outermost layer: registered explicitly by the project, visible
+            // everywhere, shadowable by any nearer declaration.
+            foreach (var hostType in _compilation.Importer.ImportedHostTypes())
+                _globalScope.AddCandidate(hostType.Name, hostType);
         }
         #endregion
 

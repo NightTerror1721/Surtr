@@ -146,20 +146,17 @@ namespace Surtr.Tests.Interop
             Assert.Equal(41, GaugeHost.Last!.Start);
         }
 
-        private struct V2Factory
-        {
-            public float X;
-            public float Y;
-        }
-
         [SurtrNativeType(Module = "host", Name = "V", Inline = true)]
         private struct V2
         {
             public float X;
             public float Y;
 
+            // The factory carries logic of its own - it is not "copy each argument to each field".
+            // A source-level construction must run through it; if emission ever lowers the
+            // construction straight to a field block instead, this doubling disappears silently.
             [SurtrNativeConstructor]
-            public static V2 Of(float x, float y) => new V2 { X = x, Y = y };
+            public static V2 Of(float x, float y) => new V2 { X = x * 2f, Y = y };
         }
 
         /// <summary>
@@ -185,8 +182,59 @@ namespace Surtr.Tests.Interop
                 new[] { SurtrValue.CreateFloat(1.5f), SurtrValue.CreateFloat(2.5f) },
                 results));
 
-            Assert.Equal(1.5f, results[0].AsFloat, 6);
+            // The factory's own logic ran: x arrived doubled.
+            Assert.Equal(3.0f, results[0].AsFloat, 6);
             Assert.Equal(2.5f, results[1].AsFloat, 6);
+        }
+
+        /// <summary>
+        /// The whole point of the attribute, end to end through source: <c>V2(x, y)</c> in Surtr
+        /// reaches the static factory and its result is the constructed value - the factory's
+        /// logic included, which is exactly what a naive field-block lowering would drop.
+        /// </summary>
+        [Fact]
+        public void SourceConstructionOfAnInlineStructRunsThroughTheFactory()
+        {
+            using var runtime = new SurtrRuntime();
+            var type = SurtrBridge.Register(runtime, SurtrReflectionScanner.Scan(typeof(V2)));
+
+            var project = new SurtrProject(sourceRoot: ".");
+            project.AddSourceFile(
+                "driver.surtr",
+                "driver",
+                "fun make(x: float, y: float): float {\n"
+                + "    let v = V(x, y);\n"
+                + "    return v.x;\n"
+                + "}\n");
+            project.AddHostType(type);
+
+            using var compilation = SurtrCompilation.Create(project);
+            var binder = compilation.Bind();
+            binder.BindBodies();
+
+            Assert.Single(compilation.Project.HostTypes);
+            Assert.True(
+                compilation.Importer.TryResolve("host:V", out _),
+                "The importer does not know 'host:V' at all.");
+            var hostSymbols = compilation.Importer.ImportedHostTypes().ToList();
+            Assert.Single(hostSymbols);
+            var scopeLookup = binder.GlobalScope.Lookup("V");
+            Assert.True(scopeLookup.IsFound, "V never reached the global scope.");
+
+            Assert.True(
+                !compilation.Diagnostics.HasErrors,
+                "Binding reported: " + string.Join("; ", compilation.Diagnostics));
+
+            var emitter = new ModuleEmitter(compilation, binder);
+
+            SurtrModuleImage driverImage = emitter.EmitImages()[0];
+            runtime.LoadModule(driverImage);
+
+            Assert.True(runtime.TryGetModule("driver", out var module));
+            Assert.True(module.TryGetMethods("make", out var overloads));
+
+            // 3 goes in; the factory doubles it; 6 comes back out through v.x.
+            Assert.Equal(6.0, runtime.Invoke(overloads[0], SurtrValue.CreateFloat(3), SurtrValue.CreateFloat(1)).AsFloat, 6);
         }
     }
 }

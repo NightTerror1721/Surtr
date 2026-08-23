@@ -3391,6 +3391,23 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private void EmitValueClassCreation(BoundObjectCreationExpression creation, NamedTypeSymbol type)
         {
+            // An instance-factory constructor - every native class's, and an inline struct's
+            // [SurtrNativeConstructor] - creates the value itself: no receiver crosses the wire,
+            // its parameters start at slot 0, and the result comes back over that same slot. The
+            // call is flat and its result is the expression's value. Checked before the block
+            // lowering below, because a factory carries logic of its own: lowering `V2(x, y)`
+            // straight to a field block would silently drop it.
+            if (creation.Constructor is { } factory
+                && factory.Role == MethodRole.Constructor
+                && !factory.ReturnType.IsVoid)
+            {
+                foreach (var argument in creation.Arguments)
+                    Expression(argument);
+
+                EmitResolvedCall(factory, virtualCall: false, discardResult: false);
+                return;
+            }
+
             if (ValueTypeLayout.IsMultiField(type))
             {
                 EmitMultiValueClassCreation(creation, type);

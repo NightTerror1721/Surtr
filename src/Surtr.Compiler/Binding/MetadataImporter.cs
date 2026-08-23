@@ -119,6 +119,18 @@ namespace Surtr.Compiler.Binding
                 _hostTypes[fullName] = type;
         }
 
+        /// <summary>
+        /// Imports every host-declared type, for the binder to place in scope. A host type reaches
+        /// source through no module - it has none - so this is the only pass that turns the
+        /// registration into symbols; called repeatedly is harmless, everything interns through
+        /// <see cref="_types"/>.
+        /// </summary>
+        internal IEnumerable<NamedTypeSymbol> ImportedHostTypes()
+        {
+            foreach (var type in _hostTypes.Values)
+                yield return Import(type);
+        }
+
         /// <summary>Imports a whole module: its types and its module-level members.</summary>
         /// <remarks>
         /// Completing is keyed by path and idempotent, and it has to be: a containing-module shell
@@ -433,6 +445,12 @@ namespace Surtr.Compiler.Binding
             {
                 SurtrInterface => TypeSymbolKind.Interface,
                 SurtrClass { IsEnum: true } => TypeSymbolKind.Enum,
+
+                // A native VALUE class - an inline struct the bridge materialized - is a value
+                // type to source exactly as a declared one: block layout, no receiver, §2.9
+                // machinery. Its TypeCode may read Native or Object depending on how it was
+                // registered, so value-ness is what decides, before the reference-kind check.
+                SurtrClass { IsValueType: true } => TypeSymbolKind.ValueClass,
                 SurtrClass { TypeCode: SurtrValueTypeCode.Native } => TypeSymbolKind.Native,
                 _ => TypeSymbolKind.Class,
             };
