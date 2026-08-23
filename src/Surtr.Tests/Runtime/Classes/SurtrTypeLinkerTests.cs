@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -74,7 +74,7 @@ namespace Surtr.Tests.Runtime.Classes
         // instance method on a compiler-generated singleton cache class, which would give it a
         // non-null Target and trip FromDelegate's "must be static" check. A method group
         // conversion carries no such ambiguity.
-        private static SurtrValue StubBody(SurtrCallArguments arguments) => SurtrValue.Null;
+        private static int StubBody(SurtrCallArguments arguments) => arguments.Return(SurtrValue.Null);
 
         private static SurtrNativeEntryPoint Stub() => SurtrNativeEntryPoint.FromDelegate(StubBody);
 

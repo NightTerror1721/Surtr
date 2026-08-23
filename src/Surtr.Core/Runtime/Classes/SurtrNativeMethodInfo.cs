@@ -171,7 +171,7 @@ namespace Surtr.Runtime.Classes
             _bound = true;
         }
 
-        private static SurtrValue ThrowUnbound(SurtrCallArguments arguments)
+        private static int ThrowUnbound(SurtrCallArguments arguments)
             => throw new InvalidOperationException(
                 "A native method was called before its body was bound. Its module was never loaded into a runtime, " +
                 "or was loaded into one that had not published the body under the method's link name.");

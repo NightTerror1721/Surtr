@@ -19,6 +19,7 @@ namespace Surtr.Compiler.Binding
                 case BlockStatementSyntax block: return BindBlock(block);
                 case ExpressionStatementSyntax expression: return BindExpressionStatement(expression);
                 case LocalDeclarationStatementSyntax local: return BindLocalDeclaration(local);
+                case TupleDeclarationStatementSyntax tupleDeclaration: return BindTupleDeclaration(tupleDeclaration);
                 case IfStatementSyntax @if: return BindIf(@if);
                 case WhileStatementSyntax @while: return BindWhile(@while);
                 case ForStatementSyntax @for: return BindFor(@for);
@@ -46,7 +47,136 @@ namespace Surtr.Compiler.Binding
         }
 
         private BoundStatement BindExpressionStatement(ExpressionStatementSyntax syntax)
-            => new BoundExpressionStatement(syntax, BindExpression(syntax.Expression));
+        {
+            // `(a, b) = value;` - the assignment form of destructuring (§4.1). It is a statement
+            // shape, not an expression: the right side is evaluated once into a hidden temporary
+            // and each target then reads its element off it.
+            if (syntax.Expression is AssignmentExpressionSyntax
+                {
+                    Operator: AssignmentOperator.Assign,
+                    Target: TupleLiteralExpressionSyntax targets,
+                } assignment)
+            {
+                return BindTupleAssignment(syntax, assignment, targets);
+            }
+
+            return new BoundExpressionStatement(syntax, BindExpression(syntax.Expression));
+        }
+
+        /// <summary>
+        /// Binds a destructuring declaration: one hidden temporary holds the value, and every
+        /// name becomes an ordinary local reading its own element off it (§4.1).
+        /// </summary>
+        /// <remarks>
+        /// The lowering is entirely desugaring - no new bound node, no new opcode. The temporary is
+        /// a tuple-typed local, so it lives in a frame range; each read is the constant-index
+        /// element access §5.3 already defines; each name is declared exactly like any other
+        /// local, which is what makes flow analysis, capture and emission all work unchanged.
+        /// </remarks>
+        private BoundStatement BindTupleDeclaration(TupleDeclarationStatementSyntax syntax)
+        {
+            var initializer = BindExpression(syntax.Initializer);
+            if (!CheckDestructuringShape(syntax.Span, initializer.Type, syntax.Names.Count))
+                return new BoundNopStatement(syntax);
+
+            var tuple = (TupleTypeSymbol)initializer.Type.NonNullable;
+            var temporary = DeclareLocal(NextDestructuringTempName(), initializer.Type, isReadOnly: true, syntax.Span);
+
+            var statements = new List<BoundStatement>(syntax.Names.Count + 1)
+            {
+                new BoundLocalDeclarationStatement(syntax, temporary, initializer),
+            };
+
+            for (int i = 0; i < syntax.Names.Count; i++)
+            {
+                statements.Add(new BoundLocalDeclarationStatement(
+                    syntax,
+                    DeclareLocal(syntax.Names[i], tuple.ElementTypes[i], !syntax.IsMutable, syntax.Span),
+                    ReadElement(syntax, temporary, tuple, i)));
+            }
+
+            return new BoundBlockStatement(syntax, statements);
+        }
+
+        /// <summary>Binds `(a, b) = value;` - the same desugaring, writing existing targets.</summary>
+        private BoundStatement BindTupleAssignment(
+            ExpressionStatementSyntax statement,
+            AssignmentExpressionSyntax assignment,
+            TupleLiteralExpressionSyntax targets)
+        {
+            var initializer = BindExpression(assignment.Value);
+
+            if (!CheckDestructuringShape(statement.Span, initializer.Type, targets.Elements.Count))
+                return new BoundNopStatement(statement);
+
+            var tuple = (TupleTypeSymbol)initializer.Type.NonNullable;
+            // A hidden declaration, not an assignment: the emitter learns a local's slot from its
+            // declaration statement, and every target write below reads the temporary.
+            var temporary = DeclareLocal(NextDestructuringTempName(), initializer.Type, isReadOnly: true, statement.Span);
+
+            var statements = new List<BoundStatement>(targets.Elements.Count + 1)
+            {
+                new BoundLocalDeclarationStatement(statement, temporary, initializer),
+            };
+
+            for (int i = 0; i < targets.Elements.Count; i++)
+            {
+                var target = BindExpression(targets.Elements[i]);
+
+                if (!target.IsAssignable)
+                {
+                    Report(
+                        SurtrDiagnosticCode.InvalidDestructuring,
+                        targets.Elements[i].Span,
+                        $"'{targets.Elements[i]}' cannot be assigned by a destructuring pattern; only variables, parameters and fields can.");
+                    continue;
+                }
+
+                statements.Add(new BoundExpressionStatement(
+                    statement,
+                    new BoundAssignmentExpression(targets.Elements[i], target, ReadElement(statement, temporary, tuple, i))));
+            }
+
+            return new BoundBlockStatement(statement, statements);
+        }
+
+        private int _destructuringTemps;
+
+        private string NextDestructuringTempName() => $"$destructure{_destructuringTemps++}";
+
+        private BoundExpression ReadElement(SyntaxNode syntax, LocalSymbol temporary, TupleTypeSymbol tuple, int index)
+            => new BoundIndexExpression(
+                syntax,
+                new BoundLocalExpression(syntax, temporary),
+                new BoundLiteralExpression(syntax, _factory.Int, (long)index),
+                tuple.ElementTypes[index]);
+
+        /// <summary>Whether <paramref name="value"/>'s type is a tuple matching the pattern's arity.</summary>
+        private bool CheckDestructuringShape(SourceSpan span, TypeSymbol value, int arity)
+        {
+            if (value.IsError)
+                return false;
+
+            if (value.NonNullable is not TupleTypeSymbol tuple || tuple.ElementTypes.Count == 0)
+            {
+                Report(
+                    SurtrDiagnosticCode.InvalidDestructuring,
+                    span,
+                    $"Cannot destructure '{value.ToDisplayString()}': only a tuple with at least one element can be taken apart.");
+                return false;
+            }
+
+            if (tuple.ElementTypes.Count != arity)
+            {
+                Report(
+                    SurtrDiagnosticCode.InvalidDestructuring,
+                    span,
+                    $"'{tuple.ToDisplayString()}' has {tuple.ElementTypes.Count} element(s), but the pattern binds {arity}.");
+                return false;
+            }
+
+            return true;
+        }
 
         /// <summary>
         /// Binds a <c>var</c> or <c>let</c>, inferring its type from the initializer when none is

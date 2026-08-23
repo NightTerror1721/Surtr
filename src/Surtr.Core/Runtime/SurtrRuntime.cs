@@ -1423,16 +1423,32 @@ namespace Surtr.Runtime
         /// </remarks>
         public SurtrValue Invoke(SurtrMethodInfo method, ReadOnlySpan<SurtrValue> arguments)
         {
-            int slotCount = ResultSlotCount(method);
+            bool nativeAnswer = method.ImplKind == SurtrMethodImplKind.Native;
+            bool inlineResult = ResultSlotCount(method) > 1;
 
-            if (!HasInlineParameters(method) && slotCount <= 1)
+            // A bytecode method with an ordinary one-slot answer keeps the shortest path: the
+            // interpreter hands back its return value directly. Everything else - natives, whose
+            // answers now land on the data stack by convention, and inline blocks - goes through
+            // the slot-copying boundary below.
+            if (!nativeAnswer
+                && !inlineResult
+                && !HasInlineParameters(method))
+            {
                 return VirtualMachine.Call(method, arguments);
+            }
 
-            Span<SurtrRawValue> results = slotCount <= 32
-                ? stackalloc SurtrRawValue[slotCount]
-                : new SurtrRawValue[slotCount];
+            int slotCount = Math.Max(ResultSlotCount(method), nativeAnswer ? 1 : 0);
+            Span<SurtrRawValue> results = slotCount switch
+            {
+                <= 0 => stackalloc SurtrRawValue[1],
+                <= 32 => stackalloc SurtrRawValue[slotCount],
+                _ => new SurtrRawValue[slotCount],
+            };
 
-            VirtualMachine.CallForResults(method, FlattenArguments(method, arguments), results);
+            VirtualMachine.CallForResults(
+                method,
+                HasInlineParameters(method) ? FlattenArguments(method, arguments) : arguments,
+                results);
 
             if (slotCount <= 1)
                 return slotCount == 0 ? SurtrValue.Null : SurtrValue.FromRaw(results[0]);
@@ -1460,11 +1476,50 @@ namespace Surtr.Runtime
 
         /// <summary>Calls a closure and returns its result.</summary>
         public SurtrValue InvokeClosure(SurtrClosure closure, params SurtrValue[] arguments)
-            => VirtualMachine.CallClosure(closure, arguments ?? Array.Empty<SurtrValue>());
+            => InvokeClosure(closure, (ReadOnlySpan<SurtrValue>)(arguments ?? Array.Empty<SurtrValue>()));
 
-        /// <summary>Calls a closure with arguments the caller already has in a span.</summary>
+        /// <summary>
+        /// Calls a closure and returns its result - the same representation boundary
+        /// <see cref="Invoke(SurtrMethodInfo, ReadOnlySpan{SurtrValue})"/> implements.
+        /// </summary>
         public SurtrValue InvokeClosure(SurtrClosure closure, ReadOnlySpan<SurtrValue> arguments)
-            => VirtualMachine.CallClosure(closure, arguments);
+        {
+            int slotCount = closure.TargetMethod.ResultSlotCount;
+            Span<SurtrRawValue> results = slotCount switch
+            {
+                <= 0 => stackalloc SurtrRawValue[1],
+                <= 32 => stackalloc SurtrRawValue[slotCount],
+                _ => new SurtrRawValue[slotCount],
+            };
+
+            VirtualMachine.CallClosureForResults(closure, arguments, results);
+
+            if (slotCount <= 1)
+                return slotCount == 0 ? SurtrValue.Null : SurtrValue.FromRaw(results[0]);
+
+            var elements = new SurtrValue[slotCount];
+            for (int i = 0; i < slotCount; i++)
+                elements[i] = SurtrValue.FromRaw(results[i]);
+
+            if (closure.TargetMethod.ReturnType.Reference.TypeCode == SurtrValueTypeCode.Tuple)
+            {
+                var tuple = new SurtrTuple(closure.TargetMethod.ReturnType.Reference, elements);
+                _context.EntityRegistry.Register(tuple);
+                return SurtrValue.CreateReference(tuple.GetSurtrReference());
+            }
+
+            if (closure.TargetMethod.ReturnType.ResolvedType is SurtrClass { IsValueType: true } valueClass)
+            {
+                var instance = NewInstance(valueClass);
+                for (int i = 0; i < slotCount; i++)
+                    instance[i] = elements[i];
+
+                return SurtrValue.CreateReference(instance.GetSurtrReference());
+            }
+
+            throw new InvalidOperationException(
+                $"A closure returning '{closure.TargetMethod.ReturnType.Reference.Descriptor}' cannot answer {slotCount} slots.");
+        }
 
         /// <summary>
         /// Calls a method and copies every slot of its result into <paramref name="results"/>.

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -51,67 +51,67 @@ namespace Surtr.Runtime.BuiltIns
             builder.Method("parseStrict", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntParseStrictRadix), builder.Params(("text", text), ("radix", integer)), isStatic: true);
         }
 
-        private static SurtrValue IntToString(SurtrCallArguments arguments)
-            => arguments.Runtime.NewStringValue(arguments.GetPrimitiveUnchecked(0).AsInt.ToString(CultureInfo.InvariantCulture));
+        private static int IntToString(SurtrCallArguments arguments)
+            => arguments.Return(arguments.Runtime.NewStringValue(arguments.GetPrimitiveUnchecked(0).AsInt.ToString(CultureInfo.InvariantCulture)));
 
-        private static SurtrValue IntToFloat(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(arguments.GetPrimitiveUnchecked(0).AsInt);
+        private static int IntToFloat(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(arguments.GetPrimitiveUnchecked(0).AsInt));
 
-        private static SurtrValue IntAbs(SurtrCallArguments arguments)
+        private static int IntAbs(SurtrCallArguments arguments)
         {
             int value = arguments.GetPrimitiveUnchecked(0).AsInt;
 
             // Math.Abs(int.MinValue) throws; wrapping instead keeps this total, which matters
             // because there is no trap mechanism to hand an overflow to yet.
-            return SurtrValue.CreateInt(value < 0 ? unchecked(-value) : value);
+            return arguments.Return(SurtrValue.CreateInt(value < 0 ? unchecked(-value) : value));
         }
 
-        private static SurtrValue IntSign(SurtrCallArguments arguments)
+        private static int IntSign(SurtrCallArguments arguments)
         {
             int value = arguments.GetPrimitiveUnchecked(0).AsInt;
-            return SurtrValue.CreateInt(value > 0 ? 1 : value < 0 ? -1 : 0);
+            return arguments.Return(SurtrValue.CreateInt(value > 0 ? 1 : value < 0 ? -1 : 0));
         }
 
-        private static SurtrValue IntMin(SurtrCallArguments arguments)
+        private static int IntMin(SurtrCallArguments arguments)
         {
             int a = arguments.GetInt(0);
             int b = arguments.GetInt(1);
-            return SurtrValue.CreateInt(a < b ? a : b);
+            return arguments.Return(SurtrValue.CreateInt(a < b ? a : b));
         }
 
-        private static SurtrValue IntMax(SurtrCallArguments arguments)
+        private static int IntMax(SurtrCallArguments arguments)
         {
             int a = arguments.GetInt(0);
             int b = arguments.GetInt(1);
-            return SurtrValue.CreateInt(a > b ? a : b);
+            return arguments.Return(SurtrValue.CreateInt(a > b ? a : b));
         }
 
-        private static SurtrValue IntClamp(SurtrCallArguments arguments)
+        private static int IntClamp(SurtrCallArguments arguments)
         {
             int value = arguments.GetInt(0);
             int low = arguments.GetInt(1);
             int high = arguments.GetInt(2);
-            return SurtrValue.CreateInt(value < low ? low : value > high ? high : value);
+            return arguments.Return(SurtrValue.CreateInt(value < low ? low : value > high ? high : value));
         }
 
         // Returns 0 for unparseable text rather than trapping, because the instruction set has no
         // trap to raise yet. Revisit alongside the rest of the undefined trap behaviour.
-        private static SurtrValue IntParse(SurtrCallArguments arguments)
+        private static int IntParse(SurtrCallArguments arguments)
         {
             string text = arguments.GetUnchecked<SurtrString>(0).Value;
             int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed);
-            return SurtrValue.CreateInt(parsed);
+            return arguments.Return(SurtrValue.CreateInt(parsed));
         }
 
         /// <summary>The throwing counterpart to <see cref="IntParse"/>, backing <c>int(aString)</c>.</summary>
-        private static SurtrValue IntParseStrict(SurtrCallArguments arguments)
+        private static int IntParseStrict(SurtrCallArguments arguments)
         {
             string text = arguments.GetUnchecked<SurtrString>(0).Value;
 
             if (!int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
                 throw new System.FormatException($"'{text}' is not a valid int.");
 
-            return SurtrValue.CreateInt(parsed);
+            return arguments.Return(SurtrValue.CreateInt(parsed));
         }
 
         /// <summary>
@@ -119,7 +119,7 @@ namespace Surtr.Runtime.BuiltIns
         /// <see cref="Convert.ToInt32(string, int)"/>, which only accepts bases 2, 8, 10 and 16 -
         /// this accepts any base in [2, 36], the range every digit/letter alphabet can name.
         /// </summary>
-        private static SurtrValue IntParseStrictRadix(SurtrCallArguments arguments)
+        private static int IntParseStrictRadix(SurtrCallArguments arguments)
         {
             string text = arguments.GetUnchecked<SurtrString>(0).Value;
             int radix = arguments.GetInt(1);
@@ -155,7 +155,7 @@ namespace Surtr.Runtime.BuiltIns
                     throw new System.FormatException($"'{text}' is out of range for int.");
             }
 
-            return SurtrValue.CreateInt((int)(negative ? -accumulated : accumulated));
+            return arguments.Return(SurtrValue.CreateInt((int)(negative ? -accumulated : accumulated)));
         }
 
         /// <summary>A digit's value in any base up to 36, or -1 if it names none. Letters are case-insensitive.</summary>
@@ -193,65 +193,65 @@ namespace Surtr.Runtime.BuiltIns
             builder.Method("parseStrict", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatParseStrict), builder.Params(("text", text)), isStatic: true);
         }
 
-        private static SurtrValue FloatToString(SurtrCallArguments arguments)
+        private static int FloatToString(SurtrCallArguments arguments)
             // "R" round-trips: the text parses back to the identical double, which is what a
             // script serialising a value needs.
-            => arguments.Runtime.NewStringValue(arguments.GetPrimitiveUnchecked(0).AsFloat.ToString("R", CultureInfo.InvariantCulture));
+            => arguments.Return(arguments.Runtime.NewStringValue(arguments.GetPrimitiveUnchecked(0).AsFloat.ToString("R", CultureInfo.InvariantCulture)));
 
-        private static SurtrValue FloatToInt(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt((SurtrInt)arguments.GetPrimitiveUnchecked(0).AsFloat);
+        private static int FloatToInt(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt((SurtrInt)arguments.GetPrimitiveUnchecked(0).AsFloat));
 
-        private static SurtrValue FloatAbs(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Abs(arguments.GetPrimitiveUnchecked(0).AsFloat));
+        private static int FloatAbs(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Abs(arguments.GetPrimitiveUnchecked(0).AsFloat)));
 
-        private static SurtrValue FloatSqrt(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Sqrt(arguments.GetPrimitiveUnchecked(0).AsFloat));
+        private static int FloatSqrt(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Sqrt(arguments.GetPrimitiveUnchecked(0).AsFloat)));
 
-        private static SurtrValue FloatFloor(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt((SurtrInt)Math.Floor(arguments.GetPrimitiveUnchecked(0).AsFloat));
+        private static int FloatFloor(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt((SurtrInt)Math.Floor(arguments.GetPrimitiveUnchecked(0).AsFloat)));
 
-        private static SurtrValue FloatCeil(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt((SurtrInt)Math.Ceiling(arguments.GetPrimitiveUnchecked(0).AsFloat));
+        private static int FloatCeil(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt((SurtrInt)Math.Ceiling(arguments.GetPrimitiveUnchecked(0).AsFloat)));
 
-        private static SurtrValue FloatRound(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt((SurtrInt)Math.Round(arguments.GetPrimitiveUnchecked(0).AsFloat, MidpointRounding.AwayFromZero));
+        private static int FloatRound(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt((SurtrInt)Math.Round(arguments.GetPrimitiveUnchecked(0).AsFloat, MidpointRounding.AwayFromZero)));
 
-        private static SurtrValue FloatIsNaN(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(double.IsNaN(arguments.GetPrimitiveUnchecked(0).AsFloat));
+        private static int FloatIsNaN(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(double.IsNaN(arguments.GetPrimitiveUnchecked(0).AsFloat)));
 
-        private static SurtrValue FloatIsInfinite(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(double.IsInfinity(arguments.GetPrimitiveUnchecked(0).AsFloat));
+        private static int FloatIsInfinite(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(double.IsInfinity(arguments.GetPrimitiveUnchecked(0).AsFloat)));
 
-        private static SurtrValue FloatMin(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Min(arguments.GetFloat(0), arguments.GetFloat(1)));
+        private static int FloatMin(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Min(arguments.GetFloat(0), arguments.GetFloat(1))));
 
-        private static SurtrValue FloatMax(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Max(arguments.GetFloat(0), arguments.GetFloat(1)));
+        private static int FloatMax(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Max(arguments.GetFloat(0), arguments.GetFloat(1))));
 
-        private static SurtrValue FloatPow(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Pow(arguments.GetFloat(0), arguments.GetFloat(1)));
+        private static int FloatPow(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Pow(arguments.GetFloat(0), arguments.GetFloat(1))));
 
         // NaN rather than 0 for unparseable text: it is the float world's own "not a number", and
         // it propagates instead of silently reading as a legitimate value.
-        private static SurtrValue FloatParse(SurtrCallArguments arguments)
+        private static int FloatParse(SurtrCallArguments arguments)
         {
             string text = arguments.GetUnchecked<SurtrString>(0).Value;
 
             if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
                 parsed = double.NaN;
 
-            return SurtrValue.CreateFloat(parsed);
+            return arguments.Return(SurtrValue.CreateFloat(parsed));
         }
 
         /// <summary>The throwing counterpart to <see cref="FloatParse"/>, backing <c>float(aString)</c>.</summary>
-        private static SurtrValue FloatParseStrict(SurtrCallArguments arguments)
+        private static int FloatParseStrict(SurtrCallArguments arguments)
         {
             string text = arguments.GetUnchecked<SurtrString>(0).Value;
 
             if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
                 throw new System.FormatException($"'{text}' is not a valid float.");
 
-            return SurtrValue.CreateFloat(parsed);
+            return arguments.Return(SurtrValue.CreateFloat(parsed));
         }
         #endregion
 
@@ -263,25 +263,25 @@ namespace Surtr.Runtime.BuiltIns
             builder.Method("parseStrict", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&BoolParseStrict), builder.Params(("text", SurtrClassReference.String)), isStatic: true);
         }
 
-        private static SurtrValue BoolToString(SurtrCallArguments arguments)
+        private static int BoolToString(SurtrCallArguments arguments)
             // Interned, not freshly allocated: there are exactly two of these strings and a
             // program is going to ask for them constantly.
-            => SurtrValue.CreateReference(
-                arguments.Runtime.InternString(arguments.GetPrimitiveUnchecked(0).AsBool ? "true" : "false").GetSurtrReference());
+            => arguments.Return(SurtrValue.CreateReference(
+                arguments.Runtime.InternString(arguments.GetPrimitiveUnchecked(0).AsBool ? "true" : "false").GetSurtrReference()));
 
-        private static SurtrValue BoolToInt(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetPrimitiveUnchecked(0).AsBool ? 1 : 0);
+        private static int BoolToInt(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetPrimitiveUnchecked(0).AsBool ? 1 : 0));
 
         /// <summary>Backs <c>bool(aString)</c>. Accepts <c>"true"</c>/<c>"1"</c> and <c>"false"</c>/<c>"0"</c>, case-insensitively for the words.</summary>
-        private static SurtrValue BoolParseStrict(SurtrCallArguments arguments)
+        private static int BoolParseStrict(SurtrCallArguments arguments)
         {
             string text = arguments.GetUnchecked<SurtrString>(0).Value;
 
             if (string.Equals(text, "true", StringComparison.OrdinalIgnoreCase) || text == "1")
-                return SurtrValue.CreateBool(true);
+                return arguments.Return(SurtrValue.CreateBool(true));
 
             if (string.Equals(text, "false", StringComparison.OrdinalIgnoreCase) || text == "0")
-                return SurtrValue.CreateBool(false);
+                return arguments.Return(SurtrValue.CreateBool(false));
 
             throw new System.FormatException($"'{text}' is neither \"true\"/\"1\" nor \"false\"/\"0\".");
         }
@@ -307,45 +307,45 @@ namespace Surtr.Runtime.BuiltIns
             builder.Method("isLower", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&CharIsLower));
         }
 
-        private static SurtrValue CharToString(SurtrCallArguments arguments)
-            => arguments.Runtime.NewStringValue(arguments.GetPrimitiveUnchecked(0).AsChar.ToString(CultureInfo.InvariantCulture));
+        private static int CharToString(SurtrCallArguments arguments)
+            => arguments.Return(arguments.Runtime.NewStringValue(arguments.GetPrimitiveUnchecked(0).AsChar.ToString(CultureInfo.InvariantCulture)));
 
-        private static SurtrValue CharToInt(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetPrimitiveUnchecked(0).AsChar);
+        private static int CharToInt(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetPrimitiveUnchecked(0).AsChar));
 
-        private static SurtrValue CharToUpper(SurtrCallArguments arguments)
-            => SurtrValue.CreateChar(char.ToUpperInvariant(arguments.GetPrimitiveUnchecked(0).AsChar));
+        private static int CharToUpper(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateChar(char.ToUpperInvariant(arguments.GetPrimitiveUnchecked(0).AsChar)));
 
-        private static SurtrValue CharToLower(SurtrCallArguments arguments)
-            => SurtrValue.CreateChar(char.ToLowerInvariant(arguments.GetPrimitiveUnchecked(0).AsChar));
+        private static int CharToLower(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateChar(char.ToLowerInvariant(arguments.GetPrimitiveUnchecked(0).AsChar)));
 
-        private static SurtrValue CharIsDigit(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(char.IsDigit(arguments.GetPrimitiveUnchecked(0).AsChar));
+        private static int CharIsDigit(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(char.IsDigit(arguments.GetPrimitiveUnchecked(0).AsChar)));
 
-        private static SurtrValue CharIsLetter(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(char.IsLetter(arguments.GetPrimitiveUnchecked(0).AsChar));
+        private static int CharIsLetter(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(char.IsLetter(arguments.GetPrimitiveUnchecked(0).AsChar)));
 
-        private static SurtrValue CharIsLetterOrDigit(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(char.IsLetterOrDigit(arguments.GetPrimitiveUnchecked(0).AsChar));
+        private static int CharIsLetterOrDigit(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(char.IsLetterOrDigit(arguments.GetPrimitiveUnchecked(0).AsChar)));
 
-        private static SurtrValue CharIsWhitespace(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(char.IsWhiteSpace(arguments.GetPrimitiveUnchecked(0).AsChar));
+        private static int CharIsWhitespace(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(char.IsWhiteSpace(arguments.GetPrimitiveUnchecked(0).AsChar)));
 
-        private static SurtrValue CharIsUpper(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(char.IsUpper(arguments.GetPrimitiveUnchecked(0).AsChar));
+        private static int CharIsUpper(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(char.IsUpper(arguments.GetPrimitiveUnchecked(0).AsChar)));
 
-        private static SurtrValue CharIsLower(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(char.IsLower(arguments.GetPrimitiveUnchecked(0).AsChar));
+        private static int CharIsLower(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(char.IsLower(arguments.GetPrimitiveUnchecked(0).AsChar)));
 
-        /// <summary>Backs <c>char(aString)</c> — the string's first character. <c>FormatException</c> on an empty string, never a validation of the character itself.</summary>
-        private static SurtrValue CharParseStrict(SurtrCallArguments arguments)
+        /// <summary>Backs <c>char(aString)</c> â€” the string's first character. <c>FormatException</c> on an empty string, never a validation of the character itself.</summary>
+        private static int CharParseStrict(SurtrCallArguments arguments)
         {
             string text = arguments.GetUnchecked<SurtrString>(0).Value;
 
             if (text.Length == 0)
                 throw new System.FormatException("Cannot take the first character of an empty string.");
 
-            return SurtrValue.CreateChar(text[0]);
+            return arguments.Return(SurtrValue.CreateChar(text[0]));
         }
         #endregion
     }

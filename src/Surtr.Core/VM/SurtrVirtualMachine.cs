@@ -214,7 +214,12 @@ namespace Surtr.VM
         /// an instance method, argument 0 is the receiver, which is what makes <c>Ldl0</c> read
         /// <c>this</c> and <c>arguments[0]</c> the receiver in a native entry point.
         /// </remarks>
-        /// <returns>The result, or <see cref="SurtrValue.Null"/> for a method that returns nothing.</returns>
+        /// <returns>
+        /// The single-slot result for a bytecode method, or <see cref="SurtrValue.Null"/> for a
+        /// native one - a native answers in place, leaving its slots on the data stack above its
+        /// argument base, so anything that needs the value reads it there
+        /// (<see cref="CallForResults"/>, or the host boundary).
+        /// </returns>
         internal SurtrValue Call(SurtrMethodInfo method, int argumentCount)
         {
             if (method is null)
@@ -223,11 +228,11 @@ namespace Surtr.VM
             if (method.ImplKind == SurtrMethodImplKind.Native)
             {
                 SurtrRawValue* argumentBase = _sp - argumentCount;
-                SurtrValue result = ((SurtrNativeMethodInfo)method).EntryPoint
-                    .Invoke(new SurtrCallArguments(_runtime, argumentBase, argumentCount));
+                int results = ((SurtrNativeMethodInfo)method).EntryPoint
+                    .Invoke(new SurtrCallArguments(_runtime, argumentBase, argumentCount, (int)(_stackLimit - argumentBase)));
 
-                _sp = argumentBase;
-                return result;
+                _sp = argumentBase + results;
+                return SurtrValue.Null;
             }
 
             if (method.ImplKind != SurtrMethodImplKind.Bytecode)
@@ -262,12 +267,14 @@ namespace Surtr.VM
 
             if (closure.ImplKind == SurtrMethodImplKind.Native)
             {
+                // Same in-place answer as every native: the results land over the arguments and
+                // the stack pointer moves to their end.
                 SurtrRawValue* argumentBase = _sp - argumentCount;
-                SurtrValue result = closure.EntryPoint
-                    .Invoke(new SurtrCallArguments(_runtime, argumentBase, argumentCount));
+                int results = closure.EntryPoint
+                    .Invoke(new SurtrCallArguments(_runtime, argumentBase, argumentCount, (int)(_stackLimit - argumentBase)));
 
-                _sp = argumentBase;
-                return result;
+                _sp = argumentBase + results;
+                return SurtrValue.Null;
             }
 
             int entryDepth = _frameCount;
@@ -336,6 +343,44 @@ namespace Surtr.VM
                 return 1;
             }
 
+            int slotCount = (int)(_sp - resultBase);
+            if (slotCount > destination.Length)
+                slotCount = destination.Length;
+
+            for (int i = 0; i < slotCount; i++)
+                destination[i] = resultBase[i];
+
+            _sp = resultBase;
+            return slotCount;
+        }
+
+        /// <summary>
+        /// The closure twin of <see cref="CallForResults"/>: calls and copies every result slot out.
+        /// </summary>
+        internal int CallClosureForResults(SurtrClosure closure, ReadOnlySpan<SurtrValue> arguments, Span<SurtrRawValue> destination)
+        {
+            if (closure is null)
+                throw new ArgumentNullException(nameof(closure));
+
+            for (int i = 0; i < arguments.Length; i++)
+                Push(arguments[i]);
+
+            SurtrRawValue* resultBase = _sp - arguments.Length;
+
+            SurtrValue single = CallClosure(closure, arguments.Length);
+
+            // A single-slot answer comes back as the ordinary return value with the stack pointer
+            // restored to the argument base - true for a native closure too, whose in-place write
+            // of zero results leaves the pointer exactly there.
+            if (_sp == resultBase)
+            {
+                if (destination.Length > 0)
+                    destination[0] = single.Raw;
+
+                return 1;
+            }
+
+            // Anything above the base is an inline block: read it and release it.
             int slotCount = (int)(_sp - resultBase);
             if (slotCount > destination.Length)
                 slotCount = destination.Length;
@@ -2193,15 +2238,15 @@ namespace Surtr.VM
                     if (field is SurtrNativeFieldInfo nativeField)
                     {
                         // A native field's value lives in the host: the receiver (still on the
-                        // stack) is argument 0, and the getter answers the value in its place. The
-                        // native boundary can allocate, so state is published and the registry
-                        // pointer reloaded exactly as the call path does.
+                        // stack) is argument 0, and the getter answers in place over it - one
+                        // slot, which is what a field is. The native boundary can allocate, so
+                        // state is published and the registry pointer reloaded exactly as the
+                        // call path does.
                         current.IP = ip;
                         _sp = sp;
 
-                        SurtrValue nativeResult = nativeField.Getter
+                        _ = nativeField.Getter
                             .Invoke(new SurtrCallArguments(runtime, sp - 1, 1));
-                        *(sp - 1) = nativeResult.Raw;
 
                         entities = context.EntityRegistry.Entities;
                         if (context.EntityRegistry.GcPending)
@@ -2254,12 +2299,15 @@ namespace Surtr.VM
 
                     if (field is SurtrNativeFieldInfo nativeField)
                     {
+                        // The getter answers in place over the empty argument block: slot 0 is
+                        // where its single result goes, so the capacity has to reach one past
+                        // zero arguments.
                         current.IP = ip;
                         _sp = sp;
 
-                        SurtrValue nativeResult = nativeField.Getter
-                            .Invoke(new SurtrCallArguments(runtime, sp, 0));
-                        *sp++ = nativeResult.Raw;
+                        _ = nativeField.Getter
+                            .Invoke(new SurtrCallArguments(runtime, sp, 0, 1));
+                        sp += 1;
                         _sp = sp;
 
                         entities = context.EntityRegistry.Entities;
@@ -2285,9 +2333,9 @@ namespace Surtr.VM
                         current.IP = ip;
                         _sp = sp;
 
-                        SurtrValue nativeResult = nativeField.Getter
-                            .Invoke(new SurtrCallArguments(runtime, sp, 0));
-                        *sp++ = nativeResult.Raw;
+                        _ = nativeField.Getter
+                            .Invoke(new SurtrCallArguments(runtime, sp, 0, 1));
+                        sp += 1;
                         _sp = sp;
 
                         entities = context.EntityRegistry.Entities;
@@ -3500,14 +3548,22 @@ namespace Surtr.VM
                 _sp = sp;
                 current.IP = ip;
 
-                SurtrValue resolvedResult = pendingClosure is null
-                    ? ((SurtrNativeMethodInfo)pendingMethod).EntryPoint
-                        .Invoke(new SurtrCallArguments(runtime, nativeArgumentBase, pendingArguments))
-                    : pendingClosure.EntryPoint
-                        .Invoke(new SurtrCallArguments(runtime, nativeArgumentBase, pendingArguments));
+                // The native answers in place: results overwrite the arguments from slot 0, and
+                // the stack pointer simply moves to their end. The encoded retCount stays a gate -
+                // zero discards whatever was written; non-zero trusts the callee's own count.
+                var nativeArguments = new SurtrCallArguments(
+                    runtime,
+                    nativeArgumentBase,
+                    pendingArguments,
+                    (int)(_stackLimit - nativeArgumentBase));
 
-                sp = nativeArgumentBase;
-                if (pendingResults != 0) *sp++ = resolvedResult.Raw;
+                int resolvedResults = pendingClosure is null
+                    ? ((SurtrNativeMethodInfo)pendingMethod).EntryPoint.Invoke(nativeArguments)
+                    : pendingClosure.EntryPoint.Invoke(nativeArguments);
+
+                sp = pendingResults != 0
+                    ? nativeArgumentBase + resolvedResults
+                    : nativeArgumentBase;
                 _sp = sp;
 
                 entities = context.EntityRegistry.Entities;

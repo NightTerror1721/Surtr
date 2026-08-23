@@ -157,7 +157,7 @@ namespace Surtr.Runtime.Objects
         /// calling it on a bytecode closure jumps through a null pointer.
         /// </remarks>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal SurtrValue InvokeNative(SurtrCallArguments arguments)
+        internal int InvokeNative(SurtrCallArguments arguments)
             => EntryPoint.Invoke(arguments);
 
         internal override void VisitReferences(SurtrEntityMarker marker)

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -337,7 +337,7 @@ namespace Surtr.Interop.SourceGenerator
             string typeName = type.ToDisplayString();
 
             builder.AppendLine(indent + GeneratedCodeAttribute);
-            builder.AppendLine(indent + "private static SurtrValue " + shimName + "(SurtrCallArguments args)");
+            builder.AppendLine(indent + "private static int " + shimName + "(SurtrCallArguments args)");
             builder.AppendLine(indent + "{");
 
             string targetExpr;
@@ -381,7 +381,7 @@ namespace Surtr.Interop.SourceGenerator
             bool hasOut = method.Parameters.Any(static p => p.RefKind == RefKind.Out);
             if (!hasOut)
             {
-                builder.AppendLine(indent + "    return " + returnExpr + ";");
+                builder.AppendLine(indent + "    return args.Return(" + returnExpr + ");");
             }
             else
             {
@@ -404,7 +404,7 @@ namespace Surtr.Interop.SourceGenerator
 
             if (outParams.Count == 1 && method.ReturnsVoid)
             {
-                builder.AppendLine(indent + "    return " + ToSurtrExpression(outParams[0].Type, outParams[0].Name) + ";");
+                builder.AppendLine(indent + "    return args.Return(" + ToSurtrExpression(outParams[0].Type, outParams[0].Name) + ");");
                 return;
             }
 
@@ -416,7 +416,7 @@ namespace Surtr.Interop.SourceGenerator
 
             var tupleDescriptor = BuildTupleDescriptor(method);
             builder.AppendLine(indent + "    var __tuple = args.Runtime.NewTuple(SurtrClassReference.FromDescriptor(\"" + tupleDescriptor + "\"), new SurtrValue[] { " + string.Join(", ", elements) + " });");
-            builder.AppendLine(indent + "    return SurtrValue.CreateReference(__tuple.GetSurtrReference());");
+            builder.AppendLine(indent + "    return args.Return(SurtrValue.CreateReference(__tuple.GetSurtrReference()));");
         }
 
         private static string EmitField(StringBuilder builder, INamedTypeSymbol type, IFieldSymbol field, int policy, string indent)
@@ -433,14 +433,14 @@ namespace Surtr.Interop.SourceGenerator
 
             // Getter shim.
             builder.AppendLine(indent + GeneratedCodeAttribute);
-            builder.AppendLine(indent + "private static SurtrValue " + getterShim + "(SurtrCallArguments args)");
+            builder.AppendLine(indent + "private static int " + getterShim + "(SurtrCallArguments args)");
             builder.AppendLine(indent + "{");
             string target = field.IsStatic
                 ? typeName
                 : "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!";
             if (!field.IsStatic)
                 builder.AppendLine(indent + "    var __target = " + target + ";");
-            builder.AppendLine(indent + "    return " + ToSurtrExpression(field.Type, (field.IsStatic ? typeName : "__target") + "." + field.Name) + ";");
+            builder.AppendLine(indent + "    return args.Return(" + ToSurtrExpression(field.Type, (field.IsStatic ? typeName : "__target") + "." + field.Name) + ");");
             builder.AppendLine(indent + "}");
             builder.AppendLine();
 
@@ -448,14 +448,14 @@ namespace Surtr.Interop.SourceGenerator
             if (!readOnly)
             {
                 builder.AppendLine(indent + GeneratedCodeAttribute);
-                builder.AppendLine(indent + "private static SurtrValue " + setterShim + "(SurtrCallArguments args)");
+                builder.AppendLine(indent + "private static int " + setterShim + "(SurtrCallArguments args)");
                 builder.AppendLine(indent + "{");
                 if (!field.IsStatic)
                     builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
                 int valueIndex = field.IsStatic ? 0 : 1;
                 builder.AppendLine(indent + "    var __value = " + ToClrExpression(field.Type, valueIndex) + ";");
                 builder.AppendLine(indent + "    " + (field.IsStatic ? typeName : "__target") + "." + field.Name + " = __value;");
-                builder.AppendLine(indent + "    return SurtrValue.Null;");
+                builder.AppendLine(indent + "    return 0;");
                 builder.AppendLine(indent + "}");
                 builder.AppendLine();
             }
@@ -481,12 +481,12 @@ namespace Surtr.Interop.SourceGenerator
             if (hasGetter)
             {
                 builder.AppendLine(indent + GeneratedCodeAttribute);
-                builder.AppendLine(indent + "private static SurtrValue " + getterShim + "(SurtrCallArguments args)");
+                builder.AppendLine(indent + "private static int " + getterShim + "(SurtrCallArguments args)");
                 builder.AppendLine(indent + "{");
                 string target = isStatic ? typeName : "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!";
                 if (!isStatic)
                     builder.AppendLine(indent + "    var __target = " + target + ";");
-                builder.AppendLine(indent + "    return " + ToSurtrExpression(property.Type, (isStatic ? typeName : "__target") + "." + property.Name) + ";");
+                builder.AppendLine(indent + "    return args.Return(" + ToSurtrExpression(property.Type, (isStatic ? typeName : "__target") + "." + property.Name) + ");");
                 builder.AppendLine(indent + "}");
                 builder.AppendLine();
             }
@@ -494,14 +494,14 @@ namespace Surtr.Interop.SourceGenerator
             if (hasSetter)
             {
                 builder.AppendLine(indent + GeneratedCodeAttribute);
-                builder.AppendLine(indent + "private static SurtrValue " + setterShim + "(SurtrCallArguments args)");
+                builder.AppendLine(indent + "private static int " + setterShim + "(SurtrCallArguments args)");
                 builder.AppendLine(indent + "{");
                 if (!isStatic)
                     builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
                 int valueIndex = isStatic ? 0 : 1;
                 builder.AppendLine(indent + "    var __value = " + ToClrExpression(property.Type, valueIndex) + ";");
                 builder.AppendLine(indent + "    " + (isStatic ? typeName : "__target") + "." + property.Name + " = __value;");
-                builder.AppendLine(indent + "    return SurtrValue.Null;");
+                builder.AppendLine(indent + "    return 0;");
                 builder.AppendLine(indent + "}");
                 builder.AppendLine();
             }
@@ -522,7 +522,7 @@ namespace Surtr.Interop.SourceGenerator
             string typeName = type.ToDisplayString();
 
             builder.AppendLine(indent + GeneratedCodeAttribute);
-            builder.AppendLine(indent + "private static SurtrValue " + shimName + "(SurtrCallArguments args)");
+            builder.AppendLine(indent + "private static int " + shimName + "(SurtrCallArguments args)");
             builder.AppendLine(indent + "{");
 
             var arguments = new List<string>();
@@ -535,7 +535,7 @@ namespace Surtr.Interop.SourceGenerator
             }
 
             string call = OperatorExpression(method, arguments, typeName);
-            builder.AppendLine(indent + "    return " + (method.ReturnsVoid ? "SurtrValue.Null" : ToSurtrExpression(method.ReturnType, call)) + ";");
+            builder.AppendLine(indent + "    return args.Return(" + (method.ReturnsVoid ? "SurtrValue.Null" : ToSurtrExpression(method.ReturnType, call)) + ");");
             builder.AppendLine(indent + "}");
             builder.AppendLine();
 
@@ -570,11 +570,11 @@ namespace Surtr.Interop.SourceGenerator
             {
                 string shimName = "__SurtrIndexGet_" + type.Name;
                 builder.AppendLine(indent + GeneratedCodeAttribute);
-                builder.AppendLine(indent + "private static SurtrValue " + shimName + "(SurtrCallArguments args)");
+                builder.AppendLine(indent + "private static int " + shimName + "(SurtrCallArguments args)");
                 builder.AppendLine(indent + "{");
                 builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
                 builder.AppendLine(indent + "    var " + indexName + " = " + ToClrExpression(indexParameter.Type, 1) + ";");
-                builder.AppendLine(indent + "    return " + ToSurtrExpression(indexer.Type, "__target[" + indexName + "]") + ";");
+                builder.AppendLine(indent + "    return args.Return(" + ToSurtrExpression(indexer.Type, "__target[" + indexName + "]") + ");");
                 builder.AppendLine(indent + "}");
                 builder.AppendLine();
 
@@ -585,13 +585,13 @@ namespace Surtr.Interop.SourceGenerator
             {
                 string shimName = "__SurtrIndexSet_" + type.Name;
                 builder.AppendLine(indent + GeneratedCodeAttribute);
-                builder.AppendLine(indent + "private static SurtrValue " + shimName + "(SurtrCallArguments args)");
+                builder.AppendLine(indent + "private static int " + shimName + "(SurtrCallArguments args)");
                 builder.AppendLine(indent + "{");
                 builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
                 builder.AppendLine(indent + "    var " + indexName + " = " + ToClrExpression(indexParameter.Type, 1) + ";");
                 builder.AppendLine(indent + "    var __value = " + ToClrExpression(indexer.Type, 2) + ";");
                 builder.AppendLine(indent + "    __target[" + indexName + "] = __value;");
-                builder.AppendLine(indent + "    return SurtrValue.Null;");
+                builder.AppendLine(indent + "    return 0;");
                 builder.AppendLine(indent + "}");
                 builder.AppendLine();
 
@@ -610,7 +610,7 @@ namespace Surtr.Interop.SourceGenerator
             string parameterName = GeneratorSupport.Apply(parameter.Name, policy, isMember: true);
 
             builder.AppendLine(indent + GeneratedCodeAttribute);
-            builder.AppendLine(indent + "private static SurtrValue " + shimName + "(SurtrCallArguments args)");
+            builder.AppendLine(indent + "private static int " + shimName + "(SurtrCallArguments args)");
             builder.AppendLine(indent + "{");
             builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
             builder.AppendLine(indent + "    var " + parameter.Name + " = " + ToClrExpression(parameter.Type, 1) + ";");
@@ -987,3 +987,5 @@ namespace Surtr.Interop.SourceGenerator
         }
     }
 }
+
+

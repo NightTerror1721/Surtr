@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -47,7 +47,7 @@ namespace Surtr.Runtime.BuiltIns
             builder.Method("toLower", text, SurtrNativeEntryPoint.FromFunctionPointer(&ToLower));
             builder.Method("trim", text, SurtrNativeEntryPoint.FromFunctionPointer(&Trim));
             builder.Method("reverse", text, SurtrNativeEntryPoint.FromFunctionPointer(&Reverse));
-            // The parameter is declared erased, not `text`: IComparable<T>/IEquatable<T> (§13.2)
+            // The parameter is declared erased, not `text`: IComparable<T>/IEquatable<T> (Â§13.2)
             // fix their own member at `compareTo(G0)`/`equals(G0)`, which erases to `E` regardless
             // of what T was instantiated to - a concrete `text` parameter here would erase to `S`
             // and miss the interface's vtable slot (SurtrTypeLinker.BuildInterfaceDispatch matches
@@ -71,7 +71,7 @@ namespace Surtr.Runtime.BuiltIns
             // Takes strings, not a heterogeneous argument list. A statically typed language knows
             // what every argument is, so converting at the call site with `.toString()` is one
             // visible call rather than a runtime type walk hidden inside this one - the same
-            // discipline §5.2's interpolation is lowered under.
+            // discipline Â§5.2's interpolation is lowered under.
             builder.Method(
                 "format",
                 text,
@@ -80,13 +80,13 @@ namespace Surtr.Runtime.BuiltIns
                 isStatic: true);
         }
 
-        private static SurtrValue GetLength(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrString>(0).Value.Length);
+        private static int GetLength(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetUnchecked<SurtrString>(0).Value.Length));
 
-        private static SurtrValue GetIsEmpty(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrString>(0).Value.Length == 0);
+        private static int GetIsEmpty(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrString>(0).Value.Length == 0));
 
-        private static SurtrValue CharAt(SurtrCallArguments arguments)
+        private static int CharAt(SurtrCallArguments arguments)
         {
             string self = arguments.GetUnchecked<SurtrString>(0).Value;
             int index = arguments.GetInt(1);
@@ -97,45 +97,45 @@ namespace Surtr.Runtime.BuiltIns
             if ((uint)index >= (uint)self.Length)
                 throw new ArgumentOutOfRangeException(nameof(index), index, "String index is out of range.");
 
-            return SurtrValue.CreateChar(self[index]);
+            return arguments.Return(SurtrValue.CreateChar(self[index]));
         }
 
-        private static SurtrValue IndexOf(SurtrCallArguments arguments)
+        private static int IndexOf(SurtrCallArguments arguments)
         {
             string self = arguments.GetUnchecked<SurtrString>(0).Value;
             string value = arguments.GetUnchecked<SurtrString>(1).Value;
-            return SurtrValue.CreateInt(self.IndexOf(value, StringComparison.Ordinal));
+            return arguments.Return(SurtrValue.CreateInt(self.IndexOf(value, StringComparison.Ordinal)));
         }
 
-        private static SurtrValue LastIndexOf(SurtrCallArguments arguments)
+        private static int LastIndexOf(SurtrCallArguments arguments)
         {
             string self = arguments.GetUnchecked<SurtrString>(0).Value;
             string value = arguments.GetUnchecked<SurtrString>(1).Value;
-            return SurtrValue.CreateInt(self.LastIndexOf(value, StringComparison.Ordinal));
+            return arguments.Return(SurtrValue.CreateInt(self.LastIndexOf(value, StringComparison.Ordinal)));
         }
 
-        private static SurtrValue Contains(SurtrCallArguments arguments)
+        private static int Contains(SurtrCallArguments arguments)
         {
             string self = arguments.GetUnchecked<SurtrString>(0).Value;
             string value = arguments.GetUnchecked<SurtrString>(1).Value;
-            return SurtrValue.CreateBool(self.IndexOf(value, StringComparison.Ordinal) >= 0);
+            return arguments.Return(SurtrValue.CreateBool(self.IndexOf(value, StringComparison.Ordinal) >= 0));
         }
 
-        private static SurtrValue StartsWith(SurtrCallArguments arguments)
+        private static int StartsWith(SurtrCallArguments arguments)
         {
             string self = arguments.GetUnchecked<SurtrString>(0).Value;
             string value = arguments.GetUnchecked<SurtrString>(1).Value;
-            return SurtrValue.CreateBool(self.StartsWith(value, StringComparison.Ordinal));
+            return arguments.Return(SurtrValue.CreateBool(self.StartsWith(value, StringComparison.Ordinal)));
         }
 
-        private static SurtrValue EndsWith(SurtrCallArguments arguments)
+        private static int EndsWith(SurtrCallArguments arguments)
         {
             string self = arguments.GetUnchecked<SurtrString>(0).Value;
             string value = arguments.GetUnchecked<SurtrString>(1).Value;
-            return SurtrValue.CreateBool(self.EndsWith(value, StringComparison.Ordinal));
+            return arguments.Return(SurtrValue.CreateBool(self.EndsWith(value, StringComparison.Ordinal)));
         }
 
-        private static SurtrValue Substring(SurtrCallArguments arguments)
+        private static int Substring(SurtrCallArguments arguments)
         {
             string self = arguments.GetUnchecked<SurtrString>(0).Value;
             int start = arguments.GetInt(1);
@@ -144,44 +144,44 @@ namespace Surtr.Runtime.BuiltIns
             if (start < 0 || length < 0 || start + length > self.Length)
                 throw new ArgumentOutOfRangeException(nameof(start), $"Substring [{start}, {start + length}) is out of range for a string of length {self.Length}.");
 
-            return arguments.Runtime.NewStringValue(self.Substring(start, length));
+            return arguments.Return(arguments.Runtime.NewStringValue(self.Substring(start, length)));
         }
 
-        private static SurtrValue Concat(SurtrCallArguments arguments)
+        private static int Concat(SurtrCallArguments arguments)
         {
             string self = arguments.GetUnchecked<SurtrString>(0).Value;
             string other = arguments.GetUnchecked<SurtrString>(1).Value;
-            return arguments.Runtime.NewStringValue(string.Concat(self, other));
+            return arguments.Return(arguments.Runtime.NewStringValue(string.Concat(self, other)));
         }
 
-        private static SurtrValue Replace(SurtrCallArguments arguments)
+        private static int Replace(SurtrCallArguments arguments)
         {
             string self = arguments.GetUnchecked<SurtrString>(0).Value;
             string target = arguments.GetUnchecked<SurtrString>(1).Value;
             string replacement = arguments.GetUnchecked<SurtrString>(2).Value;
 
             if (target.Length == 0)
-                return arguments.Runtime.NewStringValue(self);
+                return arguments.Return(arguments.Runtime.NewStringValue(self));
 
-            return arguments.Runtime.NewStringValue(self.Replace(target, replacement));
+            return arguments.Return(arguments.Runtime.NewStringValue(self.Replace(target, replacement)));
         }
 
-        private static SurtrValue Repeat(SurtrCallArguments arguments)
+        private static int Repeat(SurtrCallArguments arguments)
         {
             string self = arguments.GetUnchecked<SurtrString>(0).Value;
             int count = arguments.GetInt(1);
 
             if (count <= 0 || self.Length == 0)
-                return arguments.Runtime.NewStringValue(string.Empty);
+                return arguments.Return(arguments.Runtime.NewStringValue(string.Empty));
 
             var builder = new System.Text.StringBuilder(self.Length * count);
             for (int i = 0; i < count; i++)
                 builder.Append(self);
 
-            return arguments.Runtime.NewStringValue(builder.ToString());
+            return arguments.Return(arguments.Runtime.NewStringValue(builder.ToString()));
         }
 
-        private static SurtrValue Split(SurtrCallArguments arguments)
+        private static int Split(SurtrCallArguments arguments)
         {
             var runtime = arguments.Runtime;
             string self = arguments.GetUnchecked<SurtrString>(0).Value;
@@ -195,52 +195,52 @@ namespace Surtr.Runtime.BuiltIns
             for (int i = 0; i < parts.Length; i++)
                 result.Add(runtime.NewStringValue(parts[i]));
 
-            return runtime.ValueOf(result);
+            return arguments.Return(runtime.ValueOf(result));
         }
 
-        private static SurtrValue ToUpper(SurtrCallArguments arguments)
+        private static int ToUpper(SurtrCallArguments arguments)
             // Invariant, not current-culture: a script's output must not change with the machine's
             // regional settings, and the Turkish dotless i is the classic way that goes wrong.
-            => arguments.Runtime.NewStringValue(arguments.GetUnchecked<SurtrString>(0).Value.ToUpperInvariant());
+            => arguments.Return(arguments.Runtime.NewStringValue(arguments.GetUnchecked<SurtrString>(0).Value.ToUpperInvariant()));
 
-        private static SurtrValue ToLower(SurtrCallArguments arguments)
-            => arguments.Runtime.NewStringValue(arguments.GetUnchecked<SurtrString>(0).Value.ToLowerInvariant());
+        private static int ToLower(SurtrCallArguments arguments)
+            => arguments.Return(arguments.Runtime.NewStringValue(arguments.GetUnchecked<SurtrString>(0).Value.ToLowerInvariant()));
 
-        private static SurtrValue Trim(SurtrCallArguments arguments)
-            => arguments.Runtime.NewStringValue(arguments.GetUnchecked<SurtrString>(0).Value.Trim());
+        private static int Trim(SurtrCallArguments arguments)
+            => arguments.Return(arguments.Runtime.NewStringValue(arguments.GetUnchecked<SurtrString>(0).Value.Trim()));
 
-        private static SurtrValue Reverse(SurtrCallArguments arguments)
+        private static int Reverse(SurtrCallArguments arguments)
         {
             string self = arguments.GetUnchecked<SurtrString>(0).Value;
 
             var characters = self.ToCharArray();
             Array.Reverse(characters);
-            return arguments.Runtime.NewStringValue(new string(characters));
+            return arguments.Return(arguments.Runtime.NewStringValue(new string(characters)));
         }
 
-        private static SurtrValue EqualsText(SurtrCallArguments arguments)
+        private static int EqualsText(SurtrCallArguments arguments)
         {
             var self = arguments.GetUnchecked<SurtrString>(0);
             var other = arguments.GetUnchecked<SurtrString>(1);
-            return SurtrValue.CreateBool(self.TextEquals(other));
+            return arguments.Return(SurtrValue.CreateBool(self.TextEquals(other)));
         }
 
-        private static SurtrValue CompareTo(SurtrCallArguments arguments)
+        private static int CompareTo(SurtrCallArguments arguments)
         {
             string self = arguments.GetUnchecked<SurtrString>(0).Value;
             string other = arguments.GetUnchecked<SurtrString>(1).Value;
-            return SurtrValue.CreateInt(string.CompareOrdinal(self, other));
+            return arguments.Return(SurtrValue.CreateInt(string.CompareOrdinal(self, other)));
         }
 
         // A string is already its own text, so this hands the same object back rather than
         // allocating a copy - toString() on a string should cost nothing.
-        private static SurtrValue ToStringSelf(SurtrCallArguments arguments)
-            => arguments.GetValueUnchecked(0);
+        private static int ToStringSelf(SurtrCallArguments arguments)
+            => arguments.Return(arguments.GetValueUnchecked(0));
 
-        private static SurtrValue FromChar(SurtrCallArguments arguments)
-            => arguments.Runtime.NewStringValue(arguments.GetChar(0).ToString(CultureInfo.InvariantCulture));
+        private static int FromChar(SurtrCallArguments arguments)
+            => arguments.Return(arguments.Runtime.NewStringValue(arguments.GetChar(0).ToString(CultureInfo.InvariantCulture)));
 
-        private static SurtrValue Join(SurtrCallArguments arguments)
+        private static int Join(SurtrCallArguments arguments)
         {
             var runtime = arguments.Runtime;
             string separator = arguments.GetUnchecked<SurtrString>(0).Value;
@@ -255,11 +255,11 @@ namespace Surtr.Runtime.BuiltIns
                 builder.Append(runtime.Dereference<SurtrString>(parts[i].Raw).Value);
             }
 
-            return runtime.NewStringValue(builder.ToString());
+            return arguments.Return(runtime.NewStringValue(builder.ToString()));
         }
 
-        /// <summary>Backs <c>string(aChar, count)</c> — <c>aChar</c> repeated <c>count</c> times, in one allocation.</summary>
-        private static SurtrValue FromCharRepeated(SurtrCallArguments arguments)
+        /// <summary>Backs <c>string(aChar, count)</c> â€” <c>aChar</c> repeated <c>count</c> times, in one allocation.</summary>
+        private static int FromCharRepeated(SurtrCallArguments arguments)
         {
             char value = arguments.GetChar(0);
             int count = arguments.GetInt(1);
@@ -267,15 +267,15 @@ namespace Surtr.Runtime.BuiltIns
             if (count < 0)
                 throw new System.ArgumentException($"count must be 0 or more, not {count}.", "count");
 
-            return arguments.Runtime.NewStringValue(new string(value, count));
+            return arguments.Return(arguments.Runtime.NewStringValue(new string(value, count)));
         }
 
         /// <summary>
-        /// Backs <c>string(aCharArray)</c> — every character joined, read straight off the array's
+        /// Backs <c>string(aCharArray)</c> â€” every character joined, read straight off the array's
         /// own slots rather than through an intermediate <c>string[]</c> the way composing
         /// <see cref="FromChar"/> per element and <see cref="Join"/> would.
         /// </summary>
-        private static SurtrValue FromCharArray(SurtrCallArguments arguments)
+        private static int FromCharArray(SurtrCallArguments arguments)
         {
             var chars = arguments.GetUnchecked<SurtrArray>(0);
             var buffer = new char[chars.Length];
@@ -283,15 +283,15 @@ namespace Surtr.Runtime.BuiltIns
             for (int i = 0; i < chars.Length; i++)
                 buffer[i] = chars[i].AsChar;
 
-            return arguments.Runtime.NewStringValue(new string(buffer));
+            return arguments.Return(arguments.Runtime.NewStringValue(new string(buffer)));
         }
 
         /// <summary>
-        /// Backs <c>string(aCharArray, offset, length)</c> — <see cref="FromCharArray"/> over a
+        /// Backs <c>string(aCharArray, offset, length)</c> â€” <see cref="FromCharArray"/> over a
         /// slice instead of the whole array, so building a string out of part of a larger buffer
         /// needs no separate array just to hold the slice first.
         /// </summary>
-        private static SurtrValue FromCharArraySlice(SurtrCallArguments arguments)
+        private static int FromCharArraySlice(SurtrCallArguments arguments)
         {
             var chars = arguments.GetUnchecked<SurtrArray>(0);
             int offset = arguments.GetInt(1);
@@ -310,7 +310,7 @@ namespace Surtr.Runtime.BuiltIns
             for (int i = 0; i < length; i++)
                 buffer[i] = chars[offset + i].AsChar;
 
-            return arguments.Runtime.NewStringValue(new string(buffer));
+            return arguments.Return(arguments.Runtime.NewStringValue(new string(buffer)));
         }
 
         /// <summary>
@@ -329,7 +329,7 @@ namespace Surtr.Runtime.BuiltIns
         /// ordinary array argument.
         /// </para>
         /// </remarks>
-        private static SurtrValue Format(SurtrCallArguments arguments)
+        private static int Format(SurtrCallArguments arguments)
         {
             var runtime = arguments.Runtime;
             string pattern = arguments.GetUnchecked<SurtrString>(0).Value;
@@ -385,7 +385,7 @@ namespace Surtr.Runtime.BuiltIns
                 i = scan;
             }
 
-            return runtime.NewStringValue(builder.ToString());
+            return arguments.Return(runtime.NewStringValue(builder.ToString()));
         }
     }
 }

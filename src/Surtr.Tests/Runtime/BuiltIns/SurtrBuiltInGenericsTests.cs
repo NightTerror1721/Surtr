@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime;
 using Surtr.Runtime.BuiltIns;
@@ -250,7 +250,11 @@ namespace Surtr.Tests.Runtime.BuiltIns
                 raw[i] = arguments[i].Raw;
 
             fixed (ulong* pointer = raw)
-                return method.EntryPoint.Invoke(new SurtrCallArguments(runtime, pointer, raw.Length));
+            {
+                // The answer lands in place over slot 0; zero would mean the body wrote nothing.
+                int count = method.EntryPoint.Invoke(new SurtrCallArguments(runtime, pointer, raw.Length, Math.Max(raw.Length, 1)));
+                return count > 0 ? SurtrValue.FromRaw(pointer[0]) : SurtrValue.Null;
+            }
         }
 
         #endregion

@@ -5820,7 +5820,7 @@ using var compilation = Reject(
             Assert.Equal(1280, Int(runtime, "run"));
         }
 
-        private static SurtrValue GetScreenWidth(SurtrCallArguments arguments) => SurtrValue.CreateInt(1280);
+        private static int GetScreenWidth(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(1280));
 
         [Fact]
         public unsafe void AWriteToANativeVariableLandsInTheHostsOwnStorage()
@@ -5845,11 +5845,11 @@ using var compilation = Reject(
         // A plain static field, not a closure capture: SurtrNativeEntryPoint.FromFunctionPointer
         // needs a static method with no captured state.
         private static double? _writtenTimeScale;
-        private static SurtrValue GetTimeScale(SurtrCallArguments arguments) => SurtrValue.CreateFloat(_writtenTimeScale ?? 0.0);
-        private static SurtrValue SetTimeScale(SurtrCallArguments arguments)
+        private static int GetTimeScale(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateFloat(_writtenTimeScale ?? 0.0));
+        private static int SetTimeScale(SurtrCallArguments arguments)
         {
             _writtenTimeScale = arguments.GetFloat(0);
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
         [Fact]
@@ -5868,8 +5868,8 @@ using var compilation = Reject(
         }
 
         // A module-level native takes no receiver, so its first declared parameter is argument zero.
-        private static SurtrValue Square(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetInt(0) * arguments.GetInt(0));
+        private static int Square(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetInt(0) * arguments.GetInt(0)));
 
         [Fact]
         public void ANativeVariableCannotHaveAnInitializer()
@@ -5911,9 +5911,9 @@ using var compilation = Reject(
             Assert.Equal(2, runtime.Invoke(runOverloads[0]).AsInt);
         }
 
-        private static SurtrValue FirstLoad(SurtrCallArguments arguments) => SurtrValue.CreateInt(1);
+        private static int FirstLoad(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(1));
 
-        private static SurtrValue SecondLoad(SurtrCallArguments arguments) => SurtrValue.CreateInt(2);
+        private static int SecondLoad(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(2));
         #endregion
 
         #region Class-level natives (Â§10)
@@ -5943,7 +5943,7 @@ using var compilation = Reject(
             Assert.Equal(42, Int(runtime, "run"));
         }
 
-        private static SurtrValue DoubleSecondArgument(SurtrCallArguments arguments) => SurtrValue.CreateInt(arguments.GetInt(1) * 2);
+        private static int DoubleSecondArgument(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(arguments.GetInt(1) * 2));
 
         [Fact]
         public unsafe void AStaticNativeMethodInsideAClassReachesTheHostsBody()
@@ -5964,7 +5964,7 @@ using var compilation = Reject(
             Assert.Equal(21, Int(runtime, "run"));
         }
 
-        private static SurtrValue TripleFirstArgument(SurtrCallArguments arguments) => SurtrValue.CreateInt(arguments.GetInt(0) * 3);
+        private static int TripleFirstArgument(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(arguments.GetInt(0) * 3));
 
         /// <summary>
         /// A native property written the explicit `{ get; set; }` way, compiled through the real
@@ -5997,11 +5997,11 @@ using var compilation = Reject(
         }
 
         private static int _boxValue;
-        private static SurtrValue GetBoxValue(SurtrCallArguments arguments) => SurtrValue.CreateInt(_boxValue + 1000);
-        private static SurtrValue SetBoxValue(SurtrCallArguments arguments)
+        private static int GetBoxValue(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(_boxValue + 1000));
+        private static int SetBoxValue(SurtrCallArguments arguments)
         {
             _boxValue = arguments.GetInt(1);
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
         /// <summary>
@@ -6028,7 +6028,7 @@ using var compilation = Reject(
             Assert.Equal(99, Int(runtime, "run"));
         }
 
-        private static SurtrValue GetNinetyNine(SurtrCallArguments arguments) => SurtrValue.CreateInt(99);
+        private static int GetNinetyNine(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(99));
 
         /// <summary>The read-write twin: a `native var` inside a class gets both accessors.</summary>
         [Fact]
@@ -6055,11 +6055,11 @@ using var compilation = Reject(
         }
 
         private static int _fooX;
-        private static SurtrValue GetFooX(SurtrCallArguments arguments) => SurtrValue.CreateInt(_fooX + 2000);
-        private static SurtrValue SetFooX(SurtrCallArguments arguments)
+        private static int GetFooX(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(_fooX + 2000));
+        private static int SetFooX(SurtrCallArguments arguments)
         {
             _fooX = arguments.GetInt(1);
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
         /// <summary>A `native let`/`native var` inside a class can be static too, same as an
@@ -6083,7 +6083,7 @@ using var compilation = Reject(
             Assert.Equal(55, Int(runtime, "run"));
         }
 
-        private static SurtrValue GetFiftyFive(SurtrCallArguments arguments) => SurtrValue.CreateInt(55);
+        private static int GetFiftyFive(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(55));
 
         [Fact]
         public void ANativeLetInsideAClassCannotHaveAnInitializer()
@@ -6117,7 +6117,7 @@ using var compilation = Reject(
             Assert.Equal(1, Int(runtime, "run"));
         }
 
-        private static SurtrValue AlwaysTrue(SurtrCallArguments arguments) => SurtrValue.CreateBool(true);
+        private static int AlwaysTrue(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateBool(true));
 
         [Fact]
         public unsafe void ANativeMethodOnAnEnumReachesTheHostsBody()
@@ -6138,7 +6138,7 @@ using var compilation = Reject(
             Assert.Equal(7, Int(runtime, "run"));
         }
 
-        private static SurtrValue GetSeven(SurtrCallArguments arguments) => SurtrValue.CreateInt(7);
+        private static int GetSeven(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(7));
 
         [Fact]
         public unsafe void ANativeMethodOnANestedClassReachesTheHostsBody()
@@ -6161,7 +6161,7 @@ using var compilation = Reject(
             Assert.Equal(3, Int(runtime, "run"));
         }
 
-        private static SurtrValue GetThree(SurtrCallArguments arguments) => SurtrValue.CreateInt(3);
+        private static int GetThree(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(3));
 
         /// <summary>Â§10 for a class member, mirroring <see cref="AModuleNamingAnUnregisteredNativeFunctionFailsToLoad"/>.</summary>
         [Fact]

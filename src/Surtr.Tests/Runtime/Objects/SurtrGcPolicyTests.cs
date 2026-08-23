@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Bytecode.Emit;
@@ -206,12 +206,12 @@ namespace Surtr.Tests.Runtime.Objects
             Assert.Equal(0, runtime.AllocationsSinceLastCollection);
         }
 
-        private static SurtrValue AllocMany(SurtrCallArguments arguments)
+        private static int AllocMany(SurtrCallArguments arguments)
         {
             var runtime = arguments.Runtime;
             for (int i = 0; i < 200; i++)
                 runtime.NewArray(IntArray);
-            return SurtrValue.CreateInt(runtime.TotalCollections);
+            return arguments.Return(SurtrValue.CreateInt(runtime.TotalCollections));
         }
 
         private static SurtrModule ModuleCallingNative()

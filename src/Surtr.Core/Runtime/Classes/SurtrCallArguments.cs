@@ -42,6 +42,7 @@ namespace Surtr.Runtime.Classes
     {
         private readonly SurtrRawValue* _pointer;
         private readonly int _length;
+        private readonly int _capacity;
         private readonly SurtrRuntime _runtime;
 
         /// <summary>
@@ -55,13 +56,38 @@ namespace Surtr.Runtime.Classes
         /// <paramref name="pointer"/> must stay valid for at least as long as this value is used,
         /// which the ref-struct-ness of this type only enforces up to the boundary of the current
         /// stack frame - if it addresses pinned or stack memory that outlives that, it remains the
-        /// caller's responsibility to keep it valid.
+        /// caller's responsibility to keep it valid. The block is assumed writable up to exactly
+        /// <paramref name="length"/> slots; use the capacity-taking overload when results wider
+        /// than the arguments will be written.
         /// </remarks>
         public SurtrCallArguments(SurtrRuntime runtime, SurtrRawValue* pointer, int length)
         {
             _runtime = runtime;
             _pointer = pointer;
             _length = length;
+            _capacity = length;
+        }
+
+        /// <summary>
+        /// Wraps the call's arguments with room to answer: the first <paramref name="length"/>
+        /// slots are the arguments, and up to <paramref name="capacity"/> slots from the same base
+        /// may be written with results.
+        /// </summary>
+        /// <remarks>
+        /// This is the interpreter's own shape: the data stack above the argument base is frame
+        /// scratch the callee's budget already reserved, so an inline result (a tuple, a
+        /// multi-field value class) or any multi-slot answer always has somewhere to land, zero
+        /// arguments included.
+        /// </remarks>
+        public SurtrCallArguments(SurtrRuntime runtime, SurtrRawValue* pointer, int length, int capacity)
+        {
+            if (capacity < length)
+                throw new ArgumentOutOfRangeException(nameof(capacity), capacity, "The writable capacity cannot be smaller than the argument count.");
+
+            _runtime = runtime;
+            _pointer = pointer;
+            _length = length;
+            _capacity = capacity;
         }
 
         /// <summary>The runtime this call is running inside.</summary>
@@ -76,6 +102,17 @@ namespace Surtr.Runtime.Classes
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _length;
+        }
+
+        /// <summary>
+        /// How many slots starting at slot 0 may be written - the arguments plus whatever scratch
+        /// the caller reserved for results. Every <c>Return</c>/<c>WriteResult</c> member checks
+        /// against this, not against <see cref="Length"/>.
+        /// </summary>
+        public int Capacity
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _capacity;
         }
 
         /// <summary>
@@ -169,6 +206,59 @@ namespace Surtr.Runtime.Classes
         /// <exception cref="ArgumentException">The value is not a live reference to a <see cref="SurtrString"/>.</exception>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public SurtrString GetString(int index) => Get<SurtrString>(index);
+        #endregion
+
+        #region Returning Results
+        /// <summary>
+        /// Writes one result and answers the count a native function returns: one.
+        /// </summary>
+        /// <remarks>
+        /// The whole of the ordinary return in one call - <c>return args.Return(value);</c> is a
+        /// complete single-value body's last line. The result lands in slot 0, overwriting the
+        /// first argument, per the in-place convention.
+        /// </remarks>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public int Return(SurtrValue value)
+        {
+            WriteResult(0, value);
+            return 1;
+        }
+
+        /// <summary>
+        /// Writes a whole block of results from slot 0 and answers how many it wrote - what an
+        /// inline value's body returns, or any function answering several slots at once.
+        /// </summary>
+        public int Return(params SurtrValue[] values)
+            => Return(values.AsSpan());
+
+        /// <summary>The span form of <see cref="Return(SurtrValue[])"/>.</summary>
+        public int Return(ReadOnlySpan<SurtrValue> values)
+        {
+            if (values.Length > _capacity)
+                throw new ArgumentOutOfRangeException(nameof(values), values.Length, $"A result of {values.Length} slot(s) does not fit this call's writable capacity of {_capacity}.");
+
+            for (int i = 0; i < values.Length; i++)
+                _pointer[i] = values[i].Raw;
+
+            return values.Length;
+        }
+
+        /// <summary>
+        /// Writes result <paramref name="index"/> without returning the count - for bodies that
+        /// fill several slots through their own loop and answer once at the end.
+        /// </summary>
+        /// <exception cref="ArgumentOutOfRangeException"><paramref name="index"/> is outside <c>[0, Capacity)</c>.</exception>
+        public void WriteResult(int index, SurtrValue value)
+        {
+            if ((uint)index >= (uint)_capacity)
+                throw new ArgumentOutOfRangeException(nameof(index), index, $"Result index is out of range for a call with a writable capacity of {_capacity}.");
+
+            _pointer[index] = value.Raw;
+        }
+
+        /// <summary>The unchecked tier of <see cref="WriteResult"/>. Sound when the index is known in range.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void WriteResultUnchecked(int index, SurtrValue value) => _pointer[index] = value.Raw;
         #endregion
 
         #region Unchecked Access

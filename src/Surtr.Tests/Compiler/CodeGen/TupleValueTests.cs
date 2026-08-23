@@ -1,8 +1,9 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Binding;
 using Surtr.Compiler.CodeGen;
 using Surtr.Compiler.Compilation;
+using Surtr.Compiler.Diagnostics;
 using Surtr.Runtime;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -87,10 +88,10 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         // A named static method, not a lambda: FromDelegate requires a static target.
-        private static SurtrValue ForceCollectNow(SurtrCallArguments arguments)
+        private static int ForceCollectNow(SurtrCallArguments arguments)
         {
             _collectorTarget!.Collect();
-            return SurtrValue.CreateInt(1);
+            return arguments.Return(SurtrValue.CreateInt(1));
         }
 
         private static SurtrMethodInfo Function(SurtrRuntime runtime, string name)
@@ -374,8 +375,7 @@ fun go(): string {
 
         [Fact]
         public void IdentityComparisonOverATuple_IsRefused()
-        {
-            // Refusal arrives from emission (the binder keeps '===' symbolic until lowering
+        {            // Refusal arrives from emission (the binder keeps '===' symbolic until lowering
             // decides per representation): either way the compilation cannot produce code.
             var project = new SurtrProject(Root);
             project.AddSourceFile(
@@ -407,6 +407,188 @@ fun go(): string {
             if (!compilation.HasErrors)
             {
                 var emitter = new ModuleEmitter(compilation, compilation.Bind());
+                Assert.False(emitter.TryEmit());
+            }
+        }
+
+        #endregion
+
+        #region Destructuring (Â§4.1)
+
+        [Fact]
+        public void ADeclarationTakesATupleApart_IntoOrdinaryLocals()
+        {
+            var runtime = Load(Build(@"
+fun go(): int {
+    let (x, y) = (3, 4);
+    return x * x + y * y;
+}
+"));
+
+            Assert.Equal(25, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void ADestructuredLet_IsImmutable_AndVarIsNot()
+        {
+            var runtime = Load(Build(@"
+fun go(): int {
+    let (a, b) = (1, 2);
+    var (c, d) = (10, 20);
+    c = c + a;
+    d = d + b;
+    return c + d;
+}
+"));
+
+            Assert.Equal(33, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void TheAssignmentForm_SwapsTwoValues()
+        {
+            var runtime = Load(Build(@"
+fun go(): int {
+    var a = 1;
+    var b = 2;
+    (a, b) = (b, a);
+    return a * 10 + b;
+}
+"));
+
+            Assert.Equal(21, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void AnAssignmentForm_WritesThroughEveryAssignableTarget()
+        {
+            var runtime = Load(Build(@"
+class Box {
+    public var value: int;
+
+    public constructor(v: int) { this.value = v; }
+}
+
+fun go(): int {
+    let pair = (5, 6);
+    var local = 0;
+    let holder = Box(0);
+    (local, holder.value) = pair;
+    return local * 100 + holder.value;
+}
+"));
+
+            Assert.Equal(506, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void TheRightSide_IsEvaluatedExactlyOnce()
+        {
+            var runtime = Load(Build(@"
+var calls: int = 0;
+
+fun make(): (int, int) {
+    calls = calls + 1;
+    return (calls, calls * 10);
+}
+
+fun go(): int {
+    let (a, b) = make();
+    return a + b + calls;   // 1 + 10 + 1: one call, both elements from it
+}
+"));
+
+            Assert.Equal(12, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void NestedElements_DestructureOneLevel_AndStayReadable()
+        {
+            var runtime = Load(Build(@"
+fun go(): int {
+    let (head, rest) = (1, (2, 3));
+    let (mid, last) = rest;
+    return head + mid + last;
+}
+"));
+
+            Assert.Equal(6, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void AReferenceElement_SurvivesDestructuring()
+        {
+            var runtime = Load(Build(@"
+fun go(): string {
+    let (label, scores) = (""row"", array<int>(3, 7));
+    let first = scores.get(0);
+    return label + ""/"" + first.toString() + scores.length.toString();
+}
+"));
+
+            Assert.Equal("row/73", Text(runtime, "go"));
+        }
+
+        [Fact]
+        public void Destructuring_WorksWithACallResult_AndInsideBlocks()
+        {
+            var runtime = Load(Build(@"
+fun divmod(a: int, b: int): (int, int) {
+    return (a / b, a % b);
+}
+
+fun go(): int {
+    if (true) {
+        let (q, r) = divmod(17, 5);
+        return q * 10 + r;
+    }
+    return -1;
+}
+"));
+
+            Assert.Equal(32, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void DestructuringNonTuple_IsRefused()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(Root + "/game/core/Test.surtr", "fun go(): int { let (a, b) = 5; return a; }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidDestructuring);
+        }
+
+        [Fact]
+        public void DestructuringWithWrongArity_IsRefused()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(Root + "/game/core/Test.surtr", "fun go(): int { let (a, b, c) = (1, 2); return a; }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidDestructuring);
+        }
+
+        [Fact]
+        public void AssigningToANonName_InAPattern_IsRefused()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "fun go(): int { var a = 0; (a[0], 1) = (1, 2); return a; }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            var binder = compilation.Bind();
+            binder.BindBodies();
+            // Either the binder refuses the pattern element or emission gives up on it - the
+            // shape never compiles.
+            if (!compilation.HasErrors)
+            {
+                var emitter = new ModuleEmitter(compilation, binder);
                 Assert.False(emitter.TryEmit());
             }
         }

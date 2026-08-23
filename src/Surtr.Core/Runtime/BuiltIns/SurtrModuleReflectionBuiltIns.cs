@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -45,21 +45,21 @@ namespace Surtr.Runtime.BuiltIns
         }
 
         #region get / tryGet
-        private static SurtrValue ModuleGet(SurtrCallArguments arguments)
+        private static int ModuleGet(SurtrCallArguments arguments)
         {
             string path = arguments.GetString(0).Text;
             if (!TryFindModule(arguments.Runtime, path, out var module))
                 throw new KeyNotFoundException($"No module is loaded under path '{path}'.");
 
-            return WrapModule(arguments.Runtime, module);
+            return arguments.Return(WrapModule(arguments.Runtime, module));
         }
 
-        private static SurtrValue ModuleTryGet(SurtrCallArguments arguments)
+        private static int ModuleTryGet(SurtrCallArguments arguments)
         {
             string path = arguments.GetString(0).Text;
-            return TryFindModule(arguments.Runtime, path, out var module)
+            return arguments.Return(TryFindModule(arguments.Runtime, path, out var module)
                 ? WrapModule(arguments.Runtime, module)
-                : SurtrValue.Null;
+                : SurtrValue.Null);
         }
 
         /// <summary>
@@ -80,10 +80,10 @@ namespace Surtr.Runtime.BuiltIns
         #endregion
 
         #region Instance members
-        private static SurtrValue ModulePath(SurtrCallArguments arguments)
-            => arguments.Runtime.NewStringValue(Self(arguments).Path);
+        private static int ModulePath(SurtrCallArguments arguments)
+            => arguments.Return(arguments.Runtime.NewStringValue(Self(arguments).Path));
 
-        private static SurtrValue ModuleClasses(SurtrCallArguments arguments)
+        private static int ModuleClasses(SurtrCallArguments arguments)
         {
             var self = Self(arguments);
             var runtime = arguments.Runtime;
@@ -92,10 +92,10 @@ namespace Surtr.Runtime.BuiltIns
             foreach (var type in self.Classes)
                 array.Add(WrapType(runtime, type));
 
-            return SurtrValue.CreateReference(array.GetSurtrReference());
+            return arguments.Return(SurtrValue.CreateReference(array.GetSurtrReference()));
         }
 
-        private static SurtrValue ModuleInterfaces(SurtrCallArguments arguments)
+        private static int ModuleInterfaces(SurtrCallArguments arguments)
         {
             var self = Self(arguments);
             var runtime = arguments.Runtime;
@@ -104,7 +104,7 @@ namespace Surtr.Runtime.BuiltIns
             foreach (var type in self.Interfaces)
                 array.Add(WrapType(runtime, type));
 
-            return SurtrValue.CreateReference(array.GetSurtrReference());
+            return arguments.Return(SurtrValue.CreateReference(array.GetSurtrReference()));
         }
 
         /// <summary>
@@ -112,7 +112,7 @@ namespace Surtr.Runtime.BuiltIns
         /// interfaces, which <see cref="ModuleClasses"/>/<see cref="ModuleInterfaces"/> already
         /// enumerate on their own, the same split <see cref="SurtrModule"/> itself keeps.
         /// </summary>
-        private static SurtrValue ModuleMembers(SurtrCallArguments arguments)
+        private static int ModuleMembers(SurtrCallArguments arguments)
         {
             var self = Self(arguments);
             var runtime = arguments.Runtime;
@@ -153,16 +153,16 @@ namespace Surtr.Runtime.BuiltIns
                 }
             }
 
-            return SurtrValue.CreateReference(array.GetSurtrReference());
+            return arguments.Return(SurtrValue.CreateReference(array.GetSurtrReference()));
         }
 
         /// <summary>
         /// Every module loaded in this runtime whose path sits strictly under this one's - a
         /// module is a directory (`ModulePath.cs`), so `a.b` is a different module from `a`, not
         /// one contained in it, and this is the runtime-side counterpart of the same linear scan
-        /// the compiler already does for a directory wildcard import (§2.1, Fase 9).
+        /// the compiler already does for a directory wildcard import (Â§2.1, Fase 9).
         /// </summary>
-        private static SurtrValue ModuleSubmodules(SurtrCallArguments arguments)
+        private static int ModuleSubmodules(SurtrCallArguments arguments)
         {
             var self = Self(arguments);
             var runtime = arguments.Runtime;
@@ -175,7 +175,7 @@ namespace Surtr.Runtime.BuiltIns
                     array.Add(WrapModule(runtime, candidate));
             }
 
-            return SurtrValue.CreateReference(array.GetSurtrReference());
+            return arguments.Return(SurtrValue.CreateReference(array.GetSurtrReference()));
         }
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]

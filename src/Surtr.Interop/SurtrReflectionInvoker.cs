@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime;
 using Surtr.Runtime.Classes;
@@ -46,7 +46,7 @@ namespace Surtr.Interop
     public static class SurtrReflectionDispatch
     {
         /// <summary>Invokes the member recorded at <paramref name="index"/>.</summary>
-        public static SurtrValue Invoke(SurtrCallArguments args, int index)
+        public static int Invoke(SurtrCallArguments args, int index)
             => SurtrReflectionInvoker.InvokeSlot(args, SurtrReflectionSlots.Slots[index]);
     }
 
@@ -82,7 +82,7 @@ namespace Surtr.Interop
             var methodBuilder = typeBuilder.DefineMethod(
                 "Invoke",
                 MethodAttributes.Public | MethodAttributes.Static,
-                typeof(SurtrValue),
+                typeof(int),
                 new[] { typeof(SurtrCallArguments) });
 
             var il = methodBuilder.GetILGenerator();
@@ -96,7 +96,7 @@ namespace Surtr.Interop
             return SurtrNativeEntryPoint.FromDelegate(function);
         }
 
-        internal static SurtrValue InvokeSlot(SurtrCallArguments args, ReflectionMemberSlot slot)
+        internal static int InvokeSlot(SurtrCallArguments args, ReflectionMemberSlot slot)
         {
             var runtime = args.Runtime;
 
@@ -106,7 +106,7 @@ namespace Surtr.Interop
                 {
                     object? target = slot.IsStatic ? null : Receiver(args, 0);
                     object? value = slot.Field!.GetValue(target);
-                    return SurtrMarshaler.ToSurtr(runtime, value, slot.ResultDescriptor);
+                    return args.Return(SurtrMarshaler.ToSurtr(runtime, value, slot.ResultDescriptor));
                 }
 
                 case ReflectionMemberKind.FieldSetter:
@@ -114,14 +114,14 @@ namespace Surtr.Interop
                     object? target = slot.IsStatic ? null : Receiver(args, 0);
                     object? value = SurtrMarshaler.ToClr(runtime, args.GetValue(slot.IsStatic ? 0 : 1), slot.Field!.FieldType, slot.ResultDescriptor);
                     slot.Field!.SetValue(target, value);
-                    return SurtrValue.Null;
+                    return 0;
                 }
 
                 case ReflectionMemberKind.PropertyGetter:
                 {
                     object? target = slot.IsStatic ? null : Receiver(args, 0);
                     object? value = slot.Method!.Invoke(target, null);
-                    return SurtrMarshaler.ToSurtr(runtime, value, slot.ResultDescriptor);
+                    return args.Return(SurtrMarshaler.ToSurtr(runtime, value, slot.ResultDescriptor));
                 }
 
                 case ReflectionMemberKind.PropertySetter:
@@ -130,7 +130,7 @@ namespace Surtr.Interop
                     var parameter = slot.Method!.GetParameters()[0];
                     object? value = SurtrMarshaler.ToClr(runtime, args.GetValue(slot.IsStatic ? 0 : 1), parameter.ParameterType, slot.ResultDescriptor);
                     slot.Method!.Invoke(target, new[] { value });
-                    return SurtrValue.Null;
+                    return 0;
                 }
 
                 case ReflectionMemberKind.DelegateInvoke:
@@ -144,7 +144,7 @@ namespace Surtr.Interop
                         clrArguments[i] = SurtrMarshaler.ToClr(runtime, args.GetValue(i), parameters[i].ParameterType, slot.Parameters[i]);
 
                     object? result = invoke.Invoke(slot.DelegateValue, clrArguments);
-                    return SurtrMarshaler.ToSurtr(runtime, result, slot.ResultDescriptor);
+                    return args.Return(SurtrMarshaler.ToSurtr(runtime, result, slot.ResultDescriptor));
                 }
 
                 default:
@@ -152,7 +152,7 @@ namespace Surtr.Interop
             }
         }
 
-        private static SurtrValue InvokeMethodSlot(SurtrCallArguments args, ReflectionMemberSlot slot)
+        private static int InvokeMethodSlot(SurtrCallArguments args, ReflectionMemberSlot slot)
         {
             var runtime = args.Runtime;
             var method = slot.Method!;
@@ -181,7 +181,7 @@ namespace Surtr.Interop
             }
 
             if (outCount == 0)
-                return SurtrMarshaler.ToSurtr(runtime, result, slot.ResultDescriptor);
+                return args.Return(SurtrMarshaler.ToSurtr(runtime, result, slot.ResultDescriptor));
 
             bool voidReturn = method.ReturnType == typeof(void);
 
@@ -190,7 +190,7 @@ namespace Surtr.Interop
                 for (int i = 0; i < parameters.Length; i++)
                 {
                     if (parameters[i].IsOut)
-                        return SurtrMarshaler.ToSurtr(runtime, clrArguments[i], slot.ResultDescriptor);
+                        return args.Return(SurtrMarshaler.ToSurtr(runtime, clrArguments[i], slot.ResultDescriptor));
                 }
             }
 
@@ -208,7 +208,7 @@ namespace Surtr.Interop
             }
 
             var tuple = runtime.NewTuple(slot.ResultDescriptor, elements);
-            return SurtrValue.CreateReference(tuple.GetSurtrReference());
+            return args.Return(SurtrValue.CreateReference(tuple.GetSurtrReference()));
         }
 
         private static object? Receiver(SurtrCallArguments args, int index)
@@ -218,3 +218,4 @@ namespace Surtr.Interop
         }
     }
 }
+

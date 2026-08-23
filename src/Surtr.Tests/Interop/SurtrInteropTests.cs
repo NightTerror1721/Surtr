@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Interop;
@@ -21,17 +21,17 @@ namespace Surtr.Tests.Interop
             public int Value;
         }
 
-        private static SurtrValue GetValue(SurtrCallArguments args)
+        private static int GetValue(SurtrCallArguments args)
         {
             var target = args.Runtime.Resolve<SurtrNativeObject>(args[0])!.TargetAs<Thing>()!;
-            return SurtrValue.CreateInt(target.Value);
+            return args.Return(SurtrValue.CreateInt(target.Value));
         }
 
-        private static SurtrValue SetValue(SurtrCallArguments args)
+        private static int SetValue(SurtrCallArguments args)
         {
             var target = args.Runtime.Resolve<SurtrNativeObject>(args[0])!.TargetAs<Thing>()!;
             target.Value = args.GetInt(1);
-            return SurtrValue.Null;
+            return args.Return(SurtrValue.Null);
         }
 
         private static SurtrValue Run(SurtrRuntime runtime, SurtrModule module, BytecodeBuilder builder, int maxStackSize = 32)

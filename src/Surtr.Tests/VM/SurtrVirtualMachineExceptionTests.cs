@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Runtime;
@@ -326,7 +326,7 @@ namespace Surtr.Tests.VM
             Assert.IsType<NotSupportedException>(proxy!.Target);
         }
 
-        private static SurtrValue ThrowUnmapped(SurtrCallArguments arguments)
+        private static int ThrowUnmapped(SurtrCallArguments arguments)
             => throw new NotSupportedException("no Surtr counterpart");
 
         #endregion
@@ -337,10 +337,10 @@ namespace Surtr.Tests.VM
         // non-capturing static method, and reading a static field does not count as capturing.
         private static SurtrBytecodeMethodInfo? _reentrantTarget;
 
-        private static SurtrValue ReentrantBody(SurtrCallArguments arguments)
+        private static int ReentrantBody(SurtrCallArguments arguments)
         {
             SurtrValue innerResult = arguments.Runtime.Invoke(_reentrantTarget!);
-            return SurtrValue.CreateInt(innerResult.AsInt + 1);
+            return arguments.Return(SurtrValue.CreateInt(innerResult.AsInt + 1));
         }
 
         [Fact]

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Runtime;
@@ -17,7 +17,7 @@ namespace Surtr.Tests.VM
         // non-null Target and trips SurtrNativeEntryPoint.FromDelegate's "must be static" check.
         // A method group conversion carries no such ambiguity (see SurtrTypeLinkerTests for where
         // this was first found).
-        private static SurtrValue Return999(SurtrCallArguments arguments) => SurtrValue.CreateInt(999);
+        private static int Return999(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(999));
 
         private static SurtrNativeMethodInfo NativeMethod(
             SurtrModule module,

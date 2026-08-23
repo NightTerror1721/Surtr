@@ -37,11 +37,14 @@ namespace Surtr.Runtime.Classes
     /// argument 0 is the receiver.
     /// </param>
     /// <returns>
-    /// The call's return value. A function declared to return nothing still has to return
-    /// something down this one signature; by convention that is <see cref="SurtrValue.Null"/>,
-    /// which the caller discards.
+    /// How many result slots were written, starting at slot 0 of
+    /// <paramref name="arguments"/> - Lua's multiple-returns bargain: the callee answers into the
+    /// same block the arguments arrived in, overwriting them. One written slot is the ordinary
+    /// single-value return; zero is what a function declared <c>void</c> writes. There is no
+    /// second signature for multi-slot results - an inline value (a tuple, a multi-field value
+    /// class) is simply several consecutive slots, exactly as it travels everywhere else.
     /// </returns>
-    public delegate SurtrValue SurtrNativeFunction(SurtrCallArguments arguments);
+    public delegate int SurtrNativeFunction(SurtrCallArguments arguments);
 
     /// <summary>
     /// A callable host function address, however it was obtained.
@@ -111,13 +114,13 @@ namespace Surtr.Runtime.Classes
         /// </remarks>
         /// <example>
         /// <code>
-        /// static SurtrValue Print(SurtrCallArguments args) { ... }
+        /// static int Print(SurtrCallArguments args) { ... }
         /// var entry = SurtrNativeEntryPoint.FromFunctionPointer(&amp;Print);
         /// </code>
         /// </example>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static SurtrNativeEntryPoint FromFunctionPointer(
-            delegate*<SurtrCallArguments, SurtrValue> functionPointer)
+            delegate*<SurtrCallArguments, int> functionPointer)
             => new((IntPtr)functionPointer, null);
 
         /// <summary>
@@ -175,7 +178,7 @@ namespace Surtr.Runtime.Classes
         /// <see cref="SurtrNativeFunction"/>, which is managed.
         /// </remarks>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public SurtrValue Invoke(SurtrCallArguments arguments)
-            => ((delegate*<SurtrCallArguments, SurtrValue>)_pointer)(arguments);
+        public int Invoke(SurtrCallArguments arguments)
+            => ((delegate*<SurtrCallArguments, int>)_pointer)(arguments);
     }
 }

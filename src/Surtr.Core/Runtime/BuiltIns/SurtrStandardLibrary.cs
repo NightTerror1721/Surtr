@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -67,17 +67,17 @@ namespace Surtr.Runtime.BuiltIns
                 builder.Params(("message", SurtrClassReference.String)));
         }
 
-        private static SurtrValue ExceptionConstruct(SurtrCallArguments arguments)
+        private static int ExceptionConstruct(SurtrCallArguments arguments)
         {
             // arguments[0] is the receiver, as it is for every instance member.
             arguments.GetUnchecked<SurtrInstance>(0)[MessageSlot] = arguments.GetValueUnchecked(1);
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
-        private static SurtrValue ExceptionMessage(SurtrCallArguments arguments)
-            => arguments.GetUnchecked<SurtrInstance>(0)[MessageSlot];
+        private static int ExceptionMessage(SurtrCallArguments arguments)
+            => arguments.Return(arguments.GetUnchecked<SurtrInstance>(0)[MessageSlot]);
 
-        private static SurtrValue ExceptionToString(SurtrCallArguments arguments)
+        private static int ExceptionToString(SurtrCallArguments arguments)
         {
             var self = arguments.GetUnchecked<SurtrInstance>(0);
             var message = arguments.Runtime.Resolve<SurtrString>(self[MessageSlot]);
@@ -86,7 +86,7 @@ namespace Surtr.Runtime.BuiltIns
                 ? self.Class.Name
                 : self.Class.Name + ": " + message.Value;
 
-            return SurtrValue.CreateReference(arguments.Runtime.NewString(text).GetSurtrReference());
+            return arguments.Return(SurtrValue.CreateReference(arguments.Runtime.NewString(text).GetSurtrReference()));
         }
         #endregion
 
@@ -152,7 +152,7 @@ namespace Surtr.Runtime.BuiltIns
         }
 
         /// <summary>
-        /// The descriptor naming one of the core contracts for a concrete argument — the form a
+        /// The descriptor naming one of the core contracts for a concrete argument â€” the form a
         /// built-in declares when it satisfies the contract for its own type
         /// (<c>Osurtr:IEquatable`1;I</c> for <c>int</c>, <c>Osurtr:IEquatable`1;DG0G1</c> for a
         /// dict), as opposed to <see cref="ContractReference(string, int)"/>'s open form.

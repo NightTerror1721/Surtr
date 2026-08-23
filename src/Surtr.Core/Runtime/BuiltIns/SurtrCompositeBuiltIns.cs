@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -68,7 +68,7 @@ namespace Surtr.Runtime.BuiltIns
             builder.Method("contains", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayContains), builder.Params(("value", element)));
             builder.Method("remove", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayRemove), builder.Params(("value", element)));
 
-            // `items.sort((a, b) => a.score - b.score)` is written out in Language-Syntax.md §8, so
+            // `items.sort((a, b) => a.score - b.score)` is written out in Language-Syntax.md Â§8, so
             // the comparator form is the one that has to exist. There is deliberately no
             // parameterless `sort()`: ordering elements by nothing in particular would mean
             // dispatching IComparable on an erased slot, and saying which order you want is one
@@ -99,7 +99,7 @@ namespace Surtr.Runtime.BuiltIns
         /// does mean sorting is not something to do per frame.
         /// </para>
         /// </remarks>
-        private static SurtrValue ArraySort(SurtrCallArguments arguments)
+        private static int ArraySort(SurtrCallArguments arguments)
         {
             var self = arguments.GetUnchecked<SurtrArray>(0);
             var comparator = arguments.Get<SurtrClosure>(1);
@@ -107,7 +107,7 @@ namespace Surtr.Runtime.BuiltIns
 
             int length = self.Count;
             if (length < 2)
-                return SurtrValue.Null;
+                return arguments.Return(SurtrValue.Null);
 
             var items = self.Items;
             var scratch = new SurtrValue[length];
@@ -130,7 +130,7 @@ namespace Surtr.Runtime.BuiltIns
                     items[i] = scratch[i].Raw;
             }
 
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
         private static void Merge(
@@ -171,7 +171,7 @@ namespace Surtr.Runtime.BuiltIns
 
         // A G0 argument arrives as whatever the caller had on the stack, tag and all - the
         // parameter is erased, not boxed - so these read the raw slot rather than a typed one.
-        private static SurtrValue ArrayGet(SurtrCallArguments arguments)
+        private static int ArrayGet(SurtrCallArguments arguments)
         {
             var self = arguments.GetUnchecked<SurtrArray>(0);
             int index = arguments.GetInt(1);
@@ -179,10 +179,10 @@ namespace Surtr.Runtime.BuiltIns
             if (!self.IsInRange(index))
                 throw new ArgumentOutOfRangeException(nameof(index), index, "Array index is out of range.");
 
-            return self[index];
+            return arguments.Return(self[index]);
         }
 
-        private static SurtrValue ArraySet(SurtrCallArguments arguments)
+        private static int ArraySet(SurtrCallArguments arguments)
         {
             var self = arguments.GetUnchecked<SurtrArray>(0);
             int index = arguments.GetInt(1);
@@ -191,26 +191,26 @@ namespace Surtr.Runtime.BuiltIns
                 throw new ArgumentOutOfRangeException(nameof(index), index, "Array index is out of range.");
 
             self[index] = arguments.GetValueUnchecked(2);
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
-        private static SurtrValue ArrayPush(SurtrCallArguments arguments)
+        private static int ArrayPush(SurtrCallArguments arguments)
         {
             arguments.GetUnchecked<SurtrArray>(0).Add(arguments.GetValueUnchecked(1));
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
-        private static SurtrValue ArrayPop(SurtrCallArguments arguments)
+        private static int ArrayPop(SurtrCallArguments arguments)
         {
             var self = arguments.GetUnchecked<SurtrArray>(0);
 
             if (self.Count == 0)
                 throw new InvalidOperationException("Cannot pop from an empty array.");
 
-            return self.RemoveLast();
+            return arguments.Return(self.RemoveLast());
         }
 
-        private static SurtrValue ArrayInsert(SurtrCallArguments arguments)
+        private static int ArrayInsert(SurtrCallArguments arguments)
         {
             var self = arguments.GetUnchecked<SurtrArray>(0);
             int index = arguments.GetInt(1);
@@ -220,61 +220,61 @@ namespace Surtr.Runtime.BuiltIns
                 throw new ArgumentOutOfRangeException(nameof(index), index, "Array insertion index is out of range.");
 
             self.Insert(index, arguments.GetValueUnchecked(2));
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
-        private static SurtrValue ArrayIndexOf(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrArray>(0)
-                .IndexOf(arguments.GetValueUnchecked(1), arguments.Runtime.ValueComparer));
+        private static int ArrayIndexOf(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetUnchecked<SurtrArray>(0)
+                .IndexOf(arguments.GetValueUnchecked(1), arguments.Runtime.ValueComparer)));
 
-        private static SurtrValue ArrayContains(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrArray>(0)
-                .Contains(arguments.GetValueUnchecked(1), arguments.Runtime.ValueComparer));
+        private static int ArrayContains(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrArray>(0)
+                .Contains(arguments.GetValueUnchecked(1), arguments.Runtime.ValueComparer)));
 
-        private static SurtrValue ArrayRemove(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrArray>(0)
-                .Remove(arguments.GetValueUnchecked(1), arguments.Runtime.ValueComparer));
+        private static int ArrayRemove(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrArray>(0)
+                .Remove(arguments.GetValueUnchecked(1), arguments.Runtime.ValueComparer)));
 
-        private static SurtrValue ArrayLength(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrArray>(0).Count);
+        private static int ArrayLength(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetUnchecked<SurtrArray>(0).Count));
 
-        private static SurtrValue ArrayCapacity(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrArray>(0).Capacity);
+        private static int ArrayCapacity(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetUnchecked<SurtrArray>(0).Capacity));
 
-        private static SurtrValue ArrayIsEmpty(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrArray>(0).Count == 0);
+        private static int ArrayIsEmpty(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrArray>(0).Count == 0));
 
         // A void method still has to return something down the one native signature there is;
         // the null reference is the agreed filler, and the caller discards it because the
         // instruction's retCount is zero.
-        private static SurtrValue ArrayClear(SurtrCallArguments arguments)
+        private static int ArrayClear(SurtrCallArguments arguments)
         {
             arguments.GetUnchecked<SurtrArray>(0).Clear();
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
-        private static SurtrValue ArrayReverse(SurtrCallArguments arguments)
+        private static int ArrayReverse(SurtrCallArguments arguments)
         {
             arguments.GetUnchecked<SurtrArray>(0).Reverse();
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
-        private static SurtrValue ArrayRemoveAt(SurtrCallArguments arguments)
+        private static int ArrayRemoveAt(SurtrCallArguments arguments)
         {
             arguments.GetUnchecked<SurtrArray>(0).RemoveAt(arguments.GetInt(1));
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
-        private static SurtrValue ArrayTruncate(SurtrCallArguments arguments)
+        private static int ArrayTruncate(SurtrCallArguments arguments)
         {
             arguments.GetUnchecked<SurtrArray>(0).Truncate(arguments.GetInt(1));
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
-        private static SurtrValue ArrayReserve(SurtrCallArguments arguments)
+        private static int ArrayReserve(SurtrCallArguments arguments)
         {
             arguments.GetUnchecked<SurtrArray>(0).EnsureCapacity(arguments.GetInt(1));
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
         #endregion
 
@@ -285,11 +285,11 @@ namespace Surtr.Runtime.BuiltIns
             builder.Property("isEmpty", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&TupleIsEmpty));
         }
 
-        private static SurtrValue TupleLength(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrTuple>(0).Elements.Length);
+        private static int TupleLength(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetUnchecked<SurtrTuple>(0).Elements.Length));
 
-        private static SurtrValue TupleIsEmpty(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrTuple>(0).Elements.Length == 0);
+        private static int TupleIsEmpty(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrTuple>(0).Elements.Length == 0));
         #endregion
 
         #region Dictionary
@@ -302,8 +302,8 @@ namespace Surtr.Runtime.BuiltIns
 
             builder.Method("clear", SurtrClassReference.Void, SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryClear));
 
-            // The utility "constructor" a dict cannot spell as one (§5.3 gives it no `Dictionary<K,V>`
-            // name to construct through) — an empty `{}` literal plus a capacity hint, the same
+            // The utility "constructor" a dict cannot spell as one (Â§5.3 gives it no `Dictionary<K,V>`
+            // name to construct through) â€” an empty `{}` literal plus a capacity hint, the same
             // symmetry `array.reserve` already gives a `[]` literal.
             builder.Method(
                 "reserve", SurtrClassReference.Void, SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryReserve),
@@ -320,29 +320,29 @@ namespace Surtr.Runtime.BuiltIns
             builder.Method("values", SurtrClassReference.Array(value), SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryValues));
         }
 
-        private static SurtrValue DictionaryGet(SurtrCallArguments arguments)
+        private static int DictionaryGet(SurtrCallArguments arguments)
         {
             var self = arguments.GetUnchecked<SurtrDictionary>(0);
 
             if (!self.TryGet(arguments.GetValueUnchecked(1), out SurtrValue value))
                 throw new KeyNotFoundException("The dictionary has no entry under that key.");
 
-            return value;
+            return arguments.Return(value);
         }
 
-        private static SurtrValue DictionarySet(SurtrCallArguments arguments)
+        private static int DictionarySet(SurtrCallArguments arguments)
         {
             arguments.GetUnchecked<SurtrDictionary>(0).Set(arguments.GetValueUnchecked(1), arguments.GetValueUnchecked(2));
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
         /// <summary>
         /// Hints at the entry count about to be added, the same way <c>array.reserve</c> hints at
-        /// element count — whichever of the dictionary's two stores is live gets the call, since
+        /// element count â€” whichever of the dictionary's two stores is live gets the call, since
         /// exactly one of <see cref="SurtrDictionary.Entries"/>/<see cref="SurtrDictionary.IntEntries"/>
         /// is ever in use for a given dictionary.
         /// </summary>
-        private static SurtrValue DictionaryReserve(SurtrCallArguments arguments)
+        private static int DictionaryReserve(SurtrCallArguments arguments)
         {
             var self = arguments.GetUnchecked<SurtrDictionary>(0);
             int capacity = arguments.GetInt(1);
@@ -352,18 +352,18 @@ namespace Surtr.Runtime.BuiltIns
             else
                 self.Entries!.EnsureCapacity(capacity);
 
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
-        private static SurtrValue DictionaryContainsKey(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrDictionary>(0).ContainsKey(arguments.GetValueUnchecked(1)));
+        private static int DictionaryContainsKey(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrDictionary>(0).ContainsKey(arguments.GetValueUnchecked(1))));
 
-        private static SurtrValue DictionaryRemove(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrDictionary>(0).Remove(arguments.GetValueUnchecked(1)));
+        private static int DictionaryRemove(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrDictionary>(0).Remove(arguments.GetValueUnchecked(1))));
 
         // The result array is parameterised from the dictionary's own descriptor, so {int: string}
         // yields an int[] and a string[] rather than two arrays of nothing in particular.
-        private static SurtrValue DictionaryKeys(SurtrCallArguments arguments)
+        private static int DictionaryKeys(SurtrCallArguments arguments)
         {
             var self = arguments.GetUnchecked<SurtrDictionary>(0);
             var keys = arguments.Runtime.NewArray(
@@ -371,10 +371,10 @@ namespace Surtr.Runtime.BuiltIns
                 self.Count);
 
             self.CopyKeysTo(keys);
-            return SurtrValue.CreateReference(keys.GetSurtrReference());
+            return arguments.Return(SurtrValue.CreateReference(keys.GetSurtrReference()));
         }
 
-        private static SurtrValue DictionaryValues(SurtrCallArguments arguments)
+        private static int DictionaryValues(SurtrCallArguments arguments)
         {
             var self = arguments.GetUnchecked<SurtrDictionary>(0);
             var values = arguments.Runtime.NewArray(
@@ -382,19 +382,19 @@ namespace Surtr.Runtime.BuiltIns
                 self.Count);
 
             self.CopyValuesTo(values);
-            return SurtrValue.CreateReference(values.GetSurtrReference());
+            return arguments.Return(SurtrValue.CreateReference(values.GetSurtrReference()));
         }
 
-        private static SurtrValue DictionaryCount(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrDictionary>(0).Count);
+        private static int DictionaryCount(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetUnchecked<SurtrDictionary>(0).Count));
 
-        private static SurtrValue DictionaryIsEmpty(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrDictionary>(0).IsEmpty);
+        private static int DictionaryIsEmpty(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrDictionary>(0).IsEmpty));
 
-        private static SurtrValue DictionaryClear(SurtrCallArguments arguments)
+        private static int DictionaryClear(SurtrCallArguments arguments)
         {
             arguments.GetUnchecked<SurtrDictionary>(0).Clear();
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
         #endregion
 
@@ -414,32 +414,32 @@ namespace Surtr.Runtime.BuiltIns
             builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&RangeToString));
         }
 
-        private static SurtrValue RangeStart(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrRange>(0).Start);
+        private static int RangeStart(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetUnchecked<SurtrRange>(0).Start));
 
-        private static SurtrValue RangeEnd(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrRange>(0).End);
+        private static int RangeEnd(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetUnchecked<SurtrRange>(0).End));
 
-        private static SurtrValue RangeLength(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrRange>(0).Length);
+        private static int RangeLength(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetUnchecked<SurtrRange>(0).Length));
 
-        private static SurtrValue RangeIsEmpty(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrRange>(0).IsEmpty);
+        private static int RangeIsEmpty(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrRange>(0).IsEmpty));
 
-        private static SurtrValue RangeIsInclusive(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrRange>(0).IsInclusive);
+        private static int RangeIsInclusive(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrRange>(0).IsInclusive));
 
-        private static SurtrValue RangeContains(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrRange>(0).Contains(arguments.GetInt(1)));
+        private static int RangeContains(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrRange>(0).Contains(arguments.GetInt(1))));
 
-        /// <summary>Backs <c>string(aRange)</c> — the same <c>a..b</c>/<c>a..=b</c> spelling range literals use.</summary>
-        private static SurtrValue RangeToString(SurtrCallArguments arguments)
+        /// <summary>Backs <c>string(aRange)</c> â€” the same <c>a..b</c>/<c>a..=b</c> spelling range literals use.</summary>
+        private static int RangeToString(SurtrCallArguments arguments)
         {
             var range = arguments.GetUnchecked<SurtrRange>(0);
             string start = range.Start.ToString(CultureInfo.InvariantCulture);
             string end = range.End.ToString(CultureInfo.InvariantCulture);
 
-            return arguments.Runtime.NewStringValue(range.IsInclusive ? $"{start}..={end}" : $"{start}..{end}");
+            return arguments.Return(arguments.Runtime.NewStringValue(range.IsInclusive ? $"{start}..={end}" : $"{start}..{end}"));
         }
         #endregion
 
@@ -451,14 +451,14 @@ namespace Surtr.Runtime.BuiltIns
             builder.Property("isNative", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&ClosureIsNative));
         }
 
-        private static SurtrValue ClosureArity(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrClosure>(0).ParameterCount);
+        private static int ClosureArity(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetUnchecked<SurtrClosure>(0).ParameterCount));
 
-        private static SurtrValue ClosureUpValueCount(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetUnchecked<SurtrClosure>(0).UpValues.Length);
+        private static int ClosureUpValueCount(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetUnchecked<SurtrClosure>(0).UpValues.Length));
 
-        private static SurtrValue ClosureIsNative(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrClosure>(0).IsNative);
+        private static int ClosureIsNative(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrClosure>(0).IsNative));
         #endregion
     }
 }

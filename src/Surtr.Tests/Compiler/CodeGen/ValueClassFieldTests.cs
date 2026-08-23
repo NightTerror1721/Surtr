@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Binding;
 using Surtr.Compiler.CodeGen;
@@ -115,10 +115,10 @@ value class Tag {
 
         // A named static method, not a lambda: FromDelegate requires a static target, and this one
         // reaches the owning test's runtime through the shared field above.
-        private static SurtrValue ForceCollectNow(SurtrCallArguments arguments)
+        private static int ForceCollectNow(SurtrCallArguments arguments)
         {
             _collectorTarget!.Collect();
-            return SurtrValue.CreateInt(1);
+            return arguments.Return(SurtrValue.CreateInt(1));
         }
 
         private static SurtrMethodInfo Function(SurtrRuntime runtime, string name)

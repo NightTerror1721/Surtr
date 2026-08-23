@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -51,7 +51,7 @@ namespace Surtr.Tests.Runtime.Classes
             return type;
         }
 
-        private static SurtrValue StubBody(SurtrCallArguments arguments) => SurtrValue.Null;
+        private static int StubBody(SurtrCallArguments arguments) => arguments.Return(SurtrValue.Null);
 
         private static SurtrNativeEntryPoint Stub() => SurtrNativeEntryPoint.FromDelegate(StubBody);
 

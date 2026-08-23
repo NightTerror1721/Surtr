@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -11,7 +11,7 @@ namespace Surtr.Runtime.BuiltIns
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The four core contracts (<c>Language-Syntax.md</c> §13.2) are promises the built-ins have
+    /// The four core contracts (<c>Language-Syntax.md</c> Â§13.2) are promises the built-ins have
     /// to keep for the language to be uniform: a generic <c>max&lt;T : IComparable&lt;T&gt;&gt;</c>
     /// is only useful if <c>int</c> and <c>string</c> can be its <c>T</c>, and the operators give
     /// the primitives order and equality without their classes admitting it.
@@ -19,12 +19,12 @@ namespace Surtr.Runtime.BuiltIns
     /// <para>
     /// Every member here is <see cref="SurtrMethodDispatch.Virtual"/>, unlike most of the built-in
     /// surface. Interface dispatch routes through the receiver's vtable, so an implementation that
-    /// was not in one could not be found — the same rule the iterator contracts follow.
+    /// was not in one could not be found â€” the same rule the iterator contracts follow.
     /// </para>
     /// <para>
     /// The primitive bodies are written to agree with the opcodes the operators lower to: the
     /// interpreter compares floats with IEEE semantics, so <c>float.compareTo</c> spells the same
-    /// three-way comparison <c>&lt;=&gt;</c> does, NaN included — a NaN operand orders as neither
+    /// three-way comparison <c>&lt;=&gt;</c> does, NaN included â€” a NaN operand orders as neither
     /// less nor greater on the opcode path, so it answers 0 here too. A composite's <c>equals</c>
     /// is reference identity, exactly what <see cref="SurtrValueComparer"/> already does.
     /// </para>
@@ -47,7 +47,7 @@ namespace Surtr.Runtime.BuiltIns
         /// <c>IComparable&lt;T&gt;</c>/<c>IEquatable&lt;T&gt;</c> fix their own member at
         /// <c>compareTo(G0)</c>/<c>equals(G0)</c>, which <see cref="SurtrMethodInfo.SignatureKey"/>
         /// erases to <c>compareTo(E)</c>/<c>equals(E)</c> regardless of what <c>T</c> was
-        /// instantiated to — that erasure runs once, on the interface's own declaration, and never
+        /// instantiated to â€” that erasure runs once, on the interface's own declaration, and never
         /// looks at the implementer. A concrete parameter here (<c>int</c>, say) would erase to
         /// <c>I</c> and simply miss the slot <c>SurtrTypeLinker.BuildInterfaceDispatch</c> is
         /// looking for; declaring it already-erased is what makes the two match. Every native body
@@ -144,8 +144,8 @@ namespace Surtr.Runtime.BuiltIns
 
         /// <summary>
         /// Records that <c>string</c> satisfies <c>IComparable&lt;string&gt;</c> and
-        /// <c>IEquatable&lt;string&gt;</c>. The members themselves already exist — <c>compareTo</c>
-        /// backs the relational operators and <c>equals</c> the text equality — so all that
+        /// <c>IEquatable&lt;string&gt;</c>. The members themselves already exist â€” <c>compareTo</c>
+        /// backs the relational operators and <c>equals</c> the text equality â€” so all that
         /// happens here is the declaration, plus their dispatch being virtual.
         /// </summary>
         internal static void DeclareStringContracts(SurtrBuiltInTypeBuilder builder)
@@ -154,7 +154,7 @@ namespace Surtr.Runtime.BuiltIns
         }
 
         /// <summary>
-        /// Declares <c>array : IEquatable&lt;array&lt;T&gt;&gt;</c> — an array equals another array
+        /// Declares <c>array : IEquatable&lt;array&lt;T&gt;&gt;</c> â€” an array equals another array
         /// by identity, like every composite, never by contents.
         /// </summary>
         internal static void DeclareArrayContracts(SurtrBuiltInTypeBuilder builder)
@@ -200,42 +200,42 @@ namespace Surtr.Runtime.BuiltIns
                 dispatch: SurtrMethodDispatch.Virtual);
         }
 
-        private static SurtrValue IntCompareTo(SurtrCallArguments arguments)
+        private static int IntCompareTo(SurtrCallArguments arguments)
         {
             int left = arguments.GetPrimitiveUnchecked(0).AsInt;
             int right = arguments.GetPrimitiveUnchecked(1).AsInt;
-            return SurtrValue.CreateInt(left < right ? -1 : left > right ? 1 : 0);
+            return arguments.Return(SurtrValue.CreateInt(left < right ? -1 : left > right ? 1 : 0));
         }
 
-        private static SurtrValue IntEquals(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetPrimitiveUnchecked(0).AsInt == arguments.GetPrimitiveUnchecked(1).AsInt);
+        private static int IntEquals(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetPrimitiveUnchecked(0).AsInt == arguments.GetPrimitiveUnchecked(1).AsInt));
 
-        private static SurtrValue FloatCompareTo(SurtrCallArguments arguments)
+        private static int FloatCompareTo(SurtrCallArguments arguments)
         {
             double left = arguments.GetPrimitiveUnchecked(0).AsFloat;
             double right = arguments.GetPrimitiveUnchecked(1).AsFloat;
-            return SurtrValue.CreateInt(left < right ? -1 : left > right ? 1 : 0);
+            return arguments.Return(SurtrValue.CreateInt(left < right ? -1 : left > right ? 1 : 0));
         }
 
-        private static SurtrValue FloatEquals(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetPrimitiveUnchecked(0).AsFloat == arguments.GetPrimitiveUnchecked(1).AsFloat);
+        private static int FloatEquals(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetPrimitiveUnchecked(0).AsFloat == arguments.GetPrimitiveUnchecked(1).AsFloat));
 
-        private static SurtrValue BoolEquals(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetPrimitiveUnchecked(0).AsBool == arguments.GetPrimitiveUnchecked(1).AsBool);
+        private static int BoolEquals(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetPrimitiveUnchecked(0).AsBool == arguments.GetPrimitiveUnchecked(1).AsBool));
 
-        private static SurtrValue CharCompareTo(SurtrCallArguments arguments)
+        private static int CharCompareTo(SurtrCallArguments arguments)
         {
             char left = arguments.GetPrimitiveUnchecked(0).AsChar;
             char right = arguments.GetPrimitiveUnchecked(1).AsChar;
-            return SurtrValue.CreateInt(left < right ? -1 : left > right ? 1 : 0);
+            return arguments.Return(SurtrValue.CreateInt(left < right ? -1 : left > right ? 1 : 0));
         }
 
-        private static SurtrValue CharEquals(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetPrimitiveUnchecked(0).AsChar == arguments.GetPrimitiveUnchecked(1).AsChar);
+        private static int CharEquals(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetPrimitiveUnchecked(0).AsChar == arguments.GetPrimitiveUnchecked(1).AsChar));
 
-        private static SurtrValue IdentityEquals(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(ReferenceEquals(
+        private static int IdentityEquals(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(ReferenceEquals(
                 arguments.GetUnchecked<SurtrObject>(0),
-                arguments.GetUnchecked<SurtrObject>(1)));
+                arguments.GetUnchecked<SurtrObject>(1))));
     }
 }

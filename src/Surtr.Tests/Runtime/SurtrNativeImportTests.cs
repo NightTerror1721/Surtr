@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode.Emit;
 using Surtr.Runtime;
@@ -11,14 +11,14 @@ namespace Surtr.Tests.Runtime
     /// <summary>
     /// Covers a module-level <c>native</c> member: it binds to a host body <em>by link name when
     /// the module loads</em>, rather than by an address baked into the bytecode when it was
-    /// compiled - the same binding a class's own native member gets (§10). There is no separate
+    /// compiled - the same binding a class's own native member gets (Â§10). There is no separate
     /// host-global table anymore; a module-level native function is an ordinary method in the
     /// module's own method table, reached with <c>CallLocalModule</c>, whose body is supplied by
     /// <see cref="SurtrRuntime.DefineNativeBody"/> instead of a function pointer at declaration time.
     /// </summary>
     public class SurtrNativeImportTests
     {
-        private static SurtrValue ReturnSeven(SurtrCallArguments arguments) => SurtrValue.CreateInt(7);
+        private static int ReturnSeven(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(7));
 
         private static SurtrNativeEntryPoint Seven() => SurtrNativeEntryPoint.FromDelegate(ReturnSeven);
 
@@ -127,8 +127,8 @@ namespace Surtr.Tests.Runtime
             Assert.Equal(2, second.Invoke(secondCall[0]).AsInt);
         }
 
-        private static SurtrValue ReturnOne(SurtrCallArguments arguments) => SurtrValue.CreateInt(1);
-        private static SurtrValue ReturnTwo(SurtrCallArguments arguments) => SurtrValue.CreateInt(2);
+        private static int ReturnOne(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(1));
+        private static int ReturnTwo(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(2));
 
         #endregion
     }

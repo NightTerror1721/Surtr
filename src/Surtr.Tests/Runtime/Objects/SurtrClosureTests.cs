@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime;
 using Surtr.Runtime.Classes;
@@ -9,7 +9,7 @@ namespace Surtr.Tests.Runtime.Objects
 {
     public class SurtrClosureTests
     {
-        private static SurtrValue StubBody(SurtrCallArguments arguments) => SurtrValue.CreateInt(1);
+        private static int StubBody(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(1));
 
         private static SurtrNativeMethodInfo NativeMethod(SurtrModule module, int parameterCount)
         {

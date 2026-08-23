@@ -126,6 +126,12 @@ namespace Surtr.Compiler.Syntax
             {
                 isMutable = reader.CurrentType == TokenType.KeywordVar;
                 reader.Advance();
+
+                // `let (a, b) = value;` - a destructuring declaration (§4.1). A `const` one is
+                // deliberately not recognised: a tuple cannot fold, so the ordinary path's
+                // "expects a variable name" is the honest refusal.
+                if (reader.CurrentType == TokenType.LeftParen)
+                    return ParseTupleDeclaration(start, isMutable);
             }
 
             string name = reader.ExpectIdentifier("a variable name");
@@ -134,6 +140,27 @@ namespace Surtr.Compiler.Syntax
 
             reader.Expect(TokenType.Semicolon, "';' after the declaration");
             return new LocalDeclarationStatementSyntax(SpanFrom(start), name, type, initializer, isMutable, isConst);
+        }
+
+        /// <summary>Parses the name list of <c>let (a, b) = value;</c> (§4.1).</summary>
+        private StatementSyntax ParseTupleDeclaration(SourceLocation start, bool isMutable)
+        {
+            reader.Expect(TokenType.LeftParen, "'('");
+
+            var names = new List<string>();
+            while (true)
+            {
+                names.Add(reader.ExpectIdentifier("a name to bind"));
+                if (!reader.Match(TokenType.Comma))
+                    break;
+            }
+
+            reader.Expect(TokenType.RightParen, "')' after the names");
+            reader.Expect(TokenType.Assign, "'=' - a destructuring declaration has nothing to declare without one");
+            ExpressionSyntax initializer = ParseExpression();
+            reader.Expect(TokenType.Semicolon, "';' after the declaration");
+
+            return new TupleDeclarationStatementSyntax(SpanFrom(start), names, initializer, isMutable);
         }
 
         /// <summary>Parses <c>if</c> and <c>const if</c>, with the dangling <c>else</c> bound to the nearest one (§4.1).</summary>

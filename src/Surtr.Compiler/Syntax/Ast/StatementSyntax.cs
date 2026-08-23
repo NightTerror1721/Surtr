@@ -44,6 +44,35 @@ namespace Surtr.Compiler.Syntax.Ast
         }
     }
 
+    /// <summary>
+    /// A destructuring declaration: <c>let (a, b) = value;</c> or <c>var (a, b) = value;</c> (§4.1).
+    /// Each name becomes one local, bound to the tuple element at its position.
+    /// </summary>
+    public sealed class TupleDeclarationStatementSyntax : StatementSyntax
+    {
+        /// <summary>The declared names, in element order.</summary>
+        public IReadOnlyList<string> Names { get; }
+
+        /// <summary>The value whose elements the names bind.</summary>
+        public ExpressionSyntax Initializer { get; }
+
+        /// <summary>True for <c>var</c>, false for <c>let</c>.</summary>
+        public bool IsMutable { get; }
+
+        /// <summary>Initializes a destructuring declaration.</summary>
+        /// <param name="span">The source the statement covers.</param>
+        /// <param name="names">The declared names, in element order.</param>
+        /// <param name="initializer">The value whose elements the names bind.</param>
+        /// <param name="isMutable">True for <c>var</c>.</param>
+        public TupleDeclarationStatementSyntax(SourceSpan span, IReadOnlyList<string> names, ExpressionSyntax initializer, bool isMutable)
+            : base(span)
+        {
+            Names = names;
+            Initializer = initializer;
+            IsMutable = isMutable;
+        }
+    }
+
     /// <summary>A local declaration: <c>let x = 1;</c>, <c>var y: int;</c>, <c>const Z: int = 3;</c>.</summary>
     public sealed class LocalDeclarationStatementSyntax : StatementSyntax
     {
