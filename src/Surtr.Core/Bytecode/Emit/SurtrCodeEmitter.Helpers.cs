@@ -642,7 +642,7 @@ namespace Surtr.Bytecode.Emit
             bool moduleLevel = callee.DeclaringType is null;
             bool contract = _module.IsInterfaceMethod(callee);
 
-            int arguments = callee.ArgumentSlotCount + (moduleLevel || callee.IsStatic ? 0 : 1);
+            int arguments = callee.ArgumentSlotCount;
             int results = discardResult || callee.ReturnType.Reference.TypeCode.IsVoid ? 0 : 1;
 
             return EmitCall(_module.Method(callee), moduleLevel, callee.IsStatic, contract, callee.Dispatch, arguments, results);
@@ -650,11 +650,11 @@ namespace Surtr.Bytecode.Emit
 
         /// <summary>Calls a method through the receiver's virtual method table, whatever the callee declares.</summary>
         public SurtrCodeEmitter CallVirtual(SurtrMethodInfo callee, bool discardResult = false)
-            => InvokeVirtual(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount + 1, ResultsFor(callee, discardResult));
+            => InvokeVirtual(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount, ResultsFor(callee, discardResult));
 
         /// <summary>Calls a method without virtual dispatch: constructors, and explicit base calls.</summary>
         public SurtrCodeEmitter CallSpecial(SurtrMethodInfo callee, bool discardResult = false)
-            => InvokeSpecial(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount + 1, ResultsFor(callee, discardResult));
+            => InvokeSpecial(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount, ResultsFor(callee, discardResult));
 
         /// <summary>
         /// Calls a method declared on this builder without virtual dispatch.
@@ -679,7 +679,7 @@ namespace Surtr.Bytecode.Emit
 
         /// <summary>Calls a method through an interface contract.</summary>
         public SurtrCodeEmitter CallInterface(SurtrMethodInfo callee, bool discardResult = false)
-            => InvokeInterface(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount + 1, ResultsFor(callee, discardResult));
+            => InvokeInterface(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount, ResultsFor(callee, discardResult));
 
         /// <summary>Calls a module-level function in another, already-built module.</summary>
         public SurtrCodeEmitter CallExternal(Runtime.Classes.SurtrModule target, SurtrMethodInfo callee, bool discardResult = false)
@@ -688,7 +688,7 @@ namespace Surtr.Bytecode.Emit
                 throw new ArgumentNullException(nameof(callee));
 
             var token = _module.ExternalMethod(target, callee);
-            int arguments = callee.ArgumentSlotCount + (callee.DeclaringType is null || callee.IsStatic ? 0 : 1);
+            int arguments = callee.ArgumentSlotCount;
             int results = ResultsFor(callee, discardResult);
 
             return token.ModuleIndex <= ushort.MaxValue && token.FunctionIndex <= ushort.MaxValue

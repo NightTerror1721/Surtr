@@ -771,10 +771,13 @@ namespace Surtr.Tests.Compiler.Binding
         [Fact]
         public void AValueClassWithTwoFieldsHasNothingToEraseTo()
         {
+            // §2.9 generalized: several 'let' fields no longer refuse - the class becomes a
+            // multi-field value type that occupies a flattened block instead of erasing.
             Bind(out var compilation, ("game/core/Test.surtr",
                 "value class Pair { public let a: int; public let b: int; }"));
 
-            AssertReports(compilation, SurtrDiagnosticCode.InvalidValueClass);
+            Assert.False(compilation.HasErrors,
+                string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
         }
 
         [Fact]
