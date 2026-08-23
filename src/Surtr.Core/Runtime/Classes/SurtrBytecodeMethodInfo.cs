@@ -87,9 +87,11 @@ namespace Surtr.Runtime.Classes
         /// <summary>
         /// How many stack slots a call site leaves for this method's arguments, receiver
         /// included - value-type parameters occupy their flattened width, so this is the sum of
-        /// those widths rather than a plain parameter count.
+        /// those widths rather than a plain parameter count. Metadata read back from an image
+        /// carries no baked count and falls through to the declared shape.
         /// </summary>
-        public override int ArgumentSlotCount => _argumentSlotCount;
+        public override int ArgumentSlotCount
+            => _argumentSlotCount >= 0 ? _argumentSlotCount : base.ArgumentSlotCount;
 
         /// <summary>The byte offset into the chunk's code where this method's body starts.</summary>
         internal int CodeOffset
