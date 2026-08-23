@@ -691,7 +691,9 @@ call site.
 
 ## 15. What the compiler owes this model
 
-Things the runtime assumes and will not check:
+Things the runtime assumes and will not check. **The compiler meets all of them** — this is a list
+of standing obligations, not of outstanding work, so anything here that stops holding is a
+miscompile rather than a missing feature:
 
 * **Box a primitive flowing into an erased slot, and `Cast` reading one back out.**
 * **Emit `finally` on every exit path**, plus a catch-all that runs it and re-raises. There is no
