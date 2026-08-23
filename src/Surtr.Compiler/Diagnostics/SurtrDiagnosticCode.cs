@@ -149,6 +149,12 @@ namespace Surtr.Compiler.Diagnostics
         /// <summary>A <c>value class</c> that does not wrap exactly one <c>let</c> field, or that extends something (§2.9).</summary>
         InvalidValueClass = 3011,
 
+        /// <summary>A multi-field value class whose flattened layout cannot be represented: it contains itself, exceeds the per-call slot budget, or declares generic parameters.</summary>
+        ValueTypeLayout = 3012,
+
+        /// <summary>Identity comparison (<c>===</c>) over a value class, which has no identity to compare.</summary>
+        ValueClassIdentity = 3013,
+
         /// <summary>
         /// An interface member that is not a public abstract method or property: a field, a static,
         /// or a body (§2.3).

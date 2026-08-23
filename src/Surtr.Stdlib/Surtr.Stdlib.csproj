@@ -41,7 +41,10 @@
        the "dotnet run" invocation of Surtr.Stdlib.Tool below is a wholly separate process building
        its own Tool/Compiler/Core graph, independent of whether Surtr.Stdlib's own ProjectReference
        to Surtr.Core has resolved yet. -->
-  <Target Name="BuildStdlibImages" BeforeTargets="BeforeBuild">
+  <!-- SurtrSkipStdlibBuild=true lets development skip regenerating the images (and the compile
+       they perform) while iterating on the compiler/runtime - the last-built images in build\ are
+       embedded instead. The full build must not set it. -->
+  <Target Name="BuildStdlibImages" BeforeTargets="BeforeBuild" Condition="'$(SurtrSkipStdlibBuild)' != 'true'">
     <PropertyGroup>
       <StdlibSourceRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)src'))</StdlibSourceRoot>
       <StdlibOutputDirectory>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)build'))</StdlibOutputDirectory>

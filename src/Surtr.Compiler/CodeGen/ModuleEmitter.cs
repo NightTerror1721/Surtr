@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode.Emit;
 using Surtr.Bytecode.Image;
@@ -20,9 +20,9 @@ namespace Surtr.Compiler.CodeGen
     /// <para>
     /// The order is forced rather than chosen, at two levels. <b>Between</b> modules it is
     /// <see cref="SurtrCompilation.LoadOrder"/>, because a call into another module names an entry
-    /// in <em>that</em> module's method table, which does not exist until it has been built —
+    /// in <em>that</em> module's method table, which does not exist until it has been built â€”
     /// which is also why a dependency cycle is a hard error rather than something to resolve here.
-    /// <b>Within</b> a module it is declare → emit → <see cref="SurtrModuleBuilder.Build"/>, because
+    /// <b>Within</b> a module it is declare â†’ emit â†’ <see cref="SurtrModuleBuilder.Build"/>, because
     /// <see cref="SurtrBytecodeMethodInfo"/> snapshots its body's offset in its constructor, so no
     /// method metadata can exist until every body has been laid out.
     /// </para>
@@ -31,13 +31,13 @@ namespace Surtr.Compiler.CodeGen
     /// decision about where code <em>runs</em> rather than about what a program means: an
     /// auto-property's backing field and its two trivial accessors; a static initializer carrying a
     /// type's static field initializers and, for an enum, its cases; and the instance field
-    /// initializers, which are emitted at the top of every constructor — with a parameterless one
+    /// initializers, which are emitted at the top of every constructor â€” with a parameterless one
     /// synthesised when a class has initializers and declares none.
     /// </para>
     /// <para>
     /// Anything it cannot emit raises <see cref="SurtrEmitException"/>, carrying the span of the
     /// construct it gave up on, which <see cref="Guarded"/> turns into a diagnostic against that
-    /// construct — one per member, so a module with two un-lowered lines reports both. What it does
+    /// construct â€” one per member, so a module with two un-lowered lines reports both. What it does
     /// not do is build that module or emit the ones after it: a half-emitted body is not a module,
     /// and every module after it names entries in its method table. A compilation with errors is not
     /// emitted at all: the bound tree of a failed compilation holds error nodes, and emitting one
@@ -88,8 +88,8 @@ namespace Surtr.Compiler.CodeGen
                 return already;
 
             // Binding has already run by the time an emitter exists, so this is the first point a
-            // fully qualified reference with no `import` — recorded lazily, by TypeResolver, only
-            // once the binder actually resolves one — can be reflected in LoadOrder. Create()'s own
+            // fully qualified reference with no `import` â€” recorded lazily, by TypeResolver, only
+            // once the binder actually resolves one â€” can be reflected in LoadOrder. Create()'s own
             // order saw only the import-derived edges; this brings it up to date, including a cycle
             // that only such a reference introduces.
             _compilation.RefreshLoadOrder();
@@ -142,7 +142,7 @@ namespace Surtr.Compiler.CodeGen
         /// </para>
         /// <para>
         /// The rest of the module is emitted afterwards, so one un-lowered construct does not hide
-        /// the others — but the module is not built and nothing after it is emitted either. A
+        /// the others â€” but the module is not built and nothing after it is emitted either. A
         /// half-emitted body is not a module, and a later module names entries in this one's method
         /// table, so continuing would replace one real diagnostic with a cascade of invented ones.
         /// </para>
@@ -326,7 +326,7 @@ namespace Surtr.Compiler.CodeGen
 
                 default:
                 {
-                    // A value class and a singleton are both real classes here: §2.9 erases a value
+                    // A value class and a singleton are both real classes here: Â§2.9 erases a value
                     // class only where its type is statically known, so the class it presents as
                     // where it cannot be erased still has to exist.
                     var baseType = symbol.BaseType is NamedTypeSymbol declared
@@ -338,6 +338,13 @@ namespace Surtr.Compiler.CodeGen
                         : declaringClass.DefineNestedClass(declaredName, baseType, symbol.IsAbstract, Visibility(symbol), symbol.IsSealed);
 
                     Parameterise(@class.Class, symbol);
+
+                    // A multi-field value class is a value type at runtime: the linker reads this
+                    // flag to lay the class out as one flattened block rather than one slot per
+                    // field, which is what its boxed form and the collector both index against.
+                    if (ValueTypeLayout.IsMultiField(symbol))
+                        @class.Class.IsValueType = true;
+
                     context.Declare(symbol, @class);
                     emission = new TypeEmission(symbol, @class, null);
                     break;
@@ -353,22 +360,22 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// The name a type is declared under, which for one nested inside an <em>interface</em>
-        /// carries the qualification (§2.3).
+        /// carries the qualification (Â§2.3).
         /// </summary>
         /// <remarks>
         /// <para>
         /// Nesting is stored on <c>SurtrClass</c> and not on <c>SurtrInterface</c>, so a type nested
-        /// in a contract has no container to be added to — while §2.3 allows one, because a nested
+        /// in a contract has no container to be added to â€” while Â§2.3 allows one, because a nested
         /// type is not a member with state and does not reopen the "pure contract" rule.
         /// </para>
         /// <para>
         /// It is declared at module level under its qualified name instead. That is not a workaround
-        /// as much as the naming model showing through: §2.6 makes nesting <em>qualification</em>, a
+        /// as much as the naming model showing through: Â§2.6 makes nesting <em>qualification</em>, a
         /// full name is <c>modulePath ':' segment ('.' segment)*</c>, and the descriptor the compiler
         /// already emits for this type is exactly <c>module:IShape.Kind</c>. Declaring it under that
         /// name is what makes the module's key and the descriptor agree. What it costs is that
-        /// nothing at runtime relates the two types — which nothing needs to, since a nested type
-        /// does not see its container's parameters (§6) and reaches nothing of its container's.
+        /// nothing at runtime relates the two types â€” which nothing needs to, since a nested type
+        /// does not see its container's parameters (Â§6) and reaches nothing of its container's.
         /// </para>
         /// </remarks>
         private static string DeclaredName(NamedTypeSymbol symbol, SurtrClassBuilder? declaringClass)
@@ -393,7 +400,7 @@ namespace Surtr.Compiler.CodeGen
         /// answer <c>Box&lt;T : IComparable&lt;T&gt;&gt;</c> without re-compiling the declaration.
         /// Nothing on an execution path reads either; <c>G&lt;n&gt;</c> is a reference slot
         /// regardless. A bound is written as the descriptor it already emits, which is what keeps
-        /// a bound naming the type's own parameter (<c>IComparable&lt;T&gt;</c> → <c>G0</c>)
+        /// a bound naming the type's own parameter (<c>IComparable&lt;T&gt;</c> â†’ <c>G0</c>)
         /// meaningful after the round trip.
         /// </remarks>
         private void Parameterise(SurtrTypeInfo type, NamedTypeSymbol symbol)
@@ -462,7 +469,7 @@ namespace Surtr.Compiler.CodeGen
             {
                 switch (member)
                 {
-                    // A const carries no slot at all (§7.1) — every read of it already folded to a
+                    // A const carries no slot at all (Â§7.1) â€” every read of it already folded to a
                     // literal while binding (BodyBinder.ResolveField), so there is nothing here to
                     // declare.
                     case FieldSymbol { IsConst: true }:
@@ -504,7 +511,7 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// Whether building an instance of <paramref name="type"/> has to run anything, so a derived
-        /// class declaring no constructor still needs one to reach it (§3.2).
+        /// class declaring no constructor still needs one to reach it (Â§3.2).
         /// </summary>
         /// <remarks>
         /// Decided from symbols rather than from what has been emitted so far, because a derived
@@ -549,7 +556,7 @@ namespace Surtr.Compiler.CodeGen
                     case PropertySymbol property:
                     {
                         // Which accessors the contract requires is what the declaration wrote, and
-                        // the builder's default is read-only — so a `{ get; set; }` on an interface
+                        // the builder's default is read-only â€” so a `{ get; set; }` on an interface
                         // would otherwise lose its setter, and every call site assigning through the
                         // contract would name a method the interface does not declare.
                         var declared = contract.DefineProperty(
@@ -606,13 +613,13 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Copies a declaration's attributes onto the metadata the runtime instantiates them from (§11).
+        /// Copies a declaration's attributes onto the metadata the runtime instantiates them from (Â§11).
         /// </summary>
         /// <remarks>
         /// <para>
         /// The attribute is a real class and its arguments fill its fields positionally, so what
         /// travels is a type handle and a list of constants. The instance itself is built when the
-        /// declaring module loads, with the module's other statics — which is why nothing here runs
+        /// declaring module loads, with the module's other statics â€” which is why nothing here runs
         /// anything, and why an argument had to fold at compile time.
         /// </para>
         /// <para>
@@ -646,7 +653,7 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         /// <remarks>
         /// An accessor with no body written is one the compiler supplies, and what it reads and
-        /// writes is a field nothing in the source declared — <c>$backing$health</c>, per §6.2. The
+        /// writes is a field nothing in the source declared â€” <c>$backing$health</c>, per Â§6.2. The
         /// accessors themselves are deliberately <em>not</em> in that scheme: <c>get_x</c> and
         /// <c>set_x</c> are the names <c>SurtrTypeLinker</c> looks for.
         /// </remarks>
@@ -670,7 +677,7 @@ namespace Surtr.Compiler.CodeGen
             bool getterIsNative = property.Getter is { IsNative: true };
             bool setterIsNative = property.Setter is { IsNative: true };
 
-            // A native accessor's body is the host's, published by link name (§10) - the same path
+            // A native accessor's body is the host's, published by link name (Â§10) - the same path
             // DeclareMethod already takes for a plain native method (below). It needs neither a
             // bytecode builder nor a backing field, so it is handled before the auto-property check
             // that follows - which would otherwise mistake its bodyless accessor (a native accessor
@@ -697,7 +704,7 @@ namespace Surtr.Compiler.CodeGen
                 context.Bind(nativeSetter, native);
             }
 
-            // Either accessor being bare is enough: §3.4 lets `{ get; set { ... } }` mix them, and
+            // Either accessor being bare is enough: Â§3.4 lets `{ get; set { ... } }` mix them, and
             // the bare half still needs somewhere to read from. A native accessor is excluded here
             // even though it is bare too - it has a body, the host's, so it never needs a backing
             // field and must not contribute to `auto`.
@@ -719,7 +726,7 @@ namespace Surtr.Compiler.CodeGen
             }
 
             // `override` is dropped where it names no base accessor, for the reason it is dropped on
-            // a method: §2.2 makes a contract a promise rather than an inheritance, both are written
+            // a method: Â§2.2 makes a contract a promise rather than an inheritance, both are written
             // `override`, and `SurtrTypeLinker` rejects an override with no base entry to replace.
             if (property.Getter is MethodSymbol getter && !getterIsNative)
             {
@@ -779,7 +786,7 @@ namespace Surtr.Compiler.CodeGen
             if (method.IsNative)
             {
                 // A native member travels as a name: the address cannot, so every runtime that
-                // loads the image publishes its own body under this link name (§10).
+                // loads the image publishes its own body under this link name (Â§10).
                 var (names, constraints) = GenericParameterTable(method);
 
                 context.Bind(
@@ -821,12 +828,51 @@ namespace Surtr.Compiler.CodeGen
             }
 
             context.Declare(method, builder);
+            ApplyValueLayout(builder, method);
             emission.Methods.Add((method, builder));
         }
 
         /// <summary>
+        /// Tells a method builder how wide its argument blocks are, when its signature carries
+        /// value types - the receiver of an instance method on a multi-field value class
+        /// included. Absent, every argument stays one slot wide.
+        /// </summary>
+        private static void ApplyValueLayout(SurtrMethodBuilder builder, MethodSymbol method)
+        {
+            int receiverWidth = 1;
+            if (!method.IsStatic
+                && method.ContainingType is NamedTypeSymbol owner
+                && ValueTypeLayout.IsMultiField(owner))
+            {
+                receiverWidth = ValueTypeLayout.TryGet(owner, out var ownerLayout, out _)
+                    ? ownerLayout.Width
+                    : 1;
+            }
+
+            var widths = new int[method.Parameters.Count];
+            bool anyWide = receiverWidth > 1;
+
+            for (int i = 0; i < widths.Length; i++)
+            {
+                widths[i] = SlotWidthOf(method.Parameters[i].Type);
+                anyWide |= widths[i] > 1;
+            }
+
+            if (anyWide)
+                builder.SetArgumentLayout(receiverWidth, widths);
+        }
+
+        private static int SlotWidthOf(TypeSymbol type)
+        {
+            if (type.NonNullable is NamedTypeSymbol named && ValueTypeLayout.IsMultiField(named))
+                return ValueTypeLayout.TryGet(named, out var layout, out _) ? layout.Width : 1;
+
+            return 1;
+        }
+
+        /// <summary>
         /// The names and per-parameter constraints of a generic method, in the descriptor form the
-        /// method metadata carries (§8) - the same shape the type sections use, so the image has
+        /// method metadata carries (Â§8) - the same shape the type sections use, so the image has
         /// one rule to know. A bound naming the method's own parameter goes out as <c>H&lt;n&gt;</c>,
         /// which the importer maps back onto the rebuilt <see cref="TypeParameterSymbol"/>.
         /// </summary>
@@ -865,7 +911,7 @@ namespace Surtr.Compiler.CodeGen
         /// Whether <c>override</c> in the source really replaces a base class method.
         /// </summary>
         /// <remarks>
-        /// It does not when the method implements an interface: §2.2 makes a contract a promise
+        /// It does not when the method implements an interface: Â§2.2 makes a contract a promise
         /// rather than an inheritance, and <c>SurtrTypeLinker</c> rejects an override with no base
         /// entry to replace. Both are written <c>override</c> in Surtr, so the difference is one the
         /// emitter has to settle rather than the syntax.
@@ -895,7 +941,7 @@ namespace Surtr.Compiler.CodeGen
         {
             foreach (var field in module.Fields)
             {
-                // §7.1: a const carries no slot at all — every read of it already folded to a
+                // Â§7.1: a const carries no slot at all â€” every read of it already folded to a
                 // literal while binding (BodyBinder.ResolveField).
                 if (field.IsConst)
                     continue;
@@ -913,8 +959,8 @@ namespace Surtr.Compiler.CodeGen
                 {
                     if (getter.IsNative)
                     {
-                        // §10: a native accessor travels as its link name; every runtime that loads
-                        // the image publishes its own body with `DefineNativeBody` (§3).
+                        // Â§10: a native accessor travels as its link name; every runtime that loads
+                        // the image publishes its own body with `DefineNativeBody` (Â§3).
                         var native = builder.DeclareNativeFunction(
                             getter.Name, _descriptors.Emit(getter.ReturnType), LinkName(getter));
                         declared.BindGetter(native);
@@ -947,7 +993,7 @@ namespace Surtr.Compiler.CodeGen
 
             foreach (var method in module.Methods)
             {
-                // A module-level `native fun` is a native method like any other (§10): it lands in
+                // A module-level `native fun` is a native method like any other (Â§10): it lands in
                 // the method table and its body is published by link name, so a module that only
                 // ever passes it around still fails to load when the host never registered it.
                 if (method.IsNative)
@@ -974,6 +1020,7 @@ namespace Surtr.Compiler.CodeGen
                     Visibility(method.Accessibility));
 
                 DeclareGenericParameters(function, method);
+                ApplyValueLayout(function, method);
 
                 foreach (var use in method.Attributes)
                 {
@@ -986,18 +1033,18 @@ namespace Surtr.Compiler.CodeGen
                 context.Declare(method, function);
             }
 
-            // An extension method (§15) is, by the time it reaches here, an ordinary module-level
-            // function — its receiver is already its first declared parameter, and nothing about
+            // An extension method (Â§15) is, by the time it reaches here, an ordinary module-level
+            // function â€” its receiver is already its first declared parameter, and nothing about
             // its emission differs from `module.Methods` above. It stays a separate list only so
             // bare-name resolution in the binder never finds one (`ModuleSymbol.ExtensionMethods`).
             foreach (var method in module.ExtensionMethods)
                 DeclareExtensionFunction(context, builder, method);
 
-            // An extension property's accessors (§15.1) are declared the same way, one at a time —
+            // An extension property's accessors (Â§15.1) are declared the same way, one at a time â€”
             // never through `builder.DefineProperty`/`DefineGetter`/`DefineSetter`, which assume a
             // getter takes zero declared parameters and a setter exactly one (`value`), the receiver
             // always implicit. An extension accessor's receiver is instead its own first declared
-            // parameter (or, for a `static` one, absent entirely) — the same shape an extension
+            // parameter (or, for a `static` one, absent entirely) â€” the same shape an extension
             // method's is, which is exactly what `DeclareExtensionFunction` already emits correctly.
             foreach (var property in module.ExtensionProperties)
             {
@@ -1040,6 +1087,7 @@ namespace Surtr.Compiler.CodeGen
             function.IsExtension = true;
 
             DeclareGenericParameters(function, method);
+                ApplyValueLayout(function, method);
 
             foreach (var use in method.Attributes)
             {
@@ -1056,7 +1104,7 @@ namespace Surtr.Compiler.CodeGen
         {
             var parameters = new SurtrParameterInfo[method.Parameters.Count - (method.Role == MethodRole.Operator && !method.IsStatic ? 1 : 0)];
 
-            // An instance operator names its receiver as its first parameter (§5.6); the runtime's
+            // An instance operator names its receiver as its first parameter (Â§5.6); the runtime's
             // receiver is implicit, so that one never enters the declared parameter list.
             int first = method.Role == MethodRole.Operator && !method.IsStatic ? 1 : 0;
 
@@ -1087,7 +1135,7 @@ namespace Surtr.Compiler.CodeGen
         /// argument too.
         /// </summary>
         /// <remarks>
-        /// The interpreter never reads this — §4.8 makes filling a default the call site's job — but
+        /// The interpreter never reads this â€” Â§4.8 makes filling a default the call site's job â€” but
         /// the declaration is where the value is written, and an image that dropped it would make a
         /// defaulted parameter mandatory to everything downstream.
         /// </remarks>
@@ -1104,7 +1152,7 @@ namespace Surtr.Compiler.CodeGen
                 $"The default for '{parameter.Name}' folded to a '{parameter.DefaultValue.GetType().Name}', which metadata cannot carry."),
         };
 
-        /// <summary>One folded attribute argument, in the form metadata carries (§11).</summary>
+        /// <summary>One folded attribute argument, in the form metadata carries (Â§11).</summary>
         private static SurtrConstant Constant(object? value, string attribute) => value switch
         {
             null => SurtrConstant.Null,
@@ -1153,7 +1201,7 @@ namespace Surtr.Compiler.CodeGen
             {
                 if (symbol.Role == MethodRole.Constructor)
                 {
-                    // A value class's constructor is spliced at every creation site (§2.9), so the
+                    // A value class's constructor is spliced at every creation site (Â§2.9), so the
                     // declared one is never reached. Emitting its body anyway would write to a
                     // field slot that a boxed value class does not have.
                     if (emission.Symbol.TypeKind == TypeSymbolKind.ValueClass)
@@ -1203,7 +1251,7 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// Emits a type's or module's static field initializers and <c>static { }</c> blocks in the
-        /// one order they were written in (§2.5, §3.2).
+        /// one order they were written in (Â§2.5, Â§3.2).
         /// </summary>
         /// <remarks>
         /// Two lists, one sequence: a block reads what the initializers above it wrote and is read by
@@ -1251,7 +1299,7 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// <para>
         /// <c>SurtrTypeLinker</c> matches an implementation to a contract slot by
-        /// <c>SignatureKey()</c>, which writes <c>G&lt;n&gt;</c> as <c>E</c> — so a class satisfying
+        /// <c>SignatureKey()</c>, which writes <c>G&lt;n&gt;</c> as <c>E</c> â€” so a class satisfying
         /// <c>IComparable&lt;Vec2&gt;</c> occupies a slot keyed <c>compareTo(E)</c>, and its own
         /// <c>compareTo(Vec2)</c> misses it by spelling alone. This is Java's bargain and the
         /// compiler's half of it: a second member, named after the contract's, taking the erased
@@ -1259,7 +1307,7 @@ namespace Surtr.Compiler.CodeGen
         /// </para>
         /// <para>
         /// The bridge is emitted, never bound. It has no symbol, so nothing in source can name it
-        /// and <c>SignatureSet</c> never sees it — which is what keeps it from reading as a
+        /// and <c>SignatureSet</c> never sees it â€” which is what keeps it from reading as a
         /// duplicate of the member it forwards to.
         /// </para>
         /// </remarks>
@@ -1291,9 +1339,9 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// Two independent reasons a slot can be unfilled by anything sitting directly in the
         /// vtable, and a bridge closes both the same way: a member more specific than the slot's
-        /// own erased shape (generics — the class wrote <c>compareTo(Vec2)</c> against
+        /// own erased shape (generics â€” the class wrote <c>compareTo(Vec2)</c> against
         /// <c>IComparable&lt;Vec2&gt;</c>'s erased <c>compareTo(E)</c>), or a member whose signature
-        /// already matches the slot exactly but whose dispatch is <c>Direct</c> (§3.3 — no
+        /// already matches the slot exactly but whose dispatch is <c>Direct</c> (Â§3.3 â€” no
         /// <c>override</c> written, so <c>SurtrTypeLinker</c> never placed it in
         /// <c>VirtualMethods</c> to begin with). Either way the class's own member keeps whatever
         /// dispatch it was declared with, and the bridge is what actually answers the interface.
@@ -1368,7 +1416,7 @@ namespace Surtr.Compiler.CodeGen
             code.LoadLocal(bridge.Receiver);
 
             // The bridge is Virtual, so a value class receiver arrives boxed at this slot exactly
-            // as it does for any other interface-dispatched call on one (§6.3) — the same test
+            // as it does for any other interface-dispatched call on one (Â§6.3) â€” the same test
             // MethodBodyEmitter.LoadReceiver makes for a value class's own virtual-dispatch body,
             // applied here since the bridge plays that same role. The `target` it forwards to keeps
             // `Direct` dispatch and so expects the unboxed field, never the boxed form.
@@ -1385,7 +1433,7 @@ namespace Surtr.Compiler.CodeGen
             }
 
             // Virtual, so an override further down the hierarchy is what a call through the
-            // contract lands on — which is the whole reason the slot stores a vtable index.
+            // contract lands on â€” which is the whole reason the slot stores a vtable index.
             if (context.TryGetBuilder(target, out var local))
                 code.Call(local);
             else if (context.Resolve(target) is SurtrMethodInfo built)
@@ -1477,7 +1525,7 @@ namespace Surtr.Compiler.CodeGen
             Guarded(null, () =>
             {
                 // A module-level variable is a static of its module, so its initializer runs from
-                // the module's own initializer — which the runtime runs after every class's. A
+                // the module's own initializer â€” which the runtime runs after every class's. A
                 // module-level `static { }` block runs from the same place, in its own source
                 // position among them.
                 var moduleInitializer = builder.DefineStaticInitializer();
@@ -1505,19 +1553,19 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// Emits what runs before a constructor's own body: the chain it names, and this class's
-        /// instance field initializers (§3.2).
+        /// instance field initializers (Â§3.2).
         /// </summary>
         /// <remarks>
         /// <para>
         /// The order is forced. A <c>super(...)</c> chain runs the base constructor first, because
         /// this class's initializers may read what the base set up. A <c>this(...)</c> chain runs
-        /// another constructor of the same class, which already ran the initializers — so running
+        /// another constructor of the same class, which already ran the initializers â€” so running
         /// them again would undo whatever that constructor did with them, which is exactly what
-        /// §3.2 says must not happen.
+        /// Â§3.2 says must not happen.
         /// </para>
         /// <para>
         /// With nothing written, the base's parameterless constructor is called anyway: it is what
-        /// §3.2 promises, and <c>ObjNew</c> allocates without running anything.
+        /// Â§3.2 promises, and <c>ObjNew</c> allocates without running anything.
         /// </para>
         /// </remarks>
         private void EmitConstructorPrologue(
@@ -1562,7 +1610,7 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         /// <remarks>
         /// Emitted as instructions rather than as a bound call, because the constructor it reaches
-        /// may be one the compiler synthesised — which has a builder and metadata but no symbol for
+        /// may be one the compiler synthesised â€” which has a builder and metadata but no symbol for
         /// a bound tree to name.
         /// </remarks>
         private void EmitImplicitBaseChain(EmitContext context, NamedTypeSymbol owner, SurtrMethodBuilder builder)
@@ -1727,8 +1775,8 @@ namespace Surtr.Compiler.CodeGen
             }
 
             // Same recording as `symbol.Methods` above, for the same reason: a module built later
-            // resolves a call to one of these (§15) through `_builtMethods`, not through this
-            // module's own `EmitContext` — that only lives for the duration of building it.
+            // resolves a call to one of these (Â§15) through `_builtMethods`, not through this
+            // module's own `EmitContext` â€” that only lives for the duration of building it.
             foreach (var method in symbol.ExtensionMethods)
             {
                 if (context.TryGetBuilder(method, out var builder) && builder.Built is SurtrMethodInfo info)
@@ -1764,7 +1812,7 @@ namespace Surtr.Compiler.CodeGen
                         _builtMethods[method] = info;
                 }
 
-                // A synthesised constructor has no symbol, so nothing above records it — and a
+                // A synthesised constructor has no symbol, so nothing above records it â€” and a
                 // creation site in a module built later has to be able to call it or the instance it
                 // allocates runs none of its initializers.
                 if (emission.SyntheticConstructor?.Built is SurtrMethodInfo synthetic)
@@ -1799,7 +1847,7 @@ namespace Surtr.Compiler.CodeGen
         #endregion
 
         #region Translation
-        // A type has no accessibility in the symbol model, because §2.1 gives one no meaning: a
+        // A type has no accessibility in the symbol model, because Â§2.1 gives one no meaning: a
         // module is the unit of visibility and every type it declares is reachable from it.
         private static SurtrVisibility Visibility(NamedTypeSymbol type) => Visibility(type.Accessibility);
 
@@ -1819,7 +1867,7 @@ namespace Surtr.Compiler.CodeGen
         };
 
         /// <summary>
-        /// The name a host publishes a <c>native</c> member's body under (§10).
+        /// The name a host publishes a <c>native</c> member's body under (Â§10).
         /// </summary>
         /// <remarks>
         /// Derived rather than declared, so a member the source did not name still has a stable one:

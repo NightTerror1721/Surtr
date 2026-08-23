@@ -331,7 +331,7 @@ namespace Surtr.Compiler.CodeGen
                 return;
 
             Expression(declaration.Initializer);
-            Code.StoreLocal(slot);
+            EmitStoreLocal(slot);
         }
 
         private void EmitIf(BoundIfStatement conditional)
@@ -651,9 +651,9 @@ namespace Surtr.Compiler.CodeGen
             {
                 inclusive = bounds.Operator == BinaryOperator.RangeInclusive;
                 Expression(bounds.Left);
-                Code.StoreLocal(variable);
+                EmitStoreLocal(variable);
                 Expression(bounds.Right);
-                Code.StoreLocal(limit);
+                EmitStoreLocal(limit);
             }
             else
             {
@@ -661,18 +661,18 @@ namespace Surtr.Compiler.CodeGen
                 var range = _method.DeclareLocal("$range");
 
                 Expression(loop.Sequence);
-                Code.StoreLocal(range);
+                EmitStoreLocal(range);
 
-                Code.LoadLocal(range);
+                EmitLoadLocal(range);
                 Code.Call(RangeAccessor("start"));
-                Code.StoreLocal(variable);
+                EmitStoreLocal(variable);
 
-                Code.LoadLocal(range);
+                EmitLoadLocal(range);
                 Code.Call(RangeAccessor("start"));
-                Code.LoadLocal(range);
+                EmitLoadLocal(range);
                 Code.Call(RangeAccessor("length"));
                 Code.Add(SurtrValueTypeCode.Integer);
-                Code.StoreLocal(limit);
+                EmitStoreLocal(limit);
             }
 
             var top = Code.NewLabel();
@@ -680,8 +680,8 @@ namespace Surtr.Compiler.CodeGen
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(variable);
-            Code.LoadLocal(limit);
+            EmitLoadLocal(variable);
+            EmitLoadLocal(limit);
             Code.JumpIfCompare(
                 inclusive ? SurtrComparison.Greater : SurtrComparison.GreaterOrEqual,
                 SurtrValueTypeCode.Integer,
@@ -709,24 +709,24 @@ namespace Surtr.Compiler.CodeGen
             var variable = Declare(loop.Variable);
 
             Expression(loop.Sequence);
-            Code.StoreLocal(source);
+            EmitStoreLocal(source);
             Code.LoadInt(0);
-            Code.StoreLocal(index);
+            EmitStoreLocal(index);
 
             var top = Code.NewLabel();
             var step = Code.NewLabel();
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(index);
-            Code.LoadLocal(source);
+            EmitLoadLocal(index);
+            EmitLoadLocal(source);
             Length(kind);
             Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
 
-            Code.LoadLocal(source);
-            Code.LoadLocal(index);
+            EmitLoadLocal(source);
+            EmitLoadLocal(index);
             Element(kind);
-            Code.StoreLocal(variable);
+            EmitStoreLocal(variable);
 
             PushLoop(step, end);
             Statement(loop.Body);
@@ -780,20 +780,20 @@ namespace Surtr.Compiler.CodeGen
             var variable = Declare(loop.Variable);
 
             Expression(loop.Sequence);
-            Code.StoreLocal(source);
-            Code.LoadLocal(source);
+            EmitStoreLocal(source);
+            EmitLoadLocal(source);
             Code.DictionaryKeys(SurtrClassReference.Array(Descriptors.Emit(dictionary.KeyType)));
-            Code.StoreLocal(keys);
+            EmitStoreLocal(keys);
             Code.LoadInt(0);
-            Code.StoreLocal(index);
+            EmitStoreLocal(index);
 
             var top = Code.NewLabel();
             var step = Code.NewLabel();
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(index);
-            Code.LoadLocal(keys);
+            EmitLoadLocal(index);
+            EmitLoadLocal(keys);
             Code.ArrLen();
             Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
 
@@ -802,20 +802,20 @@ namespace Surtr.Compiler.CodeGen
             // still materialised per iteration, because the loop variable's own type is a tuple and
             // the body reads it as one (§4.2 has no destructuring for-in); what is avoided is the
             // second array read, which carries a bounds check the first one already paid.
-            Code.LoadLocal(keys);
-            Code.LoadLocal(index);
+            EmitLoadLocal(keys);
+            EmitLoadLocal(index);
             Code.ArrGet();
-            Code.StoreLocal(key);
+            EmitStoreLocal(key);
 
-            Code.LoadLocal(source);
-            Code.LoadLocal(key);
+            EmitLoadLocal(source);
+            EmitLoadLocal(key);
             Code.DictGet();
-            Code.StoreLocal(value);
+            EmitStoreLocal(value);
 
-            Code.LoadLocal(key);
-            Code.LoadLocal(value);
+            EmitLoadLocal(key);
+            EmitLoadLocal(value);
             Code.PackTuple(Descriptors.Emit(pair), 2);
-            Code.StoreLocal(variable);
+            EmitStoreLocal(variable);
 
             PushLoop(step, end);
             Statement(loop.Body);
@@ -854,17 +854,17 @@ namespace Surtr.Compiler.CodeGen
             Expression(loop.Sequence);
             BoxIfValueClass(loop.Sequence.Type);
             Code.CallInterface(iterate);
-            Code.StoreLocal(cursor);
+            EmitStoreLocal(cursor);
 
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(cursor);
+            EmitLoadLocal(cursor);
             Code.CallInterface(moveNext);
             Code.JumpIfFalse(end);
 
-            Code.LoadLocal(cursor);
+            EmitLoadLocal(cursor);
             Code.CallInterface(current);
 
             // `current` is typed by the contract's own parameter, so it reads back erased — but
@@ -879,7 +879,7 @@ namespace Surtr.Compiler.CodeGen
             Code.BoxDynamic();
             Unerase(loop.Variable.Type);
 
-            Code.StoreLocal(variable);
+            EmitStoreLocal(variable);
 
             PushLoop(top, end);
             Statement(loop.Body);
@@ -919,7 +919,7 @@ namespace Surtr.Compiler.CodeGen
             var subject = _method.DeclareLocal("$subject");
 
             Expression(@switch.Subject);
-            Code.StoreLocal(subject);
+            EmitStoreLocal(subject);
 
             var end = Code.NewLabel();
             var bodies = new SurtrLabel[@switch.Sections.Count];
@@ -972,7 +972,7 @@ namespace Surtr.Compiler.CodeGen
             if (family is SurtrValueTypeCode.Integer or SurtrValueTypeCode.Character
                 && TryCollectIntegerCases(arms, labels, out var cases))
             {
-                Code.LoadLocal(subject);
+                EmitLoadLocal(subject);
 
                 if (family == SurtrValueTypeCode.Character)
                     Code.Convert(SurtrValueTypeCode.Character, SurtrValueTypeCode.Integer);
@@ -988,7 +988,7 @@ namespace Surtr.Compiler.CodeGen
             {
                 foreach (var label in labels[i])
                 {
-                    Code.LoadLocal(subject);
+                    EmitLoadLocal(subject);
                     Expression(label);
                     Code.JumpIfCompare(SurtrComparison.Equal, family, arms[i]);
                 }
@@ -1091,7 +1091,7 @@ namespace Surtr.Compiler.CodeGen
                 confirmations.Add((confirm, pair.Value));
             }
 
-            Code.LoadLocal(subject);
+            EmitLoadLocal(subject);
             Code.StrHash();
             Code.SwitchOn(cases, fallback);
 
@@ -1101,7 +1101,7 @@ namespace Surtr.Compiler.CodeGen
 
                 foreach (var (text, arm) in bucket)
                 {
-                    Code.LoadLocal(subject);
+                    EmitLoadLocal(subject);
                     Code.LoadString(text);
                     Code.JumpIfCompare(SurtrComparison.Equal, SurtrValueTypeCode.String, arm);
                 }
@@ -1153,7 +1153,7 @@ namespace Surtr.Compiler.CodeGen
                 Code.MarkHandler(handler);
                 _method.AddCatch(guarded, Descriptors.Emit(clause.Exception.Type.NonNullable), handler);
 
-                Code.StoreLocal(Declare(clause.Exception));
+                EmitStoreLocal(Declare(clause.Exception));
 
                 PushFinally(@try.Finally);
                 Statement(clause.Body);
@@ -1175,9 +1175,9 @@ namespace Surtr.Compiler.CodeGen
                 _method.AddCatchAll(fault, rethrow);
 
                 var raised = _method.DeclareLocal("$raised");
-                Code.StoreLocal(raised);
+                EmitStoreLocal(raised);
                 RunFinally(@try.Finally);
-                Code.LoadLocal(raised);
+                EmitLoadLocal(raised);
                 Code.Throw();
             }
 
@@ -1221,7 +1221,7 @@ namespace Surtr.Compiler.CodeGen
                 if (@return.Value is not null && frame.HasResult)
                 {
                     Expression(@return.Value);
-                    Code.StoreLocal(frame.Result);
+                    EmitStoreLocal(frame.Result);
                 }
                 else if (@return.Value is not null)
                 {
@@ -1244,17 +1244,33 @@ namespace Surtr.Compiler.CodeGen
             // touches the returned local unable to change what was already returned.
             if (_finallies.Count > 0)
             {
-                var result = _method.DeclareLocal("$result");
+                var result = DeclareTemp("$result", @return.Value.Type);
                 Expression(@return.Value);
-                Code.StoreLocal(result);
+                EmitStoreLocal(result);
                 UnwindTo(0);
-                Code.LoadLocal(result);
-                Code.ReturnValue();
+                EmitLoadLocal(result);
+                EmitReturnOf(@return.Value.Type);
                 return;
             }
 
             Expression(@return.Value);
-            Code.ReturnValue();
+            EmitReturnOf(@return.Value.Type);
+        }
+
+        /// <summary>Returns whatever is on top of the operand stack, in the form its width demands.</summary>
+        /// <remarks>
+        /// A multi-field value class returns as a contiguous block - one <c>ReturnValues</c> -
+        /// while everything else keeps the single-slot return. The caller needs no counterpart:
+        /// it knows the callee's declared type, so it knows how many slots came back.
+        /// </remarks>
+        private void EmitReturnOf(TypeSymbol returnType)
+        {
+            int width = SlotCountOfType(returnType);
+
+            if (width > 1)
+                Code.ReturnValues(width);
+            else
+                Code.ReturnValue();
         }
 
         private void EmitBreak(BoundBreakStatement jump)
@@ -1313,11 +1329,11 @@ namespace Surtr.Compiler.CodeGen
                     return;
 
                 case BoundLocalExpression local:
-                    LoadSymbol(local.Local, () => Code.LoadLocal(Slot(local.Local)));
+                    LoadSymbol(local.Local, () => EmitLoadLocal(Slot(local.Local)));
                     return;
 
                 case BoundParameterExpression parameter:
-                    LoadSymbol(parameter.Parameter, () => Code.LoadLocal(ParameterSlot(parameter.Parameter)));
+                    LoadSymbol(parameter.Parameter, () => EmitLoadLocal(ParameterSlot(parameter.Parameter)));
                     return;
 
                 case BoundThisExpression:
@@ -1426,7 +1442,7 @@ namespace Surtr.Compiler.CodeGen
                     return;
 
                 case BoundConditionalReceiver:
-                    Code.LoadLocal(
+                    EmitLoadLocal(
                         _conditionalReceivers.Count > 0
                             ? _conditionalReceivers[_conditionalReceivers.Count - 1]
                             : throw Unsupported("a '?.' receiver outside the access it belongs to"));
@@ -1633,6 +1649,16 @@ namespace Surtr.Compiler.CodeGen
 
             if (bare.TypeKind == TypeSymbolKind.ValueClass)
             {
+                if ((NamedTypeSymbol)bare is { } valueBare && ValueTypeLayout.IsMultiField(valueBare))
+                {
+                    if (!ValueTypeLayout.TryGet(valueBare, out var unboxLayout, out var unboxError))
+                        throw Unsupported(unboxError!);
+
+                    Code.CastTo(Descriptors.Emit(valueBare));
+                    Code.UnboxValue(unboxLayout.Width);
+                    return;
+                }
+
                 Code.CastTo(Descriptors.EmitBoxedForm((NamedTypeSymbol)bare));
                 Code.Unbox();
                 return;
@@ -1657,6 +1683,15 @@ namespace Surtr.Compiler.CodeGen
         {
             if (type.NonNullable is not NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } valueClass)
                 return false;
+
+            if (ValueTypeLayout.IsMultiField(valueClass))
+            {
+                if (!ValueTypeLayout.TryGet(valueClass, out var boxLayout, out var boxError))
+                    throw Unsupported(boxError!);
+
+                Code.BoxValue(_context.Module.Type(Descriptors.Emit(valueClass)), boxLayout.Width);
+                return true;
+            }
 
             Code.BoxAs(_context.Module.Type(Descriptors.EmitBoxedForm(valueClass)));
             return true;
@@ -1726,8 +1761,8 @@ namespace Surtr.Compiler.CodeGen
             // materializes the bool - the "is an instance" arm is the jump target and the "is not"
             // arm is the fall-through, saving the intermediate boolean on the common (successful) path.
             Expression(conversion.Operand);
-            Code.StoreLocal(value);
-            Code.LoadLocal(value);
+            EmitStoreLocal(value);
+            EmitLoadLocal(value);
             Code.JumpIfInstanceOf(Descriptors.Emit(target), isInstance);
 
             // This branch is only reached for a primitive `target`, so the result type is always a
@@ -1740,7 +1775,7 @@ namespace Surtr.Compiler.CodeGen
             Code.Jump(end);
 
             Code.MarkLabel(isInstance);
-            Code.LoadLocal(value);
+            EmitLoadLocal(value);
             Code.Unbox();
 
             Code.MarkLabel(end);
@@ -1748,6 +1783,14 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitBinary(BoundBinaryExpression binary)
         {
+            if (binary.Operator is BinaryOperator.Equal or BinaryOperator.NotEqual
+                    or BinaryOperator.ReferenceEqual or BinaryOperator.ReferenceNotEqual
+                && (SlotCountOfType(binary.Left.Type) > 1 || SlotCountOfType(binary.Right.Type) > 1))
+            {
+                EmitValueClassEquality(binary);
+                return;
+            }
+
             switch (binary.Operator)
             {
                 case BinaryOperator.LogicalAnd:
@@ -1984,12 +2027,12 @@ namespace Surtr.Compiler.CodeGen
             var slot = _method.DeclareLocal("$safe$" + _conditionalReceivers.Count);
 
             Expression(access.Receiver);
-            Code.StoreLocal(slot);
+            EmitStoreLocal(slot);
 
             var whenNull = Code.NewLabel();
             var end = Code.NewLabel();
 
-            Code.LoadLocal(slot);
+            EmitLoadLocal(slot);
 
             if (IsNullablePrimitive(access.Receiver.Type))
                 Code.JPA(whenNull);
@@ -2227,25 +2270,102 @@ namespace Surtr.Compiler.CodeGen
         {
             var operands = TypeCodeOf(binary.Left.Type);
 
-            var left = _method.DeclareLocal("$left");
-            var right = _method.DeclareLocal("$right");
+            var left = DeclareTemp("$left", binary.Left.Type);
+            var right = DeclareTemp("$right", binary.Right.Type);
 
             Expression(binary.Left);
-            Code.StoreLocal(left);
+            EmitStoreLocal(left);
             Expression(binary.Right);
-            Code.StoreLocal(right);
+            EmitStoreLocal(right);
 
-            Code.LoadLocal(left);
-            Code.LoadLocal(right);
+            EmitLoadLocal(left);
+            EmitLoadLocal(right);
             Code.Compare(SurtrComparison.Greater, operands);
             Code.Convert(SurtrValueTypeCode.Boolean, SurtrValueTypeCode.Integer);
 
-            Code.LoadLocal(left);
-            Code.LoadLocal(right);
+            EmitLoadLocal(left);
+            EmitLoadLocal(right);
             Code.Compare(SurtrComparison.Less, operands);
             Code.Convert(SurtrValueTypeCode.Boolean, SurtrValueTypeCode.Integer);
 
             Code.Subtract(SurtrValueTypeCode.Integer);
+        }
+
+        /// <summary>
+        /// Emits <c>==</c>/<c>!=</c> over a multi-field value class: field-wise comparison in
+        /// declaration order, short-circuiting on the first slot that already decides.
+        /// </summary>
+        /// <remarks>
+        /// A value has no identity, so <c>===</c> over one is refused outright - there is nothing
+        /// for a reference comparison to compare. Each slot compares with its own family's opcode,
+        /// exactly as the fused branches choose per operand type; the failing path re-computes the
+        /// flipped answer rather than spilling the chain's partial results.
+        /// </remarks>
+        private void EmitValueClassEquality(BoundBinaryExpression binary)
+        {
+            if (binary.Operator is BinaryOperator.ReferenceEqual or BinaryOperator.ReferenceNotEqual)
+                throw Unsupported("'===' over a value class: a value has no identity to compare (use '==')");
+
+            var valueType = SlotCountOfType(binary.Left.Type) > 1
+                ? binary.Left.Type.NonNullable
+                : binary.Right.Type.NonNullable;
+
+            if (valueType is not NamedTypeSymbol named)
+                throw Unsupported($"comparing values of '{binary.Left.Type.ToDisplayString()}'");
+
+            if (!ValueTypeLayout.TryGet(named, out var layout, out var layoutError))
+                throw Unsupported(layoutError!);
+
+            int leftBase = EnsureLocalRange(binary.Left, layout.Width);
+            int rightBase = EnsureLocalRange(binary.Right, layout.Width);
+
+            // The chain stores its verdict in a bool temp: every path reaches the join at depth
+            // zero over it, which is what the emitter's label-join check requires.
+            var verdict = _method.DeclareLocal("$eq");
+
+            var unequal = Code.NewLabel();
+            var done = Code.NewLabel();
+
+            for (int i = 0; i < layout.Fields.Length; i++)
+            {
+                int offset = layout.Offsets[i];
+                int width = layout.FieldWidths[i];
+                bool last = i == layout.Fields.Length - 1;
+
+                if (width > 1)
+                {
+                    Code.LoadValueLocal(leftBase + offset, width);
+                    Code.LoadValueLocal(rightBase + offset, width);
+                }
+                else
+                {
+                    Code.LoadLocalField(leftBase, offset);
+                    Code.LoadLocalField(rightBase, offset);
+                }
+
+                Code.Compare(SurtrComparison.Equal, TypeCodeOf(layout.Fields[i].Type));
+
+                if (!last)
+                {
+                    Code.JumpIfFalse(unequal);
+                }
+                else
+                {
+                    EmitStoreLocal(verdict);
+                    Code.Jump(done);
+                }
+            }
+
+            Code.MarkLabel(unequal);
+            Code.LoadInt(0);
+            Code.Convert(SurtrValueTypeCode.Integer, SurtrValueTypeCode.Boolean);
+            EmitStoreLocal(verdict);
+
+            Code.MarkLabel(done);
+            EmitLoadLocal(verdict);
+
+            if (binary.Operator is BinaryOperator.NotEqual)
+                Code.Inv();
         }
 
         private void EmitUnary(BoundUnaryExpression unary)
@@ -2298,12 +2418,12 @@ namespace Surtr.Compiler.CodeGen
             bool isIncrement = unary.Operator is UnaryOperator.PreIncrement or UnaryOperator.PostIncrement;
 
             var family = TypeCodeOf(unary.Operand.Type);
-            var before = _method.DeclareLocal("$before");
+            var before = DeclareTemp("$before", unary.Operand.Type);
 
             Expression(unary.Operand);
-            Code.StoreLocal(before);
+            EmitStoreLocal(before);
 
-            Code.LoadLocal(before);
+            EmitLoadLocal(before);
 
             if (family == SurtrValueTypeCode.Float)
                 Code.LoadFloat(1.0);
@@ -2315,11 +2435,11 @@ namespace Surtr.Compiler.CodeGen
             else
                 Code.Subtract(family);
 
-            var after = _method.DeclareLocal("$after");
-            Code.StoreLocal(after);
+            var after = DeclareTemp("$after", unary.Operand.Type);
+            EmitStoreLocal(after);
 
-            Store(unary.Operand, () => Code.LoadLocal(after));
-            Code.LoadLocal(isPost ? before : after);
+            Store(unary.Operand, () => EmitLoadLocal(after));
+            EmitLoadLocal(isPost ? before : after);
         }
 
         /// <summary>
@@ -2341,12 +2461,12 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
-            var value = _method.DeclareLocal("$assigned");
+            var value = DeclareTemp("$assigned", assignment.Value.Type);
             Expression(assignment.Value);
-            Code.StoreLocal(value);
+            EmitStoreLocal(value);
 
-            Store(assignment.Target, () => Code.LoadLocal(value));
-            Code.LoadLocal(value);
+            Store(assignment.Target, () => EmitLoadLocal(value));
+            EmitLoadLocal(value);
         }
 
         /// <summary>
@@ -2444,12 +2564,12 @@ namespace Surtr.Compiler.CodeGen
             {
                 case BoundLocalExpression local:
                     value();
-                    Code.StoreLocal(Slot(local.Local));
+                    EmitStoreLocal(Slot(local.Local));
                     return;
 
                 case BoundParameterExpression parameter:
                     value();
-                    Code.StoreLocal(ParameterSlot(parameter.Parameter));
+                    EmitStoreLocal(ParameterSlot(parameter.Parameter));
                     return;
 
 case BoundFieldExpression field:
@@ -2544,6 +2664,31 @@ case BoundFieldExpression field:
             }
 
             var receiver = field.Receiver ?? throw Unsupported($"a read of '{field.Field.Name}' with no receiver");
+
+            // A multi-field value class lives as a block of slots: reading a field of one reads
+            // the sub-slot at the field's flattened offset - directly out of the frame range when
+            // the receiver already has a home, spilled to a temp first when it does not.
+            if (receiver.Type.NonNullable is NamedTypeSymbol receiverValue && ValueTypeLayout.IsMultiField(receiverValue))
+            {
+                if (!ValueTypeLayout.TryGet(receiverValue, out var layout, out var layoutError))
+                    throw Unsupported(layoutError!);
+
+                int fieldIndex = Array.IndexOf(layout.Fields, field.Field);
+                if (fieldIndex < 0)
+                    throw Unsupported($"a read of '{field.Field.Name}', which is not an instance field of '{receiverValue.Name}'");
+
+                int offset = layout.Offsets[fieldIndex];
+                int width = layout.FieldWidths[fieldIndex];
+                int baseSlot = EnsureLocalRange(receiver, layout.Width);
+
+                if (width > 1)
+                    Code.LoadValueLocal(baseSlot + offset, width);
+                else
+                    Code.LoadLocalField(baseSlot, offset);
+
+                UnerasedFieldResult(field.Field);
+                return;
+            }
 
             // A value class is its one field, so reading that field off one is the value itself —
             // there is no instance to load from (§2.9). A field declared against the class's own
@@ -2878,15 +3023,15 @@ case BoundFieldExpression field:
             SurtrLocal? receiverSlot = null;
             if (receiver is not null)
             {
-                var slot = _method.DeclareLocal("$inlineThis");
+                var slot = _method.HasReceiver ? DeclareTemp("$inlineThis", _symbol.ContainingType!) : _method.DeclareLocal("$inlineThis");
                 Expression(receiver);
-                Code.StoreLocal(slot);
+                EmitStoreLocal(slot);
                 receiverSlot = slot;
             }
 
-            var valueSlot = _method.DeclareLocal("$inline$" + setter.Parameters[0].Name);
+            var valueSlot = DeclareTemp("$inline$" + setter.Parameters[0].Name, setter.Parameters[0].Type);
             value();
-            Code.StoreLocal(valueSlot);
+            EmitStoreLocal(valueSlot);
             _splicedParameters[setter.Parameters[0]] = valueSlot;
 
             var exit = Code.NewLabel();
@@ -2962,6 +3107,12 @@ case BoundFieldExpression field:
         /// </remarks>
         private void EmitValueClassCreation(BoundObjectCreationExpression creation, NamedTypeSymbol type)
         {
+            if (ValueTypeLayout.IsMultiField(type))
+            {
+                EmitMultiValueClassCreation(creation, type);
+                return;
+            }
+
             if (creation.Constructor is not MethodSymbol constructor)
             {
                 // A value class that declared no constructor was given one by the binder taking the
@@ -3012,7 +3163,7 @@ case BoundFieldExpression field:
             {
                 var slot = _method.DeclareLocal("$value$" + original.Parameters[i].Name);
                 Expression(creation.Arguments[i]);
-                Code.StoreLocal(slot);
+                EmitStoreLocal(slot);
                 _splicedParameters[original.Parameters[i]] = slot;
             }
 
@@ -3048,6 +3199,86 @@ case BoundFieldExpression field:
             }
 
             return found;
+        }
+
+        /// <summary>
+        /// Builds a multi-field value class: every constructor assignment evaluates straight onto
+        /// the operand stack, in field order, leaving exactly the block one value occupies.
+        /// </summary>
+        /// <remarks>
+        /// No temp holds the value under construction - there is nothing to take its address of,
+        /// and a second kind of statement in the constructor would observe half-built slots. The
+        /// shape is therefore strict: one <c>this.field = expression</c> per instance field, no
+        /// reads of <c>this</c> on any right-hand side, nothing else.
+        /// </remarks>
+        private void EmitMultiValueClassCreation(BoundObjectCreationExpression creation, NamedTypeSymbol type)
+        {
+            if (creation.Constructor is not MethodSymbol constructor)
+                throw Unsupported($"building a '{type.Name}', which declares several fields and so needs a constructor that assigns each one");
+
+            var original = constructor.OriginalDefinition ?? constructor;
+
+            if (_context.Bodies is null
+                || !_context.Bodies.TryGetValue(original, out var body)
+                || !TryGetFieldAssignments(body, out var assignments))
+            {
+                throw Unsupported(
+                    $"building a '{type.Name}': its constructor must be exactly one 'this.field = expression' per field, with no other statements");
+            }
+
+            if (!ValueTypeLayout.TryGet(type, out var layout, out var layoutError))
+                throw Unsupported(layoutError!);
+
+            if (assignments.Count != layout.Fields.Length)
+                throw Unsupported($"building a '{type.Name}': its constructor assigns {assignments.Count} field(s), but the class declares {layout.Fields.Length}");
+
+            for (int i = 0; i < creation.Arguments.Count; i++)
+            {
+                var slot = DeclareTemp("$value$" + original.Parameters[i].Name, original.Parameters[i].Type);
+                Expression(creation.Arguments[i]);
+                EmitStoreLocal(slot);
+                _splicedParameters[original.Parameters[i]] = slot;
+            }
+
+            // Emit in declaration order, whatever order the constructor wrote the assignments in,
+            // so the stack block matches the flattened layout the runtime links.
+            var ordered = new List<(int Index, BoundExpression Value)>(assignments.Count);
+            foreach (var entry in assignments)
+                ordered.Add((Array.IndexOf(layout.Fields, entry.Field), entry.Value));
+
+            ordered.Sort((x, y) => x.Index.CompareTo(y.Index));
+
+            foreach (var entry in ordered)
+                Expression(entry.Value);
+        }
+
+        /// <summary>Reads a multi-field value class constructor as its ordered list of field assignments.</summary>
+        private static bool TryGetFieldAssignments(
+            BoundStatement body,
+            out List<(FieldSymbol Field, BoundExpression Value)> assignments)
+        {
+            assignments = new List<(FieldSymbol, BoundExpression)>();
+
+            var statements = body is BoundBlockStatement block ? block.Statements : new BoundStatement[] { body };
+
+            foreach (var statement in statements)
+            {
+                if (statement is not BoundExpressionStatement
+                    {
+                        Expression: BoundAssignmentExpression
+                        {
+                            Target: BoundFieldExpression { Receiver: BoundThisExpression, Field: var target },
+                            Value: var value,
+                        },
+                    })
+                {
+                    return false;
+                }
+
+                assignments.Add((target, value));
+            }
+
+            return true;
         }
 
         /// <summary>
@@ -3629,19 +3860,19 @@ case BoundFieldExpression field:
             SurtrLocal? receiver = null;
             if (call.Receiver is not null)
             {
-                var slot = _method.DeclareLocal("$inlineThis");
+                var slot = _method.HasReceiver ? DeclareTemp("$inlineThis", _symbol.ContainingType!) : _method.DeclareLocal("$inlineThis");
                 Expression(call.Receiver);
-                Code.StoreLocal(slot);
+                EmitStoreLocal(slot);
                 receiver = slot;
             }
 
             for (int i = 0; i < call.Arguments.Count; i++)
             {
                 var parameter = call.Method.Parameters[i];
-                var slot = _method.DeclareLocal("$inline$" + parameter.Name);
+                var slot = DeclareTemp("$inline$" + parameter.Name, parameter.Type);
 
                 Expression(call.Arguments[i]);
-                Code.StoreLocal(slot);
+                EmitStoreLocal(slot);
                 _splicedParameters[parameter] = slot;
             }
 
@@ -3670,7 +3901,7 @@ case BoundFieldExpression field:
                 return true;
             }
 
-            var result = hasResult ? _method.DeclareLocal("$inlineResult") : default;
+            var result = hasResult ? DeclareTemp("$inlineResult", _symbol.ReturnType) : default;
             var exit = Code.NewLabel();
 
             _inlines.Add(new InlineFrame(call.Method, exit, result, hasResult, receiver, _finallies.Count));
@@ -3685,7 +3916,7 @@ case BoundFieldExpression field:
             Code.MarkLabel(exit);
 
             if (hasResult)
-                Code.LoadLocal(result);
+                EmitLoadLocal(result);
 
             return true;
         }
@@ -3794,11 +4025,11 @@ case BoundFieldExpression field:
             switch (captured)
             {
                 case LocalSymbol local:
-                    LoadSymbol(local, () => Code.LoadLocal(Slot(local)));
+                    LoadSymbol(local, () => EmitLoadLocal(Slot(local)));
                     return;
 
                 case ParameterSymbol parameter:
-                    LoadSymbol(parameter, () => Code.LoadLocal(ParameterSlot(parameter)));
+                    LoadSymbol(parameter, () => EmitLoadLocal(ParameterSlot(parameter)));
                     return;
 
                 default:
@@ -4026,13 +4257,13 @@ case BoundFieldExpression field:
 
             var slot = _method.DeclareLocal("$collect");
             Expression(creation.Source);
-            Code.StoreLocal(slot);
+            EmitStoreLocal(slot);
 
             // Element 0 first, ..., element N-1 last: ArrPack pops in the same order EmitArrayLiteral
             // already pushes for a written literal, "the deepest popped value becomes element 0."
             for (int i = 0; i < conversions.Count; i++)
             {
-                Code.LoadLocal(slot);
+                EmitLoadLocal(slot);
                 Code.TupleElement(i);
                 EmitConversionTail(conversions[i], tupleType.ElementTypes[i], elementType);
             }
@@ -4047,7 +4278,7 @@ case BoundFieldExpression field:
 
             var slot = _method.DeclareLocal("$collect");
             Expression(creation.Source!);
-            Code.StoreLocal(slot);
+            EmitStoreLocal(slot);
 
             // The library not declaring InvalidCastException is treated the same way EmitNullAssert
             // treats a missing NullReferenceException: the check is skipped rather than left with
@@ -4057,7 +4288,7 @@ case BoundFieldExpression field:
             {
                 var ok = Code.NewLabel();
 
-                Code.LoadLocal(slot);
+                EmitLoadLocal(slot);
                 Code.ArrLen();
                 Code.LoadInt(conversions.Count);
                 Code.JumpIfCompare(SurtrComparison.Equal, SurtrValueTypeCode.Integer, ok);
@@ -4069,7 +4300,7 @@ case BoundFieldExpression field:
 
             for (int i = 0; i < conversions.Count; i++)
             {
-                Code.LoadLocal(slot);
+                EmitLoadLocal(slot);
                 Code.LoadInt(i);
                 Code.ArrGet();
                 EmitConversionTail(conversions[i], ((ArrayTypeSymbol)creation.Source!.Type.NonNullable).ElementType, tupleType.ElementTypes[i]);
@@ -4096,32 +4327,32 @@ case BoundFieldExpression field:
             // Zero-filled by ArrNew/ArrNewX already; the loop below overwrites every slot with the
             // real default, evaluated once up front rather than once per index.
             EmitArrayCapacity(creation, type);
-            Code.StoreLocal(arraySlot);
+            EmitStoreLocal(arraySlot);
 
             Expression(creation.DefaultValue!);
-            Code.StoreLocal(defaultSlot);
+            EmitStoreLocal(defaultSlot);
 
             Code.LoadInt(0);
-            Code.StoreLocal(indexSlot);
+            EmitStoreLocal(indexSlot);
 
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(indexSlot);
-            Code.LoadLocal(arraySlot);
+            EmitLoadLocal(indexSlot);
+            EmitLoadLocal(arraySlot);
             Code.ArrLen();
             Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
 
-            Code.LoadLocal(arraySlot);
-            Code.LoadLocal(indexSlot);
-            Code.LoadLocal(defaultSlot);
+            EmitLoadLocal(arraySlot);
+            EmitLoadLocal(indexSlot);
+            EmitLoadLocal(defaultSlot);
             Code.ArrSet();
 
             Code.IncrementLocal(indexSlot, 1);
             Code.Jump(top);
             Code.MarkLabel(end);
-            Code.LoadLocal(arraySlot);
+            EmitLoadLocal(arraySlot);
         }
 
         /// <summary>
@@ -4141,29 +4372,29 @@ case BoundFieldExpression field:
             var indexSlot = _method.DeclareLocal("$index");
 
             Expression(creation.Source);
-            Code.StoreLocal(sourceSlot);
+            EmitStoreLocal(sourceSlot);
 
-            Code.LoadLocal(sourceSlot);
+            EmitLoadLocal(sourceSlot);
             Code.ArrLen();
             Code.NewArray(type);
-            Code.StoreLocal(destSlot);
+            EmitStoreLocal(destSlot);
 
             Code.LoadInt(0);
-            Code.StoreLocal(indexSlot);
+            EmitStoreLocal(indexSlot);
 
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(indexSlot);
-            Code.LoadLocal(sourceSlot);
+            EmitLoadLocal(indexSlot);
+            EmitLoadLocal(sourceSlot);
             Code.ArrLen();
             Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
 
-            Code.LoadLocal(destSlot);
-            Code.LoadLocal(indexSlot);
-            Code.LoadLocal(sourceSlot);
-            Code.LoadLocal(indexSlot);
+            EmitLoadLocal(destSlot);
+            EmitLoadLocal(indexSlot);
+            EmitLoadLocal(sourceSlot);
+            EmitLoadLocal(indexSlot);
             Code.ArrGet();
             EmitConversionTail(conversion, sourceElementType, elementType);
             Code.ArrSet();
@@ -4171,7 +4402,7 @@ case BoundFieldExpression field:
             Code.IncrementLocal(indexSlot, 1);
             Code.Jump(top);
             Code.MarkLabel(end);
-            Code.LoadLocal(destSlot);
+            EmitLoadLocal(destSlot);
         }
 
         /// <summary>
@@ -4196,22 +4427,22 @@ case BoundFieldExpression field:
             var cursorSlot = _method.DeclareLocal("$iterator");
 
             Code.PackArray(type, 0);
-            Code.StoreLocal(destSlot);
+            EmitStoreLocal(destSlot);
 
             Expression(creation.Source!);
             Code.CallInterface(iterate);
-            Code.StoreLocal(cursorSlot);
+            EmitStoreLocal(cursorSlot);
 
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(cursorSlot);
+            EmitLoadLocal(cursorSlot);
             Code.CallInterface(moveNext);
             Code.JumpIfFalse(end);
 
-            Code.LoadLocal(destSlot);
-            Code.LoadLocal(cursorSlot);
+            EmitLoadLocal(destSlot);
+            EmitLoadLocal(cursorSlot);
             Code.CallInterface(current);
 
             // Same normalization `EmitForInIterable` needs: `current` reads back erased, but
@@ -4227,7 +4458,7 @@ case BoundFieldExpression field:
 
             Code.Jump(top);
             Code.MarkLabel(end);
-            Code.LoadLocal(destSlot);
+            EmitLoadLocal(destSlot);
         }
 
         /// <summary>
@@ -4247,33 +4478,33 @@ case BoundFieldExpression field:
             var pairSlot = _method.DeclareLocal("$pair");
 
             Expression(creation.Source);
-            Code.StoreLocal(sourceSlot);
+            EmitStoreLocal(sourceSlot);
 
             Code.NewDictionary(type);
-            Code.StoreLocal(dictSlot);
+            EmitStoreLocal(dictSlot);
 
             Code.LoadInt(0);
-            Code.StoreLocal(indexSlot);
+            EmitStoreLocal(indexSlot);
 
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(indexSlot);
-            Code.LoadLocal(sourceSlot);
+            EmitLoadLocal(indexSlot);
+            EmitLoadLocal(sourceSlot);
             Code.ArrLen();
             Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
 
-            Code.LoadLocal(sourceSlot);
-            Code.LoadLocal(indexSlot);
+            EmitLoadLocal(sourceSlot);
+            EmitLoadLocal(indexSlot);
             Code.ArrGet();
-            Code.StoreLocal(pairSlot);
+            EmitStoreLocal(pairSlot);
 
-            Code.LoadLocal(dictSlot);
-            Code.LoadLocal(pairSlot);
+            EmitLoadLocal(dictSlot);
+            EmitLoadLocal(pairSlot);
             Code.TupleElement(0);
             EmitConversionTail(conversions[0], pairType.ElementTypes[0], dictType.KeyType);
-            Code.LoadLocal(pairSlot);
+            EmitLoadLocal(pairSlot);
             Code.TupleElement(1);
             EmitConversionTail(conversions[1], pairType.ElementTypes[1], dictType.ValueType);
             Code.DictSet();
@@ -4281,7 +4512,7 @@ case BoundFieldExpression field:
             Code.IncrementLocal(indexSlot, 1);
             Code.Jump(top);
             Code.MarkLabel(end);
-            Code.LoadLocal(dictSlot);
+            EmitLoadLocal(dictSlot);
         }
 
         /// <summary>
@@ -4297,9 +4528,9 @@ case BoundFieldExpression field:
             var indexSlot = _method.DeclareLocal("$index");
 
             Expression(creation.Source!);
-            Code.StoreLocal(keysSlot);
+            EmitStoreLocal(keysSlot);
             Expression(creation.Source2!);
-            Code.StoreLocal(valuesSlot);
+            EmitStoreLocal(valuesSlot);
 
             // Same "skip the check if the library doesn't declare the exception" idiom EmitNullAssert
             // and EmitTupleFromArray already established.
@@ -4307,9 +4538,9 @@ case BoundFieldExpression field:
             {
                 var ok = Code.NewLabel();
 
-                Code.LoadLocal(keysSlot);
+                EmitLoadLocal(keysSlot);
                 Code.ArrLen();
-                Code.LoadLocal(valuesSlot);
+                EmitLoadLocal(valuesSlot);
                 Code.ArrLen();
                 Code.JumpIfCompare(SurtrComparison.Equal, SurtrValueTypeCode.Integer, ok);
 
@@ -4319,33 +4550,33 @@ case BoundFieldExpression field:
             }
 
             Code.NewDictionary(type);
-            Code.StoreLocal(dictSlot);
+            EmitStoreLocal(dictSlot);
 
             Code.LoadInt(0);
-            Code.StoreLocal(indexSlot);
+            EmitStoreLocal(indexSlot);
 
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(indexSlot);
-            Code.LoadLocal(keysSlot);
+            EmitLoadLocal(indexSlot);
+            EmitLoadLocal(keysSlot);
             Code.ArrLen();
             Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
 
-            Code.LoadLocal(dictSlot);
-            Code.LoadLocal(keysSlot);
-            Code.LoadLocal(indexSlot);
+            EmitLoadLocal(dictSlot);
+            EmitLoadLocal(keysSlot);
+            EmitLoadLocal(indexSlot);
             Code.ArrGet();
-            Code.LoadLocal(valuesSlot);
-            Code.LoadLocal(indexSlot);
+            EmitLoadLocal(valuesSlot);
+            EmitLoadLocal(indexSlot);
             Code.ArrGet();
             Code.DictSet();
 
             Code.IncrementLocal(indexSlot, 1);
             Code.Jump(top);
             Code.MarkLabel(end);
-            Code.LoadLocal(dictSlot);
+            EmitLoadLocal(dictSlot);
         }
 
         /// <summary>
@@ -4419,7 +4650,7 @@ case BoundFieldExpression field:
             var subject = _method.DeclareLocal("$subject");
 
             Expression(@switch.Subject);
-            Code.StoreLocal(subject);
+            EmitStoreLocal(subject);
 
             var end = Code.NewLabel();
             var arms = new SurtrLabel[@switch.Arms.Count];
@@ -4453,28 +4684,135 @@ case BoundFieldExpression field:
 
             // Every arm produces one value, so they all have to leave the stack at the same depth —
             // which is exactly what the emitter checks when the label joins them.
-            var result = _method.DeclareLocal("$switchResult");
+            var result = DeclareTemp("$switchResult", @switch.Arms[0].Result.Type);
 
             for (int i = 0; i < arms.Length; i++)
             {
                 Code.MarkLabel(arms[i]);
                 Expression(@switch.Arms[i].Result);
-                Code.StoreLocal(result);
+                EmitStoreLocal(result);
                 Code.Jump(end);
             }
 
             Code.MarkLabel(end);
-            Code.LoadLocal(result);
+            EmitLoadLocal(result);
         }
         #endregion
 
         #region Frame, captures and types
+
+        /// <summary>Slot width per frame index the emitter itself claimed: parameters first, then temps.</summary>
+        private readonly Dictionary<int, int> _slotWidthsByIndex = new();
+        private bool _frameWidthsRegistered;
+
+        /// <summary>
+        /// Loads a local range onto the operand stack - one slot for everything ordinary, a
+        /// contiguous block for a value-type variable.
+        /// </summary>
+        private void EmitLoadLocal(SurtrLocal local)
+        {
+            EnsureFrameWidths();
+
+            if (_slotWidthsByIndex.TryGetValue(local.Index, out int width) && width > 1)
+                Code.LoadValueLocal(local.Index, width);
+            else
+                Code.LoadLocal(local);
+        }
+
+        /// <summary>Pops whatever a local range holds back off the operand stack.</summary>
+        private void EmitStoreLocal(SurtrLocal local)
+        {
+            EnsureFrameWidths();
+
+            if (_slotWidthsByIndex.TryGetValue(local.Index, out int width) && width > 1)
+                Code.StoreValueLocal(local.Index, width);
+            else
+                Code.StoreLocal(local);
+        }
+
+        /// <summary>
+        /// Registers how wide every argument slot block is, once: the receiver of an instance
+        /// method on a multi-field value class occupies that value's whole width, and every
+        /// parameter occupies its own type's.
+        /// </summary>
+        private void EnsureFrameWidths()
+        {
+            if (_frameWidthsRegistered)
+                return;
+
+            _frameWidthsRegistered = true;
+
+            if (_method.HasReceiver && _symbol.ContainingType is NamedTypeSymbol receiverType && ValueTypeLayout.IsMultiField(receiverType))
+            {
+                if (!ValueTypeLayout.TryGet(receiverType, out var receiverLayout, out var receiverError))
+                    throw Unsupported(receiverError!);
+
+                _slotWidthsByIndex[0] = receiverLayout.Width;
+            }
+
+            foreach (var parameter in _symbol.Parameters)
+            {
+                var slot = ParameterSlot(parameter);
+                int width = SlotCountOfType(parameter.Type);
+                if (width > 1)
+                    _slotWidthsByIndex[slot.Index] = width;
+            }
+        }
+
+        /// <summary>How many slots one value of this type occupies inline: its flattened width when it is a multi-field value class, one otherwise.</summary>
+        private static int SlotCountOfType(TypeSymbol type)
+        {
+            if (type.NonNullable is NamedTypeSymbol named && ValueTypeLayout.IsMultiField(named))
+                return ValueTypeLayout.TryGet(named, out var layout, out _) ? layout.Width : 1;
+
+            return 1;
+        }
+
+        /// <summary>Claims a temporary sized to hold a value of this type.</summary>
+        private SurtrLocal DeclareTemp(string name, TypeSymbol type)
+        {
+            int width = SlotCountOfType(type);
+            var slot = width == 1 ? _method.DeclareLocal(name) : _method.DeclareLocals(name, width);
+
+            if (width > 1)
+                _slotWidthsByIndex[slot.Index] = width;
+
+            return slot;
+        }
+
+        /// <summary>The base slot of a value-typed expression's storage, spilling it to a fresh temp when it does not already live in one.</summary>
+        private int EnsureLocalRange(BoundExpression expression, int width)
+        {
+            switch (expression)
+            {
+                case BoundLocalExpression local:
+                    return Slot(local.Local).Index;
+
+                case BoundParameterExpression parameter:
+                    return ParameterSlot(parameter.Parameter).Index;
+
+                default:
+                {
+                    var spilled = _method.DeclareLocals("$vt", width);
+                    _slotWidthsByIndex[spilled.Index] = width;
+                    Expression(expression);
+                    EmitStoreLocal(spilled);
+                    return spilled.Index;
+                }
+            }
+        }
+
         private SurtrLocal Declare(LocalSymbol local)
         {
             if (_locals.TryGetValue(local, out var existing))
                 return existing;
 
-            var slot = _method.DeclareLocal(local.Name);
+            int width = SlotCountOfType(local.Type);
+            var slot = width == 1 ? _method.DeclareLocal(local.Name) : _method.DeclareLocals(local.Name, width);
+
+            if (width > 1)
+                _slotWidthsByIndex[slot.Index] = width;
+
             _locals.Add(local, slot);
             return slot;
         }
@@ -4528,14 +4866,14 @@ case BoundFieldExpression field:
 
             if (_inlines.Count > 0 && _inlines[_inlines.Count - 1].Receiver is SurtrLocal spliced)
             {
-                Code.LoadLocal(spliced);
+                EmitLoadLocal(spliced);
                 return;
             }
 
             if (!_method.HasReceiver)
                 throw Unsupported("'this', in a body with no receiver");
 
-            Code.LoadLocal(_method.Receiver);
+            EmitLoadLocal(_method.Receiver);
 
             // Inside a value class's own method the receiver arrived boxed exactly when this
             // method's own dispatch might have been resolved through its class — the same test

@@ -1930,28 +1930,53 @@ namespace Surtr.Compiler.Binding
 
         private void BindValueClassField(TypeBinding binding, List<Symbol> members, int letFields)
         {
-            // §2.9: exactly one field, declared `let`. Two would leave nothing to erase to.
-            FieldSymbol? wrapped = null;
-            int instanceFields = 0;
+            // §2.9, generalized: every instance field is declared `let`, and there is at least one.
+            // Exactly one field keeps the erasure the section introduced - the class IS that field
+            // wherever its type is statically known. Several fields make the class a value type in
+            // its own right: it occupies one flattened block of slots instead, and never erases.
+            var instanceFields = new List<FieldSymbol>();
 
             foreach (var member in members)
             {
                 if (member is FieldSymbol field && !field.IsStatic)
-                {
-                    instanceFields++;
-                    wrapped ??= field;
-                }
+                    instanceFields.Add(field);
             }
 
-            if (instanceFields != 1 || letFields != 1)
+            if (instanceFields.Count == 0 || instanceFields.Count != letFields)
             {
                 Report(SurtrDiagnosticCode.InvalidValueClass, binding, binding.Syntax.Span,
-                    $"A value class wraps exactly one 'let' field; '{binding.Symbol.Name}' declares {instanceFields}.");
+                    $"A value class declares its fields 'let'; '{binding.Symbol.Name}' declares {instanceFields.Count} instance field(s), {letFields} of them 'let'.");
 
                 return;
             }
 
-            binding.Symbol.UnderlyingType = wrapped!.Type;
+            if (instanceFields.Count > 1 && binding.Symbol.TypeParameters.Count > 0)
+            {
+                Report(SurtrDiagnosticCode.ValueTypeLayout, binding, binding.Syntax.Span,
+                    $"'{binding.Symbol.Name}' declares generic parameters; a multi-field value class cannot have one layout per substitution.");
+
+                return;
+            }
+
+            if (instanceFields.Count == 1)
+            {
+                binding.Symbol.UnderlyingType = instanceFields[0].Type;
+                return;
+            }
+
+            // A multi-field value class: no erasure. A direct self-reference is caught now; the
+            // full flattened width - indirect cycles and the slot cap included - is checked when
+            // the emitter first needs the layout, which is where ValueTypeLayout reports.
+            foreach (var field in instanceFields)
+            {
+                if (ReferenceEquals(field.Type.NonNullable, binding.Symbol))
+                {
+                    Report(SurtrDiagnosticCode.ValueTypeLayout, binding, binding.Syntax.Span,
+                        $"'{binding.Symbol.Name}' contains itself; no finite value layout can hold it.");
+
+                    return;
+                }
+            }
         }
 
         /// <summary>

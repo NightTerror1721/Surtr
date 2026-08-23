@@ -1,0 +1,167 @@
+#nullable enable
+
+using Surtr.Compiler.Binding.Symbols;
+using System;
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+
+namespace Surtr.Compiler.CodeGen
+{
+    /// <summary>
+    /// The flattened slot layout of a multi-field <c>value class</c>: how many frame slots one
+    /// value occupies, and where each field starts inside the block.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A field whose type is a primitive or a reference occupies one slot; a field whose type is
+    /// another multi-field value class occupies that value's whole width, flattened in place -
+    /// which is why a read of <c>outer.inner.x</c> is one addition away from the block's base.
+    /// The layout mirrors what the runtime linker computes from the emitted metadata, and both
+    /// derive it from the same declared field types, so the two cannot disagree.
+    /// </para>
+    /// <para>
+    /// Computed on demand and cached per symbol. The visiting set turns a self-referential
+    /// declaration into an error instead of a hang; the slot cap mirrors the one byte of
+    /// immediate every call carries its argument count in.
+    /// </para>
+    /// </remarks>
+    internal static class ValueTypeLayout
+    {
+        /// <summary>How many slots one inline value may occupy across a call boundary.</summary>
+        internal const int MaxSlots = 254;
+
+        internal sealed class Layout
+        {
+            /// <summary>The whole block's width, all nested values flattened.</summary>
+            public readonly int Width;
+
+            /// <summary>The instance fields, in declaration order.</summary>
+            public readonly FieldSymbol[] Fields;
+
+            /// <summary>Per instance field, the offset where its block starts.</summary>
+            public readonly int[] Offsets;
+
+            /// <summary>Per instance field, how many slots it occupies.</summary>
+            public readonly int[] FieldWidths;
+
+            public Layout(int width, FieldSymbol[] fields, int[] offsets, int[] fieldWidths)
+            {
+                Width = width;
+                Fields = fields;
+                Offsets = offsets;
+                FieldWidths = fieldWidths;
+            }
+        }
+
+        private static readonly ConditionalWeakTable<NamedTypeSymbol, Layout> Cache = new();
+
+        [ThreadStatic]
+        private static HashSet<NamedTypeSymbol>? _visiting;
+
+        /// <summary>
+        /// Whether this named type is a value class with several fields - one that lives as a slot
+        /// block rather than erasing to its single field.
+        /// </summary>
+        /// <remarks>
+        /// Counts the declared instance fields rather than trusting
+        /// <see cref="NamedTypeSymbol.UnderlyingType"/> alone: a substituted generic clone carries
+        /// the value-class kind but not the original's underlying field, and a one-field wrapper
+        /// must stay on its erasure path even through a clone.
+        /// </remarks>
+        internal static bool IsMultiField(NamedTypeSymbol type)
+        {
+            if (type.TypeKind != TypeSymbolKind.ValueClass || type.UnderlyingType is not null)
+                return false;
+
+            int instanceFields = 0;
+            foreach (var member in type.Members)
+            {
+                if (member is FieldSymbol { IsStatic: false })
+                {
+                    instanceFields++;
+                    if (instanceFields > 1)
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Computes (or recovers) the layout of <paramref name="type"/>, reporting through
+        /// <paramref name="error"/> when no finite layout fits the slot budget.
+        /// </summary>
+        internal static bool TryGet(NamedTypeSymbol type, out Layout layout, out string? error)
+        {
+            if (Cache.TryGetValue(type, out layout!))
+            {
+                error = null;
+                return true;
+            }
+
+            _visiting ??= new HashSet<NamedTypeSymbol>();
+
+            if (!_visiting.Add(type))
+            {
+                error = $"'{type.Name}' contains itself; no finite value layout can hold it.";
+                return false;
+            }
+
+            try
+            {
+                var fields = new List<FieldSymbol>();
+                foreach (var member in type.Members)
+                {
+                    if (member is FieldSymbol { IsStatic: false } field)
+                        fields.Add(field);
+                }
+
+                // A substituted clone of a one-field wrapper has no members of its own - it stays
+                // on the erasure path and never reaches here.
+                if (fields.Count == 0)
+                {
+                    error = $"'{type.Name}' declares no instance fields.";
+                    return false;
+                }
+
+                var offsets = new int[fields.Count];
+                var widths = new int[fields.Count];
+
+                int offset = 0;
+                for (int i = 0; i < fields.Count; i++)
+                {
+                    int width = 1;
+                    if (fields[i].Type.NonNullable is NamedTypeSymbol nested && IsMultiField(nested))
+                    {
+                        if (!TryGet(nested, out var inner, out var innerError))
+                        {
+                            error = innerError;
+                            return false;
+                        }
+
+                        width = inner.Width;
+                    }
+
+                    offsets[i] = offset;
+                    widths[i] = width;
+                    offset += width;
+                }
+
+                if (offset > MaxSlots)
+                {
+                    error = $"Value type '{type.Name}' flattens to {offset} slots; the limit is {MaxSlots}, because a call carries its arguments in one byte of immediate.";
+                    return false;
+                }
+
+                layout = new Layout(offset, fields.ToArray(), offsets, widths);
+                Cache.Add(type, layout);
+                error = null;
+                return true;
+            }
+            finally
+            {
+                _visiting.Remove(type);
+            }
+        }
+    }
+}
