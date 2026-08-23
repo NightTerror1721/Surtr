@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Binding;
 using Surtr.Compiler.CodeGen;
@@ -103,17 +103,20 @@ namespace Surtr.Bench
             runtime.DefineNativeBody(ModulePath + ".hostSqrt", SurtrNativeEntryPoint.FromFunctionPointer(&HostSqrt));
         }
 
-        private static SurtrValue HostAdd(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetInt(0) + 1);
+        // The in-place native convention: read every input before the first write, then answer
+        // how many slots were written. Each of these reads argument zero and returns one slot, so
+        // the aliasing rule is satisfied by the argument being consumed inside the Return call.
+        private static int HostAdd(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetInt(0) + 1));
 
-        private static SurtrValue HostSin(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Sin(arguments.GetFloat(0)));
+        private static int HostSin(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Sin(arguments.GetFloat(0))));
 
-        private static SurtrValue HostCos(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Cos(arguments.GetFloat(0)));
+        private static int HostCos(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Cos(arguments.GetFloat(0))));
 
-        private static SurtrValue HostSqrt(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Sqrt(arguments.GetFloat(0)));
+        private static int HostSqrt(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Sqrt(arguments.GetFloat(0))));
 
         private SurtrDriver(SurtrRuntime runtime, SurtrCompilation compilation, string modulePath, string name)
         {

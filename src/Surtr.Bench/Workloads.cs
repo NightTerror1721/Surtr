@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -97,6 +97,45 @@ namespace Surtr.Bench
             value class EntityId {
                 public let raw: int;
                 public constructor(raw: int) { this.raw = raw; }
+            }
+
+            // A multi-field value type: two float slots, no heap object anywhere. Its methods take
+            // and return Vec2 by value, so a call passes two raw slots and the return comes back
+            // over the frame base through ReturnValues. Nothing here allocates.
+            value class Vec2 {
+                public let x: float;
+                public let y: float;
+
+                public constructor(x: float, y: float) { this.x = x; this.y = y; }
+
+                public fun add(other: Vec2): Vec2 { return Vec2(this.x + other.x, this.y + other.y); }
+                public fun scale(k: float): Vec2 { return Vec2(this.x * k, this.y * k); }
+                public fun dot(other: Vec2): float { return this.x * other.x + this.y * other.y; }
+            }
+
+            // The same declaration as Vec2 with the `value` dropped: an ordinary class, so every
+            // operation allocates a heap object. vec2Class against vec2Math is the whole point of
+            // the feature measured on one line of difference.
+            class Vec2Ref {
+                public let x: float;
+                public let y: float;
+
+                public constructor(x: float, y: float) { this.x = x; this.y = y; }
+
+                public fun add(other: Vec2Ref): Vec2Ref { return Vec2Ref(this.x + other.x, this.y + other.y); }
+                public fun scale(k: float): Vec2Ref { return Vec2Ref(this.x * k, this.y * k); }
+                public fun dot(other: Vec2Ref): float { return this.x * other.x + this.y * other.y; }
+            }
+
+            // Two value-type fields stored inline: the instance is four slots wide and holds no
+            // reference at all, so its reference-slot map is empty and a collection skips it.
+            class Body {
+                public var position: Vec2;
+                public var velocity: Vec2;
+                public constructor(position: Vec2, velocity: Vec2) {
+                    this.position = position;
+                    this.velocity = velocity;
+                }
             }
 
             class Adder {
@@ -465,6 +504,62 @@ namespace Surtr.Bench
                 return acc;
             }
 
+            // Game-style vector arithmetic over a two-field value type: three constructions and
+            // three calls per iteration, none of which touches the heap. Read the alloc column
+            // against Lua's, which has no value types and builds a table per operation. The
+            // recurrence contracts towards v, so the three engines cannot drift past tolerance.
+            fun vec2Math(n: int): float {
+                let v = Vec2(0.5, -0.25);
+                var p = Vec2(0.0, 0.0);
+                var acc: float = 0.0;
+                for (var i = 0; i < n; i += 1) {
+                    p = p.add(v).scale(0.5);
+                    acc = acc * 0.5 + p.dot(v) + (i % 7) * 0.125;
+                }
+                return acc;
+            }
+
+            // Byte-for-byte vec2Math with `class` in place of `value class`. The two rows differ
+            // only in the alloc column and in what the collector is then handed.
+            fun vec2Class(n: int): float {
+                let v = Vec2Ref(0.5, -0.25);
+                var p = Vec2Ref(0.0, 0.0);
+                var acc: float = 0.0;
+                for (var i = 0; i < n; i += 1) {
+                    p = p.add(v).scale(0.5);
+                    acc = acc * 0.5 + p.dot(v) + (i % 7) * 0.125;
+                }
+                return acc;
+            }
+
+            // The same arithmetic read out of and written back into inline value-type fields:
+            // LoadValueField/StoreValueField on a four-slot instance, rather than locals.
+            fun vec2Fields(n: int): float {
+                let body = Body(Vec2(0.0, 0.0), Vec2(0.5, -0.25));
+                var acc: float = 0.0;
+                for (var i = 0; i < n; i += 1) {
+                    body.position = body.position.add(body.velocity).scale(0.5);
+                    acc = acc * 0.5 + body.position.dot(body.velocity) + (i % 7) * 0.125;
+                }
+                return acc;
+            }
+
+            // Multi-slot return and destructuring: divmod hands back two slots over the frame base
+            // and the caller binds both names without a tuple object ever existing. This is the
+            // shape Lua's multiple returns have had all along and Surtr did not.
+            fun divmod(a: int, b: int): (int, int) {
+                return (a / b, a % b);
+            }
+
+            fun tupleReturn(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) {
+                    let (q, r) = divmod(i, 7);
+                    acc = (acc + q * 3 + r) % 100000007;
+                }
+                return acc;
+            }
+
             // A closure capturing a mutable object and mutating it through the capture: the
             // environment the compiler allocates for the closure plus the upvalue dereference per
             // call. The closures case captures nothing and measures only invocation.
@@ -568,6 +663,17 @@ namespace Surtr.Bench
             Box.__index = Box
             function Box.new(v) return setmetatable({v = v}, Box) end
             function Box:get() return self.v end
+
+            local Vec2 = {}
+            Vec2.__index = Vec2
+            function Vec2.new(x, y) return setmetatable({x = x, y = y}, Vec2) end
+            function Vec2:add(o) return Vec2.new(self.x + o.x, self.y + o.y) end
+            function Vec2:scale(k) return Vec2.new(self.x * k, self.y * k) end
+            function Vec2:dot(o) return self.x * o.x + self.y * o.y end
+
+            local Body = {}
+            Body.__index = Body
+            function Body.new(p, v) return setmetatable({position = p, velocity = v}, Body) end
 
             function fib(n)
                 if n < 2 then return n end
@@ -869,6 +975,55 @@ namespace Surtr.Bench
                 return acc
             end
 
+            function vec2Math(n)
+                local v = Vec2.new(0.5, -0.25)
+                local p = Vec2.new(0.0, 0.0)
+                local acc = 0.0
+                for i = 0, n - 1 do
+                    p = p:add(v):scale(0.5)
+                    acc = acc * 0.5 + p:dot(v) + (i % 7) * 0.125
+                end
+                return acc
+            end
+
+            -- Lua has no value types, so this is vec2Math's body a second time: the pair that is
+            -- an A/B in Surtr and in C# is one implementation here, which is itself the finding.
+            function vec2Class(n)
+                local v = Vec2.new(0.5, -0.25)
+                local p = Vec2.new(0.0, 0.0)
+                local acc = 0.0
+                for i = 0, n - 1 do
+                    p = p:add(v):scale(0.5)
+                    acc = acc * 0.5 + p:dot(v) + (i % 7) * 0.125
+                end
+                return acc
+            end
+
+            function vec2Fields(n)
+                local body = Body.new(Vec2.new(0.0, 0.0), Vec2.new(0.5, -0.25))
+                local acc = 0.0
+                for i = 0, n - 1 do
+                    body.position = body.position:add(body.velocity):scale(0.5)
+                    acc = acc * 0.5 + body.position:dot(body.velocity) + (i % 7) * 0.125
+                end
+                return acc
+            end
+
+            -- Multiple returns are native to Lua, so this is the one case where Lua's own idiom is
+            -- exactly what the new Surtr convention does rather than an approximation of it.
+            function divmod(a, b)
+                return math.floor(a / b), a % b
+            end
+
+            function tupleReturn(n)
+                local acc = 0
+                for i = 0, n - 1 do
+                    local q, r = divmod(i, 7)
+                    acc = (acc + q * 3 + r) % 100000007
+                end
+                return acc
+            end
+
             function closureCapture(n)
                 local cap = {a = 0}
                 local function bump(x)
@@ -951,7 +1106,11 @@ namespace Surtr.Bench
             new Workload("nullable", 300000, WorkloadKind.Int, "nullable primitive, absent tag", Nullable),
             new Workload("enums", 300000, WorkloadKind.Int, "enum case access and comparison", Enums),
             new Workload("sortArray", 20000, WorkloadKind.Int, "native member re-entering the VM per compare", SortArray),
-            new Workload("tuples", 300000, WorkloadKind.Int, "TupPack and TupGetC", Tuples),
+            new Workload("tuples", 300000, WorkloadKind.Int, "tuple literal and element read, inline slots", Tuples),
+            new Workload("vec2Math", 300000, WorkloadKind.Float, "multi-field value type: construct, pass and return by value", baselineFloat: Vec2Math),
+            new Workload("vec2Fields", 300000, WorkloadKind.Float, "value-type fields stored inline in an instance", baselineFloat: Vec2Fields),
+            new Workload("vec2Class", 300000, WorkloadKind.Float, "vec2Math with a reference class: the A/B for the alloc column", baselineFloat: Vec2Class),
+            new Workload("tupleReturn", 300000, WorkloadKind.Int, "multi-slot return and destructuring, no tuple object", TupleReturn),
         };
 
         public static IReadOnlyList<Workload> AllWorkloads => All;
@@ -1403,6 +1562,106 @@ namespace Surtr.Bench
             {
                 var t = (i, i + 1);
                 acc = (acc + t.Item1 + t.Item2) % Modulus;
+            }
+            return acc;
+        }
+
+        // A real C# struct, which is what a C# program would reach for here. The JIT will keep it
+        // in registers and the whole loop allocates nothing — that is C#'s honest answer to the
+        // same question Surtr's value types answer, and is the number worth comparing against.
+        private readonly struct Vec2
+        {
+            public readonly double X;
+            public readonly double Y;
+
+            public Vec2(double x, double y)
+            {
+                X = x;
+                Y = y;
+            }
+
+            public Vec2 Add(Vec2 other) => new Vec2(X + other.X, Y + other.Y);
+            public Vec2 Scale(double k) => new Vec2(X * k, Y * k);
+            public double Dot(Vec2 other) => X * other.X + Y * other.Y;
+        }
+
+        // The reference twin of the struct above, for the vec2Class A/B. C# answers the same
+        // question Surtr does here, and the JIT will not sink these allocations away.
+        private sealed class Vec2Ref
+        {
+            public readonly double X;
+            public readonly double Y;
+
+            public Vec2Ref(double x, double y)
+            {
+                X = x;
+                Y = y;
+            }
+
+            public Vec2Ref Add(Vec2Ref other) => new Vec2Ref(X + other.X, Y + other.Y);
+            public Vec2Ref Scale(double k) => new Vec2Ref(X * k, Y * k);
+            public double Dot(Vec2Ref other) => X * other.X + Y * other.Y;
+        }
+
+        private sealed class Body
+        {
+            public Vec2 Position;
+            public Vec2 Velocity;
+
+            public Body(Vec2 position, Vec2 velocity)
+            {
+                Position = position;
+                Velocity = velocity;
+            }
+        }
+
+        private static double Vec2Math(long n)
+        {
+            var v = new Vec2(0.5, -0.25);
+            var p = new Vec2(0.0, 0.0);
+            double acc = 0.0;
+            for (long i = 0; i < n; i++)
+            {
+                p = p.Add(v).Scale(0.5);
+                acc = acc * 0.5 + p.Dot(v) + (i % 7) * 0.125;
+            }
+            return acc;
+        }
+
+        private static double Vec2Class(long n)
+        {
+            var v = new Vec2Ref(0.5, -0.25);
+            var p = new Vec2Ref(0.0, 0.0);
+            double acc = 0.0;
+            for (long i = 0; i < n; i++)
+            {
+                p = p.Add(v).Scale(0.5);
+                acc = acc * 0.5 + p.Dot(v) + (i % 7) * 0.125;
+            }
+            return acc;
+        }
+
+        private static double Vec2Fields(long n)
+        {
+            var body = new Body(new Vec2(0.0, 0.0), new Vec2(0.5, -0.25));
+            double acc = 0.0;
+            for (long i = 0; i < n; i++)
+            {
+                body.Position = body.Position.Add(body.Velocity).Scale(0.5);
+                acc = acc * 0.5 + body.Position.Dot(body.Velocity) + (i % 7) * 0.125;
+            }
+            return acc;
+        }
+
+        private static (long Quotient, long Remainder) DivMod(long a, long b) => (a / b, a % b);
+
+        private static long TupleReturn(long n)
+        {
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+            {
+                var (q, r) = DivMod(i, 7);
+                acc = (acc + q * 3 + r) % Modulus;
             }
             return acc;
         }
