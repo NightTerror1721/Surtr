@@ -448,6 +448,17 @@ namespace Surtr.LanguageServer.Workspace
                         WalkExpression(part, position, anchor, tokens, ref best, snapshot);
                     break;
 
+                // A yield's operand is an ordinary expression; without this case nothing written
+                // inside it resolves — a hover on `compute` in `let x = yield compute(1);` would
+                // answer nothing at all. The yield node itself has no name to offer.
+                case BoundYieldExpression yieldExpression:
+                    WalkExpression(yieldExpression.Value, position, anchor, tokens, ref best, snapshot);
+                    break;
+
+                case BoundThrowExpression throwExpression:
+                    WalkExpression(throwExpression.Value, position, anchor, tokens, ref best, snapshot);
+                    break;
+
                 default:
                     break;
             }

@@ -410,6 +410,14 @@ namespace Surtr.LanguageServer.Workspace
                     if (property.Receiver is not null)
                         yield return property.Receiver;
                     break;
+
+                case BoundYieldExpression yieldExpression:
+                    yield return yieldExpression.Value;
+                    break;
+
+                case BoundThrowExpression throwExpression:
+                    yield return throwExpression.Value;
+                    break;
             }
         }
 

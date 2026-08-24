@@ -394,15 +394,25 @@ namespace Surtr.LanguageServer.Workspace
             return new CompletionList { IsIncomplete = false, Items = items };
         }
 
-        /// <summary>The identifiers reserved by the language, offered where an expression goes.</summary>
+        /// <summary>
+        /// The identifiers reserved by the language, offered where an expression goes.
+        /// </summary>
+        /// <remarks>
+        /// Mirrors Language-Syntax.md §1.2 member by member, plus the four contextual words §1.2
+        /// names separately (<c>this</c>, <c>super</c>, <c>value</c>, <c>attribute</c>). <c>from</c>
+        /// is deliberately absent: it is recognized only directly after <c>yield</c>, so offering it
+        /// unconditionally would suggest a keyword that an ordinary identifier position refuses.
+        /// <c>noinline</c> (§3.6) rides along even though §1.2 does not list it yet — the parser
+        /// branches on it exactly like <c>inline</c>/<c>forceinline</c>.
+        /// </remarks>
         private static readonly string[] Keywords =
         {
             "abstract", "alias", "as", "attribute", "break", "case", "catch", "class", "const", "constructor",
-            "continue", "default", "else", "enum", "extension", "false", "finally", "for", "forceinline", "fun",
-            "if", "import", "in", "inline", "interface", "internal", "is", "let", "moduleof", "native", "null",
-            "operator", "override", "private", "protected", "public", "range", "return", "sealed",
+            "continue", "default", "else", "enum", "export", "extension", "false", "finally", "for", "forceinline", "fun",
+            "generator", "if", "import", "in", "inline", "interface", "internal", "is", "let", "moduleof", "native",
+            "noinline", "null", "operator", "override", "private", "protected", "public", "range", "return", "sealed",
             "singleton", "static", "super", "switch", "this", "throw", "true", "try", "typeof",
-            "unknown", "value", "var", "virtual", "while",
+            "unknown", "using", "value", "var", "virtual", "while", "yield",
         };
 
         // ------------------------------------------------------------------------------------
@@ -1218,6 +1228,19 @@ namespace Surtr.LanguageServer.Workspace
                 case BoundPropertyExpression property:
                     if (property.Receiver is not null)
                         yield return property.Receiver;
+                    break;
+
+                // Without this, everything written inside a yield's operand drops out of every
+                // walk that recurses through ChildrenOf — the receiver of `yield from xs.` would
+                // never be considered for member completion, and signature help inside
+                // `yield f(` would find no call node. The node itself has nothing to offer (its
+                // type is `unknown`), but its operand is an ordinary expression.
+                case BoundYieldExpression yieldExpression:
+                    yield return yieldExpression.Value;
+                    break;
+
+                case BoundThrowExpression throwExpression:
+                    yield return throwExpression.Value;
                     break;
             }
         }

@@ -176,7 +176,8 @@
       ]
     },
     "function-declaration": {
-      "begin": "(\\bfun\\b)(\\s+)([A-Za-z_][A-Za-z0-9_]*)",
+      "comment": "fun and generator share one rule (§3.7): generator is an introducer standing exactly where fun would — like constructor and operator, it says what kind of member this is, not a modifier — so its parameters and declared element type deserve the same signature context they get for fun.",
+      "begin": "(\\b(?:fun|generator)\\b)(\\s+)([A-Za-z_][A-Za-z0-9_]*)",
       "beginCaptures": {
         "1": { "name": "keyword.declaration.function.surtr" },
         "3": { "name": "entity.name.function.surtr" }
@@ -346,13 +347,27 @@
         { "match": "\\bas\\b", "name": "keyword.operator.cast.surtr" },
         { "match": "\\bis\\b", "name": "keyword.operator.expression.surtr" },
         { "match": "\\b(?:typeof|moduleof)\\b", "name": "keyword.operator.expression.surtr" },
-        { "match": "\\b(?:if|else|for|while|switch|case|default|break|continue|return|in)\\b", "name": "keyword.control.surtr" },
+        { "match": "\\b(?:if|else|for|while|switch|case|default|break|continue|return|in|using)\\b", "name": "keyword.control.surtr" },
+        {
+          "comment": "yield opens an expression at the lowest precedence there is (§3.7), and 'from' is contextual: recognized only directly after 'yield', an ordinary identifier everywhere else — the spec's own example writes countdown(from: int). Matching 'yield from' as one unit delivers that position rule without lookbehind; 'yield (from)', parens included, leaves 'from' to the variable rule like any identifier.",
+          "match": "\\b(yield)(?:\\s+(from)\\b)?",
+          "captures": {
+            "1": { "name": "keyword.control.surtr" },
+            "2": { "name": "keyword.control.surtr" }
+          }
+        },
         { "match": "\\b(?:try|catch|finally|throw)\\b", "name": "keyword.control.exception.surtr" },
         { "match": "\\b(?:abstract|public|private|protected|internal|static|sealed|virtual|override)\\b", "name": "storage.modifier.surtr" },
-        { "match": "\\b(?:inline|forceinline)\\b", "name": "keyword.declaration.inline.surtr" },
+        { "match": "\\b(?:inline|forceinline|noinline)\\b", "name": "keyword.declaration.inline.surtr" },
         { "match": "\\bnative\\b", "name": "keyword.declaration.native.surtr" },
         { "match": "\\bconst\\b", "name": "keyword.declaration.constant.surtr" },
         { "match": "\\bfun\\b", "name": "keyword.declaration.function.surtr" },
+        {
+          "comment": "generator is hard-reserved (§3.7) and the one reserved word that also appears in type position, since generator<T> is what a call to a generator function produces. The lookahead form colors that type use like array/dict/tuple below; the bare form colors the member introducer standing where fun would. The two never overlap: a declaration's next token is always its name, a type use's is always '<'.",
+          "match": "\\bgenerator\\b(?=\\s*<)",
+          "name": "support.type.surtr"
+        },
+        { "match": "\\bgenerator\\b", "name": "keyword.declaration.function.surtr" },
         { "match": "\\bconstructor\\b", "name": "keyword.declaration.function.surtr" },
         { "match": "\\boperator\\b", "name": "keyword.declaration.function.surtr" },
         { "match": "\\b(?:class|interface|enum|singleton)\\b", "name": "keyword.declaration.type.surtr" },
@@ -366,6 +381,11 @@
           "name": "keyword.declaration.type.surtr"
         },
         { "match": "\\bimport\\b", "name": "keyword.control.import.surtr" },
+        {
+          "comment": "export marks re-exports (§2.1: `export import X.Y;` hands X.Y's surface out as this module's own). Reserved since before the generators wave but never colored here.",
+          "match": "\\bexport\\b",
+          "name": "keyword.control.import.surtr"
+        },
         {
           "comment": "get/set are not reserved at all - the parser recognizes them purely by position inside a property's accessor list (§3.4). A regex grammar cannot see that position the way the real parser does, so this only fires for the accessor shapes that can never be a call: 'get'/'set' immediately followed by '=>', '{' or a bare ';' - a call like dict.get(k) always has '(' right after and never matches. The narrow false positive this still admits is a variable literally named get/set read bare before a ';' (e.g. 'return get;'); textDocument/semanticTokens is the robust fix for full position-accuracy, this is the regex-only approximation.",
           "match": "\\b(?:get|set)\\b(?=\\s*(?:=>|\\{|;))",

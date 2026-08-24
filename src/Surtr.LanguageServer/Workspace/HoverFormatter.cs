@@ -82,6 +82,7 @@ namespace Surtr.LanguageServer.Workspace
                 TypeSymbolKind.Dictionary => "dictionary",
                 TypeSymbolKind.Tuple => "tuple",
                 TypeSymbolKind.Closure => "closure",
+                TypeSymbolKind.Generator => "generator",
                 _ => "type",
             };
 
@@ -251,12 +252,21 @@ namespace Surtr.LanguageServer.Workspace
                 case MethodRole.PropertySetter:
                     return "set " + propertyNameOf(method) + "(" + ParameterText(method, 0) + ")";
                 default:
-                    name = "fun " + method.Name + typeParameters;
+                    // A generator is introduced by its own keyword standing where `fun` would (§3.7),
+                    // so its card reads the way the source does rather than as an ordinary method.
+                    name = (method.IsGenerator ? "generator " : "fun ") + method.Name + typeParameters;
                     break;
             }
 
             string parameters = ParametersText(method);
-            string suffix = method.ReturnType.IsVoid ? string.Empty : " : " + method.ReturnType.ToDisplayString();
+
+            // What follows the colon of a generator's declaration is the *element* (§3.7), which
+            // MethodSymbol keeps in YieldType; ReturnType is the view type (`generator<elem>`) every
+            // call site sees. The heading mirrors what was written — the view type still shows
+            // wherever the result of a call is displayed — and falls back to ReturnType when the two
+            // did not both survive an import.
+            TypeSymbol declaredReturn = method.IsGenerator && method.YieldType is { } element ? element : method.ReturnType;
+            string suffix = declaredReturn.IsVoid ? string.Empty : " : " + declaredReturn.ToDisplayString();
             return name + parameters + suffix;
         }
 
@@ -389,6 +399,7 @@ namespace Surtr.LanguageServer.Workspace
                 case TypeSymbolKind.ValueClass: return "value class";
                 case TypeSymbolKind.Singleton: return "singleton";
                 case TypeSymbolKind.Native: return "native type";
+                case TypeSymbolKind.Generator: return "built-in generator";
                 default: return "type";
             }
         }

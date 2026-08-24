@@ -263,6 +263,46 @@
       "(${1:args}) => ${2:expression}"
     ]
   },
+  "Generator function": {
+    "prefix": "generator",
+    "scope": "surtr",
+    "description": "A generator function — the declared type is the element; calling it produces a generator<T> (§3.7)",
+    "body": [
+      "generator ${1:name}(${2:args}): ${3:int} {",
+      "\t${4:yield ${5:value};}",
+      "}"
+    ]
+  },
+  "Delegating generator": {
+    "prefix": "yieldfrom",
+    "scope": "surtr",
+    "description": "Hand every element of a sequence out of this generator (§3.7); evaluates to what it delegated to returned",
+    "body": [
+      "yield from ${1:sequence};"
+    ]
+  },
+  "Using block": {
+    "prefix": "using",
+    "scope": "surtr",
+    "description": "Resources closed on every way out — break, return or exception (§9.2)",
+    "body": [
+      "using (let ${1:resource} = ${2:open()}) {",
+      "\t$3",
+      "}"
+    ]
+  },
+  "Coroutine send loop": {
+    "prefix": "sendloop",
+    "scope": "surtr",
+    "description": "Drive a coroutine two-way: send() answers the suspended yield, current reads what it handed back",
+    "body": [
+      "let ${1:g} = ${2:produce()};",
+      "$1.moveNext();",
+      "while ($1.send(${3:value})) {",
+      "\tlet ${4:element}: ${5:int} = $1.current;",
+      "}"
+    ]
+  },
   "Native import": {
     "prefix": "native",
     "scope": "surtr",

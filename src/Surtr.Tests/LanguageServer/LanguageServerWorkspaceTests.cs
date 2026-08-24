@@ -155,6 +155,23 @@ namespace Surtr.Tests.LanguageServer
             // the language in the same session that documented this list but never propagated here,
             // so completion never offered it even though it is a real, legal token.
             Assert.Contains("attribute", labels);
+
+            // The generators and disposal wave (Â§3.7, Â§9.2): "generator" and "yield" became hard-
+            // reserved, "using" had to be reserved because `using (x)` in statement position is
+            // indistinguishable from a call, and "export" joined the import forms â€” none of which
+            // reached this list until they were contrasted against Â§1.2 member by member.
+            Assert.Contains("generator", labels);
+            Assert.Contains("yield", labels);
+            Assert.Contains("using", labels);
+            Assert.Contains("export", labels);
+
+            // "noinline" (Â§3.6): the parser branches on it exactly like inline/forceinline, so it
+            // is offered even though Â§1.2 does not list it yet.
+            Assert.Contains("noinline", labels);
+
+            // "from" is contextual, recognized only directly after "yield" (Â§3.7) â€” offering it
+            // unconditionally would suggest a keyword an ordinary identifier position refuses.
+            Assert.DoesNotContain("from", labels);
         }
 
         [Fact]
@@ -1298,6 +1315,245 @@ public class Holder {
                 "Expected InvalidDestructuring among: " + Describe(diagnostics));
             Assert.True(invalid!.Span.Length > 0,
                 "The diagnostic must carry a span an editor can underline, not a bare position.");
+        }
+
+        #endregion
+
+        #region Generators, yield and disposal (§3.7 / §9.2)
+
+        /// <summary>
+        /// A <c>generator&lt;T&gt;</c> is a real built-in class, so its whole coroutine surface —
+        /// the iteration members it always had plus the four the coroutine work added — must
+        /// complete after a dot exactly like an array's members do.
+        /// </summary>
+        [Fact]
+        public void MemberCompletionOnAGeneratorOffersTheCoroutineSurface()
+        {
+            const string source =
+                "generator countdown(from: int): int {\n" +
+                "    var i = from;\n" +
+                "    while (i > 0) { yield i; i = i - 1; }\n" +
+                "}\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let g = countdown(3);\n" +
+                "        let first: int = g.current;\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int dotEnd = source.IndexOf("g.current", StringComparison.Ordinal) + "g.".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, path, source, dotEnd);
+            var labels = completion.Items.Select(item => item.Label).ToList();
+
+            foreach (string member in new[] { "iterate", "moveNext", "current", "send", "raise", "dispose", "result" })
+                Assert.Contains(member, labels);
+        }
+
+        /// <summary>
+        /// The hover on a generator call mirrors what the source wrote (§3.7): the introducer is
+        /// <c>generator</c>, not <c>fun</c>, and the type after the colon is the declared
+        /// <em>element</em> — the view type <c>generator&lt;int&gt;</c> a call produces shows up
+        /// wherever the result of the call is displayed, not in the declaration's own card.
+        /// </summary>
+        [Fact]
+        public void HoverOnAGeneratorCallMirrorsTheDeclarationShape()
+        {
+            const string source =
+                "generator countdown(from: int): int {\n" +
+                "    var i = from;\n" +
+                "    while (i > 0) { yield i; i = i - 1; }\n" +
+                "}\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let g = countdown(3);\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int callee = source.IndexOf("countdown(3)", StringComparison.Ordinal);
+
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, callee);
+
+            Assert.NotNull(hit);
+            Assert.Contains("generator countdown(from : int) : int", hit!.Markdown);
+            Assert.DoesNotContain("fun countdown", hit.Markdown);
+            Assert.DoesNotContain(": generator<", hit.Markdown);
+        }
+
+        /// <summary>
+        /// A <c>yield</c>'s operand is an ordinary expression: hover and member completion inside
+        /// it resolve like anywhere else. The walkers used to stop at the yield node itself, which
+        /// failed silently — no error, just a hover that answered everywhere except there.
+        /// </summary>
+        [Fact]
+        public void ExpressionsInsideAYieldOperandResolveLikeAnywhereElse()
+        {
+            const string source =
+                "public class Holder { public fun name(): string { return \"n\"; } }\n" +
+                "generator tagged(h: Holder): string {\n" +
+                "    yield h.name();\n" +
+                "    yield \"done\";\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Tagged.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Tagged.surtr");
+
+            // Hover on a call *inside* a plain yield operand — anchored on the callee's own name,
+            // which only resolves when the walk descends past the yield node into its operand.
+            int callee = source.IndexOf("h.name()", StringComparison.Ordinal) + "h.".Length;
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, callee);
+            Assert.NotNull(hit);
+            Assert.Contains("fun name()", hit!.Markdown);
+
+            // Member completion anchored at the dot inside the same yield operand: the bound
+            // receiver ends exactly where the dot sits, so the walk has to reach through the
+            // yield's own node to find it.
+            int dotEnd = source.IndexOf("h.name()", StringComparison.Ordinal) + "h.".Length;
+            var completion = CompletionProvider.Complete(workspace.Snapshot, path, source, dotEnd);
+            Assert.Contains(completion.Items, item => item.Label == "name");
+
+            // Hover inside a throw expression's operand — the same silent-gap pattern one wave
+            // older than the generators (§9.1), fixed by the same walker cases.
+            const string throwing =
+                "public class Failer {\n" +
+                "    public fun pick(fail: bool): string {\n" +
+                "        return fail ? \"fine\" : (throw InvalidOperationException(\"boom\"));\n" +
+                "    }\n" +
+                "}\n";
+            var throwingWorkspace = Tree(("app/Failer.surtr", throwing));
+            Assert.True(throwingWorkspace.Rebuild().Values.All(list => list.Count == 0),
+                "The throw-expression fixture itself must compile clean: " + Describe(diagnostics));
+
+            string failerPath = Path.Combine(_root, "app", "Failer.surtr");
+            int thrown = throwing.IndexOf("InvalidOperationException(\"boom\")", StringComparison.Ordinal);
+            var thrownHit = SymbolResolver.Resolve(throwingWorkspace.Snapshot, failerPath, throwing, thrown);
+            Assert.NotNull(thrownHit);
+        }
+
+        /// <summary>
+        /// A local initialized directly by a <c>yield</c> gets no <c>: unknown</c> hint — every
+        /// line of a coroutine would carry one, and the cast it demands is already visible at the
+        /// use. Inference from anything else keeps hinting, and parameter-name hints inside the
+        /// yield's operand still reach the arguments through the same walk.
+        /// </summary>
+        [Fact]
+        public void AYieldInitializerGetsNoUnknownHintButOrdinaryInferenceKeepsOne()
+        {
+            const string source =
+                "fun compute(v: int, tag: char): int { return v; }\n" +
+                "generator produce(): int {\n" +
+                "    let got = yield compute(7, 'x');\n" +
+                "    let plain = 42;\n" +
+                "    yield 2;\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Produce.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Produce.surtr");
+            var hints = InlayHintProvider.Compute(workspace.Snapshot, path, source);
+            var labels = hints.Select(h => h.Label?.ToString() ?? string.Empty).ToList();
+
+            Assert.DoesNotContain(": unknown", labels);
+            Assert.Contains(": int", labels);
+
+            // The parameter-name hints for compute(...) sit *inside* a yield operand; they only
+            // appear when the hint walk descends into it.
+            Assert.Contains("v:", labels);
+            Assert.Contains("tag:", labels);
+        }
+
+        /// <summary>
+        /// <c>IIterator&lt;T&gt;</c> extends <c>IDisposable</c> (§9.2), so a hand-written cursor
+        /// now owes a <c>dispose()</c> too — and the existing implement-missing-members fix must
+        /// stub it along with everything else, with an edit that compiles clean.
+        /// </summary>
+        [Fact]
+        public void ImplementMissingMembersStubsDisposeForAnIteratorObligatedByIDisposable()
+        {
+            const string source =
+                "public class Cursor : IIterator<int> {\n" +
+                "    public var current: int;\n" +
+                "    public fun moveNext(): bool { return false; }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Cursor.surtr", source));
+            workspace.Rebuild();
+
+            string path = Path.Combine(_root, "app", "Cursor.surtr");
+            int somewhereInClass = source.IndexOf("class Cursor", StringComparison.Ordinal);
+
+            var actions = CodeActionProvider.Complete(workspace.Snapshot, path, source, somewhereInClass);
+            var action = Assert.Single(actions);
+            var edit = Assert.Single(Assert.Single(action.Edit!.Changes).Value);
+
+            Assert.Contains("fun dispose()", edit.NewText);
+            Assert.Contains(": void", edit.NewText);
+
+            string patched = ApplyEdit(source, edit);
+            var patchedWorkspace = Tree(("app/Cursor.surtr", patched));
+            var patchedDiagnostics = patchedWorkspace.Rebuild();
+            Assert.True(patchedDiagnostics.Values.All(list => list.Count == 0),
+                "The stub the code action generated must itself compile clean: " + Describe(patchedDiagnostics) + "\n" + patched);
+        }
+
+        /// <summary>
+        /// Semantic tokens descend into a yield's operand: the written target of an <c>as</c> cast
+        /// under a <c>yield</c> is tagged as a type, not left to fall through to the grammar as a
+        /// variable. The fixture is one line so the encoded deltas map straight to offsets.
+        /// </summary>
+        [Fact]
+        public void SemanticTokensTagTypesInsideAYieldOperand()
+        {
+            const string source =
+                "public class Widget { } generator make(): Widget { let w: Widget = Widget(); yield w as Widget; }";
+
+            var workspace = Tree(("app/Make.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Make.surtr");
+            var tokens = SemanticTokensProvider.Compute(workspace.Snapshot, path, source);
+
+            int offset = 0;
+            bool tagged = false;
+            var data = tokens.Data;
+            for (int i = 0; i + 4 < data.Count; i += 5)
+            {
+                Assert.Equal(0, data[i]);
+
+                offset += data[i + 1];
+                int length = data[i + 2];
+                int tokenType = data[i + 3];
+
+                if (offset == source.IndexOf("as Widget", StringComparison.Ordinal) + "as ".Length
+                    && length == "Widget".Length
+                    && tokenType == 1)
+                {
+                    tagged = true;
+                }
+            }
+
+            Assert.True(tagged, "Expected the 'Widget' written after 'as' inside the yield operand to be tagged as a type.");
         }
 
         #endregion

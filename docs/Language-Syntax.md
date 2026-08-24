@@ -82,9 +82,9 @@ abstract   alias     as        break     case      catch       class     const
 constructor          continue  default   else      enum        extension false
 finally    for       forceinline         fun       generator   if        import
 in         inline    interface internal  is        let         moduleof  native
-null       operator  override  private   protected public      return    sealed
-singleton  static    switch    throw     true      try         typeof    using
-var        virtual   while     yield
+noinline   null      operator  override  private   protected   public    return
+sealed     singleton static    switch    throw     true        try       typeof
+using      var       virtual   while     yield
 ```
 
 And a sixth line, because the list keeps growing and `export` joined §2.1's imports:
@@ -683,7 +683,7 @@ accidentally exposed outside a type without saying so.
 A consistent left-to-right order for every member:
 
 ```
-<visibility>? <static>? <sealed>? <virtual|override|abstract>? <inline|forceinline>? <const>? <native>? <let|var|constructor|fun|alias|operator>? <name> ...
+<visibility>? <static>? <sealed>? <virtual|override|abstract>? <inline|forceinline|noinline>? <const>? <native>? <let|var|constructor|fun|alias|operator>? <name> ...
 ```
 
 The parser enforces this order — a modifier written out of turn (`static public fun f(): void { }`,
@@ -835,17 +835,17 @@ switches that accessor to custom logic while leaving the other one auto-generate
 error. This is exactly the `get_x`/`set_x` accessor-method shape `SurtrPropertyBuilder` already
 wires for built-ins, applied to user-declared classes too.
 
-An `inline`/`forceinline` on the property applies to its accessors (§3.6) — unless the accessor
-writes its own, per the rule below.
+An `inline`/`forceinline`/`noinline` on the property applies to its accessors (§3.6) — unless the
+accessor writes its own, per the rule below.
 
 **An accessor may carry its own modifier run**, independently of the other and of the property:
-visibility, `virtual`/`override`/`abstract`, `sealed`, and `inline`/`forceinline`, written directly
-before `get`/`set` in the same left-to-right order §3.2 fixes for a member. Whatever an accessor
-does *not* write, it inherits from the property — visibility and the inline hint independently of
-each other, and dispatch (`virtual`/`override`/`abstract`) together with `sealed` as one pair, since
-`sealed` only qualifies an `override`. This is why writing just `private` on a setter changes
-nothing else about it: the setter still inherits the property's own dispatch and inline hint, only
-its visibility narrowed.
+visibility, `virtual`/`override`/`abstract`, `sealed`, and `inline`/`forceinline`/`noinline`,
+written directly before `get`/`set` in the same left-to-right order §3.2 fixes for a member.
+Whatever an accessor does *not* write, it inherits from the property — visibility and the inline
+hint independently of each other, and dispatch (`virtual`/`override`/`abstract`) together with
+`sealed` as one pair, since `sealed` only qualifies an `override`. This is why writing just
+`private` on a setter changes nothing else about it: the setter still inherits the property's own
+dispatch and inline hint, only its visibility narrowed.
 
 ```
 public value: int {
