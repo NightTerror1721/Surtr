@@ -90,7 +90,12 @@ namespace Surtr.Compiler.Binding
             var analysis = new FlowAnalysis(diagnostics, sourceName, method);
             analysis.Statement(body);
 
-            if (analysis._reachable && !method.ReturnType.IsVoid && !method.ReturnType.IsNever && !method.ReturnType.IsError)
+            // A generator's declared return is `generator<T>`, but its body never returns one:
+            // falling off the end is how a generator ends, exactly as it is for a void method
+            // (§3.7). Asking it to return its own view type would report every correct generator.
+            if (analysis._reachable
+                && !method.IsGenerator
+                && !method.ReturnType.IsVoid && !method.ReturnType.IsNever && !method.ReturnType.IsError)
             {
                 diagnostics.ReportError(
                     SurtrDiagnosticCode.NotAllPathsReturn,
@@ -316,6 +321,13 @@ namespace Surtr.Compiler.Binding
                     _reachable = false;
                     return;
                 }
+
+                // A yield hands a value out and comes back: unlike a return it does not end the
+                // flow, so everything after it stays reachable and every local it reads counts as
+                // read there.
+                case BoundYieldStatement yield:
+                    Expression(yield.Value);
+                    return;
 
                 case BoundThrowStatement @throw:
                     Expression(@throw.Value);

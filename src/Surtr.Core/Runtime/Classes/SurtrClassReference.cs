@@ -39,6 +39,7 @@ namespace Surtr.Runtime.Classes
     ///             | 'L' '(' descriptor* ')' descriptor closure (params) -> return
     ///             | 'O' fullname ';' descriptor{arity} Surtr object type
     ///             | 'N' fullname ';' descriptor{arity} host-defined native type
+    ///             | 'Y' descriptor                     generator yielding T
     ///             | 'R'                                range of ints
     ///             | 'E'                                erased generic type parameter
     ///             | 'G' digit                          the declaring type's n-th generic parameter
@@ -99,6 +100,21 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>Descriptor symbol for <see cref="SurtrValueTypeCode.Closure"/>, followed by a parenthesized parameter list then the return descriptor.</summary>
         public const char SymbolClosure = 'L';
+
+        /// <summary>
+        /// Descriptor symbol for <see cref="SurtrValueTypeCode.Generator"/>, followed by the
+        /// descriptor of the element it yields.
+        /// </summary>
+        /// <remarks>
+        /// A nesting form like <c>A</c> rather than a bare symbol like <c>R</c>, because a
+        /// generator genuinely has something to be parameterised by. Carrying the element costs one
+        /// nested descriptor and keeps it visible to diagnostics, to <c>ToDisplayString</c> and to
+        /// cross-module checking - a caller in another module reads <c>YI</c> and knows it received
+        /// a <c>generator&lt;int&gt;</c> without any metadata flag. It is also what makes a call to
+        /// a generator an ordinary call: the stub's declared return descriptor already says what it
+        /// hands back.
+        /// </remarks>
+        public const char SymbolGenerator = 'Y';
 
         /// <summary>
         /// Descriptor symbol for <see cref="SurtrValueTypeCode.Range"/>.
@@ -392,6 +408,10 @@ namespace Surtr.Runtime.Classes
             return new SurtrClassReference(builder.ToString());
         }
 
+        /// <summary>Builds a reference to a generator yielding <paramref name="elementType"/>.</summary>
+        public static SurtrClassReference Generator(SurtrClassReference elementType)
+            => new(SymbolGenerator + elementType.Descriptor);
+
         /// <summary>Builds a reference to a Surtr object type by full name (for example <c>game.core:Entity.Handle</c>).</summary>
         public static SurtrClassReference Object(string fullName)
             => new(SymbolObject + fullName + NameTerminator);
@@ -617,6 +637,13 @@ namespace Surtr.Runtime.Classes
         public SurtrClassReference GetArrayElementType()
             => Slice(1, SkipDescriptor(Descriptor, 1));
 
+        /// <summary>
+        /// The element a generator yields. Only meaningful when <see cref="TypeCode"/> is
+        /// <see cref="SurtrValueTypeCode.Generator"/>.
+        /// </summary>
+        public SurtrClassReference GetGeneratorElementType()
+            => Slice(1, SkipDescriptor(Descriptor, 1));
+
         /// <summary>The key type of a dictionary reference. Only meaningful when <see cref="TypeCode"/> is <see cref="SurtrValueTypeCode.Dictionary"/>.</summary>
         public SurtrClassReference GetDictionaryKeyType()
             => Slice(1, SkipDescriptor(Descriptor, 1));
@@ -700,6 +727,9 @@ namespace Surtr.Runtime.Classes
             {
                 case SurtrValueTypeCode.Array:
                     return GetArrayElementType().ContainsOpenParameter();
+
+                case SurtrValueTypeCode.Generator:
+                    return GetGeneratorElementType().ContainsOpenParameter();
 
                 case SurtrValueTypeCode.Dictionary:
                     return GetDictionaryKeyType().ContainsOpenParameter()
@@ -855,6 +885,11 @@ namespace Surtr.Runtime.Classes
                     return index + 1;
 
                 case SymbolArray:
+                    return SkipDescriptor(descriptor, index + 1);
+
+                // One nested descriptor, exactly like an array: a generator carries the element it
+                // yields and nothing else.
+                case SymbolGenerator:
                     return SkipDescriptor(descriptor, index + 1);
 
                 case SymbolDictionary:
@@ -1033,6 +1068,7 @@ namespace Surtr.Runtime.Classes
             SymbolTuple => SurtrValueTypeCode.Tuple,
             SymbolDictionary => SurtrValueTypeCode.Dictionary,
             SymbolClosure => SurtrValueTypeCode.Closure,
+            SymbolGenerator => SurtrValueTypeCode.Generator,
             SymbolObject => SurtrValueTypeCode.Object,
             SymbolNative => SurtrValueTypeCode.Native,
             SymbolRange => SurtrValueTypeCode.Range,
@@ -1100,6 +1136,14 @@ namespace Surtr.Runtime.Classes
                 {
                     int next = AppendDisplay(builder, descriptor, index + 1);
                     builder.Append("[]");
+                    return next;
+                }
+
+                case SymbolGenerator:
+                {
+                    builder.Append("generator<");
+                    int next = AppendDisplay(builder, descriptor, index + 1);
+                    builder.Append('>');
                     return next;
                 }
 

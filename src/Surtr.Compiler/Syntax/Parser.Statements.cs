@@ -92,6 +92,12 @@ namespace Surtr.Compiler.Syntax
                     reader.Expect(TokenType.Semicolon, "';' after the return");
                     return new ReturnStatementSyntax(SpanFrom(start), returned);
 
+                case TokenType.KeywordYield:
+                    reader.Advance();
+                    ExpressionSyntax yielded = ParseExpression();
+                    reader.Expect(TokenType.Semicolon, "';' after the yielded value");
+                    return new YieldStatementSyntax(SpanFrom(start), yielded);
+
                 case TokenType.KeywordBreak:
                 case TokenType.KeywordContinue:
                     return ParseBreakOrContinue();

@@ -259,6 +259,21 @@ namespace Surtr.Compiler.Binding.BoundTree
         public BoundExpression? Value { get; }
     }
 
+    /// <summary>A <c>yield</c>: one element out of a generator, and a suspension (§3.7).</summary>
+    /// <remarks>
+    /// The value already carries its conversion to the declared element type, the way a
+    /// <see cref="BoundReturnStatement"/>'s does — a <c>yield</c> is checked against
+    /// <c>MethodSymbol.YieldType</c> by exactly the rules a <c>return</c> is checked against a
+    /// return type, so nothing downstream needs a second set.
+    /// </remarks>
+    public sealed class BoundYieldStatement : BoundStatement
+    {
+        internal BoundYieldStatement(SyntaxNode syntax, BoundExpression value) : base(syntax) => Value = value;
+
+        /// <summary>The element handed out.</summary>
+        public BoundExpression Value { get; }
+    }
+
     /// <summary>A <c>break</c> or a <c>continue</c>.</summary>
     public sealed class BoundBreakStatement : BoundStatement
     {

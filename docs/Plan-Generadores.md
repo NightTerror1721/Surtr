@@ -1,9 +1,10 @@
 # Plan-Generadores — Investigación: funciones generadoras (`generator`) para Surtr
 
-> **Estado:** investigación (sin implementar). Recoge el estudio comparado de generadores en otros
-> lenguajes, el diseño propuesto para Surtr — palabra clave `generator` en lugar de `fun`, nuevo
-> tipo built-in hermano de `SurtrClosure` — y las tres estrategias de implementación sobre la VM
-> propia, con recomendación y plan por fases.
+> **Estado:** fase 1 implementada (§13). Recoge el estudio comparado de generadores en otros
+> lenguajes, el diseño para Surtr — palabra clave `generator` como introductora de miembro, tipo
+> built-in `generator<T>` hermano de `SurtrClosure` — las tres estrategias sobre la VM propia con
+> su recomendación, la evaluación del encadenado (§11), las decisiones cerradas (§12) — que ganan
+> sobre §3, §5 y §6 — y lo que la fase 1 dejó construido y medido (§13).
 
 ---
 
@@ -362,3 +363,374 @@ Comparado con el patrón actual (clase `IIterator` + dos llamadas virtuales por 
 2. **Delegación `yield*`**: ¿fase 2 directa o se pospone hasta tener uso real?
 3. **Nombre del tipo en superficie**: `generator<T>` propuesto; alternativa `sequence<T>` choca
    con la stdlib existente.
+
+---
+
+## 11. Evaluación del encadenado (`yield*` / delegación)
+
+> Pedida antes de decidir si la delegación entra en la fase 1. Analiza qué es `yield*` bajo las
+> decisiones ya tomadas, qué cuesta sobre la estrategia B, cómo interactúa con `Sequence<T>`, y
+> propone un diseño concreto aunque se posponga.
+
+### 11.1 Bajo nuestras decisiones, `yield*` es azúcar puro
+
+Esto es lo primero que hay que fijar, porque cambia el peso de la decisión. En JS y Python
+`yield*`/`yield from` **no** es azúcar sobre un bucle: reenvía `send()` y `throw()` al generador
+interno, y la expresión *evalúa* al valor de retorno del interno. Las tres cosas son semántica
+propia, imposible de escribir con un `for`.
+
+Surtr no tiene ninguna de las tres — §2.6 descarta la inyección bidireccional, y §3.1 prohíbe
+`return expr;` en un generador, así que no hay valor de retorno que propagar. Con eso:
+
+```surtr
+yield* other;              // equivale exactamente a:
+for (x in other) { yield x; }
+```
+
+Son **semánticamente idénticos**, sin residuo. La consecuencia es doble y apunta en la misma
+dirección: posponer `yield*` no cierra ninguna puerta (el desazucarado es toda su semántica, así
+que añadirlo después es compatible por construcción), y añadirlo tampoco desbloquea nada que hoy
+sea inexpresable. Es comodidad y rendimiento, no capacidad.
+
+### 11.2 El coste sobre la estrategia B: la cadena se anida, no se fusiona
+
+§7 promete que un generador «fusiona las etapas en un frame» frente a los N objetos iterador de
+`Sequence.map(...).filter(...)`. Eso es cierto de un generador que hace el trabajo de las N etapas
+en su propio cuerpo, y **falso de una cadena de delegación**: `yield*` anida, no fusiona.
+
+Con el desazucarado ingenuo, en una cadena de N generadores donde cada uno delega en el siguiente,
+cada elemento tiene que subir por los N niveles. Cada nivel paga, por elemento:
+
+| Operación | Coste bajo estrategia B |
+|---|---|
+| Reanudar el nivel | copiar `LocalCount + profundidad de operandos` slots *hacia* la pila + montar frame |
+| `yield` que lo atraviesa | copiar la misma anchura *fuera* + desmontar frame |
+
+Es decir **2N copias de frame por elemento**, más 2N entradas/salidas de frame. La anchura real
+salva bastante la cara: un generador que solo delega es diminuto (1–2 locales, 1–2 operandos), así
+que cada nivel son 3–4 movimientos de 8 bytes. Una tubería de 5 etapas sale a ~30 movimientos de
+slot y 10 montajes de frame por elemento.
+
+Para calibrar, el patrón que hoy tiene la stdlib para lo mismo — `Sequence` con 5 iteradores
+encadenados — paga por elemento **10 despachos de interfaz** (`moveNext` + `current` por etapa),
+cada uno con su entrada de frame real. O sea que la cadena por copia sale *comparable*, quizá algo
+mejor, pero no arrasa. El «gran salto» de los generadores está en escribir un cuerpo que haga las
+cinco cosas, no en encadenar cinco generadores.
+
+### 11.3 Lo que sí arrasa: el enlace de delegación
+
+Existe una optimización que convierte la cadena de O(N) por elemento en O(1) amortizado, y es la
+razón principal por la que `yield*` merece ser una construcción del lenguaje en vez de un bucle
+escrito a mano. Es lo que hacen CPython (PEP 380) y V8.
+
+Cuando un generador ejecuta `yield*` sobre **otro generador**, en vez de reanudar al interno desde
+su propio cuerpo — lo que exige mantener vivo el frame del externo en cada ida y vuelta — el
+externo:
+
+1. copia su frame fuera **una sola vez**, como en cualquier `yield`;
+2. graba `Delegate = interno` y queda suspendido *sin frame*;
+3. a partir de ahí, `GenResume` sobre el externo **sigue la cadena de `Delegate`** hasta el
+   generador más interno que no delega, y reanuda **solo a ese**.
+
+Por elemento se paga entonces una reanudación y un `yield` del frame más interno, más un paseo de
+punteros por la cadena — sin copiar un solo slot de los niveles intermedios, que no están
+cambiando. La cadena solo se recorre de verdad cuando el interno se agota: se limpia el enlace y
+se reanuda al padre, que continúa tras su `yield*`.
+
+| Escenario | Sin enlace | Con enlace |
+|---|---|---|
+| Tubería estable de N etapas | 2N copias de frame por elemento | 2 copias + N saltos de puntero |
+| Agotamiento de un nivel | — | O(1), se limpia un enlace |
+| Recorrido de árbol, profundidad d | O(d) copias por elemento | O(1) amortizado (cada nivel se entra y sale una vez por subárbol) |
+
+El coste de implementación es pequeño y está *todo* en el camino de reanudación: un campo
+`Delegate` en `SurtrGenerator` y unas quince líneas en `GenResume`. Pero es precisamente el camino
+que la fase 1 está estrenando.
+
+**El caso que lo justifica** es el recorrido recursivo, que sin delegación no tiene forma decente:
+
+```surtr
+generator inorder(node: Node?): int {
+    if (node == null) { return; }
+    yield* inorder(node.left);
+    yield node.value;
+    yield* inorder(node.right);
+}
+```
+
+Escrito con `for (x in inorder(node.left)) { yield x; }` funciona igual, pero cada elemento sube
+por tantos frames como profundidad tenga el árbol.
+
+### 11.4 Dos lowerings, no uno
+
+El enlace de delegación **solo** sirve cuando el operando de `yield*` es estáticamente un
+`generator<T>`. Si es un `IIterable<T>` cualquiera — un array, una `Sequence`, una clase de
+usuario — no hay frame que enlazar y hay que caer al bucle. Así que `yield*` tiene dos
+lowerings elegidos por el tipo estático del operando:
+
+- **`generator<T>`** → `GenDelegate`: graba el enlace y suspende. Camino rápido.
+- **cualquier `IIterable<T>`** → el `for (x in it) { yield x; }` literal. Camino general.
+
+Es exactamente el mismo reparto que §4.2 ya hace en `for-in` entre el bucle indexado y el camino
+por interfaz, así que no introduce un principio nuevo — pero sí es una segunda ruta que mantener,
+y ese es el coste honesto de `yield*`.
+
+### 11.5 Interacción con `Sequence<T>` — y la buena noticia
+
+`Sequence<T>` guarda un **proveedor**, `() -> IIterator<T>`, no un iterador: por eso es
+recorrible más de una vez. Una función generadora *es* un proveedor, porque llamarla otra vez
+reinicia (§10.1). Y con la decisión de que `SurtrGenerator` implemente `IIterator<T>` además de
+`IIterable<T>`, un generador **es** directamente un `IIterator<T>`. Las dos cosas juntas dan el
+puente gratis:
+
+```surtr
+let s: Sequence<int> = Sequence<int>(() => digits(4021));
+let total = s.map(x => x * 2).filter(x => x > 2).count();
+```
+
+Nada nuevo que declarar, ninguna API que añadir: **los generadores entran como *fuentes* de la
+tubería existente desde el primer día, sin `yield*`**. Eso es lo que descarga a la delegación de
+ser urgente.
+
+Donde `yield*` sí pagaría dentro de la stdlib es en los dos iteradores que *son* delegación:
+`FlatMapIterator` y `ChainIterator`. Reescribirlos como generadores con `yield*` es la ganancia
+limpia; escritos con `for-in` anidado dan la misma semántica con un nivel más de frame por
+elemento mientras dure la secuencia interna.
+
+### 11.6 Seguridad: ciclos de delegación
+
+`yield* self`, o cualquier ciclo en la cadena de enlaces, se cubre sin código extra con el estado
+`Running` y su trap (§10.4): seguir la cadena hasta reanudar un generador que ya está corriendo
+lanza `InvalidOperationException` en vez de copiar un frame sobre el que está vivo.
+
+### 11.7 Recomendación
+
+**Fase 2, con el diseño de §11.3–11.4 ya fijado.** Tres razones, en orden de peso:
+
+1. **Bajo nuestra semántica es azúcar** (§11.1), así que posponerlo no cierra ninguna puerta ni
+   deja nada inexpresable — al contrario que en JS/Python, donde `yield*` es semántica propia.
+2. **Lo que lo hace valioso es el enlace de delegación** (§11.3), y ese enlace vive entero en el
+   camino de reanudación que la fase 1 está estrenando. Diseñarlo contra una fase 1 funcionando y
+   medida es sustancialmente mejor que diseñarlo a ciegas.
+3. **Nada en el árbol lo necesita todavía**: la fase 1 no reescribe la stdlib (§10.2), y el puente
+   con `Sequence<T>` (§11.5) ya da la composición perezosa sin delegación.
+
+Lo que sí conviene hacer *en* la fase 1, y cuesta casi nada: dejar el hueco. Un campo `Delegate`
+declarado en `SurtrGenerator` desde el principio, aunque siempre valga `null`, y el paseo de la
+cadena escrito como un bucle trivial en `GenResume` — para que la fase 2 sea añadir un opcode y un
+lowering, no reabrir el protocolo de reanudación.
+
+---
+
+## 12. Decisiones tomadas
+
+> Cierra §10 y corrige los puntos donde el diseño propuesto no encajaba con el código. Lo que
+> diga esta sección gana sobre §3, §5 y §6, que se escribieron antes.
+
+### 12.1 Superficie
+
+| Decisión | Resuelto |
+|---|---|
+| Introductora | **`generator`, no `generator fun`** — es una palabra clave introductora de miembro como `constructor` y `operator`, y sustituye a `fun` entera: `public generator digits(n: int): int { ... }` |
+| Reserva | **`generator` y `yield` son reservadas duras** (§1.2). Cero colisiones en las fuentes `.surtr` del árbol, así que no rompe nada |
+| Tipo en superficie | **`generator<T>`** |
+| Cuerpo de flecha | **Rechazado** — una expresión no puede contener un `yield`, así que un generador exige cuerpo de bloque |
+| Cuerpo sin ningún `yield` | **Legal** (generador vacío, útil como caso base) **con warning**, porque casi siempre es un olvido |
+| Retorno `void` | **Error** — un generador declara su *elemento*, y `void` no es un tipo |
+
+### 12.2 Reinicio: modelo mixto, y el caso silencioso se convierte en error
+
+Confirmado el modelo de §3.2 — llamar de nuevo a la función crea un generador nuevo y reinicia; el
+mismo objeto es de un solo uso — **con un añadido**: iterar un generador **ya iniciado** lanza
+`InvalidOperationException` en vez de recorrer vacío. Recorrer en silencio un generador agotado es
+un bug que no se manifiesta; el trap lo convierte en un error legible sin tocar el caso normal,
+donde la expresión del `for-in` produce un generador recién creado.
+
+El trap vive en los **dos** caminos: en `iterate()` para el camino por interfaz, y en el opcode
+`GenIterate` para el camino rápido de §12.5, que no pasa por `iterate()`.
+
+### 12.3 El descriptor lleva el elemento: `Y<elem>`
+
+§3.2 proponía el símbolo desnudo `'Y'` por analogía con `closure`, y la analogía es falsa:
+`closure` **no** borra sus parámetros (`L(II)F` los lleva completos) y `array` es `AI`. El único
+símbolo desnudo es `R`, y porque un rango no tiene nada que parametrizar.
+
+Así que el descriptor es **`Y<elem>`**: `YI` es `generator<int>`, `YOgame:Vec2;` es
+`generator<Vec2>`. Mantiene el lookahead de un carácter, cuesta cero, y conserva el elemento para
+diagnósticos, `ToDisplayString()` y re-chequeo cross-module.
+
+### 12.4 Stub + cuerpo: el sitio de llamada es una llamada ordinaria
+
+§6 hacía que el sitio de llamada emitiese `GenNew <token>`, lo que obliga a saber estáticamente que
+el destino es un generador — un bit en metadatos, un bump de formato de imagen, y despacho virtual
+imposible (un `override` podría no ser generador, y no hay `GenNewVirtual`).
+
+En su lugar, `ModuleEmitter` emite **dos métodos por generador**, como C# con sus iteradores:
+
+| | Nombre | Retorno | Cuerpo |
+|---|---|---|---|
+| **stub** | `digits` | `YI` | `GenNew $generator$digits$0` sobre sus argumentos, y `ReturnValue` |
+| **cuerpo** | `$generator$digits$0` | `V` | el código real, con `Yield` |
+
+Lo que compra:
+
+- **El sitio de llamada es una llamada ordinaria**, sin opcode ni metadatos nuevos. El descriptor
+  de retorno del stub (§12.3) ya dice `generator<int>`, así que cross-module no hace falta ningún
+  bit: **no hay bump de `SurtrModuleImage.FormatVersion`**.
+- **`virtual`/`override`/`abstract` sobre un generador salen gratis**, porque el stub se despacha
+  como cualquier método — y los generadores en interfaces, que §9 aparcaba a fase 2, se vuelven
+  casi triviales: una interfaz declara un método que devuelve `generator<T>`.
+- `$generator$digits$0` encaja en el esquema `$categoría$contexto$índice` de `SyntheticNames`.
+
+Cuesta una entrada extra en la tabla de métodos por generador y **un frame de más por creación**,
+no por elemento.
+
+### 12.5 Ejecución: dos caminos, como §4.2 con `for-in`
+
+`SurtrGenerator` implementa **`IIterable<T>` e `IIterator<T>` a la vez**, y `iterate()` devuelve
+`this` — con el objeto de un solo uso (§12.2) un cursor aparte sería una asignación por recorrido
+sin ganar nada. Es además el modelo de JS/Python.
+
+- **Camino rápido**: cuando el tipo estático de la secuencia de un `for-in` es `generator<T>`, el
+  emisor baja a opcodes directos. El frame del generador se empuja en el mismo bucle `Run`, sin
+  llamada nativa ni re-entrada en la VM.
+- **Camino general**: cuando el generador viaja como `IIterable<T>`, el `moveNext` nativo reanuda
+  re-entrando en la VM. Correcto y uniforme, y notablemente más caro por elemento.
+
+Es el mismo reparto que §4.2 ya hace entre el bucle indexado y el camino por interfaz.
+
+**Cinco opcodes nuevos desde `0xF6`**: `GenNew`, `GenIterate`, `GenResume`, `GenCurrent`, `Yield`.
+
+### 12.6 Estados: cuatro, no tres, y como enum
+
+§3.2 daba tres estados en un entero. Son cuatro y son un `enum SurtrGeneratorState`:
+
+| Estado | Significado |
+|---|---|
+| `NotStarted` | creado, cuerpo sin arrancar |
+| `Suspended` | parado en un `yield`, con su frame en `Slots` |
+| `Running` | ejecutándose ahora mismo |
+| `Exhausted` | terminado, por caída al final, por `return;` o por excepción |
+
+`Running` es el que faltaba: sin él, un generador que se reanuda a sí mismo — directa o
+indirectamente, y en fase 2 a través de un ciclo de delegación — copiaría su frame encima del que
+está vivo. Reanudar uno que ya está `Running` lanza `InvalidOperationException`.
+
+### 12.7 Alcance de la fase 1
+
+**Dentro**: funciones de módulo, métodos de instancia y estáticos, genéricos, y **extensiones**
+(§15) — el parser despacha miembros por keyword introductora en un único `switch` que las
+extensiones reutilizan, así que salen casi gratis.
+
+**Fuera**: constructores, operadores, accessors de propiedad, lambdas, interfaces, `const fun`, e
+**`inline`/`forceinline`** — un cuerpo de generador no se puede splicear en el sitio de llamada, así
+que la combinación es un error de compilación.
+
+**Valores multi-slot**: un `yield` de una `value class` de varios campos o de una tupla **boxea**,
+igual que hace el camino de interfaz. Una sola representación en fase 1; mantenerlo ancho en el
+camino rápido queda como optimización medible.
+
+**`yield` dentro de `try` sigue prohibido** (§5.4), con diagnóstico propio. `try` que no contenga
+ningún `yield` es legal.
+
+**La stdlib no se toca**: los doce `XxxIterator<T>` de `Sequence.surtr` quedan intactos. Mezclar la
+sustitución con la introducción del mecanismo haría imposible saber a qué achacar una regresión.
+
+**Sí entra un caso en `Surtr.Bench`** (generador vs iterador a mano vs bucle directo), para tener
+número base desde el principio — y porque el acuerdo de checksum entre las tres implementaciones
+del harness es una red de correctitud que los tests no dan.
+
+### 12.8 El destino es el modelo completo, y es la fase 3
+
+`yield*` llega en fase 2 con el enlace de delegación de §11.3. Pero el destino declarado **no** es
+el `yield*` de §11.1 — azúcar bajo nuestra semántica reducida — sino el comportamiento completo de
+JS/Python, que son generadores como **corrutinas**:
+
+| Pieza | Qué arrastra |
+|---|---|
+| `gen.send(v)` | `yield` pasa a ser una **expresión**, con tipo: un segundo parámetro `generator<TYield, TSend>` (TS: `Generator<T, TReturn, TNext>`) o `unknown` con cast en cada `yield` |
+| `return expr;` en generador, y `yield*` evaluando a él | un tercer parámetro `TReturn`, y `yield*` pasa de sentencia a expresión |
+| `gen.throw(e)` / `close()` | reabrir §5.4 — `try/finally` cruzando un `yield` |
+
+Y una pieza que **Surtr no tiene y los otros sí**: el registro de entidades barre soltando la
+referencia, **sin hook de finalización** (`SurtrRuntimeEntity`, `SurtrDictionary`), así que un
+generador abandonado a medias no correría nunca su `finally` por recolección — donde CPython lo
+cierra por refcount y JS por el motor. La garantía de Python exige **cierre determinista**: que el
+`for-in` emita un `close` al salir, `break` y excepción incluidos, que es lo que hace `foreach` de
+C# con `IDisposable`. Surtr no tiene hoy ninguna historia de disposición, así que eso es un hueco
+de lenguaje que la fase 3 tiene que resolver, no un detalle de implementación.
+
+Por eso es fase 3 con plan propio, y por eso la fase 1 **no reserva sitio**: descriptor `Y<elem>`
+limpio y `yield` atado como sentencia. Las imágenes se rechazan por versión y el árbol entero
+recompila, así que crecer el descriptor o convertir `yield` en expresión más adelante cuesta una
+recompilación, no una incompatibilidad — y encarecer hoy el 99% del uso (iteración simple) por el
+1% futuro es mal negocio.
+
+---
+
+## 13. Fase 1: implementada
+
+> Estado al cierre de la fase 1. Lo que sigue es lo que existe en el árbol, no lo que se planeó.
+
+### 13.1 Qué se construyó
+
+| Pieza | Dónde |
+|---|---|
+| Tipo de valor `generator` | `SurtrValueTypeCode.Generator` (insertado en la corrida de built-ins, entre `Closure` y `Range`) |
+| Descriptor `Y<elem>` | `SurtrClassReference.SymbolGenerator`, factoría `Generator(elem)`, `GetGeneratorElementType()`, y las ramas de `SkipDescriptor`/`CodeOf`/`AppendDisplay`/`ContainsOpenParameter` |
+| Objeto runtime | `Runtime/Objects/SurtrGenerator.cs` — `Slots`/`SlotCount`/`ResumeOffset`/`Current`/`State`/`Delegate`, y el `enum SurtrGeneratorState` de cuatro estados |
+| Clase built-in | `SurtrBuiltIns.Generator` + `Runtime/BuiltIns/SurtrGeneratorBuiltIns.cs` (`iterate` devolviendo `this`, `moveNext`, `current`), satisfaciendo `IIterable<T>` e `IIterator<T>` |
+| Opcodes | `GenNew` `0xF6`, `GenIterate` `0xF7`, `GenResume` `0xF8`, `GenCurrent` `0xF9`, `Yield` `0xFA` |
+| Intérprete | los cinco cuerpos escritos en el bucle de despacho, más `SurtrCallFrame.Generator` y `SurtrVirtualMachine.ResumeGenerator` para el camino nativo |
+| Emisor de bytecode | los cinco métodos de nivel 2 en `SurtrCodeEmitter.OpCodes.cs`, y el desensamblador |
+| Léxico y sintaxis | `KeywordGenerator`/`KeywordYield` reservadas duras, `generator` como introductora de miembro, `YieldStatementSyntax`, `generator<T>` en posición de tipo |
+| Binder | `MethodSymbol.IsGenerator`/`YieldType`, `BindGeneratorShape`, `BindYield`, `GeneratorTypeSymbol`, y las ramas de `Conversions`/`MemberLookup.BackingType`/`MetadataImporter`/`DescriptorEmitter` |
+| Emisión | el split stub/cuerpo en `ModuleEmitter` (clase, módulo y extensión), `EmitGeneratorFactory` y `EmitYield` en `MethodBodyEmitter`, y el camino rápido `EmitForInGenerator` |
+| Tests | `src/Surtr.Tests/VM/SurtrVirtualMachineGeneratorTests.cs` (8, a nivel de opcode) y `src/Surtr.Tests/Compiler/CodeGen/GeneratorEmissionTests.cs` (32, de fuente a ejecución) |
+| Banco | los casos `genYield` y `handIterator` en `Surtr.Bench`, en Surtr, Lua y C# |
+
+**No hizo falta el bit `IsGenerator` en metadatos.** El descriptor de retorno del stub ya dice
+`YI`, y §12.4 hace que la llamada sea ordinaria, así que un módulo que importe otro no necesita
+saber nada más. El único bump de formato (`SurtrModuleImage.FormatVersion` 8 → 9) es por la
+renumeración de `SurtrValueTypeCode`, no por los generadores.
+
+### 13.2 Lo que midió el banco
+
+50.000 elementos, `-c Release`, mediana de 7 iteraciones:
+
+| Caso | surtr ms | objetos | Qué es |
+|---|---|---|---|
+| `forIn` | 0.67 | 1 | bucle indexado sobre un array — el suelo |
+| `genYield` | **1.42** | **1** | generador: suspender y reanudar un frame por elemento |
+| `handIterator` | 1.60 | 1 | la clase cursor escrita a mano, llamada directamente |
+| `iterator` | 4.76 | 50.000 | el camino general `iterate()`/`moveNext()` por interfaz |
+
+Tres lecturas:
+
+- **Un generador sale algo más rápido que el cursor escrito a mano** (1.42 frente a 1.60) y
+  **3.4× más rápido que el camino por interfaz**, que es lo que §7 predijo: una copia de frame por
+  elemento cuesta menos que dos despachos de interfaz.
+- **Asigna un solo objeto**, independientemente de cuántos elementos produzca. El buffer de slots se
+  reserva entero al crear el generador, así que ningún `yield` asigna — y frente a los 50.000
+  objetos del camino por interfaz, esa columna es la diferencia que un presupuesto de frame nota.
+- **Sigue costando ~2× un bucle indexado**, que es el precio honesto de la suspensión. Un `for-in`
+  sobre un array no debe convertirse en un generador; lo que un generador sustituye es la clase.
+
+Un defecto propio salió de esta medición: la primera versión del camino rápido copiaba de
+`EmitForInIterable` su `BoxDynamic`, que allí normaliza un valor leído de una ranura borrada. En el
+camino del generador los dos extremos son conocidos, así que boxear era una asignación por elemento
+— 50.000 objetos y 1.9 MB. `UnboxDynamic` cubre los dos casos reales sin asignar nada, y es lo que
+lleva la columna `objs` de 50.000 a 1.
+
+### 13.3 Lo que la fase 1 no cierra
+
+- **`yield*`**, con el diseño de §11 ya fijado. El campo `Delegate` y el paseo de la cadena en
+  `GenResume` están escritos, aunque nunca iteren.
+- **Generadores en interfaces**, que §12.4 abarata mucho: con el stub, una interfaz solo tendría que
+  declarar un método que devuelva `generator<T>`.
+- **`yield` dentro de `try`**, aparcado en §5.4 hasta que exista una semántica escrita de cierre.
+- **Los doce iteradores de la stdlib**, intactos a propósito (§12.7).
+- **Un `yield` de valor multi-slot boxea**, en los dos caminos. Mantenerlo ancho en el camino rápido
+  es una optimización medible, no una corrección pendiente.
+- **Las corrutinas completas de §12.8** — `send`/`throw`/`close`, `yield` como expresión, `return`
+  con valor —, que son fase 3 y arrastran el hueco de cierre determinista que Surtr no tiene.

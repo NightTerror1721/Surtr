@@ -79,6 +79,12 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordFun:
                     return ParseMethod(start, docComment, attributes, modifiers);
 
+                // Everything a generator's header holds is a method's header, so the same parse
+                // runs; what the flag changes is downstream, where the written return type is read
+                // as the element rather than as what a call hands back (§3.7).
+                case TokenType.KeywordGenerator:
+                    return ParseMethod(start, docComment, attributes, modifiers, isGenerator: true);
+
                 case TokenType.KeywordLet:
                 case TokenType.KeywordVar:
                     return ParseField(start, docComment, attributes, modifiers);
@@ -725,11 +731,11 @@ namespace Surtr.Compiler.Syntax
 
         /// <summary>Parses a method, or a module-level function (§3.2, §2.5).</summary>
         private DeclarationSyntax ParseMethod(SourceLocation start, IReadOnlyList<string> docComment,
-            IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers)
+            IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers, bool isGenerator = false)
         {
             reader.Advance();
 
-            string name = reader.ExpectIdentifier("a method name");
+            string name = reader.ExpectIdentifier(isGenerator ? "a generator name" : "a method name");
             IReadOnlyList<TypeParameterSyntax> typeParameters = ParseTypeParameterList();
             IReadOnlyList<ParameterSyntax> parameters = ParseParameterList();
 
@@ -745,6 +751,12 @@ namespace Surtr.Compiler.Syntax
             BlockStatementSyntax? body = null;
             if (reader.Check(TokenType.FatArrow))
             {
+                // §3.7: an arrow body is one expression, and an expression cannot contain a
+                // `yield`, so a generator written this way could only ever be an empty one with a
+                // discarded expression in it. Rejected outright rather than silently accepted.
+                if (isGenerator)
+                    throw reader.Error(SurtrDiagnosticCode.GeneratorNeedsABlockBody, "A generator needs a block body: an arrow body is a single expression, which cannot contain a 'yield' (§3.7).");
+
                 bool returnsVoid = returnType is NamedTypeSyntax namedReturnType
                     && namedReturnType.Path.Count == 1
                     && namedReturnType.Path[0] == "void";
@@ -757,7 +769,7 @@ namespace Surtr.Compiler.Syntax
 
             return new MethodDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, name, typeParameters,
                 parameters, returnType, body, modifiers.IsStatic, modifiers.Dispatch, modifiers.IsSealed,
-                modifiers.Inline, modifiers.IsConst, modifiers.IsNative);
+                modifiers.Inline, modifiers.IsConst, modifiers.IsNative, isGenerator);
         }
 
         /// <summary>Parses a constructor and its optional <c>: super(...)</c> or <c>: this(...)</c> chain (§3.2).</summary>

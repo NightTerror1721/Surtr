@@ -35,6 +35,9 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>A closure type, written <c>(A, B) -&gt; R</c>.</summary>
         Closure,
 
+        /// <summary>A generator type, written <c>generator&lt;T&gt;</c> (§3.7).</summary>
+        Generator,
+
         /// <summary>A generic type parameter, declared by a type or by a method.</summary>
         TypeParameter,
 

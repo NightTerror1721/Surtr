@@ -146,6 +146,16 @@ namespace Surtr.Compiler.Syntax
         /// <summary><c>fun</c> - introduces a method or a module-level function (§3.2, §2.5).</summary>
         KeywordFun,
 
+        /// <summary>
+        /// <c>generator</c> - introduces a generator, standing where <c>fun</c> would (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// An introducer of its own rather than a modifier on <c>fun</c>, following
+        /// <c>constructor</c> and <c>operator</c>: §3.2 settles what a member is by the keyword that
+        /// opens it, and a generator is a different kind of member, not a decorated method.
+        /// </remarks>
+        KeywordGenerator,
+
         /// <summary><c>if</c> (§4.1).</summary>
         KeywordIf,
 
@@ -236,6 +246,9 @@ namespace Surtr.Compiler.Syntax
 
         /// <summary><c>while</c> (§4.2).</summary>
         KeywordWhile,
+
+        /// <summary><c>yield</c> - hands one element out of a generator and suspends it (§3.7).</summary>
+        KeywordYield,
 
         /// <summary><c>export</c> - marks an import as re-exposed by its module (§2.1's re-export).</summary>
         KeywordExport,

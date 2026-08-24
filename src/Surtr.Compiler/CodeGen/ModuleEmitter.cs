@@ -63,6 +63,23 @@ namespace Surtr.Compiler.CodeGen
         private readonly Dictionary<NamedTypeSymbol, SurtrMethodInfo> _builtDefaultConstructors =
             new Dictionary<NamedTypeSymbol, SurtrMethodInfo>();
 
+        /// <summary>
+        /// The hidden body method behind each generator's stub (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// A generator declares two entries in the method table: the stub, which
+        /// <see cref="EmitContext"/> binds to the symbol because it is what every call site names,
+        /// and the body, which only <c>GenNew</c> ever names. Keeping the second here rather than in
+        /// the context is deliberate - nothing outside emission should be able to reach a method the
+        /// symbol table has no symbol for.
+        /// </remarks>
+        private readonly Dictionary<MethodSymbol, SurtrMethodBuilder> _generatorBodies =
+            new Dictionary<MethodSymbol, SurtrMethodBuilder>();
+
+        /// <summary>How many generators of each name a container has declared, for body naming.</summary>
+        private readonly Dictionary<string, int> _generatorNameCounts =
+            new Dictionary<string, int>(StringComparer.Ordinal);
+
         private readonly List<SurtrModule> _modules = new List<SurtrModule>();
 
         private readonly Dictionary<string, SurtrModule> _modulesByPath =
@@ -836,6 +853,42 @@ namespace Surtr.Compiler.CodeGen
             context.Declare(method, builder);
             ApplyValueLayout(builder, method);
             emission.Methods.Add((method, builder));
+
+            if (method.IsGenerator)
+            {
+                var body = @class.DefineMethod(
+                    GeneratorBodyName(method),
+                    SurtrClassReference.Void,
+                    Parameters(context, method),
+                    method.IsStatic,
+                    SurtrMethodDispatch.Direct,
+                    isOverride: false,
+                    SurtrVisibility.Private,
+                    isSealed: false);
+
+                DeclareGenericParameters(body, method);
+                ApplyValueLayout(body, method);
+                _generatorBodies[method] = body;
+            }
+        }
+
+        /// <summary>
+        /// A distinct name for one generator's hidden body, unique within its container.
+        /// </summary>
+        /// <remarks>
+        /// Two overloads of one generator name would otherwise produce two bodies called the same
+        /// thing. Numbering by declared name rather than by signature keeps the name readable in a
+        /// disassembly, which is the only place it is ever seen.
+        /// </remarks>
+        private string GeneratorBodyName(MethodSymbol method)
+        {
+            string owner = method.ContainingSymbol?.Name ?? string.Empty;
+            string key = owner + "." + method.Name;
+
+            _generatorNameCounts.TryGetValue(key, out int index);
+            _generatorNameCounts[key] = index + 1;
+
+            return SyntheticNames.GeneratorBody(method.Name, index);
         }
 
         /// <summary>
@@ -1037,6 +1090,22 @@ namespace Surtr.Compiler.CodeGen
                 }
 
                 context.Declare(method, function);
+
+                // The same two-entry split a generator gets inside a class: `function` is the stub
+                // that returns a `generator<T>`, and the body holding the `yield`s is a second,
+                // private function nothing but `GenNew` names.
+                if (method.IsGenerator)
+                {
+                    var generatorBody = builder.DefineFunction(
+                        GeneratorBodyName(method),
+                        SurtrClassReference.Void,
+                        Parameters(context, method),
+                        SurtrVisibility.Private);
+
+                    DeclareGenericParameters(generatorBody, method);
+                    ApplyValueLayout(generatorBody, method);
+                    _generatorBodies[method] = generatorBody;
+                }
             }
 
             // An extension method (§15) is, by the time it reaches here, an ordinary module-level
@@ -1104,6 +1173,23 @@ namespace Surtr.Compiler.CodeGen
             }
 
             context.Declare(method, function);
+
+            // An extension method is a module-level function by the time it reaches here (§15), so
+            // a generator among them splits exactly as one declared with `fun` at module scope
+            // does. The body is not marked as an extension: nothing resolves against it, only
+            // `GenNew` names it.
+            if (method.IsGenerator)
+            {
+                var generatorBody = builder.DefineFunction(
+                    GeneratorBodyName(method),
+                    SurtrClassReference.Void,
+                    Parameters(context, method),
+                    SurtrVisibility.Private);
+
+                DeclareGenericParameters(generatorBody, method);
+                ApplyValueLayout(generatorBody, method);
+                _generatorBodies[method] = generatorBody;
+            }
         }
 
         private SurtrParameterInfo[] Parameters(EmitContext context, MethodSymbol method)
@@ -1372,7 +1458,7 @@ namespace Surtr.Compiler.CodeGen
 
             // An ancestor may already answer this slot: either it declares a virtual member of the
             // same erased shape, or the emitter gave one a bridge when IT was emitted (recorded on
-            // the ancestor's symbol � imported ancestors carry their bridges as ordinary virtual
+            // the ancestor's symbol � imported ancestors carry their bridges as ordinary virtual
             // metadata instead). Either way the slot is filled by inheritance, and a second bridge
             // here would collide with the inherited vtable entry at load.
             for (var walk = owner.BaseType; walk is not null; walk = walk.BaseType)
@@ -1591,7 +1677,7 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
-            // �6.3's boxed-receiver convention exists for a single-field value class only: the box
+            // �6.3's boxed-receiver convention exists for a single-field value class only: the box
             // names the class, the unbox hands the body back the very field its frame holds. A
             // multi-field value class has none yet - the box crosses the call as one reference slot
             // while this frame would claim the whole width - so a non-Direct method on one is
@@ -1602,6 +1688,30 @@ namespace Surtr.Compiler.CodeGen
             {
                 throw new SurtrEmitException(
                     "a non-Direct method on a multi-field value class has no receiver convention across a call yet");
+            }
+
+            // A generator is two methods (§3.7): what the caller reaches builds the object, and what
+            // the source wrote lives in a body only `GenNew` names. Emitting both here rather than
+            // at the declaration keeps every caller of EmitBody - class members, module functions,
+            // extensions - covered by one change.
+            if (symbol.IsGenerator)
+            {
+                if (!_generatorBodies.TryGetValue(symbol, out var generatorBody))
+                    throw new SurtrEmitException($"'{symbol.Name}' is a generator whose body method was never declared.");
+
+                new MethodBodyEmitter(builder, symbol, context)
+                    .EmitGeneratorFactory(generatorBody.Token);
+
+                var emitter = new MethodBodyEmitter(generatorBody, symbol, context);
+                emitter.Emit(body);
+
+                // Falling off the end is how a generator ends, so the body always needs the return
+                // the source never writes - and `Emit` only appends one for a void method, which
+                // this is not: its symbol's return type is the generator it produces.
+                if (generatorBody.Code.IsReachable)
+                    generatorBody.Code.ReturnVoid();
+
+                return;
             }
 
             new MethodBodyEmitter(builder, symbol, context).Emit(body);

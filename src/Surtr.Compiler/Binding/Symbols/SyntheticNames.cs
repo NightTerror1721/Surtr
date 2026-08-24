@@ -45,6 +45,9 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>The category of the static field holding a <c>singleton</c>'s one instance.</summary>
         public const string InstanceCategory = "instance";
 
+        /// <summary>The category of a generator's hidden body method.</summary>
+        public const string GeneratorCategory = "generator";
+
         /// <summary>
         /// The name of the receiver parameter an extension property's accessor synthesises (§15.1).
         /// An extension method's receiver is always written out by the user (§15's own explicit-
@@ -81,6 +84,19 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>The name of an auto-property's backing field.</summary>
         /// <param name="propertyName">The property it backs.</param>
         public static string BackingField(string propertyName) => Build(BackingCategory, propertyName);
+
+        /// <summary>
+        /// The name of a generator's hidden body: the method holding what the source actually
+        /// wrote (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// The generator's own name stays on the stub, which is what every call site names and what
+        /// the vtable holds - so the body needs a name nothing in source can spell, and one that
+        /// cannot collide with a second generator of the same name in an overload set.
+        /// </remarks>
+        /// <param name="context">The generator's declared name.</param>
+        /// <param name="index">Its position among that name's overloads, from zero.</param>
+        public static string GeneratorBody(string context, int index) => Build(GeneratorCategory, context, index);
 
         /// <summary>Whether a name was produced by this class rather than written in source.</summary>
         public static bool IsSynthetic(string name) => name.Length > 0 && name[0] == Marker;

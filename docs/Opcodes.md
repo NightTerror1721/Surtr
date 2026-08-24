@@ -8,13 +8,13 @@ documentation on each member; this file is that content laid out for reading, pl
 only make sense across the whole set. `docs/VM-Plan.md` has the *why* behind the interpreter's
 shape, and `docs/Module-Format.md` describes the file these bytes live in.
 
-**238 opcodes are defined, spanning `0x00` through `0xF3`.** Six values inside that span —
+**245 opcodes are defined, spanning `0x00` through `0xFA`.** Six values inside that span —
 `0x2C`–`0x2F` (the old `Ldg`/`LdgX`/`Stg`/`StgX`) and `0xAA`–`0xAB` (the old
 `CallGlobalNative`/`CallGlobalNativeX`) — are **retired**: they used to cover the host-globals
 mechanism, which is gone now that a `native` member (module-level or on a class) is an ordinary
 member reached through the same tables and call opcodes as any other. A retired value is never
 reused — reusing one would make an old module silently execute a different instruction — so those
-six numbers simply have no opcode and never will. The 12 values `0xF4`–`0xFF`, plus the six retired
+six numbers simply have no opcode and never will. The 5 values `0xFB`–`0xFF`, plus the six retired
 ones, are what is free.
 
 ---
@@ -609,3 +609,19 @@ A one-field `value class` never reaches any of this. It erases to the field it w
 | `0xF1` | `StoreValueField` | `opcode(1) fieldIdx(2) n(1)` · 4 bytes | `..., obj, s1, ..., sn -> ...` | Pops a receiver and a multi-slot value into an instance's flattened field block. The write side of `LoadValueField`, and what every assignment to such a field lowers to - including the constructor splice, which is the only writer a `let` field ever gets. Copying the block is the value type's copy-on-assignment semantics showing at its storage boundary. |
 | `0xF2` | `LoadValueStatic` | `opcode(1) fieldIdx(2) n(1)` · 4 bytes | `... -> ..., s1, ..., sn` | Copies a multi-slot value out of a static's flattened storage. The static counterpart of `LoadValueField`. A static whose declared type is a multi-field value class owns `n` consecutive slots in its owner's static storage, addressed from the slot the linker bound - so the read is one indirect base plus a run, exactly what `StaticFieldGet` does for one slot. |
 | `0xF3` | `StoreValueStatic` | `opcode(1) fieldIdx(2) n(1)` · 4 bytes | `..., s1, ..., sn -> ...` | Pops a multi-slot value into a static's flattened storage. The write side of `LoadValueStatic` - what an assignment to such a static, and the static initializer that seeds it, both lower to. |
+
+## Generator Operations
+
+Five opcodes covering `generator` and `yield` (`Language-Syntax.md` §3.7). The split between them mirrors `iterate`/`moveNext`/`current` on purpose: a generator satisfies both `IIterable<T>` and `IIterator<T>`, so a `for-in` over one can go through those contract members — the general path, for a generator travelling as an interface — or lower to these, which do the same work without an interface dispatch, a native call and a re-entry into the machine per element. It is the same division §4.2 already makes between an indexed loop and the contract.
+
+Suspension is a **frame copy**, not a compiler-built state machine: `Yield` copies the live frame — locals plus pending operands — out of the data stack into the generator, and `GenResume` copies it back at whatever base is free then. Locals keep their indices because every access is frame-base-relative, which is what makes a frame relocatable at all. The price is the restriction every language in this family accepts: a `yield` must be lexically inside the generator, never inside something it calls, because that frame is gone by then. `docs/Plan-Generadores.md` §4 has the full rationale and the two strategies that were not chosen.
+
+A generator is reached through a **stub**: the compiler emits two methods per declaration, one carrying the generator's own name and declared return `Y<elem>` whose whole body is `GenNew` plus a return, and one hidden body holding the `yield`s. So a call to a generator is an ordinary call — no metadata flag, no dedicated call opcode, and `virtual`/contract dispatch works because the stub dispatches like any method.
+
+| Value | Opcode | Encoding | Stack | What it does |
+|---|---|---|---|---|
+| `0xF6` | `GenNew` | `opcode(1) methodIdx(2) typeIdx(2) argsCount(1)` · 6 bytes | `..., a1, ..., aN -> ..., generator` | Builds a generator over the body method at `methodIdx`, without running any of it. Pops exactly `argsCount` slots, receiver included, and stores them as the generator's incoming arguments; the body does not start until something resumes it, which is what makes calling a generator function free of side effects. `methodIdx` names the compiler's hidden body method, never the stub that emits this. `typeIdx` carries the whole parameterised type (`YI`, `YS`) for the same reason `ArrNew` does: the body's own return descriptor says nothing about what it yields, and the object has to keep its type. Allocates, so it routes through the safepoint. |
+| `0xF7` | `GenIterate` | `opcode(1)` · 1 byte | `..., generator -> ..., generator` | Checks that a generator has not been iterated yet, leaving it where it was. The compiled path's copy of what `iterate()` checks, emitted once per loop rather than per element. A generator object is single-use, so walking one that has already started traps with `InvalidOperationException` instead of quietly iterating nothing; restarting means calling the generator function again. |
+| `0xF8` | `GenResume` | `opcode(1)` · 1 byte | `..., generator -> ..., bool` | Resumes a generator until its next `yield` or its end. `true` if the body yielded, in which case the value is held on the generator and `GenCurrent` reads it; `false` if it finished. The frame is rebuilt in the running machine rather than through a nested run, so a resume costs a block copy and a frame entry. The generator's own stack slot becomes the result slot, which is also what keeps it reachable for the whole resume. Resuming one that is already running traps with `InvalidOperationException`; resuming an exhausted one answers `false`. |
+| `0xF9` | `GenCurrent` | `opcode(1)` · 1 byte | `..., generator -> ..., value` | Reads the value a generator's last `yield` produced. Only meaningful after a `GenResume` that answered `true`. Reads the same field the native `current` accessor reads, so the two paths cannot disagree about what the last element was. |
+| `0xFA` | `Yield` | `opcode(1)` · 1 byte | `..., value -> ` (the frame is suspended, not popped to a result) | Suspends the executing generator, handing back one value. Copies the live frame into the generator, records where to resume, writes the answer into the slot the resumer left below the frame, and returns control to whoever resumed it. To the resumer this behaves exactly like a return, which is what lets one `Yield` serve both the compiled fast path and a resume driven by host code. A value wider than one slot is boxed by the compiler on the way in, so this always moves exactly one slot. Legal only in a body reached through a resume; the compiler guarantees that by never emitting it anywhere else. |

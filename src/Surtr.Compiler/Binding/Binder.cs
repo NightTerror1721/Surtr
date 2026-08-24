@@ -2308,6 +2308,7 @@ namespace Surtr.Compiler.Binding
                     IsNoInline = method.Inline == InlineModifier.NoInline,
                     ExtensionDeclaringContainer = containingType,
                     ExtensionIsStatic = method.IsStatic,
+                    IsGenerator = method.IsGenerator,
                 };
 
                 // The block's own type parameters (§15.4), written explicitly only when a bound is
@@ -2341,10 +2342,23 @@ namespace Surtr.Compiler.Binding
 
                 extMethod.ExtensionTargetType = target;
 
-                if (method.ReturnType is not null)
+                if (method.IsGenerator)
+                {
+                    // The same split a class's or a module's generator gets: the written type is the
+                    // element, and the member's own return becomes `generator<element>`. Routed
+                    // through the shared helper so §3.7's refusals read identically wherever a
+                    // generator is declared.
+                    BindGeneratorShape(extMethod, method, methodScope, sourceName);
+                }
+                else if (method.ReturnType is not null)
+                {
                     extMethod.ReturnType = _resolver.Resolve(method.ReturnType, methodScope, sourceName);
+                }
                 else
+                {
                     _inferReturnTypes.Add(extMethod);
+                }
+
                 extMethod.Parameters = BindParameters(method.Parameters, extMethod, methodScope, sourceName);
 
                 // An instance extension's receiver — `obj.method()` is bound against it — is an
@@ -3827,6 +3841,7 @@ namespace Surtr.Compiler.Binding
                 IsForceInline = syntax.Inline == InlineModifier.ForceInline,
                 IsNoInline = syntax.Inline == InlineModifier.NoInline,
                 IsConst = syntax.IsConst,
+                IsGenerator = syntax.IsGenerator,
             };
 
             BindTypeParameters(method, syntax.TypeParameters, scope, binding.SourceName);
@@ -3853,6 +3868,7 @@ namespace Surtr.Compiler.Binding
                 IsForceInline = syntax.Inline == InlineModifier.ForceInline,
                 IsNoInline = syntax.Inline == InlineModifier.NoInline,
                 IsConst = syntax.IsConst,
+                IsGenerator = syntax.IsGenerator,
             };
 
             BindTypeParameters(method, syntax.TypeParameters, scope, sourceName);
@@ -3875,6 +3891,12 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         private void BindMethodReturnType(MethodSymbol method, MethodDeclarationSyntax syntax, Scope scope, string sourceName)
         {
+            if (syntax.IsGenerator)
+            {
+                BindGeneratorShape(method, syntax, scope, sourceName);
+                return;
+            }
+
             if (syntax.ReturnType is not null)
             {
                 method.ReturnType = _resolver.Resolve(syntax.ReturnType, scope, sourceName);
@@ -3896,6 +3918,77 @@ namespace Surtr.Compiler.Binding
             }
 
             _inferReturnTypes.Add(method);
+        }
+
+        /// <summary>
+        /// Settles a generator's two types and the rules §3.7 puts on the declaration.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The written return type is the <em>element</em>, following C#'s iterators, and the
+        /// method's own return type - what a call site sees - becomes
+        /// <c>generator&lt;element&gt;</c>. Everything downstream of here reads an ordinary method
+        /// returning an ordinary type; only <c>yield</c> looks at
+        /// <see cref="MethodSymbol.YieldType"/>.
+        /// </para>
+        /// <para>
+        /// The element is never inferred, unlike an ordinary method's return type. Inference reads a
+        /// body's <c>return</c>s, and a generator's carry no value - the elements come out of its
+        /// <c>yield</c>s, which may be nested in any control flow and may legitimately be absent.
+        /// Requiring it written is one rule rather than a second inference with different inputs.
+        /// </para>
+        /// </remarks>
+        private void BindGeneratorShape(MethodSymbol method, MethodDeclarationSyntax syntax, Scope scope, string sourceName)
+        {
+            if (syntax.Inline != InlineModifier.None && syntax.Inline != InlineModifier.NoInline)
+            {
+                // §3.6 splices a body into its call site. A generator's body does not run at the
+                // call site at all - the call builds an object and returns - so there is nothing to
+                // splice, and `forceinline` must fail rather than fall back silently.
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidGeneratorDeclaration,
+                    $"'{method.Name}' is a generator, so it cannot be inlined: a generator's body does not run at its call site (§3.7).");
+            }
+
+            if (syntax.IsConst)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidGeneratorDeclaration,
+                    $"'{method.Name}' cannot be both 'const' and a generator: folding one would have to run a body that is meant to be suspended (§3.7).");
+            }
+
+            if (syntax.IsNative)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidGeneratorDeclaration,
+                    $"'{method.Name}' cannot be both 'native' and a generator: a generator's suspension points are bytecode the compiler emits (§3.7).");
+            }
+
+            if (syntax.Body is null)
+            {
+                // Covers an abstract generator and one declared in an interface with the same
+                // sentence, because they are the same fact: a generator is defined by where its
+                // `yield`s are, and a declaration with no body has none. Phase 2 revisits this by
+                // letting a contract declare a method returning `generator<T>` instead.
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidGeneratorDeclaration,
+                    $"'{method.Name}' is a generator, so it needs a body: a generator is defined by the 'yield's in it (§3.7).");
+            }
+
+            if (syntax.ReturnType is null)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidGeneratorDeclaration,
+                    $"'{method.Name}' is a generator, so the element type it yields must be written after the ':'; it is not inferred from the body (§3.7).");
+                return;
+            }
+
+            var element = _resolver.Resolve(syntax.ReturnType, scope, sourceName);
+
+            if (element.SpecialType == SpecialType.Void)
+            {
+                ReportAt(sourceName, syntax.ReturnType.Span, SurtrDiagnosticCode.InvalidGeneratorDeclaration,
+                    $"'{method.Name}' declares 'void' as what it yields, but a generator's declared type is the element it produces, and 'void' is not a type (§3.7).");
+                return;
+            }
+
+            method.YieldType = element;
+            method.ReturnType = element.IsError ? _factory.ErrorType : _factory.Generator(element);
         }
 
         private MethodSymbol BindConstructor(

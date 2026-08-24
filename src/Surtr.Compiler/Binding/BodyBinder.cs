@@ -70,6 +70,19 @@ namespace Surtr.Compiler.Binding
         private int _loopDepth;
         private readonly List<string> _loopLabels = new List<string>();
 
+        /// <summary>How many enclosing <c>try</c> blocks a statement is inside (§3.7's yield rule).</summary>
+        private int _tryDepth;
+
+        /// <summary>
+        /// How many <c>yield</c>s this body has, so a generator that never yields can be reported.
+        /// </summary>
+        /// <remarks>
+        /// Counted here rather than found by a later walk because the binder is already visiting
+        /// every statement, and because the answer is about the <em>declaration</em> - it is
+        /// reported once, against the generator, not at any statement.
+        /// </remarks>
+        private int _yieldCount;
+
         /// <summary>One lambda whose body is being bound, and what it has been found to capture.</summary>
         /// <remarks>
         /// A stack rather than a single frame, because a lambda inside a lambda reading an outer
@@ -133,7 +146,24 @@ namespace Surtr.Compiler.Binding
         public MethodSymbol Method => _method;
 
         /// <summary>Binds a whole body.</summary>
-        public BoundBlockStatement BindBody(BlockStatementSyntax body) => (BoundBlockStatement)BindBlock(body);
+        public BoundBlockStatement BindBody(BlockStatementSyntax body)
+        {
+            var bound = (BoundBlockStatement)BindBlock(body);
+
+            // Legal - an empty generator is a genuine base case, the way `inorder(null)` wants to
+            // produce nothing - but far more often an omission, so it warns rather than passing in
+            // silence. Reported against the declaration, since there is no statement to point at.
+            if (_method.IsGenerator && _yieldCount == 0)
+            {
+                _diagnostics.ReportWarning(
+                    SurtrDiagnosticCode.GeneratorNeverYields,
+                    $"'{_method.Name}' is a generator but contains no 'yield', so iterating it produces nothing.",
+                    _sourceName,
+                    body.Span);
+            }
+
+            return bound;
+        }
 
         /// <summary>
         /// Binds a field's initializer against the field's own type.

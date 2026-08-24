@@ -40,6 +40,18 @@ namespace Surtr.Runtime.Classes
         Closure     = 9,
 
         /// <summary>
+        /// The built-in generator type, parameterized by the element it yields.
+        /// </summary>
+        /// <remarks>
+        /// Filed beside <c>Closure</c> because the two are the same kind of thing: a suspended
+        /// piece of code plus the state it needs to run. It is parameterised by one type - what a
+        /// <c>yield</c> hands back - so its descriptor is the nesting form <c>Y&lt;elem&gt;</c>
+        /// rather than the bare symbol <c>Range</c> gets, which is what keeps the element visible
+        /// to diagnostics and to cross-module checking.
+        /// </remarks>
+        Generator   = 10,
+
+        /// <summary>
         /// The built-in range type: a half-open or closed interval of integers.
         /// </summary>
         /// <remarks>
@@ -48,13 +60,13 @@ namespace Surtr.Runtime.Classes
         /// parameterised - both bounds are always <c>int</c> - which is why its descriptor is a
         /// bare symbol rather than a nesting form.
         /// </remarks>
-        Range       = 10,
+        Range       = 11,
 
         /// <summary>A class declared in Surtr source.</summary>
-        Object      = 11,
+        Object      = 12,
 
         /// <summary>A type defined by the embedding host rather than by Surtr source.</summary>
-        Native      = 12,
+        Native      = 13,
 
         /// <summary>
         /// What a generic type parameter erases to.
@@ -75,7 +87,7 @@ namespace Surtr.Runtime.Classes
         /// case.
         /// </para>
         /// </remarks>
-        Erased      = 13,
+        Erased      = 14,
 
         /// <summary>
         /// The absence of a value: the return "type" of a method that returns nothing.
@@ -87,7 +99,7 @@ namespace Surtr.Runtime.Classes
         /// <c>ReturnVoid</c> methods have nothing else to name. Kept last so every real type,
         /// reference types included, forms one contiguous range below it.
         /// </remarks>
-        Void        = 14,
+        Void        = 15,
     }
 
     /// <summary>Classification predicates and conversions for <see cref="SurtrValueTypeCode"/>.</summary>
@@ -110,11 +122,14 @@ namespace Surtr.Runtime.Classes
             /// <summary>Whether the code is a primitive (integer, float, boolean or character).</summary>
             public bool IsPrimitive => code >= SurtrValueTypeCode.Integer && code <= SurtrValueTypeCode.Character;
 
-            /// <summary>Whether the code is a built-in composite (string, array, tuple, dictionary, closure or range).</summary>
+            /// <summary>Whether the code is a built-in composite (string, array, tuple, dictionary, closure, generator or range).</summary>
             public bool IsBuiltIn => code >= SurtrValueTypeCode.String && code <= SurtrValueTypeCode.Range;
 
             /// <summary>Whether the code is <see cref="SurtrValueTypeCode.Range"/>.</summary>
             public bool IsRange => code == SurtrValueTypeCode.Range;
+
+            /// <summary>Whether the code is <see cref="SurtrValueTypeCode.Generator"/>.</summary>
+            public bool IsGenerator => code == SurtrValueTypeCode.Generator;
 
             /// <summary>Whether the code is <see cref="SurtrValueTypeCode.Object"/>.</summary>
             public bool IsObject => code == SurtrValueTypeCode.Object;

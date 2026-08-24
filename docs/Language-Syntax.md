@@ -80,11 +80,11 @@ Hard-reserved, never usable as an identifier:
 ```
 abstract   alias     as        break     case      catch       class     const
 constructor          continue  default   else      enum        extension false
-finally    for       forceinline         fun       if          import    in
-inline     interface internal  is        let       moduleof    native    null
-operator   override  private   protected public    return      sealed   singleton
-static     switch    throw     true      try       typeof      var      virtual
-while
+finally    for       forceinline         fun       generator   if        import
+in         inline    interface internal  is        let         moduleof  native
+null       operator  override  private   protected public      return    sealed
+singleton  static    switch    throw     true      try         typeof    var
+virtual    while     yield
 ```
 
 And a sixth line, because the list keeps growing and `export` joined §2.1's imports:
@@ -92,6 +92,13 @@ And a sixth line, because the list keeps growing and `export` joined §2.1's imp
 ```
 export
 ```
+
+`generator` and `yield` (§3.7) are hard-reserved rather than contextual, and deliberately so:
+`generator` introduces a member the way `constructor` and `operator` do, and `yield` opens a
+statement the way `return` does — the grammar branches on both, which is the standard §1.2 applies
+to everything on this list. `generator` is also the one reserved word that appears in type
+position, since `generator<T>` is the type a generator function's call produces; the two readings
+never overlap, because a declaration and a type never start in the same place.
 
 Four words are **contextual**, not reserved (§3.2): `this`, `super`, `value` and `attribute` mean
 something specific only where they are legal, and remain usable as ordinary identifiers everywhere
@@ -1041,6 +1048,123 @@ fallback depends on the build model, which does not exist yet — see §14.
 `inline` and `const` (§7) are independent and compose: `const` decides whether a call happens at
 compile time at all, `inline` decides how a call that survives to runtime is emitted.
 
+### 3.7 Generators: `generator` and `yield`
+
+A **generator** is a function that produces a sequence one element at a time, remembering where it
+left off between requests. It is introduced by `generator`, standing exactly where `fun` would —
+like `constructor` and `operator`, it is the keyword that says what kind of member this is, not a
+modifier on a method.
+
+```surtr
+generator countdown(from: int): int {
+    var i = from;
+    while (i > 0) {
+        yield i;
+        i = i - 1;
+    }
+}
+
+fun total(): int {
+    var sum = 0;
+    for (x in countdown(5)) { sum = sum + x; }   // 5 + 4 + 3 + 2 + 1
+    return sum;
+}
+```
+
+Four rules carry the whole construct:
+
+- **The declared type is the element**, not what a call hands back. `countdown` is declared `: int`
+  because each `yield` produces an `int`; calling it produces a `generator<int>`. This follows C#'s
+  iterators, and it is what keeps the declaration readable — the interesting type is the one the
+  body works in.
+- **`yield expr;` hands one element out and suspends.** The value converts to the declared element
+  by the same rules a `return` converts to a return type.
+- **`return;` ends the sequence**, as does falling off the end. `return expr;` is an error: a
+  generator produces elements, not a final result on top of them.
+- **Calling a generator runs none of its body.** The call captures the arguments and builds the
+  object; the body starts on the first request for an element. So a generator function is free of
+  side effects until something iterates it.
+
+#### The type: `generator<T>`
+
+`generator<T>` is a built-in type like `array` or `range`, writable anywhere a type is:
+
+```surtr
+let g: generator<int> = countdown(5);
+let xs: IIterable<int> = g;      // satisfies the contract, with nothing extra declared
+let cursor: IIterator<int> = g;  // and is its own cursor
+```
+
+It satisfies **both** `IIterable<T>` and `IIterator<T>`, and `iterate()` hands back the generator
+itself. That is not a shortcut — it follows from the next rule.
+
+#### One object, one walk; one call, one object
+
+A generator **object** is single-use: it holds one in-progress walk, and when that walk ends there
+is nothing left in it. Iterating one that has already started raises `InvalidOperationException`
+rather than quietly producing nothing, because an empty second loop is a bug that never announces
+itself.
+
+Restarting is calling the **function** again, which builds a fresh generator:
+
+```surtr
+let g = countdown(3);
+for (a in g) { }                      // 3, 2, 1
+for (b in g) { }                      // error: this generator has already been iterated
+
+for (a in countdown(3)) { }           // 3, 2, 1
+for (b in countdown(3)) { }           // 3, 2, 1 again - a different generator
+```
+
+This is JavaScript's and Python's model for the object and C#'s for the function, and the pair is
+what makes `for (x in countdown(5))` — by far the common case — always walk the whole sequence
+without anyone having to think about it. It also composes with `Sequence<T>` (§13.2) for free,
+since a `Sequence` holds a *provider* and a generator function is one:
+
+```surtr
+let s = Sequence<int>(() => countdown(5));
+let doubled = s.map(x => x * 2).toArray();
+```
+
+#### Where a generator may be written, and where a `yield` may
+
+A `generator` is legal as a module-level function, an instance or static method, and a member of an
+`extension` block (§15). It may declare type parameters like any other method.
+
+It is **not** legal as a constructor, an operator, a property accessor, a lambda, an interface
+member, or with `const` or `native` — and it cannot be `inline`/`forceinline`, because §3.6 splices
+a body into its call site and a generator's body does not run at its call site at all.
+
+A `yield` is legal only in the lexical body of a generator. Three placements are refused:
+
+| Placement | Why |
+|---|---|
+| Outside a generator | there is no element type to convert against |
+| Inside a lambda nested in a generator | the lambda is a function of its own, with its own frame; the generator's frame is not in reach to suspend |
+| Inside a `try` | suspending would leave a handler pending across a pause nothing is obliged to end |
+
+The `try` restriction is the one worth stating plainly: a generator body cannot wrap a `yield` in
+`try/catch` or `try/finally` at all. A `try` containing no `yield` is fine, and so is a `try/catch`
+around the *consumption* of a generator — an exception raised inside a body propagates out of the
+request that reached it, and exhausts the generator.
+
+A generator whose body contains no `yield` is legal and produces nothing — a useful base case for a
+recursive walk — but warns, because it is far more often an omission.
+
+#### What it costs
+
+A `for-in` whose sequence is statically a `generator<T>` compiles to a direct suspend/resume with
+no interface dispatch and no iterator object, the same way §4.2 lowers a loop over an array to an
+indexed walk. The contract is what makes a generator assignable to an `IIterable<T>`; it is not
+what a loop over one runs.
+
+The suspension itself copies the live frame — locals and pending operands — out of the machine's
+stack and back in on the next request. That is why a `yield` cannot cross a call: by the time a
+function a generator called is running, the generator's own frame is no longer the one on top.
+Every language in this family accepts the same restriction. In exchange, a local that lives across
+a `yield` stays a local: nothing is promoted to the heap, and a generator costs exactly one
+allocation however many elements it produces.
+
 ---
 
 ## 4. Control flow
@@ -1164,6 +1288,7 @@ What each yields:
 | `string` | `char` |
 | `range` | `int` |
 | `{K: V}` | `(K, V)` — a pair per entry |
+| `generator<T>` | `T` (§3.7) |
 
 A dictionary yields **pairs**, not keys: iterating one almost always wants both halves, and the
 keys-only form is already spelled `for (k in d.keys())`. A dictionary is walked over a snapshot of

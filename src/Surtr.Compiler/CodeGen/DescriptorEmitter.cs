@@ -129,6 +129,11 @@ namespace Surtr.Compiler.CodeGen
                     Append(builder, ((ArrayTypeSymbol)type).ElementType);
                     return;
 
+                case TypeSymbolKind.Generator:
+                    builder.Append(SurtrClassReference.SymbolGenerator);
+                    Append(builder, ((GeneratorTypeSymbol)type).ElementType);
+                    return;
+
                 case TypeSymbolKind.Dictionary:
                 {
                     var dictionary = (DictionaryTypeSymbol)type;

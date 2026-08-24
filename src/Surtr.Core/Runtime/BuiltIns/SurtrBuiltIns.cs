@@ -84,6 +84,18 @@ namespace Surtr.Runtime.BuiltIns
         /// <summary>The <c>closure</c> class, behind every <see cref="SurtrClosure"/> whatever its signature.</summary>
         public static readonly SurtrClass Closure;
 
+        /// <summary>
+        /// The <c>generator</c> class, behind every <see cref="SurtrGenerator"/> whatever it yields.
+        /// </summary>
+        /// <remarks>
+        /// The one built-in that satisfies <em>both</em> <c>IIterable&lt;T&gt;</c> and
+        /// <c>IIterator&lt;T&gt;</c>. A generator object is single-use, so a separate cursor would
+        /// be an allocation per loop that could only ever hand back the same position this object
+        /// already holds - <c>iterate()</c> returns the receiver instead. It is also the shape
+        /// JavaScript and Python settled on for the same reason.
+        /// </remarks>
+        public static readonly SurtrClass Generator;
+
         /// <summary>The <c>range</c> class, behind every <see cref="SurtrRange"/>.</summary>
         public static readonly SurtrClass Range;
 
@@ -262,6 +274,7 @@ namespace Surtr.Runtime.BuiltIns
             Tuple = Declare("tuple", SurtrValueTypeCode.Tuple, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolTuple.ToString()));
             Dictionary = Declare("dict", SurtrValueTypeCode.Dictionary, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolDictionary.ToString()));
             Closure = Declare("closure", SurtrValueTypeCode.Closure, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolClosure.ToString()));
+            Generator = Declare("generator", SurtrValueTypeCode.Generator, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolGenerator.ToString()));
             // Unlike its neighbours this one's SelfReference is a well-formed descriptor, because
             // a range has nothing to be parameterised by: R names the type completely.
             Range = Declare("range", SurtrValueTypeCode.Range, SurtrClassReference.Range);
@@ -300,6 +313,7 @@ namespace Surtr.Runtime.BuiltIns
             ByTypeCode[(int)SurtrValueTypeCode.Tuple] = Tuple;
             ByTypeCode[(int)SurtrValueTypeCode.Dictionary] = Dictionary;
             ByTypeCode[(int)SurtrValueTypeCode.Closure] = Closure;
+            ByTypeCode[(int)SurtrValueTypeCode.Generator] = Generator;
             ByTypeCode[(int)SurtrValueTypeCode.Range] = Range;
             ByTypeCode[(int)SurtrValueTypeCode.Native] = NativeObject;
             ByTypeCode[(int)SurtrValueTypeCode.Erased] = Erased;
@@ -311,6 +325,12 @@ namespace Surtr.Runtime.BuiltIns
             // could not describe either, and neither has a member that would want one.
             Array.SetGenericParameters("T");
             Dictionary.SetGenericParameters("K", "V");
+
+            // Same reason as array's: `current` is declared against the element, so the class needs
+            // a parameter for G0 to name. Tuple and closure still declare none - each is
+            // parameterised by a list whose length varies per value - but a generator yields one
+            // type, so it takes exactly one.
+            Generator.SetGenericParameters("T");
 
             SurtrPrimitiveBuiltIns.DeclareInteger(BuilderFor(Integer, handles));
             SurtrPrimitiveBuiltIns.DeclareFloat(BuilderFor(Float, handles));
@@ -360,6 +380,10 @@ namespace Surtr.Runtime.BuiltIns
             SurtrIteratorBuiltIns.DeclareIterable(BuilderFor(Tuple, handles), SurtrIteratorKind.Tuple);
             SurtrIteratorBuiltIns.DeclareIterable(BuilderFor(Dictionary, handles), SurtrIteratorKind.Dictionary);
             SurtrIteratorBuiltIns.DeclareIterable(BuilderFor(Range, handles), SurtrIteratorKind.Range);
+
+            // Declared here rather than beside the other composites because it names both contracts
+            // and has to follow them, and because it is the one built-in that is its own cursor.
+            SurtrGeneratorBuiltIns.Declare(BuilderFor(Generator, handles));
 
             // The comparability contracts, declared the same way and for the same reason: a
             // `max<T : IComparable<T>>` names a contract, so the value families have to be able to

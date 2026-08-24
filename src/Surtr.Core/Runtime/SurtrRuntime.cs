@@ -602,6 +602,19 @@ namespace Surtr.Runtime
         }
         #endregion
 
+        /// <summary>
+        /// Runs <paramref name="generator"/> until its next <c>yield</c> or its end.
+        /// </summary>
+        /// <remarks>
+        /// Internal because it is one half of an operation: the value produced is left on the
+        /// generator for <c>current</c> to read, so a host driving one by hand would have to keep
+        /// the two in step itself. The built-in <c>moveNext</c> is the supported way in, and a
+        /// compiled loop does not come through here at all - it lowers to <c>GenResume</c>.
+        /// </remarks>
+        /// <returns><see langword="true"/> if the body yielded; <see langword="false"/> if it finished.</returns>
+        internal bool ResumeGenerator(SurtrGenerator generator)
+            => VirtualMachine.ResumeGenerator(generator);
+
         #region Value Access
         /// <summary>The value naming <paramref name="entity"/>, or null if it is not registered.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

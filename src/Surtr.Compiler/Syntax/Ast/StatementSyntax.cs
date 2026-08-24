@@ -356,6 +356,28 @@ namespace Surtr.Compiler.Syntax.Ast
         }
     }
 
+    /// <summary>A <c>yield</c>: hands one element out of a generator and suspends it (§3.7).</summary>
+    /// <remarks>
+    /// A statement rather than an expression, deliberately. In JavaScript and Python <c>yield</c>
+    /// is an expression because it evaluates to what <c>send()</c> injected; Surtr has no injection
+    /// in phase 1, so an expression form would be one that always has the same type and no value.
+    /// Growing it into an expression later is a contained change - see
+    /// <c>docs/Plan-Generadores.md</c> §12.8.
+    /// </remarks>
+    public sealed class YieldStatementSyntax : StatementSyntax
+    {
+        /// <summary>The element handed out.</summary>
+        public ExpressionSyntax Value { get; }
+
+        /// <summary>Initializes a yield statement.</summary>
+        /// <param name="span">The source the statement covers.</param>
+        /// <param name="value">The element handed out.</param>
+        public YieldStatementSyntax(SourceSpan span, ExpressionSyntax value) : base(span)
+        {
+            Value = value;
+        }
+    }
+
     /// <summary>A <c>break</c> or <c>continue</c>, optionally naming an enclosing labelled loop (§4.2).</summary>
     public sealed class BreakStatementSyntax : StatementSyntax
     {

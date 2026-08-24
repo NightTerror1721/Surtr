@@ -99,6 +99,13 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         InvalidParameterList = 2012,
 
+        /// <summary>
+        /// A <c>generator</c> was written with an arrow body (§3.7). An arrow body is one
+        /// expression, and <c>yield</c> is a statement, so the declaration could only ever be an
+        /// empty generator whose expression is discarded.
+        /// </summary>
+        GeneratorNeedsABlockBody = 2013,
+
         #endregion
 
         #region Binding — 3xxx
@@ -493,6 +500,28 @@ namespace Surtr.Compiler.Diagnostics
         /// the way C# reports CS0454.
         /// </summary>
         CircularTypeParameterConstraint = 3069,
+
+        /// <summary>
+        /// A <c>yield</c> appeared where there is nothing to yield from (§3.7): outside a
+        /// generator, inside a lambda nested in one, or inside a <c>try</c>. The lambda case is the
+        /// one worth naming - the lambda compiles to a closure with a frame of its own, and phase 1
+        /// suspends a frame by copying it, so there is no generator frame in reach to suspend.
+        /// </summary>
+        InvalidYield = 3070,
+
+        /// <summary>
+        /// A <c>generator</c> declaration breaks one of §3.7's rules: it returns <c>void</c>, it
+        /// carries <c>inline</c>/<c>forceinline</c>, or it is declared <c>const</c>, <c>native</c>
+        /// or in an interface.
+        /// </summary>
+        InvalidGeneratorDeclaration = 3071,
+
+        /// <summary>
+        /// A <c>generator</c> body contains no <c>yield</c> (§3.7). Legal - an empty generator is a
+        /// useful base case - but reported as a warning, because it is far more often an omission
+        /// than an intention.
+        /// </summary>
+        GeneratorNeverYields = 3072,
 
         #endregion
 

@@ -46,7 +46,8 @@ namespace Surtr.Bytecode
     /// </para>
     /// <para>
     /// <b>New opcodes take a free value at the end and are never given one already in use.</b>
-    /// 0x00 through 0xE6 are assigned; 0xE7 through 0xFF are free. Reusing a retired
+    /// 0x00 through 0xFA are assigned, apart from the six retired values 0x2C-0x2F and 0xAA-0xAB;
+    /// 0xFB through 0xFF are free. Reusing a retired
     /// value would make an old module silently execute a new instruction, so a retired value stays
     /// retired. Changing how a module is *framed*, rather than what runs inside it, is what
     /// <c>SurtrModuleImage.FormatVersion</c> is for.
@@ -1118,6 +1119,78 @@ namespace Surtr.Bytecode
         /// slot. No allocation, so no safepoint.
         /// </remarks>
         RangeUnpack = 0xF5,
+        #endregion
+
+        #region Generator Operations
+        // Five opcodes, and the split between them mirrors `iterate`/`moveNext`/`current` on
+        // purpose: a generator satisfies both `IIterable<T>` and `IIterator<T>`, so a `for-in` over
+        // one can either go through those contract members - the general path, for a generator
+        // travelling as an interface - or lower to these, which do the same work without an
+        // interface dispatch, a native call or a re-entry into the machine. It is the same split
+        // Language-Syntax.md §4.2 already makes between an indexed loop and the contract.
+
+        /// <summary>Builds a generator over the body method at <c>methodIdx</c>, without running it.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) methodIdx(2) typeIdx(2) argsCount(1)</c> - 6 bytes.<br/>
+        /// Stack: <c>..., a1, ..., aN -&gt; ..., generator</c><br/>
+        /// Notes: pops exactly <c>argsCount</c> values, receiver included, and stores them as the
+        /// generator's incoming arguments; the body does not start until something resumes it, which
+        /// is what makes calling a generator function free of side effects (§3.1). <c>methodIdx</c>
+        /// names the compiler's hidden body method, never the stub that emits this - the stub is an
+        /// ordinary method whose declared return is <c>Y&lt;elem&gt;</c>, which is what keeps every
+        /// call site to a generator an ordinary call. <c>typeIdx</c> carries the whole parameterised
+        /// type (<c>YI</c>, <c>YS</c>) for the same reason <see cref="ArrNew"/> does: the body's own
+        /// return descriptor says nothing about what it yields, and the object has to keep its type.
+        /// Allocates, so it routes through the safepoint.
+        /// </remarks>
+        GenNew = 0xF6,
+
+        /// <summary>Checks that a generator has not been iterated yet, leaving it on the stack.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., generator -&gt; ..., generator</c><br/>
+        /// Notes: the fast path's counterpart to what <c>iterate()</c> checks, emitted once per loop
+        /// rather than per element. A generator object is single-use, so walking one that has already
+        /// started would silently iterate nothing; this traps with
+        /// <c>InvalidOperationException</c> instead. Calling the generator <em>function</em> again is
+        /// what restarts (§12.2).
+        /// </remarks>
+        GenIterate = 0xF7,
+
+        /// <summary>Resumes a generator until its next <c>yield</c> or its end.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., generator -&gt; ..., bool</c><br/>
+        /// Notes: <see langword="true"/> if the body yielded, in which case the value is held on the
+        /// generator and <see cref="GenCurrent"/> reads it; <see langword="false"/> if it finished.
+        /// The frame is rebuilt in the running machine rather than through a nested run, so a
+        /// resume costs a block copy and a frame entry. Resuming a generator that is already running
+        /// traps with <c>InvalidOperationException</c>; resuming an exhausted one answers
+        /// <see langword="false"/>.
+        /// </remarks>
+        GenResume = 0xF8,
+
+        /// <summary>Reads the value a generator's last <c>yield</c> produced.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., generator -&gt; ..., value</c><br/>
+        /// Notes: only meaningful after a <see cref="GenResume"/> that answered
+        /// <see langword="true"/>. Reads the same field the native <c>current</c> accessor reads, so
+        /// the two paths cannot disagree about what the last element was.
+        /// </remarks>
+        GenCurrent = 0xF9,
+
+        /// <summary>Suspends the executing generator, handing back one value.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., value -&gt; </c> (the frame is suspended, not popped to a result)<br/>
+        /// Notes: copies the live frame - locals plus pending operands - into the generator, records
+        /// where to resume, and returns control to whoever resumed it. To the resumer this behaves
+        /// exactly like a return, which is what lets one <c>Yield</c> serve both the compiled fast
+        /// path and a resume that came from host code. Legal only in a body reached through
+        /// <see cref="GenResume"/>; the compiler guarantees that by never emitting it anywhere else.
+        /// </remarks>
+        Yield = 0xFA,
         #endregion
 
 

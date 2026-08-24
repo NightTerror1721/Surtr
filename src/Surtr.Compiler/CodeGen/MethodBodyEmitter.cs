@@ -254,6 +254,10 @@ namespace Surtr.Compiler.CodeGen
                     EmitReturn(@return);
                     return;
 
+                case BoundYieldStatement yield:
+                    EmitYield(yield);
+                    return;
+
                 case BoundThrowStatement @throw:
                     Expression(@throw.Value);
                     Code.Throw();
@@ -628,6 +632,10 @@ namespace Surtr.Compiler.CodeGen
                 case TypeSymbolKind.Dictionary:
                     EmitForInDictionary(loop, (DictionaryTypeSymbol)sequence);
                     return;
+
+                case TypeSymbolKind.Generator:
+                    EmitForInGenerator(loop, (GeneratorTypeSymbol)sequence);
+                    return;
             }
 
             if (sequence.SpecialType == SpecialType.String)
@@ -915,6 +923,70 @@ namespace Surtr.Compiler.CodeGen
         /// the receiver a real object whose class carries the implemented <c>IIterable&lt;T&gt;</c>.
         /// </para>
         /// </remarks>
+        /// <summary>
+        /// Walks a generator through its own opcodes rather than through <c>IIterable&lt;T&gt;</c>.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The same bargain §4.2 already makes for an array: the contract is what makes a
+        /// <c>generator&lt;int&gt;</c> assignable to an <c>IIterable&lt;int&gt;</c>, and this is what
+        /// a loop over one actually runs. Going through the contract would cost, per element, an
+        /// interface dispatch, a native call and a nested entry into the interpreter - which is
+        /// most of what generators exist to save over the hand-written iterators they replace.
+        /// </para>
+        /// <para>
+        /// <c>GenIterate</c> is emitted once, above the loop, and is the compiled copy of the check
+        /// <c>iterate()</c> makes: a generator object is single-use, so walking one that has already
+        /// started traps rather than quietly iterating nothing (§12.2).
+        /// </para>
+        /// </remarks>
+        private void EmitForInGenerator(BoundForInStatement loop, GeneratorTypeSymbol sequence)
+        {
+            var cursor = _method.DeclareLocal("$generator");
+            var variable = Declare(loop.Variable);
+
+            Expression(loop.Sequence);
+            Code.GenIterate();
+            EmitStoreLocal(cursor);
+
+            var top = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.MarkLabel(top);
+            EmitLoadLocal(cursor);
+            Code.GenResume();
+            Code.JumpIfFalse(end);
+
+            EmitLoadLocal(cursor);
+            Code.GenCurrent();
+
+            // Deliberately *not* the contract path's `BoxDynamic` then `Unerase`. That pair exists
+            // because a value read through `IIterator<T>.current` may be a built-in's raw storage or
+            // may be already boxed, and the call site cannot tell - so it normalizes to a box and
+            // unwraps. Here both ends are known: `Yield` wrote this slot from a body compiled
+            // against the declared element, so a primitive is raw unless the declaration erased it,
+            // in which case it is a box. `UnboxDynamic` covers exactly those two and allocates
+            // nothing, where `BoxDynamic` would allocate once per element - which for a construct
+            // whose whole point is to be cheaper than the iterator class it replaces would be the
+            // difference between a win and a loss.
+            var element = loop.Variable.Type.NonNullable;
+            if (element.SpecialType is SpecialType.Int or SpecialType.Float or SpecialType.Bool or SpecialType.Char)
+                Code.UnboxDynamic();
+            else
+                Unerase(loop.Variable.Type);
+
+            EmitStoreLocal(variable);
+
+            PushLoop(top, end);
+            Statement(loop.Body);
+            PopTargets();
+
+            if (Code.IsReachable)
+                Code.Jump(top);
+
+            Code.MarkLabel(end);
+        }
+
         private void EmitForInIterable(BoundForInStatement loop)
         {
             var iterate = ContractMethod(SurtrBuiltIns.IIterable, "iterate");
@@ -1281,6 +1353,23 @@ namespace Surtr.Compiler.CodeGen
         {
             for (int i = _finallies.Count - 1; i >= depth; i--)
                 Statement(_finallies[i]);
+        }
+
+        /// <summary>
+        /// Emits a <c>yield</c>: one value, then a suspension (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// A single slot leaves the frame, so an element whose type is wider than one - a
+        /// multi-field <c>value class</c>, a tuple - is boxed on the way out, exactly as the
+        /// interface path's <c>current</c> would have to box it. One representation rather than two
+        /// that would have to agree; keeping it wide on the compiled path is a measurable
+        /// optimisation for later, not a correctness question.
+        /// </remarks>
+        private void EmitYield(BoundYieldStatement yield)
+        {
+            Expression(yield.Value);
+            BoxIfMultiSlot(yield.Value.Type);
+            Code.Yield();
         }
 
         private void EmitReturn(BoundReturnStatement @return)
@@ -4406,6 +4495,16 @@ namespace Surtr.Compiler.CodeGen
             if (call.Method.Role == MethodRole.Constructor)
                 return false;
 
+            // Nor is a generator, and for a sharper version of the same reason: what a call to one
+            // runs is the stub, which builds an object and returns; the body this lookup finds is
+            // the suspendable one, which belongs in a frame of its own. Splicing it would run the
+            // generator's own statements in the caller's frame and put a `Yield` where nothing
+            // resumed anything. §3.7 already refuses an `inline` generator at the declaration, but
+            // the cost heuristic asks nothing about what was written, so the refusal has to live
+            // here too.
+            if (call.Method.IsGenerator)
+                return false;
+
             // A body that splices itself, directly or through another inline function, would expand
             // forever � and its locals would collide, since a symbol maps to one slot.
             if (ReferenceEquals(call.Method, _symbol))
@@ -5359,6 +5458,58 @@ namespace Surtr.Compiler.CodeGen
         /// Loads a local range onto the operand stack - one slot for everything ordinary, a
         /// contiguous block for a value-type variable.
         /// </summary>
+        /// <summary>
+        /// Emits a generator's stub: the whole of what calling a generator function does (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The stub is why a call to a generator is an ordinary call. It has the generator's own
+        /// name, parameters and declared return - <c>generator&lt;T&gt;</c> - and its body pushes
+        /// its arguments, builds the object and returns it, without running a line of what the
+        /// source wrote. That lives in a hidden second method, which is what
+        /// <paramref name="body"/> names.
+        /// </para>
+        /// <para>
+        /// Doing it this way rather than emitting <c>GenNew</c> at each call site is what keeps
+        /// generators out of the metadata: the caller needs no flag saying "this one is special",
+        /// because the stub's declared return already says what it hands back - and it is what
+        /// lets a generator be <c>virtual</c> or satisfy a contract, since the stub dispatches like
+        /// any other method.
+        /// </para>
+        /// </remarks>
+        public void EmitGeneratorFactory(SurtrMethodToken body)
+        {
+            EnsureFrameWidths();
+
+            // The generator's own type, not the element's: the object keeps it, and a host or a
+            // diagnostic reading `YI` back gets `generator<int>` rather than a bare family symbol.
+            var generatorType = _context.Module.Type(Descriptors.Emit(_symbol.ReturnType));
+
+            int slots = 0;
+
+            if (!_symbol.IsStatic)
+            {
+                EmitLoadLocal(_method.Receiver);
+                slots += WidthOf(_method.Receiver);
+            }
+
+            for (int i = 0; i < _symbol.Parameters.Count; i++)
+            {
+                var slot = _method.Parameter(i);
+                EmitLoadLocal(slot);
+                slots += WidthOf(slot);
+            }
+
+            if (slots > byte.MaxValue)
+                throw Unsupported($"a generator taking {slots} argument slots, which is more than one byte can count");
+
+            Code.GenNew(body, generatorType, slots);
+            Code.ReturnValue();
+        }
+
+        private int WidthOf(SurtrLocal local)
+            => _slotWidthsByIndex.TryGetValue(local.Index, out int width) && width > 1 ? width : 1;
+
         private void EmitLoadLocal(SurtrLocal local)
         {
             EnsureFrameWidths();

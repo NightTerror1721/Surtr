@@ -277,6 +277,7 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordConstructor:
                 case TokenType.KeywordOperator:
                 case TokenType.KeywordFun:
+                case TokenType.KeywordGenerator:
                 case TokenType.KeywordImport:
                 case TokenType.At:
                 case TokenType.DocComment:
@@ -299,6 +300,7 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordTry:
                 case TokenType.KeywordThrow:
                 case TokenType.KeywordReturn:
+                case TokenType.KeywordYield:
                 case TokenType.KeywordBreak:
                 case TokenType.KeywordContinue:
                 case TokenType.KeywordLet:

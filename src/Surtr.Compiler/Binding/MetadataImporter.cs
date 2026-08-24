@@ -95,10 +95,23 @@ namespace Surtr.Compiler.Binding
         /// <summary>The class behind every closure, which declares no parameters for the same reason.</summary>
         public NamedTypeSymbol ClosureType => _closureType ??= Import(SurtrBuiltIns.Closure);
 
+        /// <summary>
+        /// The one class behind every generator parameterisation, paired with a
+        /// <see cref="GeneratorTypeSymbol"/> the same way <see cref="ArrayType"/> is with an array.
+        /// </summary>
+        /// <remarks>
+        /// It declares one parameter, so constructing it with the element type is what makes
+        /// <c>current</c> read back as that element rather than as an erased slot - and what makes a
+        /// <c>generator&lt;int&gt;</c> satisfy <c>IIterable&lt;int&gt;</c> rather than
+        /// <c>IIterable&lt;unknown&gt;</c>.
+        /// </remarks>
+        public NamedTypeSymbol GeneratorType => _generatorType ??= Import(SurtrBuiltIns.Generator);
+
         private NamedTypeSymbol? _arrayType;
         private NamedTypeSymbol? _dictionaryType;
         private NamedTypeSymbol? _tupleType;
         private NamedTypeSymbol? _closureType;
+        private NamedTypeSymbol? _generatorType;
 
         /// <summary>Makes a module's types available to resolve against.</summary>
         public void AddModule(SurtrModule module)
@@ -242,6 +255,9 @@ namespace Surtr.Compiler.Binding
 
                 case SurtrValueTypeCode.Array:
                     return _factory.Array(Import(reference.GetArrayElementType(), declaringType));
+
+                case SurtrValueTypeCode.Generator:
+                    return _factory.Generator(Import(reference.GetGeneratorElementType(), declaringType));
 
                 case SurtrValueTypeCode.Dictionary:
                     return _factory.Dictionary(

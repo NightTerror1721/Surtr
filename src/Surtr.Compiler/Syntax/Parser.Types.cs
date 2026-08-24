@@ -56,6 +56,21 @@ namespace Surtr.Compiler.Syntax
                 return ParseTupleOrClosureType();
             }
 
+            // `generator` is the one type name that is also a hard keyword, because it introduces a
+            // declaration (§3.7) and §1.1 keeps type names and value names in separate namespaces
+            // rather than reserving them. In type position it reads as the ordinary named type it
+            // is, so `generator<int>` needs nothing beyond letting the keyword start a path - the
+            // type-argument list, the `[]` and `?` suffixes and the binder all follow from there.
+            if (reader.Check(TokenType.KeywordGenerator))
+            {
+                reader.Advance();
+                IReadOnlyList<TypeSyntax> generatorArguments = reader.Check(TokenType.Less)
+                    ? ParseTypeArgumentList()
+                    : EmptyTypes;
+
+                return new NamedTypeSyntax(SpanFrom(start), new List<string> { "generator" }, generatorArguments);
+            }
+
             if (!reader.Check(TokenType.Identifier))
             {
                 throw reader.Error(SurtrDiagnosticCode.ExpectedType, "Expected a type.");

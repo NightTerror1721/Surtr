@@ -156,8 +156,10 @@ namespace Surtr.Bench
                 fun sides(): int;
             }
 
+            // No `override`: §2.2 makes satisfying a contract a promise rather than an inheritance,
+            // so the modifier would name a base member that does not exist.
             class Triangle : ISides {
-                public override fun sides(): int { return 3; }
+                public fun sides(): int { return 3; }
             }
 
             class Holder {
@@ -393,6 +395,49 @@ namespace Surtr.Bench
                 let seq: IIterable<int> = xs;
                 var acc: int = 0;
                 for (x in seq) { acc = (acc + x) % 100000007; }
+                return acc;
+            }
+
+            // What a generator replaces, and what it costs. `genYield` suspends and resumes a real
+            // frame per element; `handIterator` is the class you write today to do the same thing,
+            // paying two interface dispatches per element instead. They produce the same sequence,
+            // so the checksums have to agree - which is also what stops either one quietly
+            // measuring a different loop.
+            generator upToGen(n: int): int {
+                var i: int = 0;
+                while (i < n) { yield i; i = i + 1; }
+            }
+
+            fun genYield(n: int): int {
+                var acc: int = 0;
+                for (x in upToGen(n)) { acc = (acc + x) % 100000007; }
+                return acc;
+            }
+
+            class RangeCursor : IIterator<int> {
+                private var _i: int = 0;
+                private let _n: int;
+
+                public constructor(n: int) { this._n = n; }
+
+                public current: int { get => _i - 1; }
+
+                public fun moveNext(): bool {
+                    if (_i >= _n) { return false; }
+                    _i = _i + 1;
+                    return true;
+                }
+            }
+
+            // The cursor is held by its own type, not by IIterator<int>. What this case is for is
+            // the *class* a generator saves you writing, and the interface-dispatched walk over one
+            // is already what `iterator` measures - so typing it here would measure that twice and
+            // nothing new. (It also steps around a miscompile of a contract-dispatched property
+            // read on a user class, which predates generators; see the repro in the report.)
+            fun handIterator(n: int): int {
+                let cursor = RangeCursor(n);
+                var acc: int = 0;
+                while (cursor.moveNext()) { acc = (acc + cursor.current) % 100000007; }
                 return acc;
             }
 
@@ -868,6 +913,34 @@ namespace Surtr.Bench
                 return acc
             end
 
+            -- Lua's answer to a generator is a coroutine, which is what `coroutine.wrap` builds: a
+            -- suspended frame resumed per element. It is the honest counterpart to `genYield`, and
+            -- more general than Surtr's - Lua can suspend across calls, at the cost of a stack per
+            -- coroutine (Plan-Generadores §4.C).
+            function genYield(n)
+                local produce = coroutine.wrap(function()
+                    for i = 0, n - 1 do coroutine.yield(i) end
+                end)
+                local acc = 0
+                for x in produce do acc = (acc + x) % 100000007 end
+                return acc
+            end
+
+            -- The written-out cursor, the same shape the Surtr side spells as a class.
+            function handIterator(n)
+                local cursor = { i = 0, n = n }
+                function cursor:moveNext()
+                    if self.i >= self.n then return false end
+                    self.i = self.i + 1
+                    return true
+                end
+                function cursor:current() return self.i - 1 end
+
+                local acc = 0
+                while cursor:moveNext() do acc = (acc + cursor:current()) % 100000007 end
+                return acc
+            end
+
             function hostAdd(value) return value + 1 end
 
             function interop(n)
@@ -1096,6 +1169,8 @@ namespace Surtr.Bench
             new Workload("exceptions", 8000, WorkloadKind.Int, "raise and handler-table search", Exceptions),
             new Workload("forIn", 50000, WorkloadKind.Int, "for-in lowered to an indexed loop", ForIn),
             new Workload("iterator", 50000, WorkloadKind.Int, "the general iterate()/moveNext() path", Iterator),
+            new Workload("genYield", 50000, WorkloadKind.Int, "generator: suspend and resume a frame per element", GenYield),
+            new Workload("handIterator", 50000, WorkloadKind.Int, "the cursor class a generator replaces", HandIterator),
             new Workload("interop", 300000, WorkloadKind.Int, "host function call", Interop),
             new Workload("valueClass", 300000, WorkloadKind.Int, "value class, erased to its field", ValueClass),
             new Workload("generics", 300000, WorkloadKind.Int, "erased slot: box in, cast out", Generics),
@@ -1433,6 +1508,51 @@ namespace Surtr.Bench
             long acc = 0;
             foreach (long x in seq)
                 acc = (acc + x) % Modulus;
+            return acc;
+        }
+
+        // C#'s generator is `yield return`, compiled to a state machine (Plan-Generadores §4.A) -
+        // the other implementation strategy, measured against the copied frame Surtr chose.
+        private static IEnumerable<long> UpToGen(long n)
+        {
+            for (long i = 0; i < n; i++)
+                yield return i;
+        }
+
+        private static long GenYield(long n)
+        {
+            long acc = 0;
+            foreach (long x in UpToGen(n))
+                acc = (acc + x) % Modulus;
+            return acc;
+        }
+
+        /// <summary>The cursor written by hand, which is what a generator saves you writing.</summary>
+        private sealed class RangeCursor
+        {
+            private long _i;
+            private readonly long _n;
+
+            public RangeCursor(long n) => _n = n;
+
+            public long Current => _i - 1;
+
+            public bool MoveNext()
+            {
+                if (_i >= _n)
+                    return false;
+
+                _i++;
+                return true;
+            }
+        }
+
+        private static long HandIterator(long n)
+        {
+            var cursor = new RangeCursor(n);
+            long acc = 0;
+            while (cursor.MoveNext())
+                acc = (acc + cursor.Current) % Modulus;
             return acc;
         }
 

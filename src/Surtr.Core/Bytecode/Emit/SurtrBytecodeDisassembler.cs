@@ -937,6 +937,10 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.RangeNewInclusive:
                 case OpCode.RangePack:
                 case OpCode.RangeUnpack:
+                case OpCode.GenIterate:
+                case OpCode.GenResume:
+                case OpCode.GenCurrent:
+                case OpCode.Yield:
                 case OpCode.BoxInt:
                 case OpCode.BoxFloat:
                 case OpCode.BoxBool:
@@ -1106,6 +1110,14 @@ namespace Surtr.Bytecode.Emit
                     AppendFieldName(builder, chunk, ReadU16(chunk, operand));
                     builder.Append(" x").Append(chunk.Code[operand + 2]).AppendLine();
                     return operand + 3;
+
+                // ---- generators --------------------------------------------------------------
+                case OpCode.GenNew:
+                    AppendMethodName(builder, chunk, ReadU16(chunk, operand));
+                    builder.Append(' ');
+                    AppendTypeName(builder, chunk, ReadU16(chunk, operand + 2));
+                    builder.Append(" args=").Append(chunk.Code[operand + 4]).AppendLine();
+                    return operand + 5;
 
                 // ---- closures ----------------------------------------------------------------
                 case OpCode.NewClosure:

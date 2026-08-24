@@ -857,6 +857,7 @@ namespace Surtr.Compiler.Syntax
                     if (Is(text, "false")) return TokenType.KeywordFalse;
                     if (Is(text, "throw")) return TokenType.KeywordThrow;
                     if (Is(text, "while")) return TokenType.KeywordWhile;
+                    if (Is(text, "yield")) return TokenType.KeywordYield;
                     break;
 
                 case 6:
@@ -891,6 +892,7 @@ namespace Surtr.Compiler.Syntax
 
                 case 9:
                     if (Is(text, "extension")) return TokenType.KeywordExtension;
+                    if (Is(text, "generator")) return TokenType.KeywordGenerator;
                     if (Is(text, "interface")) return TokenType.KeywordInterface;
                     if (Is(text, "protected")) return TokenType.KeywordProtected;
                     if (Is(text, "singleton")) return TokenType.KeywordSingleton;

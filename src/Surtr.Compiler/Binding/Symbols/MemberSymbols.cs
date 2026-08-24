@@ -129,6 +129,23 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>Whether it may be evaluated at compile time (§7.3).</summary>
         public bool IsConst { get; internal set; }
 
+        /// <summary>Whether it was introduced by <c>generator</c> rather than <c>fun</c> (§3.7).</summary>
+        /// <remarks>
+        /// <see cref="ReturnType"/> is the <em>view</em> type - <c>generator&lt;T&gt;</c> - not the
+        /// element, so a call site, overload resolution and every conversion rule read a generator
+        /// as the ordinary method it looks like from outside. What the source wrote as the return is
+        /// kept separately in <see cref="YieldType"/>, which is what a <c>yield</c> converts against.
+        /// Splitting them this way is why nothing in the binder outside the few places that handle
+        /// <c>yield</c> has to know a generator exists.
+        /// </remarks>
+        public bool IsGenerator { get; internal set; }
+
+        /// <summary>
+        /// What each <c>yield</c> produces - the type source wrote as the return - or
+        /// <see langword="null"/> when this is not a generator.
+        /// </summary>
+        public TypeSymbol? YieldType { get; internal set; }
+
         /// <summary>
         /// Whether the compiler synthesised it — a lambda body, a property accessor, a bridge —
         /// rather than the user writing it. Its name is ABI and follows the convention fixed in

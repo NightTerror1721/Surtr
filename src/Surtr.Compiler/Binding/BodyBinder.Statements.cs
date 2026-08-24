@@ -28,6 +28,7 @@ namespace Surtr.Compiler.Binding
                 case TryStatementSyntax @try: return BindTry(@try);
                 case ThrowStatementSyntax @throw: return BindThrow(@throw);
                 case ReturnStatementSyntax @return: return BindReturn(@return);
+                case YieldStatementSyntax yield: return BindYield(yield);
                 case BreakStatementSyntax @break: return BindBreak(@break);
                 case LabeledStatementSyntax labeled: return BindLabeled(labeled);
                 default: return new BoundNopStatement(syntax);
@@ -498,7 +499,14 @@ namespace Surtr.Compiler.Binding
 
         private BoundStatement BindTry(TryStatementSyntax syntax)
         {
+            // Only the protected block is counted, not the catch or finally clauses. §3.7 forbids
+            // suspending inside a `try` because a pending handler across an indefinite pause raises
+            // questions about when a `finally` runs; a `yield` in a catch clause is past that
+            // block's protection and poses none of them.
+            _tryDepth++;
             var body = BindStatement(syntax.Body);
+            _tryDepth--;
+
             var exceptionBase = ResolveBuiltInType("Exception", syntax.Span);
 
             var catches = new BoundCatchClause[syntax.Catches.Count];
@@ -566,6 +574,24 @@ namespace Surtr.Compiler.Binding
         {
             var expected = _method.ReturnType;
 
+            // A generator's `return` ends the sequence; it never carries a value (§3.7). Its
+            // declared return is `generator<T>`, so without this the two forms would be checked
+            // backwards - a bare `return;` would be told it needs a value, and `return x;` would be
+            // asked to convert an element into the generator that produces it.
+            if (_method.IsGenerator && _lambdas.Count == 0)
+            {
+                if (syntax.Value is null)
+                    return new BoundReturnStatement(syntax, null);
+
+                BindExpression(syntax.Value);
+                Report(
+                    SurtrDiagnosticCode.CannotConvert,
+                    syntax.Span,
+                    $"'{_method.Name}' is a generator, so its 'return' ends the sequence and cannot carry a value; hand elements out with 'yield' (§3.7).");
+
+                return new BoundReturnStatement(syntax, null);
+            }
+
             if (syntax.Value is null)
             {
                 if (!expected.IsVoid && !expected.IsNever && !expected.IsError)
@@ -591,6 +617,53 @@ namespace Surtr.Compiler.Binding
             }
 
             return new BoundReturnStatement(syntax, BindConverted(syntax.Value, expected));
+        }
+
+        /// <summary>
+        /// Binds a <c>yield</c>, against the element its generator declares (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// The three refusals are the three places there is no frame to suspend, and each is worth
+        /// a distinct sentence rather than one generic message. Outside a generator there is no
+        /// element to convert against; inside a nested lambda the frame that would be copied belongs
+        /// to the lambda, which is a separate function with its own body; inside a <c>try</c> the
+        /// suspension would leave a handler pending across a pause nobody is obliged to end.
+        /// Binding continues past each one so the value is still checked and one mistake does not
+        /// hide the next.
+        /// </remarks>
+        private BoundStatement BindYield(YieldStatementSyntax syntax)
+        {
+            _yieldCount++;
+
+            if (_lambdas.Count > 0)
+            {
+                Report(
+                    SurtrDiagnosticCode.InvalidYield,
+                    syntax.Span,
+                    "A 'yield' cannot appear inside a lambda: the lambda is a function of its own, so there is no generator frame here to suspend (§3.7).");
+
+                return new BoundYieldStatement(syntax, BindExpression(syntax.Value));
+            }
+
+            if (!_method.IsGenerator || _method.YieldType is not { } element)
+            {
+                Report(
+                    SurtrDiagnosticCode.InvalidYield,
+                    syntax.Span,
+                    $"'{_method.Name}' is not a generator, so it cannot 'yield'. Declare it with 'generator' instead of 'fun' (§3.7).");
+
+                return new BoundYieldStatement(syntax, BindExpression(syntax.Value));
+            }
+
+            if (_tryDepth > 0)
+            {
+                Report(
+                    SurtrDiagnosticCode.InvalidYield,
+                    syntax.Span,
+                    "A 'yield' cannot appear inside a 'try': suspending there would leave a handler pending across a pause that nothing is obliged to end (§3.7).");
+            }
+
+            return new BoundYieldStatement(syntax, BindConverted(syntax.Value, element));
         }
 
         private BoundStatement BindBreak(BreakStatementSyntax syntax)

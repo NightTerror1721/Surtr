@@ -693,6 +693,18 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>True when declared <c>native</c> — the body lives on the host side (§10).</summary>
         public bool IsNative { get; }
 
+        /// <summary>
+        /// True when introduced by <c>generator</c> rather than <c>fun</c> (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// A flag on the method node rather than a node of its own, because everything a parser has
+        /// to read is identical - name, type parameters, parameters, return type, block body - and
+        /// what changes is what the <em>return type means</em>: for a generator it declares the
+        /// element, and the member's view type is <c>generator&lt;T&gt;</c>. A separate node would
+        /// duplicate the whole shape to carry one bit.
+        /// </remarks>
+        public bool IsGenerator { get; }
+
         /// <summary>Initializes a method declaration.</summary>
         /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">Attributes attached to it.</param>
@@ -709,9 +721,11 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="inline">Its inlining request.</param>
         /// <param name="isConst">True when declared <c>const</c>.</param>
         /// <param name="isNative">True when declared <c>native</c>.</param>
+        /// <param name="isGenerator">True when introduced by <c>generator</c> rather than <c>fun</c>.</param>
         public MethodDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
             string name, IReadOnlyList<TypeParameterSyntax> typeParameters, IReadOnlyList<ParameterSyntax> parameters, TypeSyntax? returnType,
-            BlockStatementSyntax? body, bool isStatic, DispatchModifier dispatch, bool isSealed, InlineModifier inline, bool isConst, bool isNative)
+            BlockStatementSyntax? body, bool isStatic, DispatchModifier dispatch, bool isSealed, InlineModifier inline, bool isConst, bool isNative,
+            bool isGenerator = false)
             : base(span, attributes, docComment, visibility)
         {
             Name = name;
@@ -725,6 +739,7 @@ namespace Surtr.Compiler.Syntax.Ast
             Inline = inline;
             IsConst = isConst;
             IsNative = isNative;
+            IsGenerator = isGenerator;
         }
     }
 

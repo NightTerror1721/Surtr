@@ -118,8 +118,18 @@ namespace Surtr.Bytecode.Image
         /// than one slot per field. A version 7 reader would read the flag byte as the first byte
         /// of the base-type index, so it is refused like every other older format.
         /// </para>
+        /// <para>
+        /// Version 9 changes no layout at all, and is a bump precisely because a byte already in
+        /// the layout changed <em>meaning</em>: <c>SurtrValueTypeCode</c> gained
+        /// <c>Generator</c> inside the built-in run, so every code from <c>Range</c> up shifted by
+        /// one. A version 8 reader would read a class's family byte and get the wrong family
+        /// silently, which is exactly the failure a refused version exists to prevent. Nothing was
+        /// added for generators themselves: a generator's element travels in the descriptor
+        /// (<c>YI</c>), and a call to a generator is an ordinary call to a stub whose declared
+        /// return says so, so no flag was needed.
+        /// </para>
         /// </remarks>
-        internal const ushort FormatVersion = 8;
+        internal const ushort FormatVersion = 9;
 
         private readonly byte[] _bytes;
         private readonly string _path;

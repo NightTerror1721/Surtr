@@ -449,6 +449,7 @@ namespace Surtr.VM
                 _frames[i].Chunk = null;
                 _frames[i].Method = null;
                 _frames[i].Closure = null;
+                _frames[i].Generator = null;
                 _roots[i + 1] = 0;
             }
 
@@ -504,6 +505,7 @@ namespace Surtr.VM
             frame.Chunk = chunk;
             frame.Method = method;
             frame.Closure = closure;
+            frame.Generator = null;
             frame.LocalCount = localCount;
             frame.ArgumentCount = argumentCount;
             frame.ExpectedResults = 1;
@@ -514,6 +516,111 @@ namespace Surtr.VM
 
             _frameCount = depth + 1;
             _sp = frameBase + localCount;
+        }
+
+        /// <summary>
+        /// Runs a generator until its next <c>yield</c> or its end, from outside the dispatch loop.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The general path, reached when a generator travels as an <c>IIterable&lt;T&gt;</c> and
+        /// its <c>moveNext</c> is called through the contract - the native accessor lands here.
+        /// The compiled fast path does the same work with <c>GenResume</c>, without a native call
+        /// or a nested run; the two agree because both end in the same <c>Yield</c>.
+        /// </para>
+        /// <para>
+        /// Re-entrancy is what makes this legal at all: the caller published <c>sp</c> and the
+        /// executing frame's <c>IP</c> before entering host code, so pushing the generator's frame
+        /// above them and running to its own depth leaves everything below untouched.
+        /// </para>
+        /// </remarks>
+        /// <returns><see langword="true"/> if the body yielded a value; <see langword="false"/> if it finished.</returns>
+        internal bool ResumeGenerator(SurtrGenerator generator)
+        {
+            while (generator.Delegate is { } delegated)
+            {
+                if (delegated.State == SurtrGeneratorState.Exhausted)
+                {
+                    generator.Delegate = null;
+                    break;
+                }
+
+                generator = delegated;
+            }
+
+            if (generator.State == SurtrGeneratorState.Exhausted)
+                return false;
+
+            if (generator.State == SurtrGeneratorState.Running)
+                throw GeneratorAlreadyRunning();
+
+            int depth = _frameCount;
+            if (depth == _frames.Length)
+                throw CallStackOverflow(_frames.Length);
+
+            // The interpreter's GenResume leaves the generator's own stack slot below the frame as
+            // the place the answer goes. There is no such slot here, so one is pushed: both ways a
+            // body can leave write into it unconditionally, and reserving it is cheaper than
+            // teaching them which caller they are answering.
+            if (_sp >= _stackLimit)
+                throw DataStackOverflow();
+
+            *_sp++ = SurtrValue.TagMaskReference | (uint)generator.GetSurtrReference();
+
+            SurtrRawValue* frameBase = _sp;
+            int localCount = generator.LocalCount;
+            int liveSlots = generator.SlotCount;
+
+            if (frameBase + localCount + generator.MaxStackSize > _stackLimit)
+                throw DataStackOverflow();
+
+            var slots = generator.Slots;
+            for (int i = 0; i < liveSlots; i++)
+                frameBase[i] = slots[i].Raw;
+
+            for (int i = liveSlots; i < localCount; i++)
+                frameBase[i] = 0;
+
+            var chunk = generator.Chunk;
+            byte* codeBase = chunk.Code.Pointer;
+
+            ref SurtrCallFrame frame = ref _frames[depth];
+            frame.Base = frameBase;
+            frame.CodeBase = codeBase;
+            frame.IP = codeBase + generator.ResumeOffset;
+            frame.Chunk = chunk;
+            frame.Method = generator.Method;
+            frame.Closure = null;
+            frame.Generator = generator;
+            frame.LocalCount = localCount;
+            frame.ArgumentCount = generator.ArgumentCount;
+            frame.ExpectedResults = 0;
+
+            _roots[depth + 1] = SurtrValue.TagMaskReference | (uint)generator.GetSurtrReference();
+
+            generator.State = SurtrGeneratorState.Running;
+            _frameCount = depth + 1;
+            _sp = frameBase + (liveSlots > localCount ? liveSlots : localCount);
+
+            try
+            {
+                Execute(depth);
+            }
+            catch
+            {
+                // The handler search already marked the generator exhausted as it discarded the
+                // frame; what is left is the reserved slot, which nothing will pop now that the
+                // exception is travelling out through the native call.
+                _sp = frameBase - 1;
+                throw;
+            }
+
+            // The body wrote its answer into the reserved slot on the way out. Reading the state
+            // instead would say the same thing, but reading the slot keeps this path and the
+            // compiled one answering from exactly the same write.
+            bool produced = (*(frameBase - 1) & 1UL) != 0;
+            _sp = frameBase - 1;
+            return produced;
         }
         #endregion
 
@@ -632,9 +739,16 @@ namespace Surtr.VM
                     }
                 }
 
+                // An exception leaving a generator's body ends that generator for good: its frame
+                // is being discarded here, so there is nothing left to resume into. Marking it
+                // exhausted is what makes the next `moveNext` answer false rather than trying to
+                // resume from a frame that no longer describes anything.
+                frame.Generator?.Finish();
+
                 frame.Chunk = null;
                 frame.Method = null;
                 frame.Closure = null;
+                frame.Generator = null;
                 _roots[depth + 1] = 0;
                 _frameCount = depth;
             }
@@ -3157,10 +3271,22 @@ namespace Surtr.VM
                     sp = finished.Base;
                     int expected = finished.ExpectedResults;
 
-                    // A dead frame must not keep its chunk, method or closure alive.
+                    // This is how a generator body ends: `return;` or falling off the end, both of
+                    // which the compiler emits as ReturnVoid. The resumer left a slot below this
+                    // frame for the answer, and `false` is what "the body finished" means there -
+                    // the mirror of what Yield writes. Ordinary frames never carry a generator, so
+                    // this is one null test on a field already in cache.
+                    if (finished.Generator is { } ended)
+                    {
+                        ended.Finish();
+                        sp[-1] = SurtrValue.TagMaskBool;
+                    }
+
+                    // A dead frame must not keep its chunk, method, closure or generator alive.
                     finished.Chunk = null;
                     finished.Method = null;
                     finished.Closure = null;
+                    finished.Generator = null;
                     roots[depth + 1] = 0;
                     _frameCount = depth;
 
@@ -3188,6 +3314,7 @@ namespace Surtr.VM
                     finished.Chunk = null;
                     finished.Method = null;
                     finished.Closure = null;
+                    finished.Generator = null;
                     roots[depth + 1] = 0;
                     _frameCount = depth;
 
@@ -3223,6 +3350,7 @@ namespace Surtr.VM
                     finished.Chunk = null;
                     finished.Method = null;
                     finished.Closure = null;
+                    finished.Generator = null;
                     roots[depth + 1] = 0;
                     _frameCount = depth;
 
@@ -3529,6 +3657,219 @@ namespace Surtr.VM
                 }
                 #endregion
 
+                #region Generator Operations
+                case OpCode.GenNew:
+                {
+                    var body = (SurtrBytecodeMethodInfo)methodTable[(ip[0] | (ip[1] << 8))];
+                    var declared = typeTable[(ip[2] | (ip[3] << 8))].Reference;
+                    int argsCount = ip[4];
+                    ip += 5;
+                    current.IP = ip;
+                    _sp = sp;
+
+                    var built = new SurtrGenerator(declared, body, argsCount);
+
+                    // Written straight out of the stack rather than through a temporary: the
+                    // arguments are already raw values sitting in the slots this loop is about to
+                    // pop, and the generator's buffer is exactly where they have to end up.
+                    var slots = built.Slots;
+                    sp -= argsCount;
+                    for (int i = 0; i < argsCount; i++)
+                        slots[i] = SurtrValue.FromRaw(sp[i]);
+
+                    SurtrRef reference = context.EntityRegistry.Register(built, out entities);
+
+                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
+                    goto Safepoint;
+                }
+
+                case OpCode.GenIterate:
+                {
+                    var walked = (SurtrGenerator)entities[(SurtrRef)(*(sp - 1))]!;
+
+                    // A generator object is walked once. Silently iterating nothing the second time
+                    // is a bug that never announces itself, so it traps here instead; restarting is
+                    // calling the generator function again, which builds a new one.
+                    if (walked.State != SurtrGeneratorState.NotStarted)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw GeneratorAlreadyStarted();
+                    }
+
+                    goto Dispatch;
+                }
+
+                case OpCode.GenResume:
+                {
+                    var resumed = (SurtrGenerator)entities[(SurtrRef)(*(sp - 1))]!;
+
+                    // The delegation chain, which phase 1 never builds: `yield*` records a link and
+                    // suspends without a frame, so a resume walks to the innermost generator that
+                    // still has one. Written as a loop now so that turning delegation on is a new
+                    // opcode rather than a change to this sequence. See Plan-Generadores §11.3.
+                    while (resumed.Delegate is { } delegated)
+                    {
+                        if (delegated.State == SurtrGeneratorState.Exhausted)
+                        {
+                            resumed.Delegate = null;
+                            break;
+                        }
+
+                        resumed = delegated;
+                    }
+
+                    if (resumed.State == SurtrGeneratorState.Exhausted)
+                    {
+                        *(sp - 1) = SurtrValue.TagMaskBool;
+                        goto Dispatch;
+                    }
+
+                    if (resumed.State == SurtrGeneratorState.Running)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw GeneratorAlreadyRunning();
+                    }
+
+                    // The generator's own slot stays where it is and becomes the result slot: the
+                    // body's frame starts one above it, and whichever way the body leaves - a
+                    // `yield` or the end - overwrites it with the answer. That is also what keeps
+                    // the generator reachable from the data stack for the whole resume, on top of
+                    // the roots entry below.
+                    int resumeDepth = _frameCount;
+                    if (resumeDepth == maxDepth)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw CallStackOverflow(maxDepth);
+                    }
+
+                    int generatorLocals = resumed.LocalCount;
+                    int liveSlots = resumed.SlotCount;
+
+                    if (sp + generatorLocals + resumed.MaxStackSize > stackLimit)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw DataStackOverflow();
+                    }
+
+                    // The whole of strategy B in four lines: the frame is a flat run of untyped
+                    // slots, so restoring one is a copy back into the stack at whatever base is
+                    // free now. Locals keep their indices because every access is frameBase-relative,
+                    // which is what makes a frame relocatable at all.
+                    {
+                        var slots = resumed.Slots;
+                        SurtrRawValue* target = sp;
+                        for (int i = 0; i < liveSlots; i++)
+                            target[i] = slots[i].Raw;
+
+                        // Above the live width sits either a local the body has not written yet or
+                        // operand space; both have to read as a zeroed slot rather than as whatever
+                        // the last call left on the stack, or a collection would retain it.
+                        for (int i = liveSlots; i < generatorLocals; i++)
+                            target[i] = 0;
+                    }
+
+                    current.IP = ip;
+
+                    var generatorChunk = resumed.Chunk;
+                    byte* generatorCodeBase = generatorChunk.Code.Pointer;
+
+                    ref SurtrCallFrame generatorFrame = ref frames[resumeDepth];
+                    generatorFrame.Base = sp;
+                    generatorFrame.CodeBase = generatorCodeBase;
+                    generatorFrame.IP = generatorCodeBase + resumed.ResumeOffset;
+                    generatorFrame.Chunk = generatorChunk;
+                    generatorFrame.Method = resumed.Method;
+                    generatorFrame.Closure = null;
+                    generatorFrame.Generator = resumed;
+                    generatorFrame.LocalCount = generatorLocals;
+                    generatorFrame.ArgumentCount = resumed.ArgumentCount;
+
+                    // Nothing is returned through the frame protocol: a `yield` writes its value
+                    // onto the generator and GenCurrent reads it back, so the resumer wants no
+                    // result slot and ReturnVoid at the end of the body must not push one either.
+                    generatorFrame.ExpectedResults = 0;
+
+                    // A generator body captures nothing, so the roots slot its frame would have
+                    // used for a closure is free for the generator itself - which is what keeps it
+                    // alive across the collection its own body may trigger.
+                    roots[resumeDepth + 1] = SurtrValue.TagMaskReference | (uint)resumed.GetSurtrReference();
+
+                    resumed.State = SurtrGeneratorState.Running;
+                    _frameCount = resumeDepth + 1;
+
+                    // The operand stack of the resumed frame starts above its locals, and anything
+                    // it had pending was restored by the copy above.
+                    _sp = sp + (liveSlots > generatorLocals ? liveSlots : generatorLocals);
+                    goto LoadFrame;
+                }
+
+                case OpCode.GenCurrent:
+                {
+                    var read = (SurtrGenerator)entities[(SurtrRef)(*(sp - 1))]!;
+                    *(sp - 1) = read.Current.Raw;
+                    goto Dispatch;
+                }
+
+                case OpCode.Yield:
+                {
+                    var suspending = current.Generator!;
+
+                    // Read before anything is written: the value is the top operand and the copy
+                    // below is about to take the rest of the frame with it.
+                    suspending.Current = SurtrValue.FromRaw(*--sp);
+
+                    SurtrRawValue* frameStart = current.Base;
+                    int liveSlots = (int)(sp - frameStart);
+
+                    var slots = suspending.Slots;
+                    for (int i = 0; i < liveSlots; i++)
+                        slots[i] = SurtrValue.FromRaw(frameStart[i]);
+
+                    // Anything the previous suspension left above the new live width would be
+                    // traced on the next collection and would retain objects this frame has already
+                    // dropped, so the slack is blanked rather than left as it was.
+                    for (int i = liveSlots; i < suspending.SlotCount; i++)
+                        slots[i] = SurtrValue.Null;
+
+                    suspending.SlotCount = liveSlots;
+                    suspending.ResumeOffset = (int)(ip - current.CodeBase);
+                    suspending.State = SurtrGeneratorState.Suspended;
+
+                    // The slot the resumer left below this frame answers its question. Written the
+                    // same way by the two ways a body can leave, so nothing downstream has to know
+                    // which one happened.
+                    frameStart[-1] = SurtrValue.TagMaskBool | 1UL;
+
+                    // From here it is an ordinary return that happens to produce nothing: the frame
+                    // is popped and control goes back to whoever resumed it, which is what lets one
+                    // Yield serve both the compiled fast path and a resume driven by host code.
+                    int depth = _frameCount - 1;
+                    ref SurtrCallFrame parked = ref frames[depth];
+
+                    sp = frameStart;
+                    parked.Chunk = null;
+                    parked.Method = null;
+                    parked.Closure = null;
+                    parked.Generator = null;
+                    roots[depth + 1] = 0;
+                    _frameCount = depth;
+
+                    _sp = sp;
+
+                    if (depth == entryDepth)
+                    {
+                        if (budgeted) _stepsRemaining = steps;
+                        return SurtrValue.Null;
+                    }
+
+                    goto LoadFrame;
+                }
+                #endregion
+
                 default:
                     current.IP = ip;
                     _sp = sp;
@@ -3649,6 +3990,7 @@ namespace Surtr.VM
                 entered.Chunk = targetChunk;
                 entered.Method = target;
                 entered.Closure = pendingClosure;
+                entered.Generator = null;
                 entered.LocalCount = localCount;
                 entered.ArgumentCount = pendingArguments;
                 entered.ExpectedResults = pendingResults;
@@ -3726,6 +4068,18 @@ namespace Surtr.VM
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException InvalidOpCode(byte opCode)
             => new SurtrExecutionException($"0x{opCode:X2} is not a valid opcode.", SurtrBuiltIns.InvalidOperationException);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException GeneratorAlreadyStarted()
+            => new SurtrExecutionException(
+                "This generator has already been iterated. A generator object is single-use; call the generator function again to start a new one.",
+                SurtrBuiltIns.InvalidOperationException);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException GeneratorAlreadyRunning()
+            => new SurtrExecutionException(
+                "This generator is already running: a generator cannot be resumed from inside its own body.",
+                SurtrBuiltIns.InvalidOperationException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException CallStackOverflow(int maxDepth)

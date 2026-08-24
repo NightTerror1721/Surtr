@@ -241,6 +241,9 @@ namespace Surtr.Compiler.Binding
                 case ArrayTypeSymbol array:
                     return Construct(_importer.ArrayType, array.ElementType);
 
+                case GeneratorTypeSymbol generator:
+                    return Construct(_importer.GeneratorType, generator.ElementType);
+
                 case DictionaryTypeSymbol dictionary:
                     return Construct(_importer.DictionaryType, dictionary.KeyType, dictionary.ValueType);
 
@@ -370,6 +373,12 @@ namespace Surtr.Compiler.Binding
                 IsConversion = method.IsConversion,
                 TypeParameters = method.TypeParameters,
                 Parameters = parameters,
+
+                // The element is substituted alongside the view type, so a `generator<T>` read
+                // through `Box<int>` yields `int` on both halves rather than agreeing on one and
+                // keeping the declaration's parameter on the other.
+                IsGenerator = method.IsGenerator,
+                YieldType = method.YieldType is { } yielded ? substitution.Apply(yielded) : null,
 
                 // Carried across, or an `int[]`'s `push` would be a symbol no call site could
                 // emit: a substituted view is still the same method table entry.

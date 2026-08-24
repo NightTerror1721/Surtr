@@ -29,7 +29,11 @@ namespace Surtr.Bench
                 | CoreModules.Metatables
                 | CoreModules.Math
                 | CoreModules.ErrorHandling
-                | CoreModules.String);
+                | CoreModules.String
+                // Lua's answer to a generator is a coroutine, so the `genYield` case cannot be
+                // written without this module - and leaving it out would have that workload measure
+                // a closure standing in for one, which is a different thing entirely.
+                | CoreModules.Coroutine);
             script.DoString(source);
 
             var functions = new Dictionary<string, DynValue>();

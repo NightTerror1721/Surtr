@@ -206,6 +206,26 @@ namespace Surtr.Compiler.Binding
         {
             var arguments = ResolveAll(syntax.TypeArguments, scope, sourceName);
 
+            // `generator<T>` is a family, not a declaration: like `T[]` and `{K: V}` it names one
+            // built-in class whatever it is parameterised by, so it is built here rather than
+            // looked up. The parser only produces this path from the `generator` keyword, so no
+            // user type can be shadowed by it.
+            if (syntax.Path.Count == 1 && syntax.Path[0] == "generator")
+            {
+                if (arguments.Length != 1)
+                {
+                    ReportError(
+                        SurtrDiagnosticCode.InvalidGenericDeclaration,
+                        $"'generator' takes exactly one type argument, but was given {arguments.Length}.",
+                        sourceName,
+                        syntax.Span);
+
+                    return _factory.ErrorType;
+                }
+
+                return _factory.Generator(arguments[0]);
+            }
+
             if (syntax.Path.Count == 1)
                 return ResolveSimple(syntax, syntax.Path[0], arguments, scope, sourceName);
 

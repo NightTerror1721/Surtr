@@ -21,9 +21,10 @@ This file is the orientation; each of these goes deep on one thing. Read the rel
 |---|---|
 | `docs/Language-Syntax.md` | The surface language, and the reasoning behind each choice. §1.2 is the authoritative reserved word list, §5.7 the operator table. |
 | `docs/Runtime-Model.md` | How classes, methods, properties, enums, interfaces and modules fit together, what linking builds, and what the compiler owes the runtime. |
-| `docs/Opcodes.md` | All 238 opcodes by family, with values, encodings and stack effects. Mirrors `OpCode.cs`, which stays the source of truth. |
+| `docs/Opcodes.md` | All 245 opcodes by family, with values, encodings and stack effects. Mirrors `OpCode.cs`, which stays the source of truth. |
 | `docs/Module-Format.md` | The `.surtrc` byte layout, and what is bound at load rather than written. |
 | `docs/VM-Plan.md` | The interpreter's design decisions, the remaining gaps, and the ordered plan. |
+| `docs/Plan-Generadores.md` | Generators: the comparative study, the three suspension strategies and why the frame copy won (§4), the closed design decisions (§12, which override §3/§5/§6), the `yield*` evaluation (§11) and what phase 1 built and measured (§13). |
 
 ## Performance is CRITICAL
 
@@ -143,6 +144,7 @@ Also on the entry point: it is a `SurtrNativeMethodInfo` like any other, so its 
 | `SurtrTuple` | fixed `SurtrValue[]`, immutable — the **boxed** form of a tuple, since a tuple is a value type | built-in, shared |
 | `SurtrDictionary` | `Dictionary<SurtrValue, SurtrValue>` under the runtime's comparer — or `Dictionary<int, SurtrValue>` when the key is declared `int` | built-in, shared |
 | `SurtrClosure` | method + captured values, with the dispatch payload copied out flat | built-in, shared |
+| `SurtrGenerator` | a suspended frame — locals and pending operands — plus where to resume and what the last `yield` produced | built-in, shared |
 | `SurtrBoxed` | one primitive `SurtrValue` | the *same* class the unboxed primitive has |
 | `SurtrInstance` | `SurtrValue[]` field slots — also the boxed form of a `value class`, whose fields take the inline slots verbatim | whatever Surtr source declared |
 | `SurtrIterator` | a collection + a position; a dict's keys snapshotted | built-in, shared |
@@ -168,6 +170,10 @@ Members are native methods linked by function pointer via `SurtrBuiltInTypeBuild
 
 **`array`, `string`, `tuple`, `dict` and `range` implement `IIterable<T>`** and hand back a shared `iterator` class, so the contract `for-in` is defined by (`Language-Syntax.md` §4.2) is one every collection actually satisfies rather than one only user code can keep. A compiled `for-in` over any of them still lowers to an indexed loop and never allocates a cursor; the contract exists so an `int[]` can flow into an `IIterable<int>`. A dict yields `(K, V)` pairs, walked over a snapshot of its keys.
 
+**`generator<T>` is the one built-in that implements both `IIterable<T>` and `IIterator<T>`**, and its `iterate()` hands back the receiver rather than a cursor. That follows from the object being single-use: a generator holds one in-progress walk, so a separate cursor could only ever hold the position it already has. Walking one that has already started raises `InvalidOperationException` instead of iterating nothing — restarting means calling the generator *function* again, which builds a fresh one. `docs/Plan-Generadores.md` §12.2 has the reasoning; the short version is that the object follows JavaScript and the function follows C#, and the pair is what makes `for (x in countdown(5))` always walk the whole sequence.
+
+**A generator suspends by copying its frame, and is reached through a stub.** `Yield` copies the live frame — locals plus pending operands — out of the data stack into the `SurtrGenerator`, and `GenResume` copies it back at whatever base is free then; locals keep their indices because every access is frame-base-relative. That is why a `yield` cannot cross a call, the restriction every language in this family accepts. The compiler emits **two methods per generator**: a stub carrying the declared name whose return descriptor is `Y<elem>` and whose whole body is `GenNew` plus a return, and a hidden `$generator$name$0` holding the `yield`s. So a call to a generator is an *ordinary* call — no metadata flag, no dedicated call opcode, and `virtual` or contract dispatch works for free. A `for-in` whose sequence is statically a `generator<T>` lowers to `GenIterate`/`GenResume`/`GenCurrent`, the same way §4.2 lowers an array walk to an indexed loop; the contract is what makes a generator assignable to an `IIterable<T>`, not what a loop over one runs.
+
 A member implementing a generic interface is matched on the **erased** signature: `SurtrMethodInfo.SignatureKey()` writes `G<n>` as `E`, because after erasure they are the same slot and an implementation could otherwise never line up with the contract's. The other half of that bargain is Java's: a class wanting both `compareTo(Vec2)` and `IComparable<Vec2>` needs the compiler to emit a bridge, which `CodeGen/ModuleEmitter` does — under the **contract method's own name**, since the slot is keyed on name plus erased parameters and no other name would fill one. `SurtrClassReference.Erase` is what both sides compute that key with.
 
 **`array` and `dict` declare real generic parameters** — `T`, and `K`/`V` — and their element-polymorphic members are declared against them through the descriptor `G<n>`, which names the declaring type's n-th parameter. `G0` resolves to `SurtrBuiltIns.Erased`, so the runtime representation is exactly what `E` would have been and no layout, tracing or dispatch path knows the difference; what it adds is *which* parameter it is, which is what lets `int[].push("x")` be rejected against metadata alone. `push`, `pop`, `get`, `set`, `insert`, `indexOf`, `contains`, `remove`, `keys` and `values` are declared this way, and `length` is the uniform spelling of size on all four collections.
@@ -186,7 +192,7 @@ A member implementing a generic interface is matched on the **erased** signature
 
 ## The instruction set
 
-`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — **238 opcodes**, `0x00`–`0xF3`, leaving 18 free values in the `byte` space (`0xF4`–`0xFF`, plus the six retired ones). It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
+`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — **245 opcodes**, `0x00`–`0xFA`, leaving 11 free values in the `byte` space (`0xFB`–`0xFF`, plus the six retired ones). It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
 
 Surtr is a stack machine. Operands come from the evaluation stack; pool indices, jump offsets and argument counts are encoded inline after the opcode byte as little-endian immediates.
 
@@ -298,7 +304,7 @@ Benchmark the VM against MoonSharp and LuaJIT (both Lua) and a C# baseline. Alwa
 dotnet run --project src/Surtr.Bench -c Release
 ```
 
-**40 cases, each written three times over**, and the three must agree on a checksum or the run fails. `--list` prints the catalogue with what each one puts under load. LuaJIT runs through `luajit.native`'s x64 `lua51.dll` (copied to the output by the csproj; the driver is a P/Invoke over the Lua 5.1 C API), and is on by default. `surtrbench --help` lists the flags (`--workload <substring>`, `--iters <n>`, `--warmup <n>`, `--scale <factor>`, `--list`, `--surtr-only`/`--lua-only`/`--luajit-only`/`--baseline-only`, `--no-luajit`, `--csv <path>`). Run with a release build when the .NET 10 preview SDK is the one installed.
+**42 cases, each written three times over**, and the three must agree on a checksum or the run fails. `--list` prints the catalogue with what each one puts under load. LuaJIT runs through `luajit.native`'s x64 `lua51.dll` (copied to the output by the csproj; the driver is a P/Invoke over the Lua 5.1 C API), and is on by default. `surtrbench --help` lists the flags (`--workload <substring>`, `--iters <n>`, `--warmup <n>`, `--scale <factor>`, `--list`, `--surtr-only`/`--lua-only`/`--luajit-only`/`--baseline-only`, `--no-luajit`, `--csv <path>`). Run with a release build when the .NET 10 preview SDK is the one installed.
 
 Four things about the harness are load-bearing, and each was a defect before it was a feature:
 
@@ -327,6 +333,8 @@ The instruction set, the metadata layer, the object registry, the runtime object
 The language has three compile-time-only constructs worth knowing about before reading anything else, because they mean source and runtime do not correspond one-to-one: **type aliases** (§2.7) erase to their target's descriptor, **`inline`/`forceinline`** (§3.6) splice a body into a call site, and **`const`/`const fun`/`const if`** (§7) move work to compile time — including conditional compilation, with no preprocessor. The last of those is folded by *running the emitted bytecode on the real VM* rather than by a second evaluator in the compiler, so compile-time and runtime semantics cannot drift; `docs/VM-Plan.md` §4.7 covers what that costs.
 
 Three absences are deliberate and worth not re-proposing. There is **no `static class`** — a module already is a container of members with no instance (§2.5), so `singleton` (§2.8) exists only for the thing modules genuinely cannot do: implement an interface and be passed as a value. There is **no `any`** — `unknown` (§5.10) holds anything but must be cast before use, and is `SurtrValueTypeCode.Erased` with a surface name, so it costs the runtime nothing. And there are **no user-defined implicit conversions** — `operator as` (§5.6) is explicit-only, because overload resolution already has `int` → `float` as its hard case.
+
+**A `generator` (§3.7) is a fourth place source and runtime do not line up.** It is introduced by `generator` standing where `fun` would — an introducer like `constructor` and `operator`, not a modifier — and the type it declares is the **element**, so `generator countdown(from: int): int` has view type `generator<int>`. `MethodSymbol` keeps the two apart: `ReturnType` is the view type, so every call site, overload and conversion reads an ordinary method, and `YieldType` is what a `yield` converts against. `generator` and `yield` are hard-reserved, and `generator` is the one reserved word that also appears in type position.
 
 Two type-shaped things are erased but not equivalent: a **type alias** (§2.7) is transparent, so `EntityId` and `int` are interchangeable, while a **`value class`** (§2.9) groups one or more fields and *is* a distinct type to the compiler, laid out inline at runtime — one field erases to the field itself, several flatten to a run of contiguous slots — free where its type is statically known, boxed where it flows into an erased or interface-typed slot. A tuple is a value type on the same mechanism. `value` stays a contextual keyword: it is the `class` after it that makes the declaration.
 
@@ -389,7 +397,7 @@ Runtime-side gaps are in `docs/VM-Plan.md` §3; what the language design newly o
 
 The VM opcode suites in `src/Surtr.Tests/VM` predate the emitter and still use their own `BytecodeBuilder`, which pokes at `SurtrChunk` directly. That is deliberate: an opcode test should exercise the byte layout it is testing, not whatever the emitter decided to emit. New tests that are *about* a whole module belong in `src/Surtr.Tests/Bytecode/Emit` and should go through `SurtrModuleBuilder`.
 
-**Opcode values are final, not append-only.** `Bytecode/Image/` serializes bytecode, so an enum value is on disk somewhere. The set was regrouped by family and renumbered once — the pass that also wrote every value out explicitly — and `SurtrModuleImage.FormatVersion` went to **3** so an image written before it is refused rather than misread. That is the last renumbering: from here a new opcode takes a free value (`0xE0`+) and is filed with its family, and `SurtrModuleImage.FormatVersion` goes back to covering only how a module is *framed* rather than what runs inside it.
+**Opcode values are final, not append-only.** `Bytecode/Image/` serializes bytecode, so an enum value is on disk somewhere. The set was regrouped by family and renumbered once — the pass that also wrote every value out explicitly — and `SurtrModuleImage.FormatVersion` went to **3** so an image written before it is refused rather than misread. That is the last renumbering: from here a new opcode takes a free value (`0xE0`+) and is filed with its family, and `SurtrModuleImage.FormatVersion` goes back to covering only how a module is *framed* rather than what runs inside it. It is at **9** now: the generator work inserted `SurtrValueTypeCode.Generator` inside the built-in run, which shifted every code from `Range` up and so changed the meaning of a byte already in the layout — the one thing a refused version exists to catch.
 
 ## Coding conventions
 
@@ -400,7 +408,7 @@ The VM opcode suites in `src/Surtr.Tests/VM` predate the emitter and still use t
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Surtr** (9697 symbols, 39204 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Surtr** (9796 symbols, 39562 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

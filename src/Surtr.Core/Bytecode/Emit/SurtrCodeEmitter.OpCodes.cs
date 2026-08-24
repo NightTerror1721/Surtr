@@ -1150,6 +1150,61 @@ namespace Surtr.Bytecode.Emit
 
         #endregion
 
+        #region Generator Operations
+
+        /// <summary>Emits <see cref="OpCode.GenNew"/>.</summary>
+        /// <param name="body">
+        /// The generator's hidden body method - the one holding the <c>Yield</c>s, never the stub
+        /// that emits this.
+        /// </param>
+        /// <param name="generatorType">The whole parameterised type, <c>YI</c> for <c>generator&lt;int&gt;</c>.</param>
+        /// <param name="argumentCount">How many arguments to capture, receiver included.</param>
+        public SurtrCodeEmitter GenNew(SurtrMethodToken body, SurtrTypeToken generatorType, int argumentCount)
+        {
+            ThrowIfFinished();
+
+            int methodIndex = MethodIndex(body);
+            int typeIndex = TypeIndex(generatorType);
+            CheckRange(methodIndex, 0, ushort.MaxValue, OpCode.GenNew, "methodIdx");
+            CheckRange(typeIndex, 0, ushort.MaxValue, OpCode.GenNew, "typeIdx");
+            CheckRange(argumentCount, 0, byte.MaxValue, OpCode.GenNew, "argsCount");
+
+            Track(argumentCount, 1);
+
+            _code.Add((byte)OpCode.GenNew);
+            _code.Add((byte)methodIndex);
+            _code.Add((byte)(methodIndex >> 8));
+            _code.Add((byte)typeIndex);
+            _code.Add((byte)(typeIndex >> 8));
+            _code.Add((byte)argumentCount);
+            return this;
+        }
+
+        /// <summary>Emits <see cref="OpCode.GenIterate"/>.</summary>
+        /// <remarks>
+        /// Leaves the generator where it was: this is a check, not a conversion. Emitted once at
+        /// the top of a loop, which is the whole difference from the per-element opcodes below.
+        /// </remarks>
+        public SurtrCodeEmitter GenIterate() => Simple(OpCode.GenIterate, 1, 1);
+
+        /// <summary>Emits <see cref="OpCode.GenResume"/>.</summary>
+        public SurtrCodeEmitter GenResume() => Simple(OpCode.GenResume, 1, 1);
+
+        /// <summary>Emits <see cref="OpCode.GenCurrent"/>.</summary>
+        public SurtrCodeEmitter GenCurrent() => Simple(OpCode.GenCurrent, 1, 1);
+
+        /// <summary>Emits <see cref="OpCode.Yield"/>.</summary>
+        /// <remarks>
+        /// Declared as consuming its value and producing nothing, which is what the frame it
+        /// suspends actually sees. It does <em>not</em> end the flow the way a return does: the body
+        /// carries on at the next instruction when something resumes it, so the stack depth after a
+        /// <c>yield</c> is the depth before it minus the value - and that is exactly what the
+        /// emitter has to keep tracking for the rest of the body.
+        /// </remarks>
+        public SurtrCodeEmitter Yield() => Simple(OpCode.Yield, 1, 0);
+
+        #endregion
+
         #region Return Operations
 
         /// <summary>Emits <see cref="OpCode.ReturnVoid"/>.</summary>
