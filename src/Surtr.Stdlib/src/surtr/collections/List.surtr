@@ -149,6 +149,9 @@ public class List<T> : IList<T>
             }
         }
 
+        // Nothing held that outlives this cursor, so the contract slot is filled and empty.
+        public fun dispose(): void { }
+
         public fun moveNext(): bool
         {
             if (_index + 1 < _length)
@@ -185,6 +188,9 @@ public class LinkedList<T> : IList<T>
         {
             this._node = node;
         }
+
+        // Nothing held that outlives this cursor, so the contract slot is filled and empty.
+        public fun dispose(): void { }
 
         public fun moveNext(): bool
         {

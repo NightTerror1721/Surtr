@@ -326,6 +326,27 @@ namespace Surtr.Compiler.Syntax.Ast
         }
     }
 
+    /// <summary>A <c>using</c> block and the resources it closes on the way out (§9.2).</summary>
+    public sealed class UsingStatementSyntax : StatementSyntax
+    {
+        /// <summary>The resources, in the order they are opened; they are closed in reverse.</summary>
+        public IReadOnlyList<LocalDeclarationStatementSyntax> Resources { get; }
+
+        /// <summary>The block the resources are live for.</summary>
+        public BlockStatementSyntax Body { get; }
+
+        /// <summary>Initializes a using statement.</summary>
+        /// <param name="span">The source the statement covers.</param>
+        /// <param name="resources">The resources, in the order they are opened.</param>
+        /// <param name="body">The block the resources are live for.</param>
+        public UsingStatementSyntax(SourceSpan span, IReadOnlyList<LocalDeclarationStatementSyntax> resources, BlockStatementSyntax body)
+            : base(span)
+        {
+            Resources = resources;
+            Body = body;
+        }
+    }
+
     /// <summary>A <c>throw</c>.</summary>
     public sealed class ThrowStatementSyntax : StatementSyntax
     {
@@ -353,42 +374,6 @@ namespace Surtr.Compiler.Syntax.Ast
         public ReturnStatementSyntax(SourceSpan span, ExpressionSyntax? value) : base(span)
         {
             Value = value;
-        }
-    }
-
-    /// <summary>A <c>yield</c>: hands one element out of a generator and suspends it (§3.7).</summary>
-    /// <remarks>
-    /// A statement rather than an expression, deliberately. In JavaScript and Python <c>yield</c>
-    /// is an expression because it evaluates to what <c>send()</c> injected; Surtr has no injection
-    /// in phase 1, so an expression form would be one that always has the same type and no value.
-    /// Growing it into an expression later is a contained change - see
-    /// <c>docs/Plan-Generadores.md</c> §12.8.
-    /// </remarks>
-    public sealed class YieldStatementSyntax : StatementSyntax
-    {
-        /// <summary>The element handed out, or the sequence delegated to when <see cref="IsDelegating"/>.</summary>
-        public ExpressionSyntax Value { get; }
-
-        /// <summary>
-        /// True for <c>yield from expr;</c> — every element of <see cref="Value"/> in order,
-        /// rather than <see cref="Value"/> itself (§3.7).
-        /// </summary>
-        /// <remarks>
-        /// A flag rather than a node of its own: both forms hand elements out of the same generator
-        /// and are checked against the same declared element type, so everything between here and
-        /// the emitter treats them alike. Only code generation cares, and only because delegating to
-        /// another <em>generator</em> can be a link instead of a loop.
-        /// </remarks>
-        public bool IsDelegating { get; }
-
-        /// <summary>Initializes a yield statement.</summary>
-        /// <param name="span">The source the statement covers.</param>
-        /// <param name="value">The element handed out, or the sequence delegated to.</param>
-        /// <param name="isDelegating">True for the <c>yield from</c> form.</param>
-        public YieldStatementSyntax(SourceSpan span, ExpressionSyntax value, bool isDelegating = false) : base(span)
-        {
-            Value = value;
-            IsDelegating = isDelegating;
         }
     }
 

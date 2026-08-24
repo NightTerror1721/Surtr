@@ -83,8 +83,8 @@ constructor          continue  default   else      enum        extension false
 finally    for       forceinline         fun       generator   if        import
 in         inline    interface internal  is        let         moduleof  native
 null       operator  override  private   protected public      return    sealed
-singleton  static    switch    throw     true      try         typeof    var
-virtual    while     yield
+singleton  static    switch    throw     true      try         typeof    using
+var        virtual   while     yield
 ```
 
 And a sixth line, because the list keeps growing and `export` joined §2.1's imports:
@@ -92,6 +92,11 @@ And a sixth line, because the list keeps growing and `export` joined §2.1's imp
 ```
 export
 ```
+
+`using` (§9.2) is reserved rather than contextual, and it has to be: `using (x)` in statement
+position is indistinguishable from a call to a function named `using`, so nothing but reserving it
+settles the parse. It cost nothing to reserve — no `.surtr` source in the tree used the word as an
+identifier.
 
 `generator` and `yield` (§3.7) are hard-reserved rather than contextual, and deliberately so:
 `generator` introduces a member the way `constructor` and `operator` do, and `yield` opens a
@@ -1079,8 +1084,10 @@ Four rules carry the whole construct:
   body works in.
 - **`yield expr;` hands one element out and suspends.** The value converts to the declared element
   by the same rules a `return` converts to a return type.
-- **`return;` ends the sequence**, as does falling off the end. `return expr;` is an error: a
-  generator produces elements, not a final result on top of them.
+- **`return;` ends the sequence**, as does falling off the end. `return expr;` also ends it and
+  leaves a **result** alongside the elements — what a delegating `yield from` evaluates to, and what
+  `result` reads back. It is typed `unknown`, because the declaration names the element and has
+  nowhere to write a second type.
 - **Calling a generator runs none of its body.** The call captures the arguments and builds the
   object; the body starts on the first request for an element. So a generator function is free of
   side effects until something iterates it.
@@ -1195,15 +1202,80 @@ A `yield` is legal only in the lexical body of a generator. Three placements are
 |---|---|
 | Outside a generator | there is no element type to convert against |
 | Inside a lambda nested in a generator | the lambda is a function of its own, with its own frame; the generator's frame is not in reach to suspend |
-| Inside a `try` | suspending would leave a handler pending across a pause nothing is obliged to end |
+| Inside a `finally` | that block runs *because* the generator is being closed, so suspending there would answer a close with an element |
 
-The `try` restriction is the one worth stating plainly: a generator body cannot wrap a `yield` in
-`try/catch` or `try/finally` at all. A `try` containing no `yield` is fine, and so is a `try/catch`
-around the *consumption* of a generator — an exception raised inside a body propagates out of the
-request that reached it, and exhausts the generator.
+**A `yield` inside a `try` is legal**, `catch` and `finally` alike, and that is what deterministic
+disposal (§9.2) bought. The handler search reads the suspended frame's own saved instruction
+pointer, so a `catch` around the suspension point takes what `raise` throws in, and a `finally`
+around it runs when the generator is closed. The one placement left out is the `finally` block
+itself: it runs during a close, and a close that got an element back would leave a generator alive
+after something was told it was disposed.
+
+A `try/catch` around the *consumption* of a generator works as it always did — an exception raised
+inside a body propagates out of the request that reached it, and exhausts the generator.
 
 A generator whose body contains no `yield` is legal and produces nothing — a useful base case for a
 recursive walk — but warns, because it is far more often an omission.
+
+#### Coroutines: `send`, `raise`, `dispose`, `result`
+
+A generator is not only a sequence; it is a suspended body something else can talk to. Four members
+on `generator<T>` make that traffic two-way, and none of them is on a contract — nothing else in the
+language can be sent to or raised into.
+
+```
+generator negotiate(): int {
+    let first = yield 1;                 // evaluates to what send() injected
+    let second = yield ((first as int) + 1);
+    return "done";                       // the result, read back through `result`
+}
+
+fun drive(): void {
+    let g = negotiate();
+    g.moveNext();                        // runs to the first yield; g.current is 1
+    g.send(10);                          // the first `yield` evaluates to 10; g.current is 11
+    g.raise(InvalidOperationException("stop"));   // throws where it is suspended
+    g.dispose();                         // ends it, running its pending `finally` blocks
+    let r = g.result;                    // what `return expr;` left, or null
+}
+```
+
+- **`yield` is an expression**, at the lowest precedence there is — JavaScript's and Python's rule.
+  So `let cmd = yield status;` reads straight, and as an operand of anything else it needs
+  parentheses: `yield a + b` yields the sum, and `(yield a) + b` adds to what came back. What it
+  evaluates to is `unknown`, so it is cast at the point of use (§5.10). Written as a statement it
+  costs exactly what it always did — the compiler simply does not emit the read.
+- **`send(v)`** resumes and hands `v` to the suspended `yield`, answering `true` or `false` the way
+  `moveNext()` does; the element is read through `current`, so the two ways of advancing have one
+  shape. Sending to a generator that has not started is refused rather than silently dropping the
+  value — there is no suspended `yield` to hand it to.
+- **`raise(e)`** throws inside the body at the point it is suspended. It is spelled `raise` and not
+  `throw` because `throw` is reserved (§1.2), so `g.throw(e)` would not parse.
+- **`dispose()`** ends the body from outside, running whatever `finally` blocks it has pending. It
+  is `IDisposable.dispose` (§9.2), which is why a `for-in` over a generator closes it on every way
+  out — including a `break`. It is idempotent, and closing a delegation closes every level,
+  innermost first.
+
+The signal `dispose()` raises inside the body is a `GeneratorExit`, and **no typed `catch` ever
+matches it**: only a `finally` sees it. So a body that wraps its suspension in a broad
+`catch (e: Exception)` still gets closed, which is the guarantee Python gets by putting
+`GeneratorExit` outside `except Exception`. A body that somehow yields again while being closed is
+an error rather than a generator that quietly survived its own disposal.
+
+**`yield from` is an expression too**, and evaluates to what the generator it delegated to returned
+— PEP 380's rule:
+
+```
+generator inner(): int { yield 1; yield 2; return 30; }
+
+generator outer(): int {
+    let total = yield from inner();      // 30, after handing out 1 and 2
+    yield (total as int);
+}
+```
+
+Delegating to something that is not a generator evaluates to `null`, because an array has no return
+value to hand back.
 
 #### What it costs
 
@@ -1218,6 +1290,14 @@ function a generator called is running, the generator's own frame is no longer t
 Every language in this family accepts the same restriction. In exchange, a local that lives across
 a `yield` stays a local: nothing is promoted to the heap, and a generator costs exactly one
 allocation however many elements it produces.
+
+Wrapping a `yield` in a `try` costs nothing measurable — protected regions are a table of ranges,
+with no instruction to enter one. `send` is the one part of the surface that is not cheap: it goes
+through the general path rather than a compiled one, because a `for-in` never injects a value, and a
+primitive sent into an `unknown` parameter is boxed like anything else reaching an erased slot
+(§5.10). Measured at 50 000 elements: an ordinary walk is 1.42 ms and one allocation, the same walk
+with the `yield` inside a `try/finally` is 1.30 ms and one allocation, and a `send`-driven loop is
+5.2 ms and one allocation per injected value.
 
 ---
 
@@ -2673,6 +2753,67 @@ still reachable.
 `never` is legal only as a return type — it names a function that never completes — and as the
 implicit type of a throw expression. It is not a value type: a variable cannot be declared of it
 in any way that reads one back, since no value ever has that type.
+
+### 9.2 Disposal: `IDisposable` and `using`
+
+Some things have to be released at a moment the collector cannot pick — a host file handle, a
+native buffer, a generator suspended halfway through a `try/finally`. Surtr's registry sweeps by
+dropping its reference and has **no finalization hook**, so an object never learns it died. What the
+language offers instead is a contract and two places that honour it.
+
+```
+public interface IDisposable {
+    fun dispose(): void;
+}
+```
+
+`IDisposable` is built in, beside `IIterable` and `IIterator`, because the compiler has to name it:
+a `for-in` closes its cursor and a `using` closes its resource, and neither can depend on a
+particular library module having been loaded.
+
+**`using` opens a resource for a block and closes it on every way out.**
+
+```
+using (let file = openFile("data.bin")) {
+    process(file);
+}
+
+using (let source = open("in"), let sink = create("out")) {
+    copy(source, sink);
+}
+```
+
+- A resource is declared with `let`, never `var`: one that could be reassigned would leave the close
+  pointed at something other than what was opened.
+- Its type must satisfy `IDisposable`, or the declaration is an error.
+- Several resources close in **reverse order**, because the second may have been opened from the
+  first — and a resource whose own opening throws leaves the ones before it closed.
+- A nullable resource is allowed and simply not closed when it is null.
+
+It is exactly `try { B } finally { r.dispose(); }` with a null guard, and nothing more: a `break`, a
+`return` and an escaping exception all run the close through the machinery `try/finally` already
+has. If `dispose()` itself throws while an exception was travelling, the one from `dispose()` wins
+and the original is lost — C#'s behaviour, not Java's; there is no suppressed-exception list.
+
+**A `for-in` closes what it walks.** `IIterator<T>` extends `IDisposable`, so every cursor has a
+`dispose()` and a loop always knows statically that it has something to close — no run-time question
+per loop, and no way for a generator travelling as an `IIterable<T>` to escape the close. The loop
+closes on all four exits: running out, `break`, `return`, and an exception. The loops that walk a
+built-in collection by index — an array, a tuple, a dict, a `range`, a `string` (§4.2) — create no
+cursor and so pay nothing at all.
+
+Entering a protected region costs nothing in this VM, so what a loop over a cursor pays is one call
+on the way out. Once per loop, never per element — and where a body has nothing protecting its
+suspension point, the close finds that out before building a frame or an exception, so a `break` out
+of an ordinary generator allocates nothing. `genYield` measures 1.42 ms, unchanged from before the
+close existed.
+
+**What is not guaranteed.** An `IDisposable` stored in a field and abandoned is never closed; a
+generator held in a variable and never walked never runs its `finally`. This is C#'s and Java's
+position, stated rather than hidden: closing the abandoned needs reference counting, which is the
+collection decision this language did not take. What *is* guaranteed is that the two normal ways to
+consume a resource — a `for-in` and a `using` — are safe, and that stepping outside them is
+explicit.
 
 ---
 

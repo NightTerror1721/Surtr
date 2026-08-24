@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Runtime;
@@ -8,6 +8,7 @@ using Surtr.Runtime.Objects;
 using Surtr.Runtime.Utilities;
 using System;
 using System.Buffers;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
 namespace Surtr.VM
@@ -536,6 +537,259 @@ namespace Surtr.VM
         /// </remarks>
         /// <returns><see langword="true"/> if the body yielded a value; <see langword="false"/> if it finished.</returns>
         internal bool ResumeGenerator(SurtrGenerator generator)
+            => Advance(generator, SurtrValue.Null);
+
+        /// <summary>
+        /// Resumes a generator with a value, which its suspended <c>yield</c> evaluates to (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// The whole of <c>send</c> beyond one write: injecting is resuming, with the value parked
+        /// where <c>GenResumed</c> will read it. It goes to the <em>innermost</em> generator of a
+        /// delegation for the same reason a resume does - that is the one with a frame, and the one
+        /// whose <c>yield</c> is actually suspended.
+        /// </remarks>
+        /// <returns><see langword="true"/> if the body yielded again; <see langword="false"/> if it finished.</returns>
+        internal bool SendToGenerator(SurtrGenerator generator, SurtrValue value)
+        {
+            var innermost = generator.Innermost;
+
+            // A generator that has not started has no suspended `yield` to hand this to, so the
+            // value would simply vanish. Python refuses the same call for the same reason; refusing
+            // is what turns a silent loss into a legible mistake, exactly as §12.2 did for walking
+            // an already-started generator.
+            if (innermost.State == SurtrGeneratorState.NotStarted)
+                throw GeneratorNotStarted();
+
+            return Advance(generator, value);
+        }
+
+        /// <summary>
+        /// Raises an exception inside a generator at the point it is suspended (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The frame is rebuilt exactly as a resume rebuilds it, and then, instead of running, the
+        /// handler search is offered the exception against that frame's own saved instruction
+        /// pointer. That pointer sits inside whatever <c>try</c> the <c>yield</c> was written in, so
+        /// a <c>catch</c> or a <c>finally</c> around the suspension point sees the raise - which is
+        /// the whole reason §3.7 can now allow a <c>yield</c> inside a <c>try</c> at all.
+        /// </para>
+        /// <para>
+        /// Nothing about this is a new unwinding mechanism: <see cref="TryEnterHandler"/> already
+        /// walks frames, marks a generator whose body died as exhausted, and stops at the depth it
+        /// was given.
+        /// </para>
+        /// </remarks>
+        /// <returns><see langword="true"/> if the body caught it and yielded again.</returns>
+        internal bool RaiseInGenerator(SurtrGenerator generator, SurtrRef exception)
+        {
+            var innermost = generator.Innermost;
+
+            if (innermost.State == SurtrGeneratorState.Running)
+                throw GeneratorAlreadyRunning();
+
+            // Nothing left to raise into: a generator that never started has no suspended point and
+            // an exhausted one has no frame, so the exception belongs to whoever asked for the
+            // raise. Finishing first is what stops a not-started generator from later running its
+            // body as though nothing had happened to it.
+            if (innermost.State != SurtrGeneratorState.Suspended)
+            {
+                innermost.Finish();
+                throw Uncaught(exception, _runtime.Context.EntityRegistry.Entities);
+            }
+
+            innermost.Resumed = SurtrValue.Null;
+
+            int depth = PushGeneratorFrame(innermost, out SurtrRawValue* frameBase);
+
+            try
+            {
+                // Offered against the frame that was just rebuilt, and only against it: the depth
+                // bounds the search, so an exception nothing in the body catches leaves as a CLR
+                // exception and resumes its travel through whoever called in.
+                if (!TryEnterHandler(exception, depth))
+                {
+                    _sp = frameBase - 1;
+                    throw Uncaught(exception, _runtime.Context.EntityRegistry.Entities);
+                }
+
+                Execute(depth);
+            }
+            catch
+            {
+                _sp = frameBase - 1;
+                throw;
+            }
+
+            bool produced = (*(frameBase - 1) & 1UL) != 0;
+            _sp = frameBase - 1;
+            return produced;
+        }
+
+        /// <summary>
+        /// Ends a generator from outside, running the <c>finally</c> blocks its body has pending
+        /// (<c>docs/Plan-Disposicion.md</c> §3.5).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// What <c>dispose()</c> is. A suspended body is unwound by raising
+        /// <see cref="SurtrBuiltIns.GeneratorExit"/> inside it - a class no typed <c>catch</c> ever
+        /// matches, so only a <c>finally</c> sees it and no <c>catch (e: Exception)</c> in the body
+        /// can swallow the close. The exit travelling back out is success rather than failure, so it
+        /// is swallowed here; anything else the body raises on its way out is a real exception and
+        /// travels on.
+        /// </para>
+        /// <para>
+        /// A delegation is closed innermost-first, and every level is closed on its own frame. A
+        /// delegating generator is suspended <em>with</em> a frame - <c>GenDelegate</c> copies one
+        /// out, and it is only resumes that walk past it - so its own <c>finally</c> around a
+        /// <c>yield from</c> has to run too, and would be lost if the chain were simply marked
+        /// exhausted from the innermost end.
+        /// </para>
+        /// <para>
+        /// Idempotent, as the contract requires: closing an exhausted generator does nothing, and
+        /// closing one that never started only marks it.
+        /// </para>
+        /// </remarks>
+        internal void DisposeGenerator(SurtrGenerator generator)
+        {
+            if (generator.State == SurtrGeneratorState.Running)
+                throw GeneratorAlreadyRunning();
+
+            // The overwhelmingly common shape - a generator delegating to nothing - closes without
+            // building anything. Every `for-in` over a generator now ends in a close, so the
+            // no-delegation path is worth keeping free of a list nobody reads twice.
+            if (generator.Delegate is null)
+            {
+                CloseOne(generator);
+                return;
+            }
+
+            // Snapshotted before anything is closed, because closing a level cuts the links this
+            // walk would otherwise follow.
+            var chain = new List<SurtrGenerator>(4);
+            for (var level = generator; level is not null; level = level.Delegate)
+            {
+                if (level.State == SurtrGeneratorState.Running)
+                    throw GeneratorAlreadyRunning();
+
+                chain.Add(level);
+            }
+
+            for (int i = chain.Count - 1; i >= 0; i--)
+                CloseOne(chain[i]);
+        }
+
+        /// <summary>Unwinds one generator of a delegation chain, running its own pending blocks.</summary>
+        private void CloseOne(SurtrGenerator generator)
+        {
+            if (generator.State != SurtrGeneratorState.Suspended)
+            {
+                // Never started, or already over. Marking is all a close owes it - and it is worth
+                // marking, because a not-started generator that was disposed must not go on to run
+                // its body on the strength of never having been touched.
+                if (generator.State == SurtrGeneratorState.NotStarted)
+                    generator.FinishAndDetach();
+
+                return;
+            }
+
+            // Cut loose from the chain first: the levels are closed one at a time on their own
+            // frames, so a link left standing would send this raise straight past the very
+            // generator it is meant to unwind.
+            generator.Delegate = null;
+            generator.DelegatedBy = null;
+            generator.Resumed = SurtrValue.Null;
+
+            // A body with nothing protecting its suspension point has nothing to run, so there is
+            // no reason to build the frame or the exit object for it. This is what keeps a `break`
+            // out of an ordinary generator free of an allocation: only a generator that actually
+            // wrote a `try` around its `yield` pays for being closed.
+            if (!HasHandlerAt(generator))
+            {
+                generator.Finish();
+                return;
+            }
+
+            var exit = _runtime.NewException(SurtrBuiltIns.GeneratorExit, "The generator was disposed.");
+            SurtrRef exitReference = exit.GetSurtrReference();
+
+            int depth = PushGeneratorFrame(generator, out SurtrRawValue* frameBase);
+
+            bool produced;
+
+            try
+            {
+                if (!TryEnterHandler(exitReference, depth))
+                {
+                    // Nothing in the body was protecting the suspension point, so there was nothing
+                    // to run and the close is already complete.
+                    _sp = frameBase - 1;
+                    generator.Finish();
+                    return;
+                }
+
+                Execute(depth);
+                produced = (*(frameBase - 1) & 1UL) != 0;
+                _sp = frameBase - 1;
+            }
+            catch (SurtrThrownException thrown) when (thrown.Reference == exitReference)
+            {
+                // The exit came back out, which is the ordinary outcome: a `finally` ran and
+                // re-raised it, and it found nothing else. That is the close succeeding, so it
+                // stops here rather than reaching whoever called dispose().
+                _sp = frameBase - 1;
+                generator.Finish();
+                return;
+            }
+            catch
+            {
+                _sp = frameBase - 1;
+                throw;
+            }
+
+            // A body that answered a close with another element caught the exit and carried on,
+            // which leaves a generator alive after something was told it was closed. Python refuses
+            // the same shape, and for the same reason: the alternative is a resource whose release
+            // silently did not happen.
+            if (produced)
+                throw GeneratorIgnoredClose();
+
+            generator.Finish();
+        }
+
+        /// <summary>Whether anything in the body protects the point the generator is suspended at.</summary>
+        /// <remarks>
+        /// The same test <see cref="TryEnterHandler"/> would make, asked before a frame is built
+        /// rather than after: closing a generator whose suspension is inside no <c>try</c> has
+        /// nothing to run, and answering that here is what keeps the ordinary case - a <c>break</c>
+        /// out of a generator that wrote no <c>try</c> at all - free of both a frame entry and an
+        /// exception object.
+        /// </remarks>
+        private static bool HasHandlerAt(SurtrGenerator generator)
+        {
+            if (generator.Method is not SurtrBytecodeMethodInfo bytecode)
+                return false;
+
+            var handlers = bytecode.Handlers;
+            for (int i = 0; i < handlers.Length; i++)
+            {
+                if (handlers[i].Covers(generator.ResumeOffset))
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Runs a suspended generator to its next <c>yield</c> or its end, with a value to hand it.
+        /// </summary>
+        /// <remarks>
+        /// The shared body of <see cref="ResumeGenerator"/> and <see cref="SendToGenerator"/>: the
+        /// two differ only in what is parked in <c>Resumed</c>, which is why an ordinary resume
+        /// parks null rather than leaving whatever was there.
+        /// </remarks>
+        private bool Advance(SurtrGenerator generator, SurtrValue resumed)
         {
             // Straight to the innermost generator that still has a frame, exactly as GenResume
             // does: a delegating generator is suspended without one.
@@ -548,53 +802,9 @@ namespace Surtr.VM
             if (generator.State == SurtrGeneratorState.Running)
                 throw GeneratorAlreadyRunning();
 
-            int depth = _frameCount;
-            if (depth == _frames.Length)
-                throw CallStackOverflow(_frames.Length);
+            generator.Resumed = resumed;
 
-            // The interpreter's GenResume leaves the generator's own stack slot below the frame as
-            // the place the answer goes. There is no such slot here, so one is pushed: both ways a
-            // body can leave write into it unconditionally, and reserving it is cheaper than
-            // teaching them which caller they are answering.
-            if (_sp >= _stackLimit)
-                throw DataStackOverflow();
-
-            *_sp++ = SurtrValue.TagMaskReference | (uint)generator.GetSurtrReference();
-
-            SurtrRawValue* frameBase = _sp;
-            int localCount = generator.LocalCount;
-            int liveSlots = generator.SlotCount;
-
-            if (frameBase + localCount + generator.MaxStackSize > _stackLimit)
-                throw DataStackOverflow();
-
-            var slots = generator.Slots;
-            for (int i = 0; i < liveSlots; i++)
-                frameBase[i] = slots[i].Raw;
-
-            for (int i = liveSlots; i < localCount; i++)
-                frameBase[i] = 0;
-
-            var chunk = generator.Chunk;
-            byte* codeBase = chunk.Code.Pointer;
-
-            ref SurtrCallFrame frame = ref _frames[depth];
-            frame.Base = frameBase;
-            frame.CodeBase = codeBase;
-            frame.IP = codeBase + generator.ResumeOffset;
-            frame.Chunk = chunk;
-            frame.Method = generator.Method;
-            frame.Closure = null;
-            frame.Generator = generator;
-            frame.LocalCount = localCount;
-            frame.ArgumentCount = generator.ArgumentCount;
-            frame.ExpectedResults = 0;
-
-            _roots[depth + 1] = SurtrValue.TagMaskReference | (uint)generator.GetSurtrReference();
-
-            generator.State = SurtrGeneratorState.Running;
-            _frameCount = depth + 1;
-            _sp = frameBase + (liveSlots > localCount ? liveSlots : localCount);
+            int depth = PushGeneratorFrame(generator, out SurtrRawValue* frameBase);
 
             try
             {
@@ -615,6 +825,68 @@ namespace Surtr.VM
             bool produced = (*(frameBase - 1) & 1UL) != 0;
             _sp = frameBase - 1;
             return produced;
+        }
+
+        /// <summary>
+        /// Rebuilds a suspended generator's frame on top of the stack, ready to be run into.
+        /// </summary>
+        /// <remarks>
+        /// The native counterpart of the interpreter's <c>EnterGeneratorFrame</c>, shared by every
+        /// way host code enters a body: a resume, a send, a raise and a close. The interpreter's
+        /// <c>GenResume</c> leaves the generator's own stack slot below the frame as the place the
+        /// answer goes; there is no such slot here, so one is pushed - both ways a body can leave
+        /// write into it unconditionally, and reserving it is cheaper than teaching them which
+        /// caller they are answering.
+        /// </remarks>
+        /// <returns>The frame depth the run should unwind back to.</returns>
+        private int PushGeneratorFrame(SurtrGenerator generator, out SurtrRawValue* frameBase)
+        {
+            int depth = _frameCount;
+            if (depth == _frames.Length)
+                throw CallStackOverflow(_frames.Length);
+
+            if (_sp >= _stackLimit)
+                throw DataStackOverflow();
+
+            *_sp++ = SurtrValue.TagMaskReference | (uint)generator.GetSurtrReference();
+
+            SurtrRawValue* localBase = _sp;
+            int localCount = generator.LocalCount;
+            int liveSlots = generator.SlotCount;
+
+            if (localBase + localCount + generator.MaxStackSize > _stackLimit)
+                throw DataStackOverflow();
+
+            var slots = generator.Slots;
+            for (int i = 0; i < liveSlots; i++)
+                localBase[i] = slots[i].Raw;
+
+            for (int i = liveSlots; i < localCount; i++)
+                localBase[i] = 0;
+
+            var chunk = generator.Chunk;
+            byte* codeBase = chunk.Code.Pointer;
+
+            ref SurtrCallFrame frame = ref _frames[depth];
+            frame.Base = localBase;
+            frame.CodeBase = codeBase;
+            frame.IP = codeBase + generator.ResumeOffset;
+            frame.Chunk = chunk;
+            frame.Method = generator.Method;
+            frame.Closure = null;
+            frame.Generator = generator;
+            frame.LocalCount = localCount;
+            frame.ArgumentCount = generator.ArgumentCount;
+            frame.ExpectedResults = 0;
+
+            _roots[depth + 1] = SurtrValue.TagMaskReference | (uint)generator.GetSurtrReference();
+
+            generator.State = SurtrGeneratorState.Running;
+            _frameCount = depth + 1;
+            _sp = localBase + (liveSlots > localCount ? liveSlots : localCount);
+
+            frameBase = localBase;
+            return depth;
         }
         #endregion
 
@@ -772,6 +1044,15 @@ namespace Surtr.VM
         }
 
         /// <summary>Whether a handler's declared catch type admits the raised object's class.</summary>
+        /// <remarks>
+        /// One class is excluded from every typed handler: <c>GeneratorExit</c>, which
+        /// <c>dispose()</c> raises inside a suspended generator to unwind it. A catch-all is the
+        /// only handler that sees it, and the compiler emits a catch-all for exactly one construct -
+        /// a <c>finally</c> - so closing a generator runs its <c>finally</c> blocks and cannot be
+        /// swallowed by a <c>catch (e: Exception)</c> in the body. It is Python's
+        /// <c>BaseException</c> rule expressed as a condition rather than as a second hierarchy
+        /// root; see <c>SurtrBuiltIns.GeneratorExit</c>.
+        /// </remarks>
         private static bool Catches(in SurtrExceptionHandler handler, SurtrClass? raisedClass)
         {
             var catchType = handler.CatchType;
@@ -779,6 +1060,9 @@ namespace Surtr.VM
                 return true;
 
             if (raisedClass is null)
+                return false;
+
+            if (ReferenceEquals(raisedClass, SurtrBuiltIns.GeneratorExit))
                 return false;
 
             var target = catchType.ResolvedType;
@@ -3300,6 +3584,12 @@ namespace Surtr.VM
                             // still has whatever follows its `yield from`. It takes the frame the
                             // inner just vacated and answers into the same slot, so the consumer
                             // never learns that a delegation happened.
+                            //
+                            // The inner's return value travels with the hand-off, which is what
+                            // makes `let r = yield from inner();` read it: to the delegator this is
+                            // its suspension ending, so the value flows in through the very field
+                            // a `send` would have used.
+                            delegator.Resumed = ended.Result;
                             pendingGenerator = delegator;
                             goto EnterGeneratorFrame;
                         }
@@ -3326,12 +3616,39 @@ namespace Surtr.VM
                     sp = finished.Base;
                     int expected = finished.ExpectedResults;
 
+                    // `return expr;` inside a generator body (§3.7). The value is not what the
+                    // resumer wanted - a resume answers "did it yield?", and this answers "no" like
+                    // any other end - so it is kept on the generator, where the `yield from` that
+                    // delegated here or a consumer reading `result` picks it up afterwards.
+                    // Ordinary frames never carry a generator, so this is the same single null test
+                    // on a cached field that ReturnVoid already makes; and no module written before
+                    // this branch existed can reach it, because the binder rejected `return expr;`
+                    // in a generator outright.
+                    var ended = finished.Generator;
+
                     finished.Chunk = null;
                     finished.Method = null;
                     finished.Closure = null;
                     finished.Generator = null;
                     roots[depth + 1] = 0;
                     _frameCount = depth;
+
+                    if (ended is not null)
+                    {
+                        ended.Result = SurtrValue.FromRaw(result);
+                        var delegator = ended.FinishAndDetach();
+
+                        if (delegator is null)
+                        {
+                            sp[-1] = SurtrValue.TagMaskBool;
+                        }
+                        else
+                        {
+                            delegator.Resumed = ended.Result;
+                            pendingGenerator = delegator;
+                            goto EnterGeneratorFrame;
+                        }
+                    }
 
                     if (depth == entryDepth)
                     {
@@ -3739,6 +4056,11 @@ namespace Surtr.VM
                         throw GeneratorAlreadyRunning();
                     }
 
+                    // An ordinary resume carries nothing in, so whatever a previous `send` left
+                    // has to go: a stale injection read back by a later `yield` would be a value
+                    // arriving from a resumption that never sent one.
+                    resumed.Resumed = SurtrValue.Null;
+
                     // The generator's own slot stays where it is and becomes the result slot: the
                     // body's frame starts one above it, and whichever way the body leaves - a
                     // `yield` or the end - overwrites it with the answer. That is also what keeps
@@ -3758,9 +4080,15 @@ namespace Surtr.VM
                     // Delegating to something already finished produces nothing at all, so the
                     // outer simply carries on. Handled here rather than by suspending and being
                     // resumed straight back, which would have to explain a `false` that does not
-                    // mean what a `false` means everywhere else.
+                    // mean what a `false` means everywhere else. The result still has to be handed
+                    // over: `yield from` evaluates to the inner generator's return value, and one
+                    // that ended before the delegation began has one just as much as one that ends
+                    // during it.
                     if (inner.State == SurtrGeneratorState.Exhausted)
+                    {
+                        outer.Resumed = inner.Result;
                         goto Dispatch;
+                    }
 
                     // Covers `yield from self` and any longer cycle: a running generator's frame is
                     // live on this stack, and entering it again would copy a stale frame over it.
@@ -3822,6 +4150,15 @@ namespace Surtr.VM
                         read = delegated;
 
                     *(sp - 1) = read.Current.Raw;
+                    goto Dispatch;
+                }
+
+                case OpCode.GenResumed:
+                {
+                    // What the last suspension was resumed with: `send(v)`'s injection at a
+                    // `yield`, or the delegated-to generator's return value at a `yield from`.
+                    // Emitted only where the source reads it, so a statement `yield` never pays.
+                    *sp++ = current.Generator!.Resumed.Raw;
                     goto Dispatch;
                 }
 
@@ -4165,6 +4502,18 @@ namespace Surtr.VM
         private static SurtrExecutionException GeneratorAlreadyRunning()
             => new SurtrExecutionException(
                 "This generator is already running: a generator cannot be resumed from inside its own body.",
+                SurtrBuiltIns.InvalidOperationException);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException GeneratorNotStarted()
+            => new SurtrExecutionException(
+                "This generator has not started, so there is no suspended 'yield' to send a value to. Resume it once before sending.",
+                SurtrBuiltIns.InvalidOperationException);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException GeneratorIgnoredClose()
+            => new SurtrExecutionException(
+                "This generator yielded while it was being disposed: its body caught the close and carried on, so the disposal did not happen.",
                 SurtrBuiltIns.InvalidOperationException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]

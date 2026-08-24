@@ -33,7 +33,7 @@ namespace Surtr.Stdlib
         /// <summary>Nothing selected.</summary>
         None = 0,
 
-        /// <summary><c>surtr/core/</c> â€” <c>Contracts</c>, <c>Exception</c>.</summary>
+        /// <summary><c>surtr/core/</c> — <c>Exception</c>.</summary>
         Core = 1 << 0,
 
         /// <summary><c>surtr/math/</c> â€” <c>Math</c>, <c>Angle</c>.</summary>

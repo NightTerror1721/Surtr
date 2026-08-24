@@ -145,7 +145,10 @@ receiver nullness, the concrete type behind a reference, per-push stack room.
 
 Trapped, each from a `NoInlining` cold helper: division by zero and `int.MinValue / -1`, negative
 integer exponents, array/string/tuple index out of range, popping an empty array, `DictGet` on a
-missing key, a failed `Cast`, stack and call-depth overflow, an invalid opcode byte.
+missing key, a failed `Cast`, stack and call-depth overflow, an invalid opcode byte, and five
+generator states that would otherwise corrupt or silently mislead — walking one already started,
+resuming or delegating to one already running, sending to one that has not started, and a body that
+answers a `dispose()` with another element.
 
 **Each trap names the library class it surfaces as**, on the exception it raises, so a Surtr
 `catch` clause can name what the runtime raises rather than only what Surtr code threw. The pairing

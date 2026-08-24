@@ -427,6 +427,10 @@ namespace Surtr.Bench
                     _i = _i + 1;
                     return true;
                 }
+
+                // Nothing held that outlives this cursor. The slot exists because IIterator<T>
+                // extends IDisposable, which is what lets a for-in close whatever it walks.
+                public fun dispose(): void { }
             }
 
             // The cursor is held by its own type, not by IIterator<int>. What this case is for is
@@ -455,6 +459,48 @@ namespace Surtr.Bench
             fun genDelegate(n: int): int {
                 var acc: int = 0;
                 for (x in delegTop(n)) { acc = (acc + x) % 100000007; }
+                return acc;
+            }
+
+            // Two-way traffic: every element goes out through a `yield` and a value comes back
+            // in through `send`, which is the coroutine shape rather than the iteration one. It
+            // costs a native call and a nested entry into the machine per element, because a
+            // `for-in` never sends and so `send` has no compiled fast path.
+            generator sendEcho(n: int): int {
+                var i: int = 0;
+                while (i < n) {
+                    let back = yield i;
+                    i = (back as int) + 1;
+                }
+            }
+
+            fun genSend(n: int): int {
+                let g = sendEcho(n);
+                var acc: int = 0;
+                var more = g.moveNext();
+                while (more) {
+                    acc = (acc + g.current) % 100000007;
+                    more = g.send(g.current);
+                }
+                return acc;
+            }
+
+            // A `yield` inside a protected region, which the language forbade until deterministic
+            // close made it answerable. Entering a `try` costs nothing in this VM - handlers are a
+            // table of ranges - so against genYield this says whether that claim survives contact
+            // with a frame that is copied out and back while the region is open.
+            generator guardedRange(n: int): int {
+                var i: int = 0;
+                try {
+                    while (i < n) { yield i; i = i + 1; }
+                } finally {
+                    i = 0;
+                }
+            }
+
+            fun genFinally(n: int): int {
+                var acc: int = 0;
+                for (x in guardedRange(n)) { acc = (acc + x) % 100000007; }
                 return acc;
             }
 
@@ -979,6 +1025,45 @@ namespace Surtr.Bench
                 return acc
             end
 
+            -- Lua's coroutines are two-way natively: resume's extra arguments are what the
+            -- matching yield returns. This is the shape Surtr's send now has.
+            function genSend(n)
+                local co = coroutine.create(function(first)
+                    local i = 0
+                    while i < n do
+                        local back = coroutine.yield(i)
+                        i = back + 1
+                    end
+                end)
+
+                local acc = 0
+                local ok, value = coroutine.resume(co, 0)
+                while ok and value ~= nil do
+                    acc = (acc + value) % 100000007
+                    ok, value = coroutine.resume(co, value)
+                end
+                return acc
+            end
+
+            -- A pcall around the loop is the nearest Lua has to a protected region wrapping the
+            -- suspension; there is no finally, so the cleanup runs after it.
+            function genFinally(n)
+                local produce = coroutine.wrap(function()
+                    local i = 0
+                    local ok = pcall(function()
+                        while i < n do
+                            coroutine.yield(i)
+                            i = i + 1
+                        end
+                    end)
+                    i = 0
+                end)
+
+                local acc = 0
+                for x in produce do acc = (acc + x) % 100000007 end
+                return acc
+            end
+
             function hostAdd(value) return value + 1 end
 
             function interop(n)
@@ -1210,6 +1295,8 @@ namespace Surtr.Bench
             new Workload("genYield", 50000, WorkloadKind.Int, "generator: suspend and resume a frame per element", GenYield),
             new Workload("handIterator", 50000, WorkloadKind.Int, "the cursor class a generator replaces", HandIterator),
             new Workload("genDelegate", 50000, WorkloadKind.Int, "three levels of yield from, through the delegation link", GenDelegate),
+            new Workload("genSend", 50000, WorkloadKind.Int, "coroutine: a value injected at every yield", GenSend),
+            new Workload("genFinally", 50000, WorkloadKind.Int, "generator suspending inside a try/finally", GenFinally),
             new Workload("interop", 300000, WorkloadKind.Int, "host function call", Interop),
             new Workload("valueClass", 300000, WorkloadKind.Int, "value class, erased to its field", ValueClass),
             new Workload("generics", 300000, WorkloadKind.Int, "erased slot: box in, cast out", Generics),
@@ -1591,6 +1678,72 @@ namespace Surtr.Bench
         {
             long acc = 0;
             foreach (long x in DelegTop(n))
+                acc = (acc + x) % Modulus;
+            return acc;
+        }
+
+        // C# iterators are one-way: `yield return` has no value coming back, so the honest
+        // counterpart to a send loop is an explicit cursor the driver hands a value to each step.
+        // Writing it as an IEnumerable would measure a different program.
+        private sealed class EchoCursor
+        {
+            private readonly long _n;
+
+            public EchoCursor(long n) => _n = n;
+
+            public long Current { get; private set; }
+
+            public bool MoveNext(long sent)
+            {
+                long next = Current == 0 && !_started ? 0 : sent + 1;
+                _started = true;
+
+                if (next >= _n)
+                    return false;
+
+                Current = next;
+                return true;
+            }
+
+            private bool _started;
+        }
+
+        private static long GenSend(long n)
+        {
+            var cursor = new EchoCursor(n);
+            long acc = 0;
+
+            while (cursor.MoveNext(cursor.Current))
+                acc = (acc + cursor.Current) % Modulus;
+
+            return acc;
+        }
+
+        // The `try/finally` around the suspension, which C# does allow in an iterator - the
+        // `finally` runs when the enumerator is disposed, which is exactly the guarantee Surtr
+        // just grew.
+        private static IEnumerable<long> GuardedRange(long n)
+        {
+            long i = 0;
+
+            try
+            {
+                while (i < n)
+                {
+                    yield return i;
+                    i++;
+                }
+            }
+            finally
+            {
+                i = 0;
+            }
+        }
+
+        private static long GenFinally(long n)
+        {
+            long acc = 0;
+            foreach (long x in GuardedRange(n))
                 acc = (acc + x) % Modulus;
             return acc;
         }

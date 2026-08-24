@@ -1,5 +1,5 @@
 module surtr.collections.Sequence
-  constants: 5   types: 25   fields: 55   methods: 151   modules: 0
+  constants: 5   types: 25   fields: 55   methods: 190   modules: 0
   string #0 = "No current element. Call moveNext() first."
   string #1 = "'IIterator<U>?' was null where '!!' asserted it was not."
   string #2 = "Element is not of type U."
@@ -122,126 +122,165 @@ module surtr.collections.Sequence
     #28  surtr.collections.Sequence:Sequence<.iterate() -> surtr:IIterator<T0>
     #29  surtr.collections.Sequence:FilterIterator<.ctor(surtr:IIterator<T0>, (T0) -> bool) -> void
     #30  surtr.collections.Sequence:FilterIterator<.get_current() -> T0
-    #31  surtr.collections.Sequence:FilterIterator<.moveNext() -> bool
-    #32  surtr.collections.Sequence:MapIterator<.ctor(surtr:IIterator<T0>, (T0) -> T1) -> void
-    #33  surtr.collections.Sequence:MapIterator<.get_current() -> T1
-    #34  surtr.collections.Sequence:MapIterator<.moveNext() -> bool
-    #35  surtr.collections.Sequence:FlatMapIterator<.ctor(surtr:IIterator<T0>, (T0) -> () -> surtr:IIterator<T0>) -> void
-    #36  surtr.collections.Sequence:FlatMapIterator<.get_current() -> T1
-    #37  surtr.collections.Sequence:FlatMapIterator<.moveNext() -> bool
-    #38  surtr.collections.Sequence:TakeIterator<.ctor(surtr:IIterator<T0>, int) -> void
-    #39  surtr.collections.Sequence:TakeIterator<.get_current() -> T0
-    #40  surtr.collections.Sequence:TakeIterator<.moveNext() -> bool
-    #41  surtr.collections.Sequence:SkipIterator<.ctor(surtr:IIterator<T0>, int) -> void
-    #42  surtr.collections.Sequence:SkipIterator<.get_current() -> T0
-    #43  surtr.collections.Sequence:SkipIterator<.moveNext() -> bool
-    #44  surtr.collections.Sequence:DistinctIterator<.ctor(surtr:IIterator<T0>) -> void
-    #45  surtr.collections.Sequence:DistinctIterator<.get_current() -> T0
-    #46  surtr.collections.Sequence:DistinctIterator<.moveNext() -> bool
-    #47  surtr.collections.Sequence:SortedIterator<.ctor(surtr:IIterator<T0>, (T0, T0) -> int) -> void
-    #48  surtr.collections.Sequence:SortedIterator<.get_current() -> T0
-    #49  surtr.collections.Sequence:SortedIterator<.moveNext() -> bool
-    #50  surtr.collections.Sequence:ChainIterator<.ctor(surtr:IIterator<T0>, surtr:IIterator<T0>) -> void
-    #51  surtr.collections.Sequence:ChainIterator<.get_current() -> T0
-    #52  surtr.collections.Sequence:ChainIterator<.moveNext() -> bool
-    #53  surtr.collections.Sequence:ZipIterator<.ctor(surtr:IIterator<T0>, surtr:IIterator<T1>) -> void
-    #54  surtr.collections.Sequence:ZipIterator<.get_current() -> (T0, T1)
-    #55  surtr.collections.Sequence:ZipIterator<.moveNext() -> bool
-    #56  surtr.collections.Sequence:EnumerateIterator<.ctor(surtr:IIterator<T0>) -> void
-    #57  surtr.collections.Sequence:EnumerateIterator<.get_current() -> (int, T0)
-    #58  surtr.collections.Sequence:EnumerateIterator<.moveNext() -> bool
-    #59  surtr.collections.Sequence:ReverseIterator<.ctor(surtr:IIterator<T0>) -> void
-    #60  surtr.collections.Sequence:ReverseIterator<.get_current() -> T0
-    #61  surtr.collections.Sequence:ReverseIterator<.moveNext() -> bool
-    #62  surtr.collections.Sequence:CastIterator<.ctor(surtr:IIterator<T0>) -> void
-    #63  surtr.collections.Sequence:CastIterator<.get_current() -> T1
-    #64  surtr.collections.Sequence:CastIterator<.moveNext() -> bool
-    #65  surtr.collections.Sequence:SafeCastIterator<.ctor(surtr:IIterator<T0>) -> void
-    #66  surtr.collections.Sequence:SafeCastIterator<.get_current() -> T1
-    #67  surtr.collections.Sequence:SafeCastIterator<.moveNext() -> bool
-    #68  surtr.collections.Sequence:TakeWhileIterator<.ctor(surtr:IIterator<T0>, (T0) -> bool) -> void
-    #69  surtr.collections.Sequence:TakeWhileIterator<.get_current() -> T0
-    #70  surtr.collections.Sequence:TakeWhileIterator<.moveNext() -> bool
-    #71  surtr.collections.Sequence:SkipWhileIterator<.ctor(surtr:IIterator<T0>, (T0) -> bool) -> void
-    #72  surtr.collections.Sequence:SkipWhileIterator<.get_current() -> T0
-    #73  surtr.collections.Sequence:SkipWhileIterator<.moveNext() -> bool
-    #74  surtr.collections.Sequence:OnEachIterator<.ctor(surtr:IIterator<T0>, (T0) -> void) -> void
-    #75  surtr.collections.Sequence:OnEachIterator<.get_current() -> T0
-    #76  surtr.collections.Sequence:OnEachIterator<.moveNext() -> bool
-    #77  surtr.collections.Sequence:ArrayIterator<.ctor(T0[]) -> void
-    #78  surtr.collections.Sequence:ArrayIterator<.get_current() -> T0
-    #79  surtr.collections.Sequence:ArrayIterator<.moveNext() -> bool
-    #80  surtr.collections.Sequence:SingleIterator<.ctor(T0) -> void
-    #81  surtr.collections.Sequence:SingleIterator<.get_current() -> T0
-    #82  surtr.collections.Sequence:SingleIterator<.moveNext() -> bool
-    #83  surtr.collections.Sequence:EmptyIterator<.ctor() -> void
-    #84  surtr.collections.Sequence:EmptyIterator<.get_current() -> T0
-    #85  surtr.collections.Sequence:EmptyIterator<.moveNext() -> bool
-    #86  $lambda$get_empty$0() -> surtr:IIterator<T0>
-    #87  $lambda$of$0() -> surtr:IIterator<T0>
-    #88  $lambda$map$0() -> surtr:IIterator<T0>
-    #89  $lambda$flatMap$0() -> surtr:IIterator<T0>
-    #90  $lambda$filter$0() -> surtr:IIterator<T0>
-    #91  $lambda$take$0() -> surtr:IIterator<T0>
-    #92  $lambda$skip$0() -> surtr:IIterator<T0>
-    #93  $lambda$distinct$0() -> surtr:IIterator<T0>
-    #94  $lambda$sorted$0() -> surtr:IIterator<T0>
-    #95  $lambda$chain$0() -> surtr:IIterator<T0>
-    #96  $lambda$zip$0() -> surtr:IIterator<(T0, T0)>
-    #97  $lambda$enumerate$0() -> surtr:IIterator<(int, T0)>
-    #98  $lambda$reverse$0() -> surtr:IIterator<T0>
-    #99  $lambda$cast$0() -> surtr:IIterator<T0>
-    #100  $lambda$safeCast$0() -> surtr:IIterator<T0>
-    #101  $lambda$takeWhile$0() -> surtr:IIterator<T0>
-    #102  $lambda$skipWhile$0() -> surtr:IIterator<T0>
-    #103  $lambda$onEach$0() -> surtr:IIterator<T0>
-    #104  surtr:IIterator<T0>.moveNext() -> bool
-    #105  surtr:IIterator<T0>.get_current() -> T0
-    #106  surtr.collections.List:List<.ctor(int) -> void
-    #107  surtr.collections.List:List<.add(T0) -> void
-    #108  surtr.collections.Sequence:Sequence<.iterate() -> surtr:IIterator<unknown>
-    #109  surtr:InvalidOperationException.ctor(string) -> void
-    #110  surtr.collections.Sequence:FilterIterator<.moveNext() -> bool
-    #111  surtr.collections.Sequence:FilterIterator<.get_current() -> unknown
-    #112  surtr.collections.Sequence:MapIterator<.moveNext() -> bool
-    #113  surtr.collections.Sequence:MapIterator<.get_current() -> unknown
-    #114  surtr:NullReferenceException.ctor(string) -> void
-    #115  surtr.collections.Sequence:FlatMapIterator<.moveNext() -> bool
-    #116  surtr.collections.Sequence:FlatMapIterator<.get_current() -> unknown
-    #117  surtr.collections.Sequence:TakeIterator<.moveNext() -> bool
-    #118  surtr.collections.Sequence:TakeIterator<.get_current() -> unknown
-    #119  surtr.collections.Sequence:SkipIterator<.moveNext() -> bool
-    #120  surtr.collections.Sequence:SkipIterator<.get_current() -> unknown
-    #121  surtr.collections.Sequence:DistinctIterator<.moveNext() -> bool
-    #122  surtr.collections.Sequence:DistinctIterator<.get_current() -> unknown
-    #123  [].sort((T0, T0) -> int) -> void
-    #124  surtr.collections.Sequence:SortedIterator<.moveNext() -> bool
-    #125  surtr.collections.Sequence:SortedIterator<.get_current() -> unknown
-    #126  surtr.collections.Sequence:ChainIterator<.moveNext() -> bool
-    #127  surtr.collections.Sequence:ChainIterator<.get_current() -> unknown
-    #128  surtr.collections.Sequence:ZipIterator<.moveNext() -> bool
-    #129  surtr.collections.Sequence:ZipIterator<.get_current() -> unknown
-    #130  surtr.collections.Sequence:EnumerateIterator<.moveNext() -> bool
-    #131  surtr.collections.Sequence:EnumerateIterator<.get_current() -> unknown
-    #132  surtr.collections.Sequence:ReverseIterator<.moveNext() -> bool
-    #133  surtr.collections.Sequence:ReverseIterator<.get_current() -> unknown
-    #134  surtr.collections.Sequence:CastIterator<.moveNext() -> bool
-    #135  surtr.collections.Sequence:CastIterator<.get_current() -> unknown
-    #136  surtr:InvalidCastException.ctor(string) -> void
-    #137  surtr.collections.Sequence:SafeCastIterator<.moveNext() -> bool
-    #138  surtr.collections.Sequence:SafeCastIterator<.get_current() -> unknown
-    #139  surtr.collections.Sequence:TakeWhileIterator<.moveNext() -> bool
-    #140  surtr.collections.Sequence:TakeWhileIterator<.get_current() -> unknown
-    #141  surtr.collections.Sequence:SkipWhileIterator<.moveNext() -> bool
-    #142  surtr.collections.Sequence:SkipWhileIterator<.get_current() -> unknown
-    #143  surtr.collections.Sequence:OnEachIterator<.moveNext() -> bool
-    #144  surtr.collections.Sequence:OnEachIterator<.get_current() -> unknown
-    #145  surtr.collections.Sequence:ArrayIterator<.moveNext() -> bool
-    #146  surtr.collections.Sequence:ArrayIterator<.get_current() -> unknown
-    #147  surtr.collections.Sequence:SingleIterator<.moveNext() -> bool
-    #148  surtr.collections.Sequence:SingleIterator<.get_current() -> unknown
-    #149  surtr.collections.Sequence:EmptyIterator<.moveNext() -> bool
-    #150  surtr.collections.Sequence:EmptyIterator<.get_current() -> unknown
+    #31  surtr.collections.Sequence:FilterIterator<.dispose() -> void
+    #32  surtr.collections.Sequence:FilterIterator<.moveNext() -> bool
+    #33  surtr.collections.Sequence:MapIterator<.ctor(surtr:IIterator<T0>, (T0) -> T1) -> void
+    #34  surtr.collections.Sequence:MapIterator<.get_current() -> T1
+    #35  surtr.collections.Sequence:MapIterator<.dispose() -> void
+    #36  surtr.collections.Sequence:MapIterator<.moveNext() -> bool
+    #37  surtr.collections.Sequence:FlatMapIterator<.ctor(surtr:IIterator<T0>, (T0) -> () -> surtr:IIterator<T0>) -> void
+    #38  surtr.collections.Sequence:FlatMapIterator<.get_current() -> T1
+    #39  surtr.collections.Sequence:FlatMapIterator<.dispose() -> void
+    #40  surtr.collections.Sequence:FlatMapIterator<.moveNext() -> bool
+    #41  surtr.collections.Sequence:TakeIterator<.ctor(surtr:IIterator<T0>, int) -> void
+    #42  surtr.collections.Sequence:TakeIterator<.get_current() -> T0
+    #43  surtr.collections.Sequence:TakeIterator<.dispose() -> void
+    #44  surtr.collections.Sequence:TakeIterator<.moveNext() -> bool
+    #45  surtr.collections.Sequence:SkipIterator<.ctor(surtr:IIterator<T0>, int) -> void
+    #46  surtr.collections.Sequence:SkipIterator<.get_current() -> T0
+    #47  surtr.collections.Sequence:SkipIterator<.dispose() -> void
+    #48  surtr.collections.Sequence:SkipIterator<.moveNext() -> bool
+    #49  surtr.collections.Sequence:DistinctIterator<.ctor(surtr:IIterator<T0>) -> void
+    #50  surtr.collections.Sequence:DistinctIterator<.get_current() -> T0
+    #51  surtr.collections.Sequence:DistinctIterator<.dispose() -> void
+    #52  surtr.collections.Sequence:DistinctIterator<.moveNext() -> bool
+    #53  surtr.collections.Sequence:SortedIterator<.ctor(surtr:IIterator<T0>, (T0, T0) -> int) -> void
+    #54  surtr.collections.Sequence:SortedIterator<.get_current() -> T0
+    #55  surtr.collections.Sequence:SortedIterator<.dispose() -> void
+    #56  surtr.collections.Sequence:SortedIterator<.moveNext() -> bool
+    #57  surtr.collections.Sequence:ChainIterator<.ctor(surtr:IIterator<T0>, surtr:IIterator<T0>) -> void
+    #58  surtr.collections.Sequence:ChainIterator<.get_current() -> T0
+    #59  surtr.collections.Sequence:ChainIterator<.dispose() -> void
+    #60  surtr.collections.Sequence:ChainIterator<.moveNext() -> bool
+    #61  surtr.collections.Sequence:ZipIterator<.ctor(surtr:IIterator<T0>, surtr:IIterator<T1>) -> void
+    #62  surtr.collections.Sequence:ZipIterator<.get_current() -> (T0, T1)
+    #63  surtr.collections.Sequence:ZipIterator<.dispose() -> void
+    #64  surtr.collections.Sequence:ZipIterator<.moveNext() -> bool
+    #65  surtr.collections.Sequence:EnumerateIterator<.ctor(surtr:IIterator<T0>) -> void
+    #66  surtr.collections.Sequence:EnumerateIterator<.get_current() -> (int, T0)
+    #67  surtr.collections.Sequence:EnumerateIterator<.dispose() -> void
+    #68  surtr.collections.Sequence:EnumerateIterator<.moveNext() -> bool
+    #69  surtr.collections.Sequence:ReverseIterator<.ctor(surtr:IIterator<T0>) -> void
+    #70  surtr.collections.Sequence:ReverseIterator<.get_current() -> T0
+    #71  surtr.collections.Sequence:ReverseIterator<.dispose() -> void
+    #72  surtr.collections.Sequence:ReverseIterator<.moveNext() -> bool
+    #73  surtr.collections.Sequence:CastIterator<.ctor(surtr:IIterator<T0>) -> void
+    #74  surtr.collections.Sequence:CastIterator<.get_current() -> T1
+    #75  surtr.collections.Sequence:CastIterator<.dispose() -> void
+    #76  surtr.collections.Sequence:CastIterator<.moveNext() -> bool
+    #77  surtr.collections.Sequence:SafeCastIterator<.ctor(surtr:IIterator<T0>) -> void
+    #78  surtr.collections.Sequence:SafeCastIterator<.get_current() -> T1
+    #79  surtr.collections.Sequence:SafeCastIterator<.dispose() -> void
+    #80  surtr.collections.Sequence:SafeCastIterator<.moveNext() -> bool
+    #81  surtr.collections.Sequence:TakeWhileIterator<.ctor(surtr:IIterator<T0>, (T0) -> bool) -> void
+    #82  surtr.collections.Sequence:TakeWhileIterator<.get_current() -> T0
+    #83  surtr.collections.Sequence:TakeWhileIterator<.dispose() -> void
+    #84  surtr.collections.Sequence:TakeWhileIterator<.moveNext() -> bool
+    #85  surtr.collections.Sequence:SkipWhileIterator<.ctor(surtr:IIterator<T0>, (T0) -> bool) -> void
+    #86  surtr.collections.Sequence:SkipWhileIterator<.get_current() -> T0
+    #87  surtr.collections.Sequence:SkipWhileIterator<.dispose() -> void
+    #88  surtr.collections.Sequence:SkipWhileIterator<.moveNext() -> bool
+    #89  surtr.collections.Sequence:OnEachIterator<.ctor(surtr:IIterator<T0>, (T0) -> void) -> void
+    #90  surtr.collections.Sequence:OnEachIterator<.get_current() -> T0
+    #91  surtr.collections.Sequence:OnEachIterator<.dispose() -> void
+    #92  surtr.collections.Sequence:OnEachIterator<.moveNext() -> bool
+    #93  surtr.collections.Sequence:ArrayIterator<.ctor(T0[]) -> void
+    #94  surtr.collections.Sequence:ArrayIterator<.get_current() -> T0
+    #95  surtr.collections.Sequence:ArrayIterator<.dispose() -> void
+    #96  surtr.collections.Sequence:ArrayIterator<.moveNext() -> bool
+    #97  surtr.collections.Sequence:SingleIterator<.ctor(T0) -> void
+    #98  surtr.collections.Sequence:SingleIterator<.get_current() -> T0
+    #99  surtr.collections.Sequence:SingleIterator<.dispose() -> void
+    #100  surtr.collections.Sequence:SingleIterator<.moveNext() -> bool
+    #101  surtr.collections.Sequence:EmptyIterator<.ctor() -> void
+    #102  surtr.collections.Sequence:EmptyIterator<.get_current() -> T0
+    #103  surtr.collections.Sequence:EmptyIterator<.dispose() -> void
+    #104  surtr.collections.Sequence:EmptyIterator<.moveNext() -> bool
+    #105  $lambda$get_empty$0() -> surtr:IIterator<T0>
+    #106  $lambda$of$0() -> surtr:IIterator<T0>
+    #107  $lambda$map$0() -> surtr:IIterator<T0>
+    #108  $lambda$flatMap$0() -> surtr:IIterator<T0>
+    #109  $lambda$filter$0() -> surtr:IIterator<T0>
+    #110  $lambda$take$0() -> surtr:IIterator<T0>
+    #111  $lambda$skip$0() -> surtr:IIterator<T0>
+    #112  $lambda$distinct$0() -> surtr:IIterator<T0>
+    #113  $lambda$sorted$0() -> surtr:IIterator<T0>
+    #114  $lambda$chain$0() -> surtr:IIterator<T0>
+    #115  $lambda$zip$0() -> surtr:IIterator<(T0, T0)>
+    #116  $lambda$enumerate$0() -> surtr:IIterator<(int, T0)>
+    #117  $lambda$reverse$0() -> surtr:IIterator<T0>
+    #118  $lambda$cast$0() -> surtr:IIterator<T0>
+    #119  $lambda$safeCast$0() -> surtr:IIterator<T0>
+    #120  $lambda$takeWhile$0() -> surtr:IIterator<T0>
+    #121  $lambda$skipWhile$0() -> surtr:IIterator<T0>
+    #122  $lambda$onEach$0() -> surtr:IIterator<T0>
+    #123  surtr:IIterator<T0>.moveNext() -> bool
+    #124  surtr:IIterator<T0>.get_current() -> T0
+    #125  surtr.collections.List:List<.ctor(int) -> void
+    #126  surtr.collections.List:List<.add(T0) -> void
+    #127  surtr.collections.Sequence:Sequence<.iterate() -> surtr:IIterator<unknown>
+    #128  surtr:InvalidOperationException.ctor(string) -> void
+    #129  surtr:IDisposable.dispose() -> void
+    #130  surtr.collections.Sequence:FilterIterator<.moveNext() -> bool
+    #131  surtr.collections.Sequence:FilterIterator<.get_current() -> unknown
+    #132  surtr.collections.Sequence:FilterIterator<.dispose() -> void
+    #133  surtr.collections.Sequence:MapIterator<.moveNext() -> bool
+    #134  surtr.collections.Sequence:MapIterator<.get_current() -> unknown
+    #135  surtr.collections.Sequence:MapIterator<.dispose() -> void
+    #136  surtr:NullReferenceException.ctor(string) -> void
+    #137  surtr.collections.Sequence:FlatMapIterator<.moveNext() -> bool
+    #138  surtr.collections.Sequence:FlatMapIterator<.get_current() -> unknown
+    #139  surtr.collections.Sequence:FlatMapIterator<.dispose() -> void
+    #140  surtr.collections.Sequence:TakeIterator<.moveNext() -> bool
+    #141  surtr.collections.Sequence:TakeIterator<.get_current() -> unknown
+    #142  surtr.collections.Sequence:TakeIterator<.dispose() -> void
+    #143  surtr.collections.Sequence:SkipIterator<.moveNext() -> bool
+    #144  surtr.collections.Sequence:SkipIterator<.get_current() -> unknown
+    #145  surtr.collections.Sequence:SkipIterator<.dispose() -> void
+    #146  surtr.collections.Sequence:DistinctIterator<.moveNext() -> bool
+    #147  surtr.collections.Sequence:DistinctIterator<.get_current() -> unknown
+    #148  surtr.collections.Sequence:DistinctIterator<.dispose() -> void
+    #149  [].sort((T0, T0) -> int) -> void
+    #150  surtr.collections.Sequence:SortedIterator<.moveNext() -> bool
+    #151  surtr.collections.Sequence:SortedIterator<.get_current() -> unknown
+    #152  surtr.collections.Sequence:SortedIterator<.dispose() -> void
+    #153  surtr.collections.Sequence:ChainIterator<.moveNext() -> bool
+    #154  surtr.collections.Sequence:ChainIterator<.get_current() -> unknown
+    #155  surtr.collections.Sequence:ChainIterator<.dispose() -> void
+    #156  surtr.collections.Sequence:ZipIterator<.moveNext() -> bool
+    #157  surtr.collections.Sequence:ZipIterator<.get_current() -> unknown
+    #158  surtr.collections.Sequence:ZipIterator<.dispose() -> void
+    #159  surtr.collections.Sequence:EnumerateIterator<.moveNext() -> bool
+    #160  surtr.collections.Sequence:EnumerateIterator<.get_current() -> unknown
+    #161  surtr.collections.Sequence:EnumerateIterator<.dispose() -> void
+    #162  surtr.collections.Sequence:ReverseIterator<.moveNext() -> bool
+    #163  surtr.collections.Sequence:ReverseIterator<.get_current() -> unknown
+    #164  surtr.collections.Sequence:ReverseIterator<.dispose() -> void
+    #165  surtr.collections.Sequence:CastIterator<.moveNext() -> bool
+    #166  surtr.collections.Sequence:CastIterator<.get_current() -> unknown
+    #167  surtr.collections.Sequence:CastIterator<.dispose() -> void
+    #168  surtr:InvalidCastException.ctor(string) -> void
+    #169  surtr.collections.Sequence:SafeCastIterator<.moveNext() -> bool
+    #170  surtr.collections.Sequence:SafeCastIterator<.get_current() -> unknown
+    #171  surtr.collections.Sequence:SafeCastIterator<.dispose() -> void
+    #172  surtr.collections.Sequence:TakeWhileIterator<.moveNext() -> bool
+    #173  surtr.collections.Sequence:TakeWhileIterator<.get_current() -> unknown
+    #174  surtr.collections.Sequence:TakeWhileIterator<.dispose() -> void
+    #175  surtr.collections.Sequence:SkipWhileIterator<.moveNext() -> bool
+    #176  surtr.collections.Sequence:SkipWhileIterator<.get_current() -> unknown
+    #177  surtr.collections.Sequence:SkipWhileIterator<.dispose() -> void
+    #178  surtr.collections.Sequence:OnEachIterator<.moveNext() -> bool
+    #179  surtr.collections.Sequence:OnEachIterator<.get_current() -> unknown
+    #180  surtr.collections.Sequence:OnEachIterator<.dispose() -> void
+    #181  surtr.collections.Sequence:ArrayIterator<.moveNext() -> bool
+    #182  surtr.collections.Sequence:ArrayIterator<.get_current() -> unknown
+    #183  surtr.collections.Sequence:ArrayIterator<.dispose() -> void
+    #184  surtr.collections.Sequence:SingleIterator<.moveNext() -> bool
+    #185  surtr.collections.Sequence:SingleIterator<.get_current() -> unknown
+    #186  surtr.collections.Sequence:SingleIterator<.dispose() -> void
+    #187  surtr.collections.Sequence:EmptyIterator<.moveNext() -> bool
+    #188  surtr.collections.Sequence:EmptyIterator<.get_current() -> unknown
+    #189  surtr.collections.Sequence:EmptyIterator<.dispose() -> void
 
 [private] static $lambda$cast$0(): surtr:IIterator<T0>
   ; entry 13, locals 0, stack 3, code 00D1..00E0
@@ -249,7 +288,7 @@ module surtr.collections.Sequence
     00D4  Dup
     00D5  UpValueGet 0
     00D7  InvokeClosure args=0 ret=1
-    00DA  InvokeSpecial 62 (ctor) args=2 ret=0
+    00DA  InvokeSpecial 73 (ctor) args=2 ret=0
     00DF  ReturnValue
 
 [private] static $lambda$chain$0(): surtr:IIterator<T0>
@@ -260,7 +299,7 @@ module surtr.collections.Sequence
     0091  InvokeClosure args=0 ret=1
     0094  UpValueGet 1
     0096  InvokeClosure args=0 ret=1
-    0099  InvokeSpecial 50 (ctor) args=3 ret=0
+    0099  InvokeSpecial 57 (ctor) args=3 ret=0
     009E  ReturnValue
 
 [private] static $lambda$distinct$0(): surtr:IIterator<T0>
@@ -269,7 +308,7 @@ module surtr.collections.Sequence
     006E  Dup
     006F  UpValueGet 0
     0071  InvokeClosure args=0 ret=1
-    0074  InvokeSpecial 44 (ctor) args=2 ret=0
+    0074  InvokeSpecial 49 (ctor) args=2 ret=0
     0079  ReturnValue
 
 [private] static $lambda$enumerate$0(): surtr:IIterator<(int, T0)>
@@ -278,7 +317,7 @@ module surtr.collections.Sequence
     00B6  Dup
     00B7  UpValueGet 0
     00B9  InvokeClosure args=0 ret=1
-    00BC  InvokeSpecial 56 (ctor) args=2 ret=0
+    00BC  InvokeSpecial 65 (ctor) args=2 ret=0
     00C1  ReturnValue
 
 [private] static $lambda$filter$0(): surtr:IIterator<T0>
@@ -298,14 +337,14 @@ module surtr.collections.Sequence
     002B  UpValueGet 0
     002D  InvokeClosure args=0 ret=1
     0030  UpValueGet 1
-    0032  InvokeSpecial 35 (ctor) args=3 ret=0
+    0032  InvokeSpecial 37 (ctor) args=3 ret=0
     0037  ReturnValue
 
 [private] static $lambda$get_empty$0(): surtr:IIterator<T0>
   ; entry 0, locals 0, stack 2, code 0000..000A
     0000  ObjNew 0 (surtr.collections.Sequence:EmptyIterator<T0>)
     0003  Dup
-    0004  InvokeSpecial 83 (ctor) args=1 ret=0
+    0004  InvokeSpecial 101 (ctor) args=1 ret=0
     0009  ReturnValue
 
 [private] static $lambda$map$0(): surtr:IIterator<T0>
@@ -315,7 +354,7 @@ module surtr.collections.Sequence
     001A  UpValueGet 0
     001C  InvokeClosure args=0 ret=1
     001F  UpValueGet 1
-    0021  InvokeSpecial 32 (ctor) args=3 ret=0
+    0021  InvokeSpecial 33 (ctor) args=3 ret=0
     0026  ReturnValue
 
 [private] static $lambda$of$0(): surtr:IIterator<T0>
@@ -323,7 +362,7 @@ module surtr.collections.Sequence
     000A  ObjNew 1 (surtr.collections.Sequence:ArrayIterator<T0>)
     000D  Dup
     000E  UpValueGet 0
-    0010  InvokeSpecial 77 (ctor) args=2 ret=0
+    0010  InvokeSpecial 93 (ctor) args=2 ret=0
     0015  ReturnValue
 
 [private] static $lambda$onEach$0(): surtr:IIterator<T0>
@@ -333,7 +372,7 @@ module surtr.collections.Sequence
     0115  UpValueGet 0
     0117  InvokeClosure args=0 ret=1
     011A  UpValueGet 1
-    011C  InvokeSpecial 74 (ctor) args=3 ret=0
+    011C  InvokeSpecial 89 (ctor) args=3 ret=0
     0121  ReturnValue
 
 [private] static $lambda$reverse$0(): surtr:IIterator<T0>
@@ -342,7 +381,7 @@ module surtr.collections.Sequence
     00C5  Dup
     00C6  UpValueGet 0
     00C8  InvokeClosure args=0 ret=1
-    00CB  InvokeSpecial 59 (ctor) args=2 ret=0
+    00CB  InvokeSpecial 69 (ctor) args=2 ret=0
     00D0  ReturnValue
 
 [private] static $lambda$safeCast$0(): surtr:IIterator<T0>
@@ -351,7 +390,7 @@ module surtr.collections.Sequence
     00E3  Dup
     00E4  UpValueGet 0
     00E6  InvokeClosure args=0 ret=1
-    00E9  InvokeSpecial 65 (ctor) args=2 ret=0
+    00E9  InvokeSpecial 77 (ctor) args=2 ret=0
     00EE  ReturnValue
 
 [private] static $lambda$skip$0(): surtr:IIterator<T0>
@@ -361,7 +400,7 @@ module surtr.collections.Sequence
     005E  UpValueGet 0
     0060  InvokeClosure args=0 ret=1
     0063  UpValueGet 1
-    0065  InvokeSpecial 41 (ctor) args=3 ret=0
+    0065  InvokeSpecial 45 (ctor) args=3 ret=0
     006A  ReturnValue
 
 [private] static $lambda$skipWhile$0(): surtr:IIterator<T0>
@@ -371,7 +410,7 @@ module surtr.collections.Sequence
     0104  UpValueGet 0
     0106  InvokeClosure args=0 ret=1
     0109  UpValueGet 1
-    010B  InvokeSpecial 71 (ctor) args=3 ret=0
+    010B  InvokeSpecial 85 (ctor) args=3 ret=0
     0110  ReturnValue
 
 [private] static $lambda$sorted$0(): surtr:IIterator<T0>
@@ -381,7 +420,7 @@ module surtr.collections.Sequence
     007E  UpValueGet 0
     0080  InvokeClosure args=0 ret=1
     0083  UpValueGet 1
-    0085  InvokeSpecial 47 (ctor) args=3 ret=0
+    0085  InvokeSpecial 53 (ctor) args=3 ret=0
     008A  ReturnValue
 
 [private] static $lambda$take$0(): surtr:IIterator<T0>
@@ -391,7 +430,7 @@ module surtr.collections.Sequence
     004D  UpValueGet 0
     004F  InvokeClosure args=0 ret=1
     0052  UpValueGet 1
-    0054  InvokeSpecial 38 (ctor) args=3 ret=0
+    0054  InvokeSpecial 41 (ctor) args=3 ret=0
     0059  ReturnValue
 
 [private] static $lambda$takeWhile$0(): surtr:IIterator<T0>
@@ -401,7 +440,7 @@ module surtr.collections.Sequence
     00F3  UpValueGet 0
     00F5  InvokeClosure args=0 ret=1
     00F8  UpValueGet 1
-    00FA  InvokeSpecial 68 (ctor) args=3 ret=0
+    00FA  InvokeSpecial 81 (ctor) args=3 ret=0
     00FF  ReturnValue
 
 [private] static $lambda$zip$0(): surtr:IIterator<(T0, T0)>
@@ -412,7 +451,7 @@ module surtr.collections.Sequence
     00A5  InvokeClosure args=0 ret=1
     00A8  UpValueGet 1
     00AA  InvokeClosure args=0 ret=1
-    00AD  InvokeSpecial 53 (ctor) args=3 ret=0
+    00AD  InvokeSpecial 61 (ctor) args=3 ret=0
     00B2  ReturnValue
 
 class ArrayIterator`1<T> : surtr:IIterator<T0>  [internal]
@@ -421,88 +460,98 @@ class ArrayIterator`1<T> : surtr:IIterator<T0>  [internal]
 
   [public] property current: T0 { get; }
     get:
-      ; entry 129, locals 1, stack 3, code 0A8A..0ABC
-        0A8A  Ldl0
-        0A8B  FieldGet 51 (_index)
-        0A8E  PushI8 0
-        0A90  LT
-        0A91  Dup
-        0A92  JPNZ +14 -> L0 (0AA3)
-        0A95  Pop
-        0A96  Ldl0
-        0A97  FieldGet 51 (_index)
-        0A9A  Ldl0
-        0A9B  FieldGet 52 (_array)
-        0A9E  ArrLen
-        0A9F  GE
-        0AA0  JP +0 -> L0 (0AA3)
+      ; entry 161, locals 1, stack 3, code 0BBA..0BEC
+        0BBA  Ldl0
+        0BBB  FieldGet 51 (_index)
+        0BBE  PushI8 0
+        0BC0  LT
+        0BC1  Dup
+        0BC2  JPNZ +14 -> L0 (0BD3)
+        0BC5  Pop
+        0BC6  Ldl0
+        0BC7  FieldGet 51 (_index)
+        0BCA  Ldl0
+        0BCB  FieldGet 52 (_array)
+        0BCE  ArrLen
+        0BCF  GE
+        0BD0  JP +0 -> L0 (0BD3)
       L0:
-        0AA3  JPZ +11 -> L1 (0AB1)
-        0AA6  ObjNew 20 (surtr:InvalidOperationException)
-        0AA9  Dup
-        0AAA  Ldc3
-        0AAB  InvokeSpecial 109 (ctor) args=2 ret=0
-        0AB0  Throw
+        0BD3  JPZ +11 -> L1 (0BE1)
+        0BD6  ObjNew 20 (surtr:InvalidOperationException)
+        0BD9  Dup
+        0BDA  Ldc3
+        0BDB  InvokeSpecial 128 (ctor) args=2 ret=0
+        0BE0  Throw
       L1:
-        0AB1  Ldl0
-        0AB2  FieldGet 52 (_array)
-        0AB5  Ldl0
-        0AB6  FieldGet 51 (_index)
-        0AB9  ArrGet
-        0ABA  BoxDynamic
-        0ABB  ReturnValue
+        0BE1  Ldl0
+        0BE2  FieldGet 52 (_array)
+        0BE5  Ldl0
+        0BE6  FieldGet 51 (_index)
+        0BE9  ArrGet
+        0BEA  BoxDynamic
+        0BEB  ReturnValue
 
   [public] ctor (array: T0[]): void
-    ; entry 128, locals 2, stack 2, code 0A7D..0A8A
-      0A7D  Ldl0
-      0A7E  PushI8 1
-      0A80  Neg
-      0A81  FieldSet 51 (_index)
-      0A84  Ldl0
-      0A85  Ldl1
-      0A86  FieldSet 52 (_array)
-      0A89  ReturnVoid
+    ; entry 160, locals 2, stack 2, code 0BAD..0BBA
+      0BAD  Ldl0
+      0BAE  PushI8 1
+      0BB0  Neg
+      0BB1  FieldSet 51 (_index)
+      0BB4  Ldl0
+      0BB5  Ldl1
+      0BB6  FieldSet 52 (_array)
+      0BB9  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 162, locals 1, stack 0, code 0BEC..0BED
+      0BEC  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 166, locals 1, stack 1, code 0C20..0C27
+      0C20  Ldl0
+      0C21  InvokeSpecial 95 (dispose) args=1 ret=0
+      0C26  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 132, locals 1, stack 1, code 0AE7..0AEF
-      0AE7  Ldl0
-      0AE8  InvokeSpecial 78 (get_current) args=1 ret=1
-      0AED  BoxDynamic
-      0AEE  ReturnValue
+    ; entry 165, locals 1, stack 1, code 0C18..0C20
+      0C18  Ldl0
+      0C19  InvokeSpecial 94 (get_current) args=1 ret=1
+      0C1E  BoxDynamic
+      0C1F  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 130, locals 3, stack 2, code 0ABC..0AE0
-      0ABC  Ldl0
-      0ABD  FieldGet 51 (_index)
-      0AC0  PushI8 1
-      0AC2  Add
-      0AC3  Ldl0
-      0AC4  FieldGet 52 (_array)
-      0AC7  ArrLen
-      0AC8  JPGE +19 -> L0 (0ADE)
-      0ACB  Ldl0
-      0ACC  FieldGet 51 (_index)
-      0ACF  Stl1
-      0AD0  Ldl1
-      0AD1  PushI8 1
-      0AD3  Add
-      0AD4  Stl2
-      0AD5  Ldl0
-      0AD6  Ldl2
-      0AD7  FieldSet 51 (_index)
-      0ADA  Ldl1
-      0ADB  Pop
-      0ADC  PushTrue
-      0ADD  ReturnValue
+    ; entry 163, locals 3, stack 2, code 0BED..0C11
+      0BED  Ldl0
+      0BEE  FieldGet 51 (_index)
+      0BF1  PushI8 1
+      0BF3  Add
+      0BF4  Ldl0
+      0BF5  FieldGet 52 (_array)
+      0BF8  ArrLen
+      0BF9  JPGE +19 -> L0 (0C0F)
+      0BFC  Ldl0
+      0BFD  FieldGet 51 (_index)
+      0C00  Stl1
+      0C01  Ldl1
+      0C02  PushI8 1
+      0C04  Add
+      0C05  Stl2
+      0C06  Ldl0
+      0C07  Ldl2
+      0C08  FieldSet 51 (_index)
+      0C0B  Ldl1
+      0C0C  Pop
+      0C0D  PushTrue
+      0C0E  ReturnValue
     L0:
-      0ADE  PushFalse
-      0ADF  ReturnValue
+      0C0F  PushFalse
+      0C10  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 131, locals 1, stack 1, code 0AE0..0AE7
-      0AE0  Ldl0
-      0AE1  InvokeSpecial 79 (moveNext) args=1 ret=1
-      0AE6  ReturnValue
+    ; entry 164, locals 1, stack 1, code 0C11..0C18
+      0C11  Ldl0
+      0C12  InvokeSpecial 96 (moveNext) args=1 ret=1
+      0C17  ReturnValue
 
 class CastIterator`2<T, U> : surtr:IIterator<T1>  [internal]
   [private] readonly field _source: surtr:IIterator<T0>
@@ -510,62 +559,75 @@ class CastIterator`2<T, U> : surtr:IIterator<T1>  [internal]
 
   [public] property current: T1 { get; }
     get:
-      ; entry 104, locals 1, stack 3, code 084F..086C
-        084F  Ldl0
-        0850  FieldGet 36 (_valid)
-        0853  Inv
-        0854  JPZ +11 -> L0 (0862)
-        0857  ObjNew 20 (surtr:InvalidOperationException)
-        085A  Dup
-        085B  Ldc0
-        085C  InvokeSpecial 109 (ctor) args=2 ret=0
-        0861  Throw
+      ; entry 126, locals 1, stack 3, code 092A..0947
+        092A  Ldl0
+        092B  FieldGet 36 (_valid)
+        092E  Inv
+        092F  JPZ +11 -> L0 (093D)
+        0932  ObjNew 20 (surtr:InvalidOperationException)
+        0935  Dup
+        0936  Ldc0
+        0937  InvokeSpecial 128 (ctor) args=2 ret=0
+        093C  Throw
       L0:
-        0862  Ldl0
-        0863  FieldGet 37 (_source)
-        0866  InvokeInterface 105 (get_current) args=1 ret=1
-        086B  ReturnValue
+        093D  Ldl0
+        093E  FieldGet 37 (_source)
+        0941  InvokeInterface 124 (get_current) args=1 ret=1
+        0946  ReturnValue
 
   [public] ctor (source: surtr:IIterator<T0>): void
-    ; entry 103, locals 2, stack 2, code 0844..084F
-      0844  Ldl0
-      0845  PushFalse
-      0846  FieldSet 36 (_valid)
-      0849  Ldl0
-      084A  Ldl1
-      084B  FieldSet 37 (_source)
-      084E  ReturnVoid
+    ; entry 125, locals 2, stack 2, code 091F..092A
+      091F  Ldl0
+      0920  PushFalse
+      0921  FieldSet 36 (_valid)
+      0924  Ldl0
+      0925  Ldl1
+      0926  FieldSet 37 (_source)
+      0929  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 127, locals 1, stack 1, code 0947..0951
+      0947  Ldl0
+      0948  FieldGet 37 (_source)
+      094B  InvokeInterface 129 (dispose) args=1 ret=0
+      0950  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 131, locals 1, stack 1, code 097A..0981
+      097A  Ldl0
+      097B  InvokeSpecial 75 (dispose) args=1 ret=0
+      0980  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 107, locals 1, stack 1, code 088D..0895
-      088D  Ldl0
-      088E  InvokeSpecial 63 (get_current) args=1 ret=1
-      0893  BoxDynamic
-      0894  ReturnValue
+    ; entry 130, locals 1, stack 1, code 0972..097A
+      0972  Ldl0
+      0973  InvokeSpecial 74 (get_current) args=1 ret=1
+      0978  BoxDynamic
+      0979  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 105, locals 1, stack 2, code 086C..0886
-      086C  Ldl0
-      086D  FieldGet 37 (_source)
-      0870  InvokeInterface 104 (moveNext) args=1 ret=1
-      0875  JPZ +7 -> L0 (087F)
-      0878  Ldl0
-      0879  PushTrue
-      087A  FieldSet 36 (_valid)
-      087D  PushTrue
-      087E  ReturnValue
+    ; entry 128, locals 1, stack 2, code 0951..096B
+      0951  Ldl0
+      0952  FieldGet 37 (_source)
+      0955  InvokeInterface 123 (moveNext) args=1 ret=1
+      095A  JPZ +7 -> L0 (0964)
+      095D  Ldl0
+      095E  PushTrue
+      095F  FieldSet 36 (_valid)
+      0962  PushTrue
+      0963  ReturnValue
     L0:
-      087F  Ldl0
-      0880  PushFalse
-      0881  FieldSet 36 (_valid)
-      0884  PushFalse
-      0885  ReturnValue
+      0964  Ldl0
+      0965  PushFalse
+      0966  FieldSet 36 (_valid)
+      0969  PushFalse
+      096A  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 106, locals 1, stack 1, code 0886..088D
-      0886  Ldl0
-      0887  InvokeSpecial 64 (moveNext) args=1 ret=1
-      088C  ReturnValue
+    ; entry 129, locals 1, stack 1, code 096B..0972
+      096B  Ldl0
+      096C  InvokeSpecial 76 (moveNext) args=1 ret=1
+      0971  ReturnValue
 
 class ChainIterator`1<T> : surtr:IIterator<T0>  [internal]
   [private] readonly field _first: surtr:IIterator<T0>
@@ -575,94 +637,110 @@ class ChainIterator`1<T> : surtr:IIterator<T0>  [internal]
 
   [public] property current: T0 { get; }
     get:
-      ; entry 84, locals 1, stack 3, code 066D..069C
-        066D  Ldl0
-        066E  FieldGet 24 (_valid)
-        0671  Inv
-        0672  JPZ +11 -> L0 (0680)
-        0675  ObjNew 20 (surtr:InvalidOperationException)
-        0678  Dup
-        0679  Ldc0
-        067A  InvokeSpecial 109 (ctor) args=2 ret=0
-        067F  Throw
+      ; entry 98, locals 1, stack 3, code 06FB..072A
+        06FB  Ldl0
+        06FC  FieldGet 24 (_valid)
+        06FF  Inv
+        0700  JPZ +11 -> L0 (070E)
+        0703  ObjNew 20 (surtr:InvalidOperationException)
+        0706  Dup
+        0707  Ldc0
+        0708  InvokeSpecial 128 (ctor) args=2 ret=0
+        070D  Throw
       L0:
-        0680  Ldl0
-        0681  FieldGet 23 (_usingFirst)
-        0684  JPZ +10 -> L1 (0691)
-        0687  Ldl0
-        0688  FieldGet 25 (_first)
-        068B  InvokeInterface 105 (get_current) args=1 ret=1
-        0690  ReturnValue
+        070E  Ldl0
+        070F  FieldGet 23 (_usingFirst)
+        0712  JPZ +10 -> L1 (071F)
+        0715  Ldl0
+        0716  FieldGet 25 (_first)
+        0719  InvokeInterface 124 (get_current) args=1 ret=1
+        071E  ReturnValue
       L1:
-        0691  Ldl0
-        0692  FieldGet 26 (_second)
-        0695  InvokeInterface 105 (get_current) args=1 ret=1
-        069A  ReturnValue
-        069B  ReturnVoid
+        071F  Ldl0
+        0720  FieldGet 26 (_second)
+        0723  InvokeInterface 124 (get_current) args=1 ret=1
+        0728  ReturnValue
+        0729  ReturnVoid
 
   [public] ctor (first: surtr:IIterator<T0>, second: surtr:IIterator<T0>): void
-    ; entry 83, locals 3, stack 2, code 0658..066D
-      0658  Ldl0
-      0659  PushTrue
-      065A  FieldSet 23 (_usingFirst)
-      065D  Ldl0
-      065E  PushFalse
-      065F  FieldSet 24 (_valid)
-      0662  Ldl0
-      0663  Ldl1
-      0664  FieldSet 25 (_first)
-      0667  Ldl0
-      0668  Ldl2
-      0669  FieldSet 26 (_second)
-      066C  ReturnVoid
+    ; entry 97, locals 3, stack 2, code 06E6..06FB
+      06E6  Ldl0
+      06E7  PushTrue
+      06E8  FieldSet 23 (_usingFirst)
+      06EB  Ldl0
+      06EC  PushFalse
+      06ED  FieldSet 24 (_valid)
+      06F0  Ldl0
+      06F1  Ldl1
+      06F2  FieldSet 25 (_first)
+      06F5  Ldl0
+      06F6  Ldl2
+      06F7  FieldSet 26 (_second)
+      06FA  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 99, locals 1, stack 1, code 072A..073D
+      072A  Ldl0
+      072B  FieldGet 25 (_first)
+      072E  InvokeInterface 129 (dispose) args=1 ret=0
+      0733  Ldl0
+      0734  FieldGet 26 (_second)
+      0737  InvokeInterface 129 (dispose) args=1 ret=0
+      073C  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 103, locals 1, stack 1, code 0785..078C
+      0785  Ldl0
+      0786  InvokeSpecial 59 (dispose) args=1 ret=0
+      078B  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 87, locals 1, stack 1, code 06DC..06E4
-      06DC  Ldl0
-      06DD  InvokeSpecial 51 (get_current) args=1 ret=1
-      06E2  BoxDynamic
-      06E3  ReturnValue
+    ; entry 102, locals 1, stack 1, code 077D..0785
+      077D  Ldl0
+      077E  InvokeSpecial 58 (get_current) args=1 ret=1
+      0783  BoxDynamic
+      0784  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 85, locals 1, stack 2, code 069C..06D5
-      069C  Ldl0
-      069D  FieldGet 23 (_usingFirst)
-      06A0  JPZ +24 -> L1 (06BB)
-      06A3  Ldl0
-      06A4  FieldGet 25 (_first)
-      06A7  InvokeInterface 104 (moveNext) args=1 ret=1
-      06AC  JPZ +7 -> L0 (06B6)
-      06AF  Ldl0
-      06B0  PushTrue
-      06B1  FieldSet 24 (_valid)
-      06B4  PushTrue
-      06B5  ReturnValue
+    ; entry 100, locals 1, stack 2, code 073D..0776
+      073D  Ldl0
+      073E  FieldGet 23 (_usingFirst)
+      0741  JPZ +24 -> L1 (075C)
+      0744  Ldl0
+      0745  FieldGet 25 (_first)
+      0748  InvokeInterface 123 (moveNext) args=1 ret=1
+      074D  JPZ +7 -> L0 (0757)
+      0750  Ldl0
+      0751  PushTrue
+      0752  FieldSet 24 (_valid)
+      0755  PushTrue
+      0756  ReturnValue
     L0:
-      06B6  Ldl0
-      06B7  PushFalse
-      06B8  FieldSet 23 (_usingFirst)
+      0757  Ldl0
+      0758  PushFalse
+      0759  FieldSet 23 (_usingFirst)
     L1:
-      06BB  Ldl0
-      06BC  FieldGet 26 (_second)
-      06BF  InvokeInterface 104 (moveNext) args=1 ret=1
-      06C4  JPZ +7 -> L2 (06CE)
-      06C7  Ldl0
-      06C8  PushTrue
-      06C9  FieldSet 24 (_valid)
-      06CC  PushTrue
-      06CD  ReturnValue
+      075C  Ldl0
+      075D  FieldGet 26 (_second)
+      0760  InvokeInterface 123 (moveNext) args=1 ret=1
+      0765  JPZ +7 -> L2 (076F)
+      0768  Ldl0
+      0769  PushTrue
+      076A  FieldSet 24 (_valid)
+      076D  PushTrue
+      076E  ReturnValue
     L2:
-      06CE  Ldl0
-      06CF  PushFalse
-      06D0  FieldSet 24 (_valid)
-      06D3  PushFalse
-      06D4  ReturnValue
+      076F  Ldl0
+      0770  PushFalse
+      0771  FieldSet 24 (_valid)
+      0774  PushFalse
+      0775  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 86, locals 1, stack 1, code 06D5..06DC
-      06D5  Ldl0
-      06D6  InvokeSpecial 52 (moveNext) args=1 ret=1
-      06DB  ReturnValue
+    ; entry 101, locals 1, stack 1, code 0776..077D
+      0776  Ldl0
+      0777  InvokeSpecial 60 (moveNext) args=1 ret=1
+      077C  ReturnValue
 
 class DistinctIterator`1<T> : surtr:IIterator<T0>  [internal]
   [private] readonly field _seen: {T0: bool}
@@ -671,116 +749,139 @@ class DistinctIterator`1<T> : surtr:IIterator<T0>  [internal]
 
   [public] property current: T0 { get; }
     get:
-      ; entry 74, locals 1, stack 3, code 0560..057D
-        0560  Ldl0
-        0561  FieldGet 18 (_valid)
-        0564  Inv
-        0565  JPZ +11 -> L0 (0573)
-        0568  ObjNew 20 (surtr:InvalidOperationException)
-        056B  Dup
-        056C  Ldc0
-        056D  InvokeSpecial 109 (ctor) args=2 ret=0
-        0572  Throw
+      ; entry 84, locals 1, stack 3, code 05D5..05F2
+        05D5  Ldl0
+        05D6  FieldGet 18 (_valid)
+        05D9  Inv
+        05DA  JPZ +11 -> L0 (05E8)
+        05DD  ObjNew 20 (surtr:InvalidOperationException)
+        05E0  Dup
+        05E1  Ldc0
+        05E2  InvokeSpecial 128 (ctor) args=2 ret=0
+        05E7  Throw
       L0:
-        0573  Ldl0
-        0574  FieldGet 19 (_source)
-        0577  InvokeInterface 105 (get_current) args=1 ret=1
-        057C  ReturnValue
+        05E8  Ldl0
+        05E9  FieldGet 19 (_source)
+        05EC  InvokeInterface 124 (get_current) args=1 ret=1
+        05F1  ReturnValue
 
   [public] ctor (source: surtr:IIterator<T0>): void
-    ; entry 73, locals 2, stack 2, code 054C..0560
-      054C  Ldl0
-      054D  DictPack 22 ({T0: bool}) count=0
-      0552  FieldSet 17 (_seen)
-      0555  Ldl0
-      0556  PushFalse
-      0557  FieldSet 18 (_valid)
-      055A  Ldl0
-      055B  Ldl1
-      055C  FieldSet 19 (_source)
-      055F  ReturnVoid
+    ; entry 83, locals 2, stack 2, code 05C1..05D5
+      05C1  Ldl0
+      05C2  DictPack 22 ({T0: bool}) count=0
+      05C7  FieldSet 17 (_seen)
+      05CA  Ldl0
+      05CB  PushFalse
+      05CC  FieldSet 18 (_valid)
+      05CF  Ldl0
+      05D0  Ldl1
+      05D1  FieldSet 19 (_source)
+      05D4  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 85, locals 1, stack 1, code 05F2..05FC
+      05F2  Ldl0
+      05F3  FieldGet 19 (_source)
+      05F6  InvokeInterface 129 (dispose) args=1 ret=0
+      05FB  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 89, locals 1, stack 1, code 0649..0650
+      0649  Ldl0
+      064A  InvokeSpecial 51 (dispose) args=1 ret=0
+      064F  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 77, locals 1, stack 1, code 05C2..05CA
-      05C2  Ldl0
-      05C3  InvokeSpecial 45 (get_current) args=1 ret=1
-      05C8  BoxDynamic
-      05C9  ReturnValue
+    ; entry 88, locals 1, stack 1, code 0641..0649
+      0641  Ldl0
+      0642  InvokeSpecial 50 (get_current) args=1 ret=1
+      0647  BoxDynamic
+      0648  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 75, locals 1, stack 3, code 057D..05BB
+    ; entry 86, locals 1, stack 3, code 05FC..063A
     L0:
-      057D  Ldl0
-      057E  FieldGet 19 (_source)
-      0581  InvokeInterface 104 (moveNext) args=1 ret=1
-      0586  JPZ +43 -> L2 (05B4)
-      0589  Ldl0
-      058A  FieldGet 17 (_seen)
-      058D  Ldl0
-      058E  FieldGet 19 (_source)
-      0591  InvokeInterface 105 (get_current) args=1 ret=1
-      0596  DictIn
-      0597  Inv
-      0598  JPZ +22 -> L1 (05B1)
-      059B  Ldl0
-      059C  FieldGet 17 (_seen)
-      059F  Ldl0
-      05A0  FieldGet 19 (_source)
-      05A3  InvokeInterface 105 (get_current) args=1 ret=1
-      05A8  PushTrue
-      05A9  DictSet
-      05AA  Ldl0
-      05AB  PushTrue
-      05AC  FieldSet 18 (_valid)
-      05AF  PushTrue
-      05B0  ReturnValue
+      05FC  Ldl0
+      05FD  FieldGet 19 (_source)
+      0600  InvokeInterface 123 (moveNext) args=1 ret=1
+      0605  JPZ +43 -> L2 (0633)
+      0608  Ldl0
+      0609  FieldGet 17 (_seen)
+      060C  Ldl0
+      060D  FieldGet 19 (_source)
+      0610  InvokeInterface 124 (get_current) args=1 ret=1
+      0615  DictIn
+      0616  Inv
+      0617  JPZ +22 -> L1 (0630)
+      061A  Ldl0
+      061B  FieldGet 17 (_seen)
+      061E  Ldl0
+      061F  FieldGet 19 (_source)
+      0622  InvokeInterface 124 (get_current) args=1 ret=1
+      0627  PushTrue
+      0628  DictSet
+      0629  Ldl0
+      062A  PushTrue
+      062B  FieldSet 18 (_valid)
+      062E  PushTrue
+      062F  ReturnValue
     L1:
-      05B1  JP -55 -> L0 (057D)
+      0630  JP -55 -> L0 (05FC)
     L2:
-      05B4  Ldl0
-      05B5  PushFalse
-      05B6  FieldSet 18 (_valid)
-      05B9  PushFalse
-      05BA  ReturnValue
+      0633  Ldl0
+      0634  PushFalse
+      0635  FieldSet 18 (_valid)
+      0638  PushFalse
+      0639  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 76, locals 1, stack 1, code 05BB..05C2
-      05BB  Ldl0
-      05BC  InvokeSpecial 46 (moveNext) args=1 ret=1
-      05C1  ReturnValue
+    ; entry 87, locals 1, stack 1, code 063A..0641
+      063A  Ldl0
+      063B  InvokeSpecial 52 (moveNext) args=1 ret=1
+      0640  ReturnValue
 
 class EmptyIterator`1<T> : surtr:IIterator<T0>  [internal]
 
   [public] property current: T0 { get; }
     get:
-      ; entry 139, locals 1, stack 3, code 0B20..0B2B
-        0B20  ObjNew 20 (surtr:InvalidOperationException)
-        0B23  Dup
-        0B24  Ldc4
-        0B25  InvokeSpecial 109 (ctor) args=2 ret=0
-        0B2A  Throw
+      ; entry 175, locals 1, stack 3, code 0C60..0C6B
+        0C60  ObjNew 20 (surtr:InvalidOperationException)
+        0C63  Dup
+        0C64  Ldc4
+        0C65  InvokeSpecial 128 (ctor) args=2 ret=0
+        0C6A  Throw
 
   [public] ctor (): void
-    ; entry 138, locals 1, stack 0, code 0B1F..0B20
-      0B1F  ReturnVoid
+    ; entry 174, locals 1, stack 0, code 0C5F..0C60
+      0C5F  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 176, locals 1, stack 0, code 0C6B..0C6C
+      0C6B  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 180, locals 1, stack 1, code 0C7D..0C84
+      0C7D  Ldl0
+      0C7E  InvokeSpecial 103 (dispose) args=1 ret=0
+      0C83  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 142, locals 1, stack 1, code 0B34..0B3C
-      0B34  Ldl0
-      0B35  InvokeSpecial 84 (get_current) args=1 ret=1
-      0B3A  BoxDynamic
-      0B3B  ReturnValue
+    ; entry 179, locals 1, stack 1, code 0C75..0C7D
+      0C75  Ldl0
+      0C76  InvokeSpecial 102 (get_current) args=1 ret=1
+      0C7B  BoxDynamic
+      0C7C  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 140, locals 1, stack 1, code 0B2B..0B2D
-      0B2B  PushFalse
-      0B2C  ReturnValue
+    ; entry 177, locals 1, stack 1, code 0C6C..0C6E
+      0C6C  PushFalse
+      0C6D  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 141, locals 1, stack 1, code 0B2D..0B34
-      0B2D  Ldl0
-      0B2E  InvokeSpecial 85 (moveNext) args=1 ret=1
-      0B33  ReturnValue
+    ; entry 178, locals 1, stack 1, code 0C6E..0C75
+      0C6E  Ldl0
+      0C6F  InvokeSpecial 104 (moveNext) args=1 ret=1
+      0C74  ReturnValue
 
 class EnumerateIterator`1<T> : surtr:IIterator<(int, T0)>  [internal]
   [private] field _index: int
@@ -789,80 +890,93 @@ class EnumerateIterator`1<T> : surtr:IIterator<(int, T0)>  [internal]
 
   [public] property current: (int, T0) { get; }
     get:
-      ; entry 94, locals 1, stack 3, code 0768..078B
-        0768  Ldl0
-        0769  FieldGet 31 (_valid)
-        076C  Inv
-        076D  JPZ +11 -> L0 (077B)
-        0770  ObjNew 20 (surtr:InvalidOperationException)
-        0773  Dup
-        0774  Ldc0
-        0775  InvokeSpecial 109 (ctor) args=2 ret=0
-        077A  Throw
+      ; entry 112, locals 1, stack 3, code 082A..084D
+        082A  Ldl0
+        082B  FieldGet 31 (_valid)
+        082E  Inv
+        082F  JPZ +11 -> L0 (083D)
+        0832  ObjNew 20 (surtr:InvalidOperationException)
+        0835  Dup
+        0836  Ldc0
+        0837  InvokeSpecial 128 (ctor) args=2 ret=0
+        083C  Throw
       L0:
-        077B  Ldl0
-        077C  FieldGet 30 (_index)
-        077F  Ldl0
-        0780  FieldGet 32 (_source)
-        0783  InvokeInterface 105 (get_current) args=1 ret=1
-        0788  UnboxDynamic
-        0789  ReturnValues 2
+        083D  Ldl0
+        083E  FieldGet 30 (_index)
+        0841  Ldl0
+        0842  FieldGet 32 (_source)
+        0845  InvokeInterface 124 (get_current) args=1 ret=1
+        084A  UnboxDynamic
+        084B  ReturnValues 2
 
   [public] ctor (source: surtr:IIterator<T0>): void
-    ; entry 93, locals 2, stack 2, code 0756..0768
-      0756  Ldl0
-      0757  PushI8 1
-      0759  Neg
-      075A  FieldSet 30 (_index)
-      075D  Ldl0
-      075E  PushFalse
-      075F  FieldSet 31 (_valid)
-      0762  Ldl0
-      0763  Ldl1
-      0764  FieldSet 32 (_source)
-      0767  ReturnVoid
+    ; entry 111, locals 2, stack 2, code 0818..082A
+      0818  Ldl0
+      0819  PushI8 1
+      081B  Neg
+      081C  FieldSet 30 (_index)
+      081F  Ldl0
+      0820  PushFalse
+      0821  FieldSet 31 (_valid)
+      0824  Ldl0
+      0825  Ldl1
+      0826  FieldSet 32 (_source)
+      0829  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 113, locals 1, stack 1, code 084D..0857
+      084D  Ldl0
+      084E  FieldGet 32 (_source)
+      0851  InvokeInterface 129 (dispose) args=1 ret=0
+      0856  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 117, locals 1, stack 1, code 0890..0897
+      0890  Ldl0
+      0891  InvokeSpecial 67 (dispose) args=1 ret=0
+      0896  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 97, locals 1, stack 2, code 07BD..07C4
-      07BD  Ldl0
-      07BE  InvokeSpecial 57 (get_current) args=1 ret=1
-      07C3  ReturnValue
+    ; entry 116, locals 1, stack 2, code 0889..0890
+      0889  Ldl0
+      088A  InvokeSpecial 66 (get_current) args=1 ret=1
+      088F  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 95, locals 3, stack 2, code 078B..07B6
-      078B  Ldl0
-      078C  FieldGet 32 (_source)
-      078F  InvokeInterface 104 (moveNext) args=1 ret=1
-      0794  JPZ +24 -> L0 (07AF)
-      0797  Ldl0
-      0798  FieldGet 30 (_index)
-      079B  Stl1
-      079C  Ldl1
-      079D  PushI8 1
-      079F  Add
-      07A0  Stl2
-      07A1  Ldl0
-      07A2  Ldl2
-      07A3  FieldSet 30 (_index)
-      07A6  Ldl1
-      07A7  Pop
-      07A8  Ldl0
-      07A9  PushTrue
-      07AA  FieldSet 31 (_valid)
-      07AD  PushTrue
-      07AE  ReturnValue
+    ; entry 114, locals 3, stack 2, code 0857..0882
+      0857  Ldl0
+      0858  FieldGet 32 (_source)
+      085B  InvokeInterface 123 (moveNext) args=1 ret=1
+      0860  JPZ +24 -> L0 (087B)
+      0863  Ldl0
+      0864  FieldGet 30 (_index)
+      0867  Stl1
+      0868  Ldl1
+      0869  PushI8 1
+      086B  Add
+      086C  Stl2
+      086D  Ldl0
+      086E  Ldl2
+      086F  FieldSet 30 (_index)
+      0872  Ldl1
+      0873  Pop
+      0874  Ldl0
+      0875  PushTrue
+      0876  FieldSet 31 (_valid)
+      0879  PushTrue
+      087A  ReturnValue
     L0:
-      07AF  Ldl0
-      07B0  PushFalse
-      07B1  FieldSet 31 (_valid)
-      07B4  PushFalse
-      07B5  ReturnValue
+      087B  Ldl0
+      087C  PushFalse
+      087D  FieldSet 31 (_valid)
+      0880  PushFalse
+      0881  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 96, locals 1, stack 1, code 07B6..07BD
-      07B6  Ldl0
-      07B7  InvokeSpecial 58 (moveNext) args=1 ret=1
-      07BC  ReturnValue
+    ; entry 115, locals 1, stack 1, code 0882..0889
+      0882  Ldl0
+      0883  InvokeSpecial 68 (moveNext) args=1 ret=1
+      0888  ReturnValue
 
 class FilterIterator`1<T> : surtr:IIterator<T0>  [internal]
   [private] readonly field _predicate: (T0) -> bool
@@ -879,12 +993,12 @@ class FilterIterator`1<T> : surtr:IIterator<T0>  [internal]
         02E3  ObjNew 20 (surtr:InvalidOperationException)
         02E6  Dup
         02E7  Ldc0
-        02E8  InvokeSpecial 109 (ctor) args=2 ret=0
+        02E8  InvokeSpecial 128 (ctor) args=2 ret=0
         02ED  Throw
       L0:
         02EE  Ldl0
         02EF  FieldGet 1 (_source)
-        02F2  InvokeInterface 105 (get_current) args=1 ret=1
+        02F2  InvokeInterface 124 (get_current) args=1 ret=1
         02F7  ReturnValue
 
   [public] ctor (source: surtr:IIterator<T0>, predicate: (T0) -> bool): void
@@ -900,46 +1014,59 @@ class FilterIterator`1<T> : surtr:IIterator<T0>  [internal]
       02D7  FieldSet 2 (_predicate)
       02DA  ReturnVoid
 
-  [public] virtual get_current(): unknown
-    ; entry 52, locals 1, stack 1, code 032F..0337
-      032F  Ldl0
-      0330  InvokeSpecial 30 (get_current) args=1 ret=1
-      0335  BoxDynamic
-      0336  ReturnValue
-
-  [public] moveNext(): bool
-    ; entry 50, locals 1, stack 2, code 02F8..0328
-    L0:
+  [public] dispose(): void
+    ; entry 50, locals 1, stack 1, code 02F8..0302
       02F8  Ldl0
       02F9  FieldGet 1 (_source)
-      02FC  InvokeInterface 104 (moveNext) args=1 ret=1
-      0301  JPZ +29 -> L2 (0321)
-      0304  Ldl0
-      0305  FieldGet 2 (_predicate)
-      0308  Ldl0
-      0309  FieldGet 1 (_source)
-      030C  InvokeInterface 105 (get_current) args=1 ret=1
-      0311  InvokeClosure args=1 ret=1
-      0314  JPZ +7 -> L1 (031E)
-      0317  Ldl0
-      0318  PushTrue
-      0319  FieldSet 0 (_valid)
-      031C  PushTrue
-      031D  ReturnValue
-    L1:
-      031E  JP -41 -> L0 (02F8)
-    L2:
+      02FC  InvokeInterface 129 (dispose) args=1 ret=0
+      0301  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 54, locals 1, stack 1, code 0341..0348
+      0341  Ldl0
+      0342  InvokeSpecial 31 (dispose) args=1 ret=0
+      0347  ReturnVoid
+
+  [public] virtual get_current(): unknown
+    ; entry 53, locals 1, stack 1, code 0339..0341
+      0339  Ldl0
+      033A  InvokeSpecial 30 (get_current) args=1 ret=1
+      033F  BoxDynamic
+      0340  ReturnValue
+
+  [public] moveNext(): bool
+    ; entry 51, locals 1, stack 2, code 0302..0332
+    L0:
+      0302  Ldl0
+      0303  FieldGet 1 (_source)
+      0306  InvokeInterface 123 (moveNext) args=1 ret=1
+      030B  JPZ +29 -> L2 (032B)
+      030E  Ldl0
+      030F  FieldGet 2 (_predicate)
+      0312  Ldl0
+      0313  FieldGet 1 (_source)
+      0316  InvokeInterface 124 (get_current) args=1 ret=1
+      031B  InvokeClosure args=1 ret=1
+      031E  JPZ +7 -> L1 (0328)
       0321  Ldl0
-      0322  PushFalse
+      0322  PushTrue
       0323  FieldSet 0 (_valid)
-      0326  PushFalse
+      0326  PushTrue
       0327  ReturnValue
+    L1:
+      0328  JP -41 -> L0 (0302)
+    L2:
+      032B  Ldl0
+      032C  PushFalse
+      032D  FieldSet 0 (_valid)
+      0330  PushFalse
+      0331  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 51, locals 1, stack 1, code 0328..032F
-      0328  Ldl0
-      0329  InvokeSpecial 31 (moveNext) args=1 ret=1
-      032E  ReturnValue
+    ; entry 52, locals 1, stack 1, code 0332..0339
+      0332  Ldl0
+      0333  InvokeSpecial 32 (moveNext) args=1 ret=1
+      0338  ReturnValue
 
 class FlatMapIterator`2<T, U> : surtr:IIterator<T1>  [internal]
   [private] field _currentIterator: surtr:IIterator<T1>
@@ -948,110 +1075,139 @@ class FlatMapIterator`2<T, U> : surtr:IIterator<T1>  [internal]
 
   [public] property current: T1 { get; }
     get:
-      ; entry 59, locals 1, stack 3, code 03A4..03D0
-        03A4  Ldl0
-        03A5  FieldGet 6 (_currentIterator)
-        03A8  JPNN +11 -> L0 (03B6)
-        03AB  ObjNew 20 (surtr:InvalidOperationException)
-        03AE  Dup
-        03AF  Ldc0
-        03B0  InvokeSpecial 109 (ctor) args=2 ret=0
-        03B5  Throw
+      ; entry 63, locals 1, stack 3, code 03C6..03F2
+        03C6  Ldl0
+        03C7  FieldGet 6 (_currentIterator)
+        03CA  JPNN +11 -> L0 (03D8)
+        03CD  ObjNew 20 (surtr:InvalidOperationException)
+        03D0  Dup
+        03D1  Ldc0
+        03D2  InvokeSpecial 128 (ctor) args=2 ret=0
+        03D7  Throw
       L0:
-        03B6  Ldl0
-        03B7  FieldGet 6 (_currentIterator)
-        03BA  Dup
-        03BB  JPNN +12 -> L1 (03CA)
-        03BE  Pop
-        03BF  ObjNew 21 (surtr:NullReferenceException)
-        03C2  Dup
-        03C3  Ldc1
-        03C4  InvokeSpecial 114 (ctor) args=2 ret=0
-        03C9  Throw
+        03D8  Ldl0
+        03D9  FieldGet 6 (_currentIterator)
+        03DC  Dup
+        03DD  JPNN +12 -> L1 (03EC)
+        03E0  Pop
+        03E1  ObjNew 21 (surtr:NullReferenceException)
+        03E4  Dup
+        03E5  Ldc1
+        03E6  InvokeSpecial 136 (ctor) args=2 ret=0
+        03EB  Throw
       L1:
-        03CA  InvokeInterface 105 (get_current) args=1 ret=1
-        03CF  ReturnValue
+        03EC  InvokeInterface 124 (get_current) args=1 ret=1
+        03F1  ReturnValue
 
   [public] ctor (source: surtr:IIterator<T0>, mapper: (T0) -> () -> surtr:IIterator<T0>): void
-    ; entry 58, locals 3, stack 2, code 0394..03A4
-      0394  Ldl0
-      0395  PushNull
-      0396  FieldSet 6 (_currentIterator)
-      0399  Ldl0
-      039A  Ldl1
-      039B  FieldSet 7 (_source)
-      039E  Ldl0
-      039F  Ldl2
-      03A0  FieldSet 8 (_mapper)
-      03A3  ReturnVoid
+    ; entry 62, locals 3, stack 2, code 03B6..03C6
+      03B6  Ldl0
+      03B7  PushNull
+      03B8  FieldSet 6 (_currentIterator)
+      03BB  Ldl0
+      03BC  Ldl1
+      03BD  FieldSet 7 (_source)
+      03C0  Ldl0
+      03C1  Ldl2
+      03C2  FieldSet 8 (_mapper)
+      03C5  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 64, locals 1, stack 3, code 03F2..041C
+      03F2  Ldl0
+      03F3  FieldGet 7 (_source)
+      03F6  InvokeInterface 129 (dispose) args=1 ret=0
+      03FB  Ldl0
+      03FC  FieldGet 6 (_currentIterator)
+      03FF  JPN +25 -> L1 (041B)
+      0402  Ldl0
+      0403  FieldGet 6 (_currentIterator)
+      0406  Dup
+      0407  JPNN +12 -> L0 (0416)
+      040A  Pop
+      040B  ObjNew 21 (surtr:NullReferenceException)
+      040E  Dup
+      040F  Ldc1
+      0410  InvokeSpecial 136 (ctor) args=2 ret=0
+      0415  Throw
+    L0:
+      0416  InvokeInterface 129 (dispose) args=1 ret=0
+    L1:
+      041B  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 68, locals 1, stack 1, code 048C..0493
+      048C  Ldl0
+      048D  InvokeSpecial 39 (dispose) args=1 ret=0
+      0492  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 62, locals 1, stack 1, code 0438..0440
-      0438  Ldl0
-      0439  InvokeSpecial 36 (get_current) args=1 ret=1
-      043E  BoxDynamic
-      043F  ReturnValue
+    ; entry 67, locals 1, stack 1, code 0484..048C
+      0484  Ldl0
+      0485  InvokeSpecial 38 (get_current) args=1 ret=1
+      048A  BoxDynamic
+      048B  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 60, locals 3, stack 3, code 03D0..0431
+    ; entry 65, locals 3, stack 3, code 041C..047D
     L0:
-      03D0  Ldl0
-      03D1  FieldGet 6 (_currentIterator)
-      03D4  Stl1
-      03D5  Ldl1
-      03D6  JPN +9 -> L1 (03E2)
-      03D9  Ldl1
-      03DA  InvokeInterface 104 (moveNext) args=1 ret=1
-      03DF  JP +2 -> L2 (03E4)
+      041C  Ldl0
+      041D  FieldGet 6 (_currentIterator)
+      0420  Stl1
+      0421  Ldl1
+      0422  JPN +9 -> L1 (042E)
+      0425  Ldl1
+      0426  InvokeInterface 123 (moveNext) args=1 ret=1
+      042B  JP +2 -> L2 (0430)
     L1:
-      03E2  PushAbsent 3
+      042E  PushAbsent 3
     L2:
-      03E4  IsPresent
-      03E5  JPZ +23 -> L5 (03FF)
-      03E8  Ldl0
-      03E9  FieldGet 6 (_currentIterator)
-      03EC  Stl2
-      03ED  Ldl2
-      03EE  JPN +9 -> L3 (03FA)
-      03F1  Ldl2
-      03F2  InvokeInterface 104 (moveNext) args=1 ret=1
-      03F7  JP +2 -> L4 (03FC)
+      0430  IsPresent
+      0431  JPZ +23 -> L5 (044B)
+      0434  Ldl0
+      0435  FieldGet 6 (_currentIterator)
+      0438  Stl2
+      0439  Ldl2
+      043A  JPN +9 -> L3 (0446)
+      043D  Ldl2
+      043E  InvokeInterface 123 (moveNext) args=1 ret=1
+      0443  JP +2 -> L4 (0448)
     L3:
-      03FA  PushAbsent 3
+      0446  PushAbsent 3
     L4:
-      03FC  JP +1 -> L6 (0400)
+      0448  JP +1 -> L6 (044C)
     L5:
-      03FF  PushFalse
+      044B  PushFalse
     L6:
-      0400  JPZ +2 -> L7 (0405)
-      0403  PushTrue
-      0404  ReturnValue
+      044C  JPZ +2 -> L7 (0451)
+      044F  PushTrue
+      0450  ReturnValue
     L7:
-      0405  Ldl0
-      0406  FieldGet 7 (_source)
-      0409  InvokeInterface 104 (moveNext) args=1 ret=1
-      040E  Inv
-      040F  JPZ +2 -> L8 (0414)
-      0412  PushFalse
-      0413  ReturnValue
+      0451  Ldl0
+      0452  FieldGet 7 (_source)
+      0455  InvokeInterface 123 (moveNext) args=1 ret=1
+      045A  Inv
+      045B  JPZ +2 -> L8 (0460)
+      045E  PushFalse
+      045F  ReturnValue
     L8:
-      0414  Ldl0
-      0415  Ldl0
-      0416  FieldGet 8 (_mapper)
-      0419  Ldl0
-      041A  FieldGet 7 (_source)
-      041D  InvokeInterface 105 (get_current) args=1 ret=1
-      0422  InvokeClosure args=1 ret=1
-      0425  InvokeSpecial 28 (iterate) args=1 ret=1
-      042A  FieldSet 6 (_currentIterator)
-      042D  JP -96 -> L0 (03D0)
-      0430  ReturnVoid
+      0460  Ldl0
+      0461  Ldl0
+      0462  FieldGet 8 (_mapper)
+      0465  Ldl0
+      0466  FieldGet 7 (_source)
+      0469  InvokeInterface 124 (get_current) args=1 ret=1
+      046E  InvokeClosure args=1 ret=1
+      0471  InvokeSpecial 28 (iterate) args=1 ret=1
+      0476  FieldSet 6 (_currentIterator)
+      0479  JP -96 -> L0 (041C)
+      047C  ReturnVoid
 
   [public] virtual moveNext(): bool
-    ; entry 61, locals 1, stack 1, code 0431..0438
-      0431  Ldl0
-      0432  InvokeSpecial 37 (moveNext) args=1 ret=1
-      0437  ReturnValue
+    ; entry 66, locals 1, stack 1, code 047D..0484
+      047D  Ldl0
+      047E  InvokeSpecial 40 (moveNext) args=1 ret=1
+      0483  ReturnValue
 
 class MapIterator`2<T, U> : surtr:IIterator<T1>  [internal]
   [private] readonly field _mapper: (T0) -> T1
@@ -1060,68 +1216,81 @@ class MapIterator`2<T, U> : surtr:IIterator<T1>  [internal]
 
   [public] property current: T1 { get; }
     get:
-      ; entry 54, locals 1, stack 3, code 0347..036B
-        0347  Ldl0
-        0348  FieldGet 3 (_valid)
-        034B  Inv
-        034C  JPZ +11 -> L0 (035A)
-        034F  ObjNew 20 (surtr:InvalidOperationException)
-        0352  Dup
-        0353  Ldc0
-        0354  InvokeSpecial 109 (ctor) args=2 ret=0
-        0359  Throw
+      ; entry 56, locals 1, stack 3, code 0358..037C
+        0358  Ldl0
+        0359  FieldGet 3 (_valid)
+        035C  Inv
+        035D  JPZ +11 -> L0 (036B)
+        0360  ObjNew 20 (surtr:InvalidOperationException)
+        0363  Dup
+        0364  Ldc0
+        0365  InvokeSpecial 128 (ctor) args=2 ret=0
+        036A  Throw
       L0:
-        035A  Ldl0
-        035B  FieldGet 5 (_mapper)
-        035E  Ldl0
-        035F  FieldGet 4 (_source)
-        0362  InvokeInterface 105 (get_current) args=1 ret=1
-        0367  InvokeClosure args=1 ret=1
-        036A  ReturnValue
+        036B  Ldl0
+        036C  FieldGet 5 (_mapper)
+        036F  Ldl0
+        0370  FieldGet 4 (_source)
+        0373  InvokeInterface 124 (get_current) args=1 ret=1
+        0378  InvokeClosure args=1 ret=1
+        037B  ReturnValue
 
   [public] ctor (source: surtr:IIterator<T0>, mapper: (T0) -> T1): void
-    ; entry 53, locals 3, stack 2, code 0337..0347
-      0337  Ldl0
-      0338  PushFalse
-      0339  FieldSet 3 (_valid)
-      033C  Ldl0
-      033D  Ldl1
-      033E  FieldSet 4 (_source)
-      0341  Ldl0
-      0342  Ldl2
-      0343  FieldSet 5 (_mapper)
-      0346  ReturnVoid
+    ; entry 55, locals 3, stack 2, code 0348..0358
+      0348  Ldl0
+      0349  PushFalse
+      034A  FieldSet 3 (_valid)
+      034D  Ldl0
+      034E  Ldl1
+      034F  FieldSet 4 (_source)
+      0352  Ldl0
+      0353  Ldl2
+      0354  FieldSet 5 (_mapper)
+      0357  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 57, locals 1, stack 1, code 037C..0386
+      037C  Ldl0
+      037D  FieldGet 4 (_source)
+      0380  InvokeInterface 129 (dispose) args=1 ret=0
+      0385  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 61, locals 1, stack 1, code 03AF..03B6
+      03AF  Ldl0
+      03B0  InvokeSpecial 35 (dispose) args=1 ret=0
+      03B5  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 57, locals 1, stack 1, code 038C..0394
-      038C  Ldl0
-      038D  InvokeSpecial 33 (get_current) args=1 ret=1
-      0392  BoxDynamic
-      0393  ReturnValue
+    ; entry 60, locals 1, stack 1, code 03A7..03AF
+      03A7  Ldl0
+      03A8  InvokeSpecial 34 (get_current) args=1 ret=1
+      03AD  BoxDynamic
+      03AE  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 55, locals 1, stack 2, code 036B..0385
-      036B  Ldl0
-      036C  FieldGet 4 (_source)
-      036F  InvokeInterface 104 (moveNext) args=1 ret=1
-      0374  JPZ +7 -> L0 (037E)
-      0377  Ldl0
-      0378  PushTrue
-      0379  FieldSet 3 (_valid)
-      037C  PushTrue
-      037D  ReturnValue
+    ; entry 58, locals 1, stack 2, code 0386..03A0
+      0386  Ldl0
+      0387  FieldGet 4 (_source)
+      038A  InvokeInterface 123 (moveNext) args=1 ret=1
+      038F  JPZ +7 -> L0 (0399)
+      0392  Ldl0
+      0393  PushTrue
+      0394  FieldSet 3 (_valid)
+      0397  PushTrue
+      0398  ReturnValue
     L0:
-      037E  Ldl0
-      037F  PushFalse
-      0380  FieldSet 3 (_valid)
-      0383  PushFalse
-      0384  ReturnValue
+      0399  Ldl0
+      039A  PushFalse
+      039B  FieldSet 3 (_valid)
+      039E  PushFalse
+      039F  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 56, locals 1, stack 1, code 0385..038C
-      0385  Ldl0
-      0386  InvokeSpecial 34 (moveNext) args=1 ret=1
-      038B  ReturnValue
+    ; entry 59, locals 1, stack 1, code 03A0..03A7
+      03A0  Ldl0
+      03A1  InvokeSpecial 36 (moveNext) args=1 ret=1
+      03A6  ReturnValue
 
 class OnEachIterator`1<T> : surtr:IIterator<T0>  [internal]
   [private] readonly field _action: (T0) -> void
@@ -1130,71 +1299,84 @@ class OnEachIterator`1<T> : surtr:IIterator<T0>  [internal]
 
   [public] property current: T0 { get; }
     get:
-      ; entry 124, locals 1, stack 3, code 0A27..0A44
-        0A27  Ldl0
-        0A28  FieldGet 48 (_valid)
-        0A2B  Inv
-        0A2C  JPZ +11 -> L0 (0A3A)
-        0A2F  ObjNew 20 (surtr:InvalidOperationException)
-        0A32  Dup
-        0A33  Ldc0
-        0A34  InvokeSpecial 109 (ctor) args=2 ret=0
-        0A39  Throw
+      ; entry 154, locals 1, stack 3, code 0B46..0B63
+        0B46  Ldl0
+        0B47  FieldGet 48 (_valid)
+        0B4A  Inv
+        0B4B  JPZ +11 -> L0 (0B59)
+        0B4E  ObjNew 20 (surtr:InvalidOperationException)
+        0B51  Dup
+        0B52  Ldc0
+        0B53  InvokeSpecial 128 (ctor) args=2 ret=0
+        0B58  Throw
       L0:
-        0A3A  Ldl0
-        0A3B  FieldGet 49 (_source)
-        0A3E  InvokeInterface 105 (get_current) args=1 ret=1
-        0A43  ReturnValue
+        0B59  Ldl0
+        0B5A  FieldGet 49 (_source)
+        0B5D  InvokeInterface 124 (get_current) args=1 ret=1
+        0B62  ReturnValue
 
   [public] ctor (source: surtr:IIterator<T0>, action: (T0) -> void): void
-    ; entry 123, locals 3, stack 2, code 0A17..0A27
-      0A17  Ldl0
-      0A18  PushFalse
-      0A19  FieldSet 48 (_valid)
-      0A1C  Ldl0
-      0A1D  Ldl1
-      0A1E  FieldSet 49 (_source)
-      0A21  Ldl0
-      0A22  Ldl2
-      0A23  FieldSet 50 (_action)
-      0A26  ReturnVoid
+    ; entry 153, locals 3, stack 2, code 0B36..0B46
+      0B36  Ldl0
+      0B37  PushFalse
+      0B38  FieldSet 48 (_valid)
+      0B3B  Ldl0
+      0B3C  Ldl1
+      0B3D  FieldSet 49 (_source)
+      0B40  Ldl0
+      0B41  Ldl2
+      0B42  FieldSet 50 (_action)
+      0B45  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 155, locals 1, stack 1, code 0B63..0B6D
+      0B63  Ldl0
+      0B64  FieldGet 49 (_source)
+      0B67  InvokeInterface 129 (dispose) args=1 ret=0
+      0B6C  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 159, locals 1, stack 1, code 0BA6..0BAD
+      0BA6  Ldl0
+      0BA7  InvokeSpecial 91 (dispose) args=1 ret=0
+      0BAC  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 127, locals 1, stack 1, code 0A75..0A7D
-      0A75  Ldl0
-      0A76  InvokeSpecial 75 (get_current) args=1 ret=1
-      0A7B  BoxDynamic
-      0A7C  ReturnValue
+    ; entry 158, locals 1, stack 1, code 0B9E..0BA6
+      0B9E  Ldl0
+      0B9F  InvokeSpecial 90 (get_current) args=1 ret=1
+      0BA4  BoxDynamic
+      0BA5  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 125, locals 1, stack 2, code 0A44..0A6E
-      0A44  Ldl0
-      0A45  FieldGet 49 (_source)
-      0A48  InvokeInterface 104 (moveNext) args=1 ret=1
-      0A4D  JPZ +23 -> L0 (0A67)
-      0A50  Ldl0
-      0A51  FieldGet 50 (_action)
-      0A54  Ldl0
-      0A55  FieldGet 49 (_source)
-      0A58  InvokeInterface 105 (get_current) args=1 ret=1
-      0A5D  InvokeClosure args=1 ret=0
-      0A60  Ldl0
-      0A61  PushTrue
-      0A62  FieldSet 48 (_valid)
-      0A65  PushTrue
-      0A66  ReturnValue
+    ; entry 156, locals 1, stack 2, code 0B6D..0B97
+      0B6D  Ldl0
+      0B6E  FieldGet 49 (_source)
+      0B71  InvokeInterface 123 (moveNext) args=1 ret=1
+      0B76  JPZ +23 -> L0 (0B90)
+      0B79  Ldl0
+      0B7A  FieldGet 50 (_action)
+      0B7D  Ldl0
+      0B7E  FieldGet 49 (_source)
+      0B81  InvokeInterface 124 (get_current) args=1 ret=1
+      0B86  InvokeClosure args=1 ret=0
+      0B89  Ldl0
+      0B8A  PushTrue
+      0B8B  FieldSet 48 (_valid)
+      0B8E  PushTrue
+      0B8F  ReturnValue
     L0:
-      0A67  Ldl0
-      0A68  PushFalse
-      0A69  FieldSet 48 (_valid)
-      0A6C  PushFalse
-      0A6D  ReturnValue
+      0B90  Ldl0
+      0B91  PushFalse
+      0B92  FieldSet 48 (_valid)
+      0B95  PushFalse
+      0B96  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 126, locals 1, stack 1, code 0A6E..0A75
-      0A6E  Ldl0
-      0A6F  InvokeSpecial 76 (moveNext) args=1 ret=1
-      0A74  ReturnValue
+    ; entry 157, locals 1, stack 1, code 0B97..0B9E
+      0B97  Ldl0
+      0B98  InvokeSpecial 92 (moveNext) args=1 ret=1
+      0B9D  ReturnValue
 
 class ReverseIterator`1<T> : surtr:IIterator<T0>  [internal]
   [private] field _index: int
@@ -1203,93 +1385,103 @@ class ReverseIterator`1<T> : surtr:IIterator<T0>  [internal]
 
   [public] property current: T0 { get; }
     get:
-      ; entry 99, locals 1, stack 3, code 07EF..080D
-        07EF  Ldl0
-        07F0  FieldGet 33 (_valid)
-        07F3  Inv
-        07F4  JPZ +11 -> L0 (0802)
-        07F7  ObjNew 20 (surtr:InvalidOperationException)
-        07FA  Dup
-        07FB  Ldc0
-        07FC  InvokeSpecial 109 (ctor) args=2 ret=0
-        0801  Throw
+      ; entry 119, locals 1, stack 3, code 08C2..08E0
+        08C2  Ldl0
+        08C3  FieldGet 33 (_valid)
+        08C6  Inv
+        08C7  JPZ +11 -> L0 (08D5)
+        08CA  ObjNew 20 (surtr:InvalidOperationException)
+        08CD  Dup
+        08CE  Ldc0
+        08CF  InvokeSpecial 128 (ctor) args=2 ret=0
+        08D4  Throw
       L0:
-        0802  Ldl0
-        0803  FieldGet 34 (_items)
-        0806  Ldl0
-        0807  FieldGet 35 (_index)
-        080A  ArrGet
-        080B  BoxDynamic
-        080C  ReturnValue
+        08D5  Ldl0
+        08D6  FieldGet 34 (_items)
+        08D9  Ldl0
+        08DA  FieldGet 35 (_index)
+        08DD  ArrGet
+        08DE  BoxDynamic
+        08DF  ReturnValue
 
   [public] ctor (source: surtr:IIterator<T0>): void
-    ; entry 98, locals 3, stack 2, code 07C4..07EF
-      07C4  Ldl0
-      07C5  PushFalse
-      07C6  FieldSet 33 (_valid)
-      07C9  ArrPack 18 (T0[]) count=0
-      07CE  Stl2
+    ; entry 118, locals 3, stack 2, code 0897..08C2
+      0897  Ldl0
+      0898  PushFalse
+      0899  FieldSet 33 (_valid)
+      089C  ArrPack 18 (T0[]) count=0
+      08A1  Stl2
     L0:
-      07CF  Ldl1
-      07D0  InvokeInterface 104 (moveNext) args=1 ret=1
-      07D5  JPZ +11 -> L1 (07E3)
-      07D8  Ldl2
-      07D9  Ldl1
-      07DA  InvokeInterface 105 (get_current) args=1 ret=1
-      07DF  ArrPush
-      07E0  JP -20 -> L0 (07CF)
+      08A2  Ldl1
+      08A3  InvokeInterface 123 (moveNext) args=1 ret=1
+      08A8  JPZ +11 -> L1 (08B6)
+      08AB  Ldl2
+      08AC  Ldl1
+      08AD  InvokeInterface 124 (get_current) args=1 ret=1
+      08B2  ArrPush
+      08B3  JP -20 -> L0 (08A2)
     L1:
-      07E3  Ldl0
-      07E4  Ldl2
-      07E5  FieldSet 34 (_items)
-      07E8  Ldl0
-      07E9  Ldl2
-      07EA  ArrLen
-      07EB  FieldSet 35 (_index)
-      07EE  ReturnVoid
+      08B6  Ldl0
+      08B7  Ldl2
+      08B8  FieldSet 34 (_items)
+      08BB  Ldl0
+      08BC  Ldl2
+      08BD  ArrLen
+      08BE  FieldSet 35 (_index)
+      08C1  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 120, locals 1, stack 0, code 08E0..08E1
+      08E0  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 124, locals 1, stack 1, code 0918..091F
+      0918  Ldl0
+      0919  InvokeSpecial 71 (dispose) args=1 ret=0
+      091E  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 102, locals 1, stack 1, code 083C..0844
-      083C  Ldl0
-      083D  InvokeSpecial 60 (get_current) args=1 ret=1
-      0842  BoxDynamic
-      0843  ReturnValue
+    ; entry 123, locals 1, stack 1, code 0910..0918
+      0910  Ldl0
+      0911  InvokeSpecial 70 (get_current) args=1 ret=1
+      0916  BoxDynamic
+      0917  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 100, locals 3, stack 2, code 080D..0835
-      080D  Ldl0
-      080E  FieldGet 35 (_index)
-      0811  PushI8 0
-      0813  JPLE +24 -> L0 (082E)
-      0816  Ldl0
-      0817  FieldGet 35 (_index)
-      081A  Stl1
-      081B  Ldl1
-      081C  PushI8 1
-      081E  Sub
-      081F  Stl2
-      0820  Ldl0
-      0821  Ldl2
-      0822  FieldSet 35 (_index)
-      0825  Ldl1
-      0826  Pop
-      0827  Ldl0
-      0828  PushTrue
-      0829  FieldSet 33 (_valid)
-      082C  PushTrue
-      082D  ReturnValue
+    ; entry 121, locals 3, stack 2, code 08E1..0909
+      08E1  Ldl0
+      08E2  FieldGet 35 (_index)
+      08E5  PushI8 0
+      08E7  JPLE +24 -> L0 (0902)
+      08EA  Ldl0
+      08EB  FieldGet 35 (_index)
+      08EE  Stl1
+      08EF  Ldl1
+      08F0  PushI8 1
+      08F2  Sub
+      08F3  Stl2
+      08F4  Ldl0
+      08F5  Ldl2
+      08F6  FieldSet 35 (_index)
+      08F9  Ldl1
+      08FA  Pop
+      08FB  Ldl0
+      08FC  PushTrue
+      08FD  FieldSet 33 (_valid)
+      0900  PushTrue
+      0901  ReturnValue
     L0:
-      082E  Ldl0
-      082F  PushFalse
-      0830  FieldSet 33 (_valid)
-      0833  PushFalse
-      0834  ReturnValue
+      0902  Ldl0
+      0903  PushFalse
+      0904  FieldSet 33 (_valid)
+      0907  PushFalse
+      0908  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 101, locals 1, stack 1, code 0835..083C
-      0835  Ldl0
-      0836  InvokeSpecial 61 (moveNext) args=1 ret=1
-      083B  ReturnValue
+    ; entry 122, locals 1, stack 1, code 0909..0910
+      0909  Ldl0
+      090A  InvokeSpecial 72 (moveNext) args=1 ret=1
+      090F  ReturnValue
 
 class SafeCastIterator`2<T, U> : surtr:IIterator<T1>  [internal]
   [private] readonly field _source: surtr:IIterator<T0>
@@ -1297,77 +1489,90 @@ class SafeCastIterator`2<T, U> : surtr:IIterator<T1>  [internal]
 
   [public] property current: T1 { get; }
     get:
-      ; entry 109, locals 1, stack 3, code 08A0..08DE
-        08A0  Ldl0
-        08A1  FieldGet 38 (_valid)
-        08A4  Inv
-        08A5  JPZ +11 -> L0 (08B3)
-        08A8  ObjNew 20 (surtr:InvalidOperationException)
-        08AB  Dup
-        08AC  Ldc0
-        08AD  InvokeSpecial 109 (ctor) args=2 ret=0
-        08B2  Throw
+      ; entry 133, locals 1, stack 3, code 098C..09CA
+        098C  Ldl0
+        098D  FieldGet 38 (_valid)
+        0990  Inv
+        0991  JPZ +11 -> L0 (099F)
+        0994  ObjNew 20 (surtr:InvalidOperationException)
+        0997  Dup
+        0998  Ldc0
+        0999  InvokeSpecial 128 (ctor) args=2 ret=0
+        099E  Throw
       L0:
-        08B3  Ldl0
-        08B4  FieldGet 39 (_source)
-        08B7  InvokeInterface 105 (get_current) args=1 ret=1
-        08BC  CastOrNull 23 (T1)
-        08BF  IsNotNull
-        08C0  JPZ +15 -> L1 (08D2)
-        08C3  Ldl0
-        08C4  FieldGet 39 (_source)
-        08C7  InvokeInterface 105 (get_current) args=1 ret=1
-        08CC  CastOrNull 23 (T1)
-        08CF  JP +11 -> L2 (08DD)
+        099F  Ldl0
+        09A0  FieldGet 39 (_source)
+        09A3  InvokeInterface 124 (get_current) args=1 ret=1
+        09A8  CastOrNull 23 (T1)
+        09AB  IsNotNull
+        09AC  JPZ +15 -> L1 (09BE)
+        09AF  Ldl0
+        09B0  FieldGet 39 (_source)
+        09B3  InvokeInterface 124 (get_current) args=1 ret=1
+        09B8  CastOrNull 23 (T1)
+        09BB  JP +11 -> L2 (09C9)
       L1:
-        08D2  ObjNew 24 (surtr:InvalidCastException)
-        08D5  Dup
-        08D6  Ldc2
-        08D7  InvokeSpecial 136 (ctor) args=2 ret=0
-        08DC  Throw
+        09BE  ObjNew 24 (surtr:InvalidCastException)
+        09C1  Dup
+        09C2  Ldc2
+        09C3  InvokeSpecial 168 (ctor) args=2 ret=0
+        09C8  Throw
       L2:
-        08DD  ReturnValue
+        09C9  ReturnValue
 
   [public] ctor (source: surtr:IIterator<T0>): void
-    ; entry 108, locals 2, stack 2, code 0895..08A0
-      0895  Ldl0
-      0896  PushFalse
-      0897  FieldSet 38 (_valid)
-      089A  Ldl0
-      089B  Ldl1
-      089C  FieldSet 39 (_source)
-      089F  ReturnVoid
+    ; entry 132, locals 2, stack 2, code 0981..098C
+      0981  Ldl0
+      0982  PushFalse
+      0983  FieldSet 38 (_valid)
+      0986  Ldl0
+      0987  Ldl1
+      0988  FieldSet 39 (_source)
+      098B  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 134, locals 1, stack 1, code 09CA..09D4
+      09CA  Ldl0
+      09CB  FieldGet 39 (_source)
+      09CE  InvokeInterface 129 (dispose) args=1 ret=0
+      09D3  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 138, locals 1, stack 1, code 09FD..0A04
+      09FD  Ldl0
+      09FE  InvokeSpecial 79 (dispose) args=1 ret=0
+      0A03  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 112, locals 1, stack 1, code 08FF..0907
-      08FF  Ldl0
-      0900  InvokeSpecial 66 (get_current) args=1 ret=1
-      0905  BoxDynamic
-      0906  ReturnValue
+    ; entry 137, locals 1, stack 1, code 09F5..09FD
+      09F5  Ldl0
+      09F6  InvokeSpecial 78 (get_current) args=1 ret=1
+      09FB  BoxDynamic
+      09FC  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 110, locals 1, stack 2, code 08DE..08F8
-      08DE  Ldl0
-      08DF  FieldGet 39 (_source)
-      08E2  InvokeInterface 104 (moveNext) args=1 ret=1
-      08E7  JPZ +7 -> L0 (08F1)
-      08EA  Ldl0
-      08EB  PushTrue
-      08EC  FieldSet 38 (_valid)
-      08EF  PushTrue
-      08F0  ReturnValue
+    ; entry 135, locals 1, stack 2, code 09D4..09EE
+      09D4  Ldl0
+      09D5  FieldGet 39 (_source)
+      09D8  InvokeInterface 123 (moveNext) args=1 ret=1
+      09DD  JPZ +7 -> L0 (09E7)
+      09E0  Ldl0
+      09E1  PushTrue
+      09E2  FieldSet 38 (_valid)
+      09E5  PushTrue
+      09E6  ReturnValue
     L0:
-      08F1  Ldl0
-      08F2  PushFalse
-      08F3  FieldSet 38 (_valid)
-      08F6  PushFalse
-      08F7  ReturnValue
+      09E7  Ldl0
+      09E8  PushFalse
+      09E9  FieldSet 38 (_valid)
+      09EC  PushFalse
+      09ED  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 111, locals 1, stack 1, code 08F8..08FF
-      08F8  Ldl0
-      08F9  InvokeSpecial 67 (moveNext) args=1 ret=1
-      08FE  ReturnValue
+    ; entry 136, locals 1, stack 1, code 09EE..09F5
+      09EE  Ldl0
+      09EF  InvokeSpecial 80 (moveNext) args=1 ret=1
+      09F4  ReturnValue
 
 sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
   [private] readonly field _provider: () -> surtr:IIterator<T0>
@@ -1375,7 +1580,7 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
   [public] static property empty: () -> surtr:IIterator<T0> { get; }
     get:
       ; entry 19, locals 0, stack 1, code 0123..0127
-        0123  NewFunction 86 ($lambda$get_empty$0)
+        0123  NewFunction 105 ($lambda$get_empty$0)
         0126  ReturnValue
 
   [public] all(predicate: (T0) -> bool): bool
@@ -1385,11 +1590,11 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
       0239  Stl2
     L0:
       023A  Ldl2
-      023B  InvokeInterface 104 (moveNext) args=1 ret=1
+      023B  InvokeInterface 123 (moveNext) args=1 ret=1
       0240  JPZ +19 -> L2 (0256)
       0243  Ldl1
       0244  Ldl2
-      0245  InvokeInterface 105 (get_current) args=1 ret=1
+      0245  InvokeInterface 124 (get_current) args=1 ret=1
       024A  InvokeClosure args=1 ret=1
       024D  Inv
       024E  JPZ +2 -> L1 (0253)
@@ -1408,11 +1613,11 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
       0217  Stl2
     L0:
       0218  Ldl2
-      0219  InvokeInterface 104 (moveNext) args=1 ret=1
+      0219  InvokeInterface 123 (moveNext) args=1 ret=1
       021E  JPZ +18 -> L2 (0233)
       0221  Ldl1
       0222  Ldl2
-      0223  InvokeInterface 105 (get_current) args=1 ret=1
+      0223  InvokeInterface 124 (get_current) args=1 ret=1
       0228  InvokeClosure args=1 ret=1
       022B  JPZ +2 -> L1 (0230)
       022E  PushTrue
@@ -1426,14 +1631,14 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
   [public] cast(): () -> surtr:IIterator<T0>
     ; entry 32, locals 1, stack 1, code 0177..017D
       0177  Ldl0
-      0178  NewClosure 99 ($lambda$cast$0) upvalues=1
+      0178  NewClosure 118 ($lambda$cast$0) upvalues=1
       017C  ReturnValue
 
   [public] chain(other: () -> surtr:IIterator<T0>): () -> surtr:IIterator<T0>
     ; entry 28, locals 2, stack 2, code 015D..0164
       015D  Ldl0
       015E  Ldl1
-      015F  NewClosure 95 ($lambda$chain$0) upvalues=2
+      015F  NewClosure 114 ($lambda$chain$0) upvalues=2
       0163  ReturnValue
 
   [public] count(): int
@@ -1445,7 +1650,7 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
       025F  Stl2
     L0:
       0260  Ldl2
-      0261  InvokeInterface 104 (moveNext) args=1 ret=1
+      0261  InvokeInterface 123 (moveNext) args=1 ret=1
       0266  JPZ +6 -> L1 (026F)
       0269  IncLocal 1 by 1
       026C  JP -15 -> L0 (0260)
@@ -1460,20 +1665,20 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
   [public] distinct(): () -> surtr:IIterator<T0>
     ; entry 26, locals 1, stack 1, code 0150..0156
       0150  Ldl0
-      0151  NewClosure 93 ($lambda$distinct$0) upvalues=1
+      0151  NewClosure 112 ($lambda$distinct$0) upvalues=1
       0155  ReturnValue
 
   [public] enumerate(): () -> surtr:IIterator<T0>
     ; entry 30, locals 1, stack 1, code 016B..0171
       016B  Ldl0
-      016C  NewClosure 97 ($lambda$enumerate$0) upvalues=1
+      016C  NewClosure 116 ($lambda$enumerate$0) upvalues=1
       0170  ReturnValue
 
   [public] filter(predicate: (T0) -> bool): () -> surtr:IIterator<T0>
     ; entry 23, locals 2, stack 2, code 013B..0142
       013B  Ldl0
       013C  Ldl1
-      013D  NewClosure 90 ($lambda$filter$0) upvalues=2
+      013D  NewClosure 109 ($lambda$filter$0) upvalues=2
       0141  ReturnValue
 
   [public] firstOrNull(): T0
@@ -1482,10 +1687,10 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
       01D6  InvokeClosure args=0 ret=1
       01D9  Stl1
       01DA  Ldl1
-      01DB  InvokeInterface 104 (moveNext) args=1 ret=1
+      01DB  InvokeInterface 123 (moveNext) args=1 ret=1
       01E0  JPZ +7 -> L0 (01EA)
       01E3  Ldl1
-      01E4  InvokeInterface 105 (get_current) args=1 ret=1
+      01E4  InvokeInterface 124 (get_current) args=1 ret=1
       01E9  ReturnValue
     L0:
       01EA  PushNull
@@ -1498,15 +1703,15 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
       01F0  Stl2
     L0:
       01F1  Ldl2
-      01F2  InvokeInterface 104 (moveNext) args=1 ret=1
+      01F2  InvokeInterface 123 (moveNext) args=1 ret=1
       01F7  JPZ +23 -> L2 (0211)
       01FA  Ldl1
       01FB  Ldl2
-      01FC  InvokeInterface 105 (get_current) args=1 ret=1
+      01FC  InvokeInterface 124 (get_current) args=1 ret=1
       0201  InvokeClosure args=1 ret=1
       0204  JPZ +7 -> L1 (020E)
       0207  Ldl2
-      0208  InvokeInterface 105 (get_current) args=1 ret=1
+      0208  InvokeInterface 124 (get_current) args=1 ret=1
       020D  ReturnValue
     L1:
       020E  JP -32 -> L0 (01F1)
@@ -1518,7 +1723,7 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
     ; entry 22, locals 2, stack 2, code 0134..013B
       0134  Ldl0
       0135  Ldl1
-      0136  NewClosure 89 ($lambda$flatMap$0) upvalues=2
+      0136  NewClosure 108 ($lambda$flatMap$0) upvalues=2
       013A  ReturnValue
 
   [public] forEach(action: (T0) -> void): void
@@ -1528,11 +1733,11 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
       019C  Stl2
     L0:
       019D  Ldl2
-      019E  InvokeInterface 104 (moveNext) args=1 ret=1
+      019E  InvokeInterface 123 (moveNext) args=1 ret=1
       01A3  JPZ +13 -> L1 (01B3)
       01A6  Ldl1
       01A7  Ldl2
-      01A8  InvokeInterface 105 (get_current) args=1 ret=1
+      01A8  InvokeInterface 124 (get_current) args=1 ret=1
       01AD  InvokeClosure args=1 ret=0
       01B0  JP -22 -> L0 (019D)
     L1:
@@ -1555,20 +1760,20 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
     ; entry 21, locals 2, stack 2, code 012D..0134
       012D  Ldl0
       012E  Ldl1
-      012F  NewClosure 88 ($lambda$map$0) upvalues=2
+      012F  NewClosure 107 ($lambda$map$0) upvalues=2
       0133  ReturnValue
 
   [public] static of(elements: T0...): () -> surtr:IIterator<T0>
     ; entry 20, locals 1, stack 1, code 0127..012D
       0127  Ldl0
-      0128  NewClosure 87 ($lambda$of$0) upvalues=1
+      0128  NewClosure 106 ($lambda$of$0) upvalues=1
       012C  ReturnValue
 
   [public] onEach(action: (T0) -> void): () -> surtr:IIterator<T0>
     ; entry 36, locals 2, stack 2, code 0191..0198
       0191  Ldl0
       0192  Ldl1
-      0193  NewClosure 103 ($lambda$onEach$0) upvalues=2
+      0193  NewClosure 122 ($lambda$onEach$0) upvalues=2
       0197  ReturnValue
 
   [public] reduce(reducer: (T0, T0) -> T0, initialValue: T0): T0
@@ -1580,12 +1785,12 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
       01BA  Stl4
     L0:
       01BB  Ldl4
-      01BC  InvokeInterface 104 (moveNext) args=1 ret=1
+      01BC  InvokeInterface 123 (moveNext) args=1 ret=1
       01C1  JPZ +15 -> L1 (01D3)
       01C4  Ldl1
       01C5  Ldl3
       01C6  Ldl4
-      01C7  InvokeInterface 105 (get_current) args=1 ret=1
+      01C7  InvokeInterface 124 (get_current) args=1 ret=1
       01CC  InvokeClosure args=2 ret=1
       01CF  Stl3
       01D0  JP -24 -> L0 (01BB)
@@ -1596,48 +1801,48 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
   [public] reverse(): () -> surtr:IIterator<T0>
     ; entry 31, locals 1, stack 1, code 0171..0177
       0171  Ldl0
-      0172  NewClosure 98 ($lambda$reverse$0) upvalues=1
+      0172  NewClosure 117 ($lambda$reverse$0) upvalues=1
       0176  ReturnValue
 
   [public] safeCast(): () -> surtr:IIterator<T0>
     ; entry 33, locals 1, stack 1, code 017D..0183
       017D  Ldl0
-      017E  NewClosure 100 ($lambda$safeCast$0) upvalues=1
+      017E  NewClosure 119 ($lambda$safeCast$0) upvalues=1
       0182  ReturnValue
 
   [public] skip(count: int): () -> surtr:IIterator<T0>
     ; entry 25, locals 2, stack 2, code 0149..0150
       0149  Ldl0
       014A  Ldl1
-      014B  NewClosure 92 ($lambda$skip$0) upvalues=2
+      014B  NewClosure 111 ($lambda$skip$0) upvalues=2
       014F  ReturnValue
 
   [public] skipWhile(predicate: (T0) -> bool): () -> surtr:IIterator<T0>
     ; entry 35, locals 2, stack 2, code 018A..0191
       018A  Ldl0
       018B  Ldl1
-      018C  NewClosure 102 ($lambda$skipWhile$0) upvalues=2
+      018C  NewClosure 121 ($lambda$skipWhile$0) upvalues=2
       0190  ReturnValue
 
   [public] sorted(comparator: (T0, T0) -> int): () -> surtr:IIterator<T0>
     ; entry 27, locals 2, stack 2, code 0156..015D
       0156  Ldl0
       0157  Ldl1
-      0158  NewClosure 94 ($lambda$sorted$0) upvalues=2
+      0158  NewClosure 113 ($lambda$sorted$0) upvalues=2
       015C  ReturnValue
 
   [public] take(count: int): () -> surtr:IIterator<T0>
     ; entry 24, locals 2, stack 2, code 0142..0149
       0142  Ldl0
       0143  Ldl1
-      0144  NewClosure 91 ($lambda$take$0) upvalues=2
+      0144  NewClosure 110 ($lambda$take$0) upvalues=2
       0148  ReturnValue
 
   [public] takeWhile(predicate: (T0) -> bool): () -> surtr:IIterator<T0>
     ; entry 34, locals 2, stack 2, code 0183..018A
       0183  Ldl0
       0184  Ldl1
-      0185  NewClosure 101 ($lambda$takeWhile$0) upvalues=2
+      0185  NewClosure 120 ($lambda$takeWhile$0) upvalues=2
       0189  ReturnValue
 
   [public] toArray(): T0[]
@@ -1649,11 +1854,11 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
       027B  Stl2
     L0:
       027C  Ldl2
-      027D  InvokeInterface 104 (moveNext) args=1 ret=1
+      027D  InvokeInterface 123 (moveNext) args=1 ret=1
       0282  JPZ +11 -> L1 (0290)
       0285  Ldl1
       0286  Ldl2
-      0287  InvokeInterface 105 (get_current) args=1 ret=1
+      0287  InvokeInterface 124 (get_current) args=1 ret=1
       028C  ArrPush
       028D  JP -20 -> L0 (027C)
     L1:
@@ -1665,20 +1870,20 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
       0292  ObjNew 19 (surtr.collections.List:List<T0>)
       0295  Dup
       0296  PushI8 16
-      0298  InvokeSpecial 106 (ctor) args=2 ret=0
+      0298  InvokeSpecial 125 (ctor) args=2 ret=0
       029D  Stl1
       029E  Ldl0
       029F  InvokeClosure args=0 ret=1
       02A2  Stl2
     L0:
       02A3  Ldl2
-      02A4  InvokeInterface 104 (moveNext) args=1 ret=1
+      02A4  InvokeInterface 123 (moveNext) args=1 ret=1
       02A9  JPZ +16 -> L1 (02BC)
       02AC  Ldl1
       02AD  Ldl2
-      02AE  InvokeInterface 105 (get_current) args=1 ret=1
+      02AE  InvokeInterface 124 (get_current) args=1 ret=1
       02B3  BoxDynamic
-      02B4  InvokeSpecial 107 (add) args=2 ret=0
+      02B4  InvokeSpecial 126 (add) args=2 ret=0
       02B9  JP -25 -> L0 (02A3)
     L1:
       02BC  Ldl1
@@ -1688,7 +1893,7 @@ sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
     ; entry 29, locals 2, stack 2, code 0164..016B
       0164  Ldl0
       0165  Ldl1
-      0166  NewClosure 96 ($lambda$zip$0) upvalues=2
+      0166  NewClosure 115 ($lambda$zip$0) upvalues=2
       016A  ReturnValue
 
 class SingleIterator`1<T> : surtr:IIterator<T0>  [internal]
@@ -1697,48 +1902,58 @@ class SingleIterator`1<T> : surtr:IIterator<T0>  [internal]
 
   [public] property current: T0 { get; }
     get:
-      ; entry 134, locals 1, stack 1, code 0AFA..0AFF
-        0AFA  Ldl0
-        0AFB  FieldGet 54 (_value)
-        0AFE  ReturnValue
+      ; entry 168, locals 1, stack 1, code 0C32..0C37
+        0C32  Ldl0
+        0C33  FieldGet 54 (_value)
+        0C36  ReturnValue
 
   [public] ctor (value: T0): void
-    ; entry 133, locals 2, stack 2, code 0AEF..0AFA
-      0AEF  Ldl0
-      0AF0  PushFalse
-      0AF1  FieldSet 53 (_hasMoved)
-      0AF4  Ldl0
-      0AF5  Ldl1
-      0AF6  FieldSet 54 (_value)
-      0AF9  ReturnVoid
+    ; entry 167, locals 2, stack 2, code 0C27..0C32
+      0C27  Ldl0
+      0C28  PushFalse
+      0C29  FieldSet 53 (_hasMoved)
+      0C2C  Ldl0
+      0C2D  Ldl1
+      0C2E  FieldSet 54 (_value)
+      0C31  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 169, locals 1, stack 0, code 0C37..0C38
+      0C37  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 173, locals 1, stack 1, code 0C58..0C5F
+      0C58  Ldl0
+      0C59  InvokeSpecial 99 (dispose) args=1 ret=0
+      0C5E  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 137, locals 1, stack 1, code 0B17..0B1F
-      0B17  Ldl0
-      0B18  InvokeSpecial 81 (get_current) args=1 ret=1
-      0B1D  BoxDynamic
-      0B1E  ReturnValue
+    ; entry 172, locals 1, stack 1, code 0C50..0C58
+      0C50  Ldl0
+      0C51  InvokeSpecial 98 (get_current) args=1 ret=1
+      0C56  BoxDynamic
+      0C57  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 135, locals 1, stack 2, code 0AFF..0B10
-      0AFF  Ldl0
-      0B00  FieldGet 53 (_hasMoved)
-      0B03  Inv
-      0B04  JPZ +7 -> L0 (0B0E)
-      0B07  Ldl0
-      0B08  PushTrue
-      0B09  FieldSet 53 (_hasMoved)
-      0B0C  PushTrue
-      0B0D  ReturnValue
+    ; entry 170, locals 1, stack 2, code 0C38..0C49
+      0C38  Ldl0
+      0C39  FieldGet 53 (_hasMoved)
+      0C3C  Inv
+      0C3D  JPZ +7 -> L0 (0C47)
+      0C40  Ldl0
+      0C41  PushTrue
+      0C42  FieldSet 53 (_hasMoved)
+      0C45  PushTrue
+      0C46  ReturnValue
     L0:
-      0B0E  PushFalse
-      0B0F  ReturnValue
+      0C47  PushFalse
+      0C48  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 136, locals 1, stack 1, code 0B10..0B17
-      0B10  Ldl0
-      0B11  InvokeSpecial 82 (moveNext) args=1 ret=1
-      0B16  ReturnValue
+    ; entry 171, locals 1, stack 1, code 0C49..0C50
+      0C49  Ldl0
+      0C4A  InvokeSpecial 100 (moveNext) args=1 ret=1
+      0C4F  ReturnValue
 
 class SkipIterator`1<T> : surtr:IIterator<T0>  [internal]
   [private] readonly field _count: int
@@ -1748,97 +1963,110 @@ class SkipIterator`1<T> : surtr:IIterator<T0>  [internal]
 
   [public] property current: T0 { get; }
     get:
-      ; entry 69, locals 1, stack 3, code 04D5..04F2
-        04D5  Ldl0
-        04D6  FieldGet 14 (_valid)
-        04D9  Inv
-        04DA  JPZ +11 -> L0 (04E8)
-        04DD  ObjNew 20 (surtr:InvalidOperationException)
-        04E0  Dup
-        04E1  Ldc0
-        04E2  InvokeSpecial 109 (ctor) args=2 ret=0
-        04E7  Throw
+      ; entry 77, locals 1, stack 3, code 0539..0556
+        0539  Ldl0
+        053A  FieldGet 14 (_valid)
+        053D  Inv
+        053E  JPZ +11 -> L0 (054C)
+        0541  ObjNew 20 (surtr:InvalidOperationException)
+        0544  Dup
+        0545  Ldc0
+        0546  InvokeSpecial 128 (ctor) args=2 ret=0
+        054B  Throw
       L0:
-        04E8  Ldl0
-        04E9  FieldGet 15 (_source)
-        04EC  InvokeInterface 105 (get_current) args=1 ret=1
-        04F1  ReturnValue
+        054C  Ldl0
+        054D  FieldGet 15 (_source)
+        0550  InvokeInterface 124 (get_current) args=1 ret=1
+        0555  ReturnValue
 
   [public] ctor (source: surtr:IIterator<T0>, count: int): void
-    ; entry 68, locals 3, stack 2, code 04BF..04D5
-      04BF  Ldl0
-      04C0  PushI8 0
-      04C2  FieldSet 13 (_skipped)
-      04C5  Ldl0
-      04C6  PushFalse
-      04C7  FieldSet 14 (_valid)
-      04CA  Ldl0
-      04CB  Ldl1
-      04CC  FieldSet 15 (_source)
-      04CF  Ldl0
-      04D0  Ldl2
-      04D1  FieldSet 16 (_count)
-      04D4  ReturnVoid
+    ; entry 76, locals 3, stack 2, code 0523..0539
+      0523  Ldl0
+      0524  PushI8 0
+      0526  FieldSet 13 (_skipped)
+      0529  Ldl0
+      052A  PushFalse
+      052B  FieldSet 14 (_valid)
+      052E  Ldl0
+      052F  Ldl1
+      0530  FieldSet 15 (_source)
+      0533  Ldl0
+      0534  Ldl2
+      0535  FieldSet 16 (_count)
+      0538  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 78, locals 1, stack 1, code 0556..0560
+      0556  Ldl0
+      0557  FieldGet 15 (_source)
+      055A  InvokeInterface 129 (dispose) args=1 ret=0
+      055F  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 82, locals 1, stack 1, code 05BA..05C1
+      05BA  Ldl0
+      05BB  InvokeSpecial 47 (dispose) args=1 ret=0
+      05C0  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 72, locals 1, stack 1, code 0544..054C
-      0544  Ldl0
-      0545  InvokeSpecial 42 (get_current) args=1 ret=1
-      054A  BoxDynamic
-      054B  ReturnValue
+    ; entry 81, locals 1, stack 1, code 05B2..05BA
+      05B2  Ldl0
+      05B3  InvokeSpecial 46 (get_current) args=1 ret=1
+      05B8  BoxDynamic
+      05B9  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 70, locals 3, stack 2, code 04F2..053D
+    ; entry 79, locals 3, stack 2, code 0560..05AB
     L0:
-      04F2  Ldl0
-      04F3  FieldGet 13 (_skipped)
-      04F6  Ldl0
-      04F7  FieldGet 16 (_count)
-      04FA  LT
-      04FB  Dup
-      04FC  JPZ +13 -> L1 (050C)
-      04FF  Pop
-      0500  Ldl0
-      0501  FieldGet 15 (_source)
-      0504  InvokeInterface 104 (moveNext) args=1 ret=1
-      0509  JP +0 -> L1 (050C)
+      0560  Ldl0
+      0561  FieldGet 13 (_skipped)
+      0564  Ldl0
+      0565  FieldGet 16 (_count)
+      0568  LT
+      0569  Dup
+      056A  JPZ +13 -> L1 (057A)
+      056D  Pop
+      056E  Ldl0
+      056F  FieldGet 15 (_source)
+      0572  InvokeInterface 123 (moveNext) args=1 ret=1
+      0577  JP +0 -> L1 (057A)
     L1:
-      050C  JPZ +20 -> L2 (0523)
-      050F  Ldl0
-      0510  FieldGet 13 (_skipped)
-      0513  Stl1
-      0514  Ldl1
-      0515  PushI8 1
-      0517  Add
-      0518  Stl2
-      0519  Ldl0
-      051A  Ldl2
-      051B  FieldSet 13 (_skipped)
-      051E  Ldl1
-      051F  Pop
-      0520  JP -49 -> L0 (04F2)
+      057A  JPZ +20 -> L2 (0591)
+      057D  Ldl0
+      057E  FieldGet 13 (_skipped)
+      0581  Stl1
+      0582  Ldl1
+      0583  PushI8 1
+      0585  Add
+      0586  Stl2
+      0587  Ldl0
+      0588  Ldl2
+      0589  FieldSet 13 (_skipped)
+      058C  Ldl1
+      058D  Pop
+      058E  JP -49 -> L0 (0560)
     L2:
-      0523  Ldl0
-      0524  FieldGet 15 (_source)
-      0527  InvokeInterface 104 (moveNext) args=1 ret=1
-      052C  JPZ +7 -> L3 (0536)
-      052F  Ldl0
-      0530  PushTrue
-      0531  FieldSet 14 (_valid)
-      0534  PushTrue
-      0535  ReturnValue
+      0591  Ldl0
+      0592  FieldGet 15 (_source)
+      0595  InvokeInterface 123 (moveNext) args=1 ret=1
+      059A  JPZ +7 -> L3 (05A4)
+      059D  Ldl0
+      059E  PushTrue
+      059F  FieldSet 14 (_valid)
+      05A2  PushTrue
+      05A3  ReturnValue
     L3:
-      0536  Ldl0
-      0537  PushFalse
-      0538  FieldSet 14 (_valid)
-      053B  PushFalse
-      053C  ReturnValue
+      05A4  Ldl0
+      05A5  PushFalse
+      05A6  FieldSet 14 (_valid)
+      05A9  PushFalse
+      05AA  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 71, locals 1, stack 1, code 053D..0544
-      053D  Ldl0
-      053E  InvokeSpecial 43 (moveNext) args=1 ret=1
-      0543  ReturnValue
+    ; entry 80, locals 1, stack 1, code 05AB..05B2
+      05AB  Ldl0
+      05AC  InvokeSpecial 48 (moveNext) args=1 ret=1
+      05B1  ReturnValue
 
 class SkipWhileIterator`1<T> : surtr:IIterator<T0>  [internal]
   [private] readonly field _predicate: (T0) -> bool
@@ -1848,93 +2076,106 @@ class SkipWhileIterator`1<T> : surtr:IIterator<T0>  [internal]
 
   [public] property current: T0 { get; }
     get:
-      ; entry 119, locals 1, stack 3, code 09A4..09C1
-        09A4  Ldl0
-        09A5  FieldGet 45 (_valid)
-        09A8  Inv
-        09A9  JPZ +11 -> L0 (09B7)
-        09AC  ObjNew 20 (surtr:InvalidOperationException)
-        09AF  Dup
-        09B0  Ldc0
-        09B1  InvokeSpecial 109 (ctor) args=2 ret=0
-        09B6  Throw
+      ; entry 147, locals 1, stack 3, code 0AB2..0ACF
+        0AB2  Ldl0
+        0AB3  FieldGet 45 (_valid)
+        0AB6  Inv
+        0AB7  JPZ +11 -> L0 (0AC5)
+        0ABA  ObjNew 20 (surtr:InvalidOperationException)
+        0ABD  Dup
+        0ABE  Ldc0
+        0ABF  InvokeSpecial 128 (ctor) args=2 ret=0
+        0AC4  Throw
       L0:
-        09B7  Ldl0
-        09B8  FieldGet 46 (_source)
-        09BB  InvokeInterface 105 (get_current) args=1 ret=1
-        09C0  ReturnValue
+        0AC5  Ldl0
+        0AC6  FieldGet 46 (_source)
+        0AC9  InvokeInterface 124 (get_current) args=1 ret=1
+        0ACE  ReturnValue
 
   [public] ctor (source: surtr:IIterator<T0>, predicate: (T0) -> bool): void
-    ; entry 118, locals 3, stack 2, code 098F..09A4
-      098F  Ldl0
-      0990  PushTrue
-      0991  FieldSet 44 (_skipping)
-      0994  Ldl0
-      0995  PushFalse
-      0996  FieldSet 45 (_valid)
-      0999  Ldl0
-      099A  Ldl1
-      099B  FieldSet 46 (_source)
-      099E  Ldl0
-      099F  Ldl2
-      09A0  FieldSet 47 (_predicate)
-      09A3  ReturnVoid
+    ; entry 146, locals 3, stack 2, code 0A9D..0AB2
+      0A9D  Ldl0
+      0A9E  PushTrue
+      0A9F  FieldSet 44 (_skipping)
+      0AA2  Ldl0
+      0AA3  PushFalse
+      0AA4  FieldSet 45 (_valid)
+      0AA7  Ldl0
+      0AA8  Ldl1
+      0AA9  FieldSet 46 (_source)
+      0AAC  Ldl0
+      0AAD  Ldl2
+      0AAE  FieldSet 47 (_predicate)
+      0AB1  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 148, locals 1, stack 1, code 0ACF..0AD9
+      0ACF  Ldl0
+      0AD0  FieldGet 46 (_source)
+      0AD3  InvokeInterface 129 (dispose) args=1 ret=0
+      0AD8  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 152, locals 1, stack 1, code 0B2F..0B36
+      0B2F  Ldl0
+      0B30  InvokeSpecial 87 (dispose) args=1 ret=0
+      0B35  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 122, locals 1, stack 1, code 0A0F..0A17
-      0A0F  Ldl0
-      0A10  InvokeSpecial 72 (get_current) args=1 ret=1
-      0A15  BoxDynamic
-      0A16  ReturnValue
+    ; entry 151, locals 1, stack 1, code 0B27..0B2F
+      0B27  Ldl0
+      0B28  InvokeSpecial 86 (get_current) args=1 ret=1
+      0B2D  BoxDynamic
+      0B2E  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 120, locals 1, stack 2, code 09C1..0A08
+    ; entry 149, locals 1, stack 2, code 0AD9..0B20
     L0:
-      09C1  Ldl0
-      09C2  FieldGet 46 (_source)
-      09C5  InvokeInterface 104 (moveNext) args=1 ret=1
-      09CA  JPZ +52 -> L4 (0A01)
-      09CD  Ldl0
-      09CE  FieldGet 44 (_skipping)
-      09D1  JPZ +35 -> L2 (09F7)
-      09D4  Ldl0
-      09D5  FieldGet 47 (_predicate)
-      09D8  Ldl0
-      09D9  FieldGet 46 (_source)
-      09DC  InvokeInterface 105 (get_current) args=1 ret=1
-      09E1  InvokeClosure args=1 ret=1
-      09E4  Inv
-      09E5  JPZ +12 -> L1 (09F4)
-      09E8  Ldl0
-      09E9  PushFalse
-      09EA  FieldSet 44 (_skipping)
-      09ED  Ldl0
-      09EE  PushTrue
-      09EF  FieldSet 45 (_valid)
-      09F2  PushTrue
-      09F3  ReturnValue
+      0AD9  Ldl0
+      0ADA  FieldGet 46 (_source)
+      0ADD  InvokeInterface 123 (moveNext) args=1 ret=1
+      0AE2  JPZ +52 -> L4 (0B19)
+      0AE5  Ldl0
+      0AE6  FieldGet 44 (_skipping)
+      0AE9  JPZ +35 -> L2 (0B0F)
+      0AEC  Ldl0
+      0AED  FieldGet 47 (_predicate)
+      0AF0  Ldl0
+      0AF1  FieldGet 46 (_source)
+      0AF4  InvokeInterface 124 (get_current) args=1 ret=1
+      0AF9  InvokeClosure args=1 ret=1
+      0AFC  Inv
+      0AFD  JPZ +12 -> L1 (0B0C)
+      0B00  Ldl0
+      0B01  PushFalse
+      0B02  FieldSet 44 (_skipping)
+      0B05  Ldl0
+      0B06  PushTrue
+      0B07  FieldSet 45 (_valid)
+      0B0A  PushTrue
+      0B0B  ReturnValue
     L1:
-      09F4  JP +7 -> L3 (09FE)
+      0B0C  JP +7 -> L3 (0B16)
     L2:
-      09F7  Ldl0
-      09F8  PushTrue
-      09F9  FieldSet 45 (_valid)
-      09FC  PushTrue
-      09FD  ReturnValue
+      0B0F  Ldl0
+      0B10  PushTrue
+      0B11  FieldSet 45 (_valid)
+      0B14  PushTrue
+      0B15  ReturnValue
     L3:
-      09FE  JP -64 -> L0 (09C1)
+      0B16  JP -64 -> L0 (0AD9)
     L4:
-      0A01  Ldl0
-      0A02  PushFalse
-      0A03  FieldSet 45 (_valid)
-      0A06  PushFalse
-      0A07  ReturnValue
+      0B19  Ldl0
+      0B1A  PushFalse
+      0B1B  FieldSet 45 (_valid)
+      0B1E  PushFalse
+      0B1F  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 121, locals 1, stack 1, code 0A08..0A0F
-      0A08  Ldl0
-      0A09  InvokeSpecial 73 (moveNext) args=1 ret=1
-      0A0E  ReturnValue
+    ; entry 150, locals 1, stack 1, code 0B20..0B27
+      0B20  Ldl0
+      0B21  InvokeSpecial 88 (moveNext) args=1 ret=1
+      0B26  ReturnValue
 
 class SortedIterator`1<T> : surtr:IIterator<T0>  [internal]
   [private] field _index: int
@@ -1943,100 +2184,110 @@ class SortedIterator`1<T> : surtr:IIterator<T0>  [internal]
 
   [public] property current: T0 { get; }
     get:
-      ; entry 79, locals 1, stack 3, code 05FD..061B
-        05FD  Ldl0
-        05FE  FieldGet 21 (_valid)
-        0601  Inv
-        0602  JPZ +11 -> L0 (0610)
-        0605  ObjNew 20 (surtr:InvalidOperationException)
-        0608  Dup
-        0609  Ldc0
-        060A  InvokeSpecial 109 (ctor) args=2 ret=0
-        060F  Throw
+      ; entry 91, locals 1, stack 3, code 0683..06A1
+        0683  Ldl0
+        0684  FieldGet 21 (_valid)
+        0687  Inv
+        0688  JPZ +11 -> L0 (0696)
+        068B  ObjNew 20 (surtr:InvalidOperationException)
+        068E  Dup
+        068F  Ldc0
+        0690  InvokeSpecial 128 (ctor) args=2 ret=0
+        0695  Throw
       L0:
-        0610  Ldl0
-        0611  FieldGet 22 (_sortedItems)
-        0614  Ldl0
-        0615  FieldGet 20 (_index)
-        0618  ArrGet
-        0619  BoxDynamic
-        061A  ReturnValue
+        0696  Ldl0
+        0697  FieldGet 22 (_sortedItems)
+        069A  Ldl0
+        069B  FieldGet 20 (_index)
+        069E  ArrGet
+        069F  BoxDynamic
+        06A0  ReturnValue
 
   [public] ctor (source: surtr:IIterator<T0>, comparator: (T0, T0) -> int): void
-    ; entry 78, locals 4, stack 2, code 05CA..05FD
-      05CA  Ldl0
-      05CB  PushI8 1
-      05CD  Neg
-      05CE  FieldSet 20 (_index)
-      05D1  Ldl0
-      05D2  PushFalse
-      05D3  FieldSet 21 (_valid)
-      05D6  ArrPack 18 (T0[]) count=0
-      05DB  Stl3
+    ; entry 90, locals 4, stack 2, code 0650..0683
+      0650  Ldl0
+      0651  PushI8 1
+      0653  Neg
+      0654  FieldSet 20 (_index)
+      0657  Ldl0
+      0658  PushFalse
+      0659  FieldSet 21 (_valid)
+      065C  ArrPack 18 (T0[]) count=0
+      0661  Stl3
     L0:
-      05DC  Ldl1
-      05DD  InvokeInterface 104 (moveNext) args=1 ret=1
-      05E2  JPZ +11 -> L1 (05F0)
-      05E5  Ldl3
-      05E6  Ldl1
-      05E7  InvokeInterface 105 (get_current) args=1 ret=1
-      05EC  ArrPush
-      05ED  JP -20 -> L0 (05DC)
+      0662  Ldl1
+      0663  InvokeInterface 123 (moveNext) args=1 ret=1
+      0668  JPZ +11 -> L1 (0676)
+      066B  Ldl3
+      066C  Ldl1
+      066D  InvokeInterface 124 (get_current) args=1 ret=1
+      0672  ArrPush
+      0673  JP -20 -> L0 (0662)
     L1:
-      05F0  Ldl3
-      05F1  Ldl2
-      05F2  InvokeSpecial 123 (sort) args=2 ret=0
-      05F7  Ldl0
-      05F8  Ldl3
-      05F9  FieldSet 22 (_sortedItems)
-      05FC  ReturnVoid
+      0676  Ldl3
+      0677  Ldl2
+      0678  InvokeSpecial 149 (sort) args=2 ret=0
+      067D  Ldl0
+      067E  Ldl3
+      067F  FieldSet 22 (_sortedItems)
+      0682  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 92, locals 1, stack 0, code 06A1..06A2
+      06A1  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 96, locals 1, stack 1, code 06DF..06E6
+      06DF  Ldl0
+      06E0  InvokeSpecial 55 (dispose) args=1 ret=0
+      06E5  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 82, locals 1, stack 1, code 0650..0658
-      0650  Ldl0
-      0651  InvokeSpecial 48 (get_current) args=1 ret=1
-      0656  BoxDynamic
-      0657  ReturnValue
+    ; entry 95, locals 1, stack 1, code 06D7..06DF
+      06D7  Ldl0
+      06D8  InvokeSpecial 54 (get_current) args=1 ret=1
+      06DD  BoxDynamic
+      06DE  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 80, locals 3, stack 2, code 061B..0649
-      061B  Ldl0
-      061C  FieldGet 20 (_index)
-      061F  PushI8 1
-      0621  Add
-      0622  Ldl0
-      0623  FieldGet 22 (_sortedItems)
-      0626  ArrLen
-      0627  JPGE +24 -> L0 (0642)
-      062A  Ldl0
-      062B  FieldGet 20 (_index)
-      062E  Stl1
-      062F  Ldl1
-      0630  PushI8 1
-      0632  Add
-      0633  Stl2
-      0634  Ldl0
-      0635  Ldl2
-      0636  FieldSet 20 (_index)
-      0639  Ldl1
-      063A  Pop
-      063B  Ldl0
-      063C  PushTrue
-      063D  FieldSet 21 (_valid)
-      0640  PushTrue
-      0641  ReturnValue
+    ; entry 93, locals 3, stack 2, code 06A2..06D0
+      06A2  Ldl0
+      06A3  FieldGet 20 (_index)
+      06A6  PushI8 1
+      06A8  Add
+      06A9  Ldl0
+      06AA  FieldGet 22 (_sortedItems)
+      06AD  ArrLen
+      06AE  JPGE +24 -> L0 (06C9)
+      06B1  Ldl0
+      06B2  FieldGet 20 (_index)
+      06B5  Stl1
+      06B6  Ldl1
+      06B7  PushI8 1
+      06B9  Add
+      06BA  Stl2
+      06BB  Ldl0
+      06BC  Ldl2
+      06BD  FieldSet 20 (_index)
+      06C0  Ldl1
+      06C1  Pop
+      06C2  Ldl0
+      06C3  PushTrue
+      06C4  FieldSet 21 (_valid)
+      06C7  PushTrue
+      06C8  ReturnValue
     L0:
-      0642  Ldl0
-      0643  PushFalse
-      0644  FieldSet 21 (_valid)
-      0647  PushFalse
-      0648  ReturnValue
+      06C9  Ldl0
+      06CA  PushFalse
+      06CB  FieldSet 21 (_valid)
+      06CE  PushFalse
+      06CF  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 81, locals 1, stack 1, code 0649..0650
-      0649  Ldl0
-      064A  InvokeSpecial 49 (moveNext) args=1 ret=1
-      064F  ReturnValue
+    ; entry 94, locals 1, stack 1, code 06D0..06D7
+      06D0  Ldl0
+      06D1  InvokeSpecial 56 (moveNext) args=1 ret=1
+      06D6  ReturnValue
 
 class TakeIterator`1<T> : surtr:IIterator<T0>  [internal]
   [private] readonly field _count: int
@@ -2046,91 +2297,104 @@ class TakeIterator`1<T> : surtr:IIterator<T0>  [internal]
 
   [public] property current: T0 { get; }
     get:
-      ; entry 64, locals 1, stack 3, code 0456..0473
-        0456  Ldl0
-        0457  FieldGet 10 (_valid)
-        045A  Inv
-        045B  JPZ +11 -> L0 (0469)
-        045E  ObjNew 20 (surtr:InvalidOperationException)
-        0461  Dup
-        0462  Ldc0
-        0463  InvokeSpecial 109 (ctor) args=2 ret=0
-        0468  Throw
+      ; entry 70, locals 1, stack 3, code 04A9..04C6
+        04A9  Ldl0
+        04AA  FieldGet 10 (_valid)
+        04AD  Inv
+        04AE  JPZ +11 -> L0 (04BC)
+        04B1  ObjNew 20 (surtr:InvalidOperationException)
+        04B4  Dup
+        04B5  Ldc0
+        04B6  InvokeSpecial 128 (ctor) args=2 ret=0
+        04BB  Throw
       L0:
-        0469  Ldl0
-        046A  FieldGet 11 (_source)
-        046D  InvokeInterface 105 (get_current) args=1 ret=1
-        0472  ReturnValue
+        04BC  Ldl0
+        04BD  FieldGet 11 (_source)
+        04C0  InvokeInterface 124 (get_current) args=1 ret=1
+        04C5  ReturnValue
 
   [public] ctor (source: surtr:IIterator<T0>, count: int): void
-    ; entry 63, locals 3, stack 2, code 0440..0456
-      0440  Ldl0
-      0441  PushI8 0
-      0443  FieldSet 9 (_taken)
-      0446  Ldl0
-      0447  PushFalse
-      0448  FieldSet 10 (_valid)
-      044B  Ldl0
-      044C  Ldl1
-      044D  FieldSet 11 (_source)
-      0450  Ldl0
-      0451  Ldl2
-      0452  FieldSet 12 (_count)
-      0455  ReturnVoid
+    ; entry 69, locals 3, stack 2, code 0493..04A9
+      0493  Ldl0
+      0494  PushI8 0
+      0496  FieldSet 9 (_taken)
+      0499  Ldl0
+      049A  PushFalse
+      049B  FieldSet 10 (_valid)
+      049E  Ldl0
+      049F  Ldl1
+      04A0  FieldSet 11 (_source)
+      04A3  Ldl0
+      04A4  Ldl2
+      04A5  FieldSet 12 (_count)
+      04A8  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 71, locals 1, stack 1, code 04C6..04D0
+      04C6  Ldl0
+      04C7  FieldGet 11 (_source)
+      04CA  InvokeInterface 129 (dispose) args=1 ret=0
+      04CF  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 75, locals 1, stack 1, code 051C..0523
+      051C  Ldl0
+      051D  InvokeSpecial 43 (dispose) args=1 ret=0
+      0522  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 67, locals 1, stack 1, code 04B7..04BF
-      04B7  Ldl0
-      04B8  InvokeSpecial 39 (get_current) args=1 ret=1
-      04BD  BoxDynamic
-      04BE  ReturnValue
+    ; entry 74, locals 1, stack 1, code 0514..051C
+      0514  Ldl0
+      0515  InvokeSpecial 42 (get_current) args=1 ret=1
+      051A  BoxDynamic
+      051B  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 65, locals 3, stack 2, code 0473..04B0
-      0473  Ldl0
-      0474  FieldGet 9 (_taken)
-      0477  Ldl0
-      0478  FieldGet 12 (_count)
-      047B  JPLT +7 -> L0 (0485)
-      047E  Ldl0
-      047F  PushFalse
-      0480  FieldSet 10 (_valid)
-      0483  PushFalse
-      0484  ReturnValue
+    ; entry 72, locals 3, stack 2, code 04D0..050D
+      04D0  Ldl0
+      04D1  FieldGet 9 (_taken)
+      04D4  Ldl0
+      04D5  FieldGet 12 (_count)
+      04D8  JPLT +7 -> L0 (04E2)
+      04DB  Ldl0
+      04DC  PushFalse
+      04DD  FieldSet 10 (_valid)
+      04E0  PushFalse
+      04E1  ReturnValue
     L0:
-      0485  Ldl0
-      0486  FieldGet 11 (_source)
-      0489  InvokeInterface 104 (moveNext) args=1 ret=1
-      048E  JPZ +24 -> L1 (04A9)
-      0491  Ldl0
-      0492  FieldGet 9 (_taken)
-      0495  Stl1
-      0496  Ldl1
-      0497  PushI8 1
-      0499  Add
-      049A  Stl2
-      049B  Ldl0
-      049C  Ldl2
-      049D  FieldSet 9 (_taken)
-      04A0  Ldl1
-      04A1  Pop
-      04A2  Ldl0
-      04A3  PushTrue
-      04A4  FieldSet 10 (_valid)
-      04A7  PushTrue
-      04A8  ReturnValue
+      04E2  Ldl0
+      04E3  FieldGet 11 (_source)
+      04E6  InvokeInterface 123 (moveNext) args=1 ret=1
+      04EB  JPZ +24 -> L1 (0506)
+      04EE  Ldl0
+      04EF  FieldGet 9 (_taken)
+      04F2  Stl1
+      04F3  Ldl1
+      04F4  PushI8 1
+      04F6  Add
+      04F7  Stl2
+      04F8  Ldl0
+      04F9  Ldl2
+      04FA  FieldSet 9 (_taken)
+      04FD  Ldl1
+      04FE  Pop
+      04FF  Ldl0
+      0500  PushTrue
+      0501  FieldSet 10 (_valid)
+      0504  PushTrue
+      0505  ReturnValue
     L1:
-      04A9  Ldl0
-      04AA  PushFalse
-      04AB  FieldSet 10 (_valid)
-      04AE  PushFalse
-      04AF  ReturnValue
+      0506  Ldl0
+      0507  PushFalse
+      0508  FieldSet 10 (_valid)
+      050B  PushFalse
+      050C  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 66, locals 1, stack 1, code 04B0..04B7
-      04B0  Ldl0
-      04B1  InvokeSpecial 40 (moveNext) args=1 ret=1
-      04B6  ReturnValue
+    ; entry 73, locals 1, stack 1, code 050D..0514
+      050D  Ldl0
+      050E  InvokeSpecial 44 (moveNext) args=1 ret=1
+      0513  ReturnValue
 
 class TakeWhileIterator`1<T> : surtr:IIterator<T0>  [internal]
   [private] readonly field _predicate: (T0) -> bool
@@ -2140,93 +2404,106 @@ class TakeWhileIterator`1<T> : surtr:IIterator<T0>  [internal]
 
   [public] property current: T0 { get; }
     get:
-      ; entry 114, locals 1, stack 3, code 091C..0939
-        091C  Ldl0
-        091D  FieldGet 41 (_valid)
-        0920  Inv
-        0921  JPZ +11 -> L0 (092F)
-        0924  ObjNew 20 (surtr:InvalidOperationException)
-        0927  Dup
-        0928  Ldc0
-        0929  InvokeSpecial 109 (ctor) args=2 ret=0
-        092E  Throw
+      ; entry 140, locals 1, stack 3, code 0A19..0A36
+        0A19  Ldl0
+        0A1A  FieldGet 41 (_valid)
+        0A1D  Inv
+        0A1E  JPZ +11 -> L0 (0A2C)
+        0A21  ObjNew 20 (surtr:InvalidOperationException)
+        0A24  Dup
+        0A25  Ldc0
+        0A26  InvokeSpecial 128 (ctor) args=2 ret=0
+        0A2B  Throw
       L0:
-        092F  Ldl0
-        0930  FieldGet 42 (_source)
-        0933  InvokeInterface 105 (get_current) args=1 ret=1
-        0938  ReturnValue
+        0A2C  Ldl0
+        0A2D  FieldGet 42 (_source)
+        0A30  InvokeInterface 124 (get_current) args=1 ret=1
+        0A35  ReturnValue
 
   [public] ctor (source: surtr:IIterator<T0>, predicate: (T0) -> bool): void
-    ; entry 113, locals 3, stack 2, code 0907..091C
-      0907  Ldl0
-      0908  PushFalse
-      0909  FieldSet 40 (_stopped)
-      090C  Ldl0
-      090D  PushFalse
-      090E  FieldSet 41 (_valid)
-      0911  Ldl0
-      0912  Ldl1
-      0913  FieldSet 42 (_source)
-      0916  Ldl0
-      0917  Ldl2
-      0918  FieldSet 43 (_predicate)
-      091B  ReturnVoid
+    ; entry 139, locals 3, stack 2, code 0A04..0A19
+      0A04  Ldl0
+      0A05  PushFalse
+      0A06  FieldSet 40 (_stopped)
+      0A09  Ldl0
+      0A0A  PushFalse
+      0A0B  FieldSet 41 (_valid)
+      0A0E  Ldl0
+      0A0F  Ldl1
+      0A10  FieldSet 42 (_source)
+      0A13  Ldl0
+      0A14  Ldl2
+      0A15  FieldSet 43 (_predicate)
+      0A18  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 141, locals 1, stack 1, code 0A36..0A40
+      0A36  Ldl0
+      0A37  FieldGet 42 (_source)
+      0A3A  InvokeInterface 129 (dispose) args=1 ret=0
+      0A3F  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 145, locals 1, stack 1, code 0A96..0A9D
+      0A96  Ldl0
+      0A97  InvokeSpecial 83 (dispose) args=1 ret=0
+      0A9C  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 117, locals 1, stack 1, code 0987..098F
-      0987  Ldl0
-      0988  InvokeSpecial 69 (get_current) args=1 ret=1
-      098D  BoxDynamic
-      098E  ReturnValue
+    ; entry 144, locals 1, stack 1, code 0A8E..0A96
+      0A8E  Ldl0
+      0A8F  InvokeSpecial 82 (get_current) args=1 ret=1
+      0A94  BoxDynamic
+      0A95  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 115, locals 1, stack 2, code 0939..0980
-      0939  Ldl0
-      093A  FieldGet 40 (_stopped)
-      093D  JPZ +7 -> L0 (0947)
-      0940  Ldl0
-      0941  PushFalse
-      0942  FieldSet 41 (_valid)
-      0945  PushFalse
-      0946  ReturnValue
+    ; entry 142, locals 1, stack 2, code 0A40..0A87
+      0A40  Ldl0
+      0A41  FieldGet 40 (_stopped)
+      0A44  JPZ +7 -> L0 (0A4E)
+      0A47  Ldl0
+      0A48  PushFalse
+      0A49  FieldSet 41 (_valid)
+      0A4C  PushFalse
+      0A4D  ReturnValue
     L0:
-      0947  Ldl0
-      0948  FieldGet 42 (_source)
-      094B  InvokeInterface 104 (moveNext) args=1 ret=1
-      0950  JPZ +38 -> L2 (0979)
-      0953  Ldl0
-      0954  FieldGet 43 (_predicate)
-      0957  Ldl0
-      0958  FieldGet 42 (_source)
-      095B  InvokeInterface 105 (get_current) args=1 ret=1
-      0960  InvokeClosure args=1 ret=1
-      0963  JPZ +7 -> L1 (096D)
-      0966  Ldl0
-      0967  PushTrue
-      0968  FieldSet 41 (_valid)
-      096B  PushTrue
-      096C  ReturnValue
+      0A4E  Ldl0
+      0A4F  FieldGet 42 (_source)
+      0A52  InvokeInterface 123 (moveNext) args=1 ret=1
+      0A57  JPZ +38 -> L2 (0A80)
+      0A5A  Ldl0
+      0A5B  FieldGet 43 (_predicate)
+      0A5E  Ldl0
+      0A5F  FieldGet 42 (_source)
+      0A62  InvokeInterface 124 (get_current) args=1 ret=1
+      0A67  InvokeClosure args=1 ret=1
+      0A6A  JPZ +7 -> L1 (0A74)
+      0A6D  Ldl0
+      0A6E  PushTrue
+      0A6F  FieldSet 41 (_valid)
+      0A72  PushTrue
+      0A73  ReturnValue
     L1:
-      096D  Ldl0
-      096E  PushTrue
-      096F  FieldSet 40 (_stopped)
-      0972  Ldl0
-      0973  PushFalse
-      0974  FieldSet 41 (_valid)
-      0977  PushFalse
-      0978  ReturnValue
+      0A74  Ldl0
+      0A75  PushTrue
+      0A76  FieldSet 40 (_stopped)
+      0A79  Ldl0
+      0A7A  PushFalse
+      0A7B  FieldSet 41 (_valid)
+      0A7E  PushFalse
+      0A7F  ReturnValue
     L2:
-      0979  Ldl0
-      097A  PushFalse
-      097B  FieldSet 41 (_valid)
-      097E  PushFalse
-      097F  ReturnValue
+      0A80  Ldl0
+      0A81  PushFalse
+      0A82  FieldSet 41 (_valid)
+      0A85  PushFalse
+      0A86  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 116, locals 1, stack 1, code 0980..0987
-      0980  Ldl0
-      0981  InvokeSpecial 70 (moveNext) args=1 ret=1
-      0986  ReturnValue
+    ; entry 143, locals 1, stack 1, code 0A87..0A8E
+      0A87  Ldl0
+      0A88  InvokeSpecial 84 (moveNext) args=1 ret=1
+      0A8D  ReturnValue
 
 class ZipIterator`2<T, U> : surtr:IIterator<(T0, T1)>  [internal]
   [private] readonly field _first: surtr:IIterator<T0>
@@ -2235,74 +2512,90 @@ class ZipIterator`2<T, U> : surtr:IIterator<(T0, T1)>  [internal]
 
   [public] property current: (T0, T1) { get; }
     get:
-      ; entry 89, locals 1, stack 3, code 06F4..071D
-        06F4  Ldl0
-        06F5  FieldGet 27 (_valid)
-        06F8  Inv
-        06F9  JPZ +11 -> L0 (0707)
-        06FC  ObjNew 20 (surtr:InvalidOperationException)
-        06FF  Dup
-        0700  Ldc0
-        0701  InvokeSpecial 109 (ctor) args=2 ret=0
-        0706  Throw
+      ; entry 105, locals 1, stack 3, code 079C..07C5
+        079C  Ldl0
+        079D  FieldGet 27 (_valid)
+        07A0  Inv
+        07A1  JPZ +11 -> L0 (07AF)
+        07A4  ObjNew 20 (surtr:InvalidOperationException)
+        07A7  Dup
+        07A8  Ldc0
+        07A9  InvokeSpecial 128 (ctor) args=2 ret=0
+        07AE  Throw
       L0:
-        0707  Ldl0
-        0708  FieldGet 28 (_first)
-        070B  InvokeInterface 105 (get_current) args=1 ret=1
-        0710  UnboxDynamic
-        0711  Ldl0
-        0712  FieldGet 29 (_second)
-        0715  InvokeInterface 105 (get_current) args=1 ret=1
-        071A  UnboxDynamic
-        071B  ReturnValues 2
+        07AF  Ldl0
+        07B0  FieldGet 28 (_first)
+        07B3  InvokeInterface 124 (get_current) args=1 ret=1
+        07B8  UnboxDynamic
+        07B9  Ldl0
+        07BA  FieldGet 29 (_second)
+        07BD  InvokeInterface 124 (get_current) args=1 ret=1
+        07C2  UnboxDynamic
+        07C3  ReturnValues 2
 
   [public] ctor (first: surtr:IIterator<T0>, second: surtr:IIterator<T1>): void
-    ; entry 88, locals 3, stack 2, code 06E4..06F4
-      06E4  Ldl0
-      06E5  PushFalse
-      06E6  FieldSet 27 (_valid)
-      06E9  Ldl0
-      06EA  Ldl1
-      06EB  FieldSet 28 (_first)
-      06EE  Ldl0
-      06EF  Ldl2
-      06F0  FieldSet 29 (_second)
-      06F3  ReturnVoid
+    ; entry 104, locals 3, stack 2, code 078C..079C
+      078C  Ldl0
+      078D  PushFalse
+      078E  FieldSet 27 (_valid)
+      0791  Ldl0
+      0792  Ldl1
+      0793  FieldSet 28 (_first)
+      0796  Ldl0
+      0797  Ldl2
+      0798  FieldSet 29 (_second)
+      079B  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 106, locals 1, stack 1, code 07C5..07D8
+      07C5  Ldl0
+      07C6  FieldGet 28 (_first)
+      07C9  InvokeInterface 129 (dispose) args=1 ret=0
+      07CE  Ldl0
+      07CF  FieldGet 29 (_second)
+      07D2  InvokeInterface 129 (dispose) args=1 ret=0
+      07D7  ReturnVoid
+
+  [public] virtual dispose(): void
+    ; entry 110, locals 1, stack 1, code 0811..0818
+      0811  Ldl0
+      0812  InvokeSpecial 63 (dispose) args=1 ret=0
+      0817  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 92, locals 1, stack 2, code 074F..0756
-      074F  Ldl0
-      0750  InvokeSpecial 54 (get_current) args=1 ret=1
-      0755  ReturnValue
+    ; entry 109, locals 1, stack 2, code 080A..0811
+      080A  Ldl0
+      080B  InvokeSpecial 62 (get_current) args=1 ret=1
+      0810  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 90, locals 1, stack 2, code 071D..0748
-      071D  Ldl0
-      071E  FieldGet 28 (_first)
-      0721  InvokeInterface 104 (moveNext) args=1 ret=1
-      0726  Dup
-      0727  JPZ +13 -> L0 (0737)
-      072A  Pop
-      072B  Ldl0
-      072C  FieldGet 29 (_second)
-      072F  InvokeInterface 104 (moveNext) args=1 ret=1
-      0734  JP +0 -> L0 (0737)
+    ; entry 107, locals 1, stack 2, code 07D8..0803
+      07D8  Ldl0
+      07D9  FieldGet 28 (_first)
+      07DC  InvokeInterface 123 (moveNext) args=1 ret=1
+      07E1  Dup
+      07E2  JPZ +13 -> L0 (07F2)
+      07E5  Pop
+      07E6  Ldl0
+      07E7  FieldGet 29 (_second)
+      07EA  InvokeInterface 123 (moveNext) args=1 ret=1
+      07EF  JP +0 -> L0 (07F2)
     L0:
-      0737  JPZ +7 -> L1 (0741)
-      073A  Ldl0
-      073B  PushTrue
-      073C  FieldSet 27 (_valid)
-      073F  PushTrue
-      0740  ReturnValue
+      07F2  JPZ +7 -> L1 (07FC)
+      07F5  Ldl0
+      07F6  PushTrue
+      07F7  FieldSet 27 (_valid)
+      07FA  PushTrue
+      07FB  ReturnValue
     L1:
-      0741  Ldl0
-      0742  PushFalse
-      0743  FieldSet 27 (_valid)
-      0746  PushFalse
-      0747  ReturnValue
+      07FC  Ldl0
+      07FD  PushFalse
+      07FE  FieldSet 27 (_valid)
+      0801  PushFalse
+      0802  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 91, locals 1, stack 1, code 0748..074F
-      0748  Ldl0
-      0749  InvokeSpecial 55 (moveNext) args=1 ret=1
-      074E  ReturnValue
+    ; entry 108, locals 1, stack 1, code 0803..080A
+      0803  Ldl0
+      0804  InvokeSpecial 64 (moveNext) args=1 ret=1
+      0809  ReturnValue

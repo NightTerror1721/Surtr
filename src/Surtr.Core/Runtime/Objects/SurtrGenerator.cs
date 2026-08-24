@@ -111,6 +111,34 @@ namespace Surtr.Runtime.Objects
         /// </remarks>
         internal SurtrValue Current;
 
+        /// <summary>
+        /// The value the resumption carried into the body, which <c>GenResumed</c> pushes.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// One field for two things that look different and are the same: what <c>send(v)</c>
+        /// injected at a <c>yield</c>, and what a delegated-to generator returned when its
+        /// <c>yield from</c> ran out. Both are "the value that flowed back in when this suspension
+        /// ended", which is exactly what the expression form of <c>yield</c> and of
+        /// <c>yield from</c> evaluate to - so one field and one opcode cover both rather than two
+        /// of each that would have to agree.
+        /// </para>
+        /// <para>
+        /// Cleared by every resumption that carries nothing, so a stale value from an earlier
+        /// <c>send</c> can never be read back as a fresh one.
+        /// </para>
+        /// </remarks>
+        internal SurtrValue Resumed;
+
+        /// <summary>What <c>return expr;</c> left behind when the body ended, or null.</summary>
+        /// <remarks>
+        /// Deliberately <em>not</em> cleared when the generator is finished, unlike everything else
+        /// the frame held: it is only readable after the body ends, so clearing it on the way out
+        /// would clear it before its single reader ever runs. That reader is either the delegating
+        /// generator's <c>yield from</c> or a consumer asking for <c>result</c>.
+        /// </remarks>
+        internal SurtrValue Result;
+
         /// <summary>Where this generator is in its life. See <see cref="SurtrGeneratorState"/>.</summary>
         internal SurtrGeneratorState State;
 
@@ -173,6 +201,8 @@ namespace Surtr.Runtime.Objects
             SlotCount = argumentCount;
             ResumeOffset = method.CodeOffset;
             Current = SurtrValue.Null;
+            Resumed = SurtrValue.Null;
+            Result = SurtrValue.Null;
             State = SurtrGeneratorState.NotStarted;
         }
 
@@ -231,6 +261,18 @@ namespace Surtr.Runtime.Objects
             return Innermost.Current;
         }
 
+        /// <summary>What this generator's body returned, or null if it produced no result.</summary>
+        /// <remarks>
+        /// Read off this generator rather than off the innermost of a delegation, and that is the
+        /// point: a delegated-to generator's result belongs to the <c>yield from</c> that reached
+        /// it, not to the consumer, and it has already been handed there through
+        /// <see cref="Resumed"/> by the time anything asks this.
+        /// </remarks>
+        public SurtrValue GetResult()
+        {
+            return Result;
+        }
+
         /// <summary>
         /// Marks this generator finished and releases the references its suspended frame held.
         /// </summary>
@@ -253,6 +295,7 @@ namespace Surtr.Runtime.Objects
             {
                 generator.State = SurtrGeneratorState.Exhausted;
                 generator.Current = SurtrValue.Null;
+                generator.Resumed = SurtrValue.Null;
 
                 var slots = generator.Slots;
                 for (int i = 0; i < generator.SlotCount; i++)
@@ -277,6 +320,7 @@ namespace Surtr.Runtime.Objects
         {
             State = SurtrGeneratorState.Exhausted;
             Current = SurtrValue.Null;
+            Resumed = SurtrValue.Null;
 
             var slots = Slots;
             for (int i = 0; i < SlotCount; i++)
@@ -306,6 +350,12 @@ namespace Surtr.Runtime.Objects
                 marker.Mark(slots[i]);
 
             marker.Mark(Current);
+            marker.Mark(Resumed);
+
+            // Traced even once the generator is exhausted, because that is precisely when it is
+            // readable: `return expr;` outlives the frame that produced it, and its single reader
+            // - a delegating `yield from`, or a consumer asking for `result` - runs afterwards.
+            marker.Mark(Result);
 
             // Marked, not walked: a delegate is a registered entity of its own, so handing it to
             // the marker is what both keeps it alive and stops a delegation cycle from recursing

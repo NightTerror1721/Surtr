@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System.Collections.Generic;
 
@@ -573,6 +573,52 @@ namespace Surtr.Compiler.Syntax.Ast
         {
             Name = name;
             TypeArguments = typeArguments;
+        }
+    }
+
+    /// <summary>
+    /// A <c>yield</c> or <c>yield from</c> - an expression, not a statement (§3.7).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An expression because a generator is a coroutine: <c>send(v)</c> resumes a suspended
+    /// <c>yield</c> with a value, and <c>yield from</c> evaluates to what the generator it
+    /// delegated to returned. Neither has anywhere to go if <c>yield</c> only ever stands as a
+    /// statement.
+    /// </para>
+    /// <para>
+    /// It sits at the lowest precedence there is, alongside assignment, which is JavaScript's and
+    /// Python's rule. So <c>let cmd = yield status;</c> reads straight, and as an operand of
+    /// anything else it needs parentheses - <c>(yield v) + 1</c> - because <c>yield v + 1</c>
+    /// yields the sum. The statement form is then an ordinary expression statement, and costs
+    /// nothing extra: the emitter drops the resumed value where nothing reads it.
+    /// </para>
+    /// </remarks>
+    public sealed class YieldExpressionSyntax : ExpressionSyntax
+    {
+        /// <summary>The element handed out, or the sequence delegated to when <see cref="IsDelegating"/>.</summary>
+        public ExpressionSyntax Value { get; }
+
+        /// <summary>
+        /// True for <c>yield from expr</c> - every element of <see cref="Value"/> in order, rather
+        /// than <see cref="Value"/> itself (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// A flag rather than a node of its own: both forms hand elements out of the same generator
+        /// and are checked against the same declared element type, so everything between here and
+        /// the emitter treats them alike. Only code generation cares, and only because delegating to
+        /// another <em>generator</em> can be a link instead of a loop.
+        /// </remarks>
+        public bool IsDelegating { get; }
+
+        /// <summary>Initializes a yield expression.</summary>
+        /// <param name="span">The source the expression covers.</param>
+        /// <param name="value">The element handed out, or the sequence delegated to.</param>
+        /// <param name="isDelegating">True for the <c>yield from</c> form.</param>
+        public YieldExpressionSyntax(SourceSpan span, ExpressionSyntax value, bool isDelegating = false) : base(span)
+        {
+            Value = value;
+            IsDelegating = isDelegating;
         }
     }
 }

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -298,6 +298,7 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordFor:
                 case TokenType.KeywordSwitch:
                 case TokenType.KeywordTry:
+                case TokenType.KeywordUsing:
                 case TokenType.KeywordThrow:
                 case TokenType.KeywordReturn:
                 case TokenType.KeywordYield:

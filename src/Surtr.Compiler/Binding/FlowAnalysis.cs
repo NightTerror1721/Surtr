@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Binding.BoundTree;
 using Surtr.Compiler.Binding.Symbols;
@@ -322,13 +322,6 @@ namespace Surtr.Compiler.Binding
                     return;
                 }
 
-                // A yield hands a value out and comes back: unlike a return it does not end the
-                // flow, so everything after it stays reachable and every local it reads counts as
-                // read there.
-                case BoundYieldStatement yield:
-                    Expression(yield.Value);
-                    return;
-
                 case BoundThrowStatement @throw:
                     Expression(@throw.Value);
                     _reachable = false;
@@ -433,6 +426,14 @@ namespace Surtr.Compiler.Binding
 
                 case BoundUnaryExpression unary:
                     Expression(unary.Operand);
+                    return;
+
+                // A yield hands a value out and comes back: unlike a return it does not end the
+                // flow, so everything after it stays reachable and every local it reads counts as
+                // read there. What it evaluates to is unknown and unassigned to any local here,
+                // so only its operand is walked.
+                case BoundYieldExpression yield:
+                    Expression(yield.Value);
                     return;
 
                 case BoundConversionExpression conversion:

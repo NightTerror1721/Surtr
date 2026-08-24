@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -942,6 +942,7 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.GenCurrent:
                 case OpCode.Yield:
                 case OpCode.GenDelegate:
+                case OpCode.GenResumed:
                 case OpCode.BoxInt:
                 case OpCode.BoxFloat:
                 case OpCode.BoxBool:

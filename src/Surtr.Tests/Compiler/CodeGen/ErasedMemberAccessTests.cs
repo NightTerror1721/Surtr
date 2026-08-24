@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Compilation;
 using Surtr.Runtime;
@@ -88,6 +88,7 @@ namespace Surtr.Tests.Compiler.CodeGen
                     + "    private let _n: int;\n"
                     + "    public constructor(n: int) { this._n = n; }\n"
                     + "    public current: int { get => _i - 1; }\n"
+                    + "    public fun dispose(): void { }\n"
                     + "    public fun moveNext(): bool {\n"
                     + "        if (_i >= _n) { return false; }\n"
                     + "        _i = _i + 1;\n"
@@ -114,6 +115,7 @@ namespace Surtr.Tests.Compiler.CodeGen
                     + "    private let _n: int;\n"
                     + "    public constructor(n: int) { this._n = n; }\n"
                     + "    public current: int { get => _i - 1; }\n"
+                    + "    public fun dispose(): void { }\n"
                     + "    public fun moveNext(): bool {\n"
                     + "        if (_i >= _n) { return false; }\n"
                     + "        _i = _i + 1;\n"

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using System;
@@ -1210,6 +1210,14 @@ namespace Surtr.Bytecode.Emit
         /// at the next instruction once the inner generator runs out.
         /// </remarks>
         public SurtrCodeEmitter GenDelegate() => Simple(OpCode.GenDelegate, 1, 0);
+
+        /// <summary>Emits <see cref="OpCode.GenResumed"/>.</summary>
+        /// <remarks>
+        /// Produces the value the last suspension was resumed with, and consumes nothing. Emitted
+        /// only after a <see cref="Yield"/> or a <see cref="GenDelegate"/> whose result the source
+        /// actually reads, so the statement forms of both keep costing one instruction.
+        /// </remarks>
+        public SurtrCodeEmitter GenResumed() => Simple(OpCode.GenResumed, 0, 1);
 
         #endregion
 

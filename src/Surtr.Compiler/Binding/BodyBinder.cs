@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Binding.BoundTree;
 using Surtr.Compiler.Binding.Symbols;
@@ -70,8 +70,17 @@ namespace Surtr.Compiler.Binding
         private int _loopDepth;
         private readonly List<string> _loopLabels = new List<string>();
 
-        /// <summary>How many enclosing <c>try</c> blocks a statement is inside (§3.7's yield rule).</summary>
-        private int _tryDepth;
+        /// <summary>
+        /// How many enclosing <c>finally</c> blocks a statement is inside (§3.7's yield rule).
+        /// </summary>
+        /// <remarks>
+        /// A <c>finally</c> and not a <c>try</c>, which is the whole of what §9.2 bought: a
+        /// suspended generator can now be closed, and closing one runs its pending <c>finally</c>
+        /// blocks, so a <c>yield</c> inside a <c>try</c> no longer leaves work that nothing is
+        /// obliged to run. Inside the <c>finally</c> itself it stays refused - that block runs
+        /// <em>during</em> a close, and suspending there would answer a close with an element.
+        /// </remarks>
+        private int _finallyDepth;
 
         /// <summary>
         /// How many <c>yield</c>s this body has, so a generator that never yields can be reported.

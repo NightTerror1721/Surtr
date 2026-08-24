@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Binding.Symbols;
 using Surtr.Compiler.Syntax;
@@ -833,5 +833,74 @@ namespace Surtr.Compiler.Binding.BoundTree
 
         /// <summary>The thrown value.</summary>
         public BoundExpression Value { get; }
+    }
+
+    /// <summary>
+    /// A <c>yield</c> or <c>yield from</c>, whose value is what the resumption carried back in.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An expression rather than a statement, because a generator is a coroutine (§3.7): a
+    /// <c>yield</c> evaluates to what <c>send(v)</c> injected, and a <c>yield from</c> to what the
+    /// generator it delegated to returned. Both are <c>unknown</c> - a generator's declaration names
+    /// its <em>element</em>, and there is nowhere in it to write a second type, so the value comes
+    /// back erased and is cast at the point of use like anything else that holds anything (§5.10).
+    /// </para>
+    /// <para>
+    /// The statement form costs nothing for being an expression: the emitter drops the resumed value
+    /// where nothing reads it, which means not emitting the instruction that would have pushed it.
+    /// </para>
+    /// <para>
+    /// The plain form's <see cref="Value"/> already carries its conversion to the declared element
+    /// type, the way a <c>return</c>'s does - a <c>yield</c> is checked against
+    /// <c>MethodSymbol.YieldType</c> by exactly the rules a <c>return</c> is checked against a
+    /// return type, so nothing downstream needs a second set.
+    /// </para>
+    /// </remarks>
+    public sealed class BoundYieldExpression : BoundExpression
+    {
+        internal BoundYieldExpression(
+            SyntaxNode syntax,
+            TypeSymbol type,
+            BoundExpression value,
+            TypeSymbol? delegatedElementType = null,
+            Conversion delegatedConversion = default)
+            : base(syntax, type)
+        {
+            Value = value;
+            DelegatedElementType = delegatedElementType;
+            DelegatedConversion = delegatedConversion;
+        }
+
+        /// <summary>The element handed out, or the sequence delegated to when <see cref="IsDelegating"/>.</summary>
+        public BoundExpression Value { get; }
+
+        /// <summary>
+        /// What one step of <see cref="Value"/> yields, when this is a <c>yield from</c>; otherwise
+        /// <see langword="null"/>.
+        /// </summary>
+        /// <remarks>
+        /// Kept beside the node rather than recomputed at emit, because working it out means asking
+        /// what counts as iterable - the same question <c>for-in</c> asks, and one the emitter has
+        /// no business answering twice. The delegation is <em>not</em> lowered here, for the same
+        /// reason <c>for-in</c> is not: whether it becomes a link or a loop depends on the operand's
+        /// type, and that is a code generation decision.
+        /// </remarks>
+        public TypeSymbol? DelegatedElementType { get; }
+
+        /// <summary>
+        /// How one delegated element reaches the declaring generator's own element type.
+        /// </summary>
+        /// <remarks>
+        /// A conversion the binder classifies rather than the emitter, like every other conversion
+        /// in the tree - there is simply nowhere to hang a node, since what converts is each element
+        /// of a sequence rather than the expression written. It is also what decides the lowering:
+        /// only an identity conversion can become a delegation link, because a link hands the inner
+        /// generator's own values straight to the consumer with nothing in between.
+        /// </remarks>
+        public Conversion DelegatedConversion { get; }
+
+        /// <summary>True for the <c>yield from</c> form.</summary>
+        public bool IsDelegating => DelegatedElementType is not null;
     }
 }

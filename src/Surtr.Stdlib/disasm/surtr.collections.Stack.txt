@@ -1,5 +1,5 @@
 module surtr.collections.Stack
-  constants: 3   types: 5   fields: 4   methods: 37   modules: 0
+  constants: 3   types: 5   fields: 4   methods: 39   modules: 0
   string #0 = "Stack is empty."
   string #1 = "Stack does not support removing arbitrary items."
   string #2 = "Iterator is out of bounds"
@@ -38,23 +38,25 @@ module surtr.collections.Stack
     #17  surtr.collections.Stack:Stack<.iterate() -> surtr:IIterator<T0>
     #18  surtr.collections.Stack:Stack.Iterator<.ctor(T0[], int, int) -> void
     #19  surtr.collections.Stack:Stack.Iterator<.get_current() -> T0
-    #20  surtr.collections.Stack:Stack.Iterator<.moveNext() -> bool
-    #21  surtr:InvalidOperationException.ctor(string) -> void
-    #22  surtr.collections.Stack:Stack<.get_isEmpty() -> bool
-    #23  surtr.collections.Stack:Stack<.push(unknown) -> void
-    #24  surtr.collections.Stack:Stack<.pop() -> unknown
-    #25  surtr.collections.Stack:Stack<.peek() -> unknown
-    #26  surtr.collections.Stack:Stack<.get_isReadOnly() -> bool
-    #27  surtr.collections.Stack:Stack<.add(unknown) -> void
-    #28  surtr.collections.Stack:Stack<.remove(unknown) -> bool
-    #29  surtr.collections.Stack:Stack<.clear() -> void
-    #30  surtr.collections.Stack:Stack<.get_length() -> int
-    #31  surtr.collections.Stack:Stack<.contains(unknown) -> bool
-    #32  surtr.collections.Stack:Stack<.copyTo(unknown[], int) -> void
-    #33  surtr.collections.Stack:Stack<.iterate() -> surtr:IIterator<unknown>
-    #34  surtr:IndexOutOfRangeException.ctor(string) -> void
-    #35  surtr.collections.Stack:Stack.Iterator<.moveNext() -> bool
-    #36  surtr.collections.Stack:Stack.Iterator<.get_current() -> unknown
+    #20  surtr.collections.Stack:Stack.Iterator<.dispose() -> void
+    #21  surtr.collections.Stack:Stack.Iterator<.moveNext() -> bool
+    #22  surtr:InvalidOperationException.ctor(string) -> void
+    #23  surtr.collections.Stack:Stack<.get_isEmpty() -> bool
+    #24  surtr.collections.Stack:Stack<.push(unknown) -> void
+    #25  surtr.collections.Stack:Stack<.pop() -> unknown
+    #26  surtr.collections.Stack:Stack<.peek() -> unknown
+    #27  surtr.collections.Stack:Stack<.get_isReadOnly() -> bool
+    #28  surtr.collections.Stack:Stack<.add(unknown) -> void
+    #29  surtr.collections.Stack:Stack<.remove(unknown) -> bool
+    #30  surtr.collections.Stack:Stack<.clear() -> void
+    #31  surtr.collections.Stack:Stack<.get_length() -> int
+    #32  surtr.collections.Stack:Stack<.contains(unknown) -> bool
+    #33  surtr.collections.Stack:Stack<.copyTo(unknown[], int) -> void
+    #34  surtr.collections.Stack:Stack<.iterate() -> surtr:IIterator<unknown>
+    #35  surtr:IndexOutOfRangeException.ctor(string) -> void
+    #36  surtr.collections.Stack:Stack.Iterator<.moveNext() -> bool
+    #37  surtr.collections.Stack:Stack.Iterator<.get_current() -> unknown
+    #38  surtr.collections.Stack:Stack.Iterator<.dispose() -> void
 
 interface IStack`1<T> : surtr.collections.Collection:ICollection<T0>  [public]
 
@@ -250,7 +252,7 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       005C  ObjNew 1 (surtr:InvalidOperationException)
       005F  Dup
       0060  Ldc0
-      0061  InvokeSpecial 21 (ctor) args=2 ret=0
+      0061  InvokeSpecial 22 (ctor) args=2 ret=0
       0066  Throw
     L0:
       0067  Ldl0
@@ -284,7 +286,7 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       003E  ObjNew 1 (surtr:InvalidOperationException)
       0041  Dup
       0042  Ldc0
-      0043  InvokeSpecial 21 (ctor) args=2 ret=0
+      0043  InvokeSpecial 22 (ctor) args=2 ret=0
       0048  Throw
     L0:
       0049  Ldl0
@@ -320,7 +322,7 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       007F  ObjNew 1 (surtr:InvalidOperationException)
       0082  Dup
       0083  Ldc1
-      0084  InvokeSpecial 21 (ctor) args=2 ret=0
+      0084  InvokeSpecial 22 (ctor) args=2 ret=0
       0089  Throw
 
   [public] virtual remove(item: unknown): bool
@@ -357,7 +359,7 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
           0167  ObjNew 4 (surtr:IndexOutOfRangeException)
           016A  Dup
           016B  Ldc2
-          016C  InvokeSpecial 34 (ctor) args=2 ret=0
+          016C  InvokeSpecial 35 (ctor) args=2 ret=0
           0171  Throw
         L1:
           0172  Ldl0
@@ -381,42 +383,52 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
         0148  FieldSet 3 (_index)
         014B  ReturnVoid
 
+    [public] dispose(): void
+      ; entry 28, locals 1, stack 0, code 017D..017E
+        017D  ReturnVoid
+
+    [public] virtual dispose(): void
+      ; entry 32, locals 1, stack 1, code 01B0..01B7
+        01B0  Ldl0
+        01B1  InvokeSpecial 20 (dispose) args=1 ret=0
+        01B6  ReturnVoid
+
     [public] virtual get_current(): unknown
-      ; entry 30, locals 1, stack 1, code 01A7..01AF
-        01A7  Ldl0
-        01A8  InvokeSpecial 19 (get_current) args=1 ret=1
-        01AD  BoxDynamic
-        01AE  ReturnValue
+      ; entry 31, locals 1, stack 1, code 01A8..01B0
+        01A8  Ldl0
+        01A9  InvokeSpecial 19 (get_current) args=1 ret=1
+        01AE  BoxDynamic
+        01AF  ReturnValue
 
     [public] moveNext(): bool
-      ; entry 28, locals 3, stack 2, code 017D..01A0
-        017D  Ldl0
-        017E  FieldGet 3 (_index)
-        0181  PushI8 1
-        0183  Add
-        0184  Ldl0
-        0185  FieldGet 2 (_length)
-        0188  JPGE +19 -> L0 (019E)
-        018B  Ldl0
-        018C  FieldGet 3 (_index)
-        018F  Stl1
-        0190  Ldl1
-        0191  PushI8 1
-        0193  Add
-        0194  Stl2
-        0195  Ldl0
-        0196  Ldl2
-        0197  FieldSet 3 (_index)
-        019A  Ldl1
-        019B  Pop
-        019C  PushTrue
-        019D  ReturnValue
+      ; entry 29, locals 3, stack 2, code 017E..01A1
+        017E  Ldl0
+        017F  FieldGet 3 (_index)
+        0182  PushI8 1
+        0184  Add
+        0185  Ldl0
+        0186  FieldGet 2 (_length)
+        0189  JPGE +19 -> L0 (019F)
+        018C  Ldl0
+        018D  FieldGet 3 (_index)
+        0190  Stl1
+        0191  Ldl1
+        0192  PushI8 1
+        0194  Add
+        0195  Stl2
+        0196  Ldl0
+        0197  Ldl2
+        0198  FieldSet 3 (_index)
+        019B  Ldl1
+        019C  Pop
+        019D  PushTrue
+        019E  ReturnValue
       L0:
-        019E  PushFalse
-        019F  ReturnValue
+        019F  PushFalse
+        01A0  ReturnValue
 
     [public] virtual moveNext(): bool
-      ; entry 29, locals 1, stack 1, code 01A0..01A7
-        01A0  Ldl0
-        01A1  InvokeSpecial 20 (moveNext) args=1 ret=1
-        01A6  ReturnValue
+      ; entry 30, locals 1, stack 1, code 01A1..01A8
+        01A1  Ldl0
+        01A2  InvokeSpecial 21 (moveNext) args=1 ret=1
+        01A7  ReturnValue

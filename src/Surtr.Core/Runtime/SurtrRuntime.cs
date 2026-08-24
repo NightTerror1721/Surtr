@@ -615,6 +615,19 @@ namespace Surtr.Runtime
         internal bool ResumeGenerator(SurtrGenerator generator)
             => VirtualMachine.ResumeGenerator(generator);
 
+        /// <summary>Resumes <paramref name="generator"/> with a value its <c>yield</c> evaluates to.</summary>
+        /// <remarks>Internal for the same reason as <see cref="ResumeGenerator"/>: the built-in <c>send</c> is the way in.</remarks>
+        internal bool SendToGenerator(SurtrGenerator generator, SurtrValue value)
+            => VirtualMachine.SendToGenerator(generator, value);
+
+        /// <summary>Raises <paramref name="exception"/> inside <paramref name="generator"/> where it is suspended.</summary>
+        internal bool RaiseInGenerator(SurtrGenerator generator, SurtrRef exception)
+            => VirtualMachine.RaiseInGenerator(generator, exception);
+
+        /// <summary>Ends <paramref name="generator"/>, running whatever <c>finally</c> blocks it has pending.</summary>
+        internal void DisposeGenerator(SurtrGenerator generator)
+            => VirtualMachine.DisposeGenerator(generator);
+
         #region Value Access
         /// <summary>The value naming <paramref name="entity"/>, or null if it is not registered.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

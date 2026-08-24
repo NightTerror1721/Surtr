@@ -70,6 +70,18 @@ namespace Surtr.Runtime.BuiltIns
                 SurtrNativeEntryPoint.FromFunctionPointer(&Current),
                 dispatch: SurtrMethodDispatch.Virtual);
 
+            // `IIterator<T>` extends `IDisposable`, so this slot has to exist - and on this cursor
+            // it has nothing to do. A walk over an array, a string or a snapshot of a dict's keys
+            // holds no resource and no suspended body; what makes the contract worth extending is
+            // the cursor that does, which is `generator`. Declared rather than inherited because
+            // Surtr interfaces have no default implementations, by the rule that lets the dispatch
+            // tables assume every slot is filled.
+            builder.Method(
+                "dispose",
+                SurtrClassReference.Void,
+                SurtrNativeEntryPoint.FromFunctionPointer(&Dispose),
+                dispatch: SurtrMethodDispatch.Virtual);
+
             // Not part of the contract, and deliberately so: rewinding is meaningful on a cursor
             // over a snapshot and meaningless on one over a stream, so it stays off the interface
             // that a user class has to satisfy.
@@ -113,6 +125,15 @@ namespace Surtr.Runtime.BuiltIns
             arguments.GetUnchecked<SurtrIterator>(0).Reset();
             return arguments.Return(SurtrValue.Null);
         }
+
+        /// <summary><c>dispose()</c>: nothing to release on a cursor over a collection.</summary>
+        /// <remarks>
+        /// Writing no fields rather than clearing the source is deliberate: the cursor is reachable
+        /// from whoever holds it either way, and blanking its collection would turn a disposed
+        /// cursor into one that answers wrongly instead of one that answers the same. Idempotent by
+        /// construction, which is what the contract asks for.
+        /// </remarks>
+        private static int Dispose(SurtrCallArguments arguments) => 0;
 
         #endregion
 

@@ -135,6 +135,9 @@ public class Queue<T> : IQueue<T>
             }
         }
 
+        // Nothing held that outlives this cursor, so the contract slot is filled and empty.
+        public fun dispose(): void { }
+
         public fun moveNext(): bool
         {
             if (_index + 1 >= _count)

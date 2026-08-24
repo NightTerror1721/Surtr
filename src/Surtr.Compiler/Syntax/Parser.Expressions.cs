@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Diagnostics;
 using System;
@@ -110,9 +110,12 @@ namespace Surtr.Compiler.Syntax
             }
         }
 
-        /// <summary>Parses a full expression, assignment included.</summary>
+        /// <summary>Parses a full expression, assignment and <c>yield</c> included.</summary>
         private ExpressionSyntax ParseExpression()
         {
+            if (reader.Check(TokenType.KeywordYield))
+                return ParseYield();
+
             ExpressionSyntax left = ParseConditional();
 
             AssignmentOperator? assignment = ToAssignmentOperator(reader.CurrentType);
@@ -129,6 +132,31 @@ namespace Surtr.Compiler.Syntax
             // From the target, as the binary operators do: the assignment is `a = b`, and a span
             // starting at the `=` would leave the target outside the node that assigns to it.
             return new AssignmentExpressionSyntax(SpanFrom(left.Span.Start), assignment.Value, left, value);
+        }
+
+        /// <summary>Parses <c>yield</c> and <c>yield from</c>, at the lowest precedence there is (§3.7).</summary>
+        /// <remarks>
+        /// The operand is a full expression, so <c>yield a + b</c> yields the sum and using a
+        /// <c>yield</c> as an operand needs parentheses - JavaScript's and Python's rule, and the
+        /// only one that keeps <c>yield</c> readable as a statement.
+        /// </remarks>
+        private ExpressionSyntax ParseYield()
+        {
+            SourceLocation start = reader.CurrentLocation;
+            reader.Expect(TokenType.KeywordYield, "'yield'");
+
+            // `from` is contextual and recognized in exactly one place: directly after `yield`
+            // (§3.7). Reserving it would be far too costly for a word this attractive as an
+            // identifier — `countdown(from: int)` is the spec's own example — and one token of
+            // lookahead settles it without ambiguity anywhere else. The cost is that a variable
+            // literally named `from` cannot be yielded bare inside a generator; `yield (from)` is
+            // how you say that.
+            bool delegating = CheckContextual("from");
+            if (delegating)
+                reader.Advance();
+
+            ExpressionSyntax yielded = ParseExpression();
+            return new YieldExpressionSyntax(SpanFrom(start), yielded, delegating);
         }
 
         /// <summary>Parses the ternary, which sits just above assignment and is also right-associative.</summary>

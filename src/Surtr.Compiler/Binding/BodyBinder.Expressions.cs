@@ -35,6 +35,7 @@ namespace Surtr.Compiler.Binding
                 case UnaryExpressionSyntax unary: return BindUnary(unary);
                 case AssignmentExpressionSyntax assignment: return BindAssignment(assignment);
                 case ConditionalExpressionSyntax conditional: return BindConditional(conditional, expected);
+                case YieldExpressionSyntax yield: return BindYield(yield);
                 // The expected type reaches a call only to settle a generic construction's arguments
                 // (§6): `let b: Box<int> = Box();` has nothing else to infer them from.
                 case CallExpressionSyntax call: return BindCall(call, expected);

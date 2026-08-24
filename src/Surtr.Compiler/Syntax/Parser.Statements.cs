@@ -80,6 +80,9 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordTry:
                     return ParseTry();
 
+                case TokenType.KeywordUsing:
+                    return ParseUsing();
+
                 case TokenType.KeywordThrow:
                     reader.Advance();
                     ExpressionSyntax thrown = ParseExpression();
@@ -91,25 +94,6 @@ namespace Surtr.Compiler.Syntax
                     ExpressionSyntax? returned = reader.Check(TokenType.Semicolon) ? null : ParseExpression();
                     reader.Expect(TokenType.Semicolon, "';' after the return");
                     return new ReturnStatementSyntax(SpanFrom(start), returned);
-
-                case TokenType.KeywordYield:
-                {
-                    reader.Advance();
-
-                    // `from` is contextual and recognized in exactly one place: directly after
-                    // `yield` (§3.7). Reserving it would be far too costly for a word this
-                    // attractive as an identifier — `countdown(from: int)` is the spec's own
-                    // example — and one token of lookahead settles it without ambiguity anywhere
-                    // else. The cost is that a variable literally named `from` cannot be yielded
-                    // bare inside a generator; `yield (from);` is how you say that.
-                    bool delegating = CheckContextual("from");
-                    if (delegating)
-                        reader.Advance();
-
-                    ExpressionSyntax yielded = ParseExpression();
-                    reader.Expect(TokenType.Semicolon, delegating ? "';' after the delegated sequence" : "';' after the yielded value");
-                    return new YieldStatementSyntax(SpanFrom(start), yielded, delegating);
-                }
 
                 case TokenType.KeywordBreak:
                 case TokenType.KeywordContinue:
@@ -404,6 +388,54 @@ namespace Surtr.Compiler.Syntax
             }
 
             return new TryStatementSyntax(SpanFrom(start), body, catches, finallyBlock);
+        }
+
+        /// <summary>Parses <c>using</c> and its resources (§9.2).</summary>
+        /// <remarks>
+        /// Each resource is an ordinary <see cref="LocalDeclarationStatementSyntax"/>, which is not
+        /// a shortcut: a resource <em>is</em> a local declaration that happens to be closed on the
+        /// way out, so reusing the node means it binds, infers its type, takes part in flow analysis
+        /// and gets its frame slot through exactly the paths a written <c>let</c> already uses.
+        /// <c>var</c> is refused because a resource that can be reassigned would leave the close
+        /// pointed at something other than what was opened.
+        /// </remarks>
+        private StatementSyntax ParseUsing()
+        {
+            SourceLocation start = reader.CurrentLocation;
+            reader.Expect(TokenType.KeywordUsing, "'using'");
+            reader.Expect(TokenType.LeftParen, "'(' after 'using'");
+
+            List<LocalDeclarationStatementSyntax> resources = new List<LocalDeclarationStatementSyntax>();
+
+            do
+            {
+                SourceLocation resourceStart = reader.CurrentLocation;
+
+                if (reader.Check(TokenType.KeywordVar))
+                {
+                    throw reader.Error(
+                        SurtrDiagnosticCode.InvalidUsingResource,
+                        "A 'using' resource is declared with 'let': it must name the same object at the end of the block that it named at the start.",
+                        resourceStart);
+                }
+
+                reader.Expect(TokenType.KeywordLet, "'let' before a 'using' resource");
+
+                string name = reader.ExpectIdentifier("the resource's name");
+                TypeSyntax? type = reader.Match(TokenType.Colon) ? ParseType() : null;
+
+                reader.Expect(TokenType.Assign, "'=' and the resource to open");
+                ExpressionSyntax initializer = ParseExpression();
+
+                resources.Add(new LocalDeclarationStatementSyntax(
+                    SpanFrom(resourceStart), name, type, initializer, isMutable: false, isConst: false));
+            }
+            while (reader.Match(TokenType.Comma));
+
+            reader.Expect(TokenType.RightParen, "')' after the 'using' resources");
+
+            BlockStatementSyntax body = ParseBlock();
+            return new UsingStatementSyntax(SpanFrom(start), resources, body);
         }
 
         /// <summary>Parses <c>break</c>/<c>continue</c>, with an optional loop label (§4.2).</summary>

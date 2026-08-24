@@ -59,6 +59,37 @@ namespace Surtr.Runtime.BuiltIns
                 SurtrClassReference.GenericParameter(0),
                 SurtrNativeEntryPoint.FromFunctionPointer(&Current),
                 dispatch: SurtrMethodDispatch.Virtual);
+
+            // `IIterator<T>` extends `IDisposable`, so this fills a contract slot and has to be
+            // Virtual like the rest. It is also the whole reason the cursor contract was made
+            // disposable: closing a generator is the one case where a cursor genuinely has pending
+            // work of its own to run. See docs/Plan-Disposicion.md §3.2.
+            builder.Method(
+                "dispose",
+                SurtrClassReference.Void,
+                SurtrNativeEntryPoint.FromFunctionPointer(&Dispose),
+                dispatch: SurtrMethodDispatch.Virtual);
+
+            // The coroutine surface (§3.7), and deliberately off every contract: nothing else in
+            // the language can be sent to or raised into, so an interface would have exactly one
+            // implementation and cost an indirection to reach it. Direct dispatch, like the rest of
+            // the built-in surface that satisfies nothing.
+            builder.Method(
+                "send",
+                SurtrClassReference.Boolean,
+                SurtrNativeEntryPoint.FromFunctionPointer(&Send),
+                builder.Params(("value", SurtrClassReference.Erased)));
+
+            builder.Method(
+                "raise",
+                SurtrClassReference.Boolean,
+                SurtrNativeEntryPoint.FromFunctionPointer(&Raise),
+                builder.Params(("error", SurtrBuiltIns.Exception.SelfReference)));
+
+            builder.Property(
+                "result",
+                SurtrClassReference.Erased,
+                SurtrNativeEntryPoint.FromFunctionPointer(&Result));
         }
 
         /// <summary>
@@ -109,5 +140,66 @@ namespace Surtr.Runtime.BuiltIns
         /// </remarks>
         private static int Current(SurtrCallArguments arguments)
             => arguments.Return(arguments.GetUnchecked<SurtrGenerator>(0).GetCurrent());
+
+        /// <summary>
+        /// <c>send(value)</c>: resumes the body, handing the value to the <c>yield</c> it is
+        /// suspended at.
+        /// </summary>
+        /// <remarks>
+        /// Answers what <c>moveNext</c> answers - whether the body yielded again - rather than
+        /// handing the produced value straight back, so that the two ways of advancing a generator
+        /// have one shape and <c>current</c> stays the one place an element is read. Python returns
+        /// the value and signals the end with an exception, which only works in a language whose
+        /// whole iteration protocol is built on that exception.
+        /// </remarks>
+        private static int Send(SurtrCallArguments arguments)
+        {
+            var generator = arguments.GetUnchecked<SurtrGenerator>(0);
+
+            // Read before the write: `Return` overwrites slot 0, and slot 1 is read here first.
+            var value = arguments.GetValueUnchecked(1);
+
+            return arguments.Return(SurtrValue.CreateBool(arguments.Runtime.SendToGenerator(generator, value)));
+        }
+
+        /// <summary>
+        /// <c>raise(error)</c>: throws inside the body at the point it is suspended.
+        /// </summary>
+        /// <remarks>
+        /// Named <c>raise</c> rather than <c>throw</c> because <c>throw</c> is a hard-reserved word
+        /// (§1.2), so <c>g.throw(e)</c> would not parse as a member access at all.
+        /// </remarks>
+        private static int Raise(SurtrCallArguments arguments)
+        {
+            var generator = arguments.GetUnchecked<SurtrGenerator>(0);
+            var error = arguments.GetValueUnchecked(1).AsReference;
+
+            return arguments.Return(SurtrValue.CreateBool(arguments.Runtime.RaiseInGenerator(generator, error)));
+        }
+
+        /// <summary>
+        /// <c>dispose()</c>: ends the body, running the <c>finally</c> blocks it has pending.
+        /// </summary>
+        /// <remarks>
+        /// What a <c>for-in</c> calls on the way out, whichever way it leaves, and what a
+        /// hand-written consumer should call too. Idempotent, as <c>IDisposable</c> requires.
+        /// </remarks>
+        private static int Dispose(SurtrCallArguments arguments)
+        {
+            arguments.Runtime.DisposeGenerator(arguments.GetUnchecked<SurtrGenerator>(0));
+            return 0;
+        }
+
+        /// <summary>
+        /// <c>result</c>: what <c>return expr;</c> left behind, or null.
+        /// </summary>
+        /// <remarks>
+        /// Only meaningful once the body has ended; before that it reads null, because a generator
+        /// still suspended has not returned anything yet. Typed <c>unknown</c> for the same reason
+        /// the value <c>send</c> takes is: a generator declares its <em>element</em> (§3.7), and
+        /// there is nowhere in that declaration to write a second type.
+        /// </remarks>
+        private static int Result(SurtrCallArguments arguments)
+            => arguments.Return(arguments.GetUnchecked<SurtrGenerator>(0).GetResult());
     }
 }

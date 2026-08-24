@@ -8,13 +8,13 @@ documentation on each member; this file is that content laid out for reading, pl
 only make sense across the whole set. `docs/VM-Plan.md` has the *why* behind the interpreter's
 shape, and `docs/Module-Format.md` describes the file these bytes live in.
 
-**246 opcodes are defined, spanning `0x00` through `0xFB`.** Six values inside that span —
+**247 opcodes are defined, spanning `0x00` through `0xFC`.** Six values inside that span —
 `0x2C`–`0x2F` (the old `Ldg`/`LdgX`/`Stg`/`StgX`) and `0xAA`–`0xAB` (the old
 `CallGlobalNative`/`CallGlobalNativeX`) — are **retired**: they used to cover the host-globals
 mechanism, which is gone now that a `native` member (module-level or on a class) is an ordinary
 member reached through the same tables and call opcodes as any other. A retired value is never
 reused — reusing one would make an old module silently execute a different instruction — so those
-six numbers simply have no opcode and never will. The 4 values `0xFC`–`0xFF`, plus the six retired
+six numbers simply have no opcode and never will. The 3 values `0xFD`–`0xFF`, plus the six retired
 ones, are what is free.
 
 ---
@@ -79,8 +79,12 @@ together — a member inserted in the middle renumbered everything after it, sil
 the set used to grow at the tail regardless of family, and why its tail read as a pile of
 afterthoughts.
 
-**A new opcode takes a free value and is filed with its family.** `0xF4` through `0xFF` are
-unassigned. A retired value stays retired rather than being reused, because handing an old number
+**A new opcode takes a free value and is filed with its family.** `0xFD` through `0xFF` are
+unassigned. `GenResumed` (`0xFC`) is the first opcode added under that rule, and it is worth reading
+as the worked example: the coroutine surface of §3.7 — `send`, `raise`, `dispose`, `return` with a
+value, and `yield` as an expression — cost exactly one value between them. Everything else was
+either a *method* on the built-in `generator` class, which needs no opcode at all, or a branch added
+to `ReturnValue` on a path no existing module can reach, which changes no byte's meaning. A retired value stays retired rather than being reused, because handing an old number
 to a new instruction would make an existing module execute something else entirely. There are
 golden-value tests over the whole table (`src/Surtr.Tests/Bytecode/OpCodeValueTests.cs`), so
 renumbering is a thing someone has to come and do on purpose.
@@ -612,9 +616,17 @@ A one-field `value class` never reaches any of this. It erases to the field it w
 
 ## Generator Operations
 
-Five opcodes covering `generator` and `yield` (`Language-Syntax.md` §3.7). The split between them mirrors `iterate`/`moveNext`/`current` on purpose: a generator satisfies both `IIterable<T>` and `IIterator<T>`, so a `for-in` over one can go through those contract members — the general path, for a generator travelling as an interface — or lower to these, which do the same work without an interface dispatch, a native call and a re-entry into the machine per element. It is the same division §4.2 already makes between an indexed loop and the contract.
+Seven opcodes covering `generator` and `yield` (`Language-Syntax.md` §3.7). The split between them mirrors `iterate`/`moveNext`/`current` on purpose: a generator satisfies both `IIterable<T>` and `IIterator<T>`, so a `for-in` over one can go through those contract members — the general path, for a generator travelling as an interface — or lower to these, which do the same work without an interface dispatch, a native call and a re-entry into the machine per element. It is the same division §4.2 already makes between an indexed loop and the contract.
 
 Suspension is a **frame copy**, not a compiler-built state machine: `Yield` copies the live frame — locals plus pending operands — out of the data stack into the generator, and `GenResume` copies it back at whatever base is free then. Locals keep their indices because every access is frame-base-relative, which is what makes a frame relocatable at all. The price is the restriction every language in this family accepts: a `yield` must be lexically inside the generator, never inside something it calls, because that frame is gone by then. `docs/Plan-Generadores.md` §4 has the full rationale and the two strategies that were not chosen.
+
+A generator is also a **coroutine**, and the rest of that surface is deliberately not here.
+`send`, `raise`, `dispose` and `result` are native methods on the built-in `generator` class, reached
+through the ordinary call opcodes — a `for-in` never injects a value, so none of them belongs on a
+compiled hot path, and the general path a `moveNext` already takes is the right cost for them.
+`return expr;` inside a generator body is `ReturnValue` with a branch the interpreter takes when the
+frame carries a generator, which is a path no module written before it existed can reach, because
+the binder refused `return expr;` in a generator outright.
 
 A generator is reached through a **stub**: the compiler emits two methods per declaration, one carrying the generator's own name and declared return `Y<elem>` whose whole body is `GenNew` plus a return, and one hidden body holding the `yield`s. So a call to a generator is an ordinary call — no metadata flag, no dedicated call opcode, and `virtual`/contract dispatch works because the stub dispatches like any method.
 
@@ -626,3 +638,4 @@ A generator is reached through a **stub**: the compiler emits two methods per de
 | `0xF9` | `GenCurrent` | `opcode(1)` · 1 byte | `..., generator -> ..., value` | Reads the value a generator's last `yield` produced. Only meaningful after a `GenResume` that answered `true`. Reads the same field the native `current` accessor reads, so the two paths cannot disagree about what the last element was. |
 | `0xFA` | `Yield` | `opcode(1)` · 1 byte | `..., value -> ` (the frame is suspended, not popped to a result) | Suspends the executing generator, handing back one value. Copies the live frame into the generator, records where to resume, writes the answer into the slot the resumer left below the frame, and returns control to whoever resumed it. To the resumer this behaves exactly like a return, which is what lets one `Yield` serve both the compiled fast path and a resume driven by host code. A value wider than one slot is boxed by the compiler on the way in, so this always moves exactly one slot. Legal only in a body reached through a resume; the compiler guarantees that by never emitting it anywhere else. |
 | `0xFB` | `GenDelegate` | `opcode(1)` · 1 byte | `..., inner -> ` (the outer frame is suspended, and the inner one entered) | Delegates the executing generator to another one, and resumes that one now — what `yield from` lowers to when the operand is statically a generator. The outer generator's frame is copied out once and a link to `inner` recorded on it; from then on a resume walks the chain straight to the innermost generator that still has a frame, so an N-deep delegation costs one frame copy per element rather than N. When the inner ends, the return path finds the link and enters the outer's frame at the very same base and answer slot, so a consumer never learns a delegation happened. Delegating to an exhausted generator produces nothing and simply continues; delegating to a running one — directly or around a cycle — traps with `InvalidOperationException`. Any other iterable is lowered to a loop of ordinary `Yield`s instead, since there is no frame to link to. |
+| `0xFC` | `GenResumed` | `opcode(1)` · 1 byte | `... -> ..., value` | Pushes the value the executing generator's last suspension was resumed with. What makes `yield` and `yield from` *expressions*: for a `yield` it is what `send(v)` injected, and for a `yield from` it is what the delegated-to generator returned — in both cases "the value that flowed back in when this suspension ended", which is why one opcode reads both. The statement forms emit `Yield` or `GenDelegate` alone and pay nothing for this, which is why the suspension opcodes keep the stack effect they were given rather than growing one. Every resumption that carries nothing clears the field first, so a stale injection can never be read as a fresh one. Always `unknown`: a generator declares its element (§3.7) and has nowhere to name a second type. |

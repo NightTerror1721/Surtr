@@ -46,8 +46,8 @@ namespace Surtr.Bytecode
     /// </para>
     /// <para>
     /// <b>New opcodes take a free value at the end and are never given one already in use.</b>
-    /// 0x00 through 0xFB are assigned, apart from the six retired values 0x2C-0x2F and 0xAA-0xAB;
-    /// 0xFC through 0xFF are free. Reusing a retired
+    /// 0x00 through 0xFC are assigned, apart from the six retired values 0x2C-0x2F and 0xAA-0xAB;
+    /// 0xFD through 0xFF are free. Reusing a retired
     /// value would make an old module silently execute a new instruction, so a retired value stays
     /// retired. Changing how a module is *framed*, rather than what runs inside it, is what
     /// <c>SurtrModuleImage.FormatVersion</c> is for.
@@ -1207,6 +1207,23 @@ namespace Surtr.Bytecode
         /// instead, since there is no frame to link to.
         /// </remarks>
         GenDelegate = 0xFB,
+
+        /// <summary>Pushes the value the executing generator's last suspension was resumed with.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>... -&gt; ..., value</c><br/>
+        /// Notes: what makes <c>yield</c> and <c>yield from</c> <em>expressions</em> (§3.7). The
+        /// statement forms emit <see cref="Yield"/> or <see cref="GenDelegate"/> alone and pay
+        /// nothing for this, which is why the suspension opcodes keep the stack effect they were
+        /// given rather than growing one. One opcode covers both because the value is the same
+        /// question twice: for a <c>yield</c> it is what <c>send(v)</c> injected, and for a
+        /// <c>yield from</c> it is what the delegated-to generator returned - in each case "the
+        /// value that flowed back in when this suspension ended". Reads
+        /// <c>SurtrGenerator.Resumed</c>, which every resumption that carries nothing clears, so a
+        /// stale injection can never be read as a fresh one. Legal only in a generator body; the
+        /// compiler guarantees that by never emitting it anywhere else.
+        /// </remarks>
+        GenResumed = 0xFC,
         #endregion
 
 

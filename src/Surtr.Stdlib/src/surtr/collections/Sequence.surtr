@@ -155,6 +155,14 @@ class FilterIterator<T> : IIterator<T>
         }
     }
 
+    // Forwards the close, which is the point of a cursor being disposable: a
+    // pipeline whose source is a generator has to reach it through every stage
+    // that wraps it.
+    public fun dispose(): void
+    {
+        _source.dispose();
+    }
+
     public inline fun moveNext(): bool
     {
         while (_source.moveNext())
@@ -192,6 +200,14 @@ class MapIterator<T, U> : IIterator<U>
         }
     }
 
+    // Forwards the close, which is the point of a cursor being disposable: a
+    // pipeline whose source is a generator has to reach it through every stage
+    // that wraps it.
+    public fun dispose(): void
+    {
+        _source.dispose();
+    }
+
     public inline fun moveNext(): bool
     {
         if (_source.moveNext())
@@ -224,6 +240,15 @@ class FlatMapIterator<T, U> : IIterator<U>
                 throw InvalidOperationException("No current element. Call moveNext() first.");
             return _currentIterator!!.current;
         }
+    }
+
+    // Forwards the close, which is the point of a cursor being disposable: a
+    // pipeline whose source is a generator has to reach it through every stage
+    // that wraps it.
+    public fun dispose(): void
+    {
+        _source.dispose();
+        if (_currentIterator != null) { _currentIterator!!.dispose(); }
     }
 
     public inline fun moveNext(): bool
@@ -262,6 +287,14 @@ class TakeIterator<T> : IIterator<T>
                 throw InvalidOperationException("No current element. Call moveNext() first.");
             return _source.current;
         }
+    }
+
+    // Forwards the close, which is the point of a cursor being disposable: a
+    // pipeline whose source is a generator has to reach it through every stage
+    // that wraps it.
+    public fun dispose(): void
+    {
+        _source.dispose();
     }
 
     public inline fun moveNext(): bool
@@ -305,6 +338,14 @@ class SkipIterator<T> : IIterator<T>
         }
     }
 
+    // Forwards the close, which is the point of a cursor being disposable: a
+    // pipeline whose source is a generator has to reach it through every stage
+    // that wraps it.
+    public fun dispose(): void
+    {
+        _source.dispose();
+    }
+
     public inline fun moveNext(): bool
     {
         while (_skipped < _count && _source.moveNext())
@@ -338,6 +379,14 @@ class DistinctIterator<T> : IIterator<T>
                 throw InvalidOperationException("No current element. Call moveNext() first.");
             return _source.current;
         }
+    }
+
+    // Forwards the close, which is the point of a cursor being disposable: a
+    // pipeline whose source is a generator has to reach it through every stage
+    // that wraps it.
+    public fun dispose(): void
+    {
+        _source.dispose();
     }
 
     public inline fun moveNext(): bool
@@ -383,6 +432,9 @@ class SortedIterator<T> : IIterator<T>
         }
     }
 
+    // Nothing held that outlives this cursor, so the contract slot is filled and empty.
+    public fun dispose(): void { }
+
     public inline fun moveNext(): bool
     {
         if (_index + 1 < _sortedItems.length)
@@ -420,6 +472,15 @@ class ChainIterator<T> : IIterator<T>
             else
                 return _second.current;
         }
+    }
+
+    // Forwards the close, which is the point of a cursor being disposable: a
+    // pipeline whose source is a generator has to reach it through every stage
+    // that wraps it.
+    public fun dispose(): void
+    {
+        _first.dispose();
+        _second.dispose();
     }
 
     public inline fun moveNext(): bool
@@ -466,6 +527,15 @@ class ZipIterator<T, U> : IIterator<(T, U)>
         }
     }
 
+    // Forwards the close, which is the point of a cursor being disposable: a
+    // pipeline whose source is a generator has to reach it through every stage
+    // that wraps it.
+    public fun dispose(): void
+    {
+        _first.dispose();
+        _second.dispose();
+    }
+
     public inline fun moveNext(): bool
     {
         if (_first.moveNext() && _second.moveNext())
@@ -497,6 +567,14 @@ class EnumerateIterator<T> : IIterator<(int, T)>
                 throw InvalidOperationException("No current element. Call moveNext() first.");
             return (_index, _source.current);
         }
+    }
+
+    // Forwards the close, which is the point of a cursor being disposable: a
+    // pipeline whose source is a generator has to reach it through every stage
+    // that wraps it.
+    public fun dispose(): void
+    {
+        _source.dispose();
     }
 
     public inline fun moveNext(): bool
@@ -539,6 +617,9 @@ class ReverseIterator<T> : IIterator<T>
         }
     }
 
+    // Nothing held that outlives this cursor, so the contract slot is filled and empty.
+    public fun dispose(): void { }
+
     public inline fun moveNext(): bool
     {
         if (_index > 0)
@@ -572,6 +653,14 @@ class CastIterator<T, U> : IIterator<U>
         }
     }
 
+    // Forwards the close, which is the point of a cursor being disposable: a
+    // pipeline whose source is a generator has to reach it through every stage
+    // that wraps it.
+    public fun dispose(): void
+    {
+        _source.dispose();
+    }
+
     public inline fun moveNext(): bool
     {
         if (_source.moveNext())
@@ -602,6 +691,14 @@ class SafeCastIterator<T, U> : IIterator<U>
                 throw InvalidOperationException("No current element. Call moveNext() first.");
             return _source.current as? U ?? throw InvalidCastException("Element is not of type U.");
         }
+    }
+
+    // Forwards the close, which is the point of a cursor being disposable: a
+    // pipeline whose source is a generator has to reach it through every stage
+    // that wraps it.
+    public fun dispose(): void
+    {
+        _source.dispose();
     }
 
     public inline fun moveNext(): bool
@@ -637,6 +734,14 @@ class TakeWhileIterator<T> : IIterator<T>
                 throw InvalidOperationException("No current element. Call moveNext() first.");
             return _source.current;
         }
+    }
+
+    // Forwards the close, which is the point of a cursor being disposable: a
+    // pipeline whose source is a generator has to reach it through every stage
+    // that wraps it.
+    public fun dispose(): void
+    {
+        _source.dispose();
     }
 
     public inline fun moveNext(): bool
@@ -688,6 +793,14 @@ class SkipWhileIterator<T> : IIterator<T>
         }
     }
 
+    // Forwards the close, which is the point of a cursor being disposable: a
+    // pipeline whose source is a generator has to reach it through every stage
+    // that wraps it.
+    public fun dispose(): void
+    {
+        _source.dispose();
+    }
+
     public inline fun moveNext(): bool
     {
         while (_source.moveNext())
@@ -734,6 +847,14 @@ class OnEachIterator<T> : IIterator<T>
         }
     }
 
+    // Forwards the close, which is the point of a cursor being disposable: a
+    // pipeline whose source is a generator has to reach it through every stage
+    // that wraps it.
+    public fun dispose(): void
+    {
+        _source.dispose();
+    }
+
     public inline fun moveNext(): bool
     {
         if (_source.moveNext())
@@ -767,6 +888,9 @@ class ArrayIterator<T> : IIterator<T>
         }
     }
 
+    // Nothing held that outlives this cursor, so the contract slot is filled and empty.
+    public fun dispose(): void { }
+
     public inline fun moveNext(): bool
     {
         if (_index + 1 < _array.length)
@@ -790,6 +914,9 @@ class SingleIterator<T> : IIterator<T>
 
     public inline current: T => _value;
 
+    // Nothing held that outlives this cursor, so the contract slot is filled and empty.
+    public fun dispose(): void { }
+
     public inline fun moveNext(): bool
         {
             if (!_hasMoved)
@@ -809,6 +936,9 @@ class EmptyIterator<T> : IIterator<T>
     {
         get { throw InvalidOperationException("No current element. The iterator is empty."); }
     }
+
+    // Nothing held that outlives this cursor, so the contract slot is filled and empty.
+    public fun dispose(): void { }
 
     public inline fun moveNext(): bool => false;
 }

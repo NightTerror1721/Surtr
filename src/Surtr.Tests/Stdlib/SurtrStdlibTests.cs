@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode.Image;
 using Surtr.Compiler.Binding;
@@ -172,7 +172,6 @@ namespace Surtr.Tests.Stdlib
             Assert.True(runtime.TryGetModule("surtr.math.Math", out _));
             Assert.True(runtime.TryGetModule("surtr.math.Angle", out _));
             Assert.False(runtime.TryGetModule("surtr.core.Exception", out _));
-            Assert.False(runtime.TryGetModule("surtr.core.Contracts", out _));
             Assert.False(runtime.TryGetModule("surtr.collections.List", out _));
             Assert.False(runtime.TryGetModule("surtr.collections.Collection", out _));
             Assert.False(runtime.TryGetModule("surtr.text.StringBuilder", out _));

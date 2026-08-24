@@ -1,10 +1,11 @@
 # Plan-Generadores — Investigación: funciones generadoras (`generator`) para Surtr
 
-> **Estado:** fases 1 y 2 implementadas (§13, §14). Recoge el estudio comparado de generadores en
-> otros lenguajes, el diseño para Surtr — palabra clave `generator` como introductora de miembro,
-> tipo built-in `generator<T>` hermano de `SurtrClosure` — las tres estrategias sobre la VM propia
-> con su recomendación, la evaluación del encadenado (§11), las decisiones cerradas (§12) — que
-> ganan sobre §3, §5 y §6 — y lo construido y medido en cada fase (§13, §14).
+> **Estado:** las tres fases implementadas (§13, §14, §15). Recoge el estudio comparado de
+> generadores en otros lenguajes, el diseño para Surtr — palabra clave `generator` como introductora
+> de miembro, tipo built-in `generator<T>` hermano de `SurtrClosure` — las tres estrategias sobre la
+> VM propia con su recomendación, la evaluación del encadenado (§11), las decisiones cerradas (§12)
+> — que ganan sobre §3, §5 y §6 — y lo construido y medido en cada fase (§13, §14, §15). **§15 gana
+> sobre §12.8**, que anticipaba la fase 3 antes de que se decidiera.
 
 ---
 
@@ -642,6 +643,14 @@ del harness es una red de correctitud que los tests no dan.
 
 ### 12.8 El destino es el modelo completo, y es la fase 3
 
+> **Superado por §15.** Lo que sigue anticipaba la fase 3 desde la fase 1, y acertó en el fondo y
+> falló en dos cosas concretas: dio por hecho que `send` obligaría a un segundo parámetro de tipo
+> (no lo hizo — `unknown`, §15.1) y que el hueco de cierre sería «un hueco de lenguaje que la fase 3
+> tiene que resolver» (lo fue, y se resolvió fuera de este plan: `docs/Plan-Disposicion.md`). Lo que
+> sí acertó, y es la afirmación que importaba, es que **no reservar sitio salía más barato que
+> reservarlo**: el descriptor `Y<elem>` no creció, `yield` pasó de sentencia a expresión sin cambiar
+> ningún byte en disco, y la fase 3 entera costó **un valor de opcode**.
+
 `yield*` llega en fase 2 con el enlace de delegación de §11.3. Pero el destino declarado **no** es
 el `yield*` de §11.1 — azúcar bajo nuestra semántica reducida — sino el comportamiento completo de
 JS/Python, que son generadores como **corrutinas**:
@@ -812,9 +821,140 @@ elemento. Se ve en la columna de C#, que pasa de 11.1× por delante en `genYield
 
 ### 14.4 Lo que sigue abierto
 
+> Cerrado por §15, salvo la última línea y los iteradores de la stdlib.
+
 - **`yield` dentro de `try`** (§5.4), que sigue esperando a la semántica de cierre determinista.
 - **Las corrutinas completas de §12.8** — `send`/`throw`/`close`, `yield` como expresión, `return`
   con valor —, fase 3, y con ellas el hueco de cierre que Surtr no tiene.
 - **Los doce iteradores de la stdlib**, que ahora sí podrían reescribirse: `FlatMapIterator` y
   `ChainIterator` son delegación pura y son los que §11.5 señalaba.
 - **Un `yield` de valor multi-slot sigue boxeando**, en los dos caminos.
+
+---
+
+## 15. Fase 3: implementada — corrutinas completas
+
+> El modelo de JS/Python, no el subconjunto de iteración. Lo que sigue es lo que existe en el árbol.
+> **Esta sección gana sobre §12.8**, que la anticipó desde la fase 1.
+
+### 15.1 Las decisiones, y por qué
+
+**Un solo parámetro de tipo: `generator<T>` sigue siendo `generator<T>`.** Lo inyectado por `send`
+y lo devuelto por `return expr;` son `unknown` (§5.10), con un cast en el punto de uso. La
+alternativa — `generator<TYield, TSend>` como TypeScript — habría hecho crecer el descriptor a
+`Y<elem><sent>`, subido `SurtrModuleImage.FormatVersion`, y metido una regla de aridad opcional en
+el resolutor contra el principio de que la aridad es parte de la identidad; todo eso para tipar el
+1 % del uso encareciendo la lectura del 99 %, que es iteración simple. `unknown` ya es exactamente
+«contiene cualquier cosa y hay que castearlo», cuesta cero en runtime (`Erased`) y ninguna fuente
+existente cambió. Lo que sí cuesta está medido en §15.4: un primitivo enviado a una ranura borrada
+boxea, una asignación por `send`.
+
+**Cierre determinista: un protocolo general del lenguaje, no un mecanismo privado.** §12.8 lo
+señalaba como «un hueco de lenguaje que la fase 3 tiene que resolver», y resolverlo dentro de este
+plan habría producido un `close` que solo los generadores entienden. Vive en
+`docs/Plan-Disposicion.md`: contrato built-in `IDisposable`, `IIterator<T>` extendiéndolo, sentencia
+`using`, y un `for-in` que cierra su cursor en las cuatro salidas. Los generadores son entonces un
+consumidor del protocolo y no su dueño — y es lo que hace que la biblioteca entera, no solo un
+generador, pueda tener recursos que se sueltan a tiempo.
+
+**`yield` es expresión completa, en la precedencia mínima.** La regla de JS y Python: `yield a + b`
+cede la suma, y usar el valor como operando pide paréntesis. La copia de frame lo soporta sin nada
+nuevo — los operandos pendientes viajan con el frame —, así que `f(g(), yield x)` funciona por
+construcción. Costó mover `YieldStatementSyntax` a `YieldExpressionSyntax` y `BoundYieldStatement` a
+`BoundYieldExpression`; mecánico, pero toca parser, binder, análisis de flujo y emisor.
+
+**`GeneratorExit` no lo atrapa ningún `catch` tipado.** El equivalente de `BaseException` de Python,
+escrito como una condición en `Catches` en vez de como una segunda raíz de jerarquía. El emisor ya
+distinguía un `finally` (catch-all, `CatchType == null`) de un `catch` de usuario (siempre tipado),
+así que la regla es una línea: un cierre corre los `finally` del cuerpo y no lo puede tragar un
+`catch (e: Exception)`.
+
+### 15.2 El presupuesto de opcodes: un valor, no cinco
+
+Era la restricción dura de la sesión — quedaban cuatro valores libres (`0xFC`–`0xFF`) y la fase
+pedía plausiblemente `GenSend`, `GenThrow`, `GenClose`, algo para el `return` con valor, y un
+`Yield` que ahora produce un valor. Salió a **uno**:
+
+| Pieza | Cómo se paga | Opcodes |
+|---|---|---|
+| `yield` como expresión | `Yield` sin tocar, **más `GenResumed` (`0xFC`)**, que empuja el valor con el que se reanudó. La forma sentencia no lo emite y no paga nada | **1** |
+| `yield from` evaluando al `return` del interno | El mismo opcode: cuando una delegación termina, el valor de retorno del interno se escribe en el mismo campo que escribe `send`. Es coherente — el campo es «el valor que trajo la reanudación» | 0 |
+| `return expr;` en generador | `ReturnValue` gana la rama de generador que `ReturnVoid` ya tenía. El binder rechazaba `return expr;` en un generador, así que **ningún módulo escrito antes puede alcanzar esa rama**: no cambia el significado de ningún byte en disco | 0 |
+| `send` / `raise` / `dispose` / `result` | Miembros nativos de la clase built-in `generator`. Se llaman desde fuera y nunca por elemento en un bucle caliente — un `for-in` jamás inyecta —, así que el camino nativo que `moveNext()` ya usa es el correcto | 0 |
+| `yield` dentro de `try` | Ninguno. `TryEnterHandler` ya lee el `IP` guardado del frame, que apunta dentro de la región protegida si el `yield` estaba en un `try` | 0 |
+
+Quedan **tres valores libres** (`0xFD`–`0xFF`), y ningún bump de `SurtrModuleImage.FormatVersion`:
+el descriptor no creció, ningún `SurtrValueTypeCode` se movió, y añadir un opcode no es un cambio de
+*framing*.
+
+La decisión que evitó el byte de sub-operación es la de la primera fila. Cambiar el efecto de pila
+de `Yield` habría cambiado el significado de un byte ya escrito; **separar la lectura del valor en
+su propio opcode** deja `Yield` intacto, y como la forma sentencia no lo emite, el 99 % del uso
+—iteración simple— sigue costando una instrucción por `yield`.
+
+### 15.3 Qué se construyó
+
+| Pieza | Dónde |
+|---|---|
+| Opcode `GenResumed` `0xFC` | `OpCode.cs`, el cuerpo en el bucle de despacho, el método de nivel 2 y el desensamblador |
+| `Resumed` y `Result` en el generador | `SurtrGenerator`, trazados por `VisitReferences`; `Result` deliberadamente **no** se limpia al terminar, porque solo es legible después |
+| `return expr;` en un cuerpo | la rama de generador en `ReturnValue`, espejo de la de `ReturnVoid` |
+| `send` / `raise` / `dispose` / `result` | `SurtrGeneratorBuiltIns`, sobre `SendToGenerator`/`RaiseInGenerator`/`DisposeGenerator` en la VM |
+| `PushGeneratorFrame` | el contrapunto nativo de `EnterGeneratorFrame`, compartido por las cuatro formas de entrar desde fuera |
+| `GeneratorExit` | `SurtrBuiltIns`, más la condición en `Catches` que lo hace invisible a todo `catch` tipado |
+| `yield` como expresión | `YieldExpressionSyntax`, `ParseYield` en la gramática de expresiones, `BoundYieldExpression`, la rama de `EffectOnly` para la forma sentencia |
+| `yield` dentro de `try` | `_tryDepth` pasa a `_finallyDepth`: solo el `finally` sigue prohibido |
+| Tests | 6 nuevos en `SurtrVirtualMachineGeneratorTests` (14 en total) y 15 nuevos en `GeneratorEmissionTests` (65 en total), más `DisposalTests` (11) |
+| Banco | `genSend` y `genFinally`, en Surtr, Lua y C# |
+
+**Dos detalles que no eran obvios hasta escribirlos.** El primero: `GenDelegate` sobre un generador
+ya agotado tiene que copiar su `Result` al delegador antes de continuar, porque `yield from` sobre
+algo terminado evalúa igual a su resultado. El segundo: cerrar una cadena de delegación hay que
+hacerlo **nivel a nivel, del interno al externo**, porque un generador delegador está suspendido
+*con* frame — `GenDelegate` lo copia fuera, y solo las reanudaciones lo saltan —, así que su propio
+`finally` alrededor del `yield from` también tiene que correr. Marcar la cadena agotada desde el
+extremo interno lo habría perdido.
+
+### 15.4 Lo que midió el banco
+
+50 000 elementos, `-c Release`, mediana de 31 iteraciones:
+
+| Caso | surtr ms | objetos | Qué es |
+|---|---|---|---|
+| `forIn` | 0.66 | 1 | bucle indexado sobre un array — el suelo |
+| `genDelegate` | 1.26 | 3 | tres niveles de `yield from`, por el enlace |
+| `genFinally` | **1.30** | **1** | el mismo recorrido con el `yield` dentro de un `try/finally` |
+| `genYield` | 1.42 | 1 | generador: suspender y reanudar un frame por elemento |
+| `handIterator` | 1.56 | 1 | la clase cursor escrita a mano |
+| `iterator` | 3.17 | 2 | el camino general por interfaz |
+| `genSend` | **5.23** | **50 000** | corrutina: un valor inyectado en cada `yield` |
+
+Cuatro lecturas:
+
+- **`genYield` mide 1.42 ms, lo mismo que en la fase 2**, aunque ahora *todo* `for-in` sobre un
+  cursor lleva región protegida y una llamada de cierre. Es la afirmación de
+  `Plan-Disposicion.md` §3.4 medida: entrar en un `try` no cuesta nada en esta VM, y el cierre es
+  una llamada por bucle. Un `break` sobre un generador que no escribió ningún `try` no asigna nada,
+  porque el cierre comprueba si hay algo que correr antes de montar frame o construir la señal.
+- **`yield` dentro de `try/finally` no cuesta nada** — 1.30 frente a 1.42, consistentemente por
+  debajo entre corridas. La prohibición de §5.4 nunca fue de rendimiento; era de semántica, y era la
+  correcta hasta que hubo cierre determinista que la respondiera.
+- **`send` cuesta ~3.7× un recorrido normal y asigna un objeto por elemento**, y las dos mitades son
+  el precio de decisiones tomadas a la vista: no hay camino rápido compilado porque ningún `for-in`
+  inyecta, y el boxeo es §1.11 aplicándose a una ranura `unknown`. Es el coste de §15.1, medido en
+  vez de estimado — y es el número que justificaría `generator<T, TSend>` el día que alguien tenga
+  un bucle de corrutina caliente de verdad.
+- **`genDelegate` sigue por debajo de `genYield`** (1.26 frente a 1.42), lo que confirma otra vez
+  §11.3: solo el generador más interno tiene frame, y los tres niveles son saltos de puntero.
+
+### 15.5 Lo que sigue abierto
+
+- **Un `yield` de valor multi-slot sigue boxeando**, en los dos caminos. Optimización medible, no
+  corrección pendiente.
+- **`send` no tiene camino rápido compilado.** Deliberado hoy; los tres valores de opcode libres son
+  exactamente donde iría si un perfil lo pidiera.
+- **Los iteradores de la stdlib siguen escritos a mano**, y ahora tienen un motivo más para
+  reescribirse: cada uno tuvo que ganar un `dispose()` (§9.2), y los que solo delegan —
+  `FlatMapIterator`, `ChainIterator` — son los que §11.5 señalaba.
+- **Un generador abandonado no corre su `finally`.** Es el hueco enunciado de
+  `Plan-Disposicion.md` §5.3, y taparlo exige el refcount que este proyecto no tiene.

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Compilation;
 using Surtr.Compiler.Diagnostics;
@@ -373,13 +373,42 @@ namespace Surtr.Tests.Compiler.CodeGen
                 SurtrDiagnosticCode.InvalidYield);
 
         [Fact]
-        public void AYieldInsideATryIsRejected()
-            => AssertCode(
+        public void AYieldInsideAFinallyIsRejected()
+        {
+            // The one placement that survives §9.2: a `finally` runs while the generator is being
+            // closed, so suspending there would answer a close with an element.
+            AssertCode(
                 Diagnose(
                     "generator f(): int {\n"
-                        + "    try { yield 1; } catch (e: Exception) { }\n"
+                        + "    try { } finally { yield 1; }\n"
                         + "}"),
                 SurtrDiagnosticCode.InvalidYield);
+        }
+
+        [Fact]
+        public void AYieldInsideATryIsNowLegalAndItsCatchStillCatches()
+        {
+            // What deterministic close bought (§9.2). The exception is raised after the resume, so
+            // the handler covering the suspension point is the one that takes it - which is the
+            // whole reason the frame's saved IP is what the handler search reads.
+            var runtime = Run(
+                "generator f(): int {\n"
+                    + "    try {\n"
+                    + "        yield 1;\n"
+                    + "        let bad = 1 / 0;\n"
+                    + "        yield bad;\n"
+                    + "    } catch (e: Exception) {\n"
+                    + "        yield 9;\n"
+                    + "    }\n"
+                    + "}\n"
+                    + "fun total(): int {\n"
+                    + "    var sum = 0;\n"
+                    + "    for (x in f()) { sum = sum + x; }\n"
+                    + "    return sum;\n"
+                    + "}");
+
+            Assert.Equal(10, Int(runtime, "total"));
+        }
 
         [Fact]
         public void AYieldAfterATryIsFine()
@@ -428,11 +457,297 @@ namespace Surtr.Tests.Compiler.CodeGen
         public void AGeneratorWithAnArrowBodyIsRejected()
             => AssertCode(Diagnose("generator f(): int => 1;"), SurtrDiagnosticCode.GeneratorNeedsABlockBody);
 
+        #region Coroutines: send, return with a value, and yield as an expression
+
         [Fact]
-        public void AReturnWithAValueInsideAGeneratorIsRejected()
+        public void SendInjectsAValueTheSuspendedYieldEvaluatesTo()
+        {
+            var runtime = Run(
+                "generator echo(): int {\n"
+                    + "    let a = yield 1;\n"
+                    + "    let b = yield ((a as int) + 10);\n"
+                    + "    yield ((b as int) + 100);\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "    let g = echo();\n"
+                    + "    g.moveNext();\n"
+                    + "    var total = g.current;\n"
+                    + "    g.send(5);\n"
+                    + "    total = total + g.current;\n"
+                    + "    g.send(7);\n"
+                    + "    total = total + g.current;\n"
+                    + "    return total;\n"
+                    + "}");
+
+            // 1 + (5 + 10) + (7 + 100)
+            Assert.Equal(123, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AYieldInStatementPositionStillCostsNothingAndDiscardsWhatWasSent()
+        {
+            var runtime = Run(
+                "generator counted(): int { yield 1; yield 2; }\n"
+                    + "fun run(): int {\n"
+                    + "    let g = counted();\n"
+                    + "    g.moveNext();\n"
+                    + "    g.send(99);\n"
+                    + "    return g.current;\n"
+                    + "}");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void SendingToAGeneratorThatHasNotStartedIsRefused()
+        {
+            // There is no suspended `yield` to hand the value to, so it would simply vanish.
+            var runtime = Run(
+                "generator counted(): int { yield 1; }\n"
+                    + "fun run(): int {\n"
+                    + "    let g = counted();\n"
+                    + "    g.send(1);\n"
+                    + "    return 0;\n"
+                    + "}");
+
+            Assert.Throws<SurtrExecutionException>(() => Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AGeneratorCanReturnAValueAndResultReadsItBack()
+        {
+            var runtime = Run(
+                "generator counted(): int {\n"
+                    + "    yield 1;\n"
+                    + "    return 42;\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "    let g = counted();\n"
+                    + "    for (x in g) { }\n"
+                    + "    return g.result as int;\n"
+                    + "}");
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void YieldFromEvaluatesToWhatTheInnerGeneratorReturned()
+        {
+            // PEP 380's rule. The value arrives through the same field a `send` uses, because to
+            // the delegating generator this is its own suspension ending.
+            var runtime = Run(
+                "generator inner(): int {\n"
+                    + "    yield 1;\n"
+                    + "    yield 2;\n"
+                    + "    return 30;\n"
+                    + "}\n"
+                    + "generator outer(): int {\n"
+                    + "    let r = yield from inner();\n"
+                    + "    yield (r as int);\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "    var sum = 0;\n"
+                    + "    for (x in outer()) { sum = sum + x; }\n"
+                    + "    return sum;\n"
+                    + "}");
+
+            // 1 + 2 + 30
+            Assert.Equal(33, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void DelegatingToAnAlreadyFinishedGeneratorStillReadsItsResult()
+        {
+            var runtime = Run(
+                "generator inner(): int { return 5; }\n"
+                    + "generator outer(): int {\n"
+                    + "    let g = inner();\n"
+                    + "    for (x in g) { }\n"
+                    + "    let r = yield from g;\n"
+                    + "    yield (r as int);\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "    var sum = 0;\n"
+                    + "    for (x in outer()) { sum = sum + x; }\n"
+                    + "    return sum;\n"
+                    + "}");
+
+            Assert.Equal(5, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void YieldFromANonGeneratorEvaluatesToNull()
+        {
+            // The loop lowering: an array has no return value, so reading the resumed field would
+            // hand back whatever the last `send` injected into *this* generator instead.
+            var runtime = Run(
+                "generator outer(): int {\n"
+                    + "    let r = yield from [1, 2];\n"
+                    + "    yield (r == null ? 7 : 0);\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "    var sum = 0;\n"
+                    + "    for (x in outer()) { sum = sum + x; }\n"
+                    + "    return sum;\n"
+                    + "}");
+
+            Assert.Equal(10, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ASendReachesTheInnermostGeneratorOfADelegation()
+        {
+            var runtime = Run(
+                "generator inner(): int {\n"
+                    + "    let a = yield 1;\n"
+                    + "    yield ((a as int) + 1);\n"
+                    + "}\n"
+                    + "generator outer(): int { yield from inner(); }\n"
+                    + "fun run(): int {\n"
+                    + "    let g = outer();\n"
+                    + "    g.moveNext();\n"
+                    + "    g.send(9);\n"
+                    + "    return g.current;\n"
+                    + "}");
+
+            Assert.Equal(10, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AYieldMustBeParenthesizedToBeAnOperand()
+        {
+            // The lowest precedence there is, so `yield a + b` yields the sum. Reading the resumed
+            // value as an operand needs parentheses - JavaScript's and Python's rule.
+            var runtime = Run(
+                "generator echo(): int {\n"
+                    + "    let doubled = ((yield 1) as int) * 2;\n"
+                    + "    yield doubled;\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "    let g = echo();\n"
+                    + "    g.moveNext();\n"
+                    + "    g.send(21);\n"
+                    + "    return g.current;\n"
+                    + "}");
+
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        #endregion
+
+        #region Coroutines: raise and dispose
+
+        [Fact]
+        public void RaiseThrowsAtTheSuspensionPointAndACatchThereTakesIt()
+        {
+            var runtime = Run(
+                "generator guarded(): int {\n"
+                    + "    try {\n"
+                    + "        yield 1;\n"
+                    + "        yield 2;\n"
+                    + "    } catch (e: Exception) {\n"
+                    + "        yield 9;\n"
+                    + "    }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "    let g = guarded();\n"
+                    + "    g.moveNext();\n"
+                    + "    g.raise(InvalidOperationException(\"stop\"));\n"
+                    + "    return g.current;\n"
+                    + "}");
+
+            Assert.Equal(9, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void RaiseWithNothingToCatchItLeavesTheGeneratorExhausted()
+        {
+            var runtime = Run(
+                "generator plain(): int { yield 1; yield 2; }\n"
+                    + "fun run(): int {\n"
+                    + "    let g = plain();\n"
+                    + "    g.moveNext();\n"
+                    + "    try { g.raise(InvalidOperationException(\"stop\")); } catch (e: Exception) { }\n"
+                    + "    return g.moveNext() ? 1 : 0;\n"
+                    + "}");
+
+            Assert.Equal(0, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void DisposeRunsTheFinallyAndNoTypedCatchInTheBodySeesIt()
+        {
+            // GeneratorExit is the one class no typed catch ever matches, so a body that wraps its
+            // suspension in a broad `catch` still gets closed.
+            var runtime = Run(
+                "var trace: int = 0;\n"
+                    + "generator guarded(): int {\n"
+                    + "    try {\n"
+                    + "        try { yield 1; yield 2; } catch (e: Exception) { trace = trace + 100; }\n"
+                    + "    } finally {\n"
+                    + "        trace = trace + 1;\n"
+                    + "    }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "    let g = guarded();\n"
+                    + "    g.moveNext();\n"
+                    + "    g.dispose();\n"
+                    + "    return trace;\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void DisposeIsIdempotent()
+        {
+            var runtime = Run(
+                "var closes: int = 0;\n"
+                    + "generator guarded(): int {\n"
+                    + "    try { yield 1; } finally { closes = closes + 1; }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "    let g = guarded();\n"
+                    + "    g.moveNext();\n"
+                    + "    g.dispose();\n"
+                    + "    g.dispose();\n"
+                    + "    g.dispose();\n"
+                    + "    return closes;\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void DisposingADelegationClosesEveryLevelInnermostFirst()
+        {
+            // A delegating generator is suspended *with* a frame, so its own `finally` around the
+            // `yield from` has to run too - it is only resumes that walk past it.
+            var runtime = Run(
+                "var order: string = \"\";\n"
+                    + "generator inner(): int {\n"
+                    + "    try { yield 1; yield 2; } finally { order = order + \"i\"; }\n"
+                    + "}\n"
+                    + "generator outer(): int {\n"
+                    + "    try { yield from inner(); } finally { order = order + \"o\"; }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "    let g = outer();\n"
+                    + "    g.moveNext();\n"
+                    + "    g.dispose();\n"
+                    + "    return order == \"io\" ? 1 : 0;\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AYieldInsideAFinallyIsRejectedSoACloseCannotBeIgnoredByConstruction()
             => AssertCode(
-                Diagnose("generator f(): int { yield 1; return 2; }"),
-                SurtrDiagnosticCode.CannotConvert);
+                Diagnose("generator f(): int { try { } finally { yield 1; } }"),
+                SurtrDiagnosticCode.InvalidYield);
+
+        #endregion
 
         [Fact]
         public void AGeneratorThatNeverYieldsWarnsButCompiles()
@@ -825,7 +1140,11 @@ namespace Surtr.Tests.Compiler.CodeGen
                     + "    return sum;\n"
                     + "}");
 
-            Assert.Throws<SurtrExecutionException>(() => Int(runtime, "total"));
+            // A Surtr object rather than the raw trap, because the loop now has a protected region
+            // of its own - the one that closes the cursor - and anything passing through a handler
+            // becomes the library class it names. Exactly what a hand-written try/finally around
+            // the same loop has always done to a trap.
+            Assert.Throws<SurtrThrownException>(() => Int(runtime, "total"));
         }
 
         [Fact]
@@ -879,7 +1198,7 @@ namespace Surtr.Tests.Compiler.CodeGen
                     + "    return sum;\n"
                     + "}");
 
-            Assert.Throws<SurtrExecutionException>(() => Int(runtime, "total"));
+            Assert.Throws<SurtrThrownException>(() => Int(runtime, "total"));
         }
 
         [Fact]

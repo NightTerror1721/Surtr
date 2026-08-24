@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -849,6 +849,7 @@ namespace Surtr.Compiler.Syntax
                     break;
 
                 case 5:
+                    if (Is(text, "using")) return TokenType.KeywordUsing;
                     if (Is(text, "alias")) return TokenType.KeywordAlias;
                     if (Is(text, "break")) return TokenType.KeywordBreak;
                     if (Is(text, "catch")) return TokenType.KeywordCatch;

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 namespace Surtr.Compiler.Syntax
 {
@@ -237,6 +237,9 @@ namespace Surtr.Compiler.Syntax
 
         /// <summary><c>try</c> (§8).</summary>
         KeywordTry,
+
+        /// <summary><c>using</c> - a scoped resource, disposed on every way out (§9.2).</summary>
+        KeywordUsing,
 
         /// <summary><c>var</c> - a mutable binding (§1).</summary>
         KeywordVar,

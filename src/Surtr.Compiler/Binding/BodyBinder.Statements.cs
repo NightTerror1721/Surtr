@@ -26,9 +26,9 @@ namespace Surtr.Compiler.Binding
                 case ForInStatementSyntax forIn: return BindForIn(forIn);
                 case SwitchStatementSyntax @switch: return BindSwitch(@switch);
                 case TryStatementSyntax @try: return BindTry(@try);
+                case UsingStatementSyntax @using: return BindUsing(@using);
                 case ThrowStatementSyntax @throw: return BindThrow(@throw);
                 case ReturnStatementSyntax @return: return BindReturn(@return);
-                case YieldStatementSyntax yield: return BindYield(yield);
                 case BreakStatementSyntax @break: return BindBreak(@break);
                 case LabeledStatementSyntax labeled: return BindLabeled(labeled);
                 default: return new BoundNopStatement(syntax);
@@ -499,13 +499,7 @@ namespace Surtr.Compiler.Binding
 
         private BoundStatement BindTry(TryStatementSyntax syntax)
         {
-            // Only the protected block is counted, not the catch or finally clauses. §3.7 forbids
-            // suspending inside a `try` because a pending handler across an indefinite pause raises
-            // questions about when a `finally` runs; a `yield` in a catch clause is past that
-            // block's protection and poses none of them.
-            _tryDepth++;
             var body = BindStatement(syntax.Body);
-            _tryDepth--;
 
             var exceptionBase = ResolveBuiltInType("Exception", syntax.Span);
 
@@ -533,8 +527,129 @@ namespace Surtr.Compiler.Binding
                 catches[i] = new BoundCatchClause(local, handler);
             }
 
+            // A `yield` is legal inside the protected block and inside a `catch` - what makes the
+            // first safe is that a suspended body can now be closed (§9.2), which runs the pending
+            // `finally`. Inside the `finally` itself it stays refused, and that is the one case
+            // that cannot be made to work: a close unwinds the body by raising into it, so a
+            // `finally` that suspends would answer a close with an element and leave a generator
+            // alive after something was told it was disposed.
+            _finallyDepth++;
             var finallyBlock = syntax.Finally is null ? null : BindStatement(syntax.Finally);
+            _finallyDepth--;
+
             return new BoundTryStatement(syntax, body, catches, finallyBlock);
+        }
+
+        /// <summary>
+        /// Binds <c>using</c> by desugaring it: each resource becomes a local, and the block
+        /// becomes a <c>try</c> whose <c>finally</c> closes it (§9.2).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The lowering lives here rather than in the emitter because nothing about it is a
+        /// decision about representation - unlike <c>for-in</c>, where whether a sequence walks by
+        /// index or through a cursor genuinely is one. What comes out is nodes the emitter already
+        /// knows, so <c>break</c>, <c>return</c> and an escaping exception all run the close through
+        /// the machinery <c>try/finally</c> already has, with no fourth path to keep in step.
+        /// </para>
+        /// <para>
+        /// Several resources nest rather than sharing one <c>finally</c>, which is what closes them
+        /// in reverse order: the second may have been opened from the first, so the first has to
+        /// outlive it. It also means a resource whose own opening throws leaves the ones before it
+        /// closed, which a single flat <c>finally</c> would not.
+        /// </para>
+        /// </remarks>
+        private BoundStatement BindUsing(UsingStatementSyntax syntax)
+        {
+            // One scope for the whole statement: a resource is visible to the ones after it and to
+            // the body, and to nothing outside.
+            var previous = PushScope();
+            var statement = BindUsingResource(syntax, 0);
+            PopScope(previous);
+
+            return statement;
+        }
+
+        /// <summary>Binds one resource and everything it wraps, innermost last.</summary>
+        private BoundStatement BindUsingResource(UsingStatementSyntax syntax, int index)
+        {
+            if (index == syntax.Resources.Count)
+                return BindStatement(syntax.Body);
+
+            var resource = syntax.Resources[index];
+            var declaration = BindLocalDeclaration(resource);
+
+            // Anything but a plain local declaration means the resource itself failed to bind, and
+            // the reported diagnostic is the one worth having - wrapping the body in a close over a
+            // local that does not exist would only add noise.
+            if (declaration is not BoundLocalDeclarationStatement declared)
+                return new BoundBlockStatement(syntax, new[] { declaration, BindUsingResource(syntax, index + 1) });
+
+            var local = declared.Local;
+            var disposable = ResolveBuiltInType("IDisposable", resource.Span);
+            var type = local.Type;
+
+            if (!type.IsError && !disposable.IsError && !_conversions.IsAssignable(type.NonNullable, disposable))
+            {
+                Report(
+                    SurtrDiagnosticCode.NotDisposable,
+                    resource.Span,
+                    $"'{type.ToDisplayString()}' does not satisfy IDisposable, so a 'using' has nothing to close on the way out.");
+
+                return new BoundBlockStatement(syntax, new[] { declaration, BindUsingResource(syntax, index + 1) });
+            }
+
+            var body = BindUsingResource(syntax, index + 1);
+            var close = BuildDisposeCall(resource, local, type);
+
+            return new BoundBlockStatement(
+                syntax,
+                new BoundStatement[] { declaration, new BoundTryStatement(syntax, body, System.Array.Empty<BoundCatchClause>(), close) });
+        }
+
+        /// <summary>Builds the <c>finally</c> body that closes one resource.</summary>
+        /// <remarks>
+        /// A nullable resource is guarded rather than refused, because a factory that answers null
+        /// on failure is an ordinary shape and forcing a <c>!!</c> at the top of the block would
+        /// turn "nothing to close" into a raise. A non-nullable one is called straight, since a
+        /// reference typed non-nullable is one the binder has already established cannot be null.
+        /// </remarks>
+        private BoundStatement BuildDisposeCall(SyntaxNode syntax, LocalSymbol local, TypeSymbol type)
+        {
+            var dispose = _lookup.FindMethods(type.NonNullable, "dispose");
+
+            if (dispose.Count == 0)
+            {
+                Report(
+                    SurtrDiagnosticCode.NotDisposable,
+                    syntax.Span,
+                    $"'{type.ToDisplayString()}' satisfies IDisposable but has no 'dispose' to call.");
+
+                return new BoundNopStatement(syntax);
+            }
+
+            BoundStatement close = new BoundExpressionStatement(
+                syntax,
+                new BoundCallExpression(
+                    syntax,
+                    new BoundLocalExpression(syntax, local),
+                    dispose[0],
+                    System.Array.Empty<BoundExpression>(),
+                    isVirtual: dispose[0].Dispatch != MethodDispatch.Direct));
+
+            if (!type.IsNullable)
+                return close;
+
+            return new BoundIfStatement(
+                syntax,
+                new BoundBinaryExpression(
+                    syntax,
+                    BinaryOperator.NotEqual,
+                    new BoundLocalExpression(syntax, local),
+                    new BoundLiteralExpression(syntax, type, null),
+                    _factory.Bool),
+                close,
+                null);
         }
 
         private BoundStatement BindThrow(ThrowStatementSyntax syntax)
@@ -574,22 +689,19 @@ namespace Surtr.Compiler.Binding
         {
             var expected = _method.ReturnType;
 
-            // A generator's `return` ends the sequence; it never carries a value (§3.7). Its
-            // declared return is `generator<T>`, so without this the two forms would be checked
-            // backwards - a bare `return;` would be told it needs a value, and `return x;` would be
-            // asked to convert an element into the generator that produces it.
+            // A generator's `return` ends the sequence, and may carry a result alongside it
+            // (§3.7): what `yield from` evaluates to, and what `result` reads back. It is checked
+            // against nothing, because a generator declares its *element* and has nowhere to write
+            // a second type - so the value lands in an erased slot like any other `unknown`, and is
+            // cast at the point of use. Handled here because the method's declared return is
+            // `generator<T>`, against which the two forms would otherwise be checked backwards.
             if (_method.IsGenerator && _lambdas.Count == 0)
             {
                 if (syntax.Value is null)
                     return new BoundReturnStatement(syntax, null);
 
-                BindExpression(syntax.Value);
-                Report(
-                    SurtrDiagnosticCode.CannotConvert,
-                    syntax.Span,
-                    $"'{_method.Name}' is a generator, so its 'return' ends the sequence and cannot carry a value; hand elements out with 'yield' (§3.7).");
-
-                return new BoundReturnStatement(syntax, null);
+                var result = BindExpression(syntax.Value);
+                return new BoundReturnStatement(syntax, Convert(result, _factory.Unknown, syntax.Value.Span));
             }
 
             if (syntax.Value is null)
@@ -623,15 +735,22 @@ namespace Surtr.Compiler.Binding
         /// Binds a <c>yield</c>, against the element its generator declares (§3.7).
         /// </summary>
         /// <remarks>
+        /// <para>
         /// The three refusals are the three places there is no frame to suspend, and each is worth
         /// a distinct sentence rather than one generic message. Outside a generator there is no
         /// element to convert against; inside a nested lambda the frame that would be copied belongs
-        /// to the lambda, which is a separate function with its own body; inside a <c>try</c> the
-        /// suspension would leave a handler pending across a pause nobody is obliged to end.
-        /// Binding continues past each one so the value is still checked and one mistake does not
-        /// hide the next.
+        /// to the lambda, which is a separate function with its own body; inside a <c>finally</c>
+        /// the block is running <em>because</em> the generator is being closed, and suspending
+        /// there would answer a close with an element. Binding continues past each one so the value
+        /// is still checked and one mistake does not hide the next.
+        /// </para>
+        /// <para>
+        /// The result type is always <c>unknown</c> - what a resumption carries in has no declared
+        /// type to check against, since §3.7 makes a generator declare its element and gives it
+        /// nowhere to name a second one.
+        /// </para>
         /// </remarks>
-        private BoundStatement BindYield(YieldStatementSyntax syntax)
+        internal BoundExpression BindYield(YieldExpressionSyntax syntax)
         {
             _yieldCount++;
 
@@ -642,7 +761,7 @@ namespace Surtr.Compiler.Binding
                     syntax.Span,
                     "A 'yield' cannot appear inside a lambda: the lambda is a function of its own, so there is no generator frame here to suspend (§3.7).");
 
-                return new BoundYieldStatement(syntax, BindExpression(syntax.Value));
+                return new BoundYieldExpression(syntax, _factory.Unknown, BindExpression(syntax.Value));
             }
 
             if (!_method.IsGenerator || _method.YieldType is not { } element)
@@ -652,19 +771,19 @@ namespace Surtr.Compiler.Binding
                     syntax.Span,
                     $"'{_method.Name}' is not a generator, so it cannot 'yield'. Declare it with 'generator' instead of 'fun' (§3.7).");
 
-                return new BoundYieldStatement(syntax, BindExpression(syntax.Value));
+                return new BoundYieldExpression(syntax, _factory.Unknown, BindExpression(syntax.Value));
             }
 
-            if (_tryDepth > 0)
+            if (_finallyDepth > 0)
             {
                 Report(
                     SurtrDiagnosticCode.InvalidYield,
                     syntax.Span,
-                    "A 'yield' cannot appear inside a 'try': suspending there would leave a handler pending across a pause that nothing is obliged to end (§3.7).");
+                    "A 'yield' cannot appear inside a 'finally': a 'finally' runs while the generator is being closed, and answering a close with an element would leave it alive after something was told it was disposed (§3.7).");
             }
 
             if (!syntax.IsDelegating)
-                return new BoundYieldStatement(syntax, BindConverted(syntax.Value, element));
+                return new BoundYieldExpression(syntax, _factory.Unknown, BindConverted(syntax.Value, element));
 
             // `yield from xs` hands out every element of `xs`, so what has to convert to this
             // generator's element is one step of `xs`, not `xs` itself. What counts as iterable is
@@ -682,7 +801,7 @@ namespace Surtr.Compiler.Binding
                         $"'{sequence.Type.ToDisplayString()}' cannot be delegated to; it is not a built-in collection and does not satisfy IIterable.");
                 }
 
-                return new BoundYieldStatement(syntax, sequence, _factory.ErrorType);
+                return new BoundYieldExpression(syntax, _factory.Unknown, sequence, _factory.ErrorType);
             }
 
             // Classified here rather than at emit, like every other conversion: what converts is
@@ -702,7 +821,7 @@ namespace Surtr.Compiler.Binding
                 elementConversion = Conversion.Identity;
             }
 
-            return new BoundYieldStatement(syntax, sequence, delegated, elementConversion);
+            return new BoundYieldExpression(syntax, _factory.Unknown, sequence, delegated, elementConversion);
         }
 
         private BoundStatement BindBreak(BreakStatementSyntax syntax)

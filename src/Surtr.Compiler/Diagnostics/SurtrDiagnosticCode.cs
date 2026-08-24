@@ -106,6 +106,13 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         GeneratorNeedsABlockBody = 2013,
 
+        /// <summary>
+        /// A <c>using</c> resource was not written as a <c>let</c> (§9.2) - most often as a
+        /// <c>var</c>, which is refused because a resource that can be reassigned would leave the
+        /// close pointed at something other than what was opened.
+        /// </summary>
+        InvalidUsingResource = 2014,
+
         #endregion
 
         #region Binding — 3xxx
@@ -522,6 +529,12 @@ namespace Surtr.Compiler.Diagnostics
         /// than an intention.
         /// </summary>
         GeneratorNeverYields = 3072,
+
+        /// <summary>
+        /// A <c>using</c> resource's type does not satisfy <c>IDisposable</c> (§9.2), so there is
+        /// nothing for the block to close on the way out.
+        /// </summary>
+        NotDisposable = 3073,
 
         #endregion
 

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Runtime;
@@ -362,6 +362,154 @@ namespace Surtr.Tests.VM
 
             Assert.Equal(new[] { 3, 2, 1 }, produced);
             Assert.Equal(SurtrGeneratorState.Exhausted, generator.GetState());
+        }
+
+        /// <summary>
+        /// A body that echoes back whatever each resumption carried in: <c>yield</c> then
+        /// <c>GenResumed</c>, twice.
+        /// </summary>
+        private static SurtrBytecodeMethodInfo BuildEchoBody()
+        {
+            var module = new SurtrModule("generators");
+
+            return new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(0)
+                .Op(OpCode.Yield)
+                .Op(OpCode.GenResumed)
+                .Op(OpCode.Yield)
+                .Op(OpCode.GenResumed)
+                .Op(OpCode.Yield)
+                .Op(OpCode.ReturnVoid)
+                .Build(module, localCount: 0, maxStackSize: 8);
+        }
+
+        [Fact]
+        public void GenResumed_PushesWhatTheSendCarriedIn()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("caller");
+            var builder = new BytecodeBuilder();
+            var (methodIndex, typeIndex) = Wire(builder, module, BuildEchoBody());
+
+            builder
+                .Op(OpCode.GenNew).I16(methodIndex).I16(typeIndex).U8(0)
+                .Op(OpCode.ReturnValue);
+
+            var entry = builder.Build(module, localCount: 0, maxStackSize: 8);
+            var generator = Assert.IsType<SurtrGenerator>(runtime.Resolve(runtime.Invoke(entry)));
+
+            Assert.True(runtime.ResumeGenerator(generator));
+            Assert.Equal(0, generator.GetCurrent().AsInt);
+
+            Assert.True(runtime.SendToGenerator(generator, SurtrValue.CreateInt(11)));
+            Assert.Equal(11, generator.GetCurrent().AsInt);
+
+            Assert.True(runtime.SendToGenerator(generator, SurtrValue.CreateInt(22)));
+            Assert.Equal(22, generator.GetCurrent().AsInt);
+        }
+
+        [Fact]
+        public void AnOrdinaryResumeClearsWhatAnEarlierSendLeft()
+        {
+            // A stale injection read back by a later `yield` would be a value arriving from a
+            // resumption that never sent one.
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("caller");
+            var builder = new BytecodeBuilder();
+            var (methodIndex, typeIndex) = Wire(builder, module, BuildEchoBody());
+
+            builder
+                .Op(OpCode.GenNew).I16(methodIndex).I16(typeIndex).U8(0)
+                .Op(OpCode.ReturnValue);
+
+            var entry = builder.Build(module, localCount: 0, maxStackSize: 8);
+            var generator = Assert.IsType<SurtrGenerator>(runtime.Resolve(runtime.Invoke(entry)));
+
+            Assert.True(runtime.ResumeGenerator(generator));
+            Assert.True(runtime.SendToGenerator(generator, SurtrValue.CreateInt(11)));
+
+            Assert.True(runtime.ResumeGenerator(generator));
+            Assert.True(generator.GetCurrent().IsNullReference);
+        }
+
+        [Fact]
+        public void ReturnValue_InAGeneratorBodyEndsItAndKeepsTheResult()
+        {
+            // The one opcode that gained a generator branch rather than a new value of its own: no
+            // module written before it existed can reach this path, because `return expr;` in a
+            // generator was refused outright.
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("caller");
+            var builder = new BytecodeBuilder();
+
+            var bodyModule = new SurtrModule("generators");
+            var body = new BytecodeBuilder()
+                .Op(OpCode.PushI32).I32(1)
+                .Op(OpCode.Yield)
+                .Op(OpCode.PushI32).I32(42)
+                .Op(OpCode.ReturnValue)
+                .Build(bodyModule, localCount: 0, maxStackSize: 8);
+
+            var (methodIndex, typeIndex) = Wire(builder, module, body);
+
+            builder
+                .Op(OpCode.GenNew).I16(methodIndex).I16(typeIndex).U8(0)
+                .Op(OpCode.ReturnValue);
+
+            var entry = builder.Build(module, localCount: 0, maxStackSize: 8);
+            var generator = Assert.IsType<SurtrGenerator>(runtime.Resolve(runtime.Invoke(entry)));
+
+            Assert.True(runtime.ResumeGenerator(generator));
+            Assert.Equal(1, generator.GetCurrent().AsInt);
+
+            // The resumer is told the sequence is over, exactly as a bare `return;` would tell it.
+            Assert.False(runtime.ResumeGenerator(generator));
+            Assert.Equal(SurtrGeneratorState.Exhausted, generator.GetState());
+
+            // And the result outlives the frame, which is the whole reason it is not cleared with
+            // everything else the suspension held.
+            Assert.Equal(42, generator.GetResult().AsInt);
+        }
+
+        [Fact]
+        public void DisposingASuspendedGeneratorMarksItExhausted()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("caller");
+            var builder = new BytecodeBuilder();
+            var (methodIndex, typeIndex) = Wire(builder, module, BuildCountdownBody());
+
+            builder
+                .Op(OpCode.PushI32).I32(3)
+                .Op(OpCode.GenNew).I16(methodIndex).I16(typeIndex).U8(1)
+                .Op(OpCode.ReturnValue);
+
+            var entry = builder.Build(module, localCount: 0, maxStackSize: 8);
+            var generator = Assert.IsType<SurtrGenerator>(runtime.Resolve(runtime.Invoke(entry)));
+
+            Assert.True(runtime.ResumeGenerator(generator));
+            runtime.DisposeGenerator(generator);
+
+            Assert.Equal(SurtrGeneratorState.Exhausted, generator.GetState());
+            Assert.False(runtime.ResumeGenerator(generator));
+        }
+
+        [Fact]
+        public void SendingToAGeneratorThatHasNotStartedTraps()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("caller");
+            var builder = new BytecodeBuilder();
+            var (methodIndex, typeIndex) = Wire(builder, module, BuildEchoBody());
+
+            builder
+                .Op(OpCode.GenNew).I16(methodIndex).I16(typeIndex).U8(0)
+                .Op(OpCode.ReturnValue);
+
+            var entry = builder.Build(module, localCount: 0, maxStackSize: 8);
+            var generator = Assert.IsType<SurtrGenerator>(runtime.Resolve(runtime.Invoke(entry)));
+
+            Assert.Throws<SurtrExecutionException>(() => runtime.SendToGenerator(generator, SurtrValue.CreateInt(1)));
         }
     }
 }

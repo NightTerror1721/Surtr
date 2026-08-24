@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -111,7 +111,22 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass Iterator;
 
         /// <summary>
-        /// <c>IIterator&lt;T&gt;</c>: the two-member cursor <c>for-in</c> is defined against (§4.2).
+        /// <c>IDisposable</c>: the one-member contract for anything that must be released at a
+        /// point the collector cannot pick.
+        /// </summary>
+        /// <remarks>
+        /// Built-in rather than library, and for two reasons that are not taste. The emitter has to
+        /// name it - a <c>for-in</c> closes its cursor and a <c>using</c> closes its resource, and
+        /// resolving a stdlib name at emit time would be the first place the compiler depended on a
+        /// particular module being loaded. And <see cref="Generator"/> has to implement it, which
+        /// happens in this static constructor, before any stdlib module exists to declare it.
+        /// See <c>docs/Plan-Disposicion.md</c> §3.1.
+        /// </remarks>
+        public static readonly SurtrInterface IDisposable;
+
+        /// <summary>
+        /// <c>IIterator&lt;T&gt;</c>: the two-member cursor <c>for-in</c> is defined against (§4.2),
+        /// extending <see cref="IDisposable"/>.
         /// </summary>
         public static readonly SurtrInterface IIterator;
 
@@ -167,6 +182,26 @@ namespace Surtr.Runtime.BuiltIns
 
         /// <summary>Raised by an operation the runtime cannot perform in its current state.</summary>
         public static readonly SurtrClass InvalidOperationException;
+
+        /// <summary>
+        /// Raised inside a generator's suspended body by <c>dispose()</c>, to unwind it.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The one class in the system that <b>no typed <c>catch</c> ever matches</b>. Only a
+        /// catch-all handler sees it, and the compiler emits a catch-all for exactly one construct:
+        /// a <c>finally</c>. So closing a generator runs its <c>finally</c> blocks and cannot be
+        /// swallowed by a <c>catch (e: Exception)</c> the body happens to contain.
+        /// </para>
+        /// <para>
+        /// Python reaches the same place by hanging <c>GeneratorExit</c> off <c>BaseException</c>,
+        /// outside what <c>except Exception</c> covers. Surtr has one exception root by design
+        /// (<c>Language-Syntax.md</c> §9), so the rule lives in <c>Catches</c> instead of in a
+        /// second hierarchy - one condition rather than a whole parallel tree. There is precedent
+        /// for something the handler search refuses to offer: the instruction budget.
+        /// </para>
+        /// </remarks>
+        public static readonly SurtrClass GeneratorExit;
 
         /// <summary>
         /// The root every attribute class extends.
@@ -292,6 +327,7 @@ namespace Surtr.Runtime.BuiltIns
             InvalidCastException = DeclareObject("InvalidCastException", Exception);
             StackOverflowException = DeclareObject("StackOverflowException", Exception);
             InvalidOperationException = DeclareObject("InvalidOperationException", Exception);
+            GeneratorExit = DeclareObject("GeneratorExit", Exception);
             Attribute = DeclareObject("Attribute", isAbstract: true);
             Type = DeclareObject("Type");
             Member = DeclareObject("Member");
@@ -353,6 +389,7 @@ namespace Surtr.Runtime.BuiltIns
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(InvalidCastException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(StackOverflowException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(InvalidOperationException, handles));
+            SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(GeneratorExit, handles));
             SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
 
             // After Attribute, since Type.attributes()/Member.attributes() both name it, and
@@ -366,6 +403,7 @@ namespace Surtr.Runtime.BuiltIns
             // Kept as fields because a compiler has to name them to lower `for-in` and `<=>`: those
             // lowerings are calls through a contract's own slots, and looking one up by a mangled
             // string at every emit site would put the arity convention in two places.
+            IDisposable = Contract("IDisposable", 0);
             IIterator = Contract("IIterator", 1);
             IIterable = Contract("IIterable", 1);
             IComparable = Contract("IComparable", 1);

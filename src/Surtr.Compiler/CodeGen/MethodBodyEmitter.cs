@@ -135,7 +135,11 @@ namespace Surtr.Compiler.CodeGen
         private readonly Dictionary<ParameterSymbol, SurtrLocal> _splicedParameters = new Dictionary<ParameterSymbol, SurtrLocal>();
         private readonly List<JumpTargets> _jumps = new List<JumpTargets>();
         private readonly List<InlineFrame> _inlines = new List<InlineFrame>();
-        private readonly List<BoundStatement> _finallies = new List<BoundStatement>();
+        // Emitters rather than bound nodes, because two of the things that have to run on every
+        // way out of a block are not in the bound tree at all: closing a `for-in`'s cursor and
+        // closing a `yield from`'s. Both are decisions about representation, so they are made here -
+        // and a `return` out of such a loop still has to run them, which is what this stack is for.
+        private readonly List<Action> _finallies = new List<Action>();
 
         // Set by a labelled statement and consumed by the loop it labels, so `outer: for (...)` can
         // be reached by `break outer` without the loop node itself carrying the name.
@@ -254,10 +258,6 @@ namespace Surtr.Compiler.CodeGen
                     EmitReturn(@return);
                     return;
 
-                case BoundYieldStatement yield:
-                    EmitYield(yield);
-                    return;
-
                 case BoundThrowStatement @throw:
                     Expression(@throw.Value);
                     Code.Throw();
@@ -318,6 +318,14 @@ namespace Surtr.Compiler.CodeGen
                 // value � so the guard is emitted without one rather than pushed and popped.
                 case BoundNullConditionalExpression access:
                     EmitNullConditional(access, discardResult: true);
+                    return;
+
+                // `yield e;` and `yield from e;` in statement position, which is nearly every
+                // yield ever written. Not emitting the instruction that would push the resumed
+                // value is what makes the statement form cost exactly what it cost before yield
+                // became an expression.
+                case BoundYieldExpression yield:
+                    EmitYield(yield, wantsValue: false);
                     return;
             }
 
@@ -949,6 +957,18 @@ namespace Surtr.Compiler.CodeGen
             Code.GenIterate();
             EmitStoreLocal(cursor);
 
+            // Statically a generator, so the close is a direct call on its own class rather than a
+            // contract dispatch. It matters here more than anywhere: a generator is the one cursor
+            // that can have a `finally` of its own waiting to run.
+            var dispose = GeneratorMethod("dispose");
+            void Close()
+            {
+                EmitLoadLocal(cursor);
+                Code.Call(dispose);
+            }
+
+            var region = BeginCursorScope(Close);
+
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
@@ -977,6 +997,7 @@ namespace Surtr.Compiler.CodeGen
                 Code.Jump(top);
 
             Code.MarkLabel(end);
+            EndCursorScope(region, Close);
         }
 
         private void EmitForInIterable(BoundForInStatement loop)
@@ -992,6 +1013,18 @@ namespace Surtr.Compiler.CodeGen
             BoxIfMultiSlot(loop.Sequence.Type);
             Code.CallInterface(iterate);
             EmitStoreLocal(cursor);
+
+            // The cursor is only known as an `IIterator<T>` here, so the close goes through the
+            // contract - which is exactly why `IIterator<T>` was made to extend `IDisposable`
+            // rather than the loop asking at run time whether this particular cursor can be closed.
+            var dispose = DisposeContractMethod();
+            void Close()
+            {
+                EmitLoadLocal(cursor);
+                Code.CallInterface(dispose);
+            }
+
+            var region = BeginCursorScope(Close);
 
             var top = Code.NewLabel();
             var end = Code.NewLabel();
@@ -1025,7 +1058,14 @@ namespace Surtr.Compiler.CodeGen
                 Code.Jump(top);
 
             Code.MarkLabel(end);
+            EndCursorScope(region, Close);
         }
+
+        /// <summary>A method of the built-in <c>generator</c> class, by name.</summary>
+        private SurtrMethodInfo GeneratorMethod(string name)
+            => SurtrBuiltIns.Generator.TryGetMethods(name, out var overloads) && overloads.Length == 1
+                ? overloads[0]
+                : throw Unsupported("a for-in over a generator, because 'generator." + name + "' could not be found");
 
         private SurtrMethodInfo ContractMethod(SurtrInterface contract, string name)
             => contract.TryGetMethods(name, out var overloads) && overloads.Length == 1
@@ -1330,7 +1370,7 @@ namespace Surtr.Compiler.CodeGen
         private void PushFinally(BoundStatement? block)
         {
             if (block is not null)
-                _finallies.Add(block);
+                _finallies.Add(() => Statement(block));
         }
 
         private void PopFinally(BoundStatement? block)
@@ -1343,8 +1383,75 @@ namespace Surtr.Compiler.CodeGen
         private void UnwindTo(int depth)
         {
             for (int i = _finallies.Count - 1; i >= depth; i--)
-                Statement(_finallies[i]);
+                _finallies[i]();
         }
+
+        /// <summary>
+        /// Opens a protected region whose exit closes a cursor, and registers the close as pending
+        /// so a <c>return</c> out of the loop runs it too.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The shape is C#'s <c>foreach</c>, and it is C#'s shape because the alternative does not
+        /// work: the region wraps the <em>whole</em> loop, break label included, so a <c>break</c>
+        /// leaves the loop while still inside the region and the close runs exactly once on the way
+        /// out. Making <c>break</c> run the close itself would close twice on that path.
+        /// </para>
+        /// <para>
+        /// A <c>return</c> is the case the region cannot cover, because it leaves the frame rather
+        /// than the region - hence the entry on the pending stack, which is the same mechanism a
+        /// written <c>finally</c> uses. And an exception is covered by the catch-all below, which
+        /// is the same catch-all a written <c>finally</c> compiles to.
+        /// </para>
+        /// <para>
+        /// Entering a protected region costs nothing at run time in this VM - handlers are a table
+        /// of ranges, with no opcode to enter one - so what a loop over a cursor pays for all of
+        /// this is one call on the way out. Per loop, never per element. See
+        /// <c>docs/Plan-Disposicion.md</c> §3.4.
+        /// </para>
+        /// </remarks>
+        private SurtrProtectedRegion BeginCursorScope(Action close)
+        {
+            var region = _method.BeginTry();
+            _finallies.Add(close);
+            return region;
+        }
+
+        /// <summary>Closes the region <see cref="BeginCursorScope"/> opened, on both exits.</summary>
+        private void EndCursorScope(SurtrProtectedRegion region, Action close)
+        {
+            _finallies.RemoveAt(_finallies.Count - 1);
+            _method.EndTry(region);
+
+            var done = Code.NewLabel();
+
+            if (Code.IsReachable)
+            {
+                close();
+                Code.Jump(done);
+            }
+
+            var handler = Code.NewLabel();
+            Code.MarkHandler(handler);
+            _method.AddCatchAll(region, handler);
+
+            var raised = _method.DeclareLocal("$raised");
+            EmitStoreLocal(raised);
+            close();
+            EmitLoadLocal(raised);
+            Code.Throw();
+
+            Code.MarkLabel(done);
+        }
+
+        /// <summary>The <c>IDisposable.dispose</c> every cursor answers, reached through the contract.</summary>
+        /// <remarks>
+        /// <c>IIterator&lt;T&gt;</c> extends <c>IDisposable</c> (<c>docs/Plan-Disposicion.md</c>
+        /// §3.2), so the slot exists on anything a <c>for-in</c> can walk by contract - which is
+        /// what lets this be one call site rather than a run-time question about whether the cursor
+        /// happens to be closeable.
+        /// </remarks>
+        private SurtrMethodInfo DisposeContractMethod() => ContractMethod(SurtrBuiltIns.IDisposable, "dispose");
 
         /// <summary>
         /// Emits a <c>yield</c>: one value, then a suspension (§3.7).
@@ -1356,17 +1463,24 @@ namespace Surtr.Compiler.CodeGen
         /// that would have to agree; keeping it wide on the compiled path is a measurable
         /// optimisation for later, not a correctness question.
         /// </remarks>
-        private void EmitYield(BoundYieldStatement yield)
+        private void EmitYield(BoundYieldExpression yield, bool wantsValue)
         {
             if (yield.IsDelegating)
             {
-                EmitYieldFrom(yield);
+                EmitYieldFrom(yield, wantsValue);
                 return;
             }
 
             Expression(yield.Value);
             BoxIfMultiSlot(yield.Value.Type);
             Code.Yield();
+
+            // The value `send(v)` injected, read back only where the source asked for it. `Yield`
+            // keeps the stack effect it has always had, which is what let the whole coroutine
+            // surface be added for one new opcode rather than by changing what a byte already on
+            // disk means.
+            if (wantsValue)
+                Code.GenResumed();
         }
 
         /// <summary>
@@ -1387,7 +1501,7 @@ namespace Surtr.Compiler.CodeGen
         /// deals in types.
         /// </para>
         /// </remarks>
-        private void EmitYieldFrom(BoundYieldStatement yield)
+        private void EmitYieldFrom(BoundYieldExpression yield, bool wantsValue)
         {
             var sequence = yield.Value.Type.NonNullable;
 
@@ -1399,6 +1513,13 @@ namespace Surtr.Compiler.CodeGen
             {
                 Expression(yield.Value);
                 Code.GenDelegate();
+
+                // What the inner generator returned. It arrives through the same field a `send`
+                // uses, because to the delegating generator this is its own suspension ending -
+                // which is why one opcode reads both (PEP 380's rule, and §15.3's reasoning).
+                if (wantsValue)
+                    Code.GenResumed();
+
                 return;
             }
 
@@ -1415,6 +1536,19 @@ namespace Surtr.Compiler.CodeGen
             BoxIfMultiSlot(yield.Value.Type);
             Code.CallInterface(iterate);
             EmitStoreLocal(cursor);
+
+            // The delegated-to sequence is closed on the way out too, and the reason is the case
+            // that only exists for a generator: this loop can be abandoned mid-way, because the
+            // generator running it can itself be disposed. The link lowering above needs none of
+            // this - a linked generator is closed by walking the chain.
+            var dispose = DisposeContractMethod();
+            void Close()
+            {
+                EmitLoadLocal(cursor);
+                Code.CallInterface(dispose);
+            }
+
+            var region = BeginCursorScope(Close);
 
             var top = Code.NewLabel();
             var end = Code.NewLabel();
@@ -1438,6 +1572,14 @@ namespace Surtr.Compiler.CodeGen
 
             Code.Jump(top);
             Code.MarkLabel(end);
+            EndCursorScope(region, Close);
+
+            // The loop form evaluates to null, and deliberately so: what a `yield from` produces is
+            // the *generator's* return value, and an array or a user cursor has none. Reading the
+            // resumed field here would hand back whatever the last `send` injected into this
+            // generator, which is a different value entirely.
+            if (wantsValue)
+                Code.PushNull();
         }
 
         private void EmitReturn(BoundReturnStatement @return)
@@ -1556,6 +1698,10 @@ namespace Surtr.Compiler.CodeGen
             {
                 case BoundLiteralExpression literal:
                     EmitLiteral(literal);
+                    return;
+
+                case BoundYieldExpression yield:
+                    EmitYield(yield, wantsValue: true);
                     return;
 
                 case BoundLocalExpression local:
