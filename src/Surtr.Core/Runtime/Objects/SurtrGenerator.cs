@@ -118,15 +118,27 @@ namespace Surtr.Runtime.Objects
         /// The generator this one is delegating to, or <see langword="null"/>.
         /// </summary>
         /// <remarks>
-        /// Always <see langword="null"/> in phase 1, which has no <c>yield*</c>. It is declared now
-        /// because the resume path is where delegation lives: a <c>yield* inner</c> records the link
-        /// and suspends without a frame, and every later resume walks the chain to the innermost
-        /// generator instead of copying each intermediate frame in and out. Reserving the field and
-        /// writing the walk as a loop that happens never to iterate keeps phase 2 to an opcode and a
-        /// lowering rather than a reopening of this protocol. See
+        /// Set by <c>GenDelegate</c>, which is what <c>yield from</c> lowers to when the operand is
+        /// statically a generator (§3.7). The delegating generator suspends without a frame, and
+        /// every later resume walks this chain straight to the innermost generator that still has
+        /// one - so an N-deep delegation costs one frame copy per element rather than N. See
         /// <c>docs/Plan-Generadores.md</c> §11.3.
         /// </remarks>
         internal SurtrGenerator? Delegate;
+
+        /// <summary>
+        /// The generator delegating to this one, or <see langword="null"/>. The reverse of
+        /// <see cref="Delegate"/>.
+        /// </summary>
+        /// <remarks>
+        /// The link has to be two-way, and the reason is the moment a delegated-to generator ends.
+        /// Its frame is popped by the ordinary return path, which would hand the consumer "the
+        /// sequence is over" - true of the inner generator and false of the outer one, which still
+        /// has whatever follows its <c>yield from</c>. Something has to resume the delegator at
+        /// exactly that point, and only this field says who that is: the forward chain is walked
+        /// from the root, and by then the root is nowhere in reach.
+        /// </remarks>
+        internal SurtrGenerator? DelegatedBy;
 
         private readonly SurtrClassReference _typeReference;
 
@@ -191,10 +203,32 @@ namespace Surtr.Runtime.Objects
             get => State == SurtrGeneratorState.Exhausted;
         }
 
-        /// <summary>The value the last <c>yield</c> produced.</summary>
+        /// <summary>
+        /// The generator actually running this chain: this one, or the innermost it delegates to.
+        /// </summary>
+        /// <remarks>
+        /// A delegating generator has no frame and produces no elements of its own while the
+        /// delegation lasts, so every question about "the current element" has to be asked of the
+        /// generator that answered it. The chain is walked rather than the value copied upward
+        /// because a walk costs a pointer chase per level on the reads that ask, where copying
+        /// would cost one per level on every element.
+        /// </remarks>
+        internal SurtrGenerator Innermost
+        {
+            get
+            {
+                var generator = this;
+                while (generator.Delegate is { } delegated)
+                    generator = delegated;
+
+                return generator;
+            }
+        }
+
+        /// <summary>The value the last <c>yield</c> produced, wherever in a delegation it came from.</summary>
         public SurtrValue GetCurrent()
         {
-            return Current;
+            return Innermost.Current;
         }
 
         /// <summary>
@@ -208,8 +242,40 @@ namespace Surtr.Runtime.Objects
         /// </remarks>
         internal void Finish()
         {
+            var generator = this;
+
+            // Upward along the delegation chain, not just this one. `Finish` is called where a body
+            // died rather than ended - an exception walked out of it - and an exception that
+            // escapes a delegated-to generator escapes the `yield from` that reached it, so every
+            // generator waiting on this one is dead too. The ordinary end of a body does not come
+            // through here: it resumes its delegator instead.
+            while (generator is not null)
+            {
+                generator.State = SurtrGeneratorState.Exhausted;
+                generator.Current = SurtrValue.Null;
+
+                var slots = generator.Slots;
+                for (int i = 0; i < generator.SlotCount; i++)
+                    slots[i] = SurtrValue.Null;
+
+                generator.SlotCount = 0;
+
+                var parent = generator.DelegatedBy;
+                generator.Delegate = null;
+                generator.DelegatedBy = null;
+                generator = parent;
+            }
+        }
+
+        /// <summary>Marks this generator finished without touching whoever delegates to it.</summary>
+        /// <remarks>
+        /// The ordinary end of a body, as opposed to <see cref="Finish"/>'s abnormal one. A
+        /// delegator is not finished by its delegate running out - that is precisely the moment it
+        /// gets to continue - so the links are cut and the delegator left alone.
+        /// </remarks>
+        internal SurtrGenerator? FinishAndDetach()
+        {
             State = SurtrGeneratorState.Exhausted;
-            Delegate = null;
             Current = SurtrValue.Null;
 
             var slots = Slots;
@@ -217,6 +283,15 @@ namespace Surtr.Runtime.Objects
                 slots[i] = SurtrValue.Null;
 
             SlotCount = 0;
+
+            var parent = DelegatedBy;
+            Delegate = null;
+            DelegatedBy = null;
+
+            if (parent is not null)
+                parent.Delegate = null;
+
+            return parent;
         }
 
         internal override void VisitReferences(SurtrEntityMarker marker)
@@ -234,8 +309,9 @@ namespace Surtr.Runtime.Objects
 
             // Marked, not walked: a delegate is a registered entity of its own, so handing it to
             // the marker is what both keeps it alive and stops a delegation cycle from recursing
-            // forever. Null throughout phase 1, traced anyway so that turning delegation on in
-            // phase 2 is not silently a collector bug.
+            // forever. Only the forward link needs tracing - a delegator is reachable from whoever
+            // holds it, and marking backwards would keep an abandoned outer generator alive on the
+            // strength of the inner one it is waiting for.
             marker.Mark(Delegate);
         }
     }

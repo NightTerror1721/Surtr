@@ -531,6 +531,335 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(14, Int(runtime, "total", SurtrValue.CreateInt(7)));
         }
 
+        [Fact]
+        public void AnInterfaceCanDeclareAGenerator()
+        {
+            // §12.4's dividend: the stub is an ordinary method returning `generator<T>`, so a
+            // contract declares one by declaring that method, and an implementation fills the slot
+            // with its own stub. Nothing about suspension crosses the interface at all.
+            var runtime = Run(
+                "interface ISource {\n"
+                    + "    generator values(): int;\n"
+                    + "}\n"
+                    + "class UpTo : ISource {\n"
+                    + "    private let _n: int;\n"
+                    + "    public constructor(n: int) { this._n = n; }\n"
+                    + "    public generator values(): int {\n"
+                    + "        var i = 1;\n"
+                    + "        while (i <= this._n) { yield i; i = i + 1; }\n"
+                    + "    }\n"
+                    + "}\n"
+                    + "fun total(n: int): int {\n"
+                    + "    let s: ISource = UpTo(n);\n"
+                    + "    var sum = 0;\n"
+                    + "    for (x in s.values()) { sum = sum + x; }\n"
+                    + "    return sum;\n"
+                    + "}");
+
+            Assert.Equal(10, Int(runtime, "total", SurtrValue.CreateInt(4)));
+        }
+
+        [Fact]
+        public void AVirtualGeneratorDispatchesToTheOverride()
+        {
+            var runtime = Run(
+                "class Base {\n"
+                    + "    public virtual generator values(): int { yield 1; }\n"
+                    + "}\n"
+                    + "class Derived : Base {\n"
+                    + "    public override generator values(): int { yield 10; yield 20; }\n"
+                    + "}\n"
+                    + "fun total(): int {\n"
+                    + "    let b: Base = Derived();\n"
+                    + "    var sum = 0;\n"
+                    + "    for (x in b.values()) { sum = sum + x; }\n"
+                    + "    return sum;\n"
+                    + "}");
+
+            Assert.Equal(30, Int(runtime, "total"));
+        }
+
+        [Fact]
+        public void AnAbstractGeneratorNeedsNoBody()
+        {
+            var runtime = Run(
+                "abstract class Source {\n"
+                    + "    public abstract generator values(): int;\n"
+                    + "}\n"
+                    + "class Three : Source {\n"
+                    + "    public override generator values(): int { yield 3; yield 4; }\n"
+                    + "}\n"
+                    + "fun total(): int {\n"
+                    + "    let s: Source = Three();\n"
+                    + "    var sum = 0;\n"
+                    + "    for (x in s.values()) { sum = sum + x; }\n"
+                    + "    return sum;\n"
+                    + "}");
+
+            Assert.Equal(7, Int(runtime, "total"));
+        }
+
+        [Fact]
+        public void AGeneratorSatisfyingAContractIsStillWalkableAsAGenerator()
+        {
+            // The result of a contract-dispatched generator call is a `generator<int>` like any
+            // other, so the loop over it still takes the fast path rather than the interface one.
+            var runtime = Run(
+                "interface ISource {\n"
+                    + "    generator values(): int;\n"
+                    + "}\n"
+                    + "class One : ISource {\n"
+                    + "    public generator values(): int { yield 42; }\n"
+                    + "}\n"
+                    + "fun first(): int {\n"
+                    + "    let s: ISource = One();\n"
+                    + "    let g: generator<int> = s.values();\n"
+                    + "    var found = 0;\n"
+                    + "    for (x in g) { found = x; }\n"
+                    + "    return found;\n"
+                    + "}");
+
+            Assert.Equal(42, Int(runtime, "first"));
+        }
+
+        #endregion
+
+        #region Delegation
+
+        [Fact]
+        public void YieldFromAnotherGeneratorProducesItsElementsInOrder()
+        {
+            var runtime = Run(
+                "generator inner(): int { yield 2; yield 3; }\n"
+                    + "generator outer(): int {\n"
+                    + "    yield 1;\n"
+                    + "    yield from inner();\n"
+                    + "    yield 4;\n"
+                    + "}\n"
+                    + "fun digits(): int {\n"
+                    + "    var acc = 0;\n"
+                    + "    for (x in outer()) { acc = acc * 10 + x; }\n"
+                    + "    return acc;\n"
+                    + "}");
+
+            // The order is the whole point: 1, then the inner's 2 and 3, then 4.
+            Assert.Equal(1234, Int(runtime, "digits"));
+        }
+
+        [Fact]
+        public void DelegatingToAnEmptyGeneratorProducesNothingAndContinues()
+        {
+            var runtime = Run(
+                "generator nothing(): int { }\n"
+                    + "generator outer(): int {\n"
+                    + "    yield 1;\n"
+                    + "    yield from nothing();\n"
+                    + "    yield 2;\n"
+                    + "}\n"
+                    + "fun digits(): int {\n"
+                    + "    var acc = 0;\n"
+                    + "    for (x in outer()) { acc = acc * 10 + x; }\n"
+                    + "    return acc;\n"
+                    + "}");
+
+            Assert.Equal(12, Int(runtime, "digits"));
+        }
+
+        [Fact]
+        public void DelegationNestsToAnyDepth()
+        {
+            var runtime = Run(
+                "generator level3(): int { yield 3; }\n"
+                    + "generator level2(): int { yield 2; yield from level3(); }\n"
+                    + "generator level1(): int { yield 1; yield from level2(); yield 9; }\n"
+                    + "fun digits(): int {\n"
+                    + "    var acc = 0;\n"
+                    + "    for (x in level1()) { acc = acc * 10 + x; }\n"
+                    + "    return acc;\n"
+                    + "}");
+
+            Assert.Equal(1239, Int(runtime, "digits"));
+        }
+
+        [Fact]
+        public void ARecursiveWalkIsWhatDelegationIsFor()
+        {
+            // The motivating case from Plan-Generadores §11.3: an in-order traversal, which without
+            // delegation has no decent shape at all.
+            var runtime = Run(
+                "class Node {\n"
+                    + "    public let value: int;\n"
+                    + "    public let left: Node?;\n"
+                    + "    public let right: Node?;\n"
+                    + "    public constructor(value: int, left: Node?, right: Node?) {\n"
+                    + "        this.value = value;\n"
+                    + "        this.left = left;\n"
+                    + "        this.right = right;\n"
+                    + "    }\n"
+                    + "}\n"
+                    + "generator inorder(node: Node?): int {\n"
+                    + "    if (node == null) { return; }\n"
+                    + "    yield from inorder(node!!.left);\n"
+                    + "    yield node!!.value;\n"
+                    + "    yield from inorder(node!!.right);\n"
+                    + "}\n"
+                    + "fun walk(): int {\n"
+                    + "    let tree = Node(4, Node(2, Node(1, null, null), Node(3, null, null)), Node(5, null, null));\n"
+                    + "    var acc = 0;\n"
+                    + "    for (x in inorder(tree)) { acc = acc * 10 + x; }\n"
+                    + "    return acc;\n"
+                    + "}");
+
+            Assert.Equal(12345, Int(runtime, "walk"));
+        }
+
+        [Fact]
+        public void YieldFromAnArrayTakesTheLoopLowering()
+        {
+            // No frame to link to, so the delegation is the loop it means. It has to produce the
+            // same sequence the fast path would.
+            var runtime = Run(
+                "generator outer(): int {\n"
+                    + "    yield 1;\n"
+                    + "    yield from [2, 3];\n"
+                    + "    yield 4;\n"
+                    + "}\n"
+                    + "fun digits(): int {\n"
+                    + "    var acc = 0;\n"
+                    + "    for (x in outer()) { acc = acc * 10 + x; }\n"
+                    + "    return acc;\n"
+                    + "}");
+
+            Assert.Equal(1234, Int(runtime, "digits"));
+        }
+
+        [Fact]
+        public void YieldFromARangeAndAStringAlsoWork()
+        {
+            var runtime = Run(
+                "generator counted(): int {\n"
+                    + "    yield from 1..4;\n"
+                    + "}\n"
+                    + "fun total(): int {\n"
+                    + "    var sum = 0;\n"
+                    + "    for (x in counted()) { sum = sum + x; }\n"
+                    + "    return sum;\n"
+                    + "}");
+
+            Assert.Equal(6, Int(runtime, "total")); // 1 + 2 + 3
+        }
+
+        [Fact]
+        public void ADelegatedSequenceConvertsToTheDeclaredElement()
+        {
+            // The element of what is delegated to must reach the declaring generator's own element,
+            // by the same rules a plain `yield` converts by - here an int widening to a float.
+            var runtime = Run(
+                "generator ints(): int { yield 1; yield 2; }\n"
+                    + "generator floats(): float {\n"
+                    + "    yield from ints();\n"
+                    + "    yield 0.5;\n"
+                    + "}\n"
+                    + "fun total(): int {\n"
+                    + "    var sum = 0.0;\n"
+                    + "    for (x in floats()) { sum = sum + x; }\n"
+                    + "    return sum == 3.5 ? 1 : 0;\n"
+                    + "}");
+
+            Assert.Equal(1, Int(runtime, "total"));
+        }
+
+        [Fact]
+        public void ADelegatedGeneratorIsItselfSingleUse()
+        {
+            // Delegation does not exempt the inner generator from §12.2: it is walked once, by the
+            // delegation, and cannot then be walked again.
+            var runtime = Run(
+                "generator inner(): int { yield 1; }\n"
+                    + "generator outer(g: generator<int>): int { yield from g; }\n"
+                    + "fun twice(): int {\n"
+                    + "    let g = inner();\n"
+                    + "    var sum = 0;\n"
+                    + "    for (a in outer(g)) { sum = sum + a; }\n"
+                    + "    for (b in outer(g)) { sum = sum + b; }\n"
+                    + "    return sum;\n"
+                    + "}");
+
+            // The second delegation finds an exhausted generator and produces nothing, which is
+            // what §12.2 says a spent generator does when it is delegated to rather than iterated.
+            Assert.Equal(1, Int(runtime, "twice"));
+        }
+
+        [Fact]
+        public void DelegatingToOneselfIsRefused()
+        {
+            var runtime = Run(
+                "generator loop(g: generator<int>): int { yield from g; }\n"
+                    + "fun run(): int {\n"
+                    + "    var sum = 0;\n"
+                    + "    for (x in cycle()) { sum = sum + x; }\n"
+                    + "    return sum;\n"
+                    + "}\n"
+                    + "generator cycle(): int {\n"
+                    + "    yield from cycle2();\n"
+                    + "}\n"
+                    + "generator cycle2(): int {\n"
+                    + "    yield 1;\n"
+                    + "    yield 2;\n"
+                    + "}");
+
+            // The cycle-free case still walks; the guard is exercised at the VM level, where a
+            // running generator can actually be named.
+            Assert.Equal(3, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnExceptionInsideADelegatedGeneratorExhaustsTheWholeChain()
+        {
+            var runtime = Run(
+                "generator inner(): int { yield 1; let bad = 1 / 0; yield bad; }\n"
+                    + "generator outer(): int { yield from inner(); yield 9; }\n"
+                    + "fun total(): int {\n"
+                    + "    var sum = 0;\n"
+                    + "    for (x in outer()) { sum = sum + x; }\n"
+                    + "    return sum;\n"
+                    + "}");
+
+            Assert.Throws<SurtrExecutionException>(() => Int(runtime, "total"));
+        }
+
+        [Fact]
+        public void YieldFromOutsideAGeneratorIsRejected()
+            => AssertCode(Diagnose("fun f(): int { yield from [1]; return 0; }"), SurtrDiagnosticCode.InvalidYield);
+
+        [Fact]
+        public void YieldFromSomethingNotIterableIsRejected()
+            => AssertCode(
+                Diagnose("generator f(): int { yield from 3; }"),
+                SurtrDiagnosticCode.NotSupportedOnType);
+
+        [Fact]
+        public void YieldFromASequenceOfTheWrongElementIsRejected()
+            => AssertCode(
+                Diagnose("generator f(): int { yield from [\"a\", \"b\"]; }"),
+                SurtrDiagnosticCode.CannotConvert);
+
+        [Fact]
+        public void AVariableNamedFromCanStillBeYieldedInParentheses()
+        {
+            // `from` is contextual and only directly after `yield`, so it stays an ordinary name
+            // everywhere - including as a parameter of the generator doing the yielding.
+            var runtime = Run(
+                "generator echo(from: int): int { yield (from); }\n"
+                    + "fun total(n: int): int {\n"
+                    + "    var sum = 0;\n"
+                    + "    for (x in echo(n)) { sum = sum + x; }\n"
+                    + "    return sum;\n"
+                    + "}");
+
+            Assert.Equal(7, Int(runtime, "total", SurtrValue.CreateInt(7)));
+        }
+
         #endregion
 
         #region Exceptions

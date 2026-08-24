@@ -663,7 +663,46 @@ namespace Surtr.Compiler.Binding
                     "A 'yield' cannot appear inside a 'try': suspending there would leave a handler pending across a pause that nothing is obliged to end (§3.7).");
             }
 
-            return new BoundYieldStatement(syntax, BindConverted(syntax.Value, element));
+            if (!syntax.IsDelegating)
+                return new BoundYieldStatement(syntax, BindConverted(syntax.Value, element));
+
+            // `yield from xs` hands out every element of `xs`, so what has to convert to this
+            // generator's element is one step of `xs`, not `xs` itself. What counts as iterable is
+            // the same question `for-in` asks, answered by the same helper - a second definition
+            // here is exactly how the two would drift apart.
+            var sequence = BindExpression(syntax.Value);
+
+            if (!TryFindIterableElementType(sequence.Type.NonNullable, out var delegated))
+            {
+                if (!sequence.Type.NonNullable.IsError)
+                {
+                    Report(
+                        SurtrDiagnosticCode.NotSupportedOnType,
+                        syntax.Value.Span,
+                        $"'{sequence.Type.ToDisplayString()}' cannot be delegated to; it is not a built-in collection and does not satisfy IIterable.");
+                }
+
+                return new BoundYieldStatement(syntax, sequence, _factory.ErrorType);
+            }
+
+            // Classified here rather than at emit, like every other conversion: what converts is
+            // each element of the sequence, so there is no expression to hang a conversion node on,
+            // but the decision is still the binder's.
+            var elementConversion = delegated.IsError || element.IsError
+                ? Conversion.Identity
+                : _conversions.ClassifyImplicitOnly(delegated, element);
+
+            if (elementConversion.Kind == ConversionKind.None)
+            {
+                Report(
+                    SurtrDiagnosticCode.CannotConvert,
+                    syntax.Value.Span,
+                    $"'{_method.Name}' yields '{element.ToDisplayString()}', so it cannot delegate to a sequence of '{delegated.ToDisplayString()}'.");
+
+                elementConversion = Conversion.Identity;
+            }
+
+            return new BoundYieldStatement(syntax, sequence, delegated, elementConversion);
         }
 
         private BoundStatement BindBreak(BreakStatementSyntax syntax)

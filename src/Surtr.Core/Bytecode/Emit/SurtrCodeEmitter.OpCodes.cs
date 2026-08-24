@@ -1203,6 +1203,14 @@ namespace Surtr.Bytecode.Emit
         /// </remarks>
         public SurtrCodeEmitter Yield() => Simple(OpCode.Yield, 1, 0);
 
+        /// <summary>Emits <see cref="OpCode.GenDelegate"/>.</summary>
+        /// <remarks>
+        /// Consumes the inner generator and produces nothing, like <see cref="Yield"/> and for the
+        /// same reason: what it leaves behind is a suspended frame, not a value. Control comes back
+        /// at the next instruction once the inner generator runs out.
+        /// </remarks>
+        public SurtrCodeEmitter GenDelegate() => Simple(OpCode.GenDelegate, 1, 0);
+
         #endregion
 
         #region Return Operations

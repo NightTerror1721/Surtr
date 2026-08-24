@@ -1358,9 +1358,86 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private void EmitYield(BoundYieldStatement yield)
         {
+            if (yield.IsDelegating)
+            {
+                EmitYieldFrom(yield);
+                return;
+            }
+
             Expression(yield.Value);
             BoxIfMultiSlot(yield.Value.Type);
             Code.Yield();
+        }
+
+        /// <summary>
+        /// Emits a <c>yield from</c>: every element of a sequence, in order (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Two lowerings, picked by the operand's static type, and the split is the same one §4.2
+        /// makes for <c>for-in</c>. A <c>generator&lt;T&gt;</c> becomes a <b>link</b>: the
+        /// delegating generator suspends without a frame and every later resume walks straight to
+        /// the innermost one, so an N-deep chain costs one frame copy per element rather than N.
+        /// Anything else becomes the <b>loop</b> the delegation means - <c>for (x in it) yield x;</c>
+        /// written out - because an array or a user cursor has no frame to link to.
+        /// </para>
+        /// <para>
+        /// The loop is emitted here rather than lowered in the binder for the same reason
+        /// <c>for-in</c> is: which of the two applies is a fact about representation, and the binder
+        /// deals in types.
+        /// </para>
+        /// </remarks>
+        private void EmitYieldFrom(BoundYieldStatement yield)
+        {
+            var sequence = yield.Value.Type.NonNullable;
+
+            // The link hands the inner generator's own values straight to the consumer, so it is
+            // only available when they need no changing on the way. An `int` sequence delegated to
+            // by a `float` generator has to convert each element, which is the loop's job.
+            if (sequence.TypeKind == TypeSymbolKind.Generator
+                && yield.DelegatedConversion.Kind == ConversionKind.Identity)
+            {
+                Expression(yield.Value);
+                Code.GenDelegate();
+                return;
+            }
+
+            // The general path. Deliberately built from the pieces a `for-in` over the same
+            // expression would emit, so a sequence that is delegated to and one that is looped over
+            // cannot disagree about what iterating it means.
+            var iterate = ContractMethod(SurtrBuiltIns.IIterable, "iterate");
+            var moveNext = ContractMethod(SurtrBuiltIns.IIterator, "moveNext");
+            var current = ContractMethod(SurtrBuiltIns.IIterator, MemberNames.Getter("current"));
+
+            var cursor = _method.DeclareLocal("$delegated");
+
+            Expression(yield.Value);
+            BoxIfMultiSlot(yield.Value.Type);
+            Code.CallInterface(iterate);
+            EmitStoreLocal(cursor);
+
+            var top = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.MarkLabel(top);
+            EmitLoadLocal(cursor);
+            Code.CallInterface(moveNext);
+            Code.JumpIfFalse(end);
+
+            EmitLoadLocal(cursor);
+            Code.CallInterface(current);
+            Unerase(yield.DelegatedElementType!);
+
+            // Each element converts to the declaring generator's own element, by the conversion the
+            // binder already classified for exactly this loop.
+            if (yield.DelegatedConversion.Kind != ConversionKind.Identity)
+                EmitConversionTail(yield.DelegatedConversion, yield.DelegatedElementType!, _symbol.YieldType!);
+
+            BoxIfMultiSlot(_symbol.YieldType!);
+            Code.Yield();
+
+            Code.Jump(top);
+            Code.MarkLabel(end);
         }
 
         private void EmitReturn(BoundReturnStatement @return)

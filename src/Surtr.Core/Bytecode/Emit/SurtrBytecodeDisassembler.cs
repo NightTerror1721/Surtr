@@ -941,6 +941,7 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.GenResume:
                 case OpCode.GenCurrent:
                 case OpCode.Yield:
+                case OpCode.GenDelegate:
                 case OpCode.BoxInt:
                 case OpCode.BoxFloat:
                 case OpCode.BoxBool:

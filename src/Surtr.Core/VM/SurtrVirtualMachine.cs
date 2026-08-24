@@ -537,16 +537,10 @@ namespace Surtr.VM
         /// <returns><see langword="true"/> if the body yielded a value; <see langword="false"/> if it finished.</returns>
         internal bool ResumeGenerator(SurtrGenerator generator)
         {
+            // Straight to the innermost generator that still has a frame, exactly as GenResume
+            // does: a delegating generator is suspended without one.
             while (generator.Delegate is { } delegated)
-            {
-                if (delegated.State == SurtrGeneratorState.Exhausted)
-                {
-                    generator.Delegate = null;
-                    break;
-                }
-
                 generator = delegated;
-            }
 
             if (generator.State == SurtrGeneratorState.Exhausted)
                 return false;
@@ -866,6 +860,11 @@ namespace Surtr.VM
             SurtrClosure? pendingClosure = null;
             int pendingArguments = 0;
             int pendingResults = 0;
+
+            // The operand of the shared generator-entry sequence, which three sites reach: a
+            // resume, a delegation, and a delegated-to body ending. All three enter a frame at
+            // `sp` with the answer slot at `sp - 1`, so they share one copy of the setup.
+            SurtrGenerator pendingGenerator = null!;
 
         LoadFrame:
             {
@@ -3272,15 +3271,9 @@ namespace Surtr.VM
                     int expected = finished.ExpectedResults;
 
                     // This is how a generator body ends: `return;` or falling off the end, both of
-                    // which the compiler emits as ReturnVoid. The resumer left a slot below this
-                    // frame for the answer, and `false` is what "the body finished" means there -
-                    // the mirror of what Yield writes. Ordinary frames never carry a generator, so
-                    // this is one null test on a field already in cache.
-                    if (finished.Generator is { } ended)
-                    {
-                        ended.Finish();
-                        sp[-1] = SurtrValue.TagMaskBool;
-                    }
+                    // which the compiler emits as ReturnVoid. Ordinary frames never carry a
+                    // generator, so this is one null test on a field already in cache.
+                    var ended = finished.Generator;
 
                     // A dead frame must not keep its chunk, method, closure or generator alive.
                     finished.Chunk = null;
@@ -3289,6 +3282,28 @@ namespace Surtr.VM
                     finished.Generator = null;
                     roots[depth + 1] = 0;
                     _frameCount = depth;
+
+                    if (ended is not null)
+                    {
+                        // The resumer left a slot below this frame for the answer, and `false` is
+                        // what "the body finished" means there - the mirror of what Yield writes.
+                        var delegator = ended.FinishAndDetach();
+
+                        if (delegator is null)
+                        {
+                            sp[-1] = SurtrValue.TagMaskBool;
+                        }
+                        else
+                        {
+                            // Unless somebody was delegating to it, in which case the sequence is
+                            // not over at all: what ran out is the inner generator, and the outer
+                            // still has whatever follows its `yield from`. It takes the frame the
+                            // inner just vacated and answers into the same slot, so the consumer
+                            // never learns that a delegation happened.
+                            pendingGenerator = delegator;
+                            goto EnterGeneratorFrame;
+                        }
+                    }
 
                     if (depth == entryDepth)
                     {
@@ -3704,20 +3719,12 @@ namespace Surtr.VM
                 {
                     var resumed = (SurtrGenerator)entities[(SurtrRef)(*(sp - 1))]!;
 
-                    // The delegation chain, which phase 1 never builds: `yield*` records a link and
-                    // suspends without a frame, so a resume walks to the innermost generator that
-                    // still has one. Written as a loop now so that turning delegation on is a new
-                    // opcode rather than a change to this sequence. See Plan-Generadores §11.3.
+                    // Straight to the innermost generator that still has a frame. A delegating
+                    // generator is suspended with no frame of its own (GenDelegate), so walking
+                    // past it is what makes an N-deep `yield from` chain cost one frame copy per
+                    // element rather than N. See Plan-Generadores §11.3.
                     while (resumed.Delegate is { } delegated)
-                    {
-                        if (delegated.State == SurtrGeneratorState.Exhausted)
-                        {
-                            resumed.Delegate = null;
-                            break;
-                        }
-
                         resumed = delegated;
-                    }
 
                     if (resumed.State == SurtrGeneratorState.Exhausted)
                     {
@@ -3735,81 +3742,85 @@ namespace Surtr.VM
                     // The generator's own slot stays where it is and becomes the result slot: the
                     // body's frame starts one above it, and whichever way the body leaves - a
                     // `yield` or the end - overwrites it with the answer. That is also what keeps
-                    // the generator reachable from the data stack for the whole resume, on top of
-                    // the roots entry below.
-                    int resumeDepth = _frameCount;
-                    if (resumeDepth == maxDepth)
-                    {
-                        current.IP = ip;
-                        _sp = sp;
-                        throw CallStackOverflow(maxDepth);
-                    }
-
-                    int generatorLocals = resumed.LocalCount;
-                    int liveSlots = resumed.SlotCount;
-
-                    if (sp + generatorLocals + resumed.MaxStackSize > stackLimit)
-                    {
-                        current.IP = ip;
-                        _sp = sp;
-                        throw DataStackOverflow();
-                    }
-
-                    // The whole of strategy B in four lines: the frame is a flat run of untyped
-                    // slots, so restoring one is a copy back into the stack at whatever base is
-                    // free now. Locals keep their indices because every access is frameBase-relative,
-                    // which is what makes a frame relocatable at all.
-                    {
-                        var slots = resumed.Slots;
-                        SurtrRawValue* target = sp;
-                        for (int i = 0; i < liveSlots; i++)
-                            target[i] = slots[i].Raw;
-
-                        // Above the live width sits either a local the body has not written yet or
-                        // operand space; both have to read as a zeroed slot rather than as whatever
-                        // the last call left on the stack, or a collection would retain it.
-                        for (int i = liveSlots; i < generatorLocals; i++)
-                            target[i] = 0;
-                    }
-
+                    // the root generator reachable from the data stack for the whole resume,
+                    // whatever the chain does underneath.
                     current.IP = ip;
+                    pendingGenerator = resumed;
+                    goto EnterGeneratorFrame;
+                }
 
-                    var generatorChunk = resumed.Chunk;
-                    byte* generatorCodeBase = generatorChunk.Code.Pointer;
+                case OpCode.GenDelegate:
+                {
+                    var inner = (SurtrGenerator)entities[(SurtrRef)(*(sp - 1))]!;
+                    var outer = current.Generator!;
+                    sp--;
 
-                    ref SurtrCallFrame generatorFrame = ref frames[resumeDepth];
-                    generatorFrame.Base = sp;
-                    generatorFrame.CodeBase = generatorCodeBase;
-                    generatorFrame.IP = generatorCodeBase + resumed.ResumeOffset;
-                    generatorFrame.Chunk = generatorChunk;
-                    generatorFrame.Method = resumed.Method;
-                    generatorFrame.Closure = null;
-                    generatorFrame.Generator = resumed;
-                    generatorFrame.LocalCount = generatorLocals;
-                    generatorFrame.ArgumentCount = resumed.ArgumentCount;
+                    // Delegating to something already finished produces nothing at all, so the
+                    // outer simply carries on. Handled here rather than by suspending and being
+                    // resumed straight back, which would have to explain a `false` that does not
+                    // mean what a `false` means everywhere else.
+                    if (inner.State == SurtrGeneratorState.Exhausted)
+                        goto Dispatch;
 
-                    // Nothing is returned through the frame protocol: a `yield` writes its value
-                    // onto the generator and GenCurrent reads it back, so the resumer wants no
-                    // result slot and ReturnVoid at the end of the body must not push one either.
-                    generatorFrame.ExpectedResults = 0;
+                    // Covers `yield from self` and any longer cycle: a running generator's frame is
+                    // live on this stack, and entering it again would copy a stale frame over it.
+                    if (inner.State == SurtrGeneratorState.Running)
+                    {
+                        current.IP = ip;
+                        _sp = sp;
+                        throw GeneratorAlreadyRunning();
+                    }
 
-                    // A generator body captures nothing, so the roots slot its frame would have
-                    // used for a closure is free for the generator itself - which is what keeps it
-                    // alive across the collection its own body may trigger.
-                    roots[resumeDepth + 1] = SurtrValue.TagMaskReference | (uint)resumed.GetSurtrReference();
+                    // The outer suspends exactly as a `yield` suspends it, minus the value: its
+                    // frame is copied out and popped, and it resumes after this instruction once
+                    // the inner runs out.
+                    {
+                        SurtrRawValue* outerStart = current.Base;
+                        int outerLive = (int)(sp - outerStart);
 
-                    resumed.State = SurtrGeneratorState.Running;
-                    _frameCount = resumeDepth + 1;
+                        var outerSlots = outer.Slots;
+                        for (int i = 0; i < outerLive; i++)
+                            outerSlots[i] = SurtrValue.FromRaw(outerStart[i]);
 
-                    // The operand stack of the resumed frame starts above its locals, and anything
-                    // it had pending was restored by the copy above.
-                    _sp = sp + (liveSlots > generatorLocals ? liveSlots : generatorLocals);
-                    goto LoadFrame;
+                        for (int i = outerLive; i < outer.SlotCount; i++)
+                            outerSlots[i] = SurtrValue.Null;
+
+                        outer.SlotCount = outerLive;
+                        outer.ResumeOffset = (int)(ip - current.CodeBase);
+                        outer.State = SurtrGeneratorState.Suspended;
+                        outer.Delegate = inner;
+                        inner.DelegatedBy = outer;
+
+                        int outerDepth = _frameCount - 1;
+                        ref SurtrCallFrame parked = ref frames[outerDepth];
+
+                        sp = outerStart;
+                        parked.Chunk = null;
+                        parked.Method = null;
+                        parked.Closure = null;
+                        parked.Generator = null;
+                        roots[outerDepth + 1] = 0;
+                        _frameCount = outerDepth;
+                    }
+
+                    // The inner takes the frame the outer just vacated, answering into the very
+                    // same slot - which is why a delegated element is indistinguishable from one
+                    // the outer yielded itself. No IP to publish: the frame that had one is gone,
+                    // and the frames still below it kept theirs.
+                    pendingGenerator = inner;
+                    goto EnterGeneratorFrame;
                 }
 
                 case OpCode.GenCurrent:
                 {
                     var read = (SurtrGenerator)entities[(SurtrRef)(*(sp - 1))]!;
+
+                    // The element belongs to whichever generator actually produced it, which under
+                    // delegation is not the one the consumer holds. Following the same chain the
+                    // resume followed is what keeps the two answering about the same `yield`.
+                    while (read.Delegate is { } delegated)
+                        read = delegated;
+
                     *(sp - 1) = read.Current.Raw;
                     goto Dispatch;
                 }
@@ -3894,6 +3905,81 @@ namespace Surtr.VM
         // register spills. The branch on ImplKind is why there is no separate opcode for calling
         // host code - a virtual call can land on a native override, so the test has to exist here
         // regardless, and it predicts perfectly at any one call site.
+
+        // Entering a generator's frame, reached by goto from the three sites that do it: a resume,
+        // a delegation, and a delegated-to body ending. All three arrive with `sp` at the frame
+        // base and the answer slot at `sp - 1`, and all three have already published `current.IP`.
+        // Shared the same way the call sequences are - by jumping, not by calling - because the
+        // alternative is three copies of a frame setup that has to stay in step.
+        EnterGeneratorFrame:
+            {
+                var entering = pendingGenerator;
+
+                int resumeDepth = _frameCount;
+                if (resumeDepth == maxDepth)
+                {
+                    _sp = sp;
+                    throw CallStackOverflow(maxDepth);
+                }
+
+                int generatorLocals = entering.LocalCount;
+                int liveSlots = entering.SlotCount;
+
+                if (sp + generatorLocals + entering.MaxStackSize > stackLimit)
+                {
+                    _sp = sp;
+                    throw DataStackOverflow();
+                }
+
+                // The whole of strategy B in four lines: a frame is a flat run of untyped slots, so
+                // restoring one is a copy back into the stack at whatever base is free now. Locals
+                // keep their indices because every access is frameBase-relative, which is what
+                // makes a frame relocatable at all.
+                {
+                    var slots = entering.Slots;
+                    SurtrRawValue* target = sp;
+                    for (int i = 0; i < liveSlots; i++)
+                        target[i] = slots[i].Raw;
+
+                    // Above the live width sits either a local the body has not written yet or
+                    // operand space; both have to read as a zeroed slot rather than as whatever the
+                    // last call left on the stack, or a collection would retain it.
+                    for (int i = liveSlots; i < generatorLocals; i++)
+                        target[i] = 0;
+                }
+
+                var generatorChunk = entering.Chunk;
+                byte* generatorCodeBase = generatorChunk.Code.Pointer;
+
+                ref SurtrCallFrame generatorFrame = ref frames[resumeDepth];
+                generatorFrame.Base = sp;
+                generatorFrame.CodeBase = generatorCodeBase;
+                generatorFrame.IP = generatorCodeBase + entering.ResumeOffset;
+                generatorFrame.Chunk = generatorChunk;
+                generatorFrame.Method = entering.Method;
+                generatorFrame.Closure = null;
+                generatorFrame.Generator = entering;
+                generatorFrame.LocalCount = generatorLocals;
+                generatorFrame.ArgumentCount = entering.ArgumentCount;
+
+                // Nothing is returned through the frame protocol: a `yield` writes its value onto
+                // the generator and GenCurrent reads it back, so the resumer wants no result slot
+                // and ReturnVoid at the end of the body must not push one either.
+                generatorFrame.ExpectedResults = 0;
+
+                // A generator body captures nothing, so the roots slot its frame would have used
+                // for a closure is free for the generator itself - which is what keeps it alive
+                // across the collection its own body may trigger.
+                roots[resumeDepth + 1] = SurtrValue.TagMaskReference | (uint)entering.GetSurtrReference();
+
+                entering.State = SurtrGeneratorState.Running;
+                _frameCount = resumeDepth + 1;
+
+                // The operand stack of the resumed frame starts above its locals, and anything it
+                // had pending was restored by the copy above.
+                _sp = sp + (liveSlots > generatorLocals ? liveSlots : generatorLocals);
+                goto LoadFrame;
+            }
 
         InvokeResolved:
             if (pendingMethod.ImplKind == SurtrMethodImplKind.Native)

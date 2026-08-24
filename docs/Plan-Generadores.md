@@ -1,10 +1,10 @@
 # Plan-Generadores — Investigación: funciones generadoras (`generator`) para Surtr
 
-> **Estado:** fase 1 implementada (§13). Recoge el estudio comparado de generadores en otros
-> lenguajes, el diseño para Surtr — palabra clave `generator` como introductora de miembro, tipo
-> built-in `generator<T>` hermano de `SurtrClosure` — las tres estrategias sobre la VM propia con
-> su recomendación, la evaluación del encadenado (§11), las decisiones cerradas (§12) — que ganan
-> sobre §3, §5 y §6 — y lo que la fase 1 dejó construido y medido (§13).
+> **Estado:** fases 1 y 2 implementadas (§13, §14). Recoge el estudio comparado de generadores en
+> otros lenguajes, el diseño para Surtr — palabra clave `generator` como introductora de miembro,
+> tipo built-in `generator<T>` hermano de `SurtrClosure` — las tres estrategias sobre la VM propia
+> con su recomendación, la evaluación del encadenado (§11), las decisiones cerradas (§12) — que
+> ganan sobre §3, §5 y §6 — y lo construido y medido en cada fase (§13, §14).
 
 ---
 
@@ -743,3 +743,78 @@ las dos obligaciones de §1.11 — está en `Compiler-Plan.md` §10.1.
   es una optimización medible, no una corrección pendiente.
 - **Las corrutinas completas de §12.8** — `send`/`throw`/`close`, `yield` como expresión, `return`
   con valor —, que son fase 3 y arrastran el hueco de cierre determinista que Surtr no tiene.
+
+---
+
+## 14. Fase 2: implementada
+
+> Delegación y generadores en interfaces. Lo que sigue es lo que existe en el árbol.
+
+### 14.1 `yield from`
+
+Escrito `yield from expr;` — la forma de Python — con `from` **contextual**, reconocida solo
+directamente detrás de `yield`. Reservarla habría sido carísimo para una palabra tan atractiva como
+identificador: el propio ejemplo de §3.7 escribe `countdown(from: int)`. El coste es que una
+variable llamada `from` no se puede ceder desnuda; `yield (from);` es como se dice.
+
+**Dos lowerings, elegidos por el tipo estático del operando**, como anticipaba §11.4:
+
+| Operando | Lowering |
+|---|---|
+| `generator<T>`, con conversión de elemento identidad | `GenDelegate` (`0xFB`): enlace |
+| cualquier otro iterable, o cualquier conversión de elemento | el bucle `for (x in it) { yield x; }` escrito |
+
+La segunda fila creció respecto a §11.4: una conversión de elemento — `yield from ints()` dentro de
+un `generator<float>` — tampoco puede tomar el enlace, porque un enlace entrega los valores del
+generador interno **tal cual** al consumidor, sin nada en medio. El binder clasifica esa conversión
+como cualquier otra, aunque no haya expresión donde colgar el nodo, y el emisor la aplica en el
+bucle.
+
+**El enlace tuvo que ser de ida y vuelta**, que es lo que §11.3 no había previsto. El momento
+delicado no es delegar sino *terminar de delegar*: cuando el generador interno acaba, el camino de
+retorno ordinario diría al consumidor «la secuencia terminó» — cierto del interno y falso del
+externo, que todavía tiene lo que venga después de su `yield from`. Alguien tiene que reanudar al
+delegador justo ahí, y la cadena hacia delante se recorre desde la raíz, que a esas alturas no está
+al alcance. De ahí `SurtrGenerator.DelegatedBy`, y de ahí que `ReturnVoid` entre al frame del
+delegador en la misma base y con la misma ranura de respuesta.
+
+Tres sitios entran ahora a un frame de generador — reanudar, delegar y terminar una delegación — y
+los tres comparten un bloque `EnterGeneratorFrame` alcanzable por `goto`, igual que las secuencias
+de llamada comparten `InvokeResolved`.
+
+### 14.2 Generadores en interfaces
+
+Salieron con **una línea** en el binder: relajar «un generador necesita cuerpo» a «salvo que su
+despacho sea abstracto». §12.4 lo había prometido y cumplió — el stub es un método ordinario que
+devuelve `generator<T>`, así que una interfaz declara un generador declarando ese método y una
+implementación llena la ranura con su propio stub. Nada de la suspensión cruza la interfaz.
+
+Lo mismo cubrió `virtual`/`abstract`/`override` sobre generadores en clases, que §12.4 daba por
+gratis y nadie había probado.
+
+### 14.3 Lo que midió el banco
+
+50.000 elementos, `-c Release`, mediana de 7:
+
+| Caso | surtr ms | objetos | vs LuaJIT | vs C# |
+|---|---|---|---|---|
+| `genYield` (sin delegación) | 1.43 | 1 | 0.8× | 11.1× |
+| `genDelegate` (tres niveles) | **1.54** | **3** | **2.3×** | 3.6× |
+
+**Tres niveles de `yield from` cuestan un 7 % más que ninguno**, que es la afirmación de §11.3
+medida: solo el generador más interno tiene frame, así que un nivel extra es un salto de puntero,
+no una copia de frame. Los objetos son tres — los tres generadores — no tres por elemento.
+
+Es además **el único caso del banco donde Surtr gana a LuaJIT**, y por la razón que da la tabla de
+§11.2: ni LuaJIT ni C# tienen forma de delegación, así que cada nivel escribe su bucle y paga por
+elemento. Se ve en la columna de C#, que pasa de 11.1× por delante en `genYield` a 3.6× en
+`genDelegate` — el anidamiento le cuesta a su máquina de estados lo que a Surtr no le cuesta.
+
+### 14.4 Lo que sigue abierto
+
+- **`yield` dentro de `try`** (§5.4), que sigue esperando a la semántica de cierre determinista.
+- **Las corrutinas completas de §12.8** — `send`/`throw`/`close`, `yield` como expresión, `return`
+  con valor —, fase 3, y con ellas el hueco de cierre que Surtr no tiene.
+- **Los doce iteradores de la stdlib**, que ahora sí podrían reescribirse: `FlatMapIterator` y
+  `ChainIterator` son delegación pura y son los que §11.5 señalaba.
+- **Un `yield` de valor multi-slot sigue boxeando**, en los dos caminos.

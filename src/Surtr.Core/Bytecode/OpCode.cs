@@ -46,8 +46,8 @@ namespace Surtr.Bytecode
     /// </para>
     /// <para>
     /// <b>New opcodes take a free value at the end and are never given one already in use.</b>
-    /// 0x00 through 0xFA are assigned, apart from the six retired values 0x2C-0x2F and 0xAA-0xAB;
-    /// 0xFB through 0xFF are free. Reusing a retired
+    /// 0x00 through 0xFB are assigned, apart from the six retired values 0x2C-0x2F and 0xAA-0xAB;
+    /// 0xFC through 0xFF are free. Reusing a retired
     /// value would make an old module silently execute a new instruction, so a retired value stays
     /// retired. Changing how a module is *framed*, rather than what runs inside it, is what
     /// <c>SurtrModuleImage.FormatVersion</c> is for.
@@ -1191,6 +1191,22 @@ namespace Surtr.Bytecode
         /// <see cref="GenResume"/>; the compiler guarantees that by never emitting it anywhere else.
         /// </remarks>
         Yield = 0xFA,
+
+        /// <summary>Delegates the executing generator to another one, and resumes that one now.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., inner -&gt; </c> (the outer frame is suspended, and the inner one entered)<br/>
+        /// Notes: what <c>yield from</c> lowers to when the operand is statically a generator. The
+        /// outer generator's frame is copied out once and a link to <c>inner</c> recorded on it;
+        /// from then on a resume walks the chain straight to the innermost generator that still has
+        /// a frame, so an N-deep delegation costs one frame copy per element rather than N. When
+        /// the inner is exhausted the link is cleared and the outer continues after this
+        /// instruction. Delegating to a generator that is already running - directly or around a
+        /// cycle - traps with <c>InvalidOperationException</c>, which is what the <c>Running</c>
+        /// state is for. Any other iterable is lowered to a loop of ordinary <see cref="Yield"/>s
+        /// instead, since there is no frame to link to.
+        /// </remarks>
+        GenDelegate = 0xFB,
         #endregion
 
 

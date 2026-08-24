@@ -366,15 +366,29 @@ namespace Surtr.Compiler.Syntax.Ast
     /// </remarks>
     public sealed class YieldStatementSyntax : StatementSyntax
     {
-        /// <summary>The element handed out.</summary>
+        /// <summary>The element handed out, or the sequence delegated to when <see cref="IsDelegating"/>.</summary>
         public ExpressionSyntax Value { get; }
+
+        /// <summary>
+        /// True for <c>yield from expr;</c> — every element of <see cref="Value"/> in order,
+        /// rather than <see cref="Value"/> itself (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// A flag rather than a node of its own: both forms hand elements out of the same generator
+        /// and are checked against the same declared element type, so everything between here and
+        /// the emitter treats them alike. Only code generation cares, and only because delegating to
+        /// another <em>generator</em> can be a link instead of a loop.
+        /// </remarks>
+        public bool IsDelegating { get; }
 
         /// <summary>Initializes a yield statement.</summary>
         /// <param name="span">The source the statement covers.</param>
-        /// <param name="value">The element handed out.</param>
-        public YieldStatementSyntax(SourceSpan span, ExpressionSyntax value) : base(span)
+        /// <param name="value">The element handed out, or the sequence delegated to.</param>
+        /// <param name="isDelegating">True for the <c>yield from</c> form.</param>
+        public YieldStatementSyntax(SourceSpan span, ExpressionSyntax value, bool isDelegating = false) : base(span)
         {
             Value = value;
+            IsDelegating = isDelegating;
         }
     }
 

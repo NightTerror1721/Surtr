@@ -8,13 +8,13 @@ documentation on each member; this file is that content laid out for reading, pl
 only make sense across the whole set. `docs/VM-Plan.md` has the *why* behind the interpreter's
 shape, and `docs/Module-Format.md` describes the file these bytes live in.
 
-**245 opcodes are defined, spanning `0x00` through `0xFA`.** Six values inside that span —
+**246 opcodes are defined, spanning `0x00` through `0xFB`.** Six values inside that span —
 `0x2C`–`0x2F` (the old `Ldg`/`LdgX`/`Stg`/`StgX`) and `0xAA`–`0xAB` (the old
 `CallGlobalNative`/`CallGlobalNativeX`) — are **retired**: they used to cover the host-globals
 mechanism, which is gone now that a `native` member (module-level or on a class) is an ordinary
 member reached through the same tables and call opcodes as any other. A retired value is never
 reused — reusing one would make an old module silently execute a different instruction — so those
-six numbers simply have no opcode and never will. The 5 values `0xFB`–`0xFF`, plus the six retired
+six numbers simply have no opcode and never will. The 4 values `0xFC`–`0xFF`, plus the six retired
 ones, are what is free.
 
 ---
@@ -625,3 +625,4 @@ A generator is reached through a **stub**: the compiler emits two methods per de
 | `0xF8` | `GenResume` | `opcode(1)` · 1 byte | `..., generator -> ..., bool` | Resumes a generator until its next `yield` or its end. `true` if the body yielded, in which case the value is held on the generator and `GenCurrent` reads it; `false` if it finished. The frame is rebuilt in the running machine rather than through a nested run, so a resume costs a block copy and a frame entry. The generator's own stack slot becomes the result slot, which is also what keeps it reachable for the whole resume. Resuming one that is already running traps with `InvalidOperationException`; resuming an exhausted one answers `false`. |
 | `0xF9` | `GenCurrent` | `opcode(1)` · 1 byte | `..., generator -> ..., value` | Reads the value a generator's last `yield` produced. Only meaningful after a `GenResume` that answered `true`. Reads the same field the native `current` accessor reads, so the two paths cannot disagree about what the last element was. |
 | `0xFA` | `Yield` | `opcode(1)` · 1 byte | `..., value -> ` (the frame is suspended, not popped to a result) | Suspends the executing generator, handing back one value. Copies the live frame into the generator, records where to resume, writes the answer into the slot the resumer left below the frame, and returns control to whoever resumed it. To the resumer this behaves exactly like a return, which is what lets one `Yield` serve both the compiled fast path and a resume driven by host code. A value wider than one slot is boxed by the compiler on the way in, so this always moves exactly one slot. Legal only in a body reached through a resume; the compiler guarantees that by never emitting it anywhere else. |
+| `0xFB` | `GenDelegate` | `opcode(1)` · 1 byte | `..., inner -> ` (the outer frame is suspended, and the inner one entered) | Delegates the executing generator to another one, and resumes that one now — what `yield from` lowers to when the operand is statically a generator. The outer generator's frame is copied out once and a link to `inner` recorded on it; from then on a resume walks the chain straight to the innermost generator that still has a frame, so an N-deep delegation costs one frame copy per element rather than N. When the inner ends, the return path finds the link and enters the outer's frame at the very same base and answer slot, so a consumer never learns a delegation happened. Delegating to an exhausted generator produces nothing and simply continues; delegating to a running one — directly or around a cycle — traps with `InvalidOperationException`. Any other iterable is lowered to a loop of ordinary `Yield`s instead, since there is no frame to link to. |

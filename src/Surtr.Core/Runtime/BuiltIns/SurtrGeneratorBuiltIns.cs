@@ -104,10 +104,10 @@ namespace Surtr.Runtime.BuiltIns
         /// <c>current</c>: the value the last <c>yield</c> produced.
         /// </summary>
         /// <remarks>
-        /// Reads the same field <c>GenCurrent</c> reads, which is what keeps the two paths from
-        /// ever disagreeing about what the last element was.
+        /// Reads the same field <c>GenCurrent</c> reads, through the same delegation chain, which is
+        /// what keeps the two paths from ever disagreeing about what the last element was.
         /// </remarks>
         private static int Current(SurtrCallArguments arguments)
-            => arguments.Return(arguments.GetUnchecked<SurtrGenerator>(0).Current);
+            => arguments.Return(arguments.GetUnchecked<SurtrGenerator>(0).GetCurrent());
     }
 }

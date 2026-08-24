@@ -21,7 +21,7 @@ This file is the orientation; each of these goes deep on one thing. Read the rel
 |---|---|
 | `docs/Language-Syntax.md` | The surface language, and the reasoning behind each choice. §1.2 is the authoritative reserved word list, §5.7 the operator table. |
 | `docs/Runtime-Model.md` | How classes, methods, properties, enums, interfaces and modules fit together, what linking builds, and what the compiler owes the runtime. |
-| `docs/Opcodes.md` | All 245 opcodes by family, with values, encodings and stack effects. Mirrors `OpCode.cs`, which stays the source of truth. |
+| `docs/Opcodes.md` | All 246 opcodes by family, with values, encodings and stack effects. Mirrors `OpCode.cs`, which stays the source of truth. |
 | `docs/Module-Format.md` | The `.surtrc` byte layout, and what is bound at load rather than written. |
 | `docs/VM-Plan.md` | The interpreter's design decisions, the remaining gaps, and the ordered plan. |
 | `docs/Plan-Generadores.md` | Generators: the comparative study, the three suspension strategies and why the frame copy won (§4), the closed design decisions (§12, which override §3/§5/§6), the `yield*` evaluation (§11) and what phase 1 built and measured (§13). |
@@ -172,6 +172,8 @@ Members are native methods linked by function pointer via `SurtrBuiltInTypeBuild
 
 **`generator<T>` is the one built-in that implements both `IIterable<T>` and `IIterator<T>`**, and its `iterate()` hands back the receiver rather than a cursor. That follows from the object being single-use: a generator holds one in-progress walk, so a separate cursor could only ever hold the position it already has. Walking one that has already started raises `InvalidOperationException` instead of iterating nothing — restarting means calling the generator *function* again, which builds a fresh one. `docs/Plan-Generadores.md` §12.2 has the reasoning; the short version is that the object follows JavaScript and the function follows C#, and the pair is what makes `for (x in countdown(5))` always walk the whole sequence.
 
+**`yield from` is a link, not a loop** (§3.7). Delegating to another generator suspends the delegating one *without a frame* and records `SurtrGenerator.Delegate`, so every later resume walks straight to the innermost generator that still has one — three levels cost 7 % more than none, where a language without the construct pays per level at each. The link is two-way, and `DelegatedBy` is the load-bearing half: when a delegated-to generator ends, the ordinary return path would tell the consumer the sequence is over, which is true of the inner generator and false of the outer one, so `ReturnVoid` uses the back-pointer to enter the delegator's frame at the very same base and answer slot. Delegating to anything that is not a generator lowers to the loop it means, since an array has no frame to link to — and so does delegating with an element conversion, because a link hands the inner values over untouched.
+
 **A generator suspends by copying its frame, and is reached through a stub.** `Yield` copies the live frame — locals plus pending operands — out of the data stack into the `SurtrGenerator`, and `GenResume` copies it back at whatever base is free then; locals keep their indices because every access is frame-base-relative. That is why a `yield` cannot cross a call, the restriction every language in this family accepts. The compiler emits **two methods per generator**: a stub carrying the declared name whose return descriptor is `Y<elem>` and whose whole body is `GenNew` plus a return, and a hidden `$generator$name$0` holding the `yield`s. So a call to a generator is an *ordinary* call — no metadata flag, no dedicated call opcode, and `virtual` or contract dispatch works for free. A `for-in` whose sequence is statically a `generator<T>` lowers to `GenIterate`/`GenResume`/`GenCurrent`, the same way §4.2 lowers an array walk to an indexed loop; the contract is what makes a generator assignable to an `IIterable<T>`, not what a loop over one runs.
 
 A member implementing a generic interface is matched on the **erased** signature: `SurtrMethodInfo.SignatureKey()` writes `G<n>` as `E`, because after erasure they are the same slot and an implementation could otherwise never line up with the contract's. The other half of that bargain is Java's: a class wanting both `compareTo(Vec2)` and `IComparable<Vec2>` needs the compiler to emit a bridge, which `CodeGen/ModuleEmitter` does — under the **contract method's own name**, since the slot is keyed on name plus erased parameters and no other name would fill one. `SurtrClassReference.Erase` is what both sides compute that key with.
@@ -192,7 +194,7 @@ A member implementing a generic interface is matched on the **erased** signature
 
 ## The instruction set
 
-`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — **245 opcodes**, `0x00`–`0xFA`, leaving 11 free values in the `byte` space (`0xFB`–`0xFF`, plus the six retired ones). It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
+`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — **246 opcodes**, `0x00`–`0xFB`, leaving 10 free values in the `byte` space (`0xFC`–`0xFF`, plus the six retired ones). It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
 
 Surtr is a stack machine. Operands come from the evaluation stack; pool indices, jump offsets and argument counts are encoded inline after the opcode byte as little-endian immediates.
 
@@ -304,7 +306,7 @@ Benchmark the VM against MoonSharp and LuaJIT (both Lua) and a C# baseline. Alwa
 dotnet run --project src/Surtr.Bench -c Release
 ```
 
-**42 cases, each written three times over**, and the three must agree on a checksum or the run fails. `--list` prints the catalogue with what each one puts under load. LuaJIT runs through `luajit.native`'s x64 `lua51.dll` (copied to the output by the csproj; the driver is a P/Invoke over the Lua 5.1 C API), and is on by default. `surtrbench --help` lists the flags (`--workload <substring>`, `--iters <n>`, `--warmup <n>`, `--scale <factor>`, `--list`, `--surtr-only`/`--lua-only`/`--luajit-only`/`--baseline-only`, `--no-luajit`, `--csv <path>`). Run with a release build when the .NET 10 preview SDK is the one installed.
+**43 cases, each written three times over**, and the three must agree on a checksum or the run fails. `--list` prints the catalogue with what each one puts under load. LuaJIT runs through `luajit.native`'s x64 `lua51.dll` (copied to the output by the csproj; the driver is a P/Invoke over the Lua 5.1 C API), and is on by default. `surtrbench --help` lists the flags (`--workload <substring>`, `--iters <n>`, `--warmup <n>`, `--scale <factor>`, `--list`, `--surtr-only`/`--lua-only`/`--luajit-only`/`--baseline-only`, `--no-luajit`, `--csv <path>`). Run with a release build when the .NET 10 preview SDK is the one installed.
 
 Four things about the harness are load-bearing, and each was a defect before it was a feature:
 

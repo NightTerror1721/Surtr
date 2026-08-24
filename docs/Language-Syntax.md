@@ -1126,14 +1126,68 @@ let s = Sequence<int>(() => countdown(5));
 let doubled = s.map(x => x * 2).toArray();
 ```
 
+#### Delegation: `yield from`
+
+`yield from expr;` hands out every element of `expr`, in order, and then carries on:
+
+```surtr
+generator inner(): int { yield 2; yield 3; }
+
+generator outer(): int {
+    yield 1;
+    yield from inner();
+    yield 4;
+}                                   // 1, 2, 3, 4
+```
+
+The operand is anything a `for-in` could walk — another generator, an array, a range, a
+`Sequence<T>`, a user class satisfying `IIterable<T>` — and its element must reach the declaring
+generator's element by the same conversions a plain `yield` allows.
+
+It is what makes a recursive walk expressible at all:
+
+```surtr
+generator inorder(node: Node?): int {
+    if (node == null) { return; }
+    yield from inorder(node!!.left);
+    yield node!!.value;
+    yield from inorder(node!!.right);
+}
+```
+
+`from` is **contextual**, recognized only directly after `yield`, so it stays an ordinary
+identifier everywhere else — including as a parameter of the generator doing the yielding. The one
+cost is that a variable literally named `from` cannot be yielded bare: write `yield (from);`.
+
+Delegating to a generator is not the loop it looks like. The delegating generator suspends without
+a frame and records a link, so a resume goes straight to the innermost generator that still has
+one — an N-deep chain costs one suspension per element rather than N. Delegating to anything else
+is the loop, since an array has no frame to link to. Measured: three levels of `yield from` cost 7 %
+more than none.
+
+Delegating to a generator that is already running — `yield from` on itself, or around a cycle —
+raises `InvalidOperationException`, the same guard that stops a generator resuming itself.
+
 #### Where a generator may be written, and where a `yield` may
 
-A `generator` is legal as a module-level function, an instance or static method, and a member of an
-`extension` block (§15). It may declare type parameters like any other method.
+A `generator` is legal as a module-level function, an instance or static method, a member of an
+`extension` block (§15), and a member of an interface. It may declare type parameters like any
+other method, and may be `virtual`, `abstract` or `override`.
 
-It is **not** legal as a constructor, an operator, a property accessor, a lambda, an interface
-member, or with `const` or `native` — and it cannot be `inline`/`forceinline`, because §3.6 splices
-a body into its call site and a generator's body does not run at its call site at all.
+An interface declares one exactly as a class does, without a body:
+
+```surtr
+interface ISource {
+    generator values(): int;
+}
+```
+
+What that declares is an obligation whose calls hand back a `generator<int>`; an implementation
+satisfies it with a real `generator`. Nothing about suspension crosses the interface.
+
+It is **not** legal as a constructor, an operator, a property accessor, or a lambda, nor with
+`const` or `native` — and it cannot be `inline`/`forceinline`, because §3.6 splices a body into its
+call site and a generator's body does not run at its call site at all.
 
 A `yield` is legal only in the lexical body of a generator. Three placements are refused:
 

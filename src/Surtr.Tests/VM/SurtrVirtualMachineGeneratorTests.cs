@@ -287,6 +287,58 @@ namespace Surtr.Tests.VM
         }
 
         [Fact]
+        public void GenDelegate_WalksTheInnerGeneratorAndThenResumesTheOuter()
+        {
+            using var runtime = new SurtrRuntime();
+            var module = new SurtrModule("caller");
+            var builder = new BytecodeBuilder();
+
+            var innerBody = BuildCountdownBody();
+            int innerIndex = builder.AddMethod(innerBody);
+            int generatorType = builder.AddType(
+                module.TypeHandles.GetOrAdd(SurtrClassReference.Generator(SurtrClassReference.Integer)));
+
+            // The outer yields 100, delegates to a countdown from its own argument, then yields 200.
+            // Local 0 holds the countdown's bound, which the outer was called with.
+            var outerModule = new SurtrModule("generators");
+            var outerBuilder = new BytecodeBuilder();
+            int innerInOuter = outerBuilder.AddMethod(innerBody);
+            int typeInOuter = outerBuilder.AddType(
+                outerModule.TypeHandles.GetOrAdd(SurtrClassReference.Generator(SurtrClassReference.Integer)));
+
+            var outerBody = outerBuilder
+                .Op(OpCode.PushI32).I32(100)
+                .Op(OpCode.Yield)
+                .Op(OpCode.Ldl0)
+                .Op(OpCode.GenNew).I16(innerInOuter).I16(typeInOuter).U8(1)
+                .Op(OpCode.GenDelegate)
+                .Op(OpCode.PushI32).I32(200)
+                .Op(OpCode.Yield)
+                .Op(OpCode.ReturnVoid)
+                .Build(outerModule, localCount: 1, maxStackSize: 8);
+
+            int outerIndex = builder.AddMethod(outerBody);
+
+            builder
+                .Op(OpCode.PushI32).I32(2)
+                .Op(OpCode.GenNew).I16(outerIndex).I16(generatorType).U8(1)
+                .Op(OpCode.ReturnValue);
+
+            _ = innerIndex;
+
+            var entry = builder.Build(module, localCount: 0, maxStackSize: 8);
+            var generator = Assert.IsType<SurtrGenerator>(runtime.Resolve(runtime.Invoke(entry)));
+
+            var produced = new System.Collections.Generic.List<int>();
+            while (runtime.ResumeGenerator(generator))
+                produced.Add(generator.GetCurrent().AsInt);
+
+            // The outer's own elements bracket the inner's, and the consumer never sees the seam.
+            Assert.Equal(new[] { 100, 2, 1, 200 }, produced);
+            Assert.Equal(SurtrGeneratorState.Exhausted, generator.GetState());
+        }
+
+        [Fact]
         public void TheHostResumePathAgreesWithTheCompiledOne()
         {
             using var runtime = new SurtrRuntime();

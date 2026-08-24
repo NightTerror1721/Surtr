@@ -93,10 +93,23 @@ namespace Surtr.Compiler.Syntax
                     return new ReturnStatementSyntax(SpanFrom(start), returned);
 
                 case TokenType.KeywordYield:
+                {
                     reader.Advance();
+
+                    // `from` is contextual and recognized in exactly one place: directly after
+                    // `yield` (§3.7). Reserving it would be far too costly for a word this
+                    // attractive as an identifier — `countdown(from: int)` is the spec's own
+                    // example — and one token of lookahead settles it without ambiguity anywhere
+                    // else. The cost is that a variable literally named `from` cannot be yielded
+                    // bare inside a generator; `yield (from);` is how you say that.
+                    bool delegating = CheckContextual("from");
+                    if (delegating)
+                        reader.Advance();
+
                     ExpressionSyntax yielded = ParseExpression();
-                    reader.Expect(TokenType.Semicolon, "';' after the yielded value");
-                    return new YieldStatementSyntax(SpanFrom(start), yielded);
+                    reader.Expect(TokenType.Semicolon, delegating ? "';' after the delegated sequence" : "';' after the yielded value");
+                    return new YieldStatementSyntax(SpanFrom(start), yielded, delegating);
+                }
 
                 case TokenType.KeywordBreak:
                 case TokenType.KeywordContinue:

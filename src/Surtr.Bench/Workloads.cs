@@ -440,6 +440,24 @@ namespace Surtr.Bench
                 return acc;
             }
 
+            // Three levels of `yield from`, which is what the delegation link exists for: only the
+            // innermost generator has a frame, so an element costs one suspend/resume plus two
+            // pointer hops rather than three of each. Against genYield it says what a level costs.
+            generator delegLeaf(n: int): int {
+                var i: int = 0;
+                while (i < n) { yield i; i = i + 1; }
+            }
+
+            generator delegMid(n: int): int { yield from delegLeaf(n); }
+
+            generator delegTop(n: int): int { yield from delegMid(n); }
+
+            fun genDelegate(n: int): int {
+                var acc: int = 0;
+                for (x in delegTop(n)) { acc = (acc + x) % 100000007; }
+                return acc;
+            }
+
             fun interop(n: int): int {
                 var acc: int = 0;
                 for (var i = 0; i < n; i += 1) { acc = (acc + hostAdd(i)) % 100000007; }
@@ -940,6 +958,27 @@ namespace Surtr.Bench
                 return acc
             end
 
+            -- Lua has no delegation form: a coroutine that wants to re-yield another's elements
+            -- writes the loop out. That is the honest counterpart, and the gap against Surtr's link
+            -- is exactly what having the construct in the language buys.
+            function genDelegate(n)
+                local function leaf()
+                    for i = 0, n - 1 do coroutine.yield(i) end
+                end
+                local function mid()
+                    local inner = coroutine.wrap(leaf)
+                    for x in inner do coroutine.yield(x) end
+                end
+                local top = coroutine.wrap(function()
+                    local inner = coroutine.wrap(mid)
+                    for x in inner do coroutine.yield(x) end
+                end)
+
+                local acc = 0
+                for x in top do acc = (acc + x) % 100000007 end
+                return acc
+            end
+
             function hostAdd(value) return value + 1 end
 
             function interop(n)
@@ -1170,6 +1209,7 @@ namespace Surtr.Bench
             new Workload("iterator", 50000, WorkloadKind.Int, "the general iterate()/moveNext() path", Iterator),
             new Workload("genYield", 50000, WorkloadKind.Int, "generator: suspend and resume a frame per element", GenYield),
             new Workload("handIterator", 50000, WorkloadKind.Int, "the cursor class a generator replaces", HandIterator),
+            new Workload("genDelegate", 50000, WorkloadKind.Int, "three levels of yield from, through the delegation link", GenDelegate),
             new Workload("interop", 300000, WorkloadKind.Int, "host function call", Interop),
             new Workload("valueClass", 300000, WorkloadKind.Int, "value class, erased to its field", ValueClass),
             new Workload("generics", 300000, WorkloadKind.Int, "erased slot: box in, cast out", Generics),
@@ -1522,6 +1562,35 @@ namespace Surtr.Bench
         {
             long acc = 0;
             foreach (long x in UpToGen(n))
+                acc = (acc + x) % Modulus;
+            return acc;
+        }
+
+        // C# has no delegation form either - `yield return` cannot re-yield a sequence - so each
+        // level writes the foreach out, which is the shape Surtr's loop lowering also takes when
+        // the operand is not a generator.
+        private static IEnumerable<long> DelegLeaf(long n)
+        {
+            for (long i = 0; i < n; i++)
+                yield return i;
+        }
+
+        private static IEnumerable<long> DelegMid(long n)
+        {
+            foreach (long x in DelegLeaf(n))
+                yield return x;
+        }
+
+        private static IEnumerable<long> DelegTop(long n)
+        {
+            foreach (long x in DelegMid(n))
+                yield return x;
+        }
+
+        private static long GenDelegate(long n)
+        {
+            long acc = 0;
+            foreach (long x in DelegTop(n))
                 acc = (acc + x) % Modulus;
             return acc;
         }

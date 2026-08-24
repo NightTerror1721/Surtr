@@ -3961,12 +3961,14 @@ namespace Surtr.Compiler.Binding
                     $"'{method.Name}' cannot be both 'native' and a generator: a generator's suspension points are bytecode the compiler emits (§3.7).");
             }
 
-            if (syntax.Body is null)
+            // A bodyless generator is legal exactly where a bodyless method is: an interface member
+            // or an `abstract` one, both of which arrive here as `Abstract` dispatch. What it
+            // declares is the obligation - a member whose calls hand back a `generator<T>` - and an
+            // implementation satisfies it with a real `generator`, whose stub (§12.4) fills the
+            // slot like any other method. Anywhere else, a generator with no body has no `yield`s,
+            // and a generator is defined by where its `yield`s are.
+            if (syntax.Body is null && method.Dispatch != MethodDispatch.Abstract)
             {
-                // Covers an abstract generator and one declared in an interface with the same
-                // sentence, because they are the same fact: a generator is defined by where its
-                // `yield`s are, and a declaration with no body has none. Phase 2 revisits this by
-                // letting a contract declare a method returning `generator<T>` instead.
                 ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidGeneratorDeclaration,
                     $"'{method.Name}' is a generator, so it needs a body: a generator is defined by the 'yield's in it (§3.7).");
             }
