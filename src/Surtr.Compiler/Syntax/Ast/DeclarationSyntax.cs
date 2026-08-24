@@ -50,6 +50,13 @@ namespace Surtr.Compiler.Syntax.Ast
 
         /// <summary><c>forceinline</c> — mandatory; an impossible case is a compile error.</summary>
         ForceInline,
+
+        /// <summary>
+        /// <c>noinline</c> — every fold of the declaration's invocations is off: no splice by hint
+        /// or heuristic, no accessor lowering at the access site, no call-site const folding. The
+        /// declaration is what runs, as a real call, wherever it is used.
+        /// </summary>
+        NoInline,
     }
 
     /// <summary>Which kind of type a <see cref="TypeDeclarationSyntax"/> declares.</summary>

@@ -52,7 +52,7 @@ surface syntax just gives each descriptor symbol a spelling:
 | `char` | `C` | |
 | `string` | `S` | |
 | `void` | `V` | **return position only** — `void` is deliberately not a type per `CLAUDE.md`, so a field, local or parameter can never be declared `void` |
-| `range` | `R` | a half-open or closed interval of `int`s (§5.4); unparameterised, since both bounds are always `int` |
+| `range` | `R` | a half-open or closed interval of `int`s (§5.4); unparameterised, since both bounds are always `int`. An **inline value** like a tuple (§2.9): three slots - start, end, inclusive - travelling flat through locals, arguments and returns, packing only when it crosses into one-reference storage. Equality is structural: same bounds and same form, same value, whatever identity its packed form would carry |
 | `unknown` | `E` | holds any value; must be cast before use (§5.10) |
 
 Composite built-ins are written in the parameterised forms of §5.3 — `T[]`, `{K: V}`, `(T, T, ...)`,
@@ -337,6 +337,9 @@ Members are signature-only: a trailing `;` instead of a body, and no `abstract` 
 interface member is implicitly abstract and public, which is all `SurtrInterface.AddMethod` /
 `AddProperty` accept anyway (fields, statics and default bodies are rejected there). Writing
 `abstract` explicitly would just repeat something the declaration context already guarantees.
+The always-public half is enforced, not just implied: a member written `private`, `protected` or
+`internal` — on the member or on one of its accessors (§3.4) — is a compile error
+(`InvalidInterfaceMember`), because every other spelling would lie about what a contract promises.
 
 An interface may still contain **nested types** — a nested `enum`, `interface`, or `class` — even
 though it can't contain static members. A nested type isn't a member with a body or storage the
@@ -771,6 +774,13 @@ there is a base slot to replace) remains fully supported and unchanged: it is th
 interface-satisfying member itself overridable by a further subclass, which a `Direct` member
 never is, having no vtable slot of its own to replace.
 
+**`override` with nothing to replace is an error.** The modifier is owed by — and only by — a
+member whose signature also comes down the base-*class* chain as `virtual` or `abstract`
+(`InvalidOverride`). A method whose only claim is an interface obligation must be written plain,
+even when it uses the interface's own name for its slot; it stays legal where the same signature
+descends from an abstract or virtual class member too, because there the declaration really does
+replace that member while it happens to satisfy the contract along the way.
+
 `abstract` on the **class** is its own explicit, mandatory modifier — `abstract class Foo { ... }`
 — rather than something inferred from the class containing an abstract member. Requiring it
 explicitly lets a class be non-instantiable *without* any abstract members (a common pattern: a
@@ -938,7 +948,7 @@ diagnostics-style and host-facing APIs (`format`, `log`), and should be kept off
 inside a frame budget. The runtime itself never needs it: `SurtrCallArguments` already gives a
 native function a counted argument span with no array in sight.
 
-### 3.6 Inlining: `inline` and `forceinline`
+### 3.6 Inlining: `inline`, `forceinline` and `noinline`
 
 ```
 inline fun clamp(v: int, lo: int, hi: int): int {
@@ -947,6 +957,10 @@ inline fun clamp(v: int, lo: int, hi: int): int {
 
 forceinline fun dot(a: Vec2, b: Vec2): float {
     return a.x * b.x + a.y * b.y;
+}
+
+noinline fun audit(x: int): int {
+    return x * x + 7 * 3;   // stays a real call, everywhere
 }
 ```
 
@@ -961,6 +975,14 @@ that machinery dwarfs the work.
   if inlining is *impossible* rather than merely unattractive, it is a **compile error naming the
   reason**, never a silent fallback to a normal call. A `forceinline` that quietly did nothing
   would fail exactly when you most wanted to know.
+- **`noinline` is the veto.** It refuses every *optional* fold of the declaration's invocations:
+  no splice by hint or heuristic, no backing-field lowering of its auto-property accessors (the
+  access stays a real call), and no call-site const folding of its `const fun` calls. What runs is
+  the declaration itself — one frame, visible in a stack trace — at every site. The three keywords
+  are mutually exclusive (`InvalidModifier`), written in that order slot before `const`. What
+  `noinline` cannot veto are §7's *mandatory* folds: a `const` initializer or a `const if`
+  condition still evaluates the function, because there folding is what gives the value, not an
+  optimization on top of one.
 
 **There is also a default, written nothing.** A call site with no modifier consults a cost heuristic
 (`CodeGen/InlineCost.cs`) that walks the callee's bound body and splices it when the body is cheap

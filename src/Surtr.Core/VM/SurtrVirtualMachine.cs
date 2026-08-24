@@ -3490,28 +3490,42 @@ namespace Surtr.VM
                 #region Range Operations
                 case OpCode.RangeNew:
                 {
+                    // A range is an inline value (§2.9): its block is the two bounds already on
+                    // the stack plus the inclusive flag its operator baked in. Nothing is
+                    // allocated and nothing registered - three raw slots, none a reference.
+                    *sp++ = SurtrValue.TagMaskBool;
+                    goto Dispatch;
+                }
+
+                case OpCode.RangeNewInclusive:
+                {
+                    *sp++ = SurtrValue.TagMaskBool | 1UL;
+                    goto Dispatch;
+                }
+
+                case OpCode.RangePack:
+                {
                     current.IP = ip;
                     _sp = sp;
 
-                    sp--;
-                    var range = new SurtrRange((int)*(sp - 1), (int)*sp, inclusive: false);
+                    uint flag = (uint)*--sp;
+                    uint hi = (uint)*--sp;
+
+                    var range = new SurtrRange((int)*(sp - 1), (int)hi, (flag & 1UL) != 0UL);
                     SurtrRef reference = context.EntityRegistry.Register(range, out entities);
 
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
                 }
 
-                case OpCode.RangeNewInclusive:
+                case OpCode.RangeUnpack:
                 {
-                    current.IP = ip;
-                    _sp = sp;
+                    var range = (SurtrRange)entities[(SurtrRef)(*--sp)]!;
 
-                    sp--;
-                    var range = new SurtrRange((int)*(sp - 1), (int)*sp, inclusive: true);
-                    SurtrRef reference = context.EntityRegistry.Register(range, out entities);
-
-                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Safepoint;
+                    *sp++ = SurtrValue.TagMaskInt | (uint)range.Start;
+                    *sp++ = SurtrValue.TagMaskInt | (uint)range.End;
+                    *sp++ = range.IsInclusive ? SurtrValue.TagMaskBool | 1UL : SurtrValue.TagMaskBool;
+                    goto Dispatch;
                 }
                 #endregion
 

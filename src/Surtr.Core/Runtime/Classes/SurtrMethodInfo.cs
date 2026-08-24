@@ -499,9 +499,10 @@ namespace Surtr.Runtime.Classes
         /// How many contiguous slots a value of <paramref name="handle"/>'s type occupies.
         /// </summary>
         /// <remarks>
-        /// A tuple answers from its descriptor alone; a value class needs its linked layout, so an
-        /// unresolved handle falls back to one slot rather than guessing. Everything else - every
-        /// primitive and every reference - is one slot by definition.
+        /// A tuple answers from its descriptor alone; a range is its own fixed three-slot block;
+        /// a value class needs its linked layout, so an unresolved handle falls back to one slot
+        /// rather than guessing. Everything else - every other primitive and every reference - is
+        /// one slot by definition.
         /// </remarks>
         private static int SlotWidthOf(SurtrTypeHandle handle)
         {
@@ -509,6 +510,9 @@ namespace Surtr.Runtime.Classes
 
             if (reference.TypeCode == SurtrValueTypeCode.Tuple)
                 return Math.Max(reference.GetTupleFlattenedSlotWidth(), 1);
+
+            if (reference.TypeCode == SurtrValueTypeCode.Range)
+                return 3;
 
             if (handle.ResolvedType is SurtrClass { IsValueType: true } valueClass
                 && valueClass.FlattenedSlotWidth > 1)
@@ -529,7 +533,7 @@ namespace Surtr.Runtime.Classes
         /// gate (D6). The block's width rides the callee's declared type, which is what both the
         /// caller's stack accounting and the host boundary read.
         /// </remarks>
-        public virtual int ResultSlotCount
+           public virtual int ResultSlotCount
         {
             get
             {
@@ -540,6 +544,9 @@ namespace Surtr.Runtime.Classes
 
                 if (reference.TypeCode == SurtrValueTypeCode.Tuple)
                     return Math.Max(reference.GetTupleFlattenedSlotWidth(), 1);
+
+                if (reference.TypeCode == SurtrValueTypeCode.Range)
+                    return 3;
 
                 if (_returnType.ResolvedType is SurtrClass { IsValueType: true } valueClass
                     && valueClass.FlattenedSlotWidth > 1)

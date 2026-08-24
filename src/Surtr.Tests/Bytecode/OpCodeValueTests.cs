@@ -87,7 +87,8 @@ namespace Surtr.Tests.Bytecode
             (OpCode.StoreValueLocal, 0xEB), (OpCode.LoadLocalField, 0xEC), (OpCode.StoreLocalField, 0xED),
             (OpCode.BoxValue, 0xEE), (OpCode.UnboxValue, 0xEF),
             (OpCode.LoadValueField, 0xF0), (OpCode.StoreValueField, 0xF1),
-            (OpCode.LoadValueStatic, 0xF2), (OpCode.StoreValueStatic, 0xF3)
+            (OpCode.LoadValueStatic, 0xF2), (OpCode.StoreValueStatic, 0xF3),
+            (OpCode.RangePack, 0xF4), (OpCode.RangeUnpack, 0xF5)
         };
 
         [Fact]

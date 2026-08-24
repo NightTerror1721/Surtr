@@ -478,11 +478,17 @@ namespace Surtr.Bytecode.Emit
         /// <param name="type">The class the box should present as.</param>
         public SurtrCodeEmitter BoxAsX(SurtrTypeToken type) => WithI32(OpCode.BoxAsX, TypeIndex(type), 1, 1);
 
-        /// <summary>Emits <see cref="OpCode.RangeNew"/>: the exclusive <c>lo..hi</c> form.</summary>
-        public SurtrCodeEmitter RangeNew() => Simple(OpCode.RangeNew, 2, 1);
+        /// <summary>Emits <see cref="OpCode.RangeNew"/>: the exclusive <c>lo..hi</c> form, laid out as its three-slot block.</summary>
+        public SurtrCodeEmitter RangeNew() => Simple(OpCode.RangeNew, 2, 3);
 
-        /// <summary>Emits <see cref="OpCode.RangeNewInclusive"/>: the <c>lo..=hi</c> form.</summary>
-        public SurtrCodeEmitter RangeNewInclusive() => Simple(OpCode.RangeNewInclusive, 2, 1);
+        /// <summary>Emits <see cref="OpCode.RangeNewInclusive"/>: the <c>lo..=hi</c> form, laid out as its three-slot block.</summary>
+        public SurtrCodeEmitter RangeNewInclusive() => Simple(OpCode.RangeNewInclusive, 2, 3);
+
+        /// <summary>Emits <see cref="OpCode.RangePack"/>: a range block becomes the object it presents as.</summary>
+        public SurtrCodeEmitter RangePack() => Simple(OpCode.RangePack, 3, 1);
+
+        /// <summary>Emits <see cref="OpCode.RangeUnpack"/>: a packed range becomes its block again.</summary>
+        public SurtrCodeEmitter RangeUnpack() => Simple(OpCode.RangeUnpack, 1, 3);
 
         /// <summary>Emits <see cref="OpCode.BoxFloat"/>.</summary>
         public SurtrCodeEmitter BoxFloat() => Simple(OpCode.BoxFloat, 1, 1);

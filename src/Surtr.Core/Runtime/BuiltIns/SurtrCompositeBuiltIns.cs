@@ -399,6 +399,11 @@ namespace Surtr.Runtime.BuiltIns
         #endregion
 
         #region Range
+        /// <summary>
+        /// The <c>range</c> members. A range is an inline value (§2.9), so its receiver crosses
+        /// the call as the three-slot block it is - start at slot 0, end at slot 1, the inclusive
+        /// flag at slot 2 - and every member reads that block directly; nothing here sees a box.
+        /// </summary>
         internal static void DeclareRange(SurtrBuiltInTypeBuilder builder)
         {
             SurtrClassReference integer = SurtrClassReference.Integer;
@@ -415,31 +420,51 @@ namespace Surtr.Runtime.BuiltIns
         }
 
         private static int RangeStart(SurtrCallArguments arguments)
-            => arguments.Return(SurtrValue.CreateInt(arguments.GetUnchecked<SurtrRange>(0).Start));
+            => arguments.Return(arguments.GetValueUnchecked(0));
 
         private static int RangeEnd(SurtrCallArguments arguments)
-            => arguments.Return(SurtrValue.CreateInt(arguments.GetUnchecked<SurtrRange>(0).End));
+            => arguments.Return(arguments.GetValueUnchecked(1));
 
         private static int RangeLength(SurtrCallArguments arguments)
-            => arguments.Return(SurtrValue.CreateInt(arguments.GetUnchecked<SurtrRange>(0).Length));
+        {
+            int start = arguments.GetInt(0);
+            int end = arguments.GetInt(1);
+            bool inclusive = arguments.GetBool(2);
+
+            // Counted in 64 bits and then clamped, because the span of an inclusive range over
+            // the whole of int is one more than int can hold.
+            long count = (long)end - start + (inclusive ? 1 : 0);
+            return arguments.Return(SurtrValue.CreateInt(count <= 0 ? 0 : count > int.MaxValue ? int.MaxValue : (int)count));
+        }
 
         private static int RangeIsEmpty(SurtrCallArguments arguments)
-            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrRange>(0).IsEmpty));
+        {
+            int end = arguments.GetInt(1);
+            bool inclusive = arguments.GetBool(2);
+            return arguments.Return(SurtrValue.CreateBool(inclusive ? end < arguments.GetInt(0) : end <= arguments.GetInt(0)));
+        }
 
         private static int RangeIsInclusive(SurtrCallArguments arguments)
-            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrRange>(0).IsInclusive));
+            => arguments.Return(arguments.GetValueUnchecked(2));
 
         private static int RangeContains(SurtrCallArguments arguments)
-            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrRange>(0).Contains(arguments.GetInt(1))));
+        {
+            int start = arguments.GetInt(0);
+            int end = arguments.GetInt(1);
+            bool inclusive = arguments.GetBool(2);
+            int value = arguments.GetInt(3);
 
-        /// <summary>Backs <c>string(aRange)</c> â€” the same <c>a..b</c>/<c>a..=b</c> spelling range literals use.</summary>
+            return arguments.Return(SurtrValue.CreateBool(value >= start && (inclusive ? value <= end : value < end)));
+        }
+
+        /// <summary>Backs <c>string(aRange)</c> — the same <c>a..b</c>/<c>a..=b</c> spelling range literals use.</summary>
         private static int RangeToString(SurtrCallArguments arguments)
         {
-            var range = arguments.GetUnchecked<SurtrRange>(0);
-            string start = range.Start.ToString(CultureInfo.InvariantCulture);
-            string end = range.End.ToString(CultureInfo.InvariantCulture);
+            string start = arguments.GetInt(0).ToString(CultureInfo.InvariantCulture);
+            string end = arguments.GetInt(1).ToString(CultureInfo.InvariantCulture);
 
-            return arguments.Return(arguments.Runtime.NewStringValue(range.IsInclusive ? $"{start}..={end}" : $"{start}..{end}"));
+            return arguments.Return(arguments.Runtime.NewStringValue(
+                arguments.GetBool(2) ? $"{start}..={end}" : $"{start}..{end}"));
         }
         #endregion
 

@@ -935,6 +935,8 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.IsPresent:
                 case OpCode.RangeNew:
                 case OpCode.RangeNewInclusive:
+                case OpCode.RangePack:
+                case OpCode.RangeUnpack:
                 case OpCode.BoxInt:
                 case OpCode.BoxFloat:
                 case OpCode.BoxBool:

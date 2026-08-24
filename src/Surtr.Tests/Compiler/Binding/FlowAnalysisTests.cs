@@ -460,7 +460,7 @@ namespace Surtr.Tests.Compiler.Binding
             // exists - which is why constraints are bound in a pass of their own.
             AssertNoErrors(Bind(
                 "class Vec2 : IComparable<Vec2> {\n"
-                + "  public override fun compareTo(other: Vec2): int { return 0; }\n"
+                + "  public fun compareTo(other: Vec2): int { return 0; }\n"
                 + "}\n"
                 + "class Sorter<T : IComparable<T>> { }\n"
                 + "class Test { public var s: Sorter<Vec2>; }"));

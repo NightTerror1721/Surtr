@@ -155,6 +155,62 @@ public class ReadOnlySet<T> : IReadOnlySet<T>
             return false;
         }
     }
+
+    inline operator &(left: ReadOnlySet<T>, right: IReadOnlySet<T>): ReadOnlySet<T>
+    {
+        return intersect(left, right);
+    }
+    inline operator &(left: IReadOnlySet<T>, right: ReadOnlySet<T>): ReadOnlySet<T>
+    {
+        return intersect(left, right);
+    }
+
+    inline operator |(left: ReadOnlySet<T>, right: IReadOnlySet<T>): ReadOnlySet<T>
+    {
+        return union(left, right);
+    }
+    inline operator |(left: IReadOnlySet<T>, right: ReadOnlySet<T>): ReadOnlySet<T>
+    {
+        return union(left, right);
+    }
+
+    inline operator -(left: ReadOnlySet<T>, right: IReadOnlySet<T>): ReadOnlySet<T>
+    {
+        return except(left, right);
+    }
+    inline operator -(left: IReadOnlySet<T>, right: ReadOnlySet<T>): ReadOnlySet<T>
+    {
+        return except(left, right);
+    }
+
+    inline operator ^(left: ReadOnlySet<T>, right: IReadOnlySet<T>): ReadOnlySet<T>
+    {
+        return symmetricExcept(left, right);
+    }
+    inline operator ^(left: IReadOnlySet<T>, right: ReadOnlySet<T>): ReadOnlySet<T>
+    {
+        return symmetricExcept(left, right);
+    }
+
+    public static inline fun union(left: IReadOnlySet<T>, right: IReadOnlySet<T>): ReadOnlySet<T>
+    {
+        return ReadOnlySet(Set<T>.union(left, right));
+    }
+
+    public static inline fun intersect(left: IReadOnlySet<T>, right: IReadOnlySet<T>): ReadOnlySet<T>
+    {
+        return ReadOnlySet(Set<T>.intersect(left, right));
+    }
+
+    public static inline fun except(left: IReadOnlySet<T>, right: IReadOnlySet<T>): ReadOnlySet<T>
+    {
+        return ReadOnlySet(Set<T>.except(left, right));
+    }
+
+    public static inline fun symmetricExcept(left: IReadOnlySet<T>, right: IReadOnlySet<T>): ReadOnlySet<T>
+    {
+        return ReadOnlySet(Set<T>.symmetricExcept(left, right));
+    }
 }
 
 public class Set<T> : ReadOnlySet<T>, ISet<T>
@@ -237,22 +293,53 @@ public class Set<T> : ReadOnlySet<T>, ISet<T>
         }
     }
 
-    operator &(left: Set<T>, right: IReadOnlySet<T>): Set<T>
+    inline operator &(left: Set<T>, right: IReadOnlySet<T>): Set<T>
+    {
+        return intersect(left, right);
+    }
+    inline operator &(left: IReadOnlySet<T>, right: Set<T>): Set<T>
+    {
+        return intersect(left, right);
+    }
+
+    inline operator |(left: Set<T>, right: IReadOnlySet<T>): Set<T>
+    {
+        return union(left, right);
+    }
+    inline operator |(left: IReadOnlySet<T>, right: Set<T>): Set<T>
+    {
+        return union(left, right);
+    }
+
+    inline operator -(left: Set<T>, right: IReadOnlySet<T>): Set<T>
+    {
+        return except(left, right);
+    }
+    inline operator -(left: IReadOnlySet<T>, right: Set<T>): Set<T>
+    {
+        return except(left, right);
+    }
+
+    inline operator ^(left: Set<T>, right: IReadOnlySet<T>): Set<T>
+    {
+        return symmetricExcept(left, right);
+    }
+    inline operator ^(left: IReadOnlySet<T>, right: Set<T>): Set<T>
+    {
+        return symmetricExcept(left, right);
+    }
+
+    public static fun union(left: IReadOnlySet<T>, right: IReadOnlySet<T>): Set<T>
     {
         let result = Set<T>();
         for (item in left)
-        {
-            if (right.contains(item))
-                result.add(item);
-        }
+            result.add(item);
         for (item in right)
-        {
-            if (left.contains(item))
-                result.add(item);
-        }
+            result.add(item);
         return result;
     }
-    operator &(left: IReadOnlySet<T>, right: Set<T>): Set<T>
+
+    public static fun intersect(left: IReadOnlySet<T>, right: IReadOnlySet<T>): Set<T>
     {
         let result = Set<T>();
         for (item in left)
@@ -268,22 +355,30 @@ public class Set<T> : ReadOnlySet<T>, ISet<T>
         return result;
     }
 
-    operator |(left: Set<T>, right: IReadOnlySet<T>): Set<T>
+    public static fun except(left: IReadOnlySet<T>, right: IReadOnlySet<T>): Set<T>
     {
-        let result = Set<T>(left);
-        for (item in right)
-            result.add(item);
+        let result = Set<T>();
         for (item in left)
-            result.add(item);
+        {
+            if (!right.contains(item))
+                result.add(item);
+        }
         return result;
     }
-    operator |(left: IReadOnlySet<T>, right: Set<T>): Set<T>
+
+    public static fun symmetricExcept(left: IReadOnlySet<T>, right: IReadOnlySet<T>): Set<T>
     {
-        let result = Set<T>(right);
+        let result = Set<T>();
         for (item in left)
-            result.add(item);
+        {
+            if (!right.contains(item))
+                result.add(item);
+        }
         for (item in right)
-            result.add(item);
+        {
+            if (!left.contains(item))
+                result.add(item);
+        }
         return result;
     }
 }

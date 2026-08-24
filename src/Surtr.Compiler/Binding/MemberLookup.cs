@@ -364,6 +364,7 @@ namespace Surtr.Compiler.Binding
                 IsNative = method.IsNative,
                 IsInline = method.IsInline,
                 IsForceInline = method.IsForceInline,
+                IsNoInline = method.IsNoInline,
                 IsConst = method.IsConst,
                 IsSynthetic = method.IsSynthetic,
                 IsConversion = method.IsConversion,

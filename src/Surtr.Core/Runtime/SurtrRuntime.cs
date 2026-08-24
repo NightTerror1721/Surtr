@@ -54,6 +54,12 @@ namespace Surtr.Runtime
         private readonly Dictionary<SurtrClass, Dictionary<string, SurtrNativeObject>> _nativeEnumCases =
             new Dictionary<SurtrClass, Dictionary<string, SurtrNativeObject>>();
 
+        // Host objects adopted as entities in their own right (RegisterHost), keyed by the CLR
+        // instance itself: the entry dies with the key, which is what bounds the root each one
+        // holds to the lifetime of the object it was made for.
+        private readonly ConditionalWeakTable<object, SurtrNativeObject> _adoptedNatives =
+            new ConditionalWeakTable<object, SurtrNativeObject>();
+
         /// <summary>Creates and initializes a runtime with the default heap capacity.</summary>
         public SurtrRuntime() : this(DefaultEntityCapacity) { }
 
@@ -538,6 +544,62 @@ namespace Surtr.Runtime
         /// </summary>
         public SurtrRef RegisterNative(SurtrNativeObject nativeObject)
             => _context.EntityRegistry.Register(nativeObject);
+
+        /// <summary>
+        /// The host object <paramref name="value"/> carries, as a Surtr value: an instance of a
+        /// host class deriving from <see cref="SurtrNativeObject"/> is adopted as the entity
+        /// itself, and anything else is wrapped in a <see cref="SurtrNativeProxy"/>.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A class the bridge registers as a native type is normally a plain CLR object the
+        /// runtime cannot touch directly, so every crossing wraps it in a proxy whose target it
+        /// is. A host class deriving from <see cref="SurtrNativeObject"/> needs none of that: the
+        /// object already <em>is</em> a Surtr entity, so wrapping would bury it inside a second,
+        /// shell entity and reading it back through the proxy's target would reach null or the
+        /// wrong object. This is the one crossing point both shapes share.
+        /// </para>
+        /// <para>
+        /// Adoption is cached and rooted: one CLR instance answers the same reference for every
+        /// crossing of every call, the way an enum's case objects do. The root is what keeps the
+        /// registry from sweeping the entity while the host still holds the CLR object and could
+        /// hand it back; the cache entry dies with that object, and with it the last strong
+        /// reference to the entity. Host-authored facade types are a bounded set, so the pin is
+        /// bounded too. An opaque value keeps today's behavior - wrapped fresh each time,
+        /// collectable like any proxy.
+        /// </para>
+        /// </remarks>
+        public SurtrValue RegisterHost(object? value)
+        {
+            if (value is null)
+                return SurtrValue.Null;
+
+            if (value is SurtrNativeObject native)
+            {
+                if (_adoptedNatives.TryGetValue(value, out var adopted))
+                    return ValueOf(adopted);
+
+                _context.EntityRegistry.Register(native);
+                AddRoot(native);
+                _adoptedNatives.Add(value, native);
+                return ValueOf(native);
+            }
+
+            return ValueOf(WrapNative(value));
+        }
+
+        /// <summary>
+        /// The CLR object behind <paramref name="value"/>: the wrapped target of a proxy, or the
+        /// adopted <see cref="SurtrNativeObject"/> itself when the reference names one directly.
+        /// </summary>
+        public object? HostValueOf(SurtrValue value)
+        {
+            var entity = Resolve<SurtrNativeObject>(value);
+            if (entity is null)
+                return null;
+
+            return entity is SurtrNativeProxy proxy ? proxy.Target : entity;
+        }
         #endregion
 
         #region Value Access

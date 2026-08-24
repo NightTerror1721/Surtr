@@ -884,6 +884,7 @@ namespace Surtr.Compiler.Syntax
                     if (Is(text, "continue")) return TokenType.KeywordContinue;
                     if (Is(text, "internal")) return TokenType.KeywordInternal;
                     if (Is(text, "moduleof")) return TokenType.KeywordModuleOf;
+                    if (Is(text, "noinline")) return TokenType.KeywordNoInline;
                     if (Is(text, "operator")) return TokenType.KeywordOperator;
                     if (Is(text, "override")) return TokenType.KeywordOverride;
                     break;

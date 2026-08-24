@@ -130,7 +130,7 @@ public value class Sequence<T> : IIterable<T>
         return result;
     }
 
-    public override inline fun iterate(): IIterator<T> => _provider();
+    public inline fun iterate(): IIterator<T> => _provider();
 }
 
 class FilterIterator<T> : IIterator<T>

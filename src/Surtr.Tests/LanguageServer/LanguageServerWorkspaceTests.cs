@@ -565,7 +565,7 @@ namespace Surtr.Tests.LanguageServer
         {
             const string source =
                 "public class Counter : IIterable<int> {\n" +
-                "    public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n" +
+                "    public fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n" +
                 "}\n";
 
             var workspace = Tree(("app/Counter.surtr", source));

@@ -22,8 +22,8 @@ namespace Surtr.Compiler.CodeGen
     /// <para>
     /// Two invariants hold throughout. <see cref="Expression"/> leaves exactly one value on the
     /// operand stack, unless the expression's type is <c>void</c>, in which case it leaves none;
-    /// <see cref="Statement"/> leaves the stack exactly as it found it. Everything else — how deep
-    /// the stack gets, how wide a branch has to be, how many frame slots the body needs — is the
+    /// <see cref="Statement"/> leaves the stack exactly as it found it. Everything else � how deep
+    /// the stack gets, how wide a branch has to be, how many frame slots the body needs � is the
     /// emitter's own job and is never computed here.
     /// </para>
     /// <para>
@@ -44,8 +44,8 @@ namespace Surtr.Compiler.CodeGen
     {
         /// <summary>Where a <c>break</c> and a <c>continue</c> inside one enclosing construct go.</summary>
         /// <remarks>
-        /// A <c>switch</c> pushes one of these too, because §4.3 makes <c>break</c> leave the switch
-        /// — but it is not a loop, so a <c>continue</c> inside it belongs to whatever loop encloses
+        /// A <c>switch</c> pushes one of these too, because �4.3 makes <c>break</c> leave the switch
+        /// � but it is not a loop, so a <c>continue</c> inside it belongs to whatever loop encloses
         /// the switch and has to look straight past this entry. That is what
         /// <see cref="IsLoop"/> is for.
         /// </remarks>
@@ -67,7 +67,7 @@ namespace Surtr.Compiler.CodeGen
             /// <summary>Whether a <c>continue</c> may target this, which only a loop may.</summary>
             public bool IsLoop { get; }
 
-            /// <summary>The name a labelled <c>break</c> may reach it by (§4.2).</summary>
+            /// <summary>The name a labelled <c>break</c> may reach it by (�4.2).</summary>
             public string? Label { get; }
 
             /// <summary>
@@ -77,7 +77,7 @@ namespace Surtr.Compiler.CodeGen
             public int FinallyDepth { get; }
         }
 
-        /// <summary>One <c>inline</c> call site being spliced (§3.6).</summary>
+        /// <summary>One <c>inline</c> call site being spliced (�3.6).</summary>
         private readonly struct InlineFrame
         {
             public InlineFrame(
@@ -117,7 +117,7 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>How deep <c>inline</c> may splice before it gives up.</summary>
         /// <remarks>
-        /// §3.6 makes inlining a request rather than a promise, so a ceiling is legal. Mutual
+        /// �3.6 makes inlining a request rather than a promise, so a ceiling is legal. Mutual
         /// recursion between two inline functions would otherwise expand forever, and the
         /// self-reference check alone does not catch it.
         /// </remarks>
@@ -301,7 +301,7 @@ namespace Surtr.Compiler.CodeGen
                     return;
 
                 // `i++;` and a `for` loop's step clause. Prefix and postfix differ only in which
-                // value they leave behind, and here neither leaves one — so the distinction the
+                // value they leave behind, and here neither leaves one � so the distinction the
                 // long form exists to make has nothing to make it about, and the update is one
                 // instruction.
                 case BoundUnaryExpression unary when IsIncrementOrDecrement(unary.Operator):
@@ -311,7 +311,7 @@ namespace Surtr.Compiler.CodeGen
                     break;
 
                 // `a?.f();` still has to skip the call when `a` is null, but neither path leaves a
-                // value — so the guard is emitted without one rather than pushed and popped.
+                // value � so the guard is emitted without one rather than pushed and popped.
                 case BoundNullConditionalExpression access:
                     EmitNullConditional(access, discardResult: true);
                     return;
@@ -435,16 +435,16 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// Emits a condition as a branch to <paramref name="target"/>, taken when the condition is
-        /// false — jumping over an <c>if</c>'s body, or out of a <c>while</c>/<c>for</c>.
+        /// false � jumping over an <c>if</c>'s body, or out of a <c>while</c>/<c>for</c>.
         /// </summary>
         /// <remarks>
         /// Fuses a plain built-in comparison straight into the matching <c>JP&lt;cmp&gt;</c> opcode
-        /// (§Opcodes — the family that "fuses a comparison and a branch, so the boolean never
-        /// reaches the stack") instead of the naive `Compare` + `JumpIfFalse` pair. Anything else —
+        /// (�Opcodes � the family that "fuses a comparison and a branch, so the boolean never
+        /// reaches the stack") instead of the naive `Compare` + `JumpIfFalse` pair. Anything else �
         /// a compound condition (`&amp;&amp;`, `||`), a user operator's call (already a
         /// <see cref="BoundCallExpression"/> by the time it reaches here, per Fix 1/Fix 5), or a
         /// condition that already special-cases inside <see cref="EmitBinary"/> (an absence test, or
-        /// string ordering, which lowers to <c>compareTo</c>) — falls back to evaluating it as an
+        /// string ordering, which lowers to <c>compareTo</c>) � falls back to evaluating it as an
         /// ordinary boolean and testing the result, unchanged from before.
         /// </remarks>
         private void EmitConditionalJump(BoundExpression condition, SurtrLabel target)
@@ -550,7 +550,7 @@ namespace Surtr.Compiler.CodeGen
             }
 
             // TryEmitAbsenceTest intercepts exactly this shape before EmitBinary's ordinary path
-            // ever runs — a fused branch has to defer to it the same way.
+            // ever runs � a fused branch has to defer to it the same way.
             if (binary.Operator is BinaryOperator.Equal or BinaryOperator.NotEqual
                 && ((IsNullLiteral(binary.Right) && IsNullablePrimitive(binary.Left.Type))
                     || (IsNullLiteral(binary.Left) && IsNullablePrimitive(binary.Right.Type))))
@@ -560,17 +560,23 @@ namespace Surtr.Compiler.CodeGen
 
             operandType = TypeCodeOf(binary.Left.Type);
 
-            // String equality has a fused opcode (JPStrEQ/JPStrNE); string ordering does not — it
+            // String equality has a fused opcode (JPStrEQ/JPStrNE); string ordering does not � it
             // lowers to compareTo (EmitStringOrdering), so only equality fuses here.
             if (operandType == SurtrValueTypeCode.String && isOrdering)
                 return false;
 
             // Equality on a still-abstract type parameter needs the runtime's own value comparer
-            // (DynEQ/DynNE — see ComparisonOpCode), which has no fused branch form of its own. This
+            // (DynEQ/DynNE - see ComparisonOpCode), which has no fused branch form of its own. This
             // is already the rare, allocating-adjacent path a generic body without an equality
             // constraint takes, so falling back to the ordinary Compare-then-JumpIfFalse shape costs
             // one extra dispatch on a path that was never going to be fast.
             if (operandType == SurtrValueTypeCode.Erased)
+                return false;
+
+            // An inline-typed operand (a range, a multi-field value class, a tuple) compares
+            // structurally through EmitValueClassEquality - a per-family fused branch does not
+            // exist for it and would read the wrong slot count anyway.
+            if (SlotCountOfType(binary.Left.Type) > 1 || SlotCountOfType(binary.Right.Type) > 1)
                 return false;
 
             left = binary.Left;
@@ -593,8 +599,8 @@ namespace Surtr.Compiler.CodeGen
         /// Lowers a <c>for-in</c>, by index wherever that is possible.
         /// </summary>
         /// <remarks>
-        /// §4.2 defines <c>for-in</c> against <c>IIterable&lt;T&gt;</c>, and every built-in
-        /// collection really does satisfy it — but walking one by index allocates no cursor and
+        /// �4.2 defines <c>for-in</c> against <c>IIterable&lt;T&gt;</c>, and every built-in
+        /// collection really does satisfy it � but walking one by index allocates no cursor and
         /// costs two instructions per step, so the contract is what makes an <c>int[]</c> assignable
         /// to an <c>IIterable&lt;int&gt;</c> rather than what a loop over one goes through. That
         /// choice is left here rather than taken in the binder for exactly this reason.
@@ -645,24 +651,36 @@ namespace Surtr.Compiler.CodeGen
         /// Walks a range without ever building one.
         /// </summary>
         /// <remarks>
-        /// A range written inline in a loop header is the case <c>RangeNew</c>'s own documentation
-        /// says must not allocate: both bounds are already on the stack, so the loop reads them into
-        /// two slots and counts between them. A range that arrived some other way is walked from its
-        /// <c>start</c> for its <c>length</c> — which is the one reading that needs no branch on
-        /// whether the range was written <c>..</c> or <c>..=</c>, since <c>length</c> already knows.
+        /// <para>
+        /// A range written inline in a loop header is the case the old heap form's documentation
+        /// says must not allocate: both bounds are already on the stack, so the loop reads them
+        /// into two slots and counts between them.
+        /// </para>
+        /// <para>
+        /// A range that arrived some other way is walked from its own block: the variable starts
+        /// at slot 0, and the limit is derived from slot 1 under control of slot 2's flag - no
+        /// pack, no call, no length getter. The exclusive limit is <c>end - 1</c> except where
+        /// that subtraction would wrap (<c>end == int.MinValue</c>, which only an empty range can
+        /// carry), where the loop is laid out already finished instead. Either way one comparison
+        /// against <c>limit</c> ends the loop, so emptiness costs a single failed test.
+        /// </para>
         /// </remarks>
         private void EmitForInRange(BoundForInStatement loop)
         {
             var variable = Declare(loop.Variable);
             var limit = _method.DeclareLocal("$limit");
-            bool inclusive;
+
+            // Which comparison ends the loop: an inclusive limit is exited past (`>`), an
+            // exclusive one is exited at (`>=`). The inline header knows its form statically;
+            // the escaped branch folds the flag into the limit itself, so it always exits past.
+            bool limitIsInclusive;
 
             if (loop.Sequence is BoundBinaryExpression
                 {
                     Operator: BinaryOperator.Range or BinaryOperator.RangeInclusive
                 } bounds)
             {
-                inclusive = bounds.Operator == BinaryOperator.RangeInclusive;
+                limitIsInclusive = bounds.Operator == BinaryOperator.RangeInclusive;
                 Expression(bounds.Left);
                 EmitStoreLocal(variable);
                 Expression(bounds.Right);
@@ -670,22 +688,45 @@ namespace Surtr.Compiler.CodeGen
             }
             else
             {
-                inclusive = false;
-                var range = _method.DeclareLocal("$range");
+                limitIsInclusive = true;
 
-                Expression(loop.Sequence);
-                EmitStoreLocal(range);
+                int baseSlot = EnsureLocalRange(loop.Sequence, RangeSlotWidth);
 
-                EmitLoadLocal(range);
-                Code.Call(RangeAccessor("start"));
+                Code.LoadLocalField(baseSlot, 0);
                 EmitStoreLocal(variable);
 
-                EmitLoadLocal(range);
-                Code.Call(RangeAccessor("start"));
-                EmitLoadLocal(range);
-                Code.Call(RangeAccessor("length"));
-                Code.Add(SurtrValueTypeCode.Integer);
+                var exclusive = Code.NewLabel();
+                var subtract = Code.NewLabel();
+                var finish = Code.NewLabel();
+
+                Code.LoadLocalField(baseSlot, 2);
+                Code.JumpIfFalse(exclusive);
+
+                // Inclusive: the bound is its own limit.
+                Code.LoadLocalField(baseSlot, 1);
                 EmitStoreLocal(limit);
+                Code.Jump(finish);
+
+                Code.MarkLabel(exclusive);
+                Code.LoadLocalField(baseSlot, 1);
+                Code.LoadInt(int.MinValue);
+                Code.JumpIfCompare(SurtrComparison.NotEqual, SurtrValueTypeCode.Integer, subtract);
+
+                // end == int.MinValue and exclusive: nothing can have been inside, so start the
+                // walk already past it rather than subtract one into a wrap.
+                Code.LoadInt(1);
+                EmitStoreLocal(variable);
+                Code.LoadInt(0);
+                EmitStoreLocal(limit);
+                Code.Jump(finish);
+
+                Code.MarkLabel(subtract);
+                Code.LoadLocalField(baseSlot, 1);
+                Code.LoadInt(1);
+                Code.Subtract(SurtrValueTypeCode.Integer);
+                EmitStoreLocal(limit);
+
+                Code.MarkLabel(finish);
             }
 
             var top = Code.NewLabel();
@@ -696,7 +737,7 @@ namespace Surtr.Compiler.CodeGen
             EmitLoadLocal(variable);
             EmitLoadLocal(limit);
             Code.JumpIfCompare(
-                inclusive ? SurtrComparison.Greater : SurtrComparison.GreaterOrEqual,
+                limitIsInclusive ? SurtrComparison.Greater : SurtrComparison.GreaterOrEqual,
                 SurtrValueTypeCode.Integer,
                 end);
 
@@ -792,7 +833,7 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// The snapshot is what the built-in iterator does too, and for the same reason: a walk that
         /// read the live table would have to say what happens when the body inserts. Taking the keys
-        /// once makes that question have an answer — the loop sees the keys the dictionary had when
+        /// once makes that question have an answer � the loop sees the keys the dictionary had when
         /// it started.
         /// </remarks>
         private void EmitForInDictionary(BoundForInStatement loop, DictionaryTypeSymbol dictionary)
@@ -825,10 +866,10 @@ namespace Surtr.Compiler.CodeGen
             Code.ArrLen();
             Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
 
-            // The key is read from the snapshot once and reused — for the value lookup and for the
-            // packed pair — instead of re-indexing the snapshot's array a second time. The pair is
+            // The key is read from the snapshot once and reused � for the value lookup and for the
+            // packed pair � instead of re-indexing the snapshot's array a second time. The pair is
             // still materialised per iteration, because the loop variable's own type is a tuple and
-            // the body reads it as one (§4.2 has no destructuring for-in); what is avoided is the
+            // the body reads it as one (�4.2 has no destructuring for-in); what is avoided is the
             // second array read, which carries a bounds check the first one already paid.
             EmitLoadLocal(keys);
             EmitLoadLocal(index);
@@ -860,7 +901,7 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Walks anything that satisfies <c>IIterable&lt;T&gt;</c> through its cursor (§4.2).
+        /// Walks anything that satisfies <c>IIterable&lt;T&gt;</c> through its cursor (�4.2).
         /// </summary>
         /// <remarks>
         /// The general path, and the only one that allocates. Every call goes through the interface
@@ -884,7 +925,7 @@ namespace Surtr.Compiler.CodeGen
             var variable = Declare(loop.Variable);
 
             Expression(loop.Sequence);
-            BoxIfValueClass(loop.Sequence.Type);
+            BoxIfMultiSlot(loop.Sequence.Type);
             Code.CallInterface(iterate);
             EmitStoreLocal(cursor);
 
@@ -899,13 +940,13 @@ namespace Surtr.Compiler.CodeGen
             EmitLoadLocal(cursor);
             Code.CallInterface(current);
 
-            // `current` is typed by the contract's own parameter, so it reads back erased — but
+            // `current` is typed by the contract's own parameter, so it reads back erased � but
             // what it hands back is the collection's own storage, and a built-in collection stores
             // a primitive raw (an int pushed into an int[] is never boxed on the way in), while a
             // collection built from scratch inside a still-generic body stores primitives already
-            // boxed (§1.11). The receiver reached through `CallInterface` is only known to satisfy
+            // boxed (�1.11). The receiver reached through `CallInterface` is only known to satisfy
             // the contract, not which of the two it is, so `BoxDynamic` normalizes either into a
-            // definite reference — a no-op where `current` already handed one back — and `Unerase`
+            // definite reference � a no-op where `current` already handed one back � and `Unerase`
             // can then run unconditionally rather than only where the loop variable's own
             // substituted type happens to be a reference.
             Code.BoxDynamic();
@@ -937,7 +978,7 @@ namespace Surtr.Compiler.CodeGen
         /// <see cref="SurtrCodeEmitter.SwitchOn"/>, which picks a jump table or a binary-searched
         /// key table for itself. A string subject hashes first, since
         /// <c>SurtrString.ComputeHash</c> depends only on the text and so gives the same answer in
-        /// the compiler as at run time — that is the whole reason <c>StrHash</c> exists.
+        /// the compiler as at run time � that is the whole reason <c>StrHash</c> exists.
         /// </para>
         /// <para>
         /// Everything else is a chain of comparisons. That covers <c>bool</c>, <c>float</c> and an
@@ -969,7 +1010,7 @@ namespace Surtr.Compiler.CodeGen
 
             EmitDispatch(@switch.Subject.Type, subject, bodies, labels, fallback ?? end);
 
-            // A section runs to its own end: §4.3 makes fall-through explicit, so nothing here
+            // A section runs to its own end: �4.3 makes fall-through explicit, so nothing here
             // continues into the next one. `break` leaves the switch; `continue` looks past it to
             // whatever loop encloses it, which is what pushing this as a non-loop arranges.
             PushTargets(end, end, isLoop: false);
@@ -1034,7 +1075,7 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         /// <remarks>
         /// A duplicate key would make <see cref="SurtrCodeEmitter.SwitchOn"/> throw, and the binder
-        /// does not reject one — so it is caught here and the chain takes over, which matches the
+        /// does not reject one � so it is caught here and the chain takes over, which matches the
         /// first arm exactly as the source reads.
         /// </remarks>
         private static bool TryCollectIntegerCases(
@@ -1081,7 +1122,7 @@ namespace Surtr.Compiler.CodeGen
         /// Emits a string switch as a hash lookup with an equality confirmation.
         /// </summary>
         /// <remarks>
-        /// Two texts may hash alike, so a hash arm is not an answer — it is a shortlist. Each
+        /// Two texts may hash alike, so a hash arm is not an answer � it is a shortlist. Each
         /// distinct hash gets a block that compares the subject against every label sharing it and
         /// falls through to the default, which is what makes a collision cost one extra compare
         /// instead of being a miscompile.
@@ -1150,7 +1191,7 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// <para>
         /// The instruction set has no <c>finally</c>, deliberately: the block is emitted on each
-        /// normal exit path — falling off the try, a <c>return</c>, a <c>break</c> leaving it — plus
+        /// normal exit path � falling off the try, a <c>return</c>, a <c>break</c> leaving it � plus
         /// once more behind a catch-all that runs it and re-raises. That is what javac does, and
         /// what keeps <c>Leave</c>/<c>EndFinally</c> out of the set.
         /// </para>
@@ -1244,7 +1285,7 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitReturn(BoundReturnStatement @return)
         {
-            // A spliced body's `return` leaves the splice, not the frame — §3.6 makes inlining
+            // A spliced body's `return` leaves the splice, not the frame � �3.6 makes inlining
             // invisible, and a real Ret here would end the caller.
             if (_inlines.Count > 0)
             {
@@ -1493,9 +1534,9 @@ namespace Surtr.Compiler.CodeGen
         {
             switch (literal.Value)
             {
-                // §5.1: absence in a nullable primitive is its own tagged value, not a null reference.
+                // �5.1: absence in a nullable primitive is its own tagged value, not a null reference.
                 // A reference is its 32-bit payload, so a null one and a present `0` would be the
-                // same value — which is exactly what the absent tag exists to keep apart.
+                // same value � which is exactly what the absent tag exists to keep apart.
                 case null when IsNullablePrimitive(literal.Type):
                     Code.PushAbsent(TypeCodeOf(literal.Type));
                     return;
@@ -1572,7 +1613,7 @@ namespace Surtr.Compiler.CodeGen
             var from = conversion.Operand.Type;
             var to = conversion.Type;
 
-            // §4.8 hands `as?` to the compiler: test, then either keep the value or produce null.
+            // �4.8 hands `as?` to the compiler: test, then either keep the value or produce null.
             if (conversion.IsSafe)
             {
                 EmitSafeCast(conversion);
@@ -1581,7 +1622,7 @@ namespace Surtr.Compiler.CodeGen
 
             if (conversion.Conversion.Kind == ConversionKind.UserDefined)
             {
-                // §5.6's `operator as` is an ordinary static call whose one argument is the value.
+                // �5.6's `operator as` is an ordinary static call whose one argument is the value.
                 Expression(conversion.Operand);
                 EmitDirectCall(
                     conversion.Conversion.Method
@@ -1591,9 +1632,9 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
-            // `null` reaching a nullable primitive is the absent tag, not a null reference: §5.1 makes
+            // `null` reaching a nullable primitive is the absent tag, not a null reference: �5.1 makes
             // absence a value of its own precisely so it costs no allocation, and a null reference is
-            // its 32-bit payload — which would make an absent `int?` and a present `0` the same value.
+            // its 32-bit payload � which would make an absent `int?` and a present `0` the same value.
             if (conversion.Operand is BoundLiteralExpression { Value: null } && IsNullablePrimitive(to))
             {
                 Code.PushAbsent(TypeCodeOf(to));
@@ -1610,10 +1651,10 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// Split out of <see cref="EmitConversion"/> so a collection cast constructor's per-element
         /// loop (<see cref="EmitCollectionCreation"/>) can apply the same conversion to a value it
-        /// just read with <c>TupGetC</c>/<c>ArrGet</c> — there is no <see cref="BoundConversionExpression"/>
+        /// just read with <c>TupGetC</c>/<c>ArrGet</c> � there is no <see cref="BoundConversionExpression"/>
         /// node mid-loop for it to be the operand of, only the classified <see cref="Conversion"/>
         /// the binder already worked out. Every caller from that loop is restricted to
-        /// <see cref="Conversion.IsImplicit"/> (§5.6 makes a user-defined <c>operator as</c>
+        /// <see cref="Conversion.IsImplicit"/> (�5.6 makes a user-defined <c>operator as</c>
         /// explicit-only), so only the identity/nullable/reference/numeric/erasure branches below are
         /// ever reached from there.
         /// </remarks>
@@ -1628,8 +1669,8 @@ namespace Surtr.Compiler.CodeGen
                     return;
 
                 case ConversionKind.ImplicitReference:
-                    // §6.3: a value class is erased to its field, so reaching a slot that holds a
-                    // reference — an interface it implements — is where it becomes a real object.
+                    // �6.3: a value class is erased to its field, so reaching a slot that holds a
+                    // reference � an interface it implements � is where it becomes a real object.
                     // A tuple reaching one packs into its boxed form the same way. A primitive
                     // reaching a contract it satisfies is the same story: the interface dispatch
                     // goes through the receiver's vtable, which only an object has, so the raw
@@ -1645,7 +1686,7 @@ namespace Surtr.Compiler.CodeGen
                     return;
 
                 case ConversionKind.ImplicitErasure:
-                    // §1.11's first obligation: a value reaching a slot that only holds a reference
+                    // �1.11's first obligation: a value reaching a slot that only holds a reference
                     // has to become one - packed, for an inline value; boxed, for everything else.
                     // Box emits nothing for a reference already.
                     if (!BoxIfMultiSlot(from))
@@ -1673,7 +1714,7 @@ namespace Surtr.Compiler.CodeGen
             }
         }
 
-        /// <summary>Reads a concrete type back out of an erased slot — §1.11's second obligation.</summary>
+        /// <summary>Reads a concrete type back out of an erased slot � �1.11's second obligation.</summary>
         private void Unerase(TypeSymbol target)
         {
             var bare = target.NonNullable;
@@ -1715,7 +1756,7 @@ namespace Surtr.Compiler.CodeGen
         /// wherever a slot holds one reference, and says whether it did.
         /// </summary>
         /// <remarks>
-        /// The boxed-form half of the tuple boundary (§5.5 as lowered): a block reaching an array
+        /// The boxed-form half of the tuple boundary (�5.5 as lowered): a block reaching an array
         /// element, a dictionary key, an erased parameter or any other one-reference slot packs
         /// into the ordinary tuple object, whose comparer and collector already work. The mirror
         /// read side is <see cref="UnpackIfTuple"/>.
@@ -1730,11 +1771,29 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Boxes whatever this type stores inline - a tuple or a multi-field value class - before
-        /// it crosses into a one-reference slot. Answers whether anything was emitted.
+        /// Boxes a <c>range</c> as the object it presents as, and says whether it did - the
+        /// packed-form half of the range boundary, mirroring <see cref="BoxIfTuple"/>.
+        /// </summary>
+        /// <remarks>
+        /// A range is three raw slots inline (�2.9); a one-reference slot needs the registered
+        /// <c>SurtrRange</c> object, which is what every path that walks boxed values already
+        /// walks and what its own native members read.
+        /// </remarks>
+        private bool BoxIfRange(TypeSymbol type)
+        {
+            if (type.NonNullable.SpecialType != SpecialType.Range)
+                return false;
+
+            Code.RangePack();
+            return true;
+        }
+
+        /// <summary>
+        /// Boxes whatever this type stores inline - a tuple, a multi-field value class or a
+        /// range - before it crosses into a one-reference slot. Answers whether anything was emitted.
         /// </summary>
         private bool BoxIfMultiSlot(TypeSymbol type)
-            => BoxIfValueClass(type) || BoxIfTuple(type);
+            => BoxIfValueClass(type) || BoxIfTuple(type) || BoxIfRange(type);
 
         /// <summary>The mirror of <see cref="BoxIfTuple"/>: turns a packed reference back into its block.</summary>
         private bool UnpackIfTuple(TypeSymbol type)
@@ -1746,21 +1805,40 @@ namespace Surtr.Compiler.CodeGen
             return true;
         }
 
+        /// <summary>The mirror of <see cref="BoxIfRange"/>: a packed range becomes its block again.</summary>
+        private bool UnpackIfRange(TypeSymbol type)
+        {
+            if (type.NonNullable.SpecialType != SpecialType.Range)
+                return false;
+
+            Code.RangeUnpack();
+            return true;
+        }
+
         /// <summary>
         /// Unboxes whatever this type stores inline - the mirror of <see cref="BoxIfMultiSlot"/>
         /// on the way back out of a one-reference slot.
         /// </summary>
         private bool UnpackIfMultiSlot(TypeSymbol type)
         {
-            if (UnpackIfTuple(type))
+            if (UnpackIfTuple(type) || UnpackIfRange(type))
                 return true;
 
-            if (type.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } valueClass
-                && ValueTypeLayout.IsMultiField(valueClass)
-                && ValueTypeLayout.TryGet(valueClass, out var layout, out _))
+            if (type.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } valueClass)
             {
-                Code.UnboxValue(layout.Width);
-                return true;
+                // A wrapper erased to an inline value unboxes as that value does.
+                if (valueClass.UnderlyingType is TypeSymbol erased
+                    && ValueTypeLayout.WidthOfType(erased.NonNullable) > 1)
+                {
+                    return UnpackIfMultiSlot(erased.NonNullable);
+                }
+
+                if (ValueTypeLayout.IsBlockValueClass(valueClass)
+                    && ValueTypeLayout.TryGet(valueClass, out var layout, out _))
+                {
+                    Code.UnboxValue(layout.Width);
+                    return true;
+                }
             }
 
             return false;
@@ -1770,17 +1848,27 @@ namespace Surtr.Compiler.CodeGen
         /// Boxes a <c>value class</c> as the class it presents as, and says whether it did.
         /// </summary>
         /// <remarks>
-        /// The whole of §6.3 in one place. Where a value class's type is statically known it is the
-        /// field it wraps and nothing happens; where the slot holds a reference the box has to name
-        /// the real class, because the erased value is precisely the thing that no longer says what
-        /// it was.
+        /// The whole of the erased-value rule in one place. Where a value class's type is
+        /// statically known it is the field it wraps and nothing happens; where the slot holds a
+        /// reference the box has to name the real class, because the erased value is precisely the
+        /// thing that no longer says what it was. A one-field wrapper erased to an inline value - a
+        /// <c>Window</c> over a range, say - boxes exactly as the value it erases to, since its
+        /// slots ARE that value's slots.
         /// </remarks>
         private bool BoxIfValueClass(TypeSymbol type)
         {
             if (type.NonNullable is not NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } valueClass)
                 return false;
 
-            if (ValueTypeLayout.IsMultiField(valueClass))
+            if (valueClass.UnderlyingType is TypeSymbol erasedTo
+                && ValueTypeLayout.WidthOfType(erasedTo.NonNullable) > 1)
+            {
+                return BoxIfRange(erasedTo.NonNullable)
+                    || BoxIfTuple(erasedTo.NonNullable)
+                    || BoxIfValueClass(erasedTo.NonNullable);
+            }
+
+            if (ValueTypeLayout.IsBlockValueClass(valueClass))
             {
                 if (!ValueTypeLayout.TryGet(valueClass, out var boxLayout, out var boxError))
                     throw Unsupported(boxError!);
@@ -1798,40 +1886,50 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         /// <remarks>
         /// <para>
-        /// §6.3: a direct dispatch calls the exact method body regardless of the receiver's runtime
-        /// type, so there is nothing for a box to be looked up on — the erased field reaches the
+        /// �6.3: a direct dispatch calls the exact method body regardless of the receiver's runtime
+        /// type, so there is nothing for a box to be looked up on � the erased field reaches the
         /// callee unboxed. A method whose own <see cref="MethodSymbol.Dispatch"/> is not
         /// <see cref="MethodDispatch.Direct"/> may still be reached that way (a devirtualised call
         /// on a sealed value class already goes through <c>CallSpecial</c>, which does not consult
-        /// the receiver's class either), so this boxes a little more than the strict minimum there —
-        /// safe, per §6.3, where boxing less would not be. What matters is that this is the exact
+        /// the receiver's class either), so this boxes a little more than the strict minimum there �
+        /// safe, per �6.3, where boxing less would not be. What matters is that this is the exact
         /// same test <see cref="LoadReceiver"/> makes to decide whether to unbox a value class
         /// receiver, so the two can never disagree about which convention a value class body was
         /// compiled against.
         /// </para>
         /// <para>
-        /// A scalar primitive reaching one of its own <c>Virtual</c> members (§13.2's
+        /// A scalar primitive reaching one of its own <c>Virtual</c> members (�13.2's
         /// <c>compareTo</c>/<c>equals</c>, the only ones a built-in ever declares that way) needs
         /// the identical treatment for the identical reason: <c>InvokeVirtual</c>/<c>InvokeInterface</c>
         /// resolve the receiver's class through the entity registry, which only a boxed value is in.
         /// <see cref="BoxIfValueClass"/> only recognises a <c>value class</c>, so the fallback boxes
         /// whatever is left with <see cref="Code"/>'s ordinary <c>Box</c>, which is already a no-op
         /// for a receiver that is a reference already (a built-in class, or a generic parameter that
-        /// was boxed on its way into its erased slot) — nothing here has to tell those cases apart
+        /// was boxed on its way into its erased slot) � nothing here has to tell those cases apart
         /// from a primitive's own.
         /// </para>
         /// </remarks>
         private void BoxReceiverForCall(MethodSymbol method, TypeSymbol receiverType)
         {
             // A multi-field value class's box crosses the call as one reference slot while its
-            // callee frame claims the whole width - the two conventions cannot both hold (§6.3).
+            // callee frame claims the whole width - the two conventions cannot both hold (�6.3).
             // Refused at the call site rather than emitted into a mis-sliced frame.
             if (method.Dispatch != MethodDispatch.Direct
                 && receiverType.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } boxed
-                && ValueTypeLayout.IsMultiField(boxed))
+                && ValueTypeLayout.WidthOfType(boxed) > 1)
             {
                 throw Unsupported(
                     "a non-Direct call whose receiver is a multi-field value class: that receiver convention does not exist yet");
+            }
+
+            // A range receiver crosses as its three-slot block for a direct call - that is the
+            // convention its own native members are built against - and packs only where the
+            // call must resolve through a registry-resolved receiver.
+            if (receiverType.NonNullable.SpecialType == SpecialType.Range)
+            {
+                if (method.Dispatch != MethodDispatch.Direct)
+                    Code.RangePack();
+                return;
             }
 
             if (method.Dispatch != MethodDispatch.Direct && !BoxIfValueClass(receiverType))
@@ -1843,7 +1941,7 @@ namespace Surtr.Compiler.CodeGen
         /// primitive.
         /// </summary>
         /// <remarks>
-        /// <c>CastOrNull</c> exists because a reference target needs nothing else — the failure
+        /// <c>CastOrNull</c> exists because a reference target needs nothing else � the failure
         /// answer occupies the same slot as the subject, so the whole conversion is one type test.
         /// A primitive target still needs the branch: the success path unboxes and the failure path
         /// has no unboxed value to give, so the two arms differ by more than which value they
@@ -1873,7 +1971,7 @@ namespace Surtr.Compiler.CodeGen
             Code.JumpIfInstanceOf(Descriptors.Emit(target), isInstance);
 
             // This branch is only reached for a primitive `target`, so the result type is always a
-            // nullable primitive - its "no value" is the absent tag (§5.1), never a null reference.
+            // nullable primitive - its "no value" is the absent tag (�5.1), never a null reference.
             // A caller testing the result with `??`/`== null` reads the *static* type to pick
             // JPA/IsAbsent over JumpIfNull/IsNull (EmitNullCoalesce, TryEmitAbsenceTest/Branch), so
             // pushing a null reference here would go unrecognised as absence and read back its
@@ -1912,7 +2010,7 @@ namespace Surtr.Compiler.CodeGen
 
             // Absence is a *tag*, and only the tagged opcodes can see it. Left to the ordinary
             // comparison this becomes `PushAbsent` against EQ/NE, which are the integer opcodes and
-            // compare the 32-bit payload alone — while PushAbsent carries the missing primitive's
+            // compare the 32-bit payload alone � while PushAbsent carries the missing primitive's
             // type code in exactly that payload. An `int?` holding 1 then has the same payload as
             // absent-int (SurtrValueTypeCode.Integer == 1) and reads as null; a `char?` holding
             // '' would do the same. On the float side it fails the other way, since
@@ -1922,10 +2020,10 @@ namespace Surtr.Compiler.CodeGen
 
             // `x == null`/`x != null`/`x === null`/`x !== null` against a reference (a class, an
             // array, a string, ...) needs neither the null literal on the stack nor a two-operand
-            // comparison: a reference's nullness is its own tag (§5.1), which `IsNull`/`IsNotNull`
+            // comparison: a reference's nullness is its own tag (�5.1), which `IsNull`/`IsNotNull`
             // read off the one operand directly. Left to the general path below this would push
             // `PushNull` and run `REQ`/`RNE` - or, for a string, `StrEQ`/`StrNE`'s text comparison,
-            // which happens to be null-safe (§Opcodes) but still does more work than asking the tag.
+            // which happens to be null-safe (�Opcodes) but still does more work than asking the tag.
             if (TryGetNullCheckOperand(binary, out var nullCheckOperand, out bool checksForNull))
             {
                 Expression(nullCheckOperand);
@@ -1940,7 +2038,7 @@ namespace Surtr.Compiler.CodeGen
 
             var operands = TypeCodeOf(binary.Left.Type);
 
-            // §4.8 hands ordering on strings to the compiler: there is no opcode that orders one,
+            // �4.8 hands ordering on strings to the compiler: there is no opcode that orders one,
             // and `compareTo` is what the language says the operators mean.
             if (operands == SurtrValueTypeCode.String && IsOrdering(binary.Operator))
             {
@@ -1982,7 +2080,7 @@ namespace Surtr.Compiler.CodeGen
                 case BinaryOperator.ShiftLeft: Code.Shl(); return;
 
                 // `>>` keeps the sign and `>>>` fills with zeroes, which is Sar and Shr in that
-                // order — the opcodes are named after the machine operation, not after the token.
+                // order � the opcodes are named after the machine operation, not after the token.
                 case BinaryOperator.ShiftRight: Code.Sar(); return;
                 case BinaryOperator.UnsignedShiftRight: Code.Shr(); return;
 
@@ -2042,9 +2140,9 @@ namespace Surtr.Compiler.CodeGen
         /// <summary>Emits a whole <c>+</c> spine over strings as one counted concatenation.</summary>
         /// <remarks>
         /// The spine is walked in order, so operands are evaluated left to right exactly as the
-        /// pairwise emission did — flattening changes what is allocated, not when anything runs.
+        /// pairwise emission did � flattening changes what is allocated, not when anything runs.
         /// A part that is not a string is converted through its <c>toString</c> first, the same
-        /// conversion an interpolation applies: §5.7 lets anything be appended to a string, and
+        /// conversion an interpolation applies: �5.7 lets anything be appended to a string, and
         /// <c>StrCat</c> takes strings only.
         /// </remarks>
         private void EmitStringConcat(BoundBinaryExpression binary)
@@ -2071,8 +2169,8 @@ namespace Surtr.Compiler.CodeGen
 
         private void FlattenStringConcat(BoundExpression expression, List<BoundExpression> parts)
         {
-            // Only a string-typed `+` is a concatenation; anything else — a user-defined operator,
-            // an interpolation, a call returning a string — is one operand of this one.
+            // Only a string-typed `+` is a concatenation; anything else � a user-defined operator,
+            // an interpolation, a call returning a string � is one operand of this one.
             if (expression is BoundBinaryExpression { Operator: BinaryOperator.Add } nested &&
                 TypeCodeOf(nested.Type) == SurtrValueTypeCode.String)
             {
@@ -2114,13 +2212,13 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Emits a <c>?.</c> access: the receiver once, then the access only if it was not null (§5.1).
+        /// Emits a <c>?.</c> access: the receiver once, then the access only if it was not null (�5.1).
         /// </summary>
         /// <remarks>
         /// <para>
         /// The receiver goes into a slot rather than being duplicated on the stack, for two reasons.
-        /// It has to be readable at whatever depth the access reaches it — an argument list may sit
-        /// between them — and both paths have to leave the stack at the same depth, which the emitter
+        /// It has to be readable at whatever depth the access reaches it � an argument list may sit
+        /// between them � and both paths have to leave the stack at the same depth, which the emitter
         /// checks at the join. A <c>Dup</c>/<c>Pop</c> pair would have to be balanced by hand at every
         /// shape of access instead.
         /// </para>
@@ -2169,7 +2267,7 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Emits <c>x!!</c>: the value, and a raise on the path where it turned out to be null (§5.1).
+        /// Emits <c>x!!</c>: the value, and a raise on the path where it turned out to be null (�5.1).
         /// </summary>
         /// <remarks>
         /// The operand stays on the stack and a duplicate is what the test consumes, so the value
@@ -2208,7 +2306,7 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Whether a type's "no value" is the absent tag rather than a null reference (§5.1).
+        /// Whether a type's "no value" is the absent tag rather than a null reference (�5.1).
         /// </summary>
         private static bool IsNullablePrimitive(TypeSymbol type)
             => type.IsNullable && type.NonNullable.SpecialType is SpecialType.Int or SpecialType.Float
@@ -2221,12 +2319,12 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// <para>
         /// This is the only correct way to ask the question. The comparison opcodes are chosen by
-        /// operand family, so a nullable primitive picks the primitive ones — <c>EQ</c>/<c>NE</c>
+        /// operand family, so a nullable primitive picks the primitive ones � <c>EQ</c>/<c>NE</c>
         /// for the integer family, which compare the low 32 bits because int, bool and char share
         /// a representation and differ only in their tag. Absence differs from a present value in
         /// nothing <em>but</em> its tag, so that comparison cannot see it, and the payload it does
         /// see is the type code <c>PushAbsent</c> put there: an <c>int?</c> holding
-        /// <c>SurtrValueTypeCode.Integer</c> — that is, 1 — compares equal to null.
+        /// <c>SurtrValueTypeCode.Integer</c> � that is, 1 � compares equal to null.
         /// </para>
         /// <para>
         /// <c>IsAbsent</c> and <c>IsPresent</c> test the tag, which is the whole reason they are in
@@ -2239,7 +2337,7 @@ namespace Surtr.Compiler.CodeGen
             if (binary.Operator is not (BinaryOperator.Equal or BinaryOperator.NotEqual))
                 return false;
 
-            // Either side may be the literal — `null == x` is as legal as `x == null`.
+            // Either side may be the literal � `null == x` is as legal as `x == null`.
             BoundExpression? value = null;
             if (IsNullLiteral(binary.Right) && IsNullablePrimitive(binary.Left.Type))
                 value = binary.Left;
@@ -2313,7 +2411,7 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         /// <remarks>
         /// A nullable primitive is deliberately excluded: its "no value" is the absent tag, not a
-        /// null reference (§5.1), so it takes <see cref="TryEmitAbsenceTest"/>/
+        /// null reference (�5.1), so it takes <see cref="TryEmitAbsenceTest"/>/
         /// <see cref="TryEmitAbsenceBranch"/> instead - the two are never both applicable to the
         /// same comparison, since one requires the non-literal operand to be nullable-primitive and
         /// the other requires it not to be.
@@ -2370,7 +2468,7 @@ namespace Surtr.Compiler.CodeGen
         /// Emits <c>&lt;=&gt;</c> over a primitive family, which has no opcode of its own.
         /// </summary>
         /// <remarks>
-        /// §5.7 makes it yield an <c>int</c> whose sign is the answer, so two comparisons and a
+        /// �5.7 makes it yield an <c>int</c> whose sign is the answer, so two comparisons and a
         /// subtraction give it exactly.
         /// </remarks>
         private void EmitThreeWayCompare(BoundBinaryExpression binary)
@@ -2416,6 +2514,23 @@ namespace Surtr.Compiler.CodeGen
             var valueType = SlotCountOfType(binary.Left.Type) > 1
                 ? binary.Left.Type.NonNullable
                 : binary.Right.Type.NonNullable;
+
+            // A one-field wrapper erased to an inline value compares as the value it erases to -
+            // its slots are that value's, and its field list has nothing of its own to walk.
+            while (valueType is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } wrapper
+                && wrapper.UnderlyingType is TypeSymbol erased
+                && ValueTypeLayout.WidthOfType(valueType) > 1)
+            {
+                valueType = erased.NonNullable;
+            }
+
+            // A range compares structurally before any class-shaped walk can look for instance
+            // fields it does not have.
+            if (valueType.SpecialType == SpecialType.Range)
+            {
+                EmitRangeEquality(binary);
+                return;
+            }
 
             if (valueType is not NamedTypeSymbol named)
             {
@@ -2589,6 +2704,57 @@ namespace Surtr.Compiler.CodeGen
             return false;
         }
 
+        /// <summary>
+        /// Structural equality between two ranges: bounds and flag, slot by slot - the same walk
+        /// the value-class comparison runs, over the three slots a range is.
+        /// </summary>
+        /// <remarks>
+        /// Two equal ranges compare equal whatever identity their packs would carry, which is the
+        /// point of the range being a value: <c>(0..3) == (0..3)</c> answers true, and
+        /// <c>0..3</c> against <c>0..=3</c> answers false on the flag alone.
+        /// </remarks>
+        private void EmitRangeEquality(BoundBinaryExpression binary)
+        {
+            int leftBase = EnsureLocalRange(binary.Left, RangeSlotWidth);
+            int rightBase = EnsureLocalRange(binary.Right, RangeSlotWidth);
+
+            var verdict = _method.DeclareLocal("$eq");
+
+            var unequal = Code.NewLabel();
+            var done = Code.NewLabel();
+
+            Code.LoadLocalField(leftBase, 0);
+            Code.LoadLocalField(rightBase, 0);
+            Code.Compare(SurtrComparison.Equal, SurtrValueTypeCode.Integer);
+            Code.JumpIfFalse(unequal);
+
+            Code.LoadLocalField(leftBase, 1);
+            Code.LoadLocalField(rightBase, 1);
+            Code.Compare(SurtrComparison.Equal, SurtrValueTypeCode.Integer);
+            Code.JumpIfFalse(unequal);
+
+            Code.LoadLocalField(leftBase, 2);
+            Code.LoadLocalField(rightBase, 2);
+            Code.Compare(SurtrComparison.Equal, SurtrValueTypeCode.Boolean);
+
+            EmitStoreLocal(verdict);
+            Code.Jump(done);
+
+            Code.MarkLabel(unequal);
+            Code.LoadInt(0);
+            Code.Convert(SurtrValueTypeCode.Integer, SurtrValueTypeCode.Boolean);
+            EmitStoreLocal(verdict);
+
+            Code.MarkLabel(done);
+            EmitLoadLocal(verdict);
+
+            if (binary.Operator is BinaryOperator.NotEqual)
+                Code.Inv();
+        }
+
+        /// <summary>How many slots one inline range occupies: start, end, inclusive.</summary>
+        private const int RangeSlotWidth = 3;
+
         private void EmitUnary(BoundUnaryExpression unary)
         {
             switch (unary.Operator)
@@ -2609,7 +2775,7 @@ namespace Surtr.Compiler.CodeGen
                     return;
 
                 case UnaryOperator.NullAssert:
-                    // §5.1 asserts rather than converts, and the assertion is what a cast to the
+                    // �5.1 asserts rather than converts, and the assertion is what a cast to the
                     // same class already performs.
                     Expression(unary.Operand);
                     return;
@@ -2631,7 +2797,7 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         /// <remarks>
         /// Not expanded in the bound tree the way a compound assignment is, because the two forms
-        /// differ in which value they leave behind — a distinction that only exists at emit.
+        /// differ in which value they leave behind � a distinction that only exists at emit.
         /// </remarks>
         private void EmitIncrement(BoundUnaryExpression unary)
         {
@@ -2694,8 +2860,8 @@ namespace Surtr.Compiler.CodeGen
         /// Recognises <c>i = i + k</c> over an integer local and emits it as one instruction.
         /// </summary>
         /// <remarks>
-        /// §5.7's compound assignments arrive expanded — <c>i += 1</c> is already <c>i = i + 1</c>
-        /// in the bound tree — so this one shape covers both spellings, and covers the step of
+        /// �5.7's compound assignments arrive expanded � <c>i += 1</c> is already <c>i = i + 1</c>
+        /// in the bound tree � so this one shape covers both spellings, and covers the step of
         /// every hand-written counted loop with it. Only statement position qualifies: an
         /// assignment whose value something reads has to leave that value behind, and
         /// <c>IncLocal</c> leaves nothing.
@@ -2777,7 +2943,7 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// A callback rather than a value already on the stack, because the receiver and the index
         /// have to be evaluated <em>before</em> it for a field or an indexed write, and after it for
-        /// nothing — so the one order that works is the one each target dictates.
+        /// nothing � so the one order that works is the one each target dictates.
         /// </remarks>
         private void Store(BoundExpression target, Action value)
         {
@@ -2850,6 +3016,9 @@ namespace Surtr.Compiler.CodeGen
                 {
                     Expression(index.Target);
                     Expression(index.Index);
+                    // The key crosses into one-reference storage exactly as the value does:
+                    // a range or tuple key is stored packed.
+                    BoxIfMultiSlot(index.Index.Type);
                     value();
                     UnboxIfStillErased(index.Type);
                     // One-reference storage keeps an inline value boxed.
@@ -2913,10 +3082,10 @@ namespace Surtr.Compiler.CodeGen
 
             var receiver = field.Receiver ?? throw Unsupported($"a read of '{field.Field.Name}' with no receiver");
 
-            // A multi-field value class lives as a block of slots: reading a field of one reads
+            // An inline value class lives as a block of slots: reading a field of one reads
             // the sub-slot at the field's flattened offset - directly out of the frame range when
             // the receiver already has a home, spilled to a temp first when it does not.
-            if (receiver.Type.NonNullable is NamedTypeSymbol receiverValue && ValueTypeLayout.IsMultiField(receiverValue))
+            if (receiver.Type.NonNullable is NamedTypeSymbol receiverValue && ValueTypeLayout.IsBlockValueClass(receiverValue))
             {
                 if (!ValueTypeLayout.TryGet(receiverValue, out var layout, out var layoutError))
                     throw Unsupported(layoutError!);
@@ -2938,8 +3107,8 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
-            // A value class is its one field, so reading that field off one is the value itself —
-            // there is no instance to load from (§2.9). A field declared against the class's own
+            // A value class is its one field, so reading that field off one is the value itself �
+            // there is no instance to load from (�2.9). A field declared against the class's own
             // type parameter is still an erased slot, so a value that reached it was boxed on the
             // way in and has to come back out the same way any other erased field does.
             if (receiver.Type.NonNullable.TypeKind == TypeSymbolKind.ValueClass)
@@ -2964,11 +3133,11 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// Reads a field declared against its own class's type parameter back out the same way
-        /// <see cref="UnerasedCallResult"/> does for a generic method's result (§1.11's second
+        /// <see cref="UnerasedCallResult"/> does for a generic method's result (�1.11's second
         /// obligation).
         /// </summary>
         /// <remarks>
-        /// A field typed <c>T</c> is a real erased slot — unlike an <c>array</c>/<c>dict</c> element,
+        /// A field typed <c>T</c> is a real erased slot � unlike an <c>array</c>/<c>dict</c> element,
         /// it has no dedicated opcode bypassing the erasure convention, so a value reaching it was
         /// boxed on the way in (<c>ConversionTarget</c>) and has to be cast-and-unboxed on the way
         /// back out, exactly as a written <c>as</c> does. <c>field.Type</c> already reads the
@@ -2986,7 +3155,7 @@ namespace Surtr.Compiler.CodeGen
         private void EmitPropertyRead(BoundPropertyExpression property)
         {
             // Every built-in collection's `length` is a native getter, but each has a dedicated
-            // opcode that reads the count in one dispatch with no frame — the same thing, matched by
+            // opcode that reads the count in one dispatch with no frame � the same thing, matched by
             // the getter's identity so a user `length` on another type is untouched. `ArrLen`/
             // `TupLen` are also what the `for-in` lowering over an array/tuple already reads the
             // count with; this is the same opcode reaching the same answer from a property read.
@@ -3031,6 +3200,13 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
+            // A range is its own three-slot block, so reading `start`, `end` or `isInclusive` off
+            // one is a sub-slot read - the same lowering a multi-field value class field takes.
+            // No frame, no pack, no call; the other range members still reach their native bodies
+            // with the block as receiver.
+            if (!property.Property.IsStatic && TryRangeSlotRead(property))
+                return;
+
             if (TryInlineAutoAccessorGet(property.Property, property.Receiver, property.IsVirtualGet, discardResult: false))
                 return;
 
@@ -3069,23 +3245,29 @@ namespace Surtr.Compiler.CodeGen
             => property.Getter is { } getter && IsTupleMember(getter, LengthGetterName);
 
         /// <summary>
-        /// Replaces a read of an auto-property by the field load that is its whole body (§3.4, §3.6).
+        /// Replaces a read of an auto-property by the field load that is its whole body (�3.4, �3.6).
         /// </summary>
         /// <remarks>
         /// An auto-accessor has no bound body for <see cref="TryInline"/> to splice, so the read is
         /// lowered here, in the shape <see cref="ModuleEmitter.EmitAutoAccessor"/> would have given
         /// the body: a static one is the backing field, an instance one is the field off the
-        /// receiver. Only an accessor proven non-virtual at this access can be replaced — a
+        /// receiver. Only an accessor proven non-virtual at this access can be replaced � a
         /// <c>Direct</c> one always qualifies, and a <c>virtual</c>/<c>override</c> one qualifies
         /// exactly where <see cref="BoundPropertyExpression.IsVirtualGet"/> already devirtualised it
-        /// (a sealed receiver, <c>super</c>, or a <c>sealed override</c>) — either way nothing below
+        /// (a sealed receiver, <c>super</c>, or a <c>sealed override</c>) � either way nothing below
         /// this access can change which body runs. A value class's receiver is the wrapped field,
-        /// not an instance to read a field from (§2.9).
+        /// not an instance to read a field from (�2.9).
         /// </remarks>
         private bool TryInlineAutoAccessorGet(PropertySymbol property, BoundExpression? receiver, bool isVirtualGet, bool discardResult)
         {
             var getter = property.Getter;
             if (getter is null || isVirtualGet || !IsAutoAccessor(property, getter))
+                return false;
+
+            // �3.6: `noinline` refuses the backing-field fold too � the access stays a call to the
+            // accessor the module really carries, which is what "no folding" has to mean when the
+            // body is one instruction.
+            if (getter.IsNoInline)
                 return false;
 
             if (property.IsStatic)
@@ -3107,7 +3289,7 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Replaces a write to an auto-property by the field store that is its whole body (§3.4, §3.6).
+        /// Replaces a write to an auto-property by the field store that is its whole body (�3.4, �3.6).
         /// </summary>
         /// <remarks>
         /// The inverse of <see cref="TryInlineAutoAccessorGet"/>: a static one stores the backing
@@ -3119,6 +3301,10 @@ namespace Surtr.Compiler.CodeGen
         {
             var setter = property.Setter;
             if (setter is null || isVirtualSet || !IsAutoAccessor(property, setter))
+                return false;
+
+            // �3.6: the write-side twin of the getter's `noinline` guard above.
+            if (setter.IsNoInline)
                 return false;
 
             if (property.IsStatic)
@@ -3144,15 +3330,15 @@ namespace Surtr.Compiler.CodeGen
                 && (_context.Bodies is null || !_context.Bodies.ContainsKey(accessor));
 
         /// <summary>
-        /// Splices an explicit getter at its read site (§3.6), by the hint written on the property or
+        /// Splices an explicit getter at its read site (�3.6), by the hint written on the property or
         /// by the cost heuristic, whichever lets it in.
         /// </summary>
         /// <remarks>
         /// A property read reaches the getter through <see cref="EmitPropertyRead"/>, not through
-        /// <see cref="EmitCall"/> — so without this the <c>inline</c> a property declares would never
+        /// <see cref="EmitCall"/> � so without this the <c>inline</c> a property declares would never
         /// be honoured. The getter is shaped as the zero-argument call it is, and the rest is the
-        /// ordinary splice. Only a getter proven non-virtual at this access can be replaced — see
-        /// <see cref="BoundPropertyExpression.IsVirtualGet"/> — exactly as the auto-accessor path
+        /// ordinary splice. Only a getter proven non-virtual at this access can be replaced � see
+        /// <see cref="BoundPropertyExpression.IsVirtualGet"/> � exactly as the auto-accessor path
         /// requires.
         /// </remarks>
         private bool TryInlinePropertyGetter(BoundPropertyExpression property)
@@ -3161,8 +3347,13 @@ namespace Surtr.Compiler.CodeGen
             if (getter is null)
                 return false;
 
-            // An extension property's getter (§15) takes its receiver as an ordinary declared
-            // parameter, not out-of-band the way `property.Receiver` is here — the synthetic
+            // �3.6: `noinline` on the accessor (or the property it inherits it from) keeps the read
+            // a real call � no splice by hint or heuristic.
+            if (getter.IsNoInline)
+                return false;
+
+            // An extension property's getter (�15) takes its receiver as an ordinary declared
+            // parameter, not out-of-band the way `property.Receiver` is here � the synthetic
             // zero-argument call below assumes the opposite (`Arguments` empty, receiver carried
             // separately), so splicing it in would bind that empty list against a getter that
             // actually declares one parameter. `EmitPropertyRead`'s general path already knows how
@@ -3203,13 +3394,13 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Splices an explicit setter at its write site (§3.6), by the hint written on the property
-        /// or by the cost heuristic, whichever lets it in — the write-side twin of
+        /// Splices an explicit setter at its write site (�3.6), by the hint written on the property
+        /// or by the cost heuristic, whichever lets it in � the write-side twin of
         /// <see cref="TryInlinePropertyGetter"/>.
         /// </summary>
         /// <remarks>
         /// A property write reaches the setter through <see cref="Store"/>, which does not always
-        /// have a <see cref="BoundExpression"/> for the value to hand <see cref="TryInline"/> — a
+        /// have a <see cref="BoundExpression"/> for the value to hand <see cref="TryInline"/> � a
         /// compound assignment or an increment/decrement has already lowered it into a plain local
         /// by the time <see cref="Store"/> runs, and only hands over an <c>Action</c> that emits
         /// whatever the value turned out to be. <see cref="TryInlineSetterBody"/> below is that same
@@ -3223,8 +3414,13 @@ namespace Surtr.Compiler.CodeGen
             if (setter is null)
                 return false;
 
+            // �3.6: `noinline` on the accessor (or the property it inherits it from) keeps the
+            // write a real call � no splice by hint or heuristic.
+            if (setter.IsNoInline)
+                return false;
+
             // Same reason as the matching guard in TryInlinePropertyGetter: an extension property's
-            // setter (§15) declares the receiver as an ordinary parameter ahead of `value`, which
+            // setter (�15) declares the receiver as an ordinary parameter ahead of `value`, which
             // TryInlineSetterBody's splice does not know to supply.
             if (setter.ExtensionTargetType is not null)
                 return false;
@@ -3263,7 +3459,7 @@ namespace Surtr.Compiler.CodeGen
         /// The actual splice for <see cref="TryInlinePropertySetter"/>, once the hint or the
         /// heuristic has already let the setter in. Mirrors <see cref="TryInline"/>'s guards and
         /// receiver handling, but feeds the setter's one parameter from <paramref name="value"/>
-        /// rather than a bound argument, and never carries a result — a setter always returns void,
+        /// rather than a bound argument, and never carries a result � a setter always returns void,
         /// so there is nothing here that plays <see cref="TryInline"/>'s tail-return or result-local
         /// role.
         /// </summary>
@@ -3373,7 +3569,7 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Builds a <c>value class</c>, which allocates nothing (§2.9).
+        /// Builds a <c>value class</c>, which allocates nothing (�2.9).
         /// </summary>
         /// <remarks>
         /// <para>
@@ -3384,7 +3580,7 @@ namespace Surtr.Compiler.CodeGen
         /// </para>
         /// <para>
         /// So the constructor is spliced rather than called, and the shape it has to have is
-        /// <c>this.field = expression</c> — one assignment, nothing else. That is what a value
+        /// <c>this.field = expression</c> � one assignment, nothing else. That is what a value
         /// class's constructor is for, and anything wider is refused rather than approximated,
         /// because there is no object for a second statement to observe.
         /// </para>
@@ -3419,7 +3615,7 @@ namespace Surtr.Compiler.CodeGen
                 // A value class that declared no constructor was given one by the binder taking the
                 // type of its single field; the binder already converted the one argument against
                 // that field type, so the value to wrap is simply the argument. (The binding
-                // guarantees exactly one argument here — zero or several never reach emission.)
+                // guarantees exactly one argument here � zero or several never reach emission.)
                 if (creation.Arguments.Count == 1)
                 {
                     Expression(creation.Arguments[0]);
@@ -3430,8 +3626,8 @@ namespace Surtr.Compiler.CodeGen
                     $"building a '{type.Name}' with no constructor, which leaves nothing to put in the field it wraps");
             }
 
-            // A construction of a generic value class carries the substituted clone (§6), whose
-            // parameters are new symbols and whose body is keyed by the declaration — bodies are
+            // A construction of a generic value class carries the substituted clone (�6), whose
+            // parameters are new symbols and whose body is keyed by the declaration � bodies are
             // bound once against it, never against a view. So the body and the spliced assignment's
             // parameters both come from the declaration, and each argument maps onto the
             // *declaration's* parameter, which is the one the assignment's expression references.
@@ -3445,7 +3641,7 @@ namespace Surtr.Compiler.CodeGen
                     $"building a '{type.Name}', whose constructor is not a single assignment to the field it wraps");
             }
 
-            // The canonical value-class constructor is `this._field = value;` — the wrapped value is
+            // The canonical value-class constructor is `this._field = value;` � the wrapped value is
             // a direct read of the one parameter. Then the construction *is* the argument, so it is
             // emitted straight rather than spliced through a temp local: the splice would pay a
             // `Stl $value$...; Ldl $value$...` round-trip (and a local slot) for a value that is
@@ -3587,13 +3783,18 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         private void EmitCall(BoundCallExpression call, bool discardResult)
         {
-            if (TryFoldConstCall(call, discardResult))
+            // �3.6: a `noinline` callee refuses every optional fold of its invocations � the const
+            // fold below and the splice paths further down. What runs is the declaration itself, as
+            // a real call, at every site. The folds �7 makes *mandatory* (a `const` initializer, a
+            // `const if` condition) never reach here; those are evaluation semantics, not
+            // optimization, and no modifier vetoes them.
+            if (!call.Method.IsNoInline && TryFoldConstCall(call, discardResult))
                 return;
 
             // A method on a built-in collection is a native body the compiler could emit a call to,
             // but each of these operations also has a dedicated opcode that does the same thing in
             // one dispatch and no frame. Where the callee is one of them, this call site takes the
-            // opcode — the member is matched by identity so a user type that happens to declare its
+            // opcode � the member is matched by identity so a user type that happens to declare its
             // own `remove` is not confused with the built-in's. A local method never is one (its
             // `ImportedFrom` is null), so the three Try* dispatches are gated on a single
             // precomputed identity set instead of probing each name against the built-in classes.
@@ -3618,8 +3819,10 @@ namespace Surtr.Compiler.CodeGen
             }
 
             // `inline` is a hint and the heuristic a guess: a body either of them names that cannot
-            // be spliced falls through to a real call rather than failing the whole module.
-            if (call.Method.IsInline || ShouldInlineByCost(call))
+            // be spliced falls through to a real call rather than failing the whole module. A
+            // `noinline` callee reaches neither branch � it is exclusive with both hints at parse
+            // time, and the heuristic is asked only when nothing was written.
+            if (!call.Method.IsNoInline && (call.Method.IsInline || ShouldInlineByCost(call)))
             {
                 if (TryInline(call, discardResult))
                     return;
@@ -3629,8 +3832,8 @@ namespace Surtr.Compiler.CodeGen
             {
                 Expression(call.Receiver);
 
-                // §6.3: a value class is the field it wraps, and a field is not something to
-                // dispatch on — so a call that might resolve through the receiver's class boxes
+                // �6.3: a value class is the field it wraps, and a field is not something to
+                // dispatch on � so a call that might resolve through the receiver's class boxes
                 // first, and `this` inside the callee unwraps. A direct dispatch needs neither.
                 BoxReceiverForCall(call.Method, call.Receiver.Type);
             }
@@ -3646,11 +3849,11 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// Reads a generic method's result back out the same way any other erased slot is read
-        /// (§1.11's second obligation), when the call left one on the stack.
+        /// (�1.11's second obligation), when the call left one on the stack.
         /// </summary>
         /// <remarks>
         /// <c>SubstituteGenericCandidates</c> replaces a generic method with the concrete view its
-        /// arguments infer (§6) before binding ever sees it, so <c>call.Method.ReturnType</c> already
+        /// arguments infer (�6) before binding ever sees it, so <c>call.Method.ReturnType</c> already
         /// reads <c>int</c> where the declaration reads <c>T</c> - correct for type checking, since
         /// that is genuinely what a caller gets back, but silent about the fact that the declaration
         /// is compiled once, generically, and so its own return slot is erased regardless of what a
@@ -3671,8 +3874,8 @@ namespace Surtr.Compiler.CodeGen
         /// stack.
         /// </summary>
         /// <remarks>
-        /// Where a call lands is a property of the callee, not of the call site — the interpreter
-        /// reads it off the method it names — so nothing here picks between bytecode and host code.
+        /// Where a call lands is a property of the callee, not of the call site � the interpreter
+        /// reads it off the method it names � so nothing here picks between bytecode and host code.
         /// What it does pick between is the four <em>tables</em> a callee can live in: this module's
         /// method builders, another module's functions, an interface's slots, and everything else.
         /// </remarks>
@@ -3682,7 +3885,7 @@ namespace Surtr.Compiler.CodeGen
             {
                 // The one case where the call site rather than the callee decides: a `super` call,
                 // or one on a sealed receiver, names a virtual method and must not go through the
-                // vtable — an override calling its base would otherwise call itself.
+                // vtable � an override calling its base would otherwise call itself.
                 if (!virtualCall && !method.IsStatic && method.ContainingType is not null && method.Dispatch != MethodDispatch.Direct)
                     Code.CallSpecial(local, discardResult);
                 else
@@ -3701,7 +3904,7 @@ namespace Surtr.Compiler.CodeGen
             }
 
             // A module-level member records no owner, so an access-table entry cannot name one in
-            // another module (`docs/VM-Plan.md` §3.3) - a cross-module call goes through the module
+            // another module (`docs/VM-Plan.md` �3.3) - a cross-module call goes through the module
             // reference table by path instead. Both halves are asked: a module built earlier in this
             // compilation, and one referenced as an image.
             if (method.ContainingType is null
@@ -3726,7 +3929,7 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// Emits an argument bound for the built-in <c>array</c>/<c>dict</c>'s own <c>G0</c>/<c>K</c>/
-        /// <c>V</c>-typed member — a key, a value, an index target — the way
+        /// <c>V</c>-typed member � a key, a value, an index target � the way
         /// <see cref="TryEmitDictionaryOperation"/>/<see cref="TryEmitArrayOperation"/> need it.
         /// </summary>
         /// <remarks>
@@ -3735,9 +3938,9 @@ namespace Surtr.Compiler.CodeGen
         /// type, so a real generic method's own erased frame slot gets the box it needs. Array and
         /// dict declare their element/key/value members the same way (<c>G0</c>/<c>K</c>/<c>V</c>,
         /// per <c>docs/Runtime-Model.md</c>) for signature matching, but the opcodes these two
-        /// methods emit instead of a real call — <c>ArrSet</c>, <c>DictSet</c>, <c>ArrPush</c>, … —
+        /// methods emit instead of a real call � <c>ArrSet</c>, <c>DictSet</c>, <c>ArrPush</c>, � �
         /// read and write the collection's native <c>SurtrValue</c> storage directly and were never
-        /// erased to begin with (<c>docs/VM-Plan.md</c> §3.5's "no per-element type tags"), so the
+        /// erased to begin with (<c>docs/VM-Plan.md</c> �3.5's "no per-element type tags"), so the
         /// box that conversion produces is not just unneeded here, it is actively wrong: it stores a
         /// boxed reference where the opcode expects the raw value, and a later <c>DictGet</c>/
         /// <c>ArrGet</c> hands that reference back as if it were the value itself. Stripping the
@@ -3747,8 +3950,8 @@ namespace Surtr.Compiler.CodeGen
         /// that is not the erasure artifact is left untouched.
         /// <para>
         /// A second, narrower case reaches the same problem from the other side: an argument whose
-        /// own static type is <em>already</em> the bare type parameter — <c>item: T</c> passed to
-        /// <c>_items.push(item)</c> from inside the generic body that declares <c>T</c> — converts
+        /// own static type is <em>already</em> the bare type parameter � <c>item: T</c> passed to
+        /// <c>_items.push(item)</c> from inside the generic body that declares <c>T</c> � converts
         /// against it by <c>Identity</c>, since source and destination are the same unsubstituted
         /// symbol, so there is no <c>ImplicitErasure</c> node here to strip. But <c>item</c> is still
         /// boxed, the same way any <c>T</c>-typed value at rest inside a still-generic body is (an
@@ -3783,7 +3986,7 @@ namespace Surtr.Compiler.CodeGen
         /// The members lowered here are the ones with a dedicated opcode of identical semantics:
         /// <c>clear</c>, <c>get</c>, <c>set</c>, <c>containsKey</c>, <c>remove</c>, <c>keys</c> and
         /// <c>values</c>. <c>get</c>/<c>set</c> reach the same <c>DictGet</c>/<c>DictSet</c> the
-        /// index form <c>m[k]</c> already does — lowered here too, rather than left to duplicate a
+        /// index form <c>m[k]</c> already does � lowered here too, rather than left to duplicate a
         /// native call the index form already avoids. <c>length</c> is handled separately, in
         /// <see cref="EmitPropertyRead"/>.
         /// </remarks>
@@ -3866,7 +4069,7 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// The array twin of <see cref="TryEmitDictionaryOperation"/>: replaces a call to a member
-        /// of the built-in <c>array</c> that has a dedicated opcode of identical semantics —
+        /// of the built-in <c>array</c> that has a dedicated opcode of identical semantics �
         /// <c>get</c>, <c>set</c>, <c>push</c>, <c>pop</c>, <c>insert</c>, <c>removeAt</c>,
         /// <c>clear</c>, <c>indexOf</c> and <c>contains</c>. <c>length</c> is handled separately, in
         /// <see cref="EmitPropertyRead"/>; <c>reverse</c>, <c>reserve</c>, <c>truncate</c>,
@@ -3971,7 +4174,7 @@ namespace Surtr.Compiler.CodeGen
         /// The string twin of <see cref="TryEmitDictionaryOperation"/>: <c>charAt</c> is exactly the
         /// index form <c>s[i]</c> under another name, so it reaches the same <c>StrGet</c>.
         /// <c>length</c> is handled separately, in <see cref="EmitPropertyRead"/>; every other
-        /// string method (<c>substring</c>, <c>repeat</c>, …) has no opcode of its own.
+        /// string method (<c>substring</c>, <c>repeat</c>, �) has no opcode of its own.
         /// </summary>
         private bool TryEmitStringOperation(BoundCallExpression call, bool discardResult)
         {
@@ -3998,9 +4201,9 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// Identity is the point: an imported symbol keeps the very <c>SurtrMethodInfo</c> the
         /// built-in declares, and that survives the generic substitution <c>MemberLookup</c>
-        /// performs — so a constructed <c>{K: V}</c> and its definition share one
+        /// performs � so a constructed <c>{K: V}</c> and its definition share one
         /// <c>ImportedFrom</c>. Comparing it by reference keeps a user class that declares its own
-        /// <c>remove</c>/<c>clear</c>/… from being mistaken for the dictionary's.
+        /// <c>remove</c>/<c>clear</c>/� from being mistaken for the dictionary's.
         /// </remarks>
         private static bool IsDictionaryMember(MethodSymbol method, string name)
             => method.ImportedFrom is { } imported
@@ -4012,7 +4215,7 @@ namespace Surtr.Compiler.CodeGen
                 ? overloads[0]
                 : null;
 
-        /// <summary>The array twin of <see cref="IsDictionaryMember"/> — same identity reasoning.</summary>
+        /// <summary>The array twin of <see cref="IsDictionaryMember"/> � same identity reasoning.</summary>
         private static bool IsArrayMember(MethodSymbol method, string name)
             => method.ImportedFrom is { } imported
                && ReferenceEquals(imported, ArrayMethod(name));
@@ -4023,7 +4226,7 @@ namespace Surtr.Compiler.CodeGen
                 ? overloads[0]
                 : null;
 
-        /// <summary>The string twin of <see cref="IsDictionaryMember"/> — same identity reasoning.</summary>
+        /// <summary>The string twin of <see cref="IsDictionaryMember"/> � same identity reasoning.</summary>
         private static bool IsStringMember(MethodSymbol method, string name)
             => method.ImportedFrom is { } imported
                && ReferenceEquals(imported, StringMethod(name));
@@ -4034,7 +4237,7 @@ namespace Surtr.Compiler.CodeGen
                 ? overloads[0]
                 : null;
 
-        /// <summary>The tuple twin of <see cref="IsDictionaryMember"/> — same identity reasoning.</summary>
+        /// <summary>The tuple twin of <see cref="IsDictionaryMember"/> � same identity reasoning.</summary>
         private static bool IsTupleMember(MethodSymbol method, string name)
             => method.ImportedFrom is { } imported
                && ReferenceEquals(imported, TupleMethod(name));
@@ -4045,9 +4248,46 @@ namespace Surtr.Compiler.CodeGen
                 ? overloads[0]
                 : null;
 
+        /// <summary>Whether this getter is one of the built-in range members the emitter reads as a sub-slot.</summary>
+        private static bool IsRangeSlotGetter(MethodSymbol method, string property)
+            => method.ImportedFrom is { } imported
+               && ReferenceEquals(imported, RangeSlotGetter(property));
+
+        /// <summary>The single overload of a named built-in range getter, or <see langword="null"/>.</summary>
+        private static SurtrMethodInfo? RangeSlotGetter(string property)
+            => SurtrBuiltIns.Range.TryGetMethods(MemberNames.Getter(property), out var overloads) && overloads.Length == 1
+                ? overloads[0]
+                : null;
+
+        /// <summary>
+        /// Lowers a read of the range's pure-slot members - <c>start</c>, <c>end</c>,
+        /// <c>isInclusive</c> - to one sub-slot read off the receiver's block, and answers whether
+        /// it did. Everything else on <c>range</c> keeps its native body.
+        /// </summary>
+        private bool TryRangeSlotRead(BoundPropertyExpression property)
+        {
+            var getter = property.Property.Getter;
+            if (getter is null || property.IsVirtualGet || property.Receiver is null || getter.ExtensionTargetType is not null)
+                return false;
+
+            int offset;
+            if (IsRangeSlotGetter(getter, "start"))
+                offset = 0;
+            else if (IsRangeSlotGetter(getter, "end"))
+                offset = 1;
+            else if (IsRangeSlotGetter(getter, "isInclusive"))
+                offset = 2;
+            else
+                return false;
+
+            int baseSlot = EnsureLocalRange(property.Receiver, RangeSlotWidth);
+            Code.LoadLocalField(baseSlot, offset);
+            return true;
+        }
+
         /// <summary>
         /// The built-in members this emitter can lower to a dedicated opcode, keyed by their
-        /// <c>SurtrMethodInfo</c> identity — the same set the <c>Is*Member</c> checks name. Built
+        /// <c>SurtrMethodInfo</c> identity � the same set the <c>Is*Member</c> checks name. Built
         /// once, so a call site decides in one set lookup whether any of the <c>Try*</c> operations
         /// could apply.
         /// </summary>
@@ -4071,12 +4311,12 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// Replaces a call to a <c>const fun</c> with constant arguments by the value it folds to
-        /// (§7.2).
+        /// (�7.2).
         /// </summary>
         /// <remarks>
-        /// This is where §7.2's promise becomes observable: the callee still exists and can still be
+        /// This is where �7.2's promise becomes observable: the callee still exists and can still be
         /// called at run time, but a call the compiler could answer does not survive into the
-        /// bytecode. A fold that fails is not an error — the call is simply emitted.
+        /// bytecode. A fold that fails is not an error � the call is simply emitted.
         /// </remarks>
         private bool TryFoldConstCall(BoundCallExpression call, bool discardResult)
         {
@@ -4110,8 +4350,8 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Whether the default heuristic — no <c>inline</c> written — still wants this body spliced
-        /// (§3.6).
+        /// Whether the default heuristic � no <c>inline</c> written � still wants this body spliced
+        /// (�3.6).
         /// </summary>
         /// <remarks>
         /// The cheap guards <see cref="TryInline"/> would apply are checked here too, so a body the
@@ -4139,7 +4379,7 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Splices an <c>inline</c> call site (§3.6), if the body is available and it is safe to.
+        /// Splices an <c>inline</c> call site (�3.6), if the body is available and it is safe to.
         /// </summary>
         /// <remarks>
         /// Arguments land in real slots first, so an argument written once is evaluated once
@@ -4149,6 +4389,11 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private bool TryInline(BoundCallExpression call, bool discardResult)
         {
+            // The authoritative `noinline` guard (�3.6): every path here goes through it, whatever
+            // the hint or heuristic at the call site decided.
+            if (call.Method.IsNoInline)
+                return false;
+
             if (_context.Bodies is null || !_context.Bodies.TryGetValue(call.Method, out var body))
                 return false;
 
@@ -4162,7 +4407,7 @@ namespace Surtr.Compiler.CodeGen
                 return false;
 
             // A body that splices itself, directly or through another inline function, would expand
-            // forever — and its locals would collide, since a symbol maps to one slot.
+            // forever � and its locals would collide, since a symbol maps to one slot.
             if (ReferenceEquals(call.Method, _symbol))
                 return false;
 
@@ -4197,8 +4442,8 @@ namespace Surtr.Compiler.CodeGen
             // local machinery below at all: there is no earlier `return` for a jump to skip past, so
             // the value can stay on the evaluation stack exactly as an ordinary expression's would,
             // instead of paying a store immediately followed by its own reload. The frame is still
-            // pushed — with an unused exit/result, since nothing here ever reaches EmitReturn to read
-            // them — purely so a call nested inside the value expression still sees this method as
+            // pushed � with an unused exit/result, since nothing here ever reaches EmitReturn to read
+            // them � purely so a call nested inside the value expression still sees this method as
             // "already being spliced" and refuses to splice it again (the cycle guard above).
             if (body is BoundBlockStatement { Statements: [BoundReturnStatement tailReturn] })
             {
@@ -4247,7 +4492,7 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Lifts a lambda to a static function of this module and builds a closure over it (§8).
+        /// Lifts a lambda to a static function of this module and builds a closure over it (�8).
         /// </summary>
         /// <remarks>
         /// Static, never an instance method on a synthesised class: <c>SurtrClosure</c> already
@@ -4373,7 +4618,7 @@ namespace Surtr.Compiler.CodeGen
         {
             var target = index.Target.Type.NonNullable;
 
-            // §5.3 makes a tuple index a constant — the binder folds it and hands back a literal —
+            // �5.3 makes a tuple index a constant � the binder folds it and hands back a literal �
             // so it belongs in the instruction rather than on the stack. The tuple itself is a
             // block now: spill its base into a frame range (free when it already lives in one)
             // and read the element at its own flattened offset, exactly as a value-class field
@@ -4401,6 +4646,8 @@ namespace Surtr.Compiler.CodeGen
 
             Expression(index.Target);
             Expression(index.Index);
+            // A key of an inline type reaches the collection packed, mirroring the write side.
+            BoxIfMultiSlot(index.Index.Type);
 
             switch (target.TypeKind)
             {
@@ -4431,21 +4678,21 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// Boxes a value read straight off a collection's native storage when it is still typed by
-        /// the declaring generic's own bare type parameter — <c>self[i]</c> off a <c>T[]</c> inside
+        /// the declaring generic's own bare type parameter � <c>self[i]</c> off a <c>T[]</c> inside
         /// the body that declares <c>T</c>, say.
         /// </summary>
         /// <remarks>
         /// <c>ArrGet</c>/<c>DictGet</c>/<c>TupGet</c>/<c>TupleElement</c> read the collection's
-        /// storage directly (§3.5's "no per-element type tags"), which is the right raw value once
-        /// <c>T</c> is substituted to a concrete type — an <c>int[]</c>'s own indexer needs no box,
+        /// storage directly (�3.5's "no per-element type tags"), which is the right raw value once
+        /// <c>T</c> is substituted to a concrete type � an <c>int[]</c>'s own indexer needs no box,
         /// which is exactly what <see cref="EmitCollectionOperand"/> restores on the write side. But
         /// while <c>T</c> is still the declaring generic's own bare parameter, this body is compiled
         /// once for every <c>T</c>, so a value leaving through it has to become a reference the same
         /// way one reaching a generic parameter does on the way in (<c>ConversionTarget</c> in
-        /// <c>BodyBinder.Expressions.cs</c>) — except the compiler has no concrete type to pick
+        /// <c>BodyBinder.Expressions.cs</c>) � except the compiler has no concrete type to pick
         /// <c>BoxInt</c> from <c>BoxFloat</c> with here, since the collection this <c>T[]</c> names
         /// might be a concretely-typed one flowing in from a call site (raw storage) or one built
-        /// from scratch inside this very generic body (already-boxed storage, §1.11). <see
+        /// from scratch inside this very generic body (already-boxed storage, �1.11). <see
         /// cref="Surtr.Bytecode.OpCode.BoxDynamic"/> is exactly the opcode for that: it reads the value's own tag
         /// instead of a static type, and is a no-op when the value is already a reference. The read
         /// and the later <c>Unerase</c> a caller applies (<see cref="UnerasedCallResult"/>, the loop
@@ -4466,7 +4713,7 @@ namespace Surtr.Compiler.CodeGen
         /// that way across an erasure boundary (an argument, a field read) and nothing along the way
         /// had reason to undo it. But the array/dict/tuple storage it is about to be written into was
         /// never boxed to begin with, regardless of whether the collection's own compile-time element
-        /// type is concrete or still abstract (§3.5's "no per-element type tags" is a property of the
+        /// type is concrete or still abstract (�3.5's "no per-element type tags" is a property of the
         /// storage, not of how erased the accessing body happens to be). <see
         /// cref="Surtr.Bytecode.OpCode.UnboxDynamic"/> is a no-op for anything that is not a boxed primitive, so this
         /// is safe to call whenever the static type says <c>T</c>, without knowing in advance whether
@@ -4499,7 +4746,7 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         /// <remarks>
         /// <para>
-        /// Nothing is packed here any more. A tuple is a value type (§5.5 as lowered): its
+        /// Nothing is packed here any more. A tuple is a value type (�5.5 as lowered): its
         /// elements <em>are</em> the value's slots, so the literal is the block - the same shape
         /// every multi-field construction already leaves behind. Where the value meets a slot that
         /// holds one reference - an array element, a dict key, an erased parameter - the boundary
@@ -4541,8 +4788,8 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// Emits a construction of <c>array</c>, <c>dict</c> or <c>tuple</c> through their nameable
-        /// generic form (§5.3). Every shape folds to the same allocation opcodes the equivalent
-        /// literal already uses — never <c>ObjNew</c> — plus at most one native call
+        /// generic form (�5.3). Every shape folds to the same allocation opcodes the equivalent
+        /// literal already uses � never <c>ObjNew</c> � plus at most one native call
         /// (<see cref="BoundCollectionCreationExpression.ReserveMethod"/>, the one shape that has no
         /// single-opcode fold available).
         /// </summary>
@@ -4553,7 +4800,7 @@ namespace Surtr.Compiler.CodeGen
             switch (creation.Kind)
             {
                 case CollectionCreationKind.ArrayEmpty:
-                    // Identical to what an empty `[]` literal already emits (EmitArrayLiteral) —
+                    // Identical to what an empty `[]` literal already emits (EmitArrayLiteral) �
                     // routed through the same ArrPack rather than re-derived.
                     Code.PackArray(type, 0);
                     return;
@@ -4573,7 +4820,7 @@ namespace Surtr.Compiler.CodeGen
                 case CollectionCreationKind.DictCapacity:
                     // DictNew has no capacity operand, so this is the one shape that does not fold
                     // to a single opcode: allocate empty, then dup + call dict's own existing
-                    // `reserve` — the same "dup, call a void-returning instance method, keep one
+                    // `reserve` � the same "dup, call a void-returning instance method, keep one
                     // copy" idiom EmitObjectCreation already uses for a synthesized default
                     // constructor.
                     Code.NewDictionary(type);
@@ -4617,8 +4864,8 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitArrayCapacity(BoundCollectionCreationExpression creation, SurtrClassReference type)
         {
-            // A written literal folds straight to ArrNewX — the addressing mode Opcodes.md already
-            // documents for exactly this, "for arrays of statically known size" — with zero runtime
+            // A written literal folds straight to ArrNewX � the addressing mode Opcodes.md already
+            // documents for exactly this, "for arrays of statically known size" � with zero runtime
             // work; anything else pushes the runtime value and falls back to the stack-popping ArrNew.
             if (creation.Capacity is BoundLiteralExpression { Value: long constant }
                 && constant >= 0
@@ -4710,10 +4957,10 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// <c>array&lt;T&gt;(size, defaultValue)</c> for a non-zero (or non-constant) default — the
+        /// <c>array&lt;T&gt;(size, defaultValue)</c> for a non-zero (or non-constant) default � the
         /// zero-value case never reaches here, folded onto <see cref="EmitArrayCapacity"/> instead
         /// (which already zero-fills) back in the binder. Every loop method below follows the same
-        /// hand-rolled counted-loop idiom <c>EmitForInIndexed</c>/<c>EmitForInRange</c> already use —
+        /// hand-rolled counted-loop idiom <c>EmitForInIndexed</c>/<c>EmitForInRange</c> already use �
         /// no shared "emit a counted loop" helper exists anywhere in this emitter, and none of these
         /// synthesized loops has a user-visible body to give <c>break</c>/<c>continue</c> targets to,
         /// so none of them call <c>PushLoop</c>/<c>PopTargets</c> either.
@@ -4756,10 +5003,10 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// <c>array&lt;T&gt;(anotherArray)</c> — checked ahead of <see cref="EmitArrayFromIterable"/>
+        /// <c>array&lt;T&gt;(anotherArray)</c> � checked ahead of <see cref="EmitArrayFromIterable"/>
         /// in the binder precisely so this faster, non-interface-dispatch path is what an array
         /// argument actually takes: one <c>ArrLen</c>, one runtime <c>ArrNew</c>, then indexed
-        /// <c>ArrGet</c>/<c>ArrSet</c> — never <c>CallInterface</c>.
+        /// <c>ArrGet</c>/<c>ArrSet</c> � never <c>CallInterface</c>.
         /// </summary>
         private void EmitArrayCopy(BoundCollectionCreationExpression creation, SurtrClassReference type)
         {
@@ -4806,7 +5053,7 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// <c>array&lt;T&gt;(anIterable)</c> — the lowest-priority, general-purpose shape, walking
+        /// <c>array&lt;T&gt;(anIterable)</c> � the lowest-priority, general-purpose shape, walking
         /// the source through <c>IIterable&lt;T&gt;</c> exactly as <c>EmitForInIterable</c> already
         /// does (interface dispatch on <c>iterate</c>/<c>moveNext</c>/<c>current</c>, the same
         /// <c>Unerase</c> rule for a reference element), pushing each result rather than storing to a
@@ -4830,6 +5077,9 @@ namespace Surtr.Compiler.CodeGen
             EmitStoreLocal(destSlot);
 
             Expression(creation.Source!);
+            // An inline source (a range, a value class) has to reach the interface dispatch as
+            // the object its class carries IIterable on - a block cannot be dispatched through.
+            BoxIfMultiSlot(creation.Source!.Type);
             Code.CallInterface(iterate);
             EmitStoreLocal(cursorSlot);
 
@@ -4847,7 +5097,7 @@ namespace Surtr.Compiler.CodeGen
 
             // Same normalization `EmitForInIterable` needs: `current` reads back erased, but
             // whether the receiver already boxed it or is a built-in handing back raw storage is
-            // not something the contract call site can tell — `BoxDynamic` decides from the value's
+            // not something the contract call site can tell � `BoxDynamic` decides from the value's
             // own tag, a no-op if it was already a reference, and `Unerase` can then run
             // unconditionally.
             Code.BoxDynamic();
@@ -4862,7 +5112,7 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// <c>{K:V}(pairs)</c> — the pair read twice (once per slot) through a temp local, the same
+        /// <c>{K:V}(pairs)</c> � the pair read twice (once per slot) through a temp local, the same
         /// "evaluate once, use more than once" idiom every other cast/copy shape here already uses,
         /// rather than juggling a duplicate mid-stack.
         /// </summary>
@@ -4916,8 +5166,8 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// <c>{K:V}(keys, values)</c> — no element conversions: the binder only takes this path on an
-        /// exact element-type match (arrays are invariant, §6), so nothing here needs
+        /// <c>{K:V}(keys, values)</c> � no element conversions: the binder only takes this path on an
+        /// exact element-type match (arrays are invariant, �6), so nothing here needs
         /// <see cref="EmitConversionTail"/> the way every other cast/copy/pairs shape does.
         /// </summary>
         private void EmitDictFromParallelArrays(BoundCollectionCreationExpression creation, SurtrClassReference type)
@@ -4984,7 +5234,7 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         /// <remarks>
         /// Every primitive already declares a native <c>toString</c>, so a non-string part is a call
-        /// to that rather than a new opcode — which also means interpolation means exactly what
+        /// to that rather than a new opcode � which also means interpolation means exactly what
         /// writing <c>.toString()</c> means.
         /// <para>
         /// One <c>StrCat</c> over n parts rather than n - 1 over two each: joined pairwise, every
@@ -5067,8 +5317,8 @@ namespace Surtr.Compiler.CodeGen
             }
 
             // With no `else`, the binder has already established that the arms cover every case of a
-            // non-nullable enum (§4.3), so the last arm is what is left over once the others have
-            // been tested — and testing it as well would be comparing against the only value the
+            // non-nullable enum (�4.3), so the last arm is what is left over once the others have
+            // been tested � and testing it as well would be comparing against the only value the
             // subject can still be. This is the whole point of checking exhaustiveness: the form
             // that needs no fallback is the form the check exists to allow.
             if (fallback is null)
@@ -5082,7 +5332,7 @@ namespace Surtr.Compiler.CodeGen
 
             EmitDispatch(@switch.Subject.Type, subject, arms, labels, fallback.Value);
 
-            // Every arm produces one value, so they all have to leave the stack at the same depth —
+            // Every arm produces one value, so they all have to leave the stack at the same depth �
             // which is exactly what the emitter checks when the label joins them.
             var result = DeclareTemp("$switchResult", @switch.Arms[0].Result.Type);
 
@@ -5142,7 +5392,7 @@ namespace Surtr.Compiler.CodeGen
 
             _frameWidthsRegistered = true;
 
-            if (_method.HasReceiver && _symbol.ContainingType is NamedTypeSymbol receiverType && ValueTypeLayout.IsMultiField(receiverType))
+            if (_method.HasReceiver && _symbol.ContainingType is NamedTypeSymbol receiverType && ValueTypeLayout.WidthOfType(receiverType) > 1)
             {
                 if (!ValueTypeLayout.TryGet(receiverType, out var receiverLayout, out var receiverError))
                     throw Unsupported(receiverError!);
@@ -5225,8 +5475,8 @@ namespace Surtr.Compiler.CodeGen
             if (!ReferenceEquals(parameter.ContainingSymbol, _symbol) && parameter.ContainingSymbol is not null)
                 throw Unsupported($"a read of '{parameter.Name}', which belongs to another method");
 
-            // An instance operator's first parameter is its receiver (§5.6), and the runtime keeps
-            // the receiver as an implicit slot rather than a declared parameter — so parameter 0 is
+            // An instance operator's first parameter is its receiver (�5.6), and the runtime keeps
+            // the receiver as an implicit slot rather than a declared parameter � so parameter 0 is
             // local 0, and every later parameter shifts down by one to match.
             if (_symbol.Role == MethodRole.Operator && !_symbol.IsStatic)
                 return parameter.Ordinal == 0 ? _method.Receiver : _method.Parameter(parameter.Ordinal - 1);
@@ -5270,7 +5520,7 @@ namespace Surtr.Compiler.CodeGen
             EmitLoadLocal(_method.Receiver);
 
             // Inside a value class's own method the receiver arrived boxed exactly when this
-            // method's own dispatch might have been resolved through its class — the same test
+            // method's own dispatch might have been resolved through its class � the same test
             // BoxReceiverForCall makes at every call site, so the two can never disagree about
             // which convention this body was compiled against. A direct dispatch never boxes on
             // the way in, so there is nothing here to unwrap.
@@ -5284,19 +5534,19 @@ namespace Surtr.Compiler.CodeGen
                 ?? throw Unsupported($"a use of '{field.Name}', which no module being built declares");
 
         /// <summary>
-        /// The value a bound expression folds to, for the emitter's own decisions — a switch key, a
+        /// The value a bound expression folds to, for the emitter's own decisions � a switch key, a
         /// const-fun argument.
         /// </summary>
         /// <remarks>
         /// A literal, a conversion the binder wrapped one in, or a unary/binary expression built out
-        /// of more of the same — so a <c>const fun</c> argument like <c>2 + 3</c> folds here too, not
+        /// of more of the same � so a <c>const fun</c> argument like <c>2 + 3</c> folds here too, not
         /// only a literal written directly. This works over the <em>bound</em> tree rather than
         /// syntax on purpose: a bound operand has already gone through the binder's own name
-        /// resolution (locals, parameters, and — since a <c>const</c> field folds to a literal at
-        /// bind time already — even a module or class constant), so nothing here can answer a
+        /// resolution (locals, parameters, and � since a <c>const</c> field folds to a literal at
+        /// bind time already � even a module or class constant), so nothing here can answer a
         /// local's name from an unrelated same-named constant the way a second, syntax-based lookup
         /// against <c>ConstantEvaluator</c>'s flat, module-wide name table could. It still does not
-        /// duplicate that evaluator's full reach — no calls, no conditionals — only the arithmetic a
+        /// duplicate that evaluator's full reach � no calls, no conditionals � only the arithmetic a
         /// `const fun` argument realistically needs one instruction lower than its declaration.
         /// </remarks>
         private static object? ConstantOf(BoundExpression expression) => expression switch

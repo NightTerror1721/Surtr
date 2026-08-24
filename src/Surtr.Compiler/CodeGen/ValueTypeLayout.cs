@@ -32,7 +32,8 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// Whether values of this type live inline as more than one slot - a multi-field value
-        /// class, or a tuple of at least one element - and if so, the value's flattened width.
+        /// class, a tuple of at least one element, or a <c>range</c> - and if so, the value's
+        /// flattened width.
         /// </summary>
         /// <remarks>
         /// <para>
@@ -48,15 +49,38 @@ namespace Surtr.Compiler.CodeGen
         /// nested value class does; a still-abstract element (<c>G0</c>) contributes its erased
         /// single slot, which is what crosses erasure boundaries anyway.
         /// </para>
+        /// <para>
+        /// A range is always exactly three slots - start, end, inclusive - by its own descriptor,
+        /// the same answer the runtime linker gives for the type wherever it links storage.
+        /// </para>
         /// </remarks>
         internal static bool IsInlineType(TypeSymbol type, out int width)
         {
             var bare = type.NonNullable;
 
-            if (bare is NamedTypeSymbol named && IsMultiField(named))
+            if (bare.SpecialType == SpecialType.Range)
             {
-                width = TryGet(named, out var layout, out _) ? layout.Width : 1;
-                return width > 1;
+                width = 3;
+                return true;
+            }
+
+            if (bare is NamedTypeSymbol named && named.TypeKind == TypeSymbolKind.ValueClass)
+            {
+                // A one-field wrapper is erased to the field it wraps - so it occupies exactly
+                // that field's own width. `EntityId` over an `int` stays one slot; a wrapper
+                // over a range or a tuple rides the whole block, which is what every load and
+                // store of the wrapper already moves once the width says so.
+                if (named.UnderlyingType is TypeSymbol underlying)
+                {
+                    width = WidthOfType(underlying.NonNullable);
+                    return width > 1;
+                }
+
+                if (IsMultiField(named))
+                {
+                    width = TryGet(named, out var layout, out _) ? layout.Width : 1;
+                    return width > 1;
+                }
             }
 
             if (bare is TupleTypeSymbol tuple && tuple.ElementTypes.Count > 0)
@@ -76,6 +100,15 @@ namespace Surtr.Compiler.CodeGen
             width = 1;
             return false;
         }
+
+        /// <summary>
+        /// Whether this named value class lives as a multi-field slot block rather than erasing
+        /// to its single field - the shapes whose own layout the emitter reads per field.
+        /// </summary>
+        internal static bool IsBlockValueClass(NamedTypeSymbol type)
+            => type.TypeKind == TypeSymbolKind.ValueClass
+               && type.UnderlyingType is null
+               && IsMultiField(type);
 
         /// <summary>How many slots one value of this type occupies inline: its flattened width when it is an inline type, one otherwise.</summary>
         internal static int WidthOfType(TypeSymbol type)
@@ -181,16 +214,44 @@ namespace Surtr.Compiler.CodeGen
                 int offset = 0;
                 for (int i = 0; i < fields.Count; i++)
                 {
-                    int width = 1;
-                    if (fields[i].Type.NonNullable is NamedTypeSymbol nested && IsMultiField(nested))
+                    var fieldType = fields[i].Type.NonNullable;
+
+                    int width;
+                    if (fieldType.SpecialType == SpecialType.Range)
                     {
-                        if (!TryGet(nested, out var inner, out var innerError))
+                        // A range's width rides its descriptor alone - three slots, always.
+                        width = 3;
+                    }
+                    else if (fieldType is TupleTypeSymbol fieldTuple && fieldTuple.ElementTypes.Count > 0)
+                    {
+                        int total = 0;
+                        foreach (var element in fieldTuple.ElementTypes)
+                            total += WidthOfType(element);
+
+                        width = Math.Min(total, MaxSlots);
+                    }
+                    else if (fieldType is NamedTypeSymbol nested && nested.TypeKind == TypeSymbolKind.ValueClass)
+                    {
+                        // A nested wrapper rides the value it erases to; a multi-field class
+                        // keeps its own error path, so an unflattenable declaration refuses here
+                        // rather than shrinking to one silent slot.
+                        if (nested.UnderlyingType is TypeSymbol erasedTo)
+                        {
+                            width = WidthOfType(erasedTo.NonNullable);
+                        }
+                        else if (!TryGet(nested, out var inner, out var innerError))
                         {
                             error = innerError;
                             return false;
                         }
-
-                        width = inner.Width;
+                        else
+                        {
+                            width = inner.Width;
+                        }
+                    }
+                    else
+                    {
+                        width = 1;
                     }
 
                     offsets[i] = offset;

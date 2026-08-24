@@ -49,7 +49,9 @@ namespace Surtr.Interop
                     if (enumType.IsEnum && SurtrInteropState.For(runtime).TryGetEnumCache(enumType, out var cache))
                         return SurtrValue.CreateReference(cache.GetReference(value));
 
-                    return SurtrValue.CreateReference(runtime.WrapNative(value).GetSurtrReference());
+                    // A host class deriving from SurtrNativeObject is adopted as the entity itself;
+                    // anything else is wrapped in a fresh proxy. One crossing point, both shapes.
+                    return runtime.RegisterHost(value);
                 }
 
                 case SurtrValueTypeCode.Array:
@@ -63,8 +65,9 @@ namespace Surtr.Interop
                 }
 
                 default:
-                    // Object or opaque: wrap as a native proxy and let the caller resolve later.
-                    return SurtrValue.CreateReference(runtime.WrapNative(value).GetSurtrReference());
+                    // Object or opaque: adopt it when it already is an entity, wrap it as a
+                    // native proxy otherwise, and let the caller resolve later.
+                    return runtime.RegisterHost(value);
             }
         }
 
@@ -89,17 +92,24 @@ namespace Surtr.Interop
                         return cache.FromReference(value);
                 }
 
+                // A proxy unwraps to its target; an adopted SurtrNativeObject is the host object
+                // itself, and digging for a target would reach null or the wrong thing.
                 var entity = runtime.Resolve<SurtrNativeObject>(value);
-                if (entity?.Target is not null)
+                if (entity is SurtrNativeProxy proxy)
                 {
-                    var target = entity.Target;
-                    if (clrType.IsInstanceOfType(target))
-                        return target;
+                    var target = proxy.Target;
+                    if (target is not null)
+                    {
+                        if (clrType.IsInstanceOfType(target))
+                            return target;
 
-                    return Convert.ChangeType(target, clrType, System.Globalization.CultureInfo.InvariantCulture);
+                        return Convert.ChangeType(target, clrType, System.Globalization.CultureInfo.InvariantCulture);
+                    }
+
+                    return null;
                 }
 
-                return null;
+                return clrType.IsInstanceOfType(entity) ? entity : null;
             }
 
             if (value.IsAbsent)

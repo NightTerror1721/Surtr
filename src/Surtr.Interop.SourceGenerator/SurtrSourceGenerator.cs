@@ -409,7 +409,10 @@ namespace Surtr.Interop.SourceGenerator
             }
             else
             {
-                builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">();");
+                // A host class deriving from SurtrNativeObject is its own entity: the reference
+                // resolves straight to it, and digging through a proxy's Target would reach null
+                // or the wrong object. Anything else sits behind a proxy to unwrap.
+                builder.AppendLine(indent + "    var __target = " + ToClrReceiver(type, 0) + ";");
                 targetExpr = "__target";
             }
 
@@ -470,7 +473,15 @@ namespace Surtr.Interop.SourceGenerator
 
             string returnExpr;
             if (realConstructor)
-                returnExpr = "SurtrValue.CreateReference(args.Runtime.WrapNative(new " + typeName + "(" + string.Join(", ", arguments) + ")).GetSurtrReference())";
+            {
+                // A host class deriving from SurtrNativeObject is registered as the entity itself:
+                // wrapping it would bury the object the class carries inside a shell proxy, and
+                // reading it back through Target would reach null or the wrong thing.
+                string construction = "new " + typeName + "(" + string.Join(", ", arguments) + ")";
+                returnExpr = DerivesFromNativeObject(type)
+                    ? "args.Runtime.RegisterHost(" + construction + ")"
+                    : "SurtrValue.CreateReference(args.Runtime.WrapNative(" + construction + ").GetSurtrReference())";
+            }
             else if (method.ReturnsVoid)
                 returnExpr = "SurtrValue.Null";
             else
@@ -589,7 +600,7 @@ namespace Surtr.Interop.SourceGenerator
             builder.AppendLine(indent + "{");
             string target = field.IsStatic
                 ? typeName
-                : "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!";
+                : ToClrReceiver(type, 0);
             if (!field.IsStatic)
                 builder.AppendLine(indent + "    var __target = " + target + ";");
             builder.AppendLine(indent + "    return args.Return(" + ToSurtrExpression(field.Type, (field.IsStatic ? typeName : "__target") + "." + field.Name) + ");");
@@ -660,7 +671,7 @@ namespace Surtr.Interop.SourceGenerator
                     ? typeName
                     : getterReceiver is not null
                         ? ReadBlock(getterReceiver, 0)
-                        : "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!";
+                        : ToClrReceiver(type, 0);
 
                 if (!isStatic)
                     builder.AppendLine(indent + "    var __target = " + target + ";");
@@ -943,7 +954,11 @@ namespace Surtr.Interop.SourceGenerator
                 case SpecialType.System_Boolean: return "args.GetBool(" + index + ")";
                 case SpecialType.System_Char: return "args.GetChar(" + index + ")";
                 case SpecialType.System_String: return "args.GetString(" + index + ").Text";
-                case SpecialType.System_Object: return "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(" + index + "))!.Target";
+                case SpecialType.System_Object:
+                    // The static type says nothing about which shape crossed, so the runtime
+                    // decides: a proxy unwraps to its target, an adopted native object is the
+                    // host object itself.
+                    return "args.Runtime.HostValueOf(args.GetValue(" + index + "))";
             }
 
             if (type.TypeKind == TypeKind.Enum)
@@ -952,8 +967,39 @@ namespace Surtr.Interop.SourceGenerator
             if (type.TypeKind == TypeKind.Delegate)
                 return "(" + type.ToDisplayString() + ")SurtrDelegateMarshal.ToClr(args.Runtime, args.GetValue(" + index + "), typeof(" + type.ToDisplayString() + "))";
 
+            if (DerivesFromNativeObject(type))
+                return "args.Runtime.Resolve<" + type.ToDisplayString() + ">(args.GetValue(" + index + "))!";
+
             return "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(" + index + "))!.TargetAs<" + type.ToDisplayString() + ">()!";
         }
+
+        /// <summary>
+        /// The expression reading the receiver of <paramref name="type"/> from slot
+        /// <paramref name="index"/>: the entity itself when the CLR class derives from
+        /// <see cref="Surtr.Runtime.Objects.SurtrNativeObject"/>, its proxy's target otherwise.
+        /// </summary>
+        private static string ToClrReceiver(INamedTypeSymbol type, int index)
+            => DerivesFromNativeObject(type)
+                ? "args.Runtime.Resolve<" + type.ToDisplayString() + ">(args.GetValue(" + index + "))!"
+                : "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(" + index + "))!.TargetAs<" + type.ToDisplayString() + ">()";
+
+        /// <summary>
+        /// Whether <paramref name="type"/>, or any base of it, is the runtime's
+        /// <c>SurtrNativeObject</c> - the mark of a host class that is already a Surtr entity and
+        /// so needs no proxy wrapped around it and none unwrapped off it.
+        /// </summary>
+        private static bool DerivesFromNativeObject(ITypeSymbol? type)
+        {
+            for (var walk = type; walk is not null; walk = walk.BaseType)
+            {
+                if (walk.ToDisplayString() == NativeObjectTypeName)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private const string NativeObjectTypeName = "Surtr.Runtime.Objects.SurtrNativeObject";
 
         private static string ToSurtrExpression(ITypeSymbol type, string expression)
         {
@@ -984,7 +1030,9 @@ namespace Surtr.Interop.SourceGenerator
                     return "SurtrValue.CreateReference(args.Runtime.InternString(" + expression + ").GetSurtrReference())";
 
                 case SpecialType.System_Object:
-                    return "SurtrValue.CreateReference(args.Runtime.WrapNative(" + expression + ").GetSurtrReference())";
+                    // The static type says nothing about which shape will cross, so the runtime
+                    // adopts what already is an entity and wraps everything else.
+                    return "args.Runtime.RegisterHost(" + expression + ")";
             }
 
             if (type.TypeKind == TypeKind.Enum)
@@ -992,6 +1040,9 @@ namespace Surtr.Interop.SourceGenerator
 
             if (type.TypeKind == TypeKind.Delegate)
                 return "SurtrDelegateMarshal.ToSurtr(args.Runtime, " + expression + ", SurtrClassReference.FromDescriptor(\"" + GeneratorSupport.MapType(type) + "\"))";
+
+            if (DerivesFromNativeObject(type))
+                return "args.Runtime.RegisterHost(" + expression + ")";
 
             return "SurtrValue.CreateReference(args.Runtime.WrapNative(" + expression + ").GetSurtrReference())";
         }

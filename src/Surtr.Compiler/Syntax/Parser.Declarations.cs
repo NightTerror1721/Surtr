@@ -242,11 +242,22 @@ namespace Surtr.Compiler.Syntax
                     case TokenType.KeywordForceInline:
                         if (modifiers.Inline != InlineModifier.None)
                         {
-                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'inline'/'forceinline'.");
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'inline'/'forceinline'/'noinline'.");
                         }
 
                         RequireOrder(4, "forceinline");
                         modifiers.Inline = InlineModifier.ForceInline;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordNoInline:
+                        if (modifiers.Inline != InlineModifier.None)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'inline'/'forceinline'/'noinline'.");
+                        }
+
+                        RequireOrder(4, "noinline");
+                        modifiers.Inline = InlineModifier.NoInline;
                         reader.Advance();
                         continue;
 
@@ -350,6 +361,11 @@ namespace Surtr.Compiler.Syntax
 
                     case TokenType.KeywordForceInline:
                         modifiers.Inline = InlineModifier.ForceInline;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordNoInline:
+                        modifiers.Inline = InlineModifier.NoInline;
                         reader.Advance();
                         continue;
 
@@ -753,10 +769,11 @@ namespace Surtr.Compiler.Syntax
                 // §3.6: a constructor is never spliced - what runs is not its body alone but the
                 // chain and the initializers the emitter prepends to it - so the cost heuristic or
                 // a stray `inline` must not get it there. Forceinline must not fall back silently,
-                // so the modifier is rejected outright rather than ignored.
+                // and `noinline` would promise to stop a fold that already never happens, so any
+                // of the three is rejected outright rather than ignored.
                 throw reader.Error(
                     SurtrDiagnosticCode.InvalidModifier,
-                    "A constructor is never inlined; 'inline'/'forceinline' is not written on one.",
+                    "A constructor is never inlined; 'inline'/'forceinline'/'noinline' is not written on one.",
                     start);
             }
 
@@ -781,7 +798,18 @@ namespace Surtr.Compiler.Syntax
                 chainArguments = ParseArgumentList();
             }
 
-            BlockStatementSyntax body = ParseBlock();
+            BlockStatementSyntax body;
+            if (reader.Check(TokenType.FatArrow))
+            {
+                // §3.3: a constructor may take an arrow body too — sugar for a block holding one
+                // expression statement, since nothing here returns a value.
+                body = ParseArrowBody(returnsVoid: true);
+            }
+            else
+            {
+                body = ParseBlock();
+            }
+
             return new ConstructorDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility,
                 parameters, chainArguments, chainsToThis, body);
         }
@@ -847,9 +875,22 @@ namespace Surtr.Compiler.Syntax
             }
 
             // No body means an abstract operator, declared for a subclass to override — signature-only,
-            // exactly as a method's (§3.2). An interface's operators are always written this way.
+            // exactly as a method's (§3.2). An arrow body (§3.3) is sugar for a one-statement block,
+            // the same lowering a method takes: a `return` for a value-returning overload, an
+            // expression statement where the return type is `void` (a conversion never is).
             BlockStatementSyntax? operatorBody = null;
-            if (!reader.Match(TokenType.Semicolon))
+            if (reader.Match(TokenType.Semicolon))
+            {
+                // abstract — nothing to parse
+            }
+            else if (reader.Check(TokenType.FatArrow))
+            {
+                bool returnsVoid = returnType is NamedTypeSyntax namedReturnType
+                    && namedReturnType.Path.Count == 1
+                    && namedReturnType.Path[0] == "void";
+                operatorBody = ParseArrowBody(returnsVoid);
+            }
+            else
             {
                 operatorBody = ParseBlock();
             }

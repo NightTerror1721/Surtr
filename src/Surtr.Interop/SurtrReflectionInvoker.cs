@@ -211,8 +211,9 @@ namespace Surtr.Interop
         /// <para>
         /// Two shapes reach here. A real CLR constructor arrives as a
         /// <see cref="ReflectionMemberSlot.Constructor"/>; the object it builds is a reference
-        /// type, so it is wrapped - <c>SurtrRuntime.WrapNative</c> registers it and hands back its
-        /// entity id - and that reference is the answer. A static factory exposed with
+        /// type, so it is registered - <c>SurtrRuntime.RegisterHost</c> adopts it as an entity when
+        /// it already is one (a host class deriving from <see cref="SurtrNativeObject"/>) and
+        /// wraps it otherwise - and that reference is the answer. A static factory exposed with
         /// <see cref="Surtr.Interop.Attributes.SurtrNativeConstructorAttribute"/> on an inline
         /// value type arrives as a <see cref="ReflectionMemberSlot.Method"/> whose result is the
         /// struct itself: the result is the flat block, written like any inline result.
@@ -262,8 +263,8 @@ namespace Surtr.Interop
                 return args.Return(block);
             }
 
-            var wrapped = runtime.WrapNative(created);
-            return args.Return(SurtrValue.CreateReference(wrapped.GetSurtrReference()));
+            var wrapped = runtime.RegisterHost(created);
+            return args.Return(wrapped);
         }
 
         private static int InvokeMethodSlot(SurtrCallArguments args, ReflectionMemberSlot slot)
@@ -392,10 +393,7 @@ namespace Surtr.Interop
         }
 
         private static object? Receiver(SurtrCallArguments args, int index)
-        {
-            var entity = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(index));
-            return entity?.Target;
-        }
+            => args.Runtime.HostValueOf(args.GetValue(index));
     }
 }
 

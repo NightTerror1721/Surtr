@@ -57,6 +57,9 @@ namespace Sample
 ";
 
         private static Compilation RunGenerator(out GeneratorDriverRunResult result)
+            => RunGenerator(Source, out result);
+
+        private static Compilation RunGenerator(string source, out GeneratorDriverRunResult result)
         {
             var references = AppDomain.CurrentDomain.GetAssemblies()
                 .Where(static a => !a.IsDynamic && !string.IsNullOrEmpty(a.Location))
@@ -70,7 +73,7 @@ namespace Sample
             references.Add(MetadataReference.CreateFromFile(typeof(Surtr.Interop.SurtrBridge).Assembly.Location));
             references.Add(MetadataReference.CreateFromFile(typeof(Surtr.Interop.Attributes.SurtrNativeTypeAttribute).Assembly.Location));
 
-            var syntaxTree = CSharpSyntaxTree.ParseText(Source);
+            var syntaxTree = CSharpSyntaxTree.ParseText(source);
             var compilation = CSharpCompilation.Create(
                 "Sample",
                 new[] { syntaxTree },
@@ -442,6 +445,61 @@ namespace Sample
             ctorShim = ctorShim.Substring(0, ctorShim.IndexOf("}", StringComparison.Ordinal));
             Assert.DoesNotContain("GetValue(0)", ctorShim);
             Assert.Contains("GetInt(0)", ctorShim);
+        }
+
+        private const string NativeObjectSource = @"
+using Surtr.Interop.Attributes;
+using Surtr.Runtime.Classes;
+using Surtr.Runtime.Objects;
+
+namespace Sample
+{
+    [SurtrNativeType]
+    public class Gauge : SurtrNativeObject
+    {
+        public Gauge(int seed) : base(default(SurtrClass), null) { Seed = seed; }
+
+        public int Seed { get; }
+
+        public int Twice() => Seed * 2;
+
+        public Gauge Restyled() => new Gauge(Seed + 100);
+
+        public int Combine(Gauge other) => Seed + other.Seed;
+
+        public static string Describe(object value) => value.ToString() ?? """";
+    }
+}
+";
+
+        /// <summary>
+        /// A host class deriving from <see cref="SurtrNativeObject"/> is already a Surtr entity, so
+        /// its shims never wrap it in a proxy nor unwrap one: construction registers the object
+        /// itself, a receiver resolves straight to it, and a parameter or result of its type
+        /// crosses as itself.
+        /// </summary>
+        [Fact]
+        public void Generator_RegistersSurtrNativeObjectDerivedTypesWithoutAProxy()
+        {
+            RunGenerator(NativeObjectSource, out var result);
+
+            var all = string.Join("\n", result.Results.SelectMany(static r => r.GeneratedSources).Select(static g => g.SourceText.ToString()));
+
+            // Construction adopts the built object instead of wrapping it.
+            Assert.Contains("args.Runtime.RegisterHost(new Sample.Gauge(", all);
+            Assert.DoesNotContain("WrapNative(new Sample.Gauge(", all);
+
+            // The receiver is the entity itself: no proxy to unwrap for this type.
+            Assert.Contains("var __target = args.Runtime.Resolve<Sample.Gauge>(args.GetValue(0))!;", all);
+            Assert.DoesNotContain("TargetAs<Sample.Gauge>", all);
+
+            // A result typed as the facade crosses as itself...
+            Assert.Contains("args.Runtime.RegisterHost(__target.Restyled())", all);
+            // ...so does one taken in (the static knowledge case) ...
+            Assert.Contains("args.Runtime.Resolve<Sample.Gauge>(args.GetValue(1))!", all);
+            // ... and an object-typed position defers both decisions to the runtime.
+            Assert.Contains("args.Runtime.HostValueOf(args.GetValue(0))", all);
+            Assert.Contains("args.Runtime.RegisterHost(", all);
         }
 
         #endregion

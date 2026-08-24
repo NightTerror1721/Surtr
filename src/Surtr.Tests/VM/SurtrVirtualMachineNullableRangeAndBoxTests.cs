@@ -5,6 +5,7 @@ using Surtr.Runtime;
 using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
+using System;
 
 namespace Surtr.Tests.VM
 {
@@ -188,13 +189,58 @@ namespace Surtr.Tests.VM
 
         #region Ranges
 
+        private static SurtrValue[] RunBlock(SurtrRuntime runtime, BytecodeBuilder builder, int slots)
+        {
+            var module = new SurtrModule("test");
+            var method = builder.Build(module, localCount: 0, maxStackSize: 16, returnType: SurtrClassReference.Range);
+
+            var results = new SurtrValue[slots];
+            Assert.True(runtime.TryInvoke(method, ReadOnlySpan<SurtrValue>.Empty, results));
+            return results;
+        }
+
         [Fact]
-        public void RangeNew_BuildsTheExclusiveForm()
+        public void RangeNew_LaysOutTheExclusiveFormAsABlock()
+        {
+            using var runtime = new SurtrRuntime();
+
+            // The block is three slots - start, end, flag - so the test returns all three and
+            // reads them back by position.
+            var builder = new BytecodeBuilder();
+            builder.Op(OpCode.PushI32).I32(0).Op(OpCode.PushI32).I32(10).Op(OpCode.RangeNew)
+                .Op(OpCode.ReturnValues).U8(3);
+
+            SurtrValue[] block = RunBlock(runtime, builder, 3);
+
+            Assert.Equal(0, block[0].AsInt);
+            Assert.Equal(10, block[1].AsInt);
+            Assert.False(block[2].AsBool);
+        }
+
+        [Fact]
+        public void RangeNewInclusive_LaysOutTheInclusiveFlag()
         {
             using var runtime = new SurtrRuntime();
 
             var builder = new BytecodeBuilder();
-            builder.Op(OpCode.PushI32).I32(0).Op(OpCode.PushI32).I32(10).Op(OpCode.RangeNew).Op(OpCode.ReturnValue);
+            builder.Op(OpCode.PushI32).I32(0).Op(OpCode.PushI32).I32(10).Op(OpCode.RangeNewInclusive)
+                .Op(OpCode.ReturnValues).U8(3);
+
+            SurtrValue[] block = RunBlock(runtime, builder, 3);
+
+            Assert.Equal(0, block[0].AsInt);
+            Assert.Equal(10, block[1].AsInt);
+            Assert.True(block[2].AsBool);
+        }
+
+        [Fact]
+        public void RangePack_BuildsTheObjectTheBlockPresentsAs()
+        {
+            using var runtime = new SurtrRuntime();
+
+            var builder = new BytecodeBuilder();
+            builder.Op(OpCode.PushI32).I32(0).Op(OpCode.PushI32).I32(10).Op(OpCode.RangeNew)
+                .Op(OpCode.RangePack).Op(OpCode.ReturnValue);
 
             var range = runtime.Resolve<SurtrRange>(Run(runtime, builder))!;
 
@@ -207,18 +253,20 @@ namespace Surtr.Tests.VM
         }
 
         [Fact]
-        public void RangeNewInclusive_IncludesTheUpperBound()
+        public void RangeUnpack_RestoresTheBlockItsPackCameFrom()
         {
             using var runtime = new SurtrRuntime();
 
             var builder = new BytecodeBuilder();
-            builder.Op(OpCode.PushI32).I32(0).Op(OpCode.PushI32).I32(10).Op(OpCode.RangeNewInclusive).Op(OpCode.ReturnValue);
+            builder.Op(OpCode.PushI32).I32(2).Op(OpCode.PushI32).I32(7).Op(OpCode.RangeNewInclusive)
+                .Op(OpCode.RangePack).Op(OpCode.RangeUnpack)
+                .Op(OpCode.ReturnValues).U8(3);
 
-            var range = runtime.Resolve<SurtrRange>(Run(runtime, builder))!;
+            SurtrValue[] block = RunBlock(runtime, builder, 3);
 
-            Assert.True(range.IsInclusive);
-            Assert.Equal(11, range.Length);
-            Assert.True(range.Contains(10));
+            Assert.Equal(2, block[0].AsInt);
+            Assert.Equal(7, block[1].AsInt);
+            Assert.True(block[2].AsBool);
         }
 
         [Fact]
@@ -232,12 +280,13 @@ namespace Surtr.Tests.VM
         }
 
         [Fact]
-        public void AnEmptyRange_ReportsZeroLength()
+        public void AnEmptyRange_PacksAndReportsZeroLength()
         {
             using var runtime = new SurtrRuntime();
 
             var builder = new BytecodeBuilder();
-            builder.Op(OpCode.PushI32).I32(5).Op(OpCode.PushI32).I32(5).Op(OpCode.RangeNew).Op(OpCode.ReturnValue);
+            builder.Op(OpCode.PushI32).I32(5).Op(OpCode.PushI32).I32(5).Op(OpCode.RangeNew)
+                .Op(OpCode.RangePack).Op(OpCode.ReturnValue);
 
             var range = runtime.Resolve<SurtrRange>(Run(runtime, builder))!;
 
@@ -257,11 +306,11 @@ namespace Surtr.Tests.VM
         }
 
         [Fact]
-        public void ARangeIsAReferenceTypeAndStillInsideTheBuiltInRun()
+        public void ARangeIsNowAValue_WhileStillInsideTheBuiltInRun()
         {
             Assert.True(SurtrValueTypeCode.Range.IsBuiltIn);
-            Assert.True(SurtrValueTypeCode.Range.IsReferenceType);
-            Assert.False(SurtrValueTypeCode.Range.IsValueType);
+            Assert.False(SurtrValueTypeCode.Range.IsReferenceType);
+            Assert.True(SurtrValueTypeCode.Range.IsRange);
         }
 
         #endregion

@@ -651,9 +651,12 @@ namespace Surtr.Runtime.Classes
 
             foreach (var element in GetTupleElementTypes())
             {
-                total += element.TypeCode == SurtrValueTypeCode.Tuple
-                    ? element.GetTupleFlattenedSlotWidth()
-                    : 1;
+                total += element.TypeCode switch
+                {
+                    SurtrValueTypeCode.Tuple => element.GetTupleFlattenedSlotWidth(),
+                    SurtrValueTypeCode.Range => 3,
+                    _ => 1,
+                };
 
                 if (total > maxSlots)
                     throw new InvalidOperationException(

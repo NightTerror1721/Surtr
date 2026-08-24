@@ -442,6 +442,11 @@ namespace Surtr.Runtime.Classes
             if (type.TypeCode == SurtrValueTypeCode.Tuple)
                 return TupleSlotWidth(type);
 
+            // A range is likewise descriptor-complete: always the same three slots
+            // (start, end, inclusive), whatever instance or static storage holds it.
+            if (type.TypeCode == SurtrValueTypeCode.Range)
+                return 3;
+
             if (!type.TypeCode.IsReferenceType)
                 return 1;
 
@@ -462,7 +467,12 @@ namespace Surtr.Runtime.Classes
 
             foreach (var element in tuple.GetTupleElementTypes())
             {
-                total += element.TypeCode == SurtrValueTypeCode.Tuple ? TupleSlotWidth(element) : 1;
+                total += element.TypeCode switch
+                {
+                    SurtrValueTypeCode.Tuple => TupleSlotWidth(element),
+                    SurtrValueTypeCode.Range => 3,
+                    _ => 1,
+                };
 
                 if (total > maxSlots)
                     throw new InvalidOperationException(
@@ -557,7 +567,10 @@ namespace Surtr.Runtime.Classes
                         referenceSlots.Add(offset);
                     }
 
-                    offset += nestedValue?.FlattenedSlotWidth ?? 1;
+                    // The same width predicate FieldSlotWidth answers, inlined: a range claims
+                    // its three slots, a nested value class its flattened layout, everything
+                    // else one slot.
+                    offset += nestedValue?.FlattenedSlotWidth ?? FieldSlotWidth(field, visiting);
                     field.MarkBuilt();
                 }
 
@@ -657,13 +670,19 @@ namespace Surtr.Runtime.Classes
             {
                 // Elements arrive as bare descriptors with no resolved handle; a class-typed
                 // element therefore contributes its one reference slot, which is exactly what it
-                // is when it is not a value type.
+                // is when it is not a value type. A range element is an inline value now: it
+                // claims three slots and contributes none.
                 foreach (var element in type.GetTupleElementTypes())
                 {
                     if (element.TypeCode.IsReferenceType)
                         collected.Add(offset);
 
-                    offset += element.TypeCode == SurtrValueTypeCode.Tuple ? TupleSlotWidth(element) : 1;
+                    offset += element.TypeCode switch
+                    {
+                        SurtrValueTypeCode.Tuple => TupleSlotWidth(element),
+                        SurtrValueTypeCode.Range => 3,
+                        _ => 1,
+                    };
                 }
 
                 return;

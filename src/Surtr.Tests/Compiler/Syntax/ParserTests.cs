@@ -185,6 +185,32 @@ namespace Surtr.Tests.Compiler.Syntax
             Assert.Single(constructor.ChainArguments!);
         }
 
+        /// <summary>§3.3: a constructor may take an arrow body — one expression statement of sugar.</summary>
+        [Fact]
+        public void ConstructorTakesAnArrowBody()
+        {
+            TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>(
+                "class Dog { public let n: string; public constructor(n: string) => init(n); }");
+
+            ConstructorDeclarationSyntax constructor = Assert
+                .IsType<ConstructorDeclarationSyntax>(type.Members.OfType<ConstructorDeclarationSyntax>().Single());
+
+            ExpressionStatementSyntax single = Assert.IsType<ExpressionStatementSyntax>(constructor.Body.Statements.Single());
+            Assert.NotNull(single.Expression);
+        }
+
+        /// <summary>A chained constructor may take the arrow form too — the chain is independent of the body's shape.</summary>
+        [Fact]
+        public void AChainedConstructorTakesAnArrowBody()
+        {
+            TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>(
+                "class Dog : Animal { public constructor(n: string) : super(n) => wake(); }");
+
+            ConstructorDeclarationSyntax constructor = Assert.IsType<ConstructorDeclarationSyntax>(type.Members.Single());
+            Assert.False(constructor.ChainsToThis);
+            Assert.IsType<ExpressionStatementSyntax>(constructor.Body.Statements.Single());
+        }
+
         [Fact]
         public void SignatureOnlyMemberHasNoBody()
         {
@@ -225,6 +251,36 @@ namespace Surtr.Tests.Compiler.Syntax
             TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>($"class V {{ {source} }}");
 
             Assert.Equal(expected, Assert.IsType<OperatorDeclarationSyntax>(type.Members.Single()).Operator);
+        }
+
+        /// <summary>
+        /// §3.3: an operator may take an arrow body, exactly as a method may — sugar for a block
+        /// holding one <c>return</c>.
+        /// </summary>
+        [Theory]
+        [InlineData("operator+(a: V, b: V): V => a;")]
+        [InlineData("operator-(v: V): V => v;")]
+        [InlineData("operator==(a: V, b: V): bool => true;")]
+        [InlineData("operator[](i: int): float => 0.0;")]
+        [InlineData("operator as Vec3(v: V) => Vec3();")]
+        public void OperatorOverloadsTakeArrowBodies(string source)
+        {
+            TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>($"class V {{ {source} }}");
+            OperatorDeclarationSyntax declared = Assert.IsType<OperatorDeclarationSyntax>(type.Members.Single());
+
+            BlockStatementSyntax body = declared.Body!;
+            ReturnStatementSyntax single = Assert.IsType<ReturnStatementSyntax>(body.Statements.Single());
+            Assert.NotNull(single.Value);
+        }
+
+        /// <summary>An abstract operator still ends at the semicolon; the arrow is never read as one.</summary>
+        [Fact]
+        public void AnAbstractOperatorHasNoBody()
+        {
+            TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>("interface I { operator+(a: I, b: I): I; }");
+            OperatorDeclarationSyntax declared = Assert.IsType<OperatorDeclarationSyntax>(type.Members.Single());
+
+            Assert.Null(declared.Body);
         }
 
         /// <summary>§5.6: a conversion's target is written after the keyword and is its return type.</summary>
@@ -287,6 +343,41 @@ namespace Surtr.Tests.Compiler.Syntax
         {
             AssertRejected("class V { public inline constructor() { } }", SurtrDiagnosticCode.InvalidModifier);
             AssertRejected("class V { public forceinline constructor() { } }", SurtrDiagnosticCode.InvalidModifier);
+            AssertRejected("class V { public noinline constructor() { } }", SurtrDiagnosticCode.InvalidModifier);
+        }
+
+        /// <summary>§3.6: `noinline` parses in the inline slot and reaches the declaration.</summary>
+        [Fact]
+        public void ANoinlineModifierParses()
+        {
+            MethodDeclarationSyntax method = ParseSingle<MethodDeclarationSyntax>(
+                "noinline fun compute(x: int): int { return x * x + 7 * 3; }");
+
+            Assert.Equal(InlineModifier.NoInline, method.Inline);
+        }
+
+        /// <summary>The three inline-family keywords are mutually exclusive.</summary>
+        [Theory]
+        [InlineData("inline noinline")]
+        [InlineData("noinline inline")]
+        [InlineData("forceinline noinline")]
+        [InlineData("noinline forceinline")]
+        public void NoinlineIsExclusiveWithTheOtherInlineModifiers(string pair)
+        {
+            AssertRejected($"class V {{ {pair} fun m(): int {{ return 1; }} }}", SurtrDiagnosticCode.InvalidModifier);
+        }
+
+        /// <summary>§3.2's order puts the inline family before `const`.</summary>
+        [Fact]
+        public void NoinlineIsWrittenBeforeConst()
+        {
+            TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>(
+                "class V { noinline const fun k(): int { return 1; } }");
+
+            Assert.Equal(InlineModifier.NoInline,
+                Assert.IsType<MethodDeclarationSyntax>(type.Members.Single()).Inline);
+
+            AssertRejected("class V { const noinline fun k(): int { return 1; } }", SurtrDiagnosticCode.InvalidModifier);
         }
 
         /// <summary>A dispatch modifier makes an operator an instance method, so the parser keeps it rather than rejecting it.</summary>

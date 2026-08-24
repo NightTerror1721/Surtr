@@ -475,6 +475,25 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         InvalidDestructuring = 3067,
 
+        /// <summary>
+        /// An <c>override</c> that replaces nothing (§3.3): no member of any base class declares
+        /// <c>virtual</c> or <c>abstract</c> with the matching signature. The common case is
+        /// writing <c>override</c> to satisfy an interface — a contract is a promise rather than
+        /// an inheritance, so satisfying one never takes the modifier. It stays legal where the
+        /// same signature also descends from a base class's abstract or virtual member, because
+        /// there the override really does replace something.
+        /// </summary>
+        InvalidOverride = 3068,
+
+        /// <summary>
+        /// A type parameter's bounds form a cycle (§6): <c>&lt;T : U, U : T&gt;</c> — directly or
+        /// through a longer chain. The cycle promises two parameters each "at least" the other, which
+        /// says nothing any construction could satisfy or violate; every later use would fail its
+        /// bounds check with an error that names no fixable site. Reported once at the declaration,
+        /// the way C# reports CS0454.
+        /// </summary>
+        CircularTypeParameterConstraint = 3069,
+
         #endregion
 
         #region Code generation — 4xxx

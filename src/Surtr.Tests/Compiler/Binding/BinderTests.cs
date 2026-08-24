@@ -898,6 +898,50 @@ namespace Surtr.Tests.Compiler.Binding
                 Assert.Equal(Accessibility.Public, method.Accessibility);
             }
         }
+
+        [Fact]
+        public void AnInterfaceMemberCannotBePrivate()
+        {
+            // §3.1: an interface member is always public - writing nothing means public, so any
+            // other modifier lies about a contract and is refused rather than silently narrowed.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { private fun doThing(): void; }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
+        }
+
+        [Fact]
+        public void AnInterfaceMemberCannotBeProtectedOrInternal()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing {\n"
+                + "  protected fun touch(): void;\n"
+                + "  internal fun poke(): void;\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
+            Assert.Equal(2, compilation.Diagnostics.Count(d => d.Code == SurtrDiagnosticCode.InvalidInterfaceMember));
+        }
+
+        [Fact]
+        public void AnInterfacePropertyCannotCarryAVisibility()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { private x: int { get; } }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
+        }
+
+        [Fact]
+        public void AnInterfaceAccessorCannotCarryAVisibility()
+        {
+            // §3.4 lets an accessor narrow a class property's visibility; an interface property has
+            // none to narrow from, so the same always-public rule reaches into the accessor run.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { x: int { private get; set; } }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
+        }
         #endregion
 
         #region Overloads
@@ -1173,7 +1217,7 @@ namespace Surtr.Tests.Compiler.Binding
                 + "  operator+(self: IAddable, other: IAddable): IAddable;\n"
                 + "}\n"
                 + "class Vec2 : IAddable {\n"
-                + "  override operator+(self: IAddable, other: IAddable): IAddable { return self; }\n"
+                + "  virtual operator+(self: IAddable, other: IAddable): IAddable { return self; }\n"
                 + "}"));
 
             AssertNoErrors(compilation);
@@ -1270,8 +1314,8 @@ namespace Surtr.Tests.Compiler.Binding
                 + "{\n"
                 + "    private let _col: IReadOnlyCollection<T>;\n"
                 + "    public constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
-                + "    public override fun get(index: int): T { return _col.get(index); }\n"
-                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "    public fun get(index: int): T { return _col.get(index); }\n"
+                + "    public fun iterate(): IIterator<T> { return _col.iterate(); }\n"
                 + "}"));
 
             binder.BindBodies();
@@ -1297,8 +1341,8 @@ namespace Surtr.Tests.Compiler.Binding
                 + "{\n"
                 + "    private let _col: IReadOnlyCollection<T>;\n"
                 + "    public constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
-                + "    public override fun get(index: int): T { return _col.get(index); }\n"
-                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "    public fun get(index: int): T { return _col.get(index); }\n"
+                + "    public fun iterate(): IIterator<T> { return _col.iterate(); }\n"
                 + "}"));
 
             binder.BindBodies();
@@ -1325,9 +1369,9 @@ namespace Surtr.Tests.Compiler.Binding
                 + "{\n"
                 + "    private let _col: IReadOnlyCollection<T>;\n"
                 + "    public constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
-                + "    public override fun get(index: int): T { return _col.get(index); }\n"
-                + "    public override fun add(item: int): void { }\n"
-                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "    public fun get(index: int): T { return _col.get(index); }\n"
+                + "    public fun add(item: int): void { }\n"
+                + "    public fun iterate(): IIterator<T> { return _col.iterate(); }\n"
                 + "}"));
 
             binder.BindBodies();
@@ -1347,13 +1391,59 @@ namespace Surtr.Tests.Compiler.Binding
                 + "{\n"
                 + "    private let _col: IReadOnlyCollection<T>;\n"
                 + "    public constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
-                + "    public override fun get(index: int): T { return _col.get(index); }\n"
-                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "    public fun get(index: int): T { return _col.get(index); }\n"
+                + "    public fun iterate(): IIterator<T> { return _col.iterate(); }\n"
                 + "}"));
 
             binder.BindBodies();
 
             AssertNoErrors(compilation);
+        }
+        #endregion
+
+        #region Override targets
+        [Fact]
+        public void AnOverrideImplementingOnlyAnInterfaceIsRejected()
+        {
+            // §3.3: a contract is a promise rather than an inheritance, so satisfying one never
+            // takes the modifier - the linker would have nothing in the class chain to replace.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { fun doThing(): void; }\n"
+                + "class Widget : IThing { public override fun doThing(): void { } }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOverride);
+        }
+
+        [Fact]
+        public void AnOverrideWithNothingAtAllToReplaceIsRejected()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Widget { public override fun doThing(): void { } }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOverride);
+        }
+
+        [Fact]
+        public void AnOverrideAlsoReplacingAnAbstractBaseMemberIsAccepted()
+        {
+            // The signature arrives twice - down the class chain as abstract, sideways as an
+            // interface obligation - and the class-chain answer is the one that counts: this
+            // override really does replace Shape's slot.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { fun doThing(): void; }\n"
+                + "abstract class Shape : IThing { public abstract fun doThing(): void; }\n"
+                + "class Widget : Shape { public override fun doThing(): void { } }"));
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void AnInterfaceCannotDeclareAnOverride()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { override fun doThing(): void; }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOverride);
         }
         #endregion
 
@@ -1372,7 +1462,7 @@ namespace Surtr.Tests.Compiler.Binding
             var binder = Bind(out var compilation, ("game/core/Test.surtr",
                 "class Counter : IIterable<int>\n"
                 + "{\n"
-                + "    public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
+                + "    public fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
                 + "}"));
 
             binder.BindBodies();
@@ -1412,7 +1502,7 @@ namespace Surtr.Tests.Compiler.Binding
                 "interface INumbers : IIterable<int> { }\n"
                 + "class Counter : INumbers\n"
                 + "{\n"
-                + "    public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
+                + "    public fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
                 + "}"));
 
             binder.BindBodies();
@@ -1473,7 +1563,7 @@ namespace Surtr.Tests.Compiler.Binding
             var binder = Bind(out var compilation, ("game/core/Test.surtr",
                 "class Counter : IIterable<int>\n"
                 + "{\n"
-                + "    public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
+                + "    public fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
                 + "}"));
 
             binder.BindBodies();

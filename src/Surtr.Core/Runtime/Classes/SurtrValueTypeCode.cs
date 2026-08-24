@@ -133,10 +133,18 @@ namespace Surtr.Runtime.Classes
             public bool IsValueType => code >= SurtrValueTypeCode.Integer && code <= SurtrValueTypeCode.Character;
 
             /// <summary>
-            /// Whether values of this type are passed by reference: every built-in composite, object
-            /// and native types, and an erased generic parameter, which is always a reference.
+            /// Whether values of this type are passed by reference: every built-in composite except
+            /// <c>range</c>, object and native types, and an erased generic parameter, which is
+            /// always a reference.
             /// </summary>
-            public bool IsReferenceType => code >= SurtrValueTypeCode.String && code <= SurtrValueTypeCode.Erased;
+            /// <remarks>
+            /// A range is excluded since it became an inline value (§2.9): its values travel as
+            /// their own three-slot block, and its packed form is a representation choice rather
+            /// than its storage identity - exactly the line that separates the primitives from the
+            /// composites here.
+            /// </remarks>
+            public bool IsReferenceType => code >= SurtrValueTypeCode.String && code <= SurtrValueTypeCode.Erased
+                && code != SurtrValueTypeCode.Range;
 
             /// <summary>The code's underlying byte value.</summary>
             public byte ToByte() => (byte)code;

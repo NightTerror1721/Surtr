@@ -1130,6 +1130,7 @@ namespace Surtr.Compiler.Binding
             foreach (var binding in _declared)
             {
                 CheckSealedOverrides(binding);
+                CheckOverrideReplacesAnInheritedDispatch(binding);
                 CheckOverrideRequired(binding);
                 CheckBaseConstructorIsReachable(binding);
                 CheckMembersImplemented(binding);
@@ -1170,6 +1171,62 @@ namespace Surtr.Compiler.Binding
                     }
 
                     break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Rejects an <c>override</c> that replaces nothing: no member of any base class declares
+        /// <c>virtual</c> or <c>abstract</c> with the matching erased signature (§3.3).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The walk covers the base <em>class</em> chain only — interfaces are not inheritances, so
+        /// a method whose signature comes from a contract alone has nothing to override and must
+        /// be written plain (§3.3: satisfying an interface never requires the modifier). The
+        /// modifier stays legal where the same signature also descends from a base class's
+        /// abstract or virtual member: there the declaration really does replace that member,
+        /// whatever else it happens to satisfy along the way.
+        /// </para>
+        /// <para>
+        /// Matched on the same erased name-plus-parameter comparison
+        /// (<see cref="SignatureSet.MatchesSlot"/>) <see cref="CheckOverrideRequired"/> uses, so
+        /// the two checks agree on what "the same slot" means: one rejects the member that should
+        /// say <c>override</c> and does not, this one rejects the one that says it and may not.
+        /// </para>
+        /// </remarks>
+        private void CheckOverrideReplacesAnInheritedDispatch(TypeBinding binding)
+        {
+            var symbol = binding.Symbol;
+
+            foreach (var member in symbol.Members)
+            {
+                if (member is not MethodSymbol { IsOverride: true } method)
+                    continue;
+
+                bool replaced = false;
+                for (var walk = symbol.BaseType; walk is not null && !replaced; walk = walk.BaseType)
+                {
+                    foreach (var candidate in walk.Members)
+                    {
+                        if (candidate is MethodSymbol { Dispatch: MethodDispatch.Virtual or MethodDispatch.Abstract } dispatchCandidate
+                            && dispatchCandidate.IsStatic == method.IsStatic
+                            && _signatures.MatchesSlot(method, dispatchCandidate))
+                        {
+                            replaced = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!replaced)
+                {
+                    Report(
+                        SurtrDiagnosticCode.InvalidOverride,
+                        binding,
+                        binding.Syntax.Span,
+                        $"'{symbol.Name}.{method.Name}' is marked override, but no base class declares a virtual or abstract member it would replace - "
+                            + "satisfying an interface never writes override, so drop the modifier.");
                 }
             }
         }
@@ -1807,6 +1864,15 @@ namespace Surtr.Compiler.Binding
                             continue;
                         }
 
+                        // The same always-public rule as a method's, and it covers each accessor
+                        // too - that check lives where the accessor's own run is read (§3.4).
+                        if (isInterface && property.Visibility is not (Visibility.Default or Visibility.Public))
+                        {
+                            Report(SurtrDiagnosticCode.InvalidInterfaceMember, binding, property.Span,
+                                $"An interface member is always public, so '{property.Name}' cannot be '{Describe(property.Visibility)}'.");
+                            continue;
+                        }
+
                         // A native accessor has a real body - the host's - so it is exactly as much
                         // a default implementation as one written in Surtr, and an interface allows
                         // neither (§2.3).
@@ -1842,6 +1908,15 @@ namespace Surtr.Compiler.Binding
                         {
                             Report(SurtrDiagnosticCode.InvalidInterfaceMember, binding, method.Span,
                                 $"An interface has no statics, so '{method.Name}' cannot be one.");
+                            continue;
+                        }
+
+                        // §3.1: an interface member is always public - writing nothing means
+                        // public, and every other modifier lies about a contract.
+                        if (isInterface && method.Visibility is not (Visibility.Default or Visibility.Public))
+                        {
+                            Report(SurtrDiagnosticCode.InvalidInterfaceMember, binding, method.Span,
+                                $"An interface member is always public, so '{method.Name}' cannot be '{Describe(method.Visibility)}'.");
                             continue;
                         }
 
@@ -2230,6 +2305,7 @@ namespace Surtr.Compiler.Binding
                     Accessibility = ResolveExtensionMemberAccessibility(method.Visibility, blockAccessibility, sourceName, method.Span),
                     IsInline = method.Inline == InlineModifier.Inline,
                     IsForceInline = method.Inline == InlineModifier.ForceInline,
+                    IsNoInline = method.Inline == InlineModifier.NoInline,
                     ExtensionDeclaringContainer = containingType,
                     ExtensionIsStatic = method.IsStatic,
                 };
@@ -3641,7 +3717,7 @@ namespace Surtr.Compiler.Binding
 
             if (getter is not null)
             {
-                Accessibility getterAccessibility = ResolveAccessorAccessibility(getter, accessibility, sourceName);
+                Accessibility getterAccessibility = ResolveAccessorAccessibility(getter, accessibility, sourceName, isInterface);
                 var bound = new MethodSymbol(MemberNames.Getter(property.Name), owner, property.Type)
                 {
                     IsStatic = property.IsStatic,
@@ -3652,6 +3728,7 @@ namespace Surtr.Compiler.Binding
                     IsSealed = getter.HasOwnDispatch ? getter.IsSealed : isSealed,
                     IsInline = (getter.Inline != InlineModifier.None ? getter.Inline : inline) == InlineModifier.Inline,
                     IsForceInline = (getter.Inline != InlineModifier.None ? getter.Inline : inline) == InlineModifier.ForceInline,
+                    IsNoInline = (getter.Inline != InlineModifier.None ? getter.Inline : inline) == InlineModifier.NoInline,
                     IsNative = isNative,
                 };
 
@@ -3661,7 +3738,7 @@ namespace Surtr.Compiler.Binding
 
             if (setter is not null)
             {
-                Accessibility setterAccessibility = ResolveAccessorAccessibility(setter, accessibility, sourceName);
+                Accessibility setterAccessibility = ResolveAccessorAccessibility(setter, accessibility, sourceName, isInterface);
                 var bound = new MethodSymbol(MemberNames.Setter(property.Name), owner, _factory.Void)
                 {
                     IsStatic = property.IsStatic,
@@ -3672,6 +3749,7 @@ namespace Surtr.Compiler.Binding
                     IsSealed = setter.HasOwnDispatch ? setter.IsSealed : isSealed,
                     IsInline = (setter.Inline != InlineModifier.None ? setter.Inline : inline) == InlineModifier.Inline,
                     IsForceInline = (setter.Inline != InlineModifier.None ? setter.Inline : inline) == InlineModifier.ForceInline,
+                    IsNoInline = (setter.Inline != InlineModifier.None ? setter.Inline : inline) == InlineModifier.NoInline,
                     IsNative = isNative,
                 };
 
@@ -3686,9 +3764,21 @@ namespace Surtr.Compiler.Binding
         /// property's. An accessor's own visibility must be strictly narrower than the property's —
         /// equal is pointless (the accessor could have written nothing) and wider would let a caller
         /// reach, through that one accessor, something the property itself already hides from them.
+        /// An accessor inside an interface takes no visibility at all: its member is always public.
         /// </summary>
-        private Accessibility ResolveAccessorAccessibility(AccessorSyntax accessor, Accessibility propertyAccessibility, string sourceName)
+        private Accessibility ResolveAccessorAccessibility(
+            AccessorSyntax accessor,
+            Accessibility propertyAccessibility,
+            string sourceName,
+            bool isInterface = false)
         {
+            if (isInterface && accessor.Visibility is not (Visibility.Default or Visibility.Public))
+            {
+                ReportAt(sourceName, accessor.Span, SurtrDiagnosticCode.InvalidInterfaceMember,
+                    $"An interface member is always public, so an accessor cannot be '{Describe(accessor.Visibility)}'.");
+                return propertyAccessibility;
+            }
+
             if (accessor.Visibility == Visibility.Default)
                 return propertyAccessibility;
 
@@ -3710,6 +3800,14 @@ namespace Surtr.Compiler.Binding
             _ => "public",
         };
 
+        private static string Describe(Visibility visibility) => visibility switch
+        {
+            Visibility.Private => "private",
+            Visibility.Protected => "protected",
+            Visibility.Internal => "internal",
+            _ => "public",
+        };
+
         private MethodSymbol BindMethod(
             MethodDeclarationSyntax syntax,
             NamedTypeSymbol owner,
@@ -3727,6 +3825,7 @@ namespace Surtr.Compiler.Binding
                 IsNative = syntax.IsNative,
                 IsInline = syntax.Inline == InlineModifier.Inline,
                 IsForceInline = syntax.Inline == InlineModifier.ForceInline,
+                IsNoInline = syntax.Inline == InlineModifier.NoInline,
                 IsConst = syntax.IsConst,
             };
 
@@ -3752,6 +3851,7 @@ namespace Surtr.Compiler.Binding
                 IsNative = syntax.IsNative,
                 IsInline = syntax.Inline == InlineModifier.Inline,
                 IsForceInline = syntax.Inline == InlineModifier.ForceInline,
+                IsNoInline = syntax.Inline == InlineModifier.NoInline,
                 IsConst = syntax.IsConst,
             };
 
@@ -4143,8 +4243,68 @@ namespace Surtr.Compiler.Binding
                         bounds[c] = _resolver.Resolve(written[c], binding.Scope, binding.SourceName);
 
                     binding.Parameters[i].Constraints = bounds;
+
+                    // A cycle is a property of the declaration, not of any use: `<T : U, U : T>`
+                    // promises two parameters each at least the other, which no construction can
+                    // satisfy or violate. Caught here — the walk below only sees this binding's own
+                    // parameters, which is exactly the graph that can be cyclic through written
+                    // bounds — so the error names the declaration instead of every later use.
+                    CheckConstraintCycle(binding.Parameters, i, binding.Syntax[i], binding.SourceName);
                 }
             }
+        }
+
+        /// <summary>
+        /// Rejects a type parameter whose bounds lead back to itself through other parameters of the
+        /// same declaration (§6).
+        /// </summary>
+        /// <remarks>
+        /// Only the declaring list's own parameters are followed: a bound naming a parameter of an
+        /// enclosing or unrelated declaration cannot resolve in scope here anyway. The walk carries
+        /// its path set so a shared bound (<c>&lt;T : C, U : C&gt;</c>) is not mistaken for a
+        /// cycle — only a parameter already on the current path closes one.
+        /// </remarks>
+        private void CheckConstraintCycle(
+            IReadOnlyList<TypeParameterSymbol> parameters,
+            int start,
+            TypeParameterSyntax syntax,
+            string sourceName)
+        {
+            var path = new List<TypeParameterSymbol> { parameters[start] };
+            if (FollowsBackTo(parameters[start], path))
+            {
+                var chain = new System.Text.StringBuilder(path[0].Name);
+                for (int i = 1; i < path.Count; i++)
+                    chain.Append(" -> ").Append(path[i].Name);
+
+                ReportAt(
+                    sourceName,
+                    syntax.Span,
+                    SurtrDiagnosticCode.CircularTypeParameterConstraint,
+                    $"'{syntax.Name}' has bounds that lead back to itself ('{chain}'); a circular constraint cannot be satisfied.");
+            }
+        }
+
+        private bool FollowsBackTo(TypeParameterSymbol parameter, List<TypeParameterSymbol> path)
+        {
+            foreach (var bound in parameter.Constraints)
+            {
+                if (bound.NonNullable is not TypeParameterSymbol next)
+                    continue;
+
+                // Already on the current path — including the starting parameter at path[0] — so
+                // the bounds close a circle.
+                if (path.Contains(next))
+                    return true;
+
+                path.Add(next);
+                if (FollowsBackTo(next, path))
+                    return true;
+
+                path.RemoveAt(path.Count - 1);
+            }
+
+            return false;
         }
 
         private readonly struct ConstraintBinding

@@ -119,6 +119,13 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>Whether inlining is mandatory rather than a hint (§3.6).</summary>
         public bool IsForceInline { get; internal set; }
 
+        /// <summary>
+        /// Whether every fold of its invocations is off (§3.6): no splice by hint or heuristic, no
+        /// accessor lowering at the access site, and no call-site const folding. What runs is the
+        /// declaration itself, as a real call.
+        /// </summary>
+        public bool IsNoInline { get; internal set; }
+
         /// <summary>Whether it may be evaluated at compile time (§7.3).</summary>
         public bool IsConst { get; internal set; }
 

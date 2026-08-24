@@ -1097,6 +1097,27 @@ namespace Surtr.Bytecode
         /// static, and the static initializer that seeds it, both lower to.
         /// </remarks>
         StoreValueStatic = 0xF3,
+
+        /// <summary>Packs a range block into the heap object it presents as.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., lo, hi, flag -&gt; ..., ref</c><br/>
+        /// Notes: the packed-form half of the range boundary - what a range crossing into a
+        /// one-reference slot (an array element, a dictionary key, an erased parameter) boxes
+        /// through. The result is an ordinary registered <c>SurtrRange</c>, which is what every
+        /// path that walks boxed values already walks. Allocates, so it routes through the
+        /// safepoint like every other packing opcode.
+        /// </remarks>
+        RangePack = 0xF4,
+
+        /// <summary>Expands a packed range back into its three-slot block.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
+        /// Stack: <c>..., ref -&gt; ..., lo, hi, flag</c><br/>
+        /// Notes: the mirror of <see cref="RangePack"/>, on the way back out of a one-reference
+        /// slot. No allocation, so no safepoint.
+        /// </remarks>
+        RangeUnpack = 0xF5,
         #endregion
 
 
@@ -2113,22 +2134,25 @@ namespace Surtr.Bytecode
 
 
         #region Range Operations
-        /// <summary>Builds a range from two int bounds, excluding the upper one.</summary>
+        /// <summary>Lays out a range block from two int bounds, excluding the upper one.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
-        /// Stack: <c>..., lo, hi -&gt; ..., ref</c><br/>
-        /// Notes: allocates. A range written inline in a <c>for-in</c> header must never reach
-        /// this - the compiler lowers that to a counted loop over two ints - so this is for a range
-        /// that genuinely escapes into a variable, a parameter or a return.
+        /// Stack: <c>..., lo, hi -&gt; ..., lo, hi, 0</c><br/>
+        /// Notes: allocates nothing - a range is an inline value (§2.9), three slots wide, and
+        /// this opcode only materialises the inclusive flag its operator baked in. A range written
+        /// inline in a <c>for-in</c> header must never reach this - the compiler lowers that to a
+        /// counted loop over two ints - so this is for a range that genuinely escapes into a
+        /// variable, a parameter or a return.
         /// </remarks>
         RangeNew = 0xDB,
 
-        /// <summary>Builds a range from two int bounds, including the upper one.</summary>
+        /// <summary>Lays out a range block from two int bounds, including the upper one.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
-        /// Stack: <c>..., lo, hi -&gt; ..., ref</c><br/>
-        /// Notes: the <c>..=</c> form. A separate opcode rather than an increment at the call site
-        /// because <c>hi</c> may be <c>int.MaxValue</c>, where incrementing would wrap.
+        /// Stack: <c>..., lo, hi -&gt; ..., lo, hi, 1</c><br/>
+        /// Notes: the <c>..=</c> form - the mirror of <see cref="RangeNew"/>, differing only in
+        /// the flag it writes. A separate opcode rather than an increment at the call site because
+        /// <c>hi</c> may be <c>int.MaxValue</c>, where incrementing would wrap.
         /// </remarks>
         RangeNewInclusive = 0xDC,
         #endregion

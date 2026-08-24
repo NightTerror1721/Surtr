@@ -267,6 +267,7 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordOverride:
                 case TokenType.KeywordInline:
                 case TokenType.KeywordForceInline:
+                case TokenType.KeywordNoInline:
                 case TokenType.KeywordNative:
                 case TokenType.KeywordClass:
                 case TokenType.KeywordInterface:

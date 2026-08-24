@@ -158,6 +158,13 @@ namespace Surtr.Compiler.Syntax
         /// <summary><c>inline</c> - a hint the compiler may decline, unlike <see cref="KeywordForceInline"/> (§3.6).</summary>
         KeywordInline,
 
+        /// <summary>
+        /// <c>noinline</c> - the opposite of <see cref="KeywordInline"/>: every fold of the
+        /// declaration's invocations is off — splice by hint or heuristic, accessor lowering, and
+        /// call-site const folding (§3.6).
+        /// </summary>
+        KeywordNoInline,
+
         /// <summary><c>interface</c> (§2.3).</summary>
         KeywordInterface,
 

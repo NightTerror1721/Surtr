@@ -205,11 +205,27 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>
         /// Whether <paramref name="derived"/> is <paramref name="baseType"/> or something below it,
-        /// through base classes or interfaces.
+        /// through base classes, interfaces, or a type parameter's own bounds.
         /// </summary>
+        /// <remarks>
+        /// A type parameter is above exactly what its bounds promise (§6): inside
+        /// <c>Node&lt;T : IComparable&lt;T&gt;&gt;</c>, writing <c>Node&lt;T&gt;</c> in a member of
+        /// its own declaration asks whether the bare parameter satisfies
+        /// <c>IComparable&lt;T&gt;</c> — and §6's answer is yes, because that is precisely what the
+        /// bound promises every construction will satisfy. Without this walk the question read as a
+        /// flat no and every self-referencing use of a constrained generic failed its bounds check.
+        /// </remarks>
         public bool IsSubtype(TypeSymbol derived, TypeSymbol baseType)
         {
             if (ReferenceEquals(derived.NonNullable, baseType.NonNullable))
+                return true;
+
+            // A bare parameter is below nothing in the class graph, but above its own bounds (§6):
+            // asked whether `T` satisfies `IComparable<T>` under `<T : IComparable<T>>`, the walk
+            // below would read as a flat no, and every self-referencing use of a constrained
+            // generic would fail a check its declaration promises it passes.
+            if (derived.NonNullable is TypeParameterSymbol parameter
+                && ReachesThroughBounds(parameter, baseType, new HashSet<TypeParameterSymbol>()))
                 return true;
 
             // A composite is not a NamedTypeSymbol and carries no interface list of its own, but the
@@ -222,6 +238,63 @@ namespace Surtr.Compiler.Binding
             // subtype check — the most frequent primitive of overload resolution.
             _subtypeScratch.Clear();
             return WalkForBase(from, to, _subtypeScratch);
+        }
+
+        /// <summary>
+        /// Whether one of <paramref name="parameter"/>'s bounds reaches
+        /// <paramref name="target"/> — directly, through deeper bounds, or by subtyping.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The visiting set tracks the parameters on the <em>current path</em> only, added on entry
+        /// and removed on exit, so mutually referencing bounds (<c>&lt;T : U, U : T&gt;</c>) stop at
+        /// the cycle without a diamond shape being mistaken for one. It is allocated by the caller:
+        /// this walk is rare next to the ordinary subtype test, and a fresh set keeps re-entrant
+        /// calls from sharing state.
+        /// </para>
+        /// <para>
+        /// Each concrete bound goes through <see cref="WalkForBase"/> rather than a plain equality,
+        /// because a bound may itself be generic (<c>T : IEnumerable&lt;T&gt;</c>) and the question
+        /// is about the whole hierarchy above it.
+        /// </para>
+        /// </remarks>
+        private bool ReachesThroughBounds(TypeParameterSymbol parameter, TypeSymbol target, HashSet<TypeParameterSymbol> visiting)
+        {
+            if (!visiting.Add(parameter))
+                return false;
+
+            try
+            {
+                foreach (var bound in parameter.Constraints)
+                {
+                    if (bound.IsError)
+                        continue;
+
+                    var boundCore = bound.NonNullable;
+
+                    if (boundCore is TypeParameterSymbol nested)
+                    {
+                        if (!ReferenceEquals(nested, parameter) && ReachesThroughBounds(nested, target, visiting))
+                            return true;
+                    }
+                    else if (ReferenceEquals(boundCore, target.NonNullable))
+                    {
+                        return true;
+                    }
+                    else if (Named(bound) is NamedTypeSymbol from && target.NonNullable is NamedTypeSymbol to)
+                    {
+                        _subtypeScratch.Clear();
+                        if (WalkForBase(from, to, _subtypeScratch))
+                            return true;
+                    }
+                }
+            }
+            finally
+            {
+                visiting.Remove(parameter);
+            }
+
+            return false;
         }
 
         private NamedTypeSymbol? Named(TypeSymbol type)
@@ -289,6 +362,17 @@ namespace Surtr.Compiler.Binding
             // compiler owes a box on the way in for a primitive, and a Cast on the way out.
             if (destination.SpecialType == SpecialType.Unknown)
                 return Conversion.Of(ConversionKind.ImplicitErasure);
+
+            // §6: a constrained parameter widens to its bounds, exactly as a concrete class widens
+            // to its base. Inside `<T : IComparable<T>>`, a `T` may flow into an
+            // `IComparable<T>`-typed slot — that upcast is the bound's whole purpose, and without it
+            // a body could see the member through lookup yet be refused the assignment to call it.
+            // Nullability rides along one way only: `T` and `T?` both reach a nullable bound, a
+            // nullable `T?` never reaches a non-nullable one.
+            if (source.NonNullable is TypeParameterSymbol bounded
+                && !(source.IsNullable && !destination.IsNullable)
+                && ReachesThroughBounds(bounded, destination.NonNullable, new HashSet<TypeParameterSymbol>()))
+                return Conversion.Of(ConversionKind.ImplicitReference);
 
             if (IsErasedSlot(source))
                 return Conversion.None;

@@ -369,7 +369,7 @@ value class Vec2 : IMeasure {
         this.y = y;
     }
 
-    public override fun lengthSquared(): float {
+    public virtual fun lengthSquared(): float {
         return this.x * this.x + this.y * this.y;
     }
 }

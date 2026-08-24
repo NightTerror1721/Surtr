@@ -143,6 +143,7 @@ cualifica el nombre, que es como el código Surtr los referencia.
 | `string` | `S` | se interna como `SurtrString` |
 | enum registrado | descriptor del enum | **enum Surtr completo** (objeto por valor, cacheado) |
 | clase/struct `[SurtrNativeType]` | `N...` | se envuelve/desenvuelve; un struct `Inline = true` viaja como bloque de slots (§5.1) |
+| clase `[SurtrNativeType]` que hereda `SurtrNativeObject` | `N...` | **sin envoltura**: el objeto ya es una entidad Surtr y se adopta tal cual (`RegisterHost`) |
 | delegate / `Action`/`Func` | `L(...)R` | **closure Surtr** (ambas direcciones) |
 | `object` opaco | `Nsurtr:native` | `SurtrNativeProxy` |
 | `T[]` | `A...` | `SurtrArray` |
@@ -151,6 +152,12 @@ cualifica el nombre, que es como el código Surtr los referencia.
 - **Enums**: un enum C# es un enum Surtr real (clase sealed con cases). El bridge cachea un
   `SurtrNativeObject` por valor (rooteado) y lo cablea en los cases, de modo que `MyEnum.A` resuelve
   al mismo objeto y un `switch` exhaustivo compila a jump table. El marshaling es O(1) sin boxing.
+- **Clases que heredan `SurtrNativeObject`**: no se envuelven ni se desenvuelven — el objeto ya
+  **es** una entidad Surtr. Cada cruce (constructor, parámetro, resultado, campo, posición
+  `object`) lo adopta vía `SurtrRuntime.RegisterHost`, con caché de identidad rooteada: la misma
+  instancia CLR responde siempre la misma referencia. En sentido inverso, el receptor/parámetro
+  resuelve directo a la instancia (`HostValueOf`), nunca al `Target` de un proxy — que sería null
+  o el objeto equivocado en una fachada que guarda su estado en campos propios.
 - **Structs**: por defecto se empaquetan (boxing) y aparecen como clases normales. Con
   `[SurtrNativeType(Inline = true)]` se exponen como **tipo de valor**: un bloque de slots
   contiguos, sin asignacion. Ver §5.1.

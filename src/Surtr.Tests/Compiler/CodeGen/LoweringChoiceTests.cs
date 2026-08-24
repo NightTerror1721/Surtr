@@ -904,6 +904,53 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(0, Count(code, "InvokeSpecial"));
         }
 
+        /// <summary>
+        /// §3.6: <c>noinline</c> refuses the splice the default heuristic would have made — the same
+        /// trivial body that <see cref="ATrivialFunctionIsSplicedByDefault"/> shows splicing stays a
+        /// real call when the declaration says no.
+        /// </summary>
+        [Fact]
+        public void ANoinlineFunctionIsNotSplicedByTheHeuristic()
+        {
+            string code = Disassemble(
+                "noinline fun twice(x: int): int { return x + x; }\n"
+                    + "fun run(a: int): int { return twice(a); }");
+
+            Assert.Equal(1, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// And it refuses the call-site const fold too (§7.2's optional half): a literal argument
+        /// folds a plain <c>const fun</c> away entirely —
+        /// <see cref="AConstFunCallWithALiteralArgumentFoldsAway"/> — but not one declared
+        /// <c>noinline</c>. The mandatory folds (a `const` initializer, a `const if`) are evaluation,
+        /// not optimization, and still run the function.
+        /// </summary>
+        [Fact]
+        public void ANoinlineConstFunCallDoesNotFoldAtTheCallSite()
+        {
+            string code = Disassemble(
+                "noinline const fun square(x: int): int { return x * x; }\n"
+                    + "fun run(): int { return square(5); }");
+
+            Assert.Equal(1, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// An auto-property marked <c>noinline</c> is reached through its accessor rather than by
+        /// the backing-field opcode — the mirror of
+        /// <see cref="AnAutoPropertyIsAccessedByFieldOpcodeNotByACall"/>.
+        /// </summary>
+        [Fact]
+        public void ANoinlineAutoPropertyIsAccessedByCallNotByFieldOpcode()
+        {
+            string code = Disassemble(
+                "class A { public noinline n: int { get; set; } }\n"
+                    + "fun run(): int { let a = A(); return a.n; }");
+
+            Assert.Equal(1, Count(code, "InvokeSpecial"));
+        }
+
         #endregion
 
         #region Devirtualisation (§2.2, §3.3)

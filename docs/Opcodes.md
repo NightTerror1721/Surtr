@@ -575,8 +575,10 @@ A range that genuinely escapes into a variable, a parameter or a return. One wri
 
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
-| `0xDB` | `RangeNew` | `opcode(1)` · 1 byte | `..., lo, hi -> ..., ref` | Builds a range from two int bounds, excluding the upper one. Allocates. A range written inline in a `for-in` header must never reach this - the compiler lowers that to a counted loop over two ints - so this is for a range that genuinely escapes into a variable, a parameter or a return. |
-| `0xDC` | `RangeNewInclusive` | `opcode(1)` · 1 byte | `..., lo, hi -> ..., ref` | Builds a range from two int bounds, including the upper one. The `..=` form. A separate opcode rather than an increment at the call site because `hi` may be `int.MaxValue`, where incrementing would wrap. |
+| `0xDB` | `RangeNew` | `opcode(1)` – 1 byte | `..., lo, hi -> ..., lo, hi, 0` | Lays out a range block from two int bounds, excluding the upper one. A range is an inline value - three raw slots (start, end, inclusive flag), none of them a reference - so this allocates nothing; it only materialises the flag its operator baked in. A range written inline in a `for-in` header must never even reach this - the compiler lowers that to a counted loop over two ints - so this is for a range that genuinely escapes into a variable, a parameter or a return. |
+| `0xDC` | `RangeNewInclusive` | `opcode(1)` – 1 byte | `..., lo, hi -> ..., lo, hi, 1` | Lays out the `..=` form - the mirror of `RangeNew`, differing only in the flag it writes. A separate opcode rather than an increment at the call site because `hi` may be `int.MaxValue`, where incrementing would wrap. |
+| `0xF4` | `RangePack` | `opcode(1)` – 1 byte | `..., lo, hi, flag -> ..., ref` | Packs a range block into the heap object it presents as: what a range crossing into a one-reference slot (an array element, a dictionary key or value, an erased parameter) boxes through. The result is an ordinary registered `SurtrRange`, which every path that walks boxed values already walks and which the range's own native members read when a call reaches them. Allocates, so it routes through the safepoint like every other packing opcode. |
+| `0xF5` | `RangeUnpack` | `opcode(1)` – 1 byte | `..., ref -> ..., lo, hi, flag` | The mirror of `RangePack`, on the way back out of a one-reference slot: the block replaces the reference. No allocation, so no safepoint. |
 
 ## Function Operations
 
