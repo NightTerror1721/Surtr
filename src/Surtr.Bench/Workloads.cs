@@ -432,8 +432,7 @@ namespace Surtr.Bench
             // The cursor is held by its own type, not by IIterator<int>. What this case is for is
             // the *class* a generator saves you writing, and the interface-dispatched walk over one
             // is already what `iterator` measures - so typing it here would measure that twice and
-            // nothing new. (It also steps around a miscompile of a contract-dispatched property
-            // read on a user class, which predates generators; see the repro in the report.)
+            // nothing new.
             fun handIterator(n: int): int {
                 let cursor = RangeCursor(n);
                 var acc: int = 0;

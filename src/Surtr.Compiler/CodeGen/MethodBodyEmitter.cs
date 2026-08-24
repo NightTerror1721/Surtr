@@ -960,20 +960,12 @@ namespace Surtr.Compiler.CodeGen
             EmitLoadLocal(cursor);
             Code.GenCurrent();
 
-            // Deliberately *not* the contract path's `BoxDynamic` then `Unerase`. That pair exists
-            // because a value read through `IIterator<T>.current` may be a built-in's raw storage or
-            // may be already boxed, and the call site cannot tell - so it normalizes to a box and
-            // unwraps. Here both ends are known: `Yield` wrote this slot from a body compiled
-            // against the declared element, so a primitive is raw unless the declaration erased it,
-            // in which case it is a box. `UnboxDynamic` covers exactly those two and allocates
-            // nothing, where `BoxDynamic` would allocate once per element - which for a construct
-            // whose whole point is to be cheaper than the iterator class it replaces would be the
-            // difference between a win and a loss.
-            var element = loop.Variable.Type.NonNullable;
-            if (element.SpecialType is SpecialType.Int or SpecialType.Float or SpecialType.Bool or SpecialType.Char)
-                Code.UnboxDynamic();
-            else
-                Unerase(loop.Variable.Type);
+            // `Yield` wrote this slot from a body compiled against the declared element, so a
+            // primitive is raw unless the declaration erased it, in which case it is a box - the
+            // same two representations `Unerase` already resolves from the value's own tag. Nothing
+            // is boxed here: a generator whose whole point is to be cheaper than the iterator class
+            // it replaces cannot afford an allocation per element.
+            Unerase(loop.Variable.Type);
 
             EmitStoreLocal(variable);
 
@@ -1012,16 +1004,15 @@ namespace Surtr.Compiler.CodeGen
             EmitLoadLocal(cursor);
             Code.CallInterface(current);
 
-            // `current` is typed by the contract's own parameter, so it reads back erased � but
+            // `current` is typed by the contract's own parameter, so it reads back erased - but
             // what it hands back is the collection's own storage, and a built-in collection stores
             // a primitive raw (an int pushed into an int[] is never boxed on the way in), while a
             // collection built from scratch inside a still-generic body stores primitives already
-            // boxed (�1.11). The receiver reached through `CallInterface` is only known to satisfy
-            // the contract, not which of the two it is, so `BoxDynamic` normalizes either into a
-            // definite reference � a no-op where `current` already handed one back � and `Unerase`
-            // can then run unconditionally rather than only where the loop variable's own
-            // substituted type happens to be a reference.
-            Code.BoxDynamic();
+            // boxed (§1.11). The receiver reached through `CallInterface` is only known to satisfy
+            // the contract, not which of the two it is - which is exactly the ambiguity `Unerase`
+            // resolves from the value's own tag. It used to be normalised away by boxing first;
+            // that was one allocation per element on every walk through a contract, for a question
+            // `UnboxDynamic` answers for free.
             Unerase(loop.Variable.Type);
 
             EmitStoreLocal(variable);
@@ -1834,10 +1825,22 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
-            Code.CastTo(Descriptors.Emit(bare));
-
+            // A primitive read back out of an erased slot arrives in one of two representations,
+            // and the reader cannot tell which. The compiler boxes a primitive on the way into an
+            // erased slot (§1.11), so most of them are boxes - but a built-in's own storage never
+            // was: an `int[]`'s elements are raw, and `IIterator<T>.current` over one hands the raw
+            // value straight back through a slot declared `G0`. `UnboxDynamic` reads the value's
+            // own tag and covers both, where `CastTo` + `Unbox` assumes a box and would misread the
+            // raw case. It also allocates nothing, which is why the `BoxDynamic` that used to
+            // normalise this away at each read site is gone: boxing a raw value only to unbox it
+            // cost one allocation per element on every walk through a contract.
             if (bare.IsPrimitive && !bare.IsVoid)
-                Code.Unbox();
+            {
+                Code.UnboxDynamic();
+                return;
+            }
+
+            Code.CastTo(Descriptors.Emit(bare));
         }
 
         /// <summary>
@@ -3097,6 +3100,15 @@ namespace Surtr.Compiler.CodeGen
                     }
 
                     value();
+
+                    // The mirror of what UnerasedCallResult does on a read: a setter declared
+                    // against a contract's own parameter (`IBox<T>.value`) takes an erased slot
+                    // however concrete the receiver's construction is, so the value has to become a
+                    // reference on the way in. The binder writes no conversion node here - it
+                    // checked the assignment against the property's *substituted* type, which is
+                    // already `int` - so this is the only place that can know.
+                    ErasedCallArgument(setter);
+
                     EmitResolvedCall(setter, virtualCall: property.IsVirtualSet, discardResult: true);
                     return;
                 }
@@ -3313,6 +3325,15 @@ namespace Surtr.Compiler.CodeGen
             }
 
             EmitResolvedCall(getter, virtualCall: property.IsVirtualGet, discardResult: false);
+
+            // The same second obligation §1.11 puts on a generic method's result, and for exactly
+            // the same reason: a property declared against a contract's own parameter
+            // (`IIterator<T>.current`) is compiled once with an erased return, so the bridge hands
+            // back a box however concrete the receiver's construction is. `EmitCall` has always
+            // done this; a property read reaches the very same getter by a different route, and
+            // without it `cursor.current` on an `IIterator<int>` leaves a reference where an `int`
+            // is expected - which the interpreter then adds as its payload rather than trapping.
+            UnerasedCallResult(getter);
         }
 
         /// <summary>The name a built-in collection's <c>length</c> getter is emitted under.</summary>
@@ -3956,6 +3977,29 @@ namespace Surtr.Compiler.CodeGen
             var original = method.OriginalDefinition ?? method;
             if (original.ReturnType.NonNullable is TypeParameterSymbol)
                 Unerase(method.ReturnType);
+        }
+
+        /// <summary>
+        /// Boxes a single argument on its way into an erased parameter slot - §1.11's first
+        /// obligation, and the exact mirror of <see cref="UnerasedCallResult"/>.
+        /// </summary>
+        /// <remarks>
+        /// Only for a one-parameter callee reached without an argument list of its own, which in
+        /// practice means a property setter. An ordinary call gets this from the binder, which
+        /// writes a conversion node for every argument; an assignment through a property does not,
+        /// because the binder checked it against the property's substituted type and found nothing
+        /// to convert. <c>BoxDynamic</c> rather than a typed box for the same reason the read side
+        /// uses <c>Unerase</c>: the value may already be a reference, and this is a no-op then.
+        /// </remarks>
+        private void ErasedCallArgument(MethodSymbol method)
+        {
+            var original = method.OriginalDefinition ?? method;
+
+            if (original.Parameters.Count == 1
+                && original.Parameters[0].Type.NonNullable is TypeParameterSymbol)
+            {
+                Code.BoxDynamic();
+            }
         }
 
         /// <summary>

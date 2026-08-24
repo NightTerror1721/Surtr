@@ -975,6 +975,22 @@ construct whose *absence* nobody checked.
 | `native let` / `native var` / module-level `native fun` (§10) | Compiled to ordinary module statics — the module loaded with no host at all and read zeroes. | Declared as an ordinary member (a property or a method) carrying a link name, the same shape a class's own native member has; a name nothing published fails the load. (This itself first landed on a since-retired per-module native import table reached with `Ldg`/`Stg`/`CallGlobalNative` — see `docs/VM-Plan.md` §4.14 — before being folded into the general native-member mechanism.) |
 | a varargs parameter | Typed as its *element* type in the binder, so applicability never absorbed a surplus and an empty varargs packed an array typed `string`. | Typed as the array §3.5 says the body sees. `MetadataImporter` rebuilds it, since metadata carries the element type. |
 | a base with no parameterless constructor | An omitted chain silently reached nothing, so the base went unconstructed. | Reported at the constructor that omits it, or at the class when it declares none — `Binder.CheckBaseConstructorIsReachable`. |
+| a **property** declared against a contract's own parameter (`IIterator<T>.current`, `IBox<T>.value`) | Neither half of §1.11 was applied. A read left the bridge's box on the stack where an `int` was expected, so `acc + cursor.current` added the box's *entity id* — small, plausible, wrong numbers. A write pushed a raw primitive into a slot the accessor then cast, which dereferenced it. | `EmitPropertyRead` ends in `UnerasedCallResult` and the write path in `ErasedCallArgument`, so a property reaches the same two obligations a call always had. |
+
+The property case is the same mistake as the rest, seen once more: a *call* got both obligations —
+the binder writes a conversion node per argument, and `UnerasedCallResult` handles the return — and
+a property reached the very same erased slot by a different route that nobody had walked. The binder
+could not have caught it: it checks a property access against the property's **substituted** type,
+which is already `int`, so there is genuinely nothing there to convert. Only the emitter, which can
+see `OriginalDefinition`, knows the slot is erased.
+
+Closing it also paid for itself. `Unerase` used to assume a primitive coming out of an erased slot
+was boxed, which is true of everything the compiler puts there and false of a built-in's own
+storage — an `int[]`'s elements are raw, and `IIterator<T>.current` over one hands the raw value
+back through a slot declared `G0`. `EmitForInIterable` compensated by boxing every element before
+unwrapping it, at one allocation each. Reading the value's own tag with `UnboxDynamic` covers both
+representations for free, so that box is gone: a `for-in` over any `IIterable<T>` went from 50,000
+allocations per 50,000 elements to **two**, and 28 % faster with it.
 
 Two decisions inside that work are worth keeping:
 

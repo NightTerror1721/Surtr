@@ -703,24 +703,33 @@ renumeración de `SurtrValueTypeCode`, no por los generadores.
 | `forIn` | 0.67 | 1 | bucle indexado sobre un array — el suelo |
 | `genYield` | **1.42** | **1** | generador: suspender y reanudar un frame por elemento |
 | `handIterator` | 1.60 | 1 | la clase cursor escrita a mano, llamada directamente |
-| `iterator` | 4.76 | 50.000 | el camino general `iterate()`/`moveNext()` por interfaz |
+| `iterator` | 3.43 | 2 | el camino general `iterate()`/`moveNext()` por interfaz |
 
 Tres lecturas:
 
 - **Un generador sale algo más rápido que el cursor escrito a mano** (1.42 frente a 1.60) y
-  **3.4× más rápido que el camino por interfaz**, que es lo que §7 predijo: una copia de frame por
+  **2.4× más rápido que el camino por interfaz**, que es lo que §7 predijo: una copia de frame por
   elemento cuesta menos que dos despachos de interfaz.
 - **Asigna un solo objeto**, independientemente de cuántos elementos produzca. El buffer de slots se
-  reserva entero al crear el generador, así que ningún `yield` asigna — y frente a los 50.000
-  objetos del camino por interfaz, esa columna es la diferencia que un presupuesto de frame nota.
+  reserva entero al crear el generador, así que ningún `yield` asigna.
 - **Sigue costando ~2× un bucle indexado**, que es el precio honesto de la suspensión. Un `for-in`
   sobre un array no debe convertirse en un generador; lo que un generador sustituye es la clase.
 
-Un defecto propio salió de esta medición: la primera versión del camino rápido copiaba de
-`EmitForInIterable` su `BoxDynamic`, que allí normaliza un valor leído de una ranura borrada. En el
-camino del generador los dos extremos son conocidos, así que boxear era una asignación por elemento
-— 50.000 objetos y 1.9 MB. `UnboxDynamic` cubre los dos casos reales sin asignar nada, y es lo que
-lleva la columna `objs` de 50.000 a 1.
+**La medición encontró dos defectos que los tests no vieron, y el segundo no era de generadores.**
+La primera versión del camino rápido copiaba de `EmitForInIterable` su `BoxDynamic`, que allí
+normalizaba un valor leído de una ranura borrada: en el camino del generador los dos extremos son
+conocidos, así que boxear era una asignación por elemento — 50.000 objetos y 1.9 MB por bucle.
+
+Tirar de ese hilo destapó el defecto real, que llevaba ahí desde antes: `Unerase` daba por hecho que
+un primitivo saliendo de una ranura borrada venía boxeado. Es cierto de todo lo que pone ahí el
+compilador y falso del almacenamiento propio de un built-in — los elementos de un `int[]` son
+crudos, y `IIterator<T>.current` sobre uno devuelve el valor crudo por una ranura declarada `G0`.
+`EmitForInIterable` lo compensaba boxeando cada elemento antes de desenvolverlo. Leer la etiqueta
+del propio valor con `UnboxDynamic` cubre las dos representaciones gratis, así que ese box
+desaparece: **el camino general pasó de 50.000 asignaciones a 2, y de 4.76 ms a 3.43 ms.** Eso vale
+para todo `for-in` sobre un `IIterable<T>` del lenguaje, no solo para generadores. El defecto
+hermano — una propiedad leída o escrita a través de un contrato genérico, que no aplicaba ninguna de
+las dos obligaciones de §1.11 — está en `Compiler-Plan.md` §10.1.
 
 ### 13.3 Lo que la fase 1 no cierra
 
