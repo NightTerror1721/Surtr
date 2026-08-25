@@ -6,6 +6,7 @@ using Surtr.Compiler.CodeGen;
 using Surtr.Compiler.Compilation;
 using Surtr.Compiler.Diagnostics;
 using Surtr.Runtime;
+using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using System;
@@ -646,6 +647,10 @@ var runtime = Run(
                 Root + "/surtr/collections/Collection.surtr", "surtr.collections.Collection", collectionSource);
             project.AddSourceFile(
                 Root + "/surtr/collections/List.surtr", "surtr.collections.List", listSource);
+            project.AddSourceFile(
+                Root + "/surtr/collections/Set.surtr",
+                "surtr.collections.Set",
+                File.ReadAllText(collections + "/Set.surtr"));
             project.AddSourceFile(
                 Root + "/surtr/collections/Sequence.surtr", "surtr.collections.Sequence", sequenceSource);
 
@@ -4390,6 +4395,57 @@ var runtime = Run(
         #endregion
 
         #region Reflexion de atributos: Type/Member (Fase 6)
+
+        /// <summary>
+        /// The built-in vocabulary rides the same path a user attribute does: the use serializes
+        /// against the built-in class's descriptor and materializes into a real instance at load,
+        /// which is what both the host (<c>TryGetAttribute</c>) and scripts
+        /// (<c>Member.attributes()</c>) read afterwards.
+        /// </summary>
+        [Fact]
+        public void ABuiltInObsoleteUseSurvivesTheImageAndMaterializes()
+        {
+            var emitter = Build(
+                "class Player {\n"
+                    + "  @Obsolete(\"use run2\")\n"
+                    + "  public fun run(): void { }\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            Assert.True(module.FindClass("Player")!.TryGetMethods("run", out var overloads));
+            Assert.Equal("Obsolete(use run2)", Describe(overloads[0]));
+
+            Assert.True(overloads[0].TryGetAttribute(SurtrBuiltIns.Obsolete, out var usage));
+            var instance = runtime.Resolve<SurtrInstance>(SurtrValue.CreateReference(usage.Instance))!;
+            Assert.Equal("Obsolete", instance.Class.Name);
+            Assert.Equal("use run2", runtime.Resolve<SurtrString>(instance[0])!.Text);
+        }
+
+        [Fact]
+        public void AScriptReadsABuiltInAttributesReasonThroughReflection()
+        {
+            var runtime = Run(
+                "class Player {\n"
+                    + "  @NoDiscard(\"check whether it parsed\")\n"
+                    + "  public fun tryRun(): bool { return true; }\n"
+                    + "}\n"
+                    + "fun reason(): string {\n"
+                    + "    for (m in Type.of(Player()).members()) {\n"
+                    + "        if (m.name == \"tryRun\") {\n"
+                    + "            let attrs = m.attributes();\n"
+                    + "            if (attrs.length > 0) { return (attrs[0] as NoDiscard).reason; }\n"
+                    + "        }\n"
+                    + "    }\n"
+                    + "    return \"\";\n"
+                    + "}");
+
+            Assert.Equal("check whether it parsed", Text(runtime, "reason"));
+        }
+
         [Fact]
         public void TypeOfReportsTheDeclaredClassName()
         {

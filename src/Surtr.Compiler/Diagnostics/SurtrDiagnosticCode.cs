@@ -558,6 +558,36 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         VariantParameterUsedAsOutput = 3076,
 
+        /// <summary>
+        /// An <c>@Name(...)</c> use (§11) passes more positional arguments than the attribute class
+        /// declares instance fields to receive. Arguments fill the attribute's fields by position,
+        /// both here and at load (<c>SurtrRuntime.MaterializeAttributes</c>), so a surplus has no
+        /// slot to land in — checked here rather than left to fail module loading later.
+        /// </summary>
+        AttributeArgumentCountMismatch = 3077,
+
+        /// <summary>
+        /// A positional argument of an <c>@Name(...)</c> use (§11) holds a kind of constant its
+        /// field cannot take — text into an <c>int</c> field, say. Arguments fill fields by
+        /// position, so the one that does not line up is named rather than the whole list.
+        /// </summary>
+        AttributeArgumentTypeMismatch = 3078,
+
+        /// <summary>
+        /// A use of something marked <c>@Obsolete</c> (§11): a call, a field or property access, or
+        /// a construction. A warning rather than an error — the old form still works, and the point
+        /// is to move callers along, named in the attribute's reason text.
+        /// </summary>
+        ObsoleteMemberUsed = 3079,
+
+        /// <summary>
+        /// A call to a function marked <c>@NoDiscard</c> (§11) whose result is dropped: the call
+        /// sits as a statement and the value it returns goes nowhere. Also a warning — ignoring a
+        /// result can be deliberate — but one worth seeing every time, since the mark says the
+        /// value usually is not safe to ignore.
+        /// </summary>
+        NoDiscardResultUnused = 3080,
+
         #endregion
 
         #region Code generation — 4xxx

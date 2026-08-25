@@ -215,6 +215,19 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass Attribute;
 
         /// <summary>
+        /// The built-in <c>@Obsolete("reason")</c> attribute (§11): marks a declaration the language
+        /// is retiring. The compiler warns at every use; the instance stays readable through
+        /// reflection so hosts and tools can report on old APIs too.
+        /// </summary>
+        public static readonly SurtrClass Obsolete;
+
+        /// <summary>
+        /// The built-in <c>@NoDiscard("reason")</c> attribute (§11): marks a function whose result
+        /// should not be thrown away. The compiler warns when a call's value is dropped.
+        /// </summary>
+        public static readonly SurtrClass NoDiscard;
+
+        /// <summary>
         /// A first-class handle to another class's metadata, behind every <see cref="SurtrTypeValue"/>.
         /// </summary>
         /// <remarks>
@@ -329,6 +342,8 @@ namespace Surtr.Runtime.BuiltIns
             InvalidOperationException = DeclareObject("InvalidOperationException", Exception);
             GeneratorExit = DeclareObject("GeneratorExit", Exception);
             Attribute = DeclareObject("Attribute", isAbstract: true);
+            Obsolete = DeclareObject("Obsolete", Attribute);
+            NoDiscard = DeclareObject("NoDiscard", Attribute);
             Type = DeclareObject("Type");
             Member = DeclareObject("Member");
             ModuleType = DeclareObject("Module");
@@ -390,6 +405,13 @@ namespace Surtr.Runtime.BuiltIns
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(StackOverflowException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(InvalidOperationException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(GeneratorExit, handles));
+
+            // The built-in attribute vocabulary (§11): one optional reason string each, which is
+            // both the compiler's warning text and the field reflection hands back. The classes are
+            // declared above, right after their root, because SeedGlobalScope imports every type the
+            // module holds - these two have to exist by then to be nameable as `@Obsolete`.
+            DeclareReasonAttribute(BuilderFor(Obsolete, handles));
+            DeclareReasonAttribute(BuilderFor(NoDiscard, handles));
             SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
 
             // After Attribute, since Type.attributes()/Member.attributes() both name it, and
@@ -541,6 +563,14 @@ namespace Surtr.Runtime.BuiltIns
 
             return new SurtrBuiltInTypeBuilder(declared, selfHandle, handles);
         }
+
+        /// <summary>
+        /// Gives a built-in attribute class its single <c>reason</c> field: the message the compiler
+        /// quotes in its warning and reflection hands back. Public, because reading it off a
+        /// reflected instance is the whole point of carrying it.
+        /// </summary>
+        private static void DeclareReasonAttribute(SurtrBuiltInTypeBuilder builder)
+            => builder.Field("reason", SurtrClassReference.String, visibility: SurtrVisibility.Public);
 
         /// <summary>
         /// The library class a CLR exception should surface as inside Surtr code, or

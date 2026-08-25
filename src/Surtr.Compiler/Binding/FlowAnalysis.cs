@@ -138,6 +138,7 @@ namespace Surtr.Compiler.Binding
 
                 case BoundExpressionStatement expression:
                     Expression(expression.Expression);
+                    ReportIfNoDiscardWasDropped(expression);
                     return;
 
                 case BoundLocalDeclarationStatement local:
@@ -343,6 +344,40 @@ namespace Surtr.Compiler.Binding
                     Statement(labeled.Statement);
                     return;
             }
+        }
+
+        /// <summary>
+        /// Reports a statement-expression whose call resolved to something marked
+        /// <c>@NoDiscard</c> (§11): the value came back and went nowhere.
+        /// </summary>
+        /// <remarks>
+        /// Only the dropped case warns. A call feeding anything — an assignment, an argument, a
+        /// chain like <c>f().g()</c>, where the statement's call is g's — has its result used, so
+        /// this looks at exactly what the statement evaluated and nothing it flowed into.
+        /// </remarks>
+        private void ReportIfNoDiscardWasDropped(BoundExpressionStatement statement)
+        {
+            BoundExpression expression = statement.Expression;
+            while (expression is BoundConversionExpression conversion)
+                expression = conversion.Operand;
+
+            if (expression is not BoundCallExpression call)
+                return;
+
+            MethodSymbol method = call.Method;
+            if (!BuiltInAttributes.IsNoDiscard(method) || method.ReturnType.SpecialType == SpecialType.Void)
+                return;
+
+            string? reason = BuiltInAttributes.NoDiscardReason(method);
+            string message = reason is null
+                ? $"The result of '{method.Name}' is marked @NoDiscard but was not used; assign it to make ignoring it explicit."
+                : $"The result of '{method.Name}' is marked @NoDiscard but was not used: {reason}";
+
+            _diagnostics.ReportWarning(
+                SurtrDiagnosticCode.NoDiscardResultUnused,
+                message,
+                _sourceName,
+                statement.Span);
         }
 
         private BreakTarget Push(string? label)

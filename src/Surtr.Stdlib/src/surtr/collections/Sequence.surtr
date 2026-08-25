@@ -1,5 +1,6 @@
 import surtr.collections.Collection;
 import surtr.collections.List;
+import surtr.collections.Set;
 
 public value class Sequence<T> : IIterable<T>
 {
@@ -130,7 +131,55 @@ public value class Sequence<T> : IIterable<T>
         return result;
     }
 
+    public fun toSet(): Set<T>
+    {
+        var result: Set<T> = Set<T>();
+        var iter = _provider();
+        while (iter.moveNext())
+            result.add(iter.current);
+        return result;
+    }
+
+    public fun toReadOnlySet(): IReadOnlySet<T>
+    {
+        var result: Set<T> = Set<T>();
+        var iter = _provider();
+        while (iter.moveNext())
+            result.add(iter.current);
+        return ReadOnlySet<T>(result);
+    }
+
     public inline fun iterate(): IIterator<T> => _provider();
+}
+
+public extension<T> IIterable<T>
+{
+    fun asSequence(self: IIterable<T>): Sequence<T> => Sequence<T>(() => self.iterate());
+
+    fun forEach(self: IIterable<T>, action: (T) -> void): void => self.asSequence().forEach(action);
+
+    fun firstOrNull(self: IIterable<T>): T? => self.asSequence().firstOrNull();
+
+    fun firstOrNull(self: IIterable<T>, predicate: (T) -> bool): T? => self.asSequence().firstOrNull(predicate);
+
+    fun any(self: IIterable<T>, predicate: (T) -> bool): bool => self.asSequence().any(predicate);
+
+    fun all(self: IIterable<T>, predicate: (T) -> bool): bool => self.asSequence().all(predicate);
+
+    fun count(self: IIterable<T>): int => self.asSequence().count();
+
+    fun toArray(self: IIterable<T>): T[] => self.asSequence().toArray();
+
+    fun toList(self: IIterable<T>): List<T> => self.asSequence().toList();
+
+    fun toSet(self: IIterable<T>): Set<T> => self.asSequence().toSet();
+
+    fun toReadOnlySet(self: IIterable<T>): IReadOnlySet<T> => self.asSequence().toReadOnlySet();
+}
+
+public extension<T, U> IIterable<T>
+{
+    fun reduce(self: IIterable<T>, reducer: (U, T) -> U, initialValue: U): U => self.asSequence().reduce(reducer, initialValue);
 }
 
 private generator seqOf<T>(items: T[]): T

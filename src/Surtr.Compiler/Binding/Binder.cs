@@ -2950,6 +2950,14 @@ namespace Surtr.Compiler.Binding
             FoldDefaults();
             ReportUnfoldedDefaults();
 
+            // §11: before any ordinary body, because a body asks what its targets carry while it
+            // binds - the call that should warn about an @Obsolete method binds against the mark,
+            // so the marks have to exist first. Everything this needs is ready above: every type
+            // exists (the member phase ran), defaults have folded (an argument may be one), and the
+            // const functions a folded argument could name are bound.
+            foreach (var attribute in _attributes)
+                BindAttributes(attribute);
+
             foreach (var body in _bodies)
                 BindOne(body);
 
@@ -2963,12 +2971,6 @@ namespace Surtr.Compiler.Binding
 
             foreach (var chain in _chains)
                 BindChain(chain);
-
-            // After the defaults have folded, so an attribute argument may be a `const` (§11 takes
-            // constants, §7.1 is where they come from) - and after every type exists, since the
-            // attribute class is resolved by name like any other.
-            foreach (var attribute in _attributes)
-                BindAttributes(attribute);
 
             // After every fragment is bound and every body with it: a fragment reaching a static
             // through a call is the same mistake as one reading it outright, and answering that
@@ -3169,12 +3171,116 @@ namespace Surtr.Compiler.Binding
                 }
 
                 if (folded)
+                    folded = ValidateAttributeArguments(binding, written, type, arguments);
+
+                if (folded)
                     uses.Add(new AttributeUse(type, arguments));
             }
 
             if (uses.Count > 0)
                 binding.Target.Attributes = uses;
         }
+
+        /// <summary>
+        /// Checks one use's folded arguments against what its attribute class declares to receive.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// §11 fills an attribute's fields positionally — the same fill <c>SurtrRuntime</c> performs
+        /// at load — so the two questions that matter are how many fields there are and whether each
+        /// argument's kind of constant fits the field it lands in. Until now both surfaced only when
+        /// a module failed to load; reporting them here makes them ordinary compile errors, which is
+        /// where a wrong argument list belongs.
+        /// </para>
+        /// <para>
+        /// Only the class's own non-static, non-const, compiler-written fields count: a const is no
+        /// slot at all (§7.1), and a synthesised backing field is not something an argument names.
+        /// Fields whose types still mention a type parameter are left unchecked — there is nothing
+        /// concrete to compare a constant against yet.
+        /// </para>
+        /// </remarks>
+        /// <returns>Whether the use may be recorded.</returns>
+        private bool ValidateAttributeArguments(
+            AttributeBinding binding,
+            AttributeSyntax written,
+            NamedTypeSymbol type,
+            IReadOnlyList<object?> arguments)
+        {
+            List<FieldSymbol> fields = AttributeArgumentSlots(type);
+
+            if (arguments.Count > fields.Count)
+            {
+                ReportAt(
+                    binding.SourceName,
+                    written.Span,
+                    SurtrDiagnosticCode.AttributeArgumentCountMismatch,
+                    $"'{written.Name}' was given {arguments.Count} argument(s) but its class declares {fields.Count} field(s) to fill.");
+
+                return false;
+            }
+
+            for (int i = 0; i < arguments.Count; i++)
+            {
+                if (fields[i].Type.ContainsTypeParameter)
+                    continue;
+
+                if (ConstantFitsField(arguments[i], fields[i].Type.NonNullable))
+                    continue;
+
+                ReportAt(
+                    binding.SourceName,
+                    written.Arguments[i].Span,
+                    SurtrDiagnosticCode.AttributeArgumentTypeMismatch,
+                    $"Argument {i} of '{written.Name}' cannot fill '{fields[i].ToDisplayString()}': {DescribeAttributeConstant(arguments[i])} is not a value of that type.");
+
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>The attribute class's own fields, which positional arguments fill in order.</summary>
+        private static List<FieldSymbol> AttributeArgumentSlots(NamedTypeSymbol type)
+        {
+            var slots = new List<FieldSymbol>();
+
+            foreach (Symbol member in type.Definition.Members)
+            {
+                if (member is FieldSymbol field && !field.IsStatic && !field.IsConst && !field.IsSynthetic)
+                    slots.Add(field);
+            }
+
+            return slots;
+        }
+
+        /// <summary>Whether a folded attribute argument can sit in a field of this type.</summary>
+        /// <remarks>
+        /// The kinds of constant an argument folds to, against the field's special types, with the
+        /// same widening §5 gives ordinary implicit conversions: an integer widens to a float field,
+        /// and nothing else crosses. Null fits only where a reference would — a string or a
+        /// class-typed field — never a primitive.
+        /// </remarks>
+        private static bool ConstantFitsField(object? value, TypeSymbol fieldType) => fieldType.SpecialType switch
+        {
+            SpecialType.Int => value is long,
+            SpecialType.Float => value is long or double,
+            SpecialType.Bool => value is bool,
+            SpecialType.Char => value is char,
+            SpecialType.String => value is string or null,
+            SpecialType.None => value is null,
+            _ => false,
+        };
+
+        private static string DescribeAttributeConstant(object? value) => value switch
+        {
+            null => "null",
+            long => "an integer",
+            double => "a float",
+            bool => "a boolean",
+            char => "a character",
+            string => "a string",
+            _ => "this constant",
+        };
 
         private static bool ExtendsAttribute(NamedTypeSymbol type)
         {

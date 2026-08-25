@@ -140,10 +140,17 @@ namespace Surtr.Runtime.BuiltIns
         /// object, reached by native code that already knows the concrete type. A library class
         /// like <c>Exception</c> is different: Surtr source extends it, so its state has to be a
         /// real slot in a real instance layout that the linker lays out and the collector traces.
+        /// Most fields stay private (the default), because built-in state is reached through the
+        /// class's own members; the few that are part of a class's public surface - an attribute's
+        /// reason, read directly off a reflected instance - declare themselves public.
         /// </remarks>
-        internal SurtrFieldInfo Field(string name, SurtrClassReference fieldType, bool isReadOnly = true)
+        internal SurtrFieldInfo Field(
+            string name,
+            SurtrClassReference fieldType,
+            bool isReadOnly = true,
+            SurtrVisibility visibility = SurtrVisibility.Private)
         {
-            var field = new SurtrFieldInfo(name, Handle(fieldType), isStatic: false, isReadOnly, SurtrVisibility.Private, _selfHandle);
+            var field = new SurtrFieldInfo(name, Handle(fieldType), isStatic: false, isReadOnly, visibility, _selfHandle);
             _class.AddField(field);
             return field;
         }

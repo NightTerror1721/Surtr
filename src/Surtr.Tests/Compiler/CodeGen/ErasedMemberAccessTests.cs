@@ -247,6 +247,10 @@ namespace Surtr.Tests.Compiler.CodeGen
                 "surtr.collections.List",
                 File.ReadAllText(collections + "/List.surtr"));
             project.AddSourceFile(
+                Root + "/surtr/collections/Set.surtr",
+                "surtr.collections.Set",
+                File.ReadAllText(collections + "/Set.surtr"));
+            project.AddSourceFile(
                 Root + "/surtr/collections/Sequence.surtr",
                 "surtr.collections.Sequence",
                 File.ReadAllText(collections + "/Sequence.surtr"));

@@ -411,6 +411,8 @@ namespace Surtr.Compiler.Binding
         /// <param name="field">The field being read.</param>
         private BoundExpression ResolveField(SyntaxNode syntax, BoundExpression? receiver, FieldSymbol field)
         {
+            ReportIfObsolete(field, field.Name, syntax);
+
             if (field.IsConst && _constants.TryGetValue(field.Name, out object? value))
                 return new BoundLiteralExpression(syntax, field.Type, value);
 
@@ -426,7 +428,13 @@ namespace Surtr.Compiler.Binding
         /// call site.
         /// </summary>
         private BoundPropertyExpression ResolveProperty(SyntaxNode syntax, BoundExpression? receiver, PropertySymbol property)
-            => new(syntax, receiver, property, IsVirtualAccess(property.Getter, receiver), IsVirtualAccess(property.Setter, receiver));
+        {
+            // One warning per written access, covering both directions: a read resolves the getter
+            // and a write the setter, but what is being deprecated is the property itself.
+            ReportIfObsolete(property, property.Name, syntax);
+
+            return new(syntax, receiver, property, IsVirtualAccess(property.Getter, receiver), IsVirtualAccess(property.Setter, receiver));
+        }
 
         private static bool IsVirtualAccess(MethodSymbol? accessor, BoundExpression? receiver)
         {
@@ -454,6 +462,29 @@ namespace Surtr.Compiler.Binding
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Reports the use of a declaration marked <c>@Obsolete</c> (§11), unless this body belongs
+        /// to an obsolete declaration itself — an obsolete method calling another obsolete one is
+        /// migration work in progress, not a mistake to nag about.
+        /// </summary>
+        private void ReportIfObsolete(Symbol target, string used, SyntaxNode syntax)
+        {
+            if (!BuiltInAttributes.IsObsolete(target))
+                return;
+
+            if (BuiltInAttributes.IsObsolete(_method)
+                || (_containingType is not null && BuiltInAttributes.IsObsolete(_containingType)))
+            {
+                return;
+            }
+
+            _diagnostics.ReportWarning(
+                SurtrDiagnosticCode.ObsoleteMemberUsed,
+                BuiltInAttributes.ObsoleteMessage(target, used),
+                _sourceName,
+                syntax.Span);
         }
 
         /// <summary>
@@ -1868,6 +1899,8 @@ namespace Surtr.Compiler.Binding
 
             var method = result.Method!;
 
+            ReportIfObsolete(method, name, syntax);
+
             // A synthetic leading entry standing for the receiver - `OrderArguments`/
             // `BindDeferredLambdas` read only `.Name` and `.Span` off a written argument, never
             // `.Value`, so this is never re-bound; the already-bound `receiver` below is what
@@ -1926,6 +1959,9 @@ namespace Surtr.Compiler.Binding
             }
 
             var method = result.Method!;
+
+            // §11: a resolved call to something marked @Obsolete is the warning's whole point.
+            ReportIfObsolete(method, name, syntax);
 
             // A null receiver reaches this only through the type-name call path (§5.5's type-first
             // rule): a singleton supplies its instance as the receiver and so never arrives here,
@@ -3234,6 +3270,15 @@ namespace Surtr.Compiler.Binding
 
             if (!TryResolveConstructor(syntax, written, type, out var constructor, out var arguments))
                 return Error(syntax);
+
+            // §11: constructing an obsolete class is a use of it. When both the type and the chosen
+            // constructor carry the mark, the constructor's reason is the more specific one to show.
+            Symbol? marked = constructor is not null && BuiltInAttributes.IsObsolete(constructor) ? constructor
+                : BuiltInAttributes.IsObsolete(type) ? type
+                : null;
+
+            if (marked is not null)
+                ReportIfObsolete(marked, type.Name, syntax);
 
             return new BoundObjectCreationExpression(syntax, type, constructor, arguments);
         }

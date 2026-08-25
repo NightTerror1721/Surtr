@@ -2906,8 +2906,9 @@ Java-style, `@Name(args)` directly above the declaration it applies to — not C
 `[Name(args)]`. Reads as metadata *attached to* the next line rather than a bracketed clause that
 could be mistaken for an array-typed something, and keeps the one `[` / `]` pair in the language
 meaning exactly one thing (array indexing/type, §5.3/§5.4). An attribute can decorate any
-declaration — class, interface, enum, field, property, method, parameter — the same set `///` doc
-comments attach to. Concretely, this is aimed at two audiences: compiler/tooling directives
+declaration — class, interface, enum, field, property, or method (including constructors and
+module-level functions); parameters cannot carry one yet — the same set `///` doc comments attach
+to minus enum cases. Concretely, this is aimed at two audiences: compiler/tooling directives
 (`@Obsolete`, `@Deprecated`-style warnings) and future Unity interop, where a host embedding Surtr
 will want to reflect on attributes to do things like expose a field to the inspector.
 
@@ -2974,6 +2975,61 @@ for (m in t.members()) {
 §13.5 covers the whole reflection surface these belong to — `Type`, `Member` and `Module`, and the
 `typeof`/`moduleof` operators that produce them — alongside the rest of the built-in types §13
 documents.
+
+**Arguments are checked against the attribute's own declaration.** The arguments fill its fields
+positionally, so a use that hands the class more constants than it has instance fields to fill is
+an error at compile time (`AttributeArgumentCountMismatch`) rather than a module that fails to
+load later; and each constant has to fit the field it lands in
+(`AttributeArgumentTypeMismatch`), with §5's implicit widening — an integer widens into a `float`
+field, nothing else crosses kinds, and `null` fits only a reference-typed field. Fewer arguments
+than fields is fine: the rest keep their initializers' values. Only the class's own non-static,
+non-const fields count as slots, in declaration order.
+
+### 11.1 The built-in attributes
+
+Two attributes come with the language, declared once by the runtime's built-in module and so in
+scope of every compilation without any `import` — nameable like `Exception` is. Both carry one
+optional `reason: string` (quoted in the warning when present), keep `Runtime` retention so hosts
+and scripts can read them back through reflection, and are recognized by their class's simple
+name: a user-declared `attribute class Obsolete` of their own means the same thing.
+
+- **`@Obsolete("reason")`** marks a declaration that is being retired. Every *use* of something
+  marked — calling the method or function, reading or writing the field or property, constructing
+  the class — warns (`ObsoleteMemberUsed`) with the reason as its text. Code inside another
+  obsolete declaration is silent: an obsolete method calling an obsolete method is migration work,
+  not a mistake. Between two overloads the arguments tie on (§3.5 leaves them equally good), the
+  unmarked one wins quietly; only when every applicable overload is marked does the call resolve
+  to one and warn.
+
+  ```
+  @Obsolete("use moveTo(dx, dy)")
+  public fun move(x: float, y: float): void { ... }
+
+  public fun update(): void {
+      move(1.0, 2.0);    // warning: 'move' is obsolete: use moveTo(dx, dy)
+  }
+  ```
+
+- **`@NoDiscard("reason")`** marks a function whose result should not be thrown away. A call whose
+  value goes nowhere — the call sitting as a statement — warns (`NoDiscardResultUnused`);
+  assigning the result, passing it on, or chaining into another call is using it and stays quiet.
+  It is a warning rather than an error because ignoring a result can be deliberate; assigning it
+  to a named local is how a source says so explicitly.
+
+  ```
+  @NoDiscard("the bool says whether it parsed")
+  public fun tryParse(text: string): bool { ... }
+
+  public fun load(): void {
+      tryParse(input);            // warning: the result of 'tryParse' is marked @NoDiscard but was not used
+      let ok = tryParse(input);   // fine
+  }
+  ```
+
+Both ride the ordinary attribute machinery everywhere else: they serialize into images as uses of
+their built-in classes (`surtr:Obsolete`, `surtr:NoDiscard`), materialize at load, and read back
+host-side through `TryGetAttribute(SurtrBuiltIns.Obsolete, ...)` and script-side through
+`(m.attributes()[0] as Obsolete).reason`.
 
 ---
 
