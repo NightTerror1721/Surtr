@@ -1730,6 +1730,14 @@ namespace Surtr.Compiler.Binding
 
             var owner = receiver?.Type.NonNullable ?? (TypeSymbol?)_containingType;
 
+            // §P14: `perms.contains(flag)` on a @Flags enum. A lowering rather than a member,
+            // because there is no instance to declare one on - the receiver is an int - and
+            // introducing one would need the boxing the mark exists to avoid. Tried before the
+            // member lookup below only because that lookup would find nothing anyway; a flags enum
+            // is refused any member of its own, so the name cannot be shadowed.
+            if (owner is not null && TryBindFlagsContains(syntax, receiver, owner, name) is BoundExpression contains)
+                return contains;
+
             if (owner is not null && _lookup.FindMethods(owner, name).Count > 0)
                 return BindMethodCall(syntax, receiver, owner, name, isVirtual, expected);
 
@@ -2312,6 +2320,79 @@ namespace Surtr.Compiler.Binding
         /// pure must not be assumed to return the same value twice.
         /// </para>
         /// </remarks>
+        /// <summary>
+        /// Binds <c>perms.contains(flag)</c> on a <c>@Flags</c> enum (§P14) to the test it means:
+        /// <c>(perms &amp; flag) == flag</c>.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A lowering rather than a declared member, and the representation is what forces that: a
+        /// <c>@Flags</c> value is one <c>int</c> with no instance behind it, so a member would have
+        /// nothing to run on — and giving it one would mean boxing at every call, which is the cost
+        /// the mark exists to avoid. The same reason the enum is refused members of its own is the
+        /// reason this one is built in.
+        /// </para>
+        /// <para>
+        /// The argument goes into a temporary because the test reads it twice and an argument is an
+        /// arbitrary expression: written out naively, <c>p.contains(next())</c> would call
+        /// <c>next()</c> twice, which no reader of the source would expect. The receiver is read
+        /// once as written and needs none.
+        /// </para>
+        /// <para>
+        /// Answers <see langword="null"/> — rather than reporting — for anything that is not this
+        /// exact shape, so an ordinary miss falls through to the ordinary "no method called
+        /// 'contains'" message instead of a special one.
+        /// </para>
+        /// </remarks>
+        private BoundExpression? TryBindFlagsContains(
+            CallExpressionSyntax syntax,
+            BoundExpression? receiver,
+            TypeSymbol owner,
+            string name)
+        {
+            if (receiver is null
+                || !string.Equals(name, FlagsContainsName, StringComparison.Ordinal)
+                || owner is not NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum, IsFlagsEnum: true })
+            {
+                return null;
+            }
+
+            if (syntax.Arguments.Count != 1 || syntax.Arguments[0].Name is not null)
+                return null;
+
+            var argument = BindExpression(syntax.Arguments[0].Value, owner);
+
+            if (argument.Type.IsError)
+                return Error(syntax);
+
+            if (!ReferenceEquals(argument.Type.NonNullable, owner))
+            {
+                Report(
+                    SurtrDiagnosticCode.CannotConvert,
+                    syntax.Span,
+                    $"'contains' on '{owner.ToDisplayString()}' tests one of its own flags; '{argument.Type.ToDisplayString()}' is not one.");
+
+                return Error(syntax);
+            }
+
+            var temporary = DeclareLocal(NextCseTempName(), owner, isReadOnly: true, syntax.Span);
+            var reuse = new BoundLocalExpression(syntax, temporary);
+
+            var masked = new BoundBinaryExpression(syntax, BinaryOperator.BitAnd, receiver, reuse, owner);
+
+            return new BoundSequenceExpression(
+                syntax,
+                new BoundBlockStatement(syntax, new BoundStatement[]
+                {
+                    new BoundLocalDeclarationStatement(syntax, temporary, argument),
+                }),
+                new BoundBinaryExpression(syntax, BinaryOperator.Equal, masked, reuse, _factory.Bool),
+                _factory.Bool);
+        }
+
+        /// <summary>The one member name a <c>@Flags</c> enum answers to, built in (§P14).</summary>
+        private const string FlagsContainsName = "contains";
+
         private BoundExpression TryCseBinary(
             SyntaxNode syntax,
             BinaryOperator @operator,

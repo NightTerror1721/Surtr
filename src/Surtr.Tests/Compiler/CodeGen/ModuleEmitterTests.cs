@@ -5268,6 +5268,45 @@ var runtime = Run(
             Assert.True(perm.TryGetField("Read", out _));
         }
 
+        /// <summary>
+        /// <c>contains</c> is a lowering, not a member (§P14): the receiver is an int with no
+        /// instance behind it, so what the call means is <c>(p &amp; f) == f</c> and that is what
+        /// it binds to.
+        /// </summary>
+        [Fact]
+        public void ContainsTestsOneFlagOfACombination()
+        {
+            var runtime = Run(
+                Perms
+                    + "public fun holds(): int { let p: Perm = Perm.Read | Perm.Write; return p.contains(Perm.Write) ? 1 : 0; }\n"
+                    + "public fun lacks(): int { let p: Perm = Perm.Read | Perm.Write; return p.contains(Perm.Execute) ? 1 : 0; }\n"
+                    + "public fun holdsBoth(): int { let p: Perm = Perm.Read | Perm.Write; return p.contains(Perm.Read | Perm.Write) ? 1 : 0; }\n"
+                    + "public fun onACase(): int { return Perm.Read.contains(Perm.Read) ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "holds"));
+            Assert.Equal(0, Int(runtime, "lacks"));
+            Assert.Equal(1, Int(runtime, "holdsBoth"));
+            Assert.Equal(1, Int(runtime, "onACase"));
+        }
+
+        /// <summary>
+        /// The argument is read twice by the test and only once by the program: it goes into a
+        /// temporary, so an argument with an effect keeps having exactly one.
+        /// </summary>
+        [Fact]
+        public void ContainsEvaluatesItsArgumentExactlyOnce()
+        {
+            var runtime = Run(
+                Perms
+                    + "var calls: int = 0;\n"
+                    + "public fun readCalls(): int { return calls; }\n"
+                    + "fun pick(): Perm { calls = calls + 1; return Perm.Write; }\n"
+                    + "public fun run(): int { let p: Perm = Perm.Read | Perm.Write; return p.contains(pick()) ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+            Assert.Equal(1, Int(runtime, "readCalls"));
+        }
+
         #endregion
 
         #region Reflexion de atributos: Type/Member (Fase 6)
