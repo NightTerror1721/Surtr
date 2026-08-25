@@ -56,7 +56,7 @@ namespace Surtr.Compiler.Binding
 
             public Pass(Func<MethodSymbol, bool> isFoldable) => _isFoldable = isFoldable;
 
-            /// <summary>Rewrites a block's straight-line run; <paramref name="clearOnExit"/> drops the caller's table.</summary>
+            /// <summary>Rewrites a whole block's straight-line run, control flow included.</summary>
             public BoundStatement RewriteBlock(BoundStatement body)
             {
                 if (body is not BoundBlockStatement block)

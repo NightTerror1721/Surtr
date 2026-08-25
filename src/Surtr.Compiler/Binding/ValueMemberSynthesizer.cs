@@ -208,7 +208,7 @@ namespace Surtr.Compiler.Binding
 
             var same = new BoundBinaryExpression(NoSyntax, BinaryOperator.ReferenceEqual, receiver, argument, factory.Bool);
             var guarded = new BoundBinaryExpression(
-                null,
+                NoSyntax,
                 BinaryOperator.LogicalAnd,
                 new BoundBinaryExpression(NoSyntax, BinaryOperator.ReferenceNotEqual, receiver, new BoundLiteralExpression(NoSyntax, type.Nullable, null), factory.Bool),
                 new BoundBinaryExpression(NoSyntax, BinaryOperator.ReferenceNotEqual, argument, new BoundLiteralExpression(NoSyntax, type.Nullable, null), factory.Bool),
@@ -218,7 +218,7 @@ namespace Surtr.Compiler.Binding
             {
                 var field = fields[i];
                 var pair = new BoundBinaryExpression(
-                    null, BinaryOperator.Equal,
+                    NoSyntax, BinaryOperator.Equal,
                     ThisField(receiver, field),
                     ThisField(argument, field),
                     factory.Bool);

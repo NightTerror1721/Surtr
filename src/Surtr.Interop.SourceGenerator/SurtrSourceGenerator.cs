@@ -222,7 +222,7 @@ namespace Surtr.Interop.SourceGenerator
             // inline value type, which cannot expose instance constructors at all - its value is
             // its own result. Marked separately so the ordinary-method walk below skips them:
             // registering the same method twice would collide in the class's member tables.
-            var factoryConstructors = new HashSet<IMethodSymbol>();
+            var factoryConstructors = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
             if (InlineLayout.IsInline(type))
             {
                 foreach (var candidate in type.GetMembers().OfType<IMethodSymbol>())

@@ -2400,8 +2400,9 @@ namespace Surtr.Compiler.Binding
         /// <summary>
         /// Whether two bound expressions are built identically — the same symbols, literals and
         /// operations in the same places. Used to recognise the duplicated pure call CSE removes.
+        /// A <see langword="null"/> receiver matches only a <see langword="null"/> receiver.
         /// </summary>
-        private static bool StructurallyEqual(BoundExpression left, BoundExpression right)
+        private static bool StructurallyEqual(BoundExpression? left, BoundExpression? right)
         {
             if (ReferenceEquals(left, right))
                 return true;
