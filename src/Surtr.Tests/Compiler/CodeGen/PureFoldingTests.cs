@@ -88,12 +88,15 @@ namespace Surtr.Tests.Compiler.CodeGen
             return runtime;
         }
 
-        private static SurtrValue Call(SurtrRuntime runtime, string name)
+        private static SurtrValue Call(SurtrRuntime runtime, string name, params SurtrValue[] arguments)
         {
             Assert.True(runtime.TryGetModule("game.core.Test", out var module), "No test module was loaded.");
             Assert.True(module.TryGetMethods(name, out var overloads), $"'{name}' declares no function.");
-            return runtime.Invoke(overloads[0], Array.Empty<SurtrValue>());
+            return runtime.Invoke(overloads[0], arguments);
         }
+
+        private static int Int(SurtrRuntime runtime, string name)
+            => Call(runtime, name).AsInt;
 
         private static int Count(string disassembly, string mnemonic)
             => disassembly
@@ -185,19 +188,43 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         /// <summary>
-        /// A <c>@Pure</c> body that calls another function is not folded — the callee's referential
-        /// transparency is not guaranteed by the caller's mark, and proving it transitively is a
-        /// later refinement.
+        /// A <c>@Pure</c> body that calls a non-<c>@Pure</c> function is not folded — the callee's
+        /// referential transparency is not established, so neither is the caller's.
         /// </summary>
         [Fact]
-        public void APureFunctionThatCallsIsNotFolded()
+        public void APureFunctionThatCallsAnImpureFunctionIsNotFolded()
         {
             string code = Disassemble(
-                "@Pure fun helper(x: float): float { return x * 2.0; }\n"
+                "fun helper(x: float): float { return x * 2.0; }\n"
                     + "@Pure fun uses(x: float): float { return helper(x) * 3.0 + 1.0; }\n"
                     + "fun run(): float { return uses(2.0); }");
 
             Assert.Equal(1, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// Transitive folding: a <c>@Pure</c> function whose body calls only other verified
+        /// <c>@Pure</c> functions is itself foldable, so <c>clamp01</c> composed from <c>@Pure</c>
+        /// helpers folds down to a constant.
+        /// </summary>
+        [Fact]
+        public void APureFunctionCallingPureHelpersFoldsTransitively()
+        {
+            string code = Disassemble(
+                "@Pure fun minOf(a: float, b: float): float { return a < b ? a : b; }\n"
+                    + "@Pure fun maxOf(a: float, b: float): float { return a > b ? a : b; }\n"
+                    + "@Pure fun clamp01(x: float): float { return maxOf(0.0, minOf(1.0, x)); }\n"
+                    + "fun run(): float { return clamp01(5.0); }");
+
+            Assert.Equal(0, Count(code, "CallLocalModule"));
+
+            var runtime = Run(
+                "@Pure fun minOf(a: float, b: float): float { return a < b ? a : b; }\n"
+                    + "@Pure fun maxOf(a: float, b: float): float { return a > b ? a : b; }\n"
+                    + "@Pure fun clamp01(x: float): float { return maxOf(0.0, minOf(1.0, x)); }\n"
+                    + "fun run(): float { return clamp01(5.0); }");
+
+            Assert.Equal(1.0, Call(runtime, "run").AsFloat);
         }
 
         /// <summary>
@@ -215,6 +242,56 @@ namespace Surtr.Tests.Compiler.CodeGen
                     + "fun run(): float { let c = Calculator(); return c.apply(2.0); }");
 
             Assert.True(code.Contains("(apply)", StringComparison.Ordinal), "Disassembly:\n" + code);
+        }
+
+        /// <summary>
+        /// CSE: two identical <c>@Pure</c> calls in one binary expression are evaluated once — the
+        /// bytecode carries a single call to the helper, and the result is the same as two calls.
+        /// </summary>
+        [Fact]
+        public void ADuplicatedPureCallInABinaryIsEvaluatedOnce()
+        {
+            string code = Disassemble(
+                "@Pure fun big(x: float): float { return x * 2.0 + 3.0 * x - 4.0 / x; }\n"
+                    + "fun run(v: float): float { return big(v) + big(v); }");
+
+            Assert.Equal(1, Count(code, "CallLocalModule"));
+
+            var runtime = Run(
+                "@Pure fun big(x: float): float { return x * 2.0 + 3.0 * x - 4.0 / x; }\n"
+                    + "fun run(v: float): float { return big(v) + big(v); }");
+
+            Assert.Equal(16.0, Call(runtime, "run", SurtrValue.CreateFloat(2.0)).AsFloat);
+        }
+
+        /// <summary>
+        /// CSE: two identical <c>@Pure</c> calls as arguments of another call are evaluated once.
+        /// </summary>
+        [Fact]
+        public void ADuplicatedPureCallAmongCallArgumentsIsEvaluatedOnce()
+        {
+            string code = Disassemble(
+                "@Pure fun big(x: float): float { return x * 2.0 + 3.0 * x - 4.0 / x; }\n"
+                    + "fun combine(a: float, b: float): float { return a + b; }\n"
+                    + "fun run(v: float): float { return combine(big(v), big(v)); }");
+
+            Assert.Equal(1, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// CSE does not collapse a call whose argument has effects: the argument is evaluated once
+        /// per call by design, so two calls mean two evaluations.
+        /// </summary>
+        [Fact]
+        public void ADuplicatedPureCallOverAnImpureArgumentIsNotCollapsed()
+        {
+            var runtime = Run(
+                "var calls: int = 0;\n"
+                    + "fun next(): float { calls = calls + 1; return 2.0; }\n"
+                    + "@Pure fun big(x: float): float { return x * 2.0 + 3.0 * x - 4.0 / x; }\n"
+                    + "fun run(): int { let total = big(next()) + big(next()); return calls; }");
+
+            Assert.Equal(2, Int(runtime, "run"));
         }
     }
 }

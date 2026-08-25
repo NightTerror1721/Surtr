@@ -3599,12 +3599,13 @@ namespace Surtr.Compiler.Binding
         /// </summary>
         /// <remarks>
         /// <para>
-        /// The candidate set is the strict one <see cref="PureFoldVerifier"/> admits: a body with no
-        /// calls, no property reads, no construction and no read of mutable state is referentially
-        /// transparent by inspection, so replacing a call to it with the folded constant cannot
-        /// change what the program observes. Phase 2's own check is deliberately not the gate —
-        /// it proves what a body does not write or call, not that reading nothing observable makes
-        /// two calls agree.
+        /// The gate is the greatest fixed point of <see cref="PureFoldVerifier.PassesLocalChecks"/>:
+        /// a function is foldable when its own body is pure by inspection — no property reads, no
+        /// construction, no read of mutable state, no write outside a local — and every function it
+        /// calls is itself foldable. A cycle of mutually-recursive pure functions is foldable as a
+        /// whole, while one impure leaf disqualifies every caller that reaches it. Folding a call to
+        /// such a function by running it on the scratch runtime cannot change what the program
+        /// observes, because nothing in the reachable body observes anything outside its parameters.
         /// </para>
         /// <para>
         /// A compilation with no foldable <c>@Pure</c> function builds no folder, so nothing pays for
@@ -3613,13 +3614,44 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         private void PreparePureFolding()
         {
-            _foldablePure.Clear();
+            var foldable = new HashSet<MethodSymbol>();
+            var calls = new Dictionary<MethodSymbol, HashSet<MethodSymbol>>();
 
             foreach (var pair in _bound)
             {
-                if (BuiltInAttributes.IsPure(pair.Key) && PureFoldVerifier.IsFoldable(pair.Key, pair.Value))
-                    _foldablePure.Add(pair.Key);
+                if (!BuiltInAttributes.IsPure(pair.Key))
+                    continue;
+
+                if (PureFoldVerifier.PassesLocalChecks(pair.Key, pair.Value, out var targets))
+                {
+                    calls[pair.Key] = targets;
+                    foldable.Add(pair.Key);
+                }
             }
+
+            // A foldable function may only call other foldable functions. Converging downward from
+            // everything that passes local checks leaves exactly the closed, greatest set.
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+
+                foreach (var method in foldable.ToList())
+                {
+                    foreach (var target in calls[method])
+                    {
+                        if (foldable.Contains(target))
+                            continue;
+
+                        foldable.Remove(method);
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+
+            _foldablePure.Clear();
+            _foldablePure.UnionWith(foldable);
 
             if (_foldablePure.Count == 0)
                 return;

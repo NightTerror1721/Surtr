@@ -194,6 +194,9 @@ namespace Surtr.Compiler.Binding
         private int _rangeTemps;
         private string NextRangeTempName() => $"$range{_rangeTemps++}";
 
+        private int _cseTemps;
+        private string NextCseTempName() => $"$cse{_cseTemps++}";
+
         /// <summary>
         /// Binds a destructuring declaration: one hidden temporary holds the value, and every
         /// name becomes an ordinary local reading its own element off it (§4.5).

@@ -189,6 +189,14 @@ namespace Surtr.Compiler.CodeGen
             return _failures.TryGetValue(method, out failure!);
         }
 
+        /// <summary>
+        /// Whether a method is a candidate this folder could fold: a <c>const fun</c>, or one the
+        /// caller's predicate admitted. Used to decide when a <c>@Pure</c> call may be common-
+        /// subexpression-eliminated as well as folded.
+        /// </summary>
+        public bool CanFold(MethodSymbol method)
+            => method.IsConst || (_isPureCandidate?.Invoke(method) ?? false);
+
         #region Building the scratch module
         /// <summary>
         /// Emits every const-evaluable function into one module, and loads it.

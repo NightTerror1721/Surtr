@@ -944,7 +944,7 @@ namespace Surtr.Compiler.Binding
                     $"'{syntax.Operator}' is not defined for '{left.Type.ToDisplayString()}' and '{right.Type.ToDisplayString()}'.");
             }
 
-            return new BoundBinaryExpression(syntax, syntax.Operator, left, right, result);
+            return TryCseBinary(syntax, syntax.Operator, left, right, result);
         }
 
         /// <summary>
@@ -2227,7 +2227,7 @@ namespace Surtr.Compiler.Binding
                 && !(receiver?.Type.NonNullable is NamedTypeSymbol { IsSealed: true });
 
             var call = new BoundCallExpression(syntax, method.IsStatic ? null : receiver, method, ordered, virtualCall);
-            return TryFoldPureCall(syntax, call);
+            return TryCseCallArguments(syntax, TryFoldPureCall(syntax, call));
         }
 
         /// <summary>
@@ -2271,6 +2271,182 @@ namespace Surtr.Compiler.Binding
                 return call;
 
             return new BoundLiteralExpression(syntax, call.Method.ReturnType, result);
+        }
+
+        /// <summary>
+        /// Common-subexpression elimination for one expression (§P3 fase 3): when two sibling
+        /// expressions are the same call to a foldable <c>@Pure</c> function over pure arguments,
+        /// evaluate it once into a hidden temporary and read the temporary in both places.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Both shapes a duplicated pure call appears in are covered: the two operands of a binary
+        /// (<c>f(x) + f(x)</c>) and two arguments of another call (<c>g(f(x), f(x))</c>). The
+        /// lowering reuses <see cref="BoundSequenceExpression"/>: the first evaluation runs in the
+        /// statement, and both uses read the captured value.
+        /// </para>
+        /// <para>
+        /// Only a call to a foldable <c>@Pure</c> function (referentially transparent by the same
+        /// gate the folder applies) with side-effect-free arguments qualifies. A call whose argument
+        /// had effects must not lose one of its two evaluations, and a callee that is not proven
+        /// pure must not be assumed to return the same value twice.
+        /// </para>
+        /// </remarks>
+        private BoundExpression TryCseBinary(
+            SyntaxNode syntax,
+            BinaryOperator @operator,
+            BoundExpression left,
+            BoundExpression right,
+            TypeSymbol resultType)
+        {
+            if (!StructurallyEqual(left, right) || !IsFoldablePureCall(left, out _))
+                return new BoundBinaryExpression(syntax, @operator, left, right, resultType);
+
+            var temporary = DeclareLocal(NextCseTempName(), left.Type, isReadOnly: true, syntax.Span);
+            var reuse = new BoundLocalExpression(syntax, temporary);
+
+            return new BoundSequenceExpression(
+                syntax,
+                new BoundBlockStatement(syntax, new BoundStatement[]
+                {
+                    new BoundLocalDeclarationStatement(syntax, temporary, left),
+                }),
+                new BoundBinaryExpression(syntax, @operator, reuse, reuse, resultType),
+                resultType);
+        }
+
+        /// <summary>
+        /// Eliminates a duplicated <c>@Pure</c> call among a call's own arguments — the
+        /// <c>g(f(x), f(x))</c> shape — lifting the first evaluation into a temporary both copies
+        /// read.
+        /// </summary>
+        private BoundExpression TryCseCallArguments(SyntaxNode syntax, BoundExpression expression)
+        {
+            if (expression is not BoundCallExpression call)
+                return expression;
+
+            int duplicate = -1;
+            for (int i = 0; i < call.Arguments.Count; i++)
+            {
+                if (!IsFoldablePureCall(call.Arguments[i], out _))
+                    continue;
+
+                for (int j = i + 1; j < call.Arguments.Count; j++)
+                {
+                    if (StructurallyEqual(call.Arguments[i], call.Arguments[j]))
+                    {
+                        duplicate = i;
+                        break;
+                    }
+                }
+
+                if (duplicate >= 0)
+                    break;
+            }
+
+            if (duplicate < 0)
+                return call;
+
+            var temporary = DeclareLocal(NextCseTempName(), call.Arguments[duplicate].Type, isReadOnly: true, syntax.Span);
+            var reuse = new BoundLocalExpression(syntax, temporary);
+
+            var rewritten = new BoundExpression[call.Arguments.Count];
+            for (int i = 0; i < rewritten.Length; i++)
+                rewritten[i] = StructurallyEqual(call.Arguments[duplicate], call.Arguments[i])
+                    ? reuse
+                    : call.Arguments[i];
+
+            var rebuilt = new BoundCallExpression(syntax, call.Receiver, call.Method, rewritten, call.IsVirtual);
+
+            return new BoundSequenceExpression(
+                syntax,
+                new BoundBlockStatement(syntax, new BoundStatement[]
+                {
+                    new BoundLocalDeclarationStatement(syntax, temporary, call.Arguments[duplicate]),
+                }),
+                rebuilt,
+                rebuilt.Type);
+        }
+
+        /// <summary>
+        /// Whether an expression is a call to a foldable <c>@Pure</c> static function whose arguments
+        /// are all safe to evaluate once.
+        /// </summary>
+        private bool IsFoldablePureCall(BoundExpression expression, out BoundCallExpression call)
+        {
+            if (Unwrap(expression) is not BoundCallExpression unwrapped)
+            {
+                call = null!;
+                return false;
+            }
+
+            call = unwrapped;
+
+            if (_pureFolder is null || !call.Method.IsStatic || call.IsVirtual)
+                return false;
+
+            if (!_pureFolder.CanFold(call.Method))
+                return false;
+
+            foreach (var argument in call.Arguments)
+            {
+                if (!PureFoldVerifier.IsPureArgument(argument))
+                    return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Whether two bound expressions are built identically — the same symbols, literals and
+        /// operations in the same places. Used to recognise the duplicated pure call CSE removes.
+        /// </summary>
+        private static bool StructurallyEqual(BoundExpression left, BoundExpression right)
+        {
+            if (ReferenceEquals(left, right))
+                return true;
+
+            switch (left, right)
+            {
+                case (BoundCallExpression l, BoundCallExpression r):
+                    if (!ReferenceEquals(l.Method, r.Method) || l.Arguments.Count != r.Arguments.Count)
+                        return false;
+
+                    for (int i = 0; i < l.Arguments.Count; i++)
+                    {
+                        if (!StructurallyEqual(l.Arguments[i], r.Arguments[i]))
+                            return false;
+                    }
+
+                    return true;
+
+                case (BoundLiteralExpression l, BoundLiteralExpression r):
+                    return ReferenceEquals(l.Type, r.Type) && Equals(l.Value, r.Value);
+
+                case (BoundLocalExpression l, BoundLocalExpression r):
+                    return ReferenceEquals(l.Local, r.Local);
+
+                case (BoundParameterExpression l, BoundParameterExpression r):
+                    return ReferenceEquals(l.Parameter, r.Parameter);
+
+                case (BoundConversionExpression l, BoundConversionExpression r):
+                    return StructurallyEqual(l.Operand, r.Operand);
+
+                case (BoundBinaryExpression l, BoundBinaryExpression r):
+                    return l.Operator == r.Operator
+                        && StructurallyEqual(l.Left, r.Left)
+                        && StructurallyEqual(l.Right, r.Right);
+
+                case (BoundUnaryExpression l, BoundUnaryExpression r):
+                    return l.Operator == r.Operator && StructurallyEqual(l.Operand, r.Operand);
+
+                case (BoundFieldExpression l, BoundFieldExpression r):
+                    return ReferenceEquals(l.Field, r.Field)
+                        && StructurallyEqual(l.Receiver, r.Receiver);
+
+                default:
+                    return false;
+            }
         }
 
         /// <summary>

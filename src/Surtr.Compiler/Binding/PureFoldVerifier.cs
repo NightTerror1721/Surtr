@@ -2,47 +2,86 @@
 
 using Surtr.Compiler.Binding.BoundTree;
 using Surtr.Compiler.Binding.Symbols;
+using System.Collections.Generic;
 
 namespace Surtr.Compiler.Binding
 {
     /// <summary>
-    /// Decides whether a <c>@Pure</c> function may be folded at compile time (§P3 fase 3).
+    /// Decides which <c>@Pure</c> functions may be folded or common-subexpression-eliminated at
+    /// compile time (§P3 fase 3).
     /// </summary>
     /// <remarks>
     /// <para>
     /// The phase-2 check (<see cref="FlowAnalysis"/>) proves what a <c>@Pure</c> body does not
-    /// <em>write</em> and what it does not <em>call</em>, but folding the call away demands more:
-    /// the folded value has to be identical to whatever the function would return at run time, in
-    /// any program state. That fails for a body that reads mutable observable state — a module
-    /// <c>var</c>, a non-<c>let</c> field, a property getter — or that reaches out through a call,
-    /// because a callee's referential transparency is not guaranteed by the caller's mark.
+    /// <em>write</em> and what it does not <em>call</em>, but folding a call away demands more: the
+    /// folded value has to be identical to whatever the function would return at run time, in any
+    /// program state. That fails for a body that reads mutable observable state — a module
+    /// <c>var</c>, a non-<c>let</c> field, a property getter — or that reaches out through a call
+    /// whose referential transparency is not itself established.
     /// </para>
     /// <para>
-    /// This check is therefore deliberately narrower than phase 2: no calls of any kind (a
-    /// transitive reachability proof is a later refinement), no property reads, no construction,
-    /// no read of mutable state, no write outside a local. What is left is a pure expression over
-    /// the function's own parameters, locals and compile-time constants — the shape the stdlib's
-    /// arithmetic helpers are written in, and the shape that is safe to fold into a literal.
+    /// <see cref="PassesLocalChecks"/> therefore inspects one body and rejects everything
+    /// observably impure except <em>direct calls to other functions</em>, which it records. The
+    /// caller (the binder) closes the gate over the whole compilation as a greatest fixed point: a
+    /// function is foldable when its body passes local checks <em>and</em> every call it makes
+    /// targets a foldable function. That makes a cycle of mutually-recursive pure functions
+    /// foldable while a single impure leaf disqualifies every caller that reaches it.
+    /// </para>
+    /// <para>
+    /// <see cref="IsPureArgument"/> is the same inspection for one expression, with calls rejected:
+    /// it is what a common-subexpression elimination needs, because evaluating an argument once
+    /// instead of twice is only safe when the argument itself has no effects.
     /// </para>
     /// </remarks>
     internal static class PureFoldVerifier
     {
-        /// <summary>Whether the bound body of a <c>@Pure</c> function is safe to fold.</summary>
-        public static bool IsFoldable(MethodSymbol method, BoundStatement body)
+        /// <summary>
+        /// Whether a body passes every local purity check, recording each direct call it makes.
+        /// </summary>
+        /// <remarks>
+        /// Calls are allowed here — their targets are the caller's responsibility — but everything
+        /// else a body could reach out through is not: no closure invocation (a closure captures
+        /// state this check cannot see), no construction, no property read, no read of mutable
+        /// state, no write outside a local.
+        /// </remarks>
+        public static bool PassesLocalChecks(
+            MethodSymbol method,
+            BoundStatement body,
+            out HashSet<MethodSymbol> called)
         {
+            called = new HashSet<MethodSymbol>();
+
             if (method.ReturnType.IsVoid || method.ReturnType.IsNever || method.TypeParameters.Count > 0)
                 return false;
 
-            var check = new Checker(method);
+            var check = new Checker(method, allowCalls: true, called);
             check.Statement(body);
+            return check._ok;
+        }
+
+        /// <summary>
+        /// Whether one expression is safe to evaluate once and reuse: no calls, no writes, no reads
+        /// of mutable state, no property reads, no construction.
+        /// </summary>
+        public static bool IsPureArgument(BoundExpression expression)
+        {
+            var check = new Checker(null, allowCalls: false, null);
+            check.Expression(expression);
             return check._ok;
         }
 
         private sealed class Checker
         {
-            private readonly MethodSymbol _method;
+            private readonly MethodSymbol? _method;
+            private readonly bool _allowCalls;
+            private readonly HashSet<MethodSymbol>? _called;
 
-            public Checker(MethodSymbol method) => _method = method;
+            public Checker(MethodSymbol? method, bool allowCalls, HashSet<MethodSymbol>? called)
+            {
+                _method = method;
+                _allowCalls = allowCalls;
+                _called = called;
+            }
 
             public bool _ok = true;
 
@@ -207,6 +246,23 @@ namespace Surtr.Compiler.Binding
                     case BoundModuleOfExpression:
                         return;
 
+                    case BoundCallExpression call:
+                        // Under local checks a call is the one escape hatch: it records the target
+                        // for the fixed point to close, and inspects what the call reaches (its
+                        // receiver and arguments) for everything this check still rejects. As an
+                        // argument, a call is an effect and is rejected outright.
+                        if (_allowCalls)
+                        {
+                            _called?.Add(call.Method);
+                            if (call.Receiver is not null)
+                                Expression(call.Receiver);
+                            foreach (var argument in call.Arguments)
+                                Expression(argument);
+                            return;
+                        }
+                        Reject();
+                        return;
+
                     case BoundAssignmentExpression assignment:
                         // A write confined to a local is invisible outside the call, so it stays
                         // pure; a write to a field is observable and cannot be folded away.
@@ -239,7 +295,6 @@ namespace Surtr.Compiler.Binding
                         // what the check above rejects.
                         return;
 
-                    case BoundCallExpression:
                     case BoundClosureInvocationExpression:
                     case BoundObjectCreationExpression:
                     case BoundPropertyExpression:
