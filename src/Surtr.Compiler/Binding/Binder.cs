@@ -129,6 +129,12 @@ namespace Surtr.Compiler.Binding
         private ConstFolder? _constFolder;
         private string? _lastFoldFailure;
 
+        /// <summary>The <c>@Pure</c> functions this compilation verified safe to fold (§P3 fase 3).</summary>
+        private readonly HashSet<MethodSymbol> _foldablePure = new HashSet<MethodSymbol>();
+
+        /// <summary>Folds <c>@Pure</c> calls with constant arguments inside bound bodies.</summary>
+        private ConstFolder? _pureFolder;
+
         private Binder(SurtrCompilation compilation)
         {
             _compilation = compilation;
@@ -2823,7 +2829,8 @@ namespace Surtr.Compiler.Binding
                 body.Module,
                 body.ContainingType,
                 body.Method,
-                ImportedBy(body.Module));
+                ImportedBy(body.Module),
+                pureFolder: _pureFolder);
 
             int before = _diagnostics.Count;
             var bound = binder.BindBody(body.Syntax);
@@ -2982,6 +2989,19 @@ namespace Surtr.Compiler.Binding
             // as real methods with bound bodies, so the emitter ships them like any other member.
             SynthesizeValueMembers();
 
+            // The @Pure functions first, for the same reason the const funs are: §P3 folds a call by
+            // running the callee's emitted body, so an ordinary body can only be answered once every
+            // foldable @Pure function has a body. Binding them in a round of their own is the whole
+            // of that ordering - BindOne skips anything already bound, so the round below does not
+            // double-bind them.
+            foreach (var body in _bodies)
+            {
+                if (BuiltInAttributes.IsPure(body.Method))
+                    BindOne(body);
+            }
+
+            PreparePureFolding();
+
             foreach (var body in _bodies)
                 BindOne(body);
 
@@ -3078,7 +3098,8 @@ namespace Surtr.Compiler.Binding
                 initializer.ContainingType,
                 owner,
                 ImportedBy(initializer.Module),
-                rangeChecksEnabled: _compilation.Project.BuildConstants.ContainsKey("Debug"));
+                rangeChecksEnabled: _compilation.Project.BuildConstants.ContainsKey("Debug"),
+                pureFolder: _pureFolder);
 
             BoundExpression value;
 
@@ -3418,7 +3439,8 @@ namespace Surtr.Compiler.Binding
                 block.Module,
                 block.ContainingType,
                 owner,
-                ImportedBy(block.Module));
+                ImportedBy(block.Module),
+                pureFolder: _pureFolder);
 
             var body = binder.BindBody(block.Syntax.Body);
             _boundStaticBlocks.Add(new BoundStaticBlock(body, block.ContainingType, block.Module, block.Order));
@@ -3460,7 +3482,8 @@ namespace Surtr.Compiler.Binding
                 chain.Module,
                 chain.Owner,
                 chain.Constructor,
-                ImportedBy(chain.Module));
+                ImportedBy(chain.Module),
+                pureFolder: _pureFolder);
 
             if (binder.BindConstructorChain(chain.Syntax, target, chain.Syntax.ChainsToThis) is BoundConstructorChain bound)
                 _boundChains.Add(chain.Constructor, bound);
@@ -3524,7 +3547,8 @@ namespace Surtr.Compiler.Binding
                 body.ContainingType,
                 body.Method,
                 ImportedBy(body.Module),
-                rangeChecksEnabled: _compilation.Project.BuildConstants.ContainsKey("Debug"));
+                rangeChecksEnabled: _compilation.Project.BuildConstants.ContainsKey("Debug"),
+                pureFolder: _pureFolder);
 
             var bound = binder.BindBody(body.Syntax);
             _bound.Add(body.Method, bound);
@@ -3567,6 +3591,40 @@ namespace Surtr.Compiler.Binding
 
             _constFolder = new ConstFolder(_bound);
             Constants.CallFolder = FoldConstCall;
+        }
+
+        /// <summary>
+        /// Decides which <c>@Pure</c> functions may be folded at compile time, and builds the folder
+        /// that folds their calls (§P3 fase 3).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The candidate set is the strict one <see cref="PureFoldVerifier"/> admits: a body with no
+        /// calls, no property reads, no construction and no read of mutable state is referentially
+        /// transparent by inspection, so replacing a call to it with the folded constant cannot
+        /// change what the program observes. Phase 2's own check is deliberately not the gate —
+        /// it proves what a body does not write or call, not that reading nothing observable makes
+        /// two calls agree.
+        /// </para>
+        /// <para>
+        /// A compilation with no foldable <c>@Pure</c> function builds no folder, so nothing pays for
+        /// the feature it does not use.
+        /// </para>
+        /// </remarks>
+        private void PreparePureFolding()
+        {
+            _foldablePure.Clear();
+
+            foreach (var pair in _bound)
+            {
+                if (BuiltInAttributes.IsPure(pair.Key) && PureFoldVerifier.IsFoldable(pair.Key, pair.Value))
+                    _foldablePure.Add(pair.Key);
+            }
+
+            if (_foldablePure.Count == 0)
+                return;
+
+            _pureFolder = new ConstFolder(_bound, isPureCandidate: _foldablePure.Contains);
         }
 
         /// <summary>
@@ -3642,11 +3700,13 @@ namespace Surtr.Compiler.Binding
             }
         }
 
-        /// <summary>Releases the scratch runtime const folding used, if one was built.</summary>
+        /// <summary>Releases the scratch runtimes const folding and @Pure folding used, if any.</summary>
         public void Dispose()
         {
             _constFolder?.Dispose();
             _constFolder = null;
+            _pureFolder?.Dispose();
+            _pureFolder = null;
         }
 
         private void RecordBody(

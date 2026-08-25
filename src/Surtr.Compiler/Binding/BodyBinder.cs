@@ -2,6 +2,7 @@
 
 using Surtr.Compiler.Binding.BoundTree;
 using Surtr.Compiler.Binding.Symbols;
+using Surtr.Compiler.CodeGen;
 using Surtr.Compiler.Diagnostics;
 using Surtr.Compiler.Syntax;
 using Surtr.Compiler.Syntax.Ast;
@@ -55,6 +56,9 @@ namespace Surtr.Compiler.Binding
         /// assignment to a ranged field or property-set; absent, the check costs nothing at all.
         /// </summary>
         private readonly bool _rangeChecksEnabled;
+
+        /// <summary>Folds <c>@Pure</c> calls with constant arguments, when this compilation builds one.</summary>
+        private readonly ConstFolder? _pureFolder;
 
         // Modules a wildcard import brought in. §2.5 makes a module a container of members, so its
         // functions and variables are in scope unqualified exactly as its types are. A named or
@@ -138,7 +142,8 @@ namespace Surtr.Compiler.Binding
             NamedTypeSymbol? containingType,
             MethodSymbol method,
             IReadOnlyList<ImportedModule>? imported = null,
-            bool rangeChecksEnabled = false)
+            bool rangeChecksEnabled = false,
+            ConstFolder? pureFolder = null)
         {
             _imported = imported ?? Array.Empty<ImportedModule>();
             _factory = factory;
@@ -154,6 +159,7 @@ namespace Surtr.Compiler.Binding
             _containingType = containingType;
             _method = method;
             _rangeChecksEnabled = rangeChecksEnabled;
+            _pureFolder = pureFolder;
 
             _values = new Scope();
             foreach (var parameter in method.Parameters)

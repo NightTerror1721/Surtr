@@ -2226,7 +2226,51 @@ namespace Surtr.Compiler.Binding
                 && !method.IsSealed
                 && !(receiver?.Type.NonNullable is NamedTypeSymbol { IsSealed: true });
 
-            return new BoundCallExpression(syntax, method.IsStatic ? null : receiver, method, ordered, virtualCall);
+            var call = new BoundCallExpression(syntax, method.IsStatic ? null : receiver, method, ordered, virtualCall);
+            return TryFoldPureCall(syntax, call);
+        }
+
+        /// <summary>
+        /// Folds a call to a verified-strict <c>@Pure</c> function whose arguments are all
+        /// compile-time constants, replacing the call with its result (§P3 fase 3).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The callee has to be a static, directly-dispatched <c>@Pure</c> function: a virtual call
+        /// could resolve to an override this compilation did not verify, and a receiver would let
+        /// the receiver's state reach the body. Only the functions
+        /// <see cref="Binder.PreparePureFolding"/> verified — a body that is pure by inspection —
+        /// are foldable, so replacing the call with a constant cannot change what the program
+        /// observes. Whatever cannot fold — a non-constant argument, a result the evaluator cannot
+        /// marshal, a callee with no entry point — falls through to the call unchanged.
+        /// </para>
+        /// </remarks>
+        private BoundExpression TryFoldPureCall(SyntaxNode syntax, BoundCallExpression call)
+        {
+            if (_pureFolder is null || !BuiltInAttributes.IsPure(call.Method) || call.IsVirtual || !call.Method.IsStatic)
+                return call;
+
+            if (call.Method.ReturnType.IsVoid || call.Method.ReturnType.IsNever)
+                return call;
+
+            var values = new object?[call.Arguments.Count];
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (Unwrap(call.Arguments[i]) is not BoundLiteralExpression literal)
+                    return call;
+
+                values[i] = literal.Value;
+            }
+
+            if (!_pureFolder.TryFold(call.Method, values, out object? result, out _))
+                return call;
+
+            // A null result is the absent tag, which only a nullable return type can carry; folding
+            // a null against a non-nullable declaration would build a literal the type forbids.
+            if (result is null && !call.Method.ReturnType.IsNullable)
+                return call;
+
+            return new BoundLiteralExpression(syntax, call.Method.ReturnType, result);
         }
 
         /// <summary>
