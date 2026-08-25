@@ -408,6 +408,49 @@ Enums can implement interfaces (`: ICardSuit` above) since each case is a genuin
 cannot declare a base class — the enum class itself already occupies that slot, and naming one there
 is rejected.
 
+**`@Flags` (§11.1) makes the cases bits of a set rather than alternatives**, and it is the one
+attribute in the language that changes what its target *is*. An ordinary enum's cases are instances,
+so combining two of them is not something the language can express — a value would have to be two
+references at once. A marked enum's cases are the integers `1 << ordinal` instead, and a variable of
+it holds one `int`, exactly as a one-field `value class` over an `int` does:
+
+```
+@Flags
+enum Perm { Read, Write, Execute }        // 1, 2, 4
+
+let rw: Perm = Perm.Read | Perm.Write;    // 3, and still a Perm
+let ro = rw & ~Perm.Write;                // 1
+rw.contains(Perm.Write);                  // true
+```
+
+`&`, `|` and `^` combine two values of the **same** marked enum and produce that enum — which is
+what makes the assignment above need no cast — and `~` gives every bit a value does not have. The
+compound forms (`|=`, `&=`, `^=`) follow from those. Two *different* flag enums share no bit
+meanings, so combining them is rejected; the shifts are rejected too, since which bit a case
+occupies is the compiler's to assign and moving one produces a value no case names.
+
+`contains(flag)` is `(value & flag) == flag`, written as a call because that is how it reads. It is
+the only member a marked enum has, and it is built in rather than declared for the same reason the
+enum may declare none of its own: **a marked enum must be plain** — no members, no interfaces, no
+constructor arguments on its cases, and at most 31 of them. There is no instance for any of those to
+attach to, and giving the type one would mean boxing at every call, which is the cost the
+representation exists to avoid. Writing one is an error (`InvalidFlagsEnum`) rather than a warning,
+because there is no fallback representation to compile it into.
+
+The cast to and from `int` is explicit in both directions. It moves no bits, but it has to be
+written, because an arbitrary `int` is not a combination of the enum's cases — and it is what makes
+the empty set expressible, there being no case for zero:
+
+```
+let none: Perm = 0 as Perm;
+let raw: int = rw as int;                 // 3, for storing or sending somewhere
+```
+
+Two consequences worth knowing. A marked enum is a *class of int constants* at runtime, not an enum,
+so host reflection reports it as one — the same erasure a `value class` pays. And because its
+descriptor is `I`, the flags-ness does not survive a module boundary: another module sees `int`,
+again exactly as it would for a `value class`.
+
 **Per-case method bodies (Java's anonymous-constant pattern) are not supported.** Behavior always
 lives on the enum class itself, shared by every case — branch inside a method on `this` (or on a
 field set per-case, like `_symbol`/`_isRed` above) if a case needs to behave differently. Generating
@@ -3031,12 +3074,61 @@ their built-in classes (`surtr:Obsolete`, `surtr:NoDiscard`), materialize at loa
 host-side through `TryGetAttribute(SurtrBuiltIns.Obsolete, ...)` and script-side through
 `(m.attributes()[0] as Obsolete).reason`.
 
-The rest of the built-in vocabulary sits alongside them, declared by the same built-in module, each
-with its own targets: `@Range` on fields and properties, `@Value` on classes, `@Export` on classes,
-fields and properties, `@Test` on methods, `@TestSuite` on classes, `@Pure` on methods and
-properties, `@MainThread` and `@ThreadSafe` on classes and methods. Because they arrive as imported
-metadata their target lists are enforced from the recognition table rather than the declaration —
-the same `AttributeTargetMismatch` error, applied to whichever declaration the use lands on.
+The rest of the built-in vocabulary sits alongside them, declared by the same built-in module. Every
+one of them arrives as imported metadata, so its target list is enforced from the recognition table
+rather than from a declaration — the same `AttributeTargetMismatch` error, applied to whichever
+declaration the use lands on.
+
+| Attribute | Targets | Carries | What it does |
+|---|---|---|---|
+| `@Obsolete(reason)` | any declaration | `reason: string` | warns at every use |
+| `@NoDiscard(reason)` | method | `reason: string` | warns when the result is dropped |
+| `@Range(lo, hi)` | field, property | `lo`, `hi`: float | documents a numeric range; checked under `Debug` |
+| `@Value` | class | — | structural equality; compile-time only |
+| `@Export(name)` | class, field, property | `name: string` | what a module offers its host |
+| `@Test(name)` | method | `name: string` | a test the runner discovers |
+| `@TestSuite(name)` | class | `name: string` | names the group its tests belong to |
+| `@TestIgnore(reason)` | method | `reason: string` | discovered and reported, never run |
+| `@TestBefore` / `@TestAfter` | method | — | fixtures run around each test in scope |
+| `@Benchmark` | method | — | run repeatedly and timed, by a pass of its own |
+| `@Pure` | method, property | — | same result for the same arguments, no effects |
+| `@NoAlloc` | method, property | — | promises the body puts nothing on the heap |
+| `@Throws(name)` | method | `name: string` | documents an exception it can raise; repeatable |
+| `@Flags` | enum | — | makes the cases bits of a set (§2.4) |
+| `@MainThread` | class, method, property | — | may only run on the host's main thread |
+| `@ThreadSafe` | class, method | — | safe to call from any thread |
+
+Four of them are worth reading past the table, because each does something the others do not:
+
+- **`@TestIgnore("reason")`** is the complement of `@Test`, and the runner still *discovers* the
+  method — it reports it as skipped with the reason, and never enters the body. Reporting rather
+  than filtering is the point: a skip nobody can see is indistinguishable from a deleted test.
+  Written without `@Test` there is nothing to skip, and that warns (`IgnoreWithoutTest`).
+
+- **`@TestBefore` / `@TestAfter`** run around *each* test in their scope, not once around the
+  group. A fixture in a class wraps that class's own tests; one at module level wraps every test in
+  the module. The test and its fixtures share one instance, which is what lets a `@TestBefore` set
+  up state the test reads, and a `@TestAfter` runs whatever happened — including after a
+  `@TestBefore` that threw, since a fixture that only ran on the happy path would be no guarantee.
+  A fixture that takes parameters, returns a value, or is also a `@Test` warns
+  (`InvalidTestFixture`).
+
+- **`@NoAlloc`** is `@Pure`'s sibling on the memory axis: it promises the body allocates nothing,
+  and the compiler reports the constructs it can see doing so — an object creation, a collection
+  literal, a string concatenation or interpolation, a lambda, a `yield`
+  (`AllocationInNoAllocBody`). Like `@Pure` it is trusted rather than proven, so three things stay
+  silent by design: calls are not followed into the callee, tuples are allowed (a tuple is a value
+  type laid out inline, §2.9), and invoking an existing closure is allowed where creating one is
+  not.
+
+- **`@Throws("Name")`** is the one repeatable built-in — a function that can raise three things
+  carries three marks. The name is resolved and checked to descend from `Exception`, so a renamed
+  exception does not leave the mark pointing at nothing (`ThrowsTypeNotException`, a warning: the
+  mark is documentation). It is also the one attribute an editor's hover renders, as a
+  `throws X, Y` line, because what a function can raise is something a *caller* has to act on.
+
+**`@Flags` is the one that changes what its target *is*.** Everything else in this section records
+something about a declaration; `@Flags` changes an enum's representation, and §2.4 covers it.
 
 - **`@Range(lo, hi)`** documents the bounds a numeric field or property is meant to stay within.
   `lo` and `hi` are floats (integer literals widen on the way in), and the use carries them into the
