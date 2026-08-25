@@ -128,8 +128,18 @@ namespace Surtr.Bytecode.Image
         /// (<c>YI</c>), and a call to a generator is an ordinary call to a stub whose declared
         /// return says so, so no flag was needed.
         /// </para>
+        /// <para>
+        /// Version 10 is the second renumbering, after the pattern of version 3: the retired
+        /// opcode values the set had accumulated were reclaimed by renumbering the whole
+        /// instruction set into one contiguous run - families in reading order, free values at
+        /// the end - instead of growing around holes nothing could ever fill again. No member's
+        /// name or semantics changed; only its number did, which means every opcode byte in every
+        /// older image now names a different instruction. A version 9 reader must refuse a
+        /// version 10 image for the same reason this reader refuses everything older than
+        /// itself: there is no upgrade path, only a recompile.
+        /// </para>
         /// </remarks>
-        internal const ushort FormatVersion = 9;
+        internal const ushort FormatVersion = 10;
 
         private readonly byte[] _bytes;
         private readonly string _path;
