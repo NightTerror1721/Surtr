@@ -402,6 +402,8 @@ namespace Surtr.LanguageServer.Workspace
         /// names separately (<c>this</c>, <c>super</c>, <c>value</c>, <c>attribute</c>). <c>from</c>
         /// is deliberately absent: it is recognized only directly after <c>yield</c>, so offering it
         /// unconditionally would suggest a keyword that an ordinary identifier position refuses.
+        /// The same rule keeps <c>out</c> off the list — §6's variance annotation exists only
+        /// before a type parameter's name, and completion here answers expression positions.
         /// <c>noinline</c> (§3.6) rides along even though §1.2 does not list it yet — the parser
         /// branches on it exactly like <c>inline</c>/<c>forceinline</c>.
         /// </remarks>

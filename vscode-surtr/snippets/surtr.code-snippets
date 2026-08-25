@@ -59,6 +59,26 @@
       "}"
     ]
   },
+  "Covariant interface": {
+    "prefix": "interfaceout",
+    "scope": "surtr",
+    "description": "A covariant interface (§6): IIterable<Circle> is an IIterable<IShape>",
+    "body": [
+      "public interface ${1:Name}<out ${2:T}> {",
+      "\t$3",
+      "}"
+    ]
+  },
+  "Contravariant interface": {
+    "prefix": "interfacein",
+    "scope": "surtr",
+    "description": "A contravariant interface (§6): IComparable<Base> serves where IComparable<Derived> is asked for",
+    "body": [
+      "public interface ${1:Name}<in ${2:T}> {",
+      "\t${3:fun compare(other: ${2:T}): int;}",
+      "}"
+    ]
+  },
   "Enum": {
     "prefix": "enum",
     "scope": "surtr",

@@ -920,6 +920,102 @@ namespace Surtr.Tests.LanguageServer
             Assert.DoesNotContain(tokens, t => t.Text == "_items");
         }
 
+        /// <summary>
+        /// §6's <c>out</c> is contextual and would fall through to the variable rule without this
+        /// pass; it is tagged as a modifier exactly where a type parameter declares it, and nothing
+        /// else. The <c>in</c> of a for-in is reserved and stays entirely the grammar's.
+        /// </summary>
+        [Fact]
+        public void SemanticTokensTagAVarianceAnnotationOnlyWhereATypeParameterDeclaresIt()
+        {
+            const string source =
+                "public interface Producer<out T> {\n" +
+                "    fun next(): T;\n" +
+                "}\n" +
+                "public class Holder {\n" +
+                "    public fun run(xs: int[]): void {\n" +
+                "        for (x in xs) { }\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Producer.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Producer.surtr");
+            var result = SemanticTokensProvider.Compute(workspace.Snapshot, path, source);
+
+            int typeParameter = Array.IndexOf(SemanticTokensProvider.TokenTypes, "typeParameter");
+            int modifier = Array.IndexOf(SemanticTokensProvider.TokenTypes, "modifier");
+
+            var tokens = DecodeSemanticTokens(result, source);
+
+            // Exactly one "out", on the annotation - the parameter's name is tagged as itself.
+            Assert.Equal(1, tokens.Count(t => t.Text == "out" && t.TokenType == modifier));
+            Assert.True(tokens.Any(t => t.Text == "T" && t.TokenType == typeParameter),
+                "Expected the type parameter's own name to be tagged.");
+
+            // A parameter named out (legal - the word is contextual) is a name, not an annotation.
+            const string namedSource =
+                "public class Box<out> { }\n";
+            var namedWorkspace = Tree(("app/Box.surtr", namedSource));
+            Assert.True(namedWorkspace.Rebuild().Values.All(list => list.Count == 0));
+
+            string namedPath = Path.Combine(_root, "app", "Box.surtr");
+            var namedResult = SemanticTokensProvider.Compute(namedWorkspace.Snapshot, namedPath, namedSource);
+            var namedTokens = DecodeSemanticTokens(namedResult, namedSource);
+
+            Assert.DoesNotContain(namedTokens, t => t.Text == "out" && t.TokenType == modifier);
+            Assert.True(namedTokens.Any(t => t.Text == "out" && t.TokenType == typeParameter),
+                "Expected a parameter genuinely named 'out' to be tagged as a type parameter.");
+        }
+
+        /// <summary>
+        /// A generic declaration's card mirrors what the source wrote, annotations included —
+        /// the same rule a generator's card follows — and a type parameter's own card names its
+        /// direction.
+        /// </summary>
+        [Fact]
+        public void HoverOnACovariantDeclarationMirrorsTheAnnotation()
+        {
+            const string source =
+                "public interface Producer<out T> {\n" +
+                "    fun next(): T;\n" +
+                "}\n" +
+                "public interface Consumer<in T> {\n" +
+                "    fun take(item: T): void;\n" +
+                "}\n" +
+                "public class Plain<T> {\n" +
+                "    public let item: T;\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Producer.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            var types = workspace.Snapshot.Binder!.Modules.Values
+                .SelectMany(module => module.Types)
+                .ToList();
+
+            string covariantCard = HoverFormatter.FormatType(types.Single(t => t.Name == "Producer"));
+            Assert.Contains("interface Producer<out T>", covariantCard);
+
+            string contravariantCard = HoverFormatter.FormatType(types.Single(t => t.Name == "Consumer"));
+            Assert.Contains("interface Consumer<in T>", contravariantCard);
+
+            // An unannotated declaration has nothing to mirror and reads exactly as before.
+            string plainCard = HoverFormatter.FormatType(types.Single(t => t.Name == "Plain"));
+            Assert.Contains("class Plain<T>", plainCard);
+            Assert.DoesNotContain("out ", plainCard.Replace("<out", "<"));
+
+            var parameter = types.Single(t => t.Name == "Consumer").TypeParameters[0];
+            string parameterCard = HoverFormatter.FormatSymbol(parameter);
+            Assert.Contains("in-variant (in)", parameterCard);
+            Assert.Contains("type parameter", parameterCard);
+        }
+
         [Fact]
         public void InlayHintsCoverInferredTypesLambdaReturnsAndParameterNames()
         {

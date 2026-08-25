@@ -24,16 +24,21 @@ Syntax highlighting, hover, go-to-definition and diagnostics for the
   - `array<T>`, `dict<K, V>` and `tuple<...>` (`support.type.surtr`) — the nameable,
     callable forms of `T[]`, `{K: V}` and `(T1, ..., Tn)`, recognized wherever they're
     followed by `<`, including in constructor-call position (`array<int>(5)`)
+  - variance modifiers (`out`/`in`, §6) inside a declaration's type-parameter list —
+    `interface IIterable<out T>` — coloured as modifiers, with the server confirming the
+    one contextual word (`out`) by position
   - attributes (`@Range(0, 100)`)
   - every operator from the §5.7 precedence table
 - **Hover signatures** — type-accurate, cross-file, produced by the real compiler
   binder: fields, locals, parameters, methods (with their full signature), types
   and aliases. A generator's card mirrors its declaration — `generator countdown(from: int): int`,
-  element included — rather than showing the `generator<int>` a call produces.
+  element included — rather than showing the `generator<int>` a call produces; a generic
+  declaration's card mirrors its variance annotations — `interface IIterable<out T>` —
+  and a type parameter's card names its direction and constraints.
 - **Semantic tokens** — the server resolves what the regex grammar cannot, with real
   position accuracy: type references in *any* position (annotations, base lists,
   `is`/`as`/`typeof`, constructions, operands of `yield`), type parameters, the contextual
-  keywords (`this`/`super`/`value`/`attribute`/`get`/`set`) coloured as modifiers rather than
+  keywords (`this`/`super`/`value`/`attribute`/`get`/`set`/`out`) coloured as modifiers rather than
   bare keywords, and constructor calls tagged as calls.
 - **Inlay hints** — grey inline hints for an inferred local's type (`let x = 5` →
   `x : int`), a lambda's return type, and the parameter a positional argument fills
@@ -47,7 +52,8 @@ Syntax highlighting, hover, go-to-definition and diagnostics for the
   `IDisposable` (§9.2), a hand-written cursor missing its `dispose()` gets a stub
   along with everything else.
 - **Code snippets** — classes, methods, constructors, properties, enums,
-  singletons, value classes, generators (`generator`, `yield from`, a `send` loop),
+  singletons, value classes, covariant/contravariant interfaces (`interfaceout`,
+  `interfacein`), generators (`generator`, `yield from`, a `send` loop),
   `using` blocks, control flow, and more.
 - Matching bracket colorization and auto-closing pairs via `language-configuration.json`.
 

@@ -131,6 +131,11 @@
         { "include": "#catch-param" }
       ]
     },
+    "variance-modifier": {
+      "comment": "out/in are variance modifiers (§6) only where a type parameter list can have them: immediately before the parameter's own identifier. This rule is included ONLY inside declaration headers (type-declaration, function-declaration) - the one region where a <T, ...> list lives - so an ordinary 'in' in a for-in or an identifier named out elsewhere never matches: after the modifier word must come another identifier (the parameter name), which is never the shape of for-in ('in items)') or of a type reference. `in` is reserved anyway; `out` is contextual and this is its one keyword position.",
+      "match": "\\b(?:out|in)\\b(?=\\s*[A-Za-z_][A-Za-z0-9_]*)",
+      "name": "storage.modifier.surtr"
+    },
     "import-declaration": {
       "match": "(\\bimport\\b)(\\s+)([A-Za-z_][A-Za-z0-9_.]*\\*?)(;)",
       "captures": {
@@ -155,6 +160,7 @@
       "end": "(?=[{;])",
       "name": "meta.type.declaration.surtr",
       "patterns": [
+        { "include": "#variance-modifier" },
         { "include": "#type-reference" },
         { "include": "#comments" },
         { "include": "#punctuation" }
@@ -185,6 +191,7 @@
       "end": "(?=[{};])",
       "name": "meta.function.signature.surtr",
       "patterns": [
+        { "include": "#variance-modifier" },
         { "include": "#comments" },
         { "include": "#strings" },
         { "include": "#numbers" },

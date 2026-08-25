@@ -561,7 +561,22 @@ namespace Surtr.Compiler.Binding
             {
                 var parameters = new TypeParameterSymbol[syntax.TypeParameters.Count];
                 for (int i = 0; i < parameters.Length; i++)
+                {
+                    // Same rule a method's parameters answer: variance relates constructions of a
+                    // declaration, and an alias is transparent - it *is* its target, so there is
+                    // no family of constructions for an annotation to relate.
+                    if (syntax.TypeParameters[i].Variance != VarianceModifier.None)
+                    {
+                        _diagnostics.ReportError(
+                            SurtrDiagnosticCode.InvalidVarianceModifier,
+                            $"'{(syntax.TypeParameters[i].Variance == VarianceModifier.Covariant ? "out" : "in")}' is not valid on the type parameter '{syntax.TypeParameters[i].Name}' of alias '{alias.Name}'; "
+                                + "only class and interface declarations can declare variance.",
+                            sourceName,
+                            syntax.TypeParameters[i].Span);
+                    }
+
                     parameters[i] = _factory.DeclareTypeParameter(syntax.TypeParameters[i].Name, alias, i);
+                }
 
                 alias.TypeParameters = parameters;
             }

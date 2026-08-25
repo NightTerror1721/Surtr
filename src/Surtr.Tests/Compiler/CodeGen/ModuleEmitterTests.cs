@@ -6221,6 +6221,20 @@ using var compilation = Reject(
 
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidVarianceModifier);
         }
+
+        /// <summary>
+        /// An alias is transparent — it *is* its target — so there is no family of constructions
+        /// for an annotation to relate, and writing one is refused rather than silently ignored.
+        /// </summary>
+        [Fact]
+        public void AVarianceModifierOnAnAliasTypeParameterIsRefused()
+        {
+            using var compilation = Reject(
+                "alias P<out T> = IIterable<T>;\n"
+                    + "fun run(): void { }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidVarianceModifier);
+        }
         #endregion
 
         #region Module-level natives (§10)

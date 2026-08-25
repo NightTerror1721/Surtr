@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using Surtr.Compiler.Binding.Symbols;
 using Surtr.Compiler.Syntax.Ast;
@@ -356,7 +357,7 @@ namespace Surtr.LanguageServer.Workspace
             string kind = TypeKindLabel(type.TypeKind);
 
             var builder = new StringBuilder();
-            builder.Append(Fence(kind + " " + type.ToDisplayString()));
+            builder.Append(Fence(kind + " " + DisplayWithName(type)));
 
             var relations = new List<string>();
             if (type.BaseType is not null)
@@ -372,10 +373,47 @@ namespace Surtr.LanguageServer.Workspace
             return builder.ToString();
         }
 
+        /// <summary>
+        /// A generic declaration's card mirrors its own annotation — <c>interface IIterable&lt;out T&gt;</c>
+        /// reads exactly as it was written, the way a generator's card already does. Constructions
+        /// (<c>IIterable&lt;int&gt;</c>) and non-generic names render through
+        /// <see cref="TypeSymbol.ToDisplayString"/>, which has nothing to annotate.
+        /// </summary>
+        private static string DisplayWithName(NamedTypeSymbol type)
+        {
+            var parameters = type.TypeParameters;
+            if (parameters.Count == 0 || type.TypeArguments.Count > 0 || parameters.All(p => p.Variance == TypeParameterVariance.Invariant))
+                return type.ToDisplayString();
+
+            return type.Name + "<" + ParameterList(parameters) + ">";
+        }
+
+        private static string ParameterList(IReadOnlyList<TypeParameterSymbol> parameters)
+        {
+            var parts = new List<string>();
+            foreach (TypeParameterSymbol parameter in parameters)
+                parts.Add(VariancePrefix(parameter.Variance) + parameter.Name);
+            return string.Join(", ", parts);
+        }
+
+        /// <summary>The annotation as written before a covariant or contravariant parameter's name.</summary>
+        public static string VariancePrefix(TypeParameterVariance variance) => variance switch
+        {
+            TypeParameterVariance.Covariant => "out ",
+            TypeParameterVariance.Contravariant => "in ",
+            _ => string.Empty,
+        };
+
         private static string FormatTypeParameter(TypeParameterSymbol typeParameter)
         {
             var builder = new StringBuilder();
             builder.Append(Fence(typeParameter.Name));
+
+            if (typeParameter.Variance != TypeParameterVariance.Invariant)
+            {
+                string word = typeParameter.Variance == TypeParameterVariance.Covariant ? "out" : "in";
+                builder.Append(Break).Append(word + "-variant (" + word + ")");
+            }
 
             if (typeParameter.Constraints.Count > 0)
             {
