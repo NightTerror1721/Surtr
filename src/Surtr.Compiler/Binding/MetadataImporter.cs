@@ -107,6 +107,9 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         public NamedTypeSymbol GeneratorType => _generatorType ??= Import(SurtrBuiltIns.Generator);
 
+        /// <summary>The <c>@Pure</c> attribute class, imported once for native methods marked pure.</summary>
+        private NamedTypeSymbol? _pureAttribute;
+
         private NamedTypeSymbol? _arrayType;
         private NamedTypeSymbol? _dictionaryType;
         private NamedTypeSymbol? _tupleType;
@@ -764,6 +767,12 @@ namespace Surtr.Compiler.Binding
             }
 
             symbol.Parameters = parameters2;
+
+            // A native built-in declared pure in C# carries the mark like any source-declared
+            // @Pure: the runtime recorded it on the method metadata, and here it becomes the same
+            // attribute use BuiltInAttributes recognises by name.
+            if (method.IsPure)
+                symbol.Attributes = new[] { new AttributeUse(_pureAttribute ??= Import(SurtrBuiltIns.Pure), System.Array.Empty<object?>()) };
 
             ImportMethodConstraints(symbol, method);
             return symbol;

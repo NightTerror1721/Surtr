@@ -604,6 +604,34 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
+        public void APureBodyCallingAPureNativeBuiltInStaysQuiet()
+        {
+            using var compilation = Compile(
+                "@Pure\n"
+                    + "public fun first(s: string): char { return s.charAt(0); }\n"
+                    + "@Pure\n"
+                    + "public fun pick(xs: int[], i: int): int { return xs.get(i); }\n"
+                    + "@Pure\n"
+                    + "public fun middle(s: string): string { return s.substring(1, 2); }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.PureContractViolated);
+        }
+
+        [Fact]
+        public void APureBodyCallingAMutatingNativeBuiltInStillWarns()
+        {
+            using var compilation = Compile(
+                "@Pure\n"
+                    + "public fun grow(xs: int[]): void { xs.push(1); }");
+
+            Assert.True(
+                compilation.Diagnostics.Count(d => d.Code == SurtrDiagnosticCode.PureContractViolated) == 1,
+                "A mutating native call should warn: "
+                    + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+        }
+
+        [Fact]
         public void APureBodyCallingAnUnmarkedFunctionWarns()
         {
             using var compilation = Compile(

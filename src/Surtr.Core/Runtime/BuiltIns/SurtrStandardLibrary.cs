@@ -42,8 +42,8 @@ namespace Surtr.Runtime.BuiltIns
         {
             builder.Field("_message", SurtrClassReference.String);
 
-            builder.Property("message", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionMessage));
-            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionToString));
+            builder.Property("message", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionMessage), isPure: true);
+            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionToString), isPure: true);
 
             builder.Constructor(
                 SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionConstruct),

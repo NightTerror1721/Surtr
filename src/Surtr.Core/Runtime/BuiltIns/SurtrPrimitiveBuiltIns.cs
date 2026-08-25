@@ -38,17 +38,17 @@ namespace Surtr.Runtime.BuiltIns
             SurtrClassReference real = SurtrClassReference.Float;
             SurtrClassReference text = SurtrClassReference.String;
 
-            builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&IntToString));
-            builder.Method("toFloat", real, SurtrNativeEntryPoint.FromFunctionPointer(&IntToFloat));
-            builder.Method("abs", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntAbs));
-            builder.Method("sign", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntSign));
+            builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&IntToString), isPure: true);
+            builder.Method("toFloat", real, SurtrNativeEntryPoint.FromFunctionPointer(&IntToFloat), isPure: true);
+            builder.Method("abs", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntAbs), isPure: true);
+            builder.Method("sign", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntSign), isPure: true);
 
-            builder.Method("min", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntMin), builder.Params(("a", integer), ("b", integer)), isStatic: true);
-            builder.Method("max", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntMax), builder.Params(("a", integer), ("b", integer)), isStatic: true);
-            builder.Method("clamp", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntClamp), builder.Params(("value", integer), ("low", integer), ("high", integer)), isStatic: true);
-            builder.Method("parse", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntParse), builder.Params(("text", text)), isStatic: true);
-            builder.Method("parseStrict", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntParseStrict), builder.Params(("text", text)), isStatic: true);
-            builder.Method("parseStrict", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntParseStrictRadix), builder.Params(("text", text), ("radix", integer)), isStatic: true);
+            builder.Method("min", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntMin), builder.Params(("a", integer), ("b", integer)), isStatic: true, isPure: true);
+            builder.Method("max", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntMax), builder.Params(("a", integer), ("b", integer)), isStatic: true, isPure: true);
+            builder.Method("clamp", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntClamp), builder.Params(("value", integer), ("low", integer), ("high", integer)), isStatic: true, isPure: true);
+            builder.Method("parse", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntParse), builder.Params(("text", text)), isStatic: true, isPure: true);
+            builder.Method("parseStrict", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntParseStrict), builder.Params(("text", text)), isStatic: true, isPure: true);
+            builder.Method("parseStrict", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntParseStrictRadix), builder.Params(("text", text), ("radix", integer)), isStatic: true, isPure: true);
         }
 
         private static int IntToString(SurtrCallArguments arguments)
@@ -176,21 +176,21 @@ namespace Surtr.Runtime.BuiltIns
             SurtrClassReference boolean = SurtrClassReference.Boolean;
             SurtrClassReference text = SurtrClassReference.String;
 
-            builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&FloatToString));
-            builder.Method("toInt", integer, SurtrNativeEntryPoint.FromFunctionPointer(&FloatToInt));
-            builder.Method("abs", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatAbs));
-            builder.Method("sqrt", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatSqrt));
-            builder.Method("floor", integer, SurtrNativeEntryPoint.FromFunctionPointer(&FloatFloor));
-            builder.Method("ceil", integer, SurtrNativeEntryPoint.FromFunctionPointer(&FloatCeil));
-            builder.Method("round", integer, SurtrNativeEntryPoint.FromFunctionPointer(&FloatRound));
-            builder.Method("isNaN", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&FloatIsNaN));
-            builder.Method("isInfinite", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&FloatIsInfinite));
+            builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&FloatToString), isPure: true);
+            builder.Method("toInt", integer, SurtrNativeEntryPoint.FromFunctionPointer(&FloatToInt), isPure: true);
+            builder.Method("abs", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatAbs), isPure: true);
+            builder.Method("sqrt", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatSqrt), isPure: true);
+            builder.Method("floor", integer, SurtrNativeEntryPoint.FromFunctionPointer(&FloatFloor), isPure: true);
+            builder.Method("ceil", integer, SurtrNativeEntryPoint.FromFunctionPointer(&FloatCeil), isPure: true);
+            builder.Method("round", integer, SurtrNativeEntryPoint.FromFunctionPointer(&FloatRound), isPure: true);
+            builder.Method("isNaN", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&FloatIsNaN), isPure: true);
+            builder.Method("isInfinite", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&FloatIsInfinite), isPure: true);
 
-            builder.Method("min", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatMin), builder.Params(("a", real), ("b", real)), isStatic: true);
-            builder.Method("max", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatMax), builder.Params(("a", real), ("b", real)), isStatic: true);
-            builder.Method("pow", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatPow), builder.Params(("value", real), ("exponent", real)), isStatic: true);
-            builder.Method("parse", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatParse), builder.Params(("text", text)), isStatic: true);
-            builder.Method("parseStrict", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatParseStrict), builder.Params(("text", text)), isStatic: true);
+            builder.Method("min", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatMin), builder.Params(("a", real), ("b", real)), isStatic: true, isPure: true);
+            builder.Method("max", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatMax), builder.Params(("a", real), ("b", real)), isStatic: true, isPure: true);
+            builder.Method("pow", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatPow), builder.Params(("value", real), ("exponent", real)), isStatic: true, isPure: true);
+            builder.Method("parse", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatParse), builder.Params(("text", text)), isStatic: true, isPure: true);
+            builder.Method("parseStrict", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatParseStrict), builder.Params(("text", text)), isStatic: true, isPure: true);
         }
 
         private static int FloatToString(SurtrCallArguments arguments)
@@ -258,9 +258,9 @@ namespace Surtr.Runtime.BuiltIns
         #region Boolean
         internal static void DeclareBoolean(SurtrBuiltInTypeBuilder builder)
         {
-            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&BoolToString));
-            builder.Method("toInt", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&BoolToInt));
-            builder.Method("parseStrict", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&BoolParseStrict), builder.Params(("text", SurtrClassReference.String)), isStatic: true);
+            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&BoolToString), isPure: true);
+            builder.Method("toInt", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&BoolToInt), isPure: true);
+            builder.Method("parseStrict", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&BoolParseStrict), builder.Params(("text", SurtrClassReference.String)), isStatic: true, isPure: true);
         }
 
         private static int BoolToString(SurtrCallArguments arguments)

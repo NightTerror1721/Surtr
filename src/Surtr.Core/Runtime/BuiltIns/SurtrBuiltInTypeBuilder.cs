@@ -96,7 +96,8 @@ namespace Surtr.Runtime.BuiltIns
             SurtrNativeEntryPoint entryPoint,
             SurtrParameterInfo[]? parameters = null,
             bool isStatic = false,
-            SurtrMethodDispatch dispatch = SurtrMethodDispatch.Direct)
+            SurtrMethodDispatch dispatch = SurtrMethodDispatch.Direct,
+            bool isPure = false)
         {
             var method = new SurtrNativeMethodInfo(
                 name,
@@ -108,7 +109,8 @@ namespace Surtr.Runtime.BuiltIns
                 isStatic,
                 SurtrVisibility.Public,
                 _selfHandle,
-                entryPoint);
+                entryPoint,
+                isPure: isPure);
 
             _class.AddMethod(method);
             return method;
@@ -189,13 +191,14 @@ namespace Surtr.Runtime.BuiltIns
             SurtrNativeEntryPoint getter,
             SurtrNativeEntryPoint setter = default,
             bool isStatic = false,
-            SurtrMethodDispatch dispatch = SurtrMethodDispatch.Direct)
+            SurtrMethodDispatch dispatch = SurtrMethodDispatch.Direct,
+            bool isPure = false)
         {
             SurtrMethodInfo? getterMethod = null;
             SurtrMethodInfo? setterMethod = null;
 
             if (getter.IsValid)
-                getterMethod = Method("get_" + name, propertyType, getter, NoParameters, isStatic, dispatch);
+                getterMethod = Method("get_" + name, propertyType, getter, NoParameters, isStatic, dispatch, isPure);
 
             if (setter.IsValid)
                 setterMethod = Method("set_" + name, SurtrClassReference.Void, setter, Params(("value", propertyType)), isStatic, dispatch);

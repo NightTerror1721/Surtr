@@ -3636,7 +3636,10 @@ namespace Surtr.Compiler.Binding
             }
 
             // A foldable function may only call other foldable functions. Converging downward from
-            // everything that passes local checks leaves exactly the closed, greatest set.
+            // everything that passes local checks leaves exactly the closed, greatest set. A native
+            // built-in declared pure in C# counts as foldable — it has no body to fold, but it is
+            // trusted not to observe anything outside its arguments, so a caller that reaches it
+            // stays foldable and the native itself runs in the evaluator's scratch runtime.
             bool changed = true;
             while (changed)
             {
@@ -3646,7 +3649,7 @@ namespace Surtr.Compiler.Binding
                 {
                     foreach (var target in calls[method])
                     {
-                        if (foldable.Contains(target))
+                        if (foldable.Contains(target) || IsTrustedPureNative(target))
                             continue;
 
                         foldable.Remove(method);
@@ -3664,6 +3667,13 @@ namespace Surtr.Compiler.Binding
 
             _pureFolder = new ConstFolder(_bound, isPureCandidate: _foldablePure.Contains);
         }
+
+        /// <summary>
+        /// Whether a method is a native built-in the runtime declared pure — trusted not to observe
+        /// anything outside its arguments, even though it has no body to fold.
+        /// </summary>
+        private static bool IsTrustedPureNative(MethodSymbol method)
+            => method.IsNative && BuiltInAttributes.IsPure(method);
 
         /// <summary>
         /// Resolves a <c>const fun</c> call written inside a constant expression, and folds it.

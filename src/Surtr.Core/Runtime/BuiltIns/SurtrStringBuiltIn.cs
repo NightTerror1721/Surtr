@@ -29,44 +29,45 @@ namespace Surtr.Runtime.BuiltIns
             SurtrClassReference character = SurtrClassReference.Character;
             SurtrClassReference textArray = SurtrClassReference.Array(text);
 
-            builder.Property("length", integer, SurtrNativeEntryPoint.FromFunctionPointer(&GetLength));
-            builder.Property("isEmpty", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&GetIsEmpty));
+            builder.Property("length", integer, SurtrNativeEntryPoint.FromFunctionPointer(&GetLength), isPure: true);
+            builder.Property("isEmpty", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&GetIsEmpty), isPure: true);
 
-            builder.Method("charAt", character, SurtrNativeEntryPoint.FromFunctionPointer(&CharAt), builder.Params(("index", integer)));
-            builder.Method("indexOf", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IndexOf), builder.Params(("value", text)));
-            builder.Method("lastIndexOf", integer, SurtrNativeEntryPoint.FromFunctionPointer(&LastIndexOf), builder.Params(("value", text)));
-            builder.Method("contains", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&Contains), builder.Params(("value", text)));
-            builder.Method("startsWith", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&StartsWith), builder.Params(("value", text)));
-            builder.Method("endsWith", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&EndsWith), builder.Params(("value", text)));
-            builder.Method("substring", text, SurtrNativeEntryPoint.FromFunctionPointer(&Substring), builder.Params(("start", integer), ("length", integer)));
-            builder.Method("concat", text, SurtrNativeEntryPoint.FromFunctionPointer(&Concat), builder.Params(("other", text)));
-            builder.Method("replace", text, SurtrNativeEntryPoint.FromFunctionPointer(&Replace), builder.Params(("target", text), ("replacement", text)));
-            builder.Method("repeat", text, SurtrNativeEntryPoint.FromFunctionPointer(&Repeat), builder.Params(("count", integer)));
-            builder.Method("split", textArray, SurtrNativeEntryPoint.FromFunctionPointer(&Split), builder.Params(("separator", text)));
-            builder.Method("toUpper", text, SurtrNativeEntryPoint.FromFunctionPointer(&ToUpper));
-            builder.Method("toLower", text, SurtrNativeEntryPoint.FromFunctionPointer(&ToLower));
-            builder.Method("trim", text, SurtrNativeEntryPoint.FromFunctionPointer(&Trim));
-            builder.Method("reverse", text, SurtrNativeEntryPoint.FromFunctionPointer(&Reverse));
+            builder.Method("charAt", character, SurtrNativeEntryPoint.FromFunctionPointer(&CharAt), builder.Params(("index", integer)), isPure: true);
+            builder.Method("indexOf", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IndexOf), builder.Params(("value", text)), isPure: true);
+            builder.Method("lastIndexOf", integer, SurtrNativeEntryPoint.FromFunctionPointer(&LastIndexOf), builder.Params(("value", text)), isPure: true);
+            builder.Method("contains", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&Contains), builder.Params(("value", text)), isPure: true);
+            builder.Method("startsWith", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&StartsWith), builder.Params(("value", text)), isPure: true);
+            builder.Method("endsWith", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&EndsWith), builder.Params(("value", text)), isPure: true);
+            builder.Method("substring", text, SurtrNativeEntryPoint.FromFunctionPointer(&Substring), builder.Params(("start", integer), ("length", integer)), isPure: true);
+            builder.Method("concat", text, SurtrNativeEntryPoint.FromFunctionPointer(&Concat), builder.Params(("other", text)), isPure: true);
+            builder.Method("replace", text, SurtrNativeEntryPoint.FromFunctionPointer(&Replace), builder.Params(("target", text), ("replacement", text)), isPure: true);
+            builder.Method("repeat", text, SurtrNativeEntryPoint.FromFunctionPointer(&Repeat), builder.Params(("count", integer)), isPure: true);
+            builder.Method("split", textArray, SurtrNativeEntryPoint.FromFunctionPointer(&Split), builder.Params(("separator", text)), isPure: true);
+            builder.Method("toUpper", text, SurtrNativeEntryPoint.FromFunctionPointer(&ToUpper), isPure: true);
+            builder.Method("toLower", text, SurtrNativeEntryPoint.FromFunctionPointer(&ToLower), isPure: true);
+            builder.Method("trim", text, SurtrNativeEntryPoint.FromFunctionPointer(&Trim), isPure: true);
+            builder.Method("reverse", text, SurtrNativeEntryPoint.FromFunctionPointer(&Reverse), isPure: true);
             // The parameter is declared erased, not `text`: IComparable<T>/IEquatable<T> (Â§13.2)
             // fix their own member at `compareTo(G0)`/`equals(G0)`, which erases to `E` regardless
             // of what T was instantiated to - a concrete `text` parameter here would erase to `S`
             // and miss the interface's vtable slot (SurtrTypeLinker.BuildInterfaceDispatch matches
             // on SignatureKey, not on assignability). The bodies read the argument through
             // GetUnchecked<SurtrString>, which does not care what the declared parameter type was.
-            builder.Method("equals", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&EqualsText), builder.Params(("other", SurtrClassReference.Erased)), dispatch: SurtrMethodDispatch.Virtual);
-            builder.Method("compareTo", integer, SurtrNativeEntryPoint.FromFunctionPointer(&CompareTo), builder.Params(("other", SurtrClassReference.Erased)), dispatch: SurtrMethodDispatch.Virtual);
-            builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&ToStringSelf));
+            builder.Method("equals", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&EqualsText), builder.Params(("other", SurtrClassReference.Erased)), dispatch: SurtrMethodDispatch.Virtual, isPure: true);
+            builder.Method("compareTo", integer, SurtrNativeEntryPoint.FromFunctionPointer(&CompareTo), builder.Params(("other", SurtrClassReference.Erased)), dispatch: SurtrMethodDispatch.Virtual, isPure: true);
+            builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&ToStringSelf), isPure: true);
 
-            builder.Method("fromChar", text, SurtrNativeEntryPoint.FromFunctionPointer(&FromChar), builder.Params(("value", character)), isStatic: true);
-            builder.Method("join", text, SurtrNativeEntryPoint.FromFunctionPointer(&Join), builder.Params(("separator", text), ("parts", textArray)), isStatic: true);
-            builder.Method("fromCharRepeated", text, SurtrNativeEntryPoint.FromFunctionPointer(&FromCharRepeated), builder.Params(("value", character), ("count", integer)), isStatic: true);
-            builder.Method("fromCharArray", text, SurtrNativeEntryPoint.FromFunctionPointer(&FromCharArray), builder.Params(("chars", SurtrClassReference.Array(character))), isStatic: true);
+            builder.Method("fromChar", text, SurtrNativeEntryPoint.FromFunctionPointer(&FromChar), builder.Params(("value", character)), isStatic: true, isPure: true);
+            builder.Method("join", text, SurtrNativeEntryPoint.FromFunctionPointer(&Join), builder.Params(("separator", text), ("parts", textArray)), isStatic: true, isPure: true);
+            builder.Method("fromCharRepeated", text, SurtrNativeEntryPoint.FromFunctionPointer(&FromCharRepeated), builder.Params(("value", character), ("count", integer)), isStatic: true, isPure: true);
+            builder.Method("fromCharArray", text, SurtrNativeEntryPoint.FromFunctionPointer(&FromCharArray), builder.Params(("chars", SurtrClassReference.Array(character))), isStatic: true, isPure: true);
             builder.Method(
                 "fromCharArraySlice",
                 text,
                 SurtrNativeEntryPoint.FromFunctionPointer(&FromCharArraySlice),
                 builder.Params(("chars", SurtrClassReference.Array(character)), ("offset", integer), ("length", integer)),
-                isStatic: true);
+                isStatic: true,
+                isPure: true);
 
             // Takes strings, not a heterogeneous argument list. A statically typed language knows
             // what every argument is, so converting at the call site with `.toString()` is one
@@ -77,7 +78,8 @@ namespace Surtr.Runtime.BuiltIns
                 text,
                 SurtrNativeEntryPoint.FromFunctionPointer(&Format),
                 builder.ParamsWithVarargs(("args", text), ("pattern", text)),
-                isStatic: true);
+                isStatic: true,
+                isPure: true);
         }
 
         private static int GetLength(SurtrCallArguments arguments)

@@ -46,9 +46,9 @@ namespace Surtr.Runtime.BuiltIns
             SurtrClassReference integer = SurtrClassReference.Integer;
             SurtrClassReference boolean = SurtrClassReference.Boolean;
 
-            builder.Property("length", integer, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayLength));
-            builder.Property("capacity", integer, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayCapacity));
-            builder.Property("isEmpty", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayIsEmpty));
+            builder.Property("length", integer, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayLength), isPure: true);
+            builder.Property("capacity", integer, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayCapacity), isPure: true);
+            builder.Property("isEmpty", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayIsEmpty), isPure: true);
 
             builder.Method("clear", SurtrClassReference.Void, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayClear));
             builder.Method("reverse", SurtrClassReference.Void, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayReverse));
@@ -59,13 +59,13 @@ namespace Surtr.Runtime.BuiltIns
             // Everything below names the array's own element type through G0.
             SurtrClassReference element = SurtrClassReference.GenericParameter(0);
 
-            builder.Method("get", element, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayGet), builder.Params(("index", integer)));
+            builder.Method("get", element, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayGet), builder.Params(("index", integer)), isPure: true);
             builder.Method("set", SurtrClassReference.Void, SurtrNativeEntryPoint.FromFunctionPointer(&ArraySet), builder.Params(("index", integer), ("value", element)));
             builder.Method("push", SurtrClassReference.Void, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayPush), builder.Params(("value", element)));
             builder.Method("pop", element, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayPop));
             builder.Method("insert", SurtrClassReference.Void, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayInsert), builder.Params(("index", integer), ("value", element)));
-            builder.Method("indexOf", integer, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayIndexOf), builder.Params(("value", element)));
-            builder.Method("contains", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayContains), builder.Params(("value", element)));
+            builder.Method("indexOf", integer, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayIndexOf), builder.Params(("value", element)), isPure: true);
+            builder.Method("contains", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayContains), builder.Params(("value", element)), isPure: true);
             builder.Method("remove", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&ArrayRemove), builder.Params(("value", element)));
 
             // `items.sort((a, b) => a.score - b.score)` is written out in Language-Syntax.md Â§8, so
@@ -281,8 +281,8 @@ namespace Surtr.Runtime.BuiltIns
         #region Tuple
         internal static void DeclareTuple(SurtrBuiltInTypeBuilder builder)
         {
-            builder.Property("length", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&TupleLength));
-            builder.Property("isEmpty", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&TupleIsEmpty));
+            builder.Property("length", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&TupleLength), isPure: true);
+            builder.Property("isEmpty", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&TupleIsEmpty), isPure: true);
         }
 
         private static int TupleLength(SurtrCallArguments arguments)
@@ -297,8 +297,8 @@ namespace Surtr.Runtime.BuiltIns
         {
             // `length`, not `count`: every built-in collection answers its size under the same
             // name, so there is no rule about which container uses which word.
-            builder.Property("length", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryCount));
-            builder.Property("isEmpty", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryIsEmpty));
+            builder.Property("length", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryCount), isPure: true);
+            builder.Property("isEmpty", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryIsEmpty), isPure: true);
 
             builder.Method("clear", SurtrClassReference.Void, SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryClear));
 
@@ -312,12 +312,12 @@ namespace Surtr.Runtime.BuiltIns
             SurtrClassReference key = SurtrClassReference.GenericParameter(0);
             SurtrClassReference value = SurtrClassReference.GenericParameter(1);
 
-            builder.Method("get", value, SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryGet), builder.Params(("key", key)));
+            builder.Method("get", value, SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryGet), builder.Params(("key", key)), isPure: true);
             builder.Method("set", SurtrClassReference.Void, SurtrNativeEntryPoint.FromFunctionPointer(&DictionarySet), builder.Params(("key", key), ("value", value)));
-            builder.Method("containsKey", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryContainsKey), builder.Params(("key", key)));
+            builder.Method("containsKey", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryContainsKey), builder.Params(("key", key)), isPure: true);
             builder.Method("remove", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryRemove), builder.Params(("key", key)));
-            builder.Method("keys", SurtrClassReference.Array(key), SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryKeys));
-            builder.Method("values", SurtrClassReference.Array(value), SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryValues));
+            builder.Method("keys", SurtrClassReference.Array(key), SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryKeys), isPure: true);
+            builder.Method("values", SurtrClassReference.Array(value), SurtrNativeEntryPoint.FromFunctionPointer(&DictionaryValues), isPure: true);
         }
 
         private static int DictionaryGet(SurtrCallArguments arguments)
@@ -409,14 +409,14 @@ namespace Surtr.Runtime.BuiltIns
             SurtrClassReference integer = SurtrClassReference.Integer;
             SurtrClassReference boolean = SurtrClassReference.Boolean;
 
-            builder.Property("start", integer, SurtrNativeEntryPoint.FromFunctionPointer(&RangeStart));
-            builder.Property("end", integer, SurtrNativeEntryPoint.FromFunctionPointer(&RangeEnd));
-            builder.Property("length", integer, SurtrNativeEntryPoint.FromFunctionPointer(&RangeLength));
-            builder.Property("isEmpty", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&RangeIsEmpty));
-            builder.Property("isInclusive", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&RangeIsInclusive));
+            builder.Property("start", integer, SurtrNativeEntryPoint.FromFunctionPointer(&RangeStart), isPure: true);
+            builder.Property("end", integer, SurtrNativeEntryPoint.FromFunctionPointer(&RangeEnd), isPure: true);
+            builder.Property("length", integer, SurtrNativeEntryPoint.FromFunctionPointer(&RangeLength), isPure: true);
+            builder.Property("isEmpty", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&RangeIsEmpty), isPure: true);
+            builder.Property("isInclusive", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&RangeIsInclusive), isPure: true);
 
-            builder.Method("contains", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&RangeContains), builder.Params(("value", integer)));
-            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&RangeToString));
+            builder.Method("contains", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&RangeContains), builder.Params(("value", integer)), isPure: true);
+            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&RangeToString), isPure: true);
         }
 
         private static int RangeStart(SurtrCallArguments arguments)
@@ -471,9 +471,9 @@ namespace Surtr.Runtime.BuiltIns
         #region Closure
         internal static void DeclareClosure(SurtrBuiltInTypeBuilder builder)
         {
-            builder.Property("arity", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&ClosureArity));
-            builder.Property("upValueCount", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&ClosureUpValueCount));
-            builder.Property("isNative", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&ClosureIsNative));
+            builder.Property("arity", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&ClosureArity), isPure: true);
+            builder.Property("upValueCount", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&ClosureUpValueCount), isPure: true);
+            builder.Property("isNative", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&ClosureIsNative), isPure: true);
         }
 
         private static int ClosureArity(SurtrCallArguments arguments)

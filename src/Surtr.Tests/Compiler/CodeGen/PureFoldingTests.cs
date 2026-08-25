@@ -228,6 +228,27 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         /// <summary>
+        /// A <c>@Pure</c> function whose body reaches a pure native built-in is foldable too: the
+        /// native has no body of its own, but it runs in the evaluator's scratch runtime, so
+        /// folding a call to the wrapper evaluates the string read to a constant.
+        /// </summary>
+        [Fact]
+        public void APureFunctionCallingAPureNativeFolds()
+        {
+            string code = Disassemble(
+                "@Pure fun first(s: string): char { return s.charAt(0); }\n"
+                    + "fun run(): char { return first(\"abc\"); }");
+
+            Assert.Equal(0, Count(code, "CallLocalModule"));
+
+            var runtime = Run(
+                "@Pure fun first(s: string): char { return s.charAt(0); }\n"
+                    + "fun run(): char { return first(\"abc\"); }");
+
+            Assert.Equal('a', Call(runtime, "run").AsChar);
+        }
+
+        /// <summary>
         /// An instance <c>@Pure</c> method is not folded: its result can depend on the receiver's
         /// state, which a static-only folding pass cannot know is constant.
         /// </summary>

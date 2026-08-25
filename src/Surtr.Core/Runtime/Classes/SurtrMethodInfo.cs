@@ -211,6 +211,7 @@ namespace Surtr.Runtime.Classes
         private readonly bool _sealed;
         private readonly bool _extension;
         private readonly bool _bridge;
+        private readonly bool _isPure;
         private readonly string[] _genericParameters;
         private readonly string[][] _genericConstraints;
         private SurtrClassReference _signature;
@@ -238,7 +239,8 @@ namespace Surtr.Runtime.Classes
             string[]? genericParameters = null,
             string[][]? genericConstraints = null,
             bool isExtension = false,
-            bool isBridge = false)
+            bool isBridge = false,
+            bool isPure = false)
             : base(name, SurtrMemberKind.Method, isStatic, visibility, declaringType)
         {
             // Constructors are never inherited, so they can never be dispatched through a vtable.
@@ -276,6 +278,7 @@ namespace Surtr.Runtime.Classes
             _genericConstraints = genericConstraints ?? System.Array.Empty<string[]>();
             _extension = isExtension;
             _bridge = isBridge;
+            _isPure = isPure;
 
             if (_genericConstraints.Length != 0 && _genericConstraints.Length != _genericParameters.Length)
             {
@@ -364,6 +367,21 @@ namespace Surtr.Runtime.Classes
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _bridge;
+        }
+
+        /// <summary>
+        /// Whether the method promises referential transparency — the built-in side of <c>@Pure</c>.
+        /// </summary>
+        /// <remarks>
+        /// A native built-in declared pure (a string read, a collection read, a conversion) carries
+        /// the mark here so the compiler's <c>@Pure</c> machinery recognises it without a whitelist:
+        /// the purity lives beside the implementation that has to keep it, exactly where a
+        /// source-declared <c>@Pure</c> lives beside its body.
+        /// </remarks>
+        public bool IsPure
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _isPure;
         }
 
         /// <summary>Whether calls to this method go through the vtable rather than being bound directly.</summary>
