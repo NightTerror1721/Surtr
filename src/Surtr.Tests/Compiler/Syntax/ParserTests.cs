@@ -135,6 +135,29 @@ namespace Surtr.Tests.Compiler.Syntax
             Assert.IsType<DictTypeSyntax>(alias.Target);
         }
 
+        /// <summary>§6: <c>out</c>/<c>in</c> annotate a parameter's direction, right where it is declared.</summary>
+        [Fact]
+        public void VarianceAnnotationsParse()
+        {
+            TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>(
+                "interface Source<out T, in U, V> { }");
+
+            Assert.Equal(VarianceModifier.Covariant, type.TypeParameters[0].Variance);
+            Assert.Equal(VarianceModifier.Contravariant, type.TypeParameters[1].Variance);
+            Assert.Equal(VarianceModifier.None, type.TypeParameters[2].Variance);
+        }
+
+        /// <summary><c>out</c> is contextual: a parameter genuinely named that still parses.</summary>
+        [Fact]
+        public void OutRemainsUsableAsAParameterName()
+        {
+            TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>(
+                "class Box<out> { }");
+
+            Assert.Equal("out", type.TypeParameters.Single().Name);
+            Assert.Equal(VarianceModifier.None, type.TypeParameters.Single().Variance);
+        }
+
         [Fact]
         public void ClosureAliasParsesAsClosureType()
         {

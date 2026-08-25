@@ -501,6 +501,13 @@ namespace Surtr.Bytecode.Image
             for (int i = 0; i < genericParameters.Length; i++)
                 writer.Write(Intern(state, genericParameters[i]));
 
+            // One variance byte per parameter - out/in/invariant, §6's declaration-site annotation.
+            // Like the constraint table below it, nothing on an execution path reads it back; it
+            // exists so an imported construction answers subtype questions without its source.
+            var genericVariance = type.GenericVariance;
+            for (int i = 0; i < genericParameters.Length; i++)
+                writer.Write(i < genericVariance.Length ? (byte)genericVariance[i] : (byte)SurtrGenericVariance.Invariant);
+
             // The constraints ride along with the parameters that declare them, as descriptor
             // strings naming the bound - `G<n>` included, so a bound naming the type's own
             // parameter means the same thing after the round trip. Nothing on an execution path
@@ -597,6 +604,12 @@ namespace Surtr.Bytecode.Image
             writer.Write(genericParameters.Length);
             for (int i = 0; i < genericParameters.Length; i++)
                 writer.Write(Intern(state, genericParameters[i]));
+
+            // One variance byte per parameter, exactly as a class writes - and doubly worth
+            // carrying here, since out/in is first of all a contract's promise about its element.
+            var genericVariance = contract.GenericVariance;
+            for (int i = 0; i < genericParameters.Length; i++)
+                writer.Write(i < genericVariance.Length ? (byte)genericVariance[i] : (byte)SurtrGenericVariance.Invariant);
 
             var genericConstraints = contract.GenericConstraints;
             for (int i = 0; i < genericConstraints.Length; i++)

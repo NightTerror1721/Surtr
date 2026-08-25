@@ -223,7 +223,15 @@ namespace Surtr.Compiler.Syntax
             return new TupleTypeSyntax(SpanFrom(start), elements);
         }
 
-        /// <summary>Parses <c>&lt;T, U : IComparable&lt;U&gt; &amp; IEquatable&lt;U&gt;&gt;</c> (§6).</summary>
+        /// <summary>Parses <c>&lt;T, U : IComparable&lt;U&gt; &amp; IEquatable&lt;U&gt;&gt;</c> (§6), each parameter optionally annotated <c>out</c>/<c>in</c>.</summary>
+        /// <remarks>
+        /// <para>
+        /// <c>out</c> and <c>in</c> are contextual keywords here, not reserved words: they count
+        /// as variance only when an identifier follows, so a parameter actually named <c>out</c>
+        /// or <c>in</c> still parses. Whether the annotation is allowed where it was written is
+        /// the binder's question — the parser records what it saw.
+        /// </para>
+        /// </remarks>
         private IReadOnlyList<TypeParameterSyntax> ParseTypeParameterList()
         {
             if (!reader.Check(TokenType.Less))
@@ -237,6 +245,8 @@ namespace Surtr.Compiler.Syntax
             while (true)
             {
                 SourceLocation start = reader.CurrentLocation;
+                VarianceModifier variance = ParseVarianceModifier();
+
                 string name = reader.ExpectIdentifier("a type parameter name");
 
                 List<TypeSyntax> constraints = new List<TypeSyntax>();
@@ -249,7 +259,7 @@ namespace Surtr.Compiler.Syntax
                     while (reader.Match(TokenType.Ampersand));
                 }
 
-                parameters.Add(new TypeParameterSyntax(SpanFrom(start), name, constraints));
+                parameters.Add(new TypeParameterSyntax(SpanFrom(start), name, variance, constraints));
 
                 if (reader.Match(TokenType.Comma))
                 {
@@ -266,6 +276,29 @@ namespace Surtr.Compiler.Syntax
 
             reader.ConsumeTypeArgumentClose();
             return parameters;
+        }
+
+        private VarianceModifier ParseVarianceModifier()
+        {
+            // The lookahead is what keeps a parameter actually named `out` usable: only an
+            // identifier after the candidate reads as variance. `in` is reserved outright —
+            // for-in owns it — so it is matched as the keyword it is.
+            if (reader.Peek(1).Type != TokenType.Identifier)
+                return VarianceModifier.None;
+
+            if (CheckContextual("out"))
+            {
+                reader.Advance();
+                return VarianceModifier.Covariant;
+            }
+
+            if (reader.Check(TokenType.KeywordIn))
+            {
+                reader.Advance();
+                return VarianceModifier.Contravariant;
+            }
+
+            return VarianceModifier.None;
         }
     }
 }

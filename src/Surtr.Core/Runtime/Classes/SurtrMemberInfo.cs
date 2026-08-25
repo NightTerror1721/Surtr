@@ -31,6 +31,19 @@ namespace Surtr.Runtime.Classes
         Interface = 6,
     }
 
+    /// <summary>The declaration-site variance a generic type parameter carries (§6).</summary>
+    public enum SurtrGenericVariance : byte
+    {
+        /// <summary>The parameter accepts one exact argument. The default.</summary>
+        Invariant = 0,
+
+        /// <summary>Written <c>out T</c>: <c>C&lt;Derived&gt;</c> is a <c>C&lt;Base&gt;</c>.</summary>
+        Covariant = 1,
+
+        /// <summary>Written <c>in T</c>: <c>C&lt;Base&gt;</c> is a <c>C&lt;Derived&gt;</c>.</summary>
+        Contravariant = 2,
+    }
+
     /// <summary>How widely a member is visible.</summary>
     public enum SurtrVisibility : byte
     {

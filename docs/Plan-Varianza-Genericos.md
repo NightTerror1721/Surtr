@@ -1,6 +1,8 @@
 # Plan-Varianza — Evaluación: varianza en los genéricos de Surtr
 
-> **Estado:** evaluación (sin implementar). Responde a la pregunta planteada: «evaluar la
+> **Estado: IMPLEMENTADO** (las 5 fases, FormatVersion 11). Lo que sigue era la evaluación
+> previa; al final, en §7, queda el registro de cómo se implementó y las dos correcciones que
+> la implementación hizo a este documento. Responde a la pregunta planteada: «evaluar la
 > posibilidad de añadir varianza a los genéricos, ampliando sus constraints». Recoge el modelo
 > actual, las dos variantes posibles (declaración y uso), qué costaría cada una sobre el borrado
 > que ya tiene el lenguaje, con qué features existentes interactúa y una recomendación por fases.
@@ -146,7 +148,7 @@ esto, la varianza es tan local como cualquier otra regla de declaración.
 | Constraints `<T : C>` | composición natural: un `out T` con bound sigue prometiendo miembros; `MemberLookup.CollectReachable` ya camina bounds y no distingue |
 | Inferencia de métodos genéricos | sin cambios: infiere argumentos concretos, no comodines (otro motivo para rechazar use-site) |
 | Extension methods `extension<T> T[] { }` | el receptor `T[]` es invariante; nada cambia |
-| Method-group → closure | gana: con varianza de cierres, `let f: (Animal) -> int = (c: Circle) => c.radius;` pasaría a ser válido contravariante |
+| Method-group → closure | gana: con varianza de cierres, `let f: (Circle) -> int = (a: Animal) => a.name();` pasaría a ser válido contravariante — un manejador de animales sirve donde se pide uno de perros, nunca al revés (corregido aquí: la versión original de este ejemplo tenía las dos partes invertidas) |
 | Value classes genéricas | campos ⇒ invariantes de facto; la comprobación de posiciones lo declara sin caso especial |
 | `===` identidad | sin interacción |
 | Igualdad estructural de rangos/tuplas | tupla: covariante por elementos, coherente con su igualdad estructural |
@@ -194,3 +196,29 @@ Orden sugerido si se aprueba:
 
 Fase 1–2 son infraestructura invisible; 3 es el interruptor; 4–5 son adopción. Nada de esto
 bloquea ni es bloqueado por generadores ni por la clase base evaluada por separado.
+
+## 7. Implementación (registro)
+
+Las cinco fases están implementadas y la suite completa en verde (2806 tests). Decisiones que
+quedaron cerradas al implementar, más dos correcciones a lo escrito arriba:
+
+1. **Matching restringido (corrección a §3.1).** «Conversión implícita» era demasiado ancho:
+   `int → float` es implícita en Surtr y, bajo borrado, no hay conversión por elemento que
+   aplicarla — un `IIterable<int>` covariante hacia `IIterable<float>` sería corrupción
+   silenciosa. El matching de argumentos usa solo identidad + jerarquía + ampliación nullable,
+   excluyendo numéricos y `operator as`. (`IsVariantAssignable` en `Conversions.cs`.)
+2. **El ejemplo de cierres de §3.4 estaba invertido** y está corregido arriba: la contravarianza
+   dice que `(Animal) -> R` sirve como `(Dog) -> R`, no al revés.
+3. **Metadatos:** byte por parámetro tras los nombres, tanto en clases como en interfaces;
+   `FormatVersion 10 → 11`; el importador traduce a `TypeParameterSymbol.Variance`.
+   Los built-ins nativos ganan una API gemela (`SurtrTypeInfo.SetGenericVariance`).
+4. **Built-ins anotados:** `IIterable<out T>`, `IIIterator<out T>`, `IComparable<in T>`,
+   `IEquatable<in T>` — declarados en C# (`DeclareCoreInterfaces`), no en `.surtr`; §5 asumía
+   fuente Surtr. `Sequence<T>` queda invariante por su campo `_provider`, como anticipaba §5.
+5. **Estructurales:** cierres contra/co, tuplas covariantes por elemento, `generator<T>`
+   covariante (solo produce), arrays y dicts invariantes por mutabilidad.
+6. **Verificador de posiciones:** paseo por miembros ya ligados en `MemberPhase`
+   (`Binder.CheckTypeParameterPositions`), polaridad compuesta a través de construcciones
+   anidadas, un diagnóstico por parámetro; códigos nuevos 3074–3076. `<out T>`/`<in T>` en
+   métodos se rechaza con 3074; `out` es contextual y `in` ya era palabra clave del `for-in`,
+   así que se reconoce como token propio.

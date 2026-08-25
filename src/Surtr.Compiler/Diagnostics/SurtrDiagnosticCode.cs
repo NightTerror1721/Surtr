@@ -536,6 +536,28 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         NotDisposable = 3073,
 
+        /// <summary>
+        /// An <c>out</c>/<c>in</c> variance annotation written where no declaration can carry it
+        /// (§6): a method's type parameters live only inside their own body, so there is no
+        /// construction to relate and variance would say nothing.
+        /// </summary>
+        InvalidVarianceModifier = 3074,
+
+        /// <summary>
+        /// A parameter declared <c>out</c> appears in an input position of its own declaration
+        /// (§6) — a method parameter, a setter value, a field, an array element — where accepting
+        /// a supertype's construction would mean reading back something that was never written.
+        /// Reported once, at the declaration, before any use exists.
+        /// </summary>
+        VariantParameterUsedAsInput = 3075,
+
+        /// <summary>
+        /// A parameter declared <c>in</c> appears in an output position of its own declaration
+        /// (§6) — a return type, a getter result — where handing back a subtype's construction
+        /// would promise values the declaration cannot produce.
+        /// </summary>
+        VariantParameterUsedAsOutput = 3076,
+
         #endregion
 
         #region Code generation — 4xxx

@@ -64,6 +64,9 @@ namespace Surtr.Compiler.Binding.Symbols
             internal set => _constraints = value;
         }
 
+        /// <summary>The declaration-site variance written against it, invariant by default (§6).</summary>
+        public TypeParameterVariance Variance { get; internal set; } = TypeParameterVariance.Invariant;
+
         /// <inheritdoc/>
         public override TypeSymbol Substitute(TypeSubstitution substitution)
         {

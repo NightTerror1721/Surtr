@@ -636,6 +636,15 @@ namespace Surtr.Bytecode.Image
 
                 type.SetGenericParameters(genericParameters);
 
+                // One variance byte per parameter, written after the names. An all-invariant table
+                // is the same answer an unannotated declaration gives, so it round-trips as data
+                // rather than being inferred.
+                var genericVariance = new SurtrGenericVariance[genericCount];
+                for (int i = 0; i < genericCount; i++)
+                    genericVariance[i] = (SurtrGenericVariance)reader.ReadByte();
+
+                type.SetGenericVariance(genericVariance);
+
                 var genericConstraints = new string[genericCount][];
                 for (int i = 0; i < genericCount; i++)
                 {
@@ -732,6 +741,14 @@ namespace Surtr.Bytecode.Image
                     genericParameters[i] = state.Text();
 
                 contract.SetGenericParameters(genericParameters);
+
+                // One variance byte per parameter, written after the names - the interface twin of
+                // what ReadClass reads, so both kinds answer variance questions identically.
+                var genericVariance = new SurtrGenericVariance[genericCount];
+                for (int i = 0; i < genericCount; i++)
+                    genericVariance[i] = (SurtrGenericVariance)state.Reader.ReadByte();
+
+                contract.SetGenericVariance(genericVariance);
 
                 var genericConstraints = new string[genericCount][];
                 for (int i = 0; i < genericCount; i++)

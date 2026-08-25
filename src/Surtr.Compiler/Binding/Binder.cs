@@ -469,6 +469,12 @@ namespace Surtr.Compiler.Binding
                         parameters[i] = _factory.DeclareTypeParameter(syntax.TypeParameters[i].Name, symbol, i);
 
                     symbol.SetTypeParameters(parameters);
+
+                    // Variance is a property of the declaration, read back by every later subtype
+                    // question and written into the image; the positions it promises are verified
+                    // once all members are bound, in MemberPhase.
+                    for (int i = 0; i < parameters.Length; i++)
+                        parameters[i].Variance = TranslateVariance(syntax.TypeParameters[i].Variance);
                 }
             }
 
@@ -1134,6 +1140,7 @@ namespace Surtr.Compiler.Binding
                 CheckOverrideRequired(binding);
                 CheckBaseConstructorIsReachable(binding);
                 CheckMembersImplemented(binding);
+                CheckTypeParameterPositions(binding);
             }
 
             // Last, because a bound like `<T : IComparable<T>>` names a type whose own hierarchy is
@@ -4302,6 +4309,19 @@ namespace Surtr.Compiler.Binding
             var parameters = new TypeParameterSymbol[syntax.Count];
             for (int i = 0; i < parameters.Length; i++)
             {
+                // A method's parameters are chosen per call and live only inside their own body,
+                // so there is no family of constructions for variance to relate. The annotation
+                // is a declaration-site concept, and this is not one.
+                if (syntax[i].Variance != VarianceModifier.None)
+                {
+                    _diagnostics.ReportError(
+                        SurtrDiagnosticCode.InvalidVarianceModifier,
+                        $"'{(syntax[i].Variance == VarianceModifier.Covariant ? "out" : "in")}' is not valid on the type parameter '{syntax[i].Name}' of method '{method.Name}'; "
+                            + "only class and interface declarations can declare variance.",
+                        sourceName,
+                        syntax[i].Span);
+                }
+
                 parameters[i] = _factory.DeclareTypeParameter(syntax[i].Name, method, i);
                 scope.TryDeclare(syntax[i].Name, parameters[i]);
             }
@@ -4400,6 +4420,229 @@ namespace Surtr.Compiler.Binding
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// Proves every <c>out</c>/<c>in</c> annotation this declaration wrote: a covariant
+        /// parameter never appears in an input position of its own declaration, a contravariant
+        /// one never in an output position (§6).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The walk runs once per declaration, after every member signature is bound and before
+        /// any construction could be compared — variance is a promise the declaration makes, so a
+        /// broken one is reported here rather than as a mysterious subtype failure at some distant
+        /// use. Positions follow §6's table: returns and getters produce, parameters and setters
+        /// consume, a field both reads and writes, an array element or dict entry both reads and
+        /// writes because the collections are mutable, a constraint produces promises.
+        /// </para>
+        /// <para>
+        /// Polarity composes through nested constructions: a <c>IIterator&lt;T&gt;</c> field sits
+        /// under an invariant owner's both-positions; a contravariant argument flips the
+        /// polarity its children are read under. Only this declaration's own annotated parameters
+        /// can fail — another declaration's parameters were proven where they were declared, and a
+        /// method's parameters cannot carry variance at all.
+        /// </para>
+        /// </remarks>
+        private void CheckTypeParameterPositions(TypeBinding binding)
+        {
+            var symbol = binding.Symbol;
+            var parameters = symbol.TypeParameters;
+
+            bool anyVariant = false;
+            for (int i = 0; i < parameters.Count && !anyVariant; i++)
+                anyVariant = parameters[i].Variance != TypeParameterVariance.Invariant;
+
+            if (!anyVariant)
+                return;
+
+            var checker = new PositionChecker(this, binding);
+
+            // The bounds each parameter promises sit in output positions: `<U : T>` has U
+            // promising everything T promises, which is producing, not consuming.
+            foreach (var parameter in parameters)
+                checker.WalkEach(parameter.Constraints, Position.Output);
+
+            // A base class or declared interface is written in terms of this declaration's
+            // parameters, and implementing it means producing what it asks for.
+            if (symbol.BaseType is NamedTypeSymbol baseType)
+                checker.Walk(baseType, Position.Output);
+
+            for (int i = 0; i < symbol.Interfaces.Count; i++)
+                checker.Walk(symbol.Interfaces[i], Position.Output);
+
+            foreach (var member in symbol.Members)
+            {
+                switch (member)
+                {
+                    case MethodSymbol method when method.ContainingSymbol == symbol:
+                        checker.MemberName = method.Name;
+                        checker.Walk(method.ReturnType, Position.Output);
+                        for (int p = 0; p < method.Parameters.Count; p++)
+                            checker.Walk(method.Parameters[p].Type, Position.Input);
+                        break;
+
+                    case PropertySymbol property:
+                        checker.MemberName = property.Name;
+                        if (property.Getter is not null)
+                            checker.Walk(property.Type, Position.Output);
+
+                        if (property.Setter is not null)
+                            checker.Walk(property.Type, Position.Input);
+
+                        break;
+
+                    case FieldSymbol field:
+                        // A field is legible and writable by anyone who can see it, which is why
+                        // a generic value class stays invariant whatever its members wish.
+                        checker.MemberName = field.Name;
+                        checker.Walk(field.Type, Position.Both);
+                        break;
+                }
+            }
+        }
+
+        private static TypeParameterVariance TranslateVariance(VarianceModifier variance) => variance switch
+        {
+            VarianceModifier.Covariant => TypeParameterVariance.Covariant,
+            VarianceModifier.Contravariant => TypeParameterVariance.Contravariant,
+            _ => TypeParameterVariance.Invariant,
+        };
+
+        /// <summary>Which direction a position consumes: output-only, input-only, or unavoidably both.</summary>
+        private enum Position
+        {
+            Output,
+            Input,
+            Both,
+        }
+
+        private sealed class PositionChecker
+        {
+            private readonly Binder _binder;
+            private readonly TypeBinding _binding;
+            private readonly HashSet<TypeParameterSymbol> _reported = new HashSet<TypeParameterSymbol>();
+
+            public string MemberName = string.Empty;
+
+            public PositionChecker(Binder binder, TypeBinding binding)
+            {
+                _binder = binder;
+                _binding = binding;
+            }
+
+            public void WalkEach(IReadOnlyList<TypeSymbol> types, Position position)
+            {
+                for (int i = 0; i < types.Count; i++)
+                    Walk(types[i], position);
+            }
+
+            public void Walk(TypeSymbol type, Position position)
+            {
+                switch (type.NonNullable)
+                {
+                    case TypeParameterSymbol parameter:
+                        Check(parameter, position);
+                        return;
+
+                    // A nested construction inherits this walk's polarity through the argument's
+                    // own annotation: `out` passes it on, `in` flips it, an invariant parameter
+                    // pins its argument to both directions.
+                    case NamedTypeSymbol named when named.IsConstructed:
+                        {
+                            var arguments = named.TypeArguments;
+                            var declared = named.TypeParameters;
+                            for (int i = 0; i < arguments.Count && i < declared.Count; i++)
+                            {
+                                Walk(arguments[i], declared[i].Variance switch
+                                {
+                                    TypeParameterVariance.Covariant => position,
+                                    TypeParameterVariance.Contravariant => Flip(position),
+                                    _ => Position.Both,
+                                });
+                            }
+
+                            return;
+                        }
+
+                    case ClosureTypeSymbol closure:
+                        for (int i = 0; i < closure.ParameterTypes.Count; i++)
+                            Walk(closure.ParameterTypes[i], Flip(position));
+
+                        Walk(closure.ReturnType, position);
+                        return;
+
+                    // A generator only ever yields, so its element rides the same direction as
+                    // the position the generator itself was found in.
+                    case GeneratorTypeSymbol generator:
+                        Walk(generator.ElementType, position);
+                        return;
+
+                    // Tuples hand their polarity straight to each element.
+                    case TupleTypeSymbol tuple:
+                        for (int i = 0; i < tuple.ElementTypes.Count; i++)
+                            Walk(tuple.ElementTypes[i], position);
+
+                        return;
+
+                    // Arrays and dicts are mutable containers: reading and writing meet in every
+                    // slot, so anything annotated inside them is forced invariant (§3.2).
+                    case ArrayTypeSymbol array:
+                        Walk(array.ElementType, Position.Both);
+                        return;
+
+                    case DictionaryTypeSymbol dictionary:
+                        Walk(dictionary.KeyType, Position.Both);
+                        Walk(dictionary.ValueType, Position.Both);
+                        return;
+
+                    default:
+                        return;
+                }
+            }
+
+            private static Position Flip(Position position) => position switch
+            {
+                Position.Output => Position.Input,
+                Position.Input => Position.Output,
+                _ => Position.Both,
+            };
+
+            private void Check(TypeParameterSymbol parameter, Position position)
+            {
+                if (parameter.ContainingSymbol != _binding.Symbol)
+                    return;
+
+                bool fails = parameter.Variance switch
+                {
+                    TypeParameterVariance.Covariant => position is Position.Input or Position.Both,
+                    TypeParameterVariance.Contravariant => position is Position.Output or Position.Both,
+                    _ => false,
+                };
+
+                if (!fails || !_reported.Add(parameter))
+                    return;
+
+                string word = parameter.Variance == TypeParameterVariance.Covariant ? "out" : "in";
+                SurtrDiagnosticCode code = parameter.Variance == TypeParameterVariance.Covariant
+                    ? SurtrDiagnosticCode.VariantParameterUsedAsInput
+                    : SurtrDiagnosticCode.VariantParameterUsedAsOutput;
+
+                string site = MemberName.Length == 0 ? $"'{_binding.Symbol.Name}'" : $"member '{MemberName}'";
+                _binder.Report(
+                    code,
+                    _binding,
+                    Span(parameter),
+                    $"Cannot use {word}-variant type parameter '{parameter.Name}' here ({site}): "
+                        + $"a {word} parameter may only appear {(parameter.Variance == TypeParameterVariance.Covariant ? "in output positions" : "in input positions")} of '{_binding.Symbol.Name}'.");
+            }
+
+            private SourceSpan Span(TypeParameterSymbol parameter)
+            {
+                var syntaxes = _binding.Syntax.TypeParameters;
+                int ordinal = parameter.Ordinal;
+                return ordinal < syntaxes.Count ? syntaxes[ordinal].Span : _binding.Syntax.Span;
+            }
         }
 
         private readonly struct ConstraintBinding

@@ -59,6 +59,19 @@ namespace Surtr.Compiler.Syntax.Ast
         NoInline,
     }
 
+    /// <summary>The declaration-site variance written on a generic type parameter (§6).</summary>
+    public enum VarianceModifier
+    {
+        /// <summary>Nothing was written: the parameter is invariant, which is the default.</summary>
+        None,
+
+        /// <summary><c>out</c> — the parameter only appears in output positions.</summary>
+        Covariant,
+
+        /// <summary><c>in</c> — the parameter only appears in input positions.</summary>
+        Contravariant,
+    }
+
     /// <summary>Which kind of type a <see cref="TypeDeclarationSyntax"/> declares.</summary>
     /// <remarks>
     /// One node covers all five because they share a shape — modifiers, name, type parameters, base
@@ -166,16 +179,21 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>The type parameter's name.</summary>
         public string Name { get; }
 
+        /// <summary>The variance written before it, or <see cref="VarianceModifier.None"/>.</summary>
+        public VarianceModifier Variance { get; }
+
         /// <summary>Its constraints, combined with <c>&amp;</c>. Empty when unconstrained.</summary>
         public IReadOnlyList<TypeSyntax> Constraints { get; }
 
         /// <summary>Initializes a type parameter.</summary>
         /// <param name="span">The source the parameter covers.</param>
         /// <param name="name">Its name.</param>
+        /// <param name="variance">The variance written against it, if any.</param>
         /// <param name="constraints">Its constraints, or an empty list.</param>
-        public TypeParameterSyntax(SourceSpan span, string name, IReadOnlyList<TypeSyntax> constraints) : base(span)
+        public TypeParameterSyntax(SourceSpan span, string name, VarianceModifier variance, IReadOnlyList<TypeSyntax> constraints) : base(span)
         {
             Name = name;
+            Variance = variance;
             Constraints = constraints;
         }
     }

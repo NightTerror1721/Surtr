@@ -6081,6 +6081,148 @@ using var compilation = Reject(
 
         #endregion
 
+        #region Variance (§6)
+        /// <summary>
+        /// The motivating case: a collection of derived elements consumed where the element's base
+        /// is expected. <c>IIterable</c> declares <c>out T</c>, so the array widens with its
+        /// elements and the loop reads real values back — which is what makes this an end-to-end
+        /// test and not just a type-checker one.
+        /// </summary>
+        [Fact]
+        public void ACovariantIterableAcceptsADerivedElementsCollection()
+        {
+            var runtime = Run(
+                "interface IShape { fun area(): float; }\n"
+                    + "class Circle : IShape {\n"
+                    + "  public let radius: float;\n"
+                    + "  constructor(radius: float) { this.radius = radius; }\n"
+                    + "  public fun area(): float { return 3.0 * radius * radius; }\n"
+                    + "}\n"
+                    + "fun total(shapes: IIterable<IShape>): float {\n"
+                    + "  var sum = 0.0;\n"
+                    + "  for (s in shapes) { sum = sum + s.area(); }\n"
+                    + "  return sum;\n"
+                    + "}\n"
+                    + "fun run(): float {\n"
+                    + "  let circles: Circle[] = [Circle(1.0), Circle(2.0)];\n"
+                    + "  return total(circles);\n"
+                    + "}");
+
+            var result = Call(runtime, "run").AsFloat;
+            Assert.Equal(3.0 * (1.0 + 4.0), result, 5);
+        }
+
+        /// <summary>
+        /// A comparer of animals compares dogs: the argument widens <em>against</em> the
+        /// annotation, the call runs for real, and the base-typed member reads a dog through it.
+        /// </summary>
+        [Fact]
+        public void AContravariantComparerServesWhereADerivedOneIsAskedFor()
+        {
+            var runtime = Run(
+                "class Animal {\n"
+                    + "  public let rank: int;\n"
+                    + "  constructor(rank: int) { this.rank = rank; }\n"
+                    + "}\n"
+                    + "class Dog : Animal {\n"
+                    + "  constructor(rank: int) : super(rank) { }\n"
+                    + "}\n"
+                    + "class ByRank : IComparable<Animal> {\n"
+                    + "  public fun compareTo(other: Animal): int { return other.rank; }\n"
+                    + "}\n"
+                    + "fun serve(c: IComparable<Dog>): int { return c.compareTo(Dog(41)); }\n"
+                    + "fun run(): int { return serve(ByRank()); }");
+
+            Assert.Equal(41, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// Method-group style: an animal handler serves where a dog handler is declared — that is
+        /// what contravariance of inputs means. Before closure variance this was an error; now it
+        /// compiles and calls back through the widened handler with a real dog.
+        /// </summary>
+        [Fact]
+        public void AContravariantClosureAcceptsAWiderHandler()
+        {
+            var runtime = Run(
+                "class Animal { public fun name(): string { return \"animal\"; } }\n"
+                    + "class Dog : Animal { }\n"
+                    + "fun speak(handler: (Dog) -> string): string { return handler(Dog()); }\n"
+                    + "fun run(): string { let describe = (a: Animal) => a.name(); return speak(describe); }");
+
+            Assert.Equal("animal", Text(runtime, "run"));
+        }
+
+        /// <summary>The invariance default still holds for mutable collections.</summary>
+        [Fact]
+        public void AnUnannotatedCollectionStaysInvariant()
+        {
+            // Arrays are invariant because they are writable: feeding dogs where animals are
+            // stored would let someone push a cat into a dog array (§3.1). IIterable widens
+            // because it only reads; the array itself never does.
+            using var compilation = Reject(
+                "class Animal { }\n"
+                    + "class Dog : Animal { }\n"
+                    + "fun feed(meal: Animal[]): void { }\n"
+                    + "fun run(): void { let dogs: Dog[] = [Dog()]; feed(dogs); }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedCall);
+        }
+
+        /// <summary><c>out T</c> in a parameter position is refused at the declaration itself.</summary>
+        [Fact]
+        public void ACovariantParameterInAnInputPositionIsRefusedAtTheDeclaration()
+        {
+            using var compilation = Reject(
+                "interface Sink<out T> {\n"
+                    + "  fun write(item: T): void;\n"
+                    + "}\n"
+                    + "fun run(): void { }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.VariantParameterUsedAsInput);
+        }
+
+        /// <summary>And symmetrically, <c>in T</c> in a return position.</summary>
+        [Fact]
+        public void AContravariantParameterInAnOutputPositionIsRefusedAtTheDeclaration()
+        {
+            using var compilation = Reject(
+                "interface Source<in T> {\n"
+                    + "  fun next(): T;\n"
+                    + "}\n"
+                    + "fun run(): void { }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.VariantParameterUsedAsOutput);
+        }
+
+        /// <summary>
+        /// A field reads and writes, so it forces its own declaration invariant — reported once,
+        /// at the annotation, not as a mysterious subtype failure somewhere else.
+        /// </summary>
+        [Fact]
+        public void ACovariantParameterOverAFieldIsRefused()
+        {
+            using var compilation = Reject(
+                "class Cell<out T> {\n"
+                    + "  public var item: T;\n"
+                    + "}\n"
+                    + "fun run(): void { }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.VariantParameterUsedAsInput);
+        }
+
+        /// <summary>Variance belongs to declarations; a method's parameters cannot carry it.</summary>
+        [Fact]
+        public void AVarianceModifierOnAMethodTypeParameterIsRefused()
+        {
+            using var compilation = Reject(
+                "fun first<out T>(items: T[]): T { return items[0]; }\n"
+                    + "fun run(): int { return first([1, 2]); }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidVarianceModifier);
+        }
+        #endregion
+
         #region Module-level natives (§10)
         /// <summary>
         /// §10: a module naming a host global nobody registered fails to load, rather than reading a

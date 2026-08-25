@@ -337,6 +337,46 @@ namespace Surtr.Tests.Compiler.Binding
             Assert.False(symbol.IsAbstract);
         }
 
+        /// <summary>
+        /// The <c>out</c>/<c>in</c> annotation survives the image, so an imported construction
+        /// answers subtype questions exactly as its source would have — the whole point of
+        /// carrying variance in metadata at all.
+        /// </summary>
+        [Fact]
+        public void VarianceComesBackFromAnImageAndAnswersSubtypeQuestions()
+        {
+            using var runtime = new SurtrRuntime();
+
+            var builder = new SurtrModuleBuilder("coll");
+
+            var producer = builder.DefineInterface("IProducer");
+            producer.Interface.SetGenericParameters("T");
+            producer.Interface.SetGenericConstraints(System.Array.Empty<string>());
+            producer.Interface.SetGenericVariance(SurtrGenericVariance.Covariant);
+            producer.DefineMethod("next", SurtrClassReference.GenericParameter(0));
+
+            runtime.LoadModule(builder.Build());
+            Assert.True(runtime.TryGetModule("coll", out var module));
+
+            var importer = Importer(out var factory);
+            var symbol = importer.ImportModule(module);
+
+            var producerSymbol = (NamedTypeSymbol)symbol.Types.Single(t => t.Name == "IProducer");
+            Assert.Equal(TypeParameterVariance.Covariant, producerSymbol.TypeParameters[0].Variance);
+
+            // Two unrelated classes, one derived from the other - declared right here, since the
+            // hierarchy question is about the importing compilation's own types.
+            var animal = factory.DeclareType("Animal", TypeSymbolKind.Class, symbol);
+            var dog = factory.DeclareType("Dog", TypeSymbolKind.Class, symbol);
+            dog.BaseType = animal;
+
+            var conversions = new Conversions(factory);
+
+            Assert.True(conversions.IsAssignable(
+                producerSymbol.Construct(new TypeSymbol[] { dog }),
+                producerSymbol.Construct(new TypeSymbol[] { animal })));
+        }
+
         [Fact]
         public void AGenericClassComesBackWithItsConstraints()
         {

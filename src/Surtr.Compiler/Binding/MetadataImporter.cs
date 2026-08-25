@@ -507,6 +507,12 @@ namespace Surtr.Compiler.Binding
                     parameters[i] = _factory.DeclareTypeParameter(declared[i], symbol, i);
 
                 symbol.SetTypeParameters(parameters);
+
+                // Variance rides next to the parameters in the image; a table shorter than the
+                // parameter list (an older host that never set one) reads as all-invariant.
+                var variance = type.GenericVariance;
+                for (int i = 0; i < parameters.Length; i++)
+                    parameters[i].Variance = Translate(i < variance.Length ? variance[i] : SurtrGenericVariance.Invariant);
             }
 
             return symbol;
@@ -830,6 +836,13 @@ namespace Surtr.Compiler.Binding
             SurtrVisibility.Protected => Accessibility.Protected,
             SurtrVisibility.Internal => Accessibility.Internal,
             _ => Accessibility.Private,
+        };
+
+        private static TypeParameterVariance Translate(SurtrGenericVariance variance) => variance switch
+        {
+            SurtrGenericVariance.Covariant => TypeParameterVariance.Covariant,
+            SurtrGenericVariance.Contravariant => TypeParameterVariance.Contravariant,
+            _ => TypeParameterVariance.Invariant,
         };
 
         private static MethodDispatch Translate(SurtrMethodDispatch dispatch) => dispatch switch

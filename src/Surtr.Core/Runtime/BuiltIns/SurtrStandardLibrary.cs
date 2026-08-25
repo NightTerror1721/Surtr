@@ -118,6 +118,7 @@ namespace Surtr.Runtime.BuiltIns
             AddAbstractMethod(disposable, handles, "dispose", SurtrClassReference.Void);
 
             var iterator = DeclareInterface(module, handles, "IIterator", "T");
+            iterator.SetGenericVariance(SurtrGenericVariance.Covariant);
 
             // A cursor is disposable, which is C#'s decision about `IEnumerator<T>` and taken for
             // C#'s reason: deterministic close of a lazy sequence is a consequence of the cursor
@@ -132,12 +133,21 @@ namespace Surtr.Runtime.BuiltIns
             AddAbstractProperty(iterator, handles, "current", element);
 
             var iterable = DeclareInterface(module, handles, "IIterable", "T");
+
+            // Both cursors only produce their element - moveNext answers whether there is one,
+            // current and iterate hand them out - so `out T` is exactly the promise each keeps,
+            // and a collection of Circle iterates as a collection of Shape.
+            iterable.SetGenericVariance(SurtrGenericVariance.Covariant);
             AddAbstractMethod(iterable, handles, "iterate", iterator.SelfReference);
 
+            // compareTo and equals consume their element and produce nothing of it, so `in T`
+            // says what they are: a comparer of Shape compares Circles just as well.
             var comparable = DeclareInterface(module, handles, "IComparable", "T");
+            comparable.SetGenericVariance(SurtrGenericVariance.Contravariant);
             AddAbstractMethod(comparable, handles, "compareTo", SurtrClassReference.Integer, ("other", element));
 
             var equatable = DeclareInterface(module, handles, "IEquatable", "T");
+            equatable.SetGenericVariance(SurtrGenericVariance.Contravariant);
             AddAbstractMethod(equatable, handles, "equals", SurtrClassReference.Boolean, ("other", element));
         }
 

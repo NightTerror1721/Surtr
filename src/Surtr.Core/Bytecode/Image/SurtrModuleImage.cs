@@ -138,8 +138,16 @@ namespace Surtr.Bytecode.Image
         /// version 10 image for the same reason this reader refuses everything older than
         /// itself: there is no upgrade path, only a recompile.
         /// </para>
+        /// <para>
+        /// Version 11 adds one variance byte per generic type parameter on classes and
+        /// interfaces, written after the parameter names and before the constraint table. The
+        /// byte is the declaration-site <c>out</c>/<c>in</c> annotation (§6), and like the
+        /// constraint lists it serves only the compiler's importer, tooling and host interop -
+        /// never an execution path. A version 10 reader would read the first variance byte as
+        /// the constraint count, so it is refused like every other older format.
+        /// </para>
         /// </remarks>
-        internal const ushort FormatVersion = 10;
+        internal const ushort FormatVersion = 11;
 
         private readonly byte[] _bytes;
         private readonly string _path;
