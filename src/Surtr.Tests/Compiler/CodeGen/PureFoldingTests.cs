@@ -293,5 +293,60 @@ namespace Surtr.Tests.Compiler.CodeGen
 
             Assert.Equal(2, Int(runtime, "run"));
         }
+
+        /// <summary>
+        /// Cross-statement CSE: the same <c>@Pure</c> call across two statements of a straight-line
+        /// run is evaluated once, with the second statement reading the first's local.
+        /// </summary>
+        [Fact]
+        public void APureCallRepeatedAcrossStatementsIsEvaluatedOnce()
+        {
+            string code = Disassemble(
+                "@Pure fun big(x: float): float { return x * 2.0 + 3.0 * x - 4.0 / x; }\n"
+                    + "fun run(v: float): float { let a = big(v); let b = big(v); return a + b; }");
+
+            Assert.Equal(1, Count(code, "CallLocalModule"));
+
+            var runtime = Run(
+                "@Pure fun big(x: float): float { return x * 2.0 + 3.0 * x - 4.0 / x; }\n"
+                    + "fun run(v: float): float { let a = big(v); let b = big(v); return a + b; }");
+
+            Assert.Equal(16.0, Call(runtime, "run", SurtrValue.CreateFloat(2.0)).AsFloat);
+        }
+
+        /// <summary>
+        /// A write to a call's argument between the two occurrences kills the reuse: the second call
+        /// sees the new argument, so it has to run again.
+        /// </summary>
+        [Fact]
+        public void AWriteToAnArgumentBetweenStatementsKillsTheReuse()
+        {
+            string code = Disassemble(
+                "@Pure fun big(x: float): float { return x * 2.0 + 3.0 * x - 4.0 / x; }\n"
+                    + "fun run(v: float): float { let a = big(v); v = 5.0; let b = big(v); return a + b; }");
+
+            Assert.Equal(2, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// Control flow between the two occurrences kills the reuse: the nested block could write
+        /// an argument or skip the first evaluation's dominance, so the second call runs again.
+        /// </summary>
+        [Fact]
+        public void ControlFlowBetweenStatementsKillsTheReuse()
+        {
+            string code = Disassemble(
+                "@Pure fun big(x: float): float { return x * 2.0 + 3.0 * x - 4.0 / x; }\n"
+                    + "fun run(v: float): float\n"
+                    + "{\n"
+                    + "  let a = big(v);\n"
+                    + "  var t = 0.0;\n"
+                    + "  if (v > 0.0) { t = 1.0; }\n"
+                    + "  let b = big(v);\n"
+                    + "  return a + b + t;\n"
+                    + "}");
+
+            Assert.Equal(2, Count(code, "CallLocalModule"));
+        }
     }
 }

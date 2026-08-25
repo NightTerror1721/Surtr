@@ -3550,7 +3550,13 @@ namespace Surtr.Compiler.Binding
                 rangeChecksEnabled: _compilation.Project.BuildConstants.ContainsKey("Debug"),
                 pureFolder: _pureFolder);
 
-            var bound = binder.BindBody(body.Syntax);
+            BoundStatement bound = binder.BindBody(body.Syntax);
+
+            // §P3: cross-statement CSE of pure calls, once a foldable set exists. Runs on the bound
+            // tree before flow analysis, so the analysis sees the final shape.
+            if (_pureFolder is not null)
+                bound = CrossStatementCse.Rewrite(bound, _pureFolder.CanFold);
+
             _bound.Add(body.Method, bound);
             _bodyFiles[body.Method] = body.SourceName;
 
