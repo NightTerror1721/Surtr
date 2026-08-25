@@ -10,8 +10,9 @@ namespace Surtr.Compiler.Binding
 {
     /// <summary>
     /// Reports a declaration carrying test-family marks (§11) that cannot all be true of it at
-    /// once — <c>@TestIgnore</c> with nothing to skip, and the other combinations the runner would
-    /// have to pick between.
+    /// once — <c>@TestIgnore</c> with nothing to skip, a fixture that is also a test, a fixture
+    /// the runner could not call — and the other combinations the runner would have to pick
+    /// between.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -58,6 +59,46 @@ namespace Surtr.Compiler.Binding
                     diagnostics.ReportWarning(
                         SurtrDiagnosticCode.IgnoreWithoutTest,
                         $"'{method.Name}' carries '@TestIgnore' but not '@Test', so there is nothing to skip; the runner never discovers it.",
+                        sourceName,
+                        attribute.Span);
+                }
+
+                if (!Is(attribute, BuiltInAttributes.TestBefore) && !Is(attribute, BuiltInAttributes.TestAfter))
+                    continue;
+
+                if (!BuiltInAttributes.IsTestFixture(method))
+                    continue;
+
+                // A fixture wraps a test, so it cannot be one: the runner would have to decide
+                // whether to call it around itself.
+                if (BuiltInAttributes.IsMarkedTest(method))
+                {
+                    diagnostics.ReportWarning(
+                        SurtrDiagnosticCode.InvalidTestFixture,
+                        $"'{method.Name}' is both a test and a fixture; '@{attribute.Name}' wraps a test, so it cannot also be one.",
+                        sourceName,
+                        attribute.Span);
+
+                    continue;
+                }
+
+                // The runner calls a fixture with nothing and reads nothing back - there is no
+                // argument for a parameter to receive and nowhere for a result to go - so a
+                // signature that asks for either is a fixture that will never be called the way it
+                // was written.
+                if (method.Parameters.Count > 0)
+                {
+                    diagnostics.ReportWarning(
+                        SurtrDiagnosticCode.InvalidTestFixture,
+                        $"'{method.Name}' takes parameters, so '@{attribute.Name}' cannot call it; a fixture is invoked with no arguments.",
+                        sourceName,
+                        attribute.Span);
+                }
+                else if (!method.ReturnType.IsVoid)
+                {
+                    diagnostics.ReportWarning(
+                        SurtrDiagnosticCode.InvalidTestFixture,
+                        $"'{method.Name}' returns a value, which '@{attribute.Name}' has nowhere to put; a fixture returns nothing.",
                         sourceName,
                         attribute.Span);
                 }

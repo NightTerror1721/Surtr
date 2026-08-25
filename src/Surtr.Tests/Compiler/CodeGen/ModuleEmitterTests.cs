@@ -4764,6 +4764,194 @@ var runtime = Run(
 
         #endregion
 
+        #region Fixtures de @TestBefore/@TestAfter (§P10)
+
+        /// <summary>
+        /// Per-test, not per-suite (§P10): two tests in one class mean the fixtures run twice
+        /// each, which the counters are what separate from a once-around-the-group reading.
+        /// </summary>
+        [Fact]
+        public void FixturesRunAroundEachTestRatherThanOncePerSuite()
+        {
+            var runtime = Run(
+                "var beforeRuns: int = 0;\n"
+                    + "var afterRuns: int = 0;\n"
+                    + "public fun readBefores(): int { return beforeRuns; }\n"
+                    + "public fun readAfters(): int { return afterRuns; }\n"
+                    + "class Tests {\n"
+                    + "  @TestBefore\n"
+                    + "  public static fun setUp(): void { beforeRuns = beforeRuns + 1; }\n"
+                    + "  @TestAfter\n"
+                    + "  public static fun tearDown(): void { afterRuns = afterRuns + 1; }\n"
+                    + "  @Test(\"a\")\n"
+                    + "  public static fun a(): void { }\n"
+                    + "  @Test(\"b\")\n"
+                    + "  public static fun b(): void { }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var results = SurtrTestRunner.Run(runtime, module);
+
+            Assert.Equal(2, results.Count);
+            Assert.All(results, r => Assert.True(r.Passed));
+            Assert.Equal(2, Int(runtime, "readBefores"));
+            Assert.Equal(2, Int(runtime, "readAfters"));
+        }
+
+        /// <summary>
+        /// The guarantee that makes acquiring something in a <c>@TestBefore</c> safe: the body
+        /// never runs, the test is reported failed, and the <c>@TestAfter</c> runs anyway.
+        /// </summary>
+        [Fact]
+        public void AThrowingBeforeFailsTheTestAndStillRunsTheAfter()
+        {
+            var runtime = Run(
+                "var afterRuns: int = 0;\n"
+                    + "var bodyRuns: int = 0;\n"
+                    + "public fun readAfters(): int { return afterRuns; }\n"
+                    + "public fun readBody(): int { return bodyRuns; }\n"
+                    + "class Tests {\n"
+                    + "  @TestBefore\n"
+                    + "  public static fun setUp(): void { let x: int = 1 / 0; }\n"
+                    + "  @TestAfter\n"
+                    + "  public static fun tearDown(): void { afterRuns = afterRuns + 1; }\n"
+                    + "  @Test(\"t\")\n"
+                    + "  public static fun t(): void { bodyRuns = bodyRuns + 1; }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var failed = Assert.Single(SurtrTestRunner.Run(runtime, module));
+
+            Assert.Equal(SurtrTestOutcome.Failed, failed.Outcome);
+            Assert.False(string.IsNullOrEmpty(failed.Failure));
+            Assert.Equal(0, Int(runtime, "readBody"));
+            Assert.Equal(1, Int(runtime, "readAfters"));
+        }
+
+        [Fact]
+        public void AFixtureWrapsItsOwnClassesTestsAndNoOthers()
+        {
+            var runtime = Run(
+                "var alphaSetUps: int = 0;\n"
+                    + "public fun readAlpha(): int { return alphaSetUps; }\n"
+                    + "class Alpha {\n"
+                    + "  @TestBefore\n"
+                    + "  public static fun setUp(): void { alphaSetUps = alphaSetUps + 1; }\n"
+                    + "  @Test(\"alpha\")\n"
+                    + "  public static fun alpha(): void { }\n"
+                    + "}\n"
+                    + "class Beta {\n"
+                    + "  @Test(\"beta\")\n"
+                    + "  public static fun beta(): void { }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var results = SurtrTestRunner.Run(runtime, module);
+
+            Assert.Equal(2, results.Count);
+            Assert.All(results, r => Assert.True(r.Passed));
+            Assert.Equal(1, Int(runtime, "readAlpha"));
+        }
+
+        /// <summary>
+        /// Module scope means every test in the module, the ones inside its classes included — and
+        /// a loose <c>@Test fun</c> is discovered as an ordinary test, under the module's path for
+        /// a suite since there is no <c>@TestSuite</c> to name it (§2.5).
+        /// </summary>
+        [Fact]
+        public void AModuleLevelFixtureWrapsBothLooseAndClassTests()
+        {
+            var runtime = Run(
+                "var setUps: int = 0;\n"
+                    + "var looseRuns: int = 0;\n"
+                    + "public fun readSetUps(): int { return setUps; }\n"
+                    + "public fun readLoose(): int { return looseRuns; }\n"
+                    + "@TestBefore\n"
+                    + "public fun setUp(): void { setUps = setUps + 1; }\n"
+                    + "@Test(\"loose\")\n"
+                    + "public fun loose(): void { looseRuns = looseRuns + 1; }\n"
+                    + "class Tests {\n"
+                    + "  @Test(\"inClass\")\n"
+                    + "  public static fun inClass(): void { }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var results = SurtrTestRunner.Run(runtime, module);
+
+            Assert.Equal(2, results.Count);
+            Assert.All(results, r => Assert.True(r.Passed));
+
+            var loose = Assert.Single(results, r => r.Name == "loose");
+            Assert.Equal("game.core.Test", loose.Suite);
+            Assert.Contains(results, r => r.Name == "inClass" && r.Suite == "Tests");
+
+            Assert.Equal(2, Int(runtime, "readSetUps"));
+            Assert.Equal(1, Int(runtime, "readLoose"));
+        }
+
+        [Fact]
+        public void AnInstanceFixtureAndItsTestShareOneInstance()
+        {
+            var runtime = Run(
+                "var observed: int = 0;\n"
+                    + "public fun readObserved(): int { return observed; }\n"
+                    + "class Tests {\n"
+                    + "  public var n: int = 0;\n"
+                    + "  @TestBefore\n"
+                    + "  public fun setUp(): void { n = 41; }\n"
+                    + "  @Test(\"shares\")\n"
+                    + "  public fun shares(): void { observed = n; }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            Assert.True(Assert.Single(SurtrTestRunner.Run(runtime, module)).Passed);
+            Assert.Equal(41, Int(runtime, "readObserved"));
+        }
+
+        /// <summary>
+        /// A static test beside an instance fixture still gets an instance built for it — the
+        /// fixture has to have something to run on, and the test not needing one does not answer
+        /// that question.
+        /// </summary>
+        [Fact]
+        public void AStaticTestStillGetsAnInstanceWhenItsFixtureIsOne()
+        {
+            var runtime = Run(
+                "var touched: int = 0;\n"
+                    + "public fun readTouched(): int { return touched; }\n"
+                    + "class Tests {\n"
+                    + "  @TestBefore\n"
+                    + "  public fun setUp(): void { touched = touched + 1; }\n"
+                    + "  @Test(\"staticOne\")\n"
+                    + "  public static fun staticOne(): void { }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            Assert.True(Assert.Single(SurtrTestRunner.Run(runtime, module)).Passed);
+            Assert.Equal(1, Int(runtime, "readTouched"));
+        }
+
+        [Fact]
+        public void AnIgnoredTestRunsNoFixturesEither()
+        {
+            var runtime = Run(
+                "var setUps: int = 0;\n"
+                    + "public fun readSetUps(): int { return setUps; }\n"
+                    + "class Tests {\n"
+                    + "  @TestBefore\n"
+                    + "  public static fun setUp(): void { setUps = setUps + 1; }\n"
+                    + "  @Test\n"
+                    + "  @TestIgnore(\"pending\")\n"
+                    + "  public static fun dropped(): void { }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            Assert.True(Assert.Single(SurtrTestRunner.Run(runtime, module)).Skipped);
+            Assert.Equal(0, Int(runtime, "readSetUps"));
+        }
+
+        #endregion
+
         #region Reflexion de atributos: Type/Member (Fase 6)
 
         /// <summary>

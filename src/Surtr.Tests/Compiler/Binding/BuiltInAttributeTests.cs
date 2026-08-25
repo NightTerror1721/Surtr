@@ -836,5 +836,83 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         #endregion
+
+        #region @TestBefore/@TestAfter (§P10)
+
+        [Fact]
+        public void AFixtureIsRejectedOnAClass()
+        {
+            using var compilation = Compile(
+                "@TestBefore\n"
+                    + "class Target { }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AttributeTargetMismatch);
+        }
+
+        [Fact]
+        public void AParameterlessVoidFixtureIsAccepted()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @TestBefore\n"
+                    + "  public fun setUp(): void { }\n"
+                    + "  @TestAfter\n"
+                    + "  public static fun tearDown(): void { }\n"
+                    + "}");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.InvalidTestFixture);
+        }
+
+        [Fact]
+        public void AFixtureThatIsAlsoATestIsReported()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @Test\n"
+                    + "  @TestBefore\n"
+                    + "  public fun both(): void { }\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidTestFixture);
+            Assert.False(compilation.HasErrors, "A mixed role is a warning, not an error.");
+        }
+
+        [Fact]
+        public void AFixtureTakingParametersIsReportedBecauseNothingWouldFillThem()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @TestBefore\n"
+                    + "  public fun setUp(seed: int): void { }\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidTestFixture);
+        }
+
+        [Fact]
+        public void AFixtureReturningAValueIsReportedBecauseNothingReadsIt()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @TestAfter\n"
+                    + "  public fun tearDown(): int { return 1; }\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidTestFixture);
+        }
+
+        [Fact]
+        public void AModuleLevelFixtureIsAccepted()
+        {
+            using var compilation = Compile(
+                "@TestBefore\n"
+                    + "public fun setUp(): void { }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.InvalidTestFixture);
+        }
+
+        #endregion
     }
 }

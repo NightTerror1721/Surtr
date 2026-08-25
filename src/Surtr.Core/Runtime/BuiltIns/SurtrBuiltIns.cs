@@ -280,6 +280,21 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass TestIgnore;
 
         /// <summary>
+        /// The built-in <c>@TestBefore</c> attribute (§11): marks a method the runner calls before
+        /// each test in its scope — the tests of its own class, or every test in the module when it
+        /// is written at module level.
+        /// </summary>
+        public static readonly SurtrClass TestBefore;
+
+        /// <summary>
+        /// The built-in <c>@TestAfter</c> attribute (§11): the counterpart of
+        /// <see cref="TestBefore"/>, called after each test in its scope — including after a test
+        /// that failed, and after one whose <c>@TestBefore</c> threw, so a fixture that acquired
+        /// something always gets the chance to release it.
+        /// </summary>
+        public static readonly SurtrClass TestAfter;
+
+        /// <summary>
         /// The built-in <c>@Pure</c> attribute (§11): promises a function returns the same value
         /// for the same arguments without observable side effects. A contract for tools first; an
         /// optimizer input later.
@@ -423,6 +438,8 @@ namespace Surtr.Runtime.BuiltIns
             Test = DeclareObject("Test", Attribute);
             TestSuite = DeclareObject("TestSuite", Attribute);
             TestIgnore = DeclareObject("TestIgnore", Attribute);
+            TestBefore = DeclareObject("TestBefore", Attribute);
+            TestAfter = DeclareObject("TestAfter", Attribute);
             Pure = DeclareObject("Pure", Attribute);
             MainThread = DeclareObject("MainThread", Attribute);
             ThreadSafe = DeclareObject("ThreadSafe", Attribute);
@@ -500,7 +517,8 @@ namespace Surtr.Runtime.BuiltIns
             DeclareNamedAttribute(BuilderFor(Test, handles));
             DeclareNamedAttribute(BuilderFor(TestSuite, handles));
             DeclareReasonAttribute(BuilderFor(TestIgnore, handles));
-            // Value, Pure, MainThread and ThreadSafe carry nothing: their meaning is the mark.
+            // Value, Pure, MainThread, ThreadSafe, TestBefore and TestAfter carry nothing: their
+            // meaning is the mark.
             SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
 
             // After Attribute, since Type.attributes()/Member.attributes() both name it, and

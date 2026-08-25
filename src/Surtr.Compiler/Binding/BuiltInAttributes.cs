@@ -53,6 +53,12 @@ namespace Surtr.Compiler.Binding
         /// <summary>The class name <c>@TestIgnore(reason)</c> resolves to.</summary>
         internal const string TestIgnore = "TestIgnore";
 
+        /// <summary>The class name <c>@TestBefore</c> resolves to — a per-test fixture.</summary>
+        internal const string TestBefore = "TestBefore";
+
+        /// <summary>The class name <c>@TestAfter</c> resolves to — a per-test fixture.</summary>
+        internal const string TestAfter = "TestAfter";
+
         /// <summary>The class name <c>@Pure</c> resolves to.</summary>
         internal const string Pure = "Pure";
 
@@ -79,6 +85,8 @@ namespace Surtr.Compiler.Binding
                 [Test] = SurtrAttributeTargets.Method,
                 [TestSuite] = SurtrAttributeTargets.Class,
                 [TestIgnore] = SurtrAttributeTargets.Method,
+                [TestBefore] = SurtrAttributeTargets.Method,
+                [TestAfter] = SurtrAttributeTargets.Method,
                 [Pure] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property,
                 [MainThread] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property | SurtrAttributeTargets.Class,
                 [ThreadSafe] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Class,
@@ -147,6 +155,14 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>Whether this method is marked <c>@TestIgnore</c>: discovered, reported, not run.</summary>
         internal static bool IsTestIgnored(Symbol symbol) => Find(symbol, TestIgnore) is not null;
+
+        /// <summary>
+        /// Whether this method is a per-test fixture — <c>@TestBefore</c> or <c>@TestAfter</c>.
+        /// The two are one question wherever the rules are the same for both, which is everywhere
+        /// except which side of the test the runner calls them on.
+        /// </summary>
+        internal static bool IsTestFixture(Symbol symbol)
+            => Find(symbol, TestBefore) is not null || Find(symbol, TestAfter) is not null;
 
         /// <summary>The message an <c>@NoDiscard</c> mark carries, quoted when a result is dropped.</summary>
         internal static string? NoDiscardReason(Symbol symbol) => Reason(Find(symbol, NoDiscard));
