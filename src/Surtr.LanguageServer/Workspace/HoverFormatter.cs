@@ -167,9 +167,47 @@ namespace Surtr.LanguageServer.Workspace
             if (implements is not null)
                 builder.Append(Break).Append(implements);
 
+            string? throws = ThrowsLine(method);
+            if (throws is not null)
+                builder.Append(Break).Append(throws);
+
             builder.Append(Break).Append(ExtensionOrContainingLabel(method.ExtensionTargetType, method.ContainingSymbol, "method", "function"));
             return builder.ToString();
         }
+
+        /// <summary>
+        /// "throws `ArgumentException`, `FormatException`" for a method carrying §11's repeatable
+        /// <c>@Throws</c> marks, in the order they were written.
+        /// </summary>
+        /// <remarks>
+        /// The only attribute hover renders, and deliberately so: what a function can raise is
+        /// signature-level information a caller has to act on, where every other mark in the
+        /// vocabulary says something about the declaration rather than about how to call it. Read
+        /// off the uses directly rather than through the compiler's own recognition helper, which
+        /// is internal to it — the class name is ABI either way.
+        /// </remarks>
+        private static string? ThrowsLine(MethodSymbol method)
+        {
+            var attributes = method.Attributes;
+            if (attributes.Count == 0)
+                return null;
+
+            List<string>? named = null;
+
+            for (int i = 0; i < attributes.Count; i++)
+            {
+                if (!string.Equals(attributes[i].Type.Name, ThrowsAttributeName, StringComparison.Ordinal))
+                    continue;
+
+                if (attributes[i].Arguments.Count > 0 && attributes[i].Arguments[0] is string name && name.Length > 0)
+                    (named ??= new List<string>()).Add("`" + name + "`");
+            }
+
+            return named is null ? null : "throws " + string.Join(", ", named);
+        }
+
+        /// <summary>The §11 attribute class whose marks <see cref="ThrowsLine"/> reads.</summary>
+        private const string ThrowsAttributeName = "Throws";
 
         /// <summary>
         /// "implements `IFoo.bar`" for every interface a method satisfies without necessarily saying

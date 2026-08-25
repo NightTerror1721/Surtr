@@ -5072,6 +5072,45 @@ var runtime = Run(
 
         #endregion
 
+        #region @Throws en imagen (§P12)
+
+        /// <summary>
+        /// <c>@Throws</c> is the one built-in written more than once on a declaration (§P12), so
+        /// what the image has to carry is a list rather than a value: both uses materialize, each
+        /// with its own <c>name</c>, in the order they were written.
+        /// </summary>
+        [Fact]
+        public void BothThrowsUsesSurviveTheImageAsSeparateInstances()
+        {
+            var emitter = Build(
+                "class Parser {\n"
+                    + "  @Throws(\"ArgumentException\")\n"
+                    + "  @Throws(\"FormatException\")\n"
+                    + "  public fun parse(text: string): int { return 0; }\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            Assert.True(module.FindClass("Parser")!.TryGetMethods("parse", out var overloads));
+
+            var named = new List<string>();
+            foreach (var usage in overloads[0].Attributes)
+            {
+                if (!ReferenceEquals(usage.AttributeType.ResolvedClass, SurtrBuiltIns.Throws))
+                    continue;
+
+                var instance = runtime.Resolve<SurtrInstance>(SurtrValue.CreateReference(usage.Instance))!;
+                named.Add(runtime.Resolve<SurtrString>(instance[0])!.Text);
+            }
+
+            Assert.Equal(new[] { "ArgumentException", "FormatException" }, named);
+        }
+
+        #endregion
+
         #region Reflexion de atributos: Type/Member (Fase 6)
 
         /// <summary>

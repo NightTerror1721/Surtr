@@ -2974,7 +2974,10 @@ namespace Surtr.Compiler.Binding
             // that says so, and it has to be a second one: a target carries no marks until the loop
             // above has run over every one of its attributes.
             foreach (var attribute in _attributes)
+            {
                 AttributeRoleCheck.Verify(attribute.Target, attribute.Syntax, attribute.SourceName, _diagnostics);
+                CheckThrowsTypes(attribute);
+            }
 
             // Now that the marks exist, the declaration-signature uses queued during the member
             // phase can be judged: an @Obsolete type referenced from a non-obsolete declaration
@@ -3251,6 +3254,89 @@ namespace Surtr.Compiler.Binding
 
             if (uses.Count > 0)
                 binding.Target.Attributes = uses;
+        }
+
+        /// <summary>
+        /// Checks that every <c>@Throws("Name")</c> on this declaration names an exception class.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The mark is documentation, so a stale name is a warning rather than an error — but one
+        /// worth having, because nothing else would ever read it: an argument is a string literal,
+        /// which resolves against no scope on its own, so a renamed exception leaves the mark
+        /// pointing at a name that no longer exists and nothing to say so.
+        /// </para>
+        /// <para>
+        /// Resolution goes through <c>TryResolveTypeName</c> rather than <c>Resolve</c> precisely
+        /// because a failure here must not report an error of its own; the name is split on '.' so
+        /// a qualified one resolves the way §2.6 reads any other. The root is looked up the same
+        /// way, and a compilation where <c>Exception</c> itself does not resolve simply skips the
+        /// check rather than accusing every mark.
+        /// </para>
+        /// </remarks>
+        private void CheckThrowsTypes(AttributeBinding binding)
+        {
+            if (binding.Target.Attributes.Count == 0)
+                return;
+
+            for (int i = 0; i < binding.Syntax.Count; i++)
+            {
+                var written = binding.Syntax[i];
+                if (!string.Equals(written.Name, BuiltInAttributes.Throws, StringComparison.Ordinal))
+                    continue;
+
+                if (written.Arguments.Count == 0
+                    || !Constants.TryEvaluate(written.Arguments[0], out object? value)
+                    || value is not string name
+                    || name.Length == 0)
+                {
+                    continue;
+                }
+
+                var span = written.Arguments[0].Span;
+
+                if (!_resolver.TryResolveTypeName(name.Split('.'), binding.Scope, span, out var named))
+                {
+                    _diagnostics.ReportWarning(
+                        SurtrDiagnosticCode.ThrowsTypeNotException,
+                        $"'@Throws' names '{name}', which is not a type in scope here.",
+                        binding.SourceName,
+                        span);
+
+                    continue;
+                }
+
+                if (!_resolver.TryResolveTypeName(ExceptionRootPath, binding.Scope, span, out var root))
+                    continue;
+
+                if (!DescendsFrom(named, root))
+                {
+                    _diagnostics.ReportWarning(
+                        SurtrDiagnosticCode.ThrowsTypeNotException,
+                        $"'@Throws' names '{name}', which does not descend from 'Exception'; only an exception can be thrown (§9).",
+                        binding.SourceName,
+                        span);
+                }
+            }
+        }
+
+        /// <summary>The one-segment path naming §9's exception root, allocated once.</summary>
+        private static readonly string[] ExceptionRootPath = new[] { "Exception" };
+
+        /// <summary>
+        /// Whether <paramref name="type"/> is <paramref name="root"/> or extends it. Reference
+        /// identity is enough at each step: every type is interned, so two symbols for one type do
+        /// not exist.
+        /// </summary>
+        private static bool DescendsFrom(NamedTypeSymbol type, NamedTypeSymbol root)
+        {
+            for (NamedTypeSymbol? walk = type; walk is not null; walk = walk.BaseType)
+            {
+                if (ReferenceEquals(walk, root))
+                    return true;
+            }
+
+            return false;
         }
 
         /// <summary>

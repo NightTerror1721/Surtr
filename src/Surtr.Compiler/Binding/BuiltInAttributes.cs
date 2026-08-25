@@ -62,6 +62,9 @@ namespace Surtr.Compiler.Binding
         /// <summary>The class name <c>@Benchmark</c> resolves to.</summary>
         internal const string Benchmark = "Benchmark";
 
+        /// <summary>The class name <c>@Throws("Name")</c> resolves to — repeatable.</summary>
+        internal const string Throws = "Throws";
+
         /// <summary>The class name <c>@Pure</c> resolves to.</summary>
         internal const string Pure = "Pure";
 
@@ -91,6 +94,7 @@ namespace Surtr.Compiler.Binding
                 [TestBefore] = SurtrAttributeTargets.Method,
                 [TestAfter] = SurtrAttributeTargets.Method,
                 [Benchmark] = SurtrAttributeTargets.Method,
+                [Throws] = SurtrAttributeTargets.Method,
                 [Pure] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property,
                 [MainThread] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property | SurtrAttributeTargets.Class,
                 [ThreadSafe] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Class,
@@ -170,6 +174,36 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>Whether this method is marked <c>@Benchmark</c>: run repeatedly and timed.</summary>
         internal static bool IsBenchmark(Symbol symbol) => Find(symbol, Benchmark) is not null;
+
+        /// <summary>
+        /// Every exception class name this declaration's <c>@Throws</c> marks name, in the order
+        /// they were written, or an empty list when it carries none.
+        /// </summary>
+        /// <remarks>
+        /// The one built-in that is read with a collector rather than with <see cref="Find"/>:
+        /// <c>@Throws</c> is repeatable, and the first use is only ever half the answer. A mark
+        /// whose argument was left out contributes nothing rather than a null entry - the class
+        /// still has its <c>name</c> field, it is simply empty.
+        /// </remarks>
+        internal static IReadOnlyList<string> AllThrows(Symbol symbol)
+        {
+            var attributes = symbol.Attributes;
+            if (attributes.Count == 0)
+                return System.Array.Empty<string>();
+
+            List<string>? named = null;
+
+            for (int i = 0; i < attributes.Count; i++)
+            {
+                if (!string.Equals(attributes[i].Type.Name, Throws, StringComparison.Ordinal))
+                    continue;
+
+                if (attributes[i].Arguments.Count > 0 && attributes[i].Arguments[0] is string name)
+                    (named ??= new List<string>()).Add(name);
+            }
+
+            return (IReadOnlyList<string>?)named ?? System.Array.Empty<string>();
+        }
 
         /// <summary>The message an <c>@NoDiscard</c> mark carries, quoted when a result is dropped.</summary>
         internal static string? NoDiscardReason(Symbol symbol) => Reason(Find(symbol, NoDiscard));

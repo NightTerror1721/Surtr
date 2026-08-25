@@ -967,5 +967,101 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         #endregion
+
+        #region @Throws (§P12)
+
+        [Fact]
+        public void ThrowsIsRejectedOnAField()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @Throws(\"ArgumentException\")\n"
+                    + "  public let n: int = 0;\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AttributeTargetMismatch);
+        }
+
+        [Fact]
+        public void ThrowsNamingALibraryExceptionIsQuiet()
+        {
+            using var compilation = Compile(
+                "@Throws(\"ArgumentException\")\n"
+                    + "public fun parse(text: string): int { return 0; }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.ThrowsTypeNotException);
+        }
+
+        [Fact]
+        public void ThrowsNamingTheRootItselfIsQuiet()
+        {
+            using var compilation = Compile(
+                "@Throws(\"Exception\")\n"
+                    + "public fun risky(): void { }");
+
+            AssertNoReports(compilation, SurtrDiagnosticCode.ThrowsTypeNotException);
+        }
+
+        [Fact]
+        public void ThrowsNamingAUserExceptionIsQuiet()
+        {
+            using var compilation = Compile(
+                "public class ParseFailed : Exception {\n"
+                    + "  public constructor(message: string) : super(message) { }\n"
+                    + "}\n"
+                    + "@Throws(\"ParseFailed\")\n"
+                    + "public fun parse(): void { }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.ThrowsTypeNotException);
+        }
+
+        [Fact]
+        public void ThrowsNamingSomethingThatIsNotATypeWarns()
+        {
+            using var compilation = Compile(
+                "@Throws(\"NoSuchException\")\n"
+                    + "public fun risky(): void { }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.ThrowsTypeNotException);
+            Assert.False(compilation.HasErrors, "A stale name is documentation gone bad, not a build failure.");
+        }
+
+        [Fact]
+        public void ThrowsNamingATypeThatIsNoExceptionWarns()
+        {
+            using var compilation = Compile(
+                "public class Vec2 { }\n"
+                    + "@Throws(\"Vec2\")\n"
+                    + "public fun risky(): void { }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.ThrowsTypeNotException);
+        }
+
+        [Fact]
+        public void TwoThrowsOnOneDeclarationAreBothRecorded()
+        {
+            using var compilation = Compile(
+                "@Throws(\"ArgumentException\")\n"
+                    + "@Throws(\"FormatException\")\n"
+                    + "public fun parse(): void { }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.ThrowsTypeNotException);
+        }
+
+        [Fact]
+        public void OnlyTheStaleOneOfTwoThrowsIsReported()
+        {
+            using var compilation = Compile(
+                "@Throws(\"ArgumentException\")\n"
+                    + "@Throws(\"Gone\")\n"
+                    + "public fun parse(): void { }");
+
+            Assert.Single(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.ThrowsTypeNotException);
+        }
+
+        #endregion
     }
 }

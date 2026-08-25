@@ -307,6 +307,13 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass Benchmark;
 
         /// <summary>
+        /// The built-in <c>@Throws("Name")</c> attribute (§11): documents one exception class a
+        /// function can raise. Repeatable — a function that can throw three things carries three
+        /// marks, each its own instance, since one <c>name</c> field holds one name.
+        /// </summary>
+        public static readonly SurtrClass Throws;
+
+        /// <summary>
         /// The built-in <c>@Pure</c> attribute (§11): promises a function returns the same value
         /// for the same arguments without observable side effects. A contract for tools first; an
         /// optimizer input later.
@@ -453,6 +460,7 @@ namespace Surtr.Runtime.BuiltIns
             TestBefore = DeclareObject("TestBefore", Attribute);
             TestAfter = DeclareObject("TestAfter", Attribute);
             Benchmark = DeclareObject("Benchmark", Attribute);
+            Throws = DeclareObject("Throws", Attribute);
             Pure = DeclareObject("Pure", Attribute);
             MainThread = DeclareObject("MainThread", Attribute);
             ThreadSafe = DeclareObject("ThreadSafe", Attribute);
@@ -530,6 +538,7 @@ namespace Surtr.Runtime.BuiltIns
             DeclareNamedAttribute(BuilderFor(Test, handles));
             DeclareNamedAttribute(BuilderFor(TestSuite, handles));
             DeclareReasonAttribute(BuilderFor(TestIgnore, handles));
+            DeclareNamedAttribute(BuilderFor(Throws, handles));
             // Value, Pure, MainThread, ThreadSafe, TestBefore, TestAfter and Benchmark carry
             // nothing: their meaning is the mark.
             SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
