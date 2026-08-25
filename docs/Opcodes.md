@@ -8,14 +8,18 @@ documentation on each member; this file is that content laid out for reading, pl
 only make sense across the whole set. `docs/VM-Plan.md` has the *why* behind the interpreter's
 shape, and `docs/Module-Format.md` describes the file these bytes live in.
 
-**247 opcodes are defined, spanning `0x00` through `0xFC`.** Six values inside that span —
-`0x2C`–`0x2F` (the old `Ldg`/`LdgX`/`Stg`/`StgX`) and `0xAA`–`0xAB` (the old
-`CallGlobalNative`/`CallGlobalNativeX`) — are **retired**: they used to cover the host-globals
-mechanism, which is gone now that a `native` member (module-level or on a class) is an ordinary
-member reached through the same tables and call opcodes as any other. A retired value is never
+**240 opcodes are defined, spanning `0x00` through `0xFC`.** Thirteen values inside that span —
+`0x02`–`0x04` (the old `Dup2`/`Swap`/`Swap2`), `0x2C`–`0x2F` (the old
+`Ldg`/`LdgX`/`Stg`/`StgX`), `0x41`–`0x42` (the old `Pow`/`FPow`), `0xAA`–`0xAB` (the old
+`CallGlobalNative`/`CallGlobalNativeX`), `0xCA` (the old `ArrNIn`) and `0xDA` (the old
+`DictNIn`) — are **retired**: the host-globals mechanism they once covered is gone now that a
+`native` member is an ordinary member reached through the same tables and call opcodes as any
+other, and the rest were never emitted by any lowering — no compiler pass needs a stack shuffle,
+the language has no exponentiation operator (`pow` is a native library function), and a negated
+membership test lowers to the plain test plus `Inv`. A retired value is never
 reused — reusing one would make an old module silently execute a different instruction — so those
-six numbers simply have no opcode and never will. The 3 values `0xFD`–`0xFF`, plus the six retired
-ones, are what is free.
+thirteen numbers simply have no opcode and never will. The 3 values `0xFD`–`0xFF`, plus the
+thirteen retired ones, are what is free.
 
 ---
 
@@ -196,14 +200,12 @@ Zero, and the only value that was never going to be anything else: a zeroed byte
 
 ## Stack Operations
 
-Pure shuffling: no operand is interpreted, no tag is inspected. `Dup`/`Swap` come in single and double forms because a two-slot pattern is what the emitter meets when it has to keep a receiver under an argument, and doing it with two single-slot shuffles would cost two dispatches instead of one.
+Pure shuffling: no operand is interpreted, no tag is inspected. (`Dup2`, `Swap` and `Swap2` used to
+live here; nothing ever emitted them, so their values are retired.)
 
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
 | `0x01` | `Dup` | `opcode(1)` · 1 byte | `..., value -> ..., value, value` | Duplicates the value on top of the stack. |
-| `0x02` | `Dup2` | `opcode(1)` · 1 byte | `..., a, b -> ..., a, b, a, b` | Duplicates the top two values, preserving their order. |
-| `0x03` | `Swap` | `opcode(1)` · 1 byte | `..., a, b -> ..., b, a` | Exchanges the top two values. |
-| `0x04` | `Swap2` | `opcode(1)` · 1 byte | `..., a, b, c, d -> ..., c, d, a, b` | Exchanges the top two pairs of values, keeping each pair's internal order. |
 | `0x05` | `Pop` | `opcode(1)` · 1 byte | `..., value -> ...` | Discards the value on top of the stack. How a call's unused return value is dropped in statement position. |
 
 ## Constants and Literals
@@ -297,8 +299,11 @@ Integer and float forms of each operation, paired. They are separate opcodes bec
 | `0x3E` | `FDiv` | `opcode(1)` · 1 byte | `..., a, b -> ..., a / b` | Floating-point division. Division by zero follows IEEE 754 and yields an infinity or NaN rather than trapping. |
 | `0x3F` | `Mod` | `opcode(1)` · 1 byte | `..., a, b -> ..., a % b` | Integer remainder. As with `Div`, a zero divisor still needs a defined behaviour. |
 | `0x40` | `FMod` | `opcode(1)` · 1 byte | `..., a, b -> ..., a % b` | Floating-point remainder. |
-| `0x41` | `Pow` | `opcode(1)` · 1 byte | `..., a, b -> ..., a ** b` | Integer exponentiation. Raises the deeper operand to the power of the top one. A negative exponent has no integer result and needs a defined behaviour. |
-| `0x42` | `FPow` | `opcode(1)` · 1 byte | `..., a, b -> ..., a ** b` | Floating-point exponentiation. |
+
+(`Pow` and `FPow` used to live here; the language has no exponentiation operator - `pow` is a
+native library function reached through an ordinary call - so nothing could emit them and their
+values are retired.)
+
 | `0x43` | `Neg` | `opcode(1)` · 1 byte | `..., a -> ..., -a` | Integer negation. |
 | `0x44` | `FNeg` | `opcode(1)` · 1 byte | `..., a -> ..., -a` | Floating-point negation. Flips the sign bit, so it also turns zero into negative zero. |
 
@@ -541,7 +546,10 @@ Allocation carries the whole parameterised type as one immediate, so a single in
 | `0xC7` | `ArrClear` | `opcode(1)` · 1 byte | `..., arr -> ...` | Drops every element of an array. |
 | `0xC8` | `ArrIndexOf` | `opcode(1)` · 1 byte | `..., arr, value -> ..., int` | Pushes the index of the first element equal to a value, or `-1`. Equality is the runtime's value semantics, not raw bits, so two distinct string objects holding the same text match. Linear scan. |
 | `0xC9` | `ArrIn` | `opcode(1)` · 1 byte | `..., arr, value -> ..., bool` | Tests whether an array contains a value. Linear scan, so cost grows with the array. |
-| `0xCA` | `ArrNIn` | `opcode(1)` · 1 byte | `..., arr, value -> ..., bool` | Tests whether an array does not contain a value. Exists as its own opcode so the negated form costs no extra instruction. |
+
+(`ArrNIn` used to live here; a negated membership test lowers to the plain test plus `Inv`, so
+nothing ever emitted it and its value is retired. The same applies to the dictionary's old
+`DictNIn` below.)
 
 ## Tuple Operations
 
@@ -571,7 +579,6 @@ Keyed under the runtime's own value comparer, so two distinct string objects hol
 | `0xD7` | `DictKeys` | `opcode(1) typeIdx(2)` · 3 bytes | `..., dict -> ..., array` | Collects a dictionary's keys into a new array of the type at `typeIdx`. The array's own type has to be named here because it cannot be derived at run time - the dictionary knows `DIS`, but building `AI` from it would mean parsing a descriptor on every call. In the dictionary's own iteration order. |
 | `0xD8` | `DictValues` | `opcode(1) typeIdx(2)` · 3 bytes | `..., dict -> ..., array` | Collects a dictionary's values into a new array of the type at `typeIdx`. In the same order as `DictKeys`, so the two line up element for element. |
 | `0xD9` | `DictIn` | `opcode(1)` · 1 byte | `..., dict, key -> ..., bool` | Tests whether a dictionary holds a key. |
-| `0xDA` | `DictNIn` | `opcode(1)` · 1 byte | `..., dict, key -> ..., bool` | Tests whether a dictionary does not hold a key. |
 
 ## Range Operations
 

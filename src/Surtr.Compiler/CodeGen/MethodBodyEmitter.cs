@@ -2192,7 +2192,7 @@ namespace Surtr.Compiler.CodeGen
                 return true;
             }
 
-            Code.BoxAs(_context.Module.Type(Descriptors.EmitBoxedForm(valueClass)));
+            Code.BoxAs(Descriptors.EmitBoxedForm(valueClass));
             return true;
         }
 

@@ -133,15 +133,6 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Emits <see cref="OpCode.Dup"/>.</summary>
         public SurtrCodeEmitter Dup() => Simple(OpCode.Dup, 1, 2);
 
-        /// <summary>Emits <see cref="OpCode.Dup2"/>.</summary>
-        public SurtrCodeEmitter Dup2() => Simple(OpCode.Dup2, 2, 4);
-
-        /// <summary>Emits <see cref="OpCode.Swap"/>.</summary>
-        public SurtrCodeEmitter Swap() => Simple(OpCode.Swap, 2, 2);
-
-        /// <summary>Emits <see cref="OpCode.Swap2"/>.</summary>
-        public SurtrCodeEmitter Swap2() => Simple(OpCode.Swap2, 4, 4);
-
         /// <summary>Emits <see cref="OpCode.PushNull"/>.</summary>
         public SurtrCodeEmitter PushNull() => Simple(OpCode.PushNull, 0, 1);
 
@@ -332,12 +323,6 @@ namespace Surtr.Bytecode.Emit
 
         /// <summary>Emits <see cref="OpCode.FMod"/>.</summary>
         public SurtrCodeEmitter FMod() => Simple(OpCode.FMod, 2, 1);
-
-        /// <summary>Emits <see cref="OpCode.Pow"/>.</summary>
-        public SurtrCodeEmitter Pow() => Simple(OpCode.Pow, 2, 1);
-
-        /// <summary>Emits <see cref="OpCode.FPow"/>.</summary>
-        public SurtrCodeEmitter FPow() => Simple(OpCode.FPow, 2, 1);
 
         /// <summary>Emits <see cref="OpCode.Neg"/>.</summary>
         public SurtrCodeEmitter Neg() => Simple(OpCode.Neg, 1, 1);
@@ -625,9 +610,6 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Emits <see cref="OpCode.ArrIn"/>.</summary>
         public SurtrCodeEmitter ArrIn() => Simple(OpCode.ArrIn, 2, 1);
 
-        /// <summary>Emits <see cref="OpCode.ArrNIn"/>.</summary>
-        public SurtrCodeEmitter ArrNIn() => Simple(OpCode.ArrNIn, 2, 1);
-
         #endregion
 
         #region Tuple Operations
@@ -698,9 +680,6 @@ namespace Surtr.Bytecode.Emit
 
         /// <summary>Emits <see cref="OpCode.DictIn"/>.</summary>
         public SurtrCodeEmitter DictIn() => Simple(OpCode.DictIn, 2, 1);
-
-        /// <summary>Emits <see cref="OpCode.DictNIn"/>.</summary>
-        public SurtrCodeEmitter DictNIn() => Simple(OpCode.DictNIn, 2, 1);
 
         #endregion
 
@@ -842,10 +821,20 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter JPNN(SurtrLabel target) => Branch(OpCode.JPNN, OpCode.JPNNX, target, 1, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPA"/>: branches when a nullable primitive holds nothing.</summary>
-        public SurtrCodeEmitter JPA(SurtrLabel target) => Branch(OpCode.JPA, OpCode.JPAX, target, 1, SurtrJumpWidth.Short, false);
+        /// <remarks>
+        /// The width defaults to auto so relaxation can widen a too-far target to
+        /// <see cref="OpCode.JPAX"/>; pass a width to pin the encoding.
+        /// </remarks>
+        public SurtrCodeEmitter JPA(SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
+            => Branch(OpCode.JPA, OpCode.JPAX, target, 1, width, false);
 
         /// <summary>Emits <see cref="OpCode.JPNA"/>: branches when a nullable primitive holds a value.</summary>
-        public SurtrCodeEmitter JPNA(SurtrLabel target) => Branch(OpCode.JPNA, OpCode.JPNAX, target, 1, SurtrJumpWidth.Short, false);
+        /// <remarks>
+        /// The width defaults to auto so relaxation can widen a too-far target to
+        /// <see cref="OpCode.JPNAX"/>; pass a width to pin the encoding.
+        /// </remarks>
+        public SurtrCodeEmitter JPNA(SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
+            => Branch(OpCode.JPNA, OpCode.JPNAX, target, 1, width, false);
 
         /// <summary>Emits <see cref="OpCode.JP"/>.</summary>
         public SurtrCodeEmitter JP(SurtrLabel target) => Branch(OpCode.JP, OpCode.JPX, target, 0, SurtrJumpWidth.Short, true);

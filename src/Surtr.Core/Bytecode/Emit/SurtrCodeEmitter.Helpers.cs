@@ -232,6 +232,18 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Pushes the <c>Type</c> value for the named type.</summary>
         public SurtrCodeEmitter LoadTypeOf(SurtrClassReference type) => LoadTypeOf(_module.Type(type));
 
+        /// <summary>Boxes the top value as an instance of the named class, in the narrowest encoding that reaches it.</summary>
+        /// <remarks>
+        /// The tier-two <see cref="BoxAs(SurtrTypeToken)"/> stays literal on purpose; this is what
+        /// a caller that names the class rather than the slot should reach for, so a type table
+        /// past 65536 entries widens instead of throwing.
+        /// </remarks>
+        public SurtrCodeEmitter BoxAs(SurtrClassReference type)
+        {
+            SurtrTypeToken token = _module.Type(type);
+            return TypeIndex(token) <= ushort.MaxValue ? BoxAs(token) : BoxAsX(token);
+        }
+
         /// <summary>Pushes the <c>Module</c> value for another module, in the narrowest encoding that reaches it.</summary>
         public SurtrCodeEmitter LoadModuleOf(SurtrModuleToken module)
             => ModuleIndex(module) <= ushort.MaxValue ? LoadModule(module) : LoadModuleX(module);
@@ -304,10 +316,6 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Takes the remainder of the deeper operand divided by the top one.</summary>
         public SurtrCodeEmitter Remainder(SurtrValueTypeCode operandType)
             => operandType == SurtrValueTypeCode.Float ? FMod() : RequireIntegral(operandType, "Mod").Mod();
-
-        /// <summary>Raises the deeper operand to the power of the top one.</summary>
-        public SurtrCodeEmitter Power(SurtrValueTypeCode operandType)
-            => operandType == SurtrValueTypeCode.Float ? FPow() : RequireIntegral(operandType, "Pow").Pow();
 
         /// <summary>Negates the top operand.</summary>
         public SurtrCodeEmitter Negate(SurtrValueTypeCode operandType)

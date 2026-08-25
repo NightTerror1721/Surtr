@@ -311,19 +311,6 @@ namespace Surtr.Tests.VM
             Assert.True(Run(runtime, builder).AsBool);
         }
 
-        [Fact]
-        public void ArrNIn_IsTrueWhenAbsent()
-        {
-            using var runtime = new SurtrRuntime();
-            var array = runtime.NewArray(SurtrClassReference.Array(SurtrClassReference.Integer));
-            array.Add(SurtrValue.CreateInt(5));
-
-            var builder = new BytecodeBuilder();
-            builder.LoadReference(array).Op(OpCode.PushI32).I32(6).Op(OpCode.ArrNIn).Op(OpCode.ReturnValue);
-
-            Assert.True(Run(runtime, builder).AsBool);
-        }
-
         #endregion
     }
 }

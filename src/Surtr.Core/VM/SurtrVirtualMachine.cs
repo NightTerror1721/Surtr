@@ -1211,31 +1211,6 @@ namespace Surtr.VM
                     sp++;
                     goto Dispatch;
 
-                case OpCode.Dup2:
-                    *sp = *(sp - 2);
-                    *(sp + 1) = *(sp - 1);
-                    sp += 2;
-                    goto Dispatch;
-
-                case OpCode.Swap:
-                {
-                    SurtrRawValue top = *(sp - 1);
-                    *(sp - 1) = *(sp - 2);
-                    *(sp - 2) = top;
-                    goto Dispatch;
-                }
-
-                case OpCode.Swap2:
-                {
-                    SurtrRawValue first = *(sp - 4);
-                    SurtrRawValue second = *(sp - 3);
-                    *(sp - 4) = *(sp - 2);
-                    *(sp - 3) = *(sp - 1);
-                    *(sp - 2) = first;
-                    *(sp - 1) = second;
-                    goto Dispatch;
-                }
-
                 case OpCode.PushNull:
                     *sp++ = SurtrValue.TagMaskReference;
                     goto Dispatch;
@@ -1434,41 +1409,6 @@ namespace Surtr.VM
                 {
                     double right = *(double*)(--sp);
                     *(double*)(sp - 1) = *(double*)(sp - 1) % right;
-                    goto Dispatch;
-                }
-
-                case OpCode.Pow:
-                {
-                    int exponent = (int)*--sp;
-                    if (exponent < 0)
-                    {
-                        current.IP = ip;
-                        _sp = sp;
-                        throw NegativeExponent(exponent);
-                    }
-
-                    // Exponentiation by squaring, written out rather than calling Math.Pow and
-                    // rounding back: the double round-trip loses exactness past 2^53 and costs a
-                    // call the JIT cannot inline.
-                    int factor = (int)*(sp - 1);
-                    int result = 1;
-                    while (exponent != 0)
-                    {
-                        if ((exponent & 1) != 0)
-                            result *= factor;
-
-                        factor *= factor;
-                        exponent >>= 1;
-                    }
-
-                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)result;
-                    goto Dispatch;
-                }
-
-                case OpCode.FPow:
-                {
-                    double exponent = *(double*)(--sp);
-                    *(double*)(sp - 1) = Math.Pow(*(double*)(sp - 1), exponent);
                     goto Dispatch;
                 }
 
@@ -2309,14 +2249,6 @@ namespace Surtr.VM
                     *(sp - 1) = SurtrValue.TagMaskBool | (array.IndexOf(needle, comparer) >= 0 ? 1UL : 0UL);
                     goto Dispatch;
                 }
-
-                case OpCode.ArrNIn:
-                {
-                    SurtrValue needle = SurtrValue.FromRaw(*--sp);
-                    var array = (SurtrArray)entities[(SurtrRef)(*(sp - 1))]!;
-                    *(sp - 1) = SurtrValue.TagMaskBool | (array.IndexOf(needle, comparer) < 0 ? 1UL : 0UL);
-                    goto Dispatch;
-                }
                 #endregion
 
                 #region Tuple Operations
@@ -2570,20 +2502,6 @@ namespace Surtr.VM
                         : dictionary.ContainsKeyGeneral(SurtrValue.FromRaw(rawKey));
 
                     *(sp - 1) = SurtrValue.TagMaskBool | (contains ? 1UL : 0UL);
-                    goto Dispatch;
-                }
-
-                case OpCode.DictNIn:
-                {
-                    SurtrRawValue rawKey = *--sp;
-                    var dictionary = (SurtrDictionary)entities[(SurtrRef)(*(sp - 1))]!;
-                    var ints = dictionary.IntEntries;
-
-                    bool contains = ints != null && (rawKey & SurtrValue.TagMask) == SurtrValue.TagMaskInt
-                        ? ints.ContainsKey((SurtrInt)rawKey)
-                        : dictionary.ContainsKeyGeneral(SurtrValue.FromRaw(rawKey));
-
-                    *(sp - 1) = SurtrValue.TagMaskBool | (contains ? 0UL : 1UL);
                     goto Dispatch;
                 }
                 #endregion
@@ -4471,10 +4389,6 @@ namespace Surtr.VM
             => new SurtrExecutionException(right == 0
                 ? "Integer division by zero."
                 : $"Integer division of {left} by {right} has no representable result.", SurtrBuiltIns.DivideByZeroException);
-
-        [MethodImpl(MethodImplOptions.NoInlining)]
-        private static SurtrExecutionException NegativeExponent(int exponent)
-            => new SurtrExecutionException($"Integer exponentiation needs a non-negative exponent, but was given {exponent}.", SurtrBuiltIns.ArgumentException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException MissingKey()

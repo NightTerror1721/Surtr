@@ -83,27 +83,6 @@ namespace Surtr.Tests.VM
         }
 
         [Fact]
-        public void Pow_ComputesIntegerExponentiation()
-        {
-            var builder = PushInts(2, 10).Op(OpCode.Pow).Op(OpCode.ReturnValue);
-            Assert.Equal(1024, Run(builder).AsInt);
-        }
-
-        [Fact]
-        public void Pow_ZeroExponent_IsOne()
-        {
-            var builder = PushInts(5, 0).Op(OpCode.Pow).Op(OpCode.ReturnValue);
-            Assert.Equal(1, Run(builder).AsInt);
-        }
-
-        [Fact]
-        public void Pow_NegativeExponent_Traps()
-        {
-            var builder = PushInts(2, -1).Op(OpCode.Pow).Op(OpCode.ReturnValue);
-            Assert.Throws<SurtrExecutionException>(() => Run(builder));
-        }
-
-        [Fact]
         public void Neg_NegatesAnInt()
         {
             var builder = new BytecodeBuilder().Op(OpCode.PushI32).I32(42).Op(OpCode.Neg).Op(OpCode.ReturnValue);
@@ -165,13 +144,6 @@ namespace Surtr.Tests.VM
         {
             var builder = PushFloats(5.5, 2.0).Op(OpCode.FMod).Op(OpCode.ReturnValue);
             Assert.Equal(1.5, Run(builder).AsFloat);
-        }
-
-        [Fact]
-        public void FPow_UsesMathPow()
-        {
-            var builder = PushFloats(2.0, 0.5).Op(OpCode.FPow).Op(OpCode.ReturnValue);
-            Assert.Equal(System.Math.Sqrt(2.0), Run(builder).AsFloat);
         }
 
         [Fact]

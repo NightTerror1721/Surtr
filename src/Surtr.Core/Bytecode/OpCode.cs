@@ -45,9 +45,9 @@ namespace Surtr.Bytecode
     /// value something a reader can look up rather than count out.
     /// </para>
     /// <para>
-    /// <b>New opcodes take a free value at the end and are never given one already in use.</b>
-    /// 0x00 through 0xFC are assigned, apart from the six retired values 0x2C-0x2F and 0xAA-0xAB;
-    /// 0xFD through 0xFF are free. Reusing a retired
+/// <b>New opcodes take a free value at the end and are never given one already in use.</b>
+/// 0x00 through 0xFC are assigned, apart from the retired values 0x02-0x04, 0x2C-0x2F, 0x41-0x42,
+/// 0xAA-0xAB, 0xCA and 0xDA; 0xFD through 0xFF are free. Reusing a retired
     /// value would make an old module silently execute a new instruction, so a retired value stays
     /// retired. Changing how a module is *framed*, rather than what runs inside it, is what
     /// <c>SurtrModuleImage.FormatVersion</c> is for.
@@ -79,26 +79,10 @@ namespace Surtr.Bytecode
         /// </remarks>
         Dup = 0x01,
 
-        /// <summary>Duplicates the top two values, preserving their order.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
-        /// Stack: <c>..., a, b -&gt; ..., a, b, a, b</c>
-        /// </remarks>
-        Dup2 = 0x02,
-
-        /// <summary>Exchanges the top two values.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
-        /// Stack: <c>..., a, b -&gt; ..., b, a</c>
-        /// </remarks>
-        Swap = 0x03,
-
-        /// <summary>Exchanges the top two pairs of values, keeping each pair's internal order.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
-        /// Stack: <c>..., a, b, c, d -&gt; ..., c, d, a, b</c>
-        /// </remarks>
-        Swap2 = 0x04,
+        // 0x02 (Dup2), 0x03 (Swap) and 0x04 (Swap2) are retired: nothing ever needed them. No
+        // compiler lowering reaches for a stack shuffle - intermediates live in locals - so no
+        // instruction was ever emitted with these bytes. Retired values stay retired - see the
+        // note at the top of this enum.
 
         /// <summary>Discards the value on top of the stack.</summary>
         /// <remarks>
@@ -551,21 +535,10 @@ namespace Surtr.Bytecode
         /// </remarks>
         FMod = 0x40,
 
-        /// <summary>Integer exponentiation.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
-        /// Stack: <c>..., a, b -&gt; ..., a ** b</c><br/>
-        /// Notes: raises the deeper operand to the power of the top one. A negative exponent has
-        /// no integer result and needs a defined behaviour.
-        /// </remarks>
-        Pow = 0x41,
-
-        /// <summary>Floating-point exponentiation.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
-        /// Stack: <c>..., a, b -&gt; ..., a ** b</c>
-        /// </remarks>
-        FPow = 0x42,
+        // 0x41 (Pow) and 0x42 (FPow) are retired: the language has no exponentiation operator,
+        // so no lowering could ever reach them - power is a native library function reached
+        // through an ordinary call. Retired values stay retired - see the note at the top of
+        // this enum.
 
         /// <summary>Integer negation.</summary>
         /// <remarks>
@@ -2087,13 +2060,10 @@ namespace Surtr.Bytecode
         /// </remarks>
         ArrIn = 0xC9,
 
-        /// <summary>Tests whether an array does not contain a value.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
-        /// Stack: <c>..., arr, value -&gt; ..., bool</c><br/>
-        /// Notes: exists as its own opcode so the negated form costs no extra instruction.
-        /// </remarks>
-        ArrNIn = 0xCA,
+        // 0xCA (ArrNIn) is retired: a negated membership test lowers to the plain test plus
+        // <see cref="Inv"/>, so no lowering ever emitted it. Retired values stay retired - see
+        // the note at the top of this enum.
+
         #endregion
 
 
@@ -2230,12 +2200,9 @@ namespace Surtr.Bytecode
         /// </remarks>
         DictIn = 0xD9,
 
-        /// <summary>Tests whether a dictionary does not hold a key.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
-        /// Stack: <c>..., dict, key -&gt; ..., bool</c>
-        /// </remarks>
-        DictNIn = 0xDA,
+        // 0xDA (DictNIn) is retired, for the same reason as 0xCA (ArrNIn): the negated form
+        // lowers to the plain test plus <see cref="Inv"/>, so nothing ever emitted it. Retired
+        // values stay retired - see the note at the top of this enum.
         #endregion
 
 

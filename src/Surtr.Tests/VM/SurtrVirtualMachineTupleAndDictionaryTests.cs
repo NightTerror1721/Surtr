@@ -264,19 +264,6 @@ namespace Surtr.Tests.VM
             Assert.True(Run(runtime, module, builder).AsBool);
         }
 
-        [Fact]
-        public void DictNIn_IsTrueForAnAbsentKey()
-        {
-            using var runtime = new SurtrRuntime();
-            var module = new SurtrModule("test");
-            var dict = runtime.NewDictionary(SurtrClassReference.Dictionary(SurtrClassReference.Integer, SurtrClassReference.Integer));
-
-            var builder = new BytecodeBuilder();
-            builder.LoadReference(dict).Op(OpCode.PushI32).I32(1).Op(OpCode.DictNIn).Op(OpCode.ReturnValue);
-
-            Assert.True(Run(runtime, module, builder).AsBool);
-        }
-
         #endregion
     }
 }

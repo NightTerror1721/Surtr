@@ -104,13 +104,14 @@ namespace Surtr.Tests.VM
                 .Op(OpCode.NewClosure).I16(methodIndex).U8(1)   // closure B, captures 1000
                 .Op(OpCode.PushI32).I32(1)                       // argument for B
                 .Op(OpCode.InvokeClosure).U8(1).U8(1)            // call B -> 1000 + 1 = 1001
-                .Op(OpCode.Swap)                                 // bring closure A on top
+                .Op(OpCode.Stl0)                                 // park B's result in local 0
                 .Op(OpCode.PushI32).I32(1)                       // argument for A
                 .Op(OpCode.InvokeClosure).U8(1).U8(1)            // call A -> 1 + 1 = 2
+                .Op(OpCode.Ldl0)                                 // recall B's result
                 .Op(OpCode.Add)                                  // 1001 + 2
                 .Op(OpCode.ReturnValue);
 
-            var callerMethod = builder.Build(callerModule, localCount: 0, maxStackSize: 16);
+            var callerMethod = builder.Build(callerModule, localCount: 1, maxStackSize: 8);
             Assert.Equal(1003, runtime.Invoke(callerMethod).AsInt);
         }
 

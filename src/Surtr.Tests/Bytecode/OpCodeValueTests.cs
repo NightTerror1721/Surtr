@@ -23,8 +23,9 @@ namespace Surtr.Tests.Bytecode
         /// <summary>Every opcode and the value it is defined to have, as of the current format.</summary>
         private static readonly (OpCode Op, byte Value)[] Assigned = new (OpCode, byte)[]
         {
-            (OpCode.Nop, 0x00), (OpCode.Dup, 0x01), (OpCode.Dup2, 0x02), (OpCode.Swap, 0x03),
-            (OpCode.Swap2, 0x04), (OpCode.Pop, 0x05), (OpCode.PushNull, 0x06), (OpCode.PushTrue, 0x07),
+            (OpCode.Nop, 0x00), (OpCode.Dup, 0x01), (OpCode.Pop, 0x05), (OpCode.PushNull, 0x06),
+            (OpCode.PushTrue, 0x07),
+            // 0x02-0x04 (Dup2/Swap/Swap2) are retired - see RetiredValues below.
             (OpCode.PushFalse, 0x08), (OpCode.PushI8, 0x09), (OpCode.PushI16, 0x0A), (OpCode.PushI32, 0x0B),
             (OpCode.PushChar, 0x0C), (OpCode.PushAbsent, 0x0D), (OpCode.Ldc0, 0x0E), (OpCode.Ldc1, 0x0F),
             (OpCode.Ldc2, 0x10), (OpCode.Ldc3, 0x11), (OpCode.Ldc4, 0x12), (OpCode.Ldc5, 0x13),
@@ -39,7 +40,8 @@ namespace Surtr.Tests.Bytecode
             (OpCode.StaticFieldSet, 0x34), (OpCode.StaticFieldSetX, 0x35), (OpCode.UpValueGet, 0x36), (OpCode.Add, 0x37),
             (OpCode.FAdd, 0x38), (OpCode.Sub, 0x39), (OpCode.FSub, 0x3A), (OpCode.Mul, 0x3B),
             (OpCode.FMul, 0x3C), (OpCode.Div, 0x3D), (OpCode.FDiv, 0x3E), (OpCode.Mod, 0x3F),
-            (OpCode.FMod, 0x40), (OpCode.Pow, 0x41), (OpCode.FPow, 0x42), (OpCode.Neg, 0x43),
+            (OpCode.FMod, 0x40), (OpCode.Neg, 0x43),
+            // 0x41-0x42 (Pow/FPow) are retired - see RetiredValues below.
             (OpCode.FNeg, 0x44), (OpCode.And, 0x45), (OpCode.Or, 0x46), (OpCode.Xor, 0x47),
             (OpCode.Not, 0x48), (OpCode.Shl, 0x49), (OpCode.Shr, 0x4A), (OpCode.Sar, 0x4B),
             (OpCode.Inv, 0x4C), (OpCode.EQ, 0x4D), (OpCode.NE, 0x4E), (OpCode.GT, 0x4F),
@@ -74,11 +76,13 @@ namespace Surtr.Tests.Bytecode
             (OpCode.StrHash, 0xBC), (OpCode.ArrNew, 0xBD), (OpCode.ArrNewX, 0xBE), (OpCode.ArrPack, 0xBF),
             (OpCode.ArrLen, 0xC0), (OpCode.ArrGet, 0xC1), (OpCode.ArrSet, 0xC2), (OpCode.ArrPush, 0xC3),
             (OpCode.ArrPop, 0xC4), (OpCode.ArrInsert, 0xC5), (OpCode.ArrRemoveAt, 0xC6), (OpCode.ArrClear, 0xC7),
-            (OpCode.ArrIndexOf, 0xC8), (OpCode.ArrIn, 0xC9), (OpCode.ArrNIn, 0xCA), (OpCode.TupPack, 0xCB),
+            (OpCode.ArrIndexOf, 0xC8), (OpCode.ArrIn, 0xC9), (OpCode.TupPack, 0xCB),
+            // 0xCA (ArrNIn) is retired - see RetiredValues below.
             (OpCode.TupUnpack, 0xCC), (OpCode.TupLen, 0xCD), (OpCode.TupGet, 0xCE), (OpCode.TupGetC, 0xCF),
             (OpCode.DictNew, 0xD0), (OpCode.DictPack, 0xD1), (OpCode.DictLen, 0xD2), (OpCode.DictGet, 0xD3),
             (OpCode.DictSet, 0xD4), (OpCode.DictDel, 0xD5), (OpCode.DictClear, 0xD6), (OpCode.DictKeys, 0xD7),
-            (OpCode.DictValues, 0xD8), (OpCode.DictIn, 0xD9), (OpCode.DictNIn, 0xDA), (OpCode.RangeNew, 0xDB),
+            (OpCode.DictValues, 0xD8), (OpCode.DictIn, 0xD9), (OpCode.RangeNew, 0xDB),
+            // 0xDA (DictNIn) is retired - see RetiredValues below.
             (OpCode.RangeNewInclusive, 0xDC), (OpCode.LoadType, 0xDD), (OpCode.LoadTypeX, 0xDE),
             (OpCode.GetTypeOfValue, 0xDF), (OpCode.LoadModule, 0xE0), (OpCode.LoadModuleX, 0xE1),
             (OpCode.LoadCurrentModule, 0xE2), (OpCode.BoxDynamic, 0xE3), (OpCode.DynEQ, 0xE4),
@@ -122,7 +126,15 @@ namespace Surtr.Tests.Bytecode
         /// A retired opcode's old byte value, never reused - reusing one would make an old module
         /// silently execute a different instruction. See the note at the top of <c>OpCode.cs</c>.
         /// </summary>
-        private static readonly byte[] RetiredValues = { 0x2C, 0x2D, 0x2E, 0x2F, 0xAA, 0xAB };
+        private static readonly byte[] RetiredValues =
+        {
+            0x02, 0x03, 0x04,             // Dup2/Swap/Swap2
+            0x2C, 0x2D, 0x2E, 0x2F,       // Ldg/LdgX/Stg/StgX
+            0x41, 0x42,                   // Pow/FPow
+            0xAA, 0xAB,                   // CallGlobalNative/CallGlobalNativeX
+            0xCA,                         // ArrNIn
+            0xDA,                         // DictNIn
+        };
 
         /// <summary>
         /// The values run from zero with no gap except at a retired opcode's old slot, which is

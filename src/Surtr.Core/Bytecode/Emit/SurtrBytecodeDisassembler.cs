@@ -854,9 +854,6 @@ namespace Surtr.Bytecode.Emit
                 // ---- no immediate ------------------------------------------------------------
                 case OpCode.Nop:
                 case OpCode.Dup:
-                case OpCode.Dup2:
-                case OpCode.Swap:
-                case OpCode.Swap2:
                 case OpCode.PushNull:
                 case OpCode.PushTrue:
                 case OpCode.PushFalse:
@@ -893,8 +890,6 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.FDiv:
                 case OpCode.Mod:
                 case OpCode.FMod:
-                case OpCode.Pow:
-                case OpCode.FPow:
                 case OpCode.Neg:
                 case OpCode.FNeg:
                 case OpCode.Inv:
@@ -965,7 +960,6 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.ArrClear:
                 case OpCode.ArrIndexOf:
                 case OpCode.ArrIn:
-                case OpCode.ArrNIn:
                 case OpCode.TupLen:
                 case OpCode.TupGet:
                 case OpCode.DictLen:
@@ -974,7 +968,6 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.DictDel:
                 case OpCode.DictClear:
                 case OpCode.DictIn:
-                case OpCode.DictNIn:
                 case OpCode.Throw:
                 case OpCode.ReturnVoid:
                 case OpCode.ReturnValue:
