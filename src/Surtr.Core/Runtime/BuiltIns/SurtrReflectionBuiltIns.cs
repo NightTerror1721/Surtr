@@ -39,43 +39,46 @@ namespace Surtr.Runtime.BuiltIns
                 selfType,
                 SurtrNativeEntryPoint.FromFunctionPointer(&TypeOf),
                 builder.Params(("value", SurtrClassReference.Erased)),
-                isStatic: true);
+                isStatic: true,
+                isPure: true);
 
             builder.Method(
                 "get",
                 selfType,
                 SurtrNativeEntryPoint.FromFunctionPointer(&TypeGet),
                 builder.Params(("name", SurtrClassReference.String)),
-                isStatic: true);
+                isStatic: true,
+                isPure: true);
 
             builder.Method(
                 "tryGet",
                 selfType,
                 SurtrNativeEntryPoint.FromFunctionPointer(&TypeTryGet),
                 builder.Params(("name", SurtrClassReference.String)),
-                isStatic: true);
+                isStatic: true,
+                isPure: true);
 
-            builder.Property("name", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&TypeName));
-            builder.Property("baseType", selfType, SurtrNativeEntryPoint.FromFunctionPointer(&TypeBaseType));
-            builder.Property("isInterface", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&TypeIsInterface));
-            builder.Property("descriptor", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&TypeDescriptor));
-            builder.Property("genericParameterCount", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&TypeGenericParameterCount));
-            builder.Method("genericParameters", SurtrClassReference.Array(SurtrClassReference.String), SurtrNativeEntryPoint.FromFunctionPointer(&TypeGenericParameters));
-            builder.Method("genericConstraints", SurtrClassReference.Array(SurtrClassReference.Array(SurtrClassReference.String)), SurtrNativeEntryPoint.FromFunctionPointer(&TypeGenericConstraints));
-            builder.Method("genericArguments", SurtrClassReference.Array(selfType), SurtrNativeEntryPoint.FromFunctionPointer(&TypeGenericArguments));
-            builder.Method("members", memberArray, SurtrNativeEntryPoint.FromFunctionPointer(&TypeMembers));
-            builder.Method("attributes", attributeArray, SurtrNativeEntryPoint.FromFunctionPointer(&TypeAttributes));
+            builder.Property("name", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&TypeName), isPure: true);
+            builder.Property("baseType", selfType, SurtrNativeEntryPoint.FromFunctionPointer(&TypeBaseType), isPure: true);
+            builder.Property("isInterface", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&TypeIsInterface), isPure: true);
+            builder.Property("descriptor", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&TypeDescriptor), isPure: true);
+            builder.Property("genericParameterCount", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&TypeGenericParameterCount), isPure: true);
+            builder.Method("genericParameters", SurtrClassReference.Array(SurtrClassReference.String), SurtrNativeEntryPoint.FromFunctionPointer(&TypeGenericParameters), isPure: true);
+            builder.Method("genericConstraints", SurtrClassReference.Array(SurtrClassReference.Array(SurtrClassReference.String)), SurtrNativeEntryPoint.FromFunctionPointer(&TypeGenericConstraints), isPure: true);
+            builder.Method("genericArguments", SurtrClassReference.Array(selfType), SurtrNativeEntryPoint.FromFunctionPointer(&TypeGenericArguments), isPure: true);
+            builder.Method("members", memberArray, SurtrNativeEntryPoint.FromFunctionPointer(&TypeMembers), isPure: true);
+            builder.Method("attributes", attributeArray, SurtrNativeEntryPoint.FromFunctionPointer(&TypeAttributes), isPure: true);
         }
 
         internal static void DeclareMember(SurtrBuiltInTypeBuilder builder)
         {
             var attributeArray = SurtrClassReference.Array(SurtrBuiltIns.Attribute.SelfReference);
 
-            builder.Property("name", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&MemberName));
-            builder.Property("kind", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&MemberKind));
-            builder.Property("isStatic", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&MemberIsStatic));
-            builder.Property("declaringType", SurtrBuiltIns.Type.SelfReference, SurtrNativeEntryPoint.FromFunctionPointer(&MemberDeclaringType));
-            builder.Method("attributes", attributeArray, SurtrNativeEntryPoint.FromFunctionPointer(&MemberAttributes));
+            builder.Property("name", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&MemberName), isPure: true);
+            builder.Property("kind", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&MemberKind), isPure: true);
+            builder.Property("isStatic", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&MemberIsStatic), isPure: true);
+            builder.Property("declaringType", SurtrBuiltIns.Type.SelfReference, SurtrNativeEntryPoint.FromFunctionPointer(&MemberDeclaringType), isPure: true);
+            builder.Method("attributes", attributeArray, SurtrNativeEntryPoint.FromFunctionPointer(&MemberAttributes), isPure: true);
         }
 
         #region Type

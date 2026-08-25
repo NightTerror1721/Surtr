@@ -39,7 +39,7 @@ namespace Surtr.Compiler.Binding
         public static BoundStatement Rewrite(BoundStatement body, Func<MethodSymbol, bool> isFoldable)
         {
             var pass = new Pass(isFoldable);
-            return pass.RewriteBlock(body, clearOnExit: false);
+            return pass.RewriteBlock(body);
         }
 
         /// <summary>One evaluated pure call: the local holding its result and everything it reads.</summary>
@@ -57,27 +57,14 @@ namespace Surtr.Compiler.Binding
             public Pass(Func<MethodSymbol, bool> isFoldable) => _isFoldable = isFoldable;
 
             /// <summary>Rewrites a block's straight-line run; <paramref name="clearOnExit"/> drops the caller's table.</summary>
-            public BoundStatement RewriteBlock(BoundStatement body, bool clearOnExit)
+            public BoundStatement RewriteBlock(BoundStatement body)
             {
                 if (body is not BoundBlockStatement block)
                     return body;
 
-                var parent = _available;
-                if (clearOnExit)
-                    _available = new Dictionary<string, Entry>();
-
                 var rewritten = new BoundStatement[block.Statements.Count];
                 for (int i = 0; i < rewritten.Length; i++)
                     rewritten[i] = RewriteSequential(block.Statements[i]);
-
-                if (clearOnExit)
-                {
-                    // Whatever the nested run left may not dominate the caller's later statements,
-                    // and the nested block itself could have written anything, so the caller's
-                    // table is dropped too.
-                    _available = parent;
-                    parent.Clear();
-                }
 
                 return new BoundBlockStatement(block.Syntax, rewritten);
             }
@@ -88,89 +75,119 @@ namespace Surtr.Compiler.Binding
                 {
                     case BoundIfStatement conditional:
                     {
-                        var rewritten = new BoundIfStatement(
-                            conditional.Syntax,
-                            conditional.Condition,
-                            RewriteBlock(conditional.Then, clearOnExit: true),
-                            conditional.Else is null ? null : RewriteBlock(conditional.Else, clearOnExit: true));
-                        _available.Clear();
-                        return rewritten;
+                        var parent = _available;
+                        var thenWrites = new HashSet<Symbol>();
+                        var then = RewriteBody(conditional.Then, inheritAvailable: true, thenWrites);
+                        var elseWrites = new HashSet<Symbol>();
+                        var elseBody = conditional.Else is null
+                            ? null
+                            : RewriteBody(conditional.Else, inheritAvailable: true, elseWrites);
+
+                        // An entry available before the `if` dominates code after it, so it
+                        // survives — unless a branch wrote one of its operands.
+                        Kill(parent, thenWrites);
+                        Kill(parent, elseWrites);
+                        _available = parent;
+
+                        return new BoundIfStatement(conditional.Syntax, conditional.Condition, then, elseBody);
                     }
 
                     case BoundWhileStatement loop:
                     {
-                        var rewritten = new BoundWhileStatement(
-                            loop.Syntax,
-                            loop.Condition,
-                            RewriteBlock(loop.Body, clearOnExit: true));
-                        _available.Clear();
-                        return rewritten;
+                        var parent = _available;
+                        var bodyWrites = new HashSet<Symbol>();
+                        var body = RewriteBody(loop.Body, inheritAvailable: false, bodyWrites);
+
+                        // The loop may run zero times, but the entry before it always ran, so the
+                        // entry dominates after the loop unless the body wrote one of its operands.
+                        Kill(parent, bodyWrites);
+                        _available = parent;
+
+                        return new BoundWhileStatement(loop.Syntax, loop.Condition, body);
                     }
 
                     case BoundForStatement loop:
                     {
-                        var rewritten = new BoundForStatement(
-                            loop.Syntax,
-                            loop.Initializer,
-                            loop.Condition,
-                            loop.Step,
-                            RewriteBlock(loop.Body, clearOnExit: true));
-                        _available.Clear();
-                        return rewritten;
+                        var parent = _available;
+                        var bodyWrites = new HashSet<Symbol>();
+                        var body = RewriteBody(loop.Body, inheritAvailable: false, bodyWrites);
+
+                        Kill(parent, bodyWrites);
+                        _available = parent;
+
+                        return new BoundForStatement(loop.Syntax, loop.Initializer, loop.Condition, loop.Step, body);
                     }
 
                     case BoundForInStatement loop:
                     {
-                        var rewritten = new BoundForInStatement(
-                            loop.Syntax,
-                            loop.Variable,
-                            loop.Sequence,
-                            RewriteBlock(loop.Body, clearOnExit: true));
-                        _available.Clear();
-                        return rewritten;
+                        var parent = _available;
+                        var bodyWrites = new HashSet<Symbol>();
+                        var body = RewriteBody(loop.Body, inheritAvailable: false, bodyWrites);
+
+                        Kill(parent, bodyWrites);
+                        _available = parent;
+
+                        return new BoundForInStatement(loop.Syntax, loop.Variable, loop.Sequence, body);
                     }
 
                     case BoundSwitchStatement @switch:
                     {
+                        var parent = _available;
                         var sections = new BoundSwitchSection[@switch.Sections.Count];
                         for (int i = 0; i < sections.Length; i++)
                         {
                             var section = @switch.Sections[i];
-                            var body = RewriteBlock(new BoundBlockStatement(@switch.Syntax, section.Statements), clearOnExit: true);
+                            var sectionWrites = new HashSet<Symbol>();
+                            var body = RewriteBody(
+                                new BoundBlockStatement(@switch.Syntax, section.Statements),
+                                inheritAvailable: true,
+                                sectionWrites);
+
+                            Kill(parent, sectionWrites);
                             sections[i] = new BoundSwitchSection(section.Labels, ((BoundBlockStatement)body).Statements);
                         }
 
-                        _available.Clear();
+                        _available = parent;
                         return new BoundSwitchStatement(@switch.Syntax, @switch.Subject, sections);
                     }
 
                     case BoundTryStatement @try:
                     {
+                        var parent = _available;
+                        var bodyWrites = new HashSet<Symbol>();
+                        var body = RewriteBody(@try.Body, inheritAvailable: true, bodyWrites);
+                        Kill(parent, bodyWrites);
+
                         var catches = new BoundCatchClause[@try.Catches.Count];
                         for (int i = 0; i < catches.Length; i++)
                         {
+                            var catchWrites = new HashSet<Symbol>();
                             catches[i] = new BoundCatchClause(
                                 @try.Catches[i].Exception,
-                                RewriteBlock(@try.Catches[i].Body, clearOnExit: true));
+                                RewriteBody(@try.Catches[i].Body, inheritAvailable: true, catchWrites));
+                            Kill(parent, catchWrites);
                         }
 
-                        var rewritten = new BoundTryStatement(
-                            @try.Syntax,
-                            RewriteBlock(@try.Body, clearOnExit: true),
-                            catches,
-                            @try.Finally is null ? null : RewriteBlock(@try.Finally, clearOnExit: true));
-                        _available.Clear();
-                        return rewritten;
+                        var finallyWrites = new HashSet<Symbol>();
+                        var finallyBlock = @try.Finally is null
+                            ? null
+                            : RewriteBody(@try.Finally, inheritAvailable: true, finallyWrites);
+                        Kill(parent, finallyWrites);
+
+                        _available = parent;
+                        return new BoundTryStatement(@try.Syntax, body, catches, finallyBlock);
                     }
 
                     case BoundLabeledStatement labeled:
                     {
-                        var rewritten = new BoundLabeledStatement(
-                            labeled.Syntax,
-                            labeled.Label,
-                            RewriteBlock(labeled.Statement, clearOnExit: true));
-                        _available.Clear();
-                        return rewritten;
+                        var parent = _available;
+                        var innerWrites = new HashSet<Symbol>();
+                        var inner = RewriteBody(labeled.Statement, inheritAvailable: true, innerWrites);
+
+                        Kill(parent, innerWrites);
+                        _available = parent;
+
+                        return new BoundLabeledStatement(labeled.Syntax, labeled.Label, inner);
                     }
 
                     default:
@@ -181,6 +198,34 @@ namespace Surtr.Compiler.Binding
                         return substituted;
                     }
                 }
+            }
+
+            /// <summary>
+            /// Rewrites one control-flow body, starting from a fresh table, and reports every write
+            /// it performs so the caller can kill the entries the construct invalidates.
+            /// </summary>
+            /// <param name="body">The branch, loop body, section or catch to rewrite.</param>
+            /// <param name="inheritAvailable">
+            /// Whether the entries available before the construct dominate the body's entry. True
+            /// for a branch of an <c>if</c>, a <c>switch</c> section, a <c>try</c> body or catch — a
+            /// straight-line successor. False for a loop body, whose back-edge makes a pre-loop
+            /// entry unsound inside.
+            /// </param>
+            /// <param name="writesOut">Every symbol the body writes, however deep.</param>
+            private BoundStatement RewriteBody(BoundStatement body, bool inheritAvailable, HashSet<Symbol> writesOut)
+            {
+                var parent = _available;
+                _available = inheritAvailable
+                    ? new Dictionary<string, Entry>(parent)
+                    : new Dictionary<string, Entry>();
+
+                BoundStatement rewritten = body is BoundBlockStatement block
+                    ? RewriteBlock(block)
+                    : RewriteSequential(body);
+
+                CollectSubtreeWrites(rewritten, writesOut);
+                _available = parent;
+                return rewritten;
             }
 
             #region Substitution
@@ -299,12 +344,17 @@ namespace Surtr.Compiler.Binding
             {
                 var writes = new HashSet<Symbol>();
                 CollectStatementWrites(statement, writes);
+                Kill(_available, writes);
+            }
 
+            /// <summary>Drops every entry whose local or operand a write touched.</summary>
+            private static void Kill(Dictionary<string, Entry> available, HashSet<Symbol> writes)
+            {
                 if (writes.Count == 0)
                     return;
 
                 List<string>? dead = null;
-                foreach (var pair in _available)
+                foreach (var pair in available)
                 {
                     if (writes.Contains(pair.Value.Local))
                     {
@@ -326,7 +376,7 @@ namespace Surtr.Compiler.Binding
                     return;
 
                 foreach (var key in dead)
-                    _available.Remove(key);
+                    available.Remove(key);
             }
 
             private bool IsFoldablePureCall(BoundCallExpression call)
@@ -357,6 +407,85 @@ namespace Surtr.Compiler.Binding
 
                     case BoundReturnStatement { Value: not null } @return:
                         CollectExpressionWrites(@return.Value, writes);
+                        return;
+
+                    default:
+                        return;
+                }
+            }
+
+            /// <summary>Every write a whole statement subtree performs, control flow included.</summary>
+            private static void CollectSubtreeWrites(BoundStatement statement, HashSet<Symbol> writes)
+            {
+                switch (statement)
+                {
+                    case BoundBlockStatement block:
+                        foreach (var inner in block.Statements)
+                            CollectSubtreeWrites(inner, writes);
+                        return;
+
+                    case BoundExpressionStatement expression:
+                        CollectExpressionWrites(expression.Expression, writes);
+                        return;
+
+                    case BoundLocalDeclarationStatement { Initializer: not null } declaration:
+                        CollectExpressionWrites(declaration.Initializer, writes);
+                        return;
+
+                    case BoundReturnStatement { Value: not null } @return:
+                        CollectExpressionWrites(@return.Value, writes);
+                        return;
+
+                    case BoundIfStatement @if:
+                        CollectExpressionWrites(@if.Condition, writes);
+                        CollectSubtreeWrites(@if.Then, writes);
+                        if (@if.Else is not null)
+                            CollectSubtreeWrites(@if.Else, writes);
+                        return;
+
+                    case BoundWhileStatement loop:
+                        CollectExpressionWrites(loop.Condition, writes);
+                        CollectSubtreeWrites(loop.Body, writes);
+                        return;
+
+                    case BoundForStatement loop:
+                        if (loop.Initializer is not null)
+                            CollectSubtreeWrites(loop.Initializer, writes);
+                        if (loop.Condition is not null)
+                            CollectExpressionWrites(loop.Condition, writes);
+                        if (loop.Step is not null)
+                            CollectExpressionWrites(loop.Step, writes);
+                        CollectSubtreeWrites(loop.Body, writes);
+                        return;
+
+                    case BoundForInStatement loop:
+                        CollectExpressionWrites(loop.Sequence, writes);
+                        CollectSubtreeWrites(loop.Body, writes);
+                        return;
+
+                    case BoundSwitchStatement @switch:
+                        CollectExpressionWrites(@switch.Subject, writes);
+                        foreach (var section in @switch.Sections)
+                        {
+                            foreach (var inner in section.Statements)
+                                CollectSubtreeWrites(inner, writes);
+                        }
+                        return;
+
+                    case BoundTryStatement @try:
+                        CollectSubtreeWrites(@try.Body, writes);
+                        foreach (var clause in @try.Catches)
+                            CollectSubtreeWrites(clause.Body, writes);
+                        if (@try.Finally is not null)
+                            CollectSubtreeWrites(@try.Finally, writes);
+                        return;
+
+                    case BoundLabeledStatement labeled:
+                        CollectSubtreeWrites(labeled.Statement, writes);
+                        return;
+
+                    case BoundThrowStatement @throw:
+                        CollectExpressionWrites(@throw.Value, writes);
                         return;
 
                     default:

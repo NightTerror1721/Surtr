@@ -58,7 +58,8 @@ namespace Surtr.Runtime.BuiltIns
                 "current",
                 SurtrClassReference.GenericParameter(0),
                 SurtrNativeEntryPoint.FromFunctionPointer(&Current),
-                dispatch: SurtrMethodDispatch.Virtual);
+                dispatch: SurtrMethodDispatch.Virtual,
+                isPure: true);
 
             // `IIterator<T>` extends `IDisposable`, so this fills a contract slot and has to be
             // Virtual like the rest. It is also the whole reason the cursor contract was made
@@ -89,7 +90,8 @@ namespace Surtr.Runtime.BuiltIns
             builder.Property(
                 "result",
                 SurtrClassReference.Erased,
-                SurtrNativeEntryPoint.FromFunctionPointer(&Result));
+                SurtrNativeEntryPoint.FromFunctionPointer(&Result),
+                isPure: true);
         }
 
         /// <summary>

@@ -28,20 +28,22 @@ namespace Surtr.Runtime.BuiltIns
                 selfType,
                 SurtrNativeEntryPoint.FromFunctionPointer(&ModuleGet),
                 builder.Params(("path", SurtrClassReference.String)),
-                isStatic: true);
+                isStatic: true,
+                isPure: true);
 
             builder.Method(
                 "tryGet",
                 selfType,
                 SurtrNativeEntryPoint.FromFunctionPointer(&ModuleTryGet),
                 builder.Params(("path", SurtrClassReference.String)),
-                isStatic: true);
+                isStatic: true,
+                isPure: true);
 
-            builder.Property("path", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ModulePath));
-            builder.Method("classes", typeArray, SurtrNativeEntryPoint.FromFunctionPointer(&ModuleClasses));
-            builder.Method("interfaces", typeArray, SurtrNativeEntryPoint.FromFunctionPointer(&ModuleInterfaces));
-            builder.Method("members", memberArray, SurtrNativeEntryPoint.FromFunctionPointer(&ModuleMembers));
-            builder.Method("submodules", moduleArray, SurtrNativeEntryPoint.FromFunctionPointer(&ModuleSubmodules));
+            builder.Property("path", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ModulePath), isPure: true);
+            builder.Method("classes", typeArray, SurtrNativeEntryPoint.FromFunctionPointer(&ModuleClasses), isPure: true);
+            builder.Method("interfaces", typeArray, SurtrNativeEntryPoint.FromFunctionPointer(&ModuleInterfaces), isPure: true);
+            builder.Method("members", memberArray, SurtrNativeEntryPoint.FromFunctionPointer(&ModuleMembers), isPure: true);
+            builder.Method("submodules", moduleArray, SurtrNativeEntryPoint.FromFunctionPointer(&ModuleSubmodules), isPure: true);
         }
 
         #region get / tryGet

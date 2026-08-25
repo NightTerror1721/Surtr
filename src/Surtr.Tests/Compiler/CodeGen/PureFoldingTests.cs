@@ -350,11 +350,31 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Control flow between the two occurrences kills the reuse: the nested block could write
-        /// an argument or skip the first evaluation's dominance, so the second call runs again.
+        /// Control flow whose body writes a call's argument kills the reuse: after the construct
+        /// the argument may hold a different value, so the call runs again.
         /// </summary>
         [Fact]
-        public void ControlFlowBetweenStatementsKillsTheReuse()
+        public void ControlFlowThatWritesAnOperandBetweenStatementsKillsTheReuse()
+        {
+            string code = Disassemble(
+                "@Pure fun big(x: float): float { return x * 2.0 + 3.0 * x - 4.0 / x; }\n"
+                    + "fun run(v: float): float\n"
+                    + "{\n"
+                    + "  let a = big(v);\n"
+                    + "  if (v > 0.0) { v = 1.0; }\n"
+                    + "  let b = big(v);\n"
+                    + "  return a + b;\n"
+                    + "}");
+
+            Assert.Equal(2, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// Dominance: an expression available before an <c>if</c> dominates code after it, so the
+        /// reuse survives the branch as long as the branch writes none of its operands.
+        /// </summary>
+        [Fact]
+        public void AControlFlowThatWritesNothingKeepsTheReuseAcrossIt()
         {
             string code = Disassemble(
                 "@Pure fun big(x: float): float { return x * 2.0 + 3.0 * x - 4.0 / x; }\n"
@@ -365,6 +385,48 @@ namespace Surtr.Tests.Compiler.CodeGen
                     + "  if (v > 0.0) { t = 1.0; }\n"
                     + "  let b = big(v);\n"
                     + "  return a + b + t;\n"
+                    + "}");
+
+            Assert.Equal(1, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// Dominance across a loop: an expression available before a loop dominates code after it,
+        /// so the reuse survives when the loop body writes none of its operands.
+        /// </summary>
+        [Fact]
+        public void AReuseSurvivesALoopThatWritesNothing()
+        {
+            string code = Disassemble(
+                "@Pure fun big(x: float): float { return x * 2.0 + 3.0 * x - 4.0 / x; }\n"
+                    + "fun run(v: float): float\n"
+                    + "{\n"
+                    + "  let a = big(v);\n"
+                    + "  var i = 0;\n"
+                    + "  while (i < 3) { i = i + 1; }\n"
+                    + "  let b = big(v);\n"
+                    + "  return a + b;\n"
+                    + "}");
+
+            Assert.Equal(1, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// A loop body that writes a call's argument kills the reuse after the loop: the value may
+        /// have changed, so the call runs again.
+        /// </summary>
+        [Fact]
+        public void ALoopThatWritesAnOperandKillsTheReuse()
+        {
+            string code = Disassemble(
+                "@Pure fun big(x: float): float { return x * 2.0 + 3.0 * x - 4.0 / x; }\n"
+                    + "fun run(v: float): float\n"
+                    + "{\n"
+                    + "  let a = big(v);\n"
+                    + "  var i = 0;\n"
+                    + "  while (i < 3) { v = v + 1.0; i = i + 1; }\n"
+                    + "  let b = big(v);\n"
+                    + "  return a + b;\n"
                     + "}");
 
             Assert.Equal(2, Count(code, "CallLocalModule"));

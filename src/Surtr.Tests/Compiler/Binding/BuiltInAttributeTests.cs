@@ -632,6 +632,43 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
+        public void APureBodyCallingReflectionNativesStaysQuiet()
+        {
+            using var compilation = Compile(
+                "@Pure\n"
+                    + "public fun typeName(): string { return Type.of(5).name; }\n"
+                    + "@Pure\n"
+                    + "public fun memberCount(): int { return Type.of(5).members().length; }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.PureContractViolated);
+        }
+
+        [Fact]
+        public void APureBodyReadingAnIteratorCurrentStaysQuiet()
+        {
+            using var compilation = Compile(
+                "@Pure\n"
+                    + "public fun peek(it: IIterator<int>): int { return it.current; }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.PureContractViolated);
+        }
+
+        [Fact]
+        public void APureBodyCallingMoveNextStillWarns()
+        {
+            using var compilation = Compile(
+                "@Pure\n"
+                    + "public fun advance(it: IIterator<int>): bool { return it.moveNext(); }");
+
+            Assert.True(
+                compilation.Diagnostics.Count(d => d.Code == SurtrDiagnosticCode.PureContractViolated) == 1,
+                "moveNext mutates the cursor, so it should warn: "
+                    + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+        }
+
+        [Fact]
         public void APureBodyCallingAnUnmarkedFunctionWarns()
         {
             using var compilation = Compile(

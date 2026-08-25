@@ -294,17 +294,17 @@ namespace Surtr.Runtime.BuiltIns
             SurtrClassReference character = SurtrClassReference.Character;
             SurtrClassReference text = SurtrClassReference.String;
 
-            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&CharToString));
-            builder.Method("parseStrict", character, SurtrNativeEntryPoint.FromFunctionPointer(&CharParseStrict), builder.Params(("text", text)), isStatic: true);
-            builder.Method("toInt", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&CharToInt));
-            builder.Method("toUpper", character, SurtrNativeEntryPoint.FromFunctionPointer(&CharToUpper));
-            builder.Method("toLower", character, SurtrNativeEntryPoint.FromFunctionPointer(&CharToLower));
-            builder.Method("isDigit", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&CharIsDigit));
-            builder.Method("isLetter", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&CharIsLetter));
-            builder.Method("isLetterOrDigit", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&CharIsLetterOrDigit));
-            builder.Method("isWhitespace", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&CharIsWhitespace));
-            builder.Method("isUpper", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&CharIsUpper));
-            builder.Method("isLower", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&CharIsLower));
+            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&CharToString), isPure: true);
+            builder.Method("parseStrict", character, SurtrNativeEntryPoint.FromFunctionPointer(&CharParseStrict), builder.Params(("text", text)), isStatic: true, isPure: true);
+            builder.Method("toInt", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&CharToInt), isPure: true);
+            builder.Method("toUpper", character, SurtrNativeEntryPoint.FromFunctionPointer(&CharToUpper), isPure: true);
+            builder.Method("toLower", character, SurtrNativeEntryPoint.FromFunctionPointer(&CharToLower), isPure: true);
+            builder.Method("isDigit", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&CharIsDigit), isPure: true);
+            builder.Method("isLetter", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&CharIsLetter), isPure: true);
+            builder.Method("isLetterOrDigit", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&CharIsLetterOrDigit), isPure: true);
+            builder.Method("isWhitespace", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&CharIsWhitespace), isPure: true);
+            builder.Method("isUpper", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&CharIsUpper), isPure: true);
+            builder.Method("isLower", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&CharIsLower), isPure: true);
         }
 
         private static int CharToString(SurtrCallArguments arguments)

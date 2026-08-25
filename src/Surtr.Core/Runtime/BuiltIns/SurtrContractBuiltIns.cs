@@ -69,14 +69,14 @@ namespace Surtr.Runtime.BuiltIns
                 SurtrClassReference.Integer,
                 SurtrNativeEntryPoint.FromFunctionPointer(&IntCompareTo),
                 builder.Params(("other", Erased)),
-                dispatch: SurtrMethodDispatch.Virtual);
+                dispatch: SurtrMethodDispatch.Virtual, isPure: true);
 
             builder.Method(
                 "equals",
                 SurtrClassReference.Boolean,
                 SurtrNativeEntryPoint.FromFunctionPointer(&IntEquals),
                 builder.Params(("other", Erased)),
-                dispatch: SurtrMethodDispatch.Virtual);
+                dispatch: SurtrMethodDispatch.Virtual, isPure: true);
         }
 
         /// <summary>Declares <c>float : IComparable&lt;float&gt; &amp; IEquatable&lt;float&gt;</c>.</summary>
@@ -91,14 +91,14 @@ namespace Surtr.Runtime.BuiltIns
                 SurtrClassReference.Integer,
                 SurtrNativeEntryPoint.FromFunctionPointer(&FloatCompareTo),
                 builder.Params(("other", Erased)),
-                dispatch: SurtrMethodDispatch.Virtual);
+                dispatch: SurtrMethodDispatch.Virtual, isPure: true);
 
             builder.Method(
                 "equals",
                 SurtrClassReference.Boolean,
                 SurtrNativeEntryPoint.FromFunctionPointer(&FloatEquals),
                 builder.Params(("other", Erased)),
-                dispatch: SurtrMethodDispatch.Virtual);
+                dispatch: SurtrMethodDispatch.Virtual, isPure: true);
         }
 
         /// <summary>
@@ -117,7 +117,7 @@ namespace Surtr.Runtime.BuiltIns
                 SurtrClassReference.Boolean,
                 SurtrNativeEntryPoint.FromFunctionPointer(&BoolEquals),
                 builder.Params(("other", Erased)),
-                dispatch: SurtrMethodDispatch.Virtual);
+                dispatch: SurtrMethodDispatch.Virtual, isPure: true);
         }
 
         /// <summary>Declares <c>char : IComparable&lt;char&gt; &amp; IEquatable&lt;char&gt;</c>.</summary>
@@ -132,14 +132,14 @@ namespace Surtr.Runtime.BuiltIns
                 SurtrClassReference.Integer,
                 SurtrNativeEntryPoint.FromFunctionPointer(&CharCompareTo),
                 builder.Params(("other", Erased)),
-                dispatch: SurtrMethodDispatch.Virtual);
+                dispatch: SurtrMethodDispatch.Virtual, isPure: true);
 
             builder.Method(
                 "equals",
                 SurtrClassReference.Boolean,
                 SurtrNativeEntryPoint.FromFunctionPointer(&CharEquals),
                 builder.Params(("other", Erased)),
-                dispatch: SurtrMethodDispatch.Virtual);
+                dispatch: SurtrMethodDispatch.Virtual, isPure: true);
         }
 
         /// <summary>
@@ -197,7 +197,7 @@ namespace Surtr.Runtime.BuiltIns
                 SurtrClassReference.Boolean,
                 SurtrNativeEntryPoint.FromFunctionPointer(&IdentityEquals),
                 builder.Params(("other", Erased)),
-                dispatch: SurtrMethodDispatch.Virtual);
+                dispatch: SurtrMethodDispatch.Virtual, isPure: true);
         }
 
         private static int IntCompareTo(SurtrCallArguments arguments)

@@ -68,7 +68,8 @@ namespace Surtr.Runtime.BuiltIns
                 "current",
                 SurtrClassReference.GenericParameter(0),
                 SurtrNativeEntryPoint.FromFunctionPointer(&Current),
-                dispatch: SurtrMethodDispatch.Virtual);
+                dispatch: SurtrMethodDispatch.Virtual,
+                isPure: true);
 
             // `IIterator<T>` extends `IDisposable`, so this slot has to exist - and on this cursor
             // it has nothing to do. A walk over an array, a string or a snapshot of a dict's keys
