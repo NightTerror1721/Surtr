@@ -471,14 +471,8 @@ namespace Surtr.Compiler.Binding
         /// </summary>
         private void ReportIfObsolete(Symbol target, string used, SyntaxNode syntax)
         {
-            if (!BuiltInAttributes.IsObsolete(target))
+            if (!BuiltInAttributes.IsObsolete(target) || SuppressObsoleteWarnings())
                 return;
-
-            if (BuiltInAttributes.IsObsolete(_method)
-                || (_containingType is not null && BuiltInAttributes.IsObsolete(_containingType)))
-            {
-                return;
-            }
 
             _diagnostics.ReportWarning(
                 SurtrDiagnosticCode.ObsoleteMemberUsed,
@@ -486,6 +480,30 @@ namespace Surtr.Compiler.Binding
                 _sourceName,
                 syntax.Span);
         }
+
+        /// <summary>
+        /// Reports the use of an <c>@Obsolete</c> type where a body names it — an annotation, a
+        /// cast, a type argument — under the same quiet-inside-obsolete rule member uses get.
+        /// </summary>
+        private void ReportIfObsoleteType(NamedTypeSymbol type, SyntaxNode syntax)
+        {
+            if (!BuiltInAttributes.IsObsolete(type) || SuppressObsoleteWarnings())
+                return;
+
+            _diagnostics.ReportWarning(
+                SurtrDiagnosticCode.ObsoleteMemberUsed,
+                BuiltInAttributes.ObsoleteMessage(type, type.Name),
+                _sourceName,
+                syntax.Span);
+        }
+
+        /// <summary>
+        /// Whether this body belongs to an obsolete declaration, which is migration work rather
+        /// than a mistake worth nagging about — the same rule §11.1 gives member uses.
+        /// </summary>
+        private bool SuppressObsoleteWarnings()
+            => BuiltInAttributes.IsObsolete(_method)
+                || (_containingType is not null && BuiltInAttributes.IsObsolete(_containingType));
 
         /// <summary>
         /// Reports a member this body may not reach (§3.1), and carries on binding.
@@ -1702,10 +1720,63 @@ namespace Surtr.Compiler.Binding
                     return member;
             }
 
+            // §11.1: a @Value class that declares none of the value-members still answers
+            // `a.equals(b)` - synthesized here at the call site, structural equality - so a
+            // value-semantics class has the method a reader would reach for, not just the `==`
+            // operator. Tried only once every real member, extension and module function has
+            // failed, so a declaration of its own always wins.
+            if (TryBindValueEquals(syntax, owner, receiver, name, expected, out var synthetic))
+                return synthetic;
+
             return Error(
                 syntax,
                 SurtrDiagnosticCode.UnresolvedName,
                 $"'{name}' does not name a method in scope.");
+        }
+
+        /// <summary>
+        /// Synthesizes <c>a.equals(b)</c> for a <c>@Value</c> class that does not declare one:
+        /// the same structural, field-by-field comparison <c>==</c> already means for it.
+        /// </summary>
+        private bool TryBindValueEquals(
+            CallExpressionSyntax syntax,
+            TypeSymbol? owner,
+            BoundExpression? receiver,
+            string name,
+            TypeSymbol? expected,
+            out BoundExpression result)
+        {
+            result = Error(syntax);
+
+            if (receiver is null
+                || name != "equals"
+                || owner?.NonNullable is not NamedTypeSymbol type
+                || type.TypeKind != TypeSymbolKind.Class
+                || !BuiltInAttributes.IsMarkedValue(type.Definition)
+                || syntax.Arguments.Count != 1)
+            {
+                return false;
+            }
+
+            var argument = BindExpression(syntax.Arguments[0].Value);
+            if (argument.Type.IsError)
+                return true;
+
+            if (!_conversions.IsAssignable(argument.Type, receiver.Type)
+                && !_conversions.IsAssignable(receiver.Type, argument.Type))
+            {
+                return false;
+            }
+
+            result = StructuralEquality(
+                syntax,
+                receiver,
+                Convert(argument, receiver.Type, syntax.Arguments[0].Value.Span),
+                type,
+                EqualityFieldsOf(type),
+                new Stack<NamedTypeSymbol>());
+
+            return true;
         }
 
         private BoundExpression BindMethodCall(
@@ -2497,7 +2568,11 @@ namespace Surtr.Compiler.Binding
 
             var resolved = new TypeSymbol[syntax.TypeArguments.Count];
             for (int i = 0; i < resolved.Length; i++)
+            {
                 resolved[i] = _resolver.Resolve(syntax.TypeArguments[i], _typeScope, _sourceName);
+                if (resolved[i].NonNullable is NamedTypeSymbol writtenType)
+                    ReportIfObsoleteType(writtenType, syntax.TypeArguments[i]);
+            }
 
             return resolved;
         }
@@ -4077,6 +4152,8 @@ namespace Surtr.Compiler.Binding
         {
             var operand = BindExpression(syntax.Operand);
             var target = _resolver.Resolve(syntax.TargetType, _typeScope, _sourceName);
+            if (target.NonNullable is NamedTypeSymbol castTarget)
+                ReportIfObsoleteType(castTarget, syntax.TargetType);
 
             if (operand.Type.IsError || target.IsError)
                 return Error(syntax);
@@ -4103,6 +4180,8 @@ namespace Surtr.Compiler.Binding
         {
             var operand = BindExpression(syntax.Operand);
             var tested = _resolver.Resolve(syntax.TargetType, _typeScope, _sourceName);
+            if (tested.NonNullable is NamedTypeSymbol testedType)
+                ReportIfObsoleteType(testedType, syntax.TargetType);
 
             return new BoundTypeTestExpression(syntax, operand, tested, _factory.Bool);
         }

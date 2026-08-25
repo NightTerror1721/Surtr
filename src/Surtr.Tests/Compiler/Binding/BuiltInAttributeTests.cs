@@ -336,6 +336,104 @@ namespace Surtr.Tests.Compiler.Binding
             AssertReports(compilation, SurtrDiagnosticCode.ObsoleteMemberUsed);
         }
 
+        [Fact]
+        public void AnObsoleteClassWrittenAsAnAnnotationWarns()
+        {
+            using var compilation = Compile(
+                "@Obsolete(\"use Fresh\")\n"
+                    + "class Old { }\n"
+                    + "public fun run(): void { let x: Old? = null; }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.ObsoleteMemberUsed);
+        }
+
+        [Fact]
+        public void AnObsoleteClassAsACastOrTypeTestTargetWarns()
+        {
+            using var compilation = Compile(
+                "@Obsolete\n"
+                    + "class Old { }\n"
+                    + "public fun cast(o: unknown): unknown { return o as Old; }\n"
+                    + "public fun test(o: unknown): bool { return o is Old; }");
+
+            Assert.Equal(2, compilation.Diagnostics.Count(d => d.Code == SurtrDiagnosticCode.ObsoleteMemberUsed));
+        }
+
+        [Fact]
+        public void AnObsoleteTypeArgumentWarns()
+        {
+            using var compilation = Compile(
+                "@Obsolete\n"
+                    + "class Old { }\n"
+                    + "class Box<T> { public fun n(): int { return 1; } }\n"
+                    + "public fun run(): int { return Box<Old>().n(); }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.ObsoleteMemberUsed);
+        }
+
+        [Fact]
+        public void AnObsoleteTypeUseInsideAnObsoleteDeclarationStaysQuiet()
+        {
+            using var compilation = Compile(
+                "@Obsolete\n"
+                    + "class Old { }\n"
+                    + "@Obsolete\n"
+                    + "class Migrating {\n"
+                    + "  public fun run(): void { let x: Old? = null; }\n"
+                    + "}");
+
+            AssertNoReports(compilation, SurtrDiagnosticCode.ObsoleteMemberUsed);
+        }
+
+        [Fact]
+        public void DerivingFromAnObsoleteBaseWarns()
+        {
+            using var compilation = Compile(
+                "@Obsolete(\"extend New instead\")\n"
+                    + "class Base { }\n"
+                    + "class Derived : Base { }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.ObsoleteMemberUsed);
+        }
+
+        [Fact]
+        public void DerivingFromAnObsoleteBaseIsQuietWhenTheDerivedIsObsoleteToo()
+        {
+            using var compilation = Compile(
+                "@Obsolete\n"
+                    + "class Base { }\n"
+                    + "@Obsolete\n"
+                    + "class Derived : Base { }");
+
+            AssertNoReports(compilation, SurtrDiagnosticCode.ObsoleteMemberUsed);
+        }
+
+        [Fact]
+        public void AnObsoleteFieldTypeInADeclarationWarns()
+        {
+            using var compilation = Compile(
+                "@Obsolete\n"
+                    + "class Old { }\n"
+                    + "class Holder {\n"
+                    + "  public let o: Old? = null;\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.ObsoleteMemberUsed);
+        }
+
+        [Fact]
+        public void AnObsoleteReturnTypeInADeclarationWarns()
+        {
+            using var compilation = Compile(
+                "@Obsolete\n"
+                    + "class Old { }\n"
+                    + "class Maker {\n"
+                    + "  public fun make(): Old { return Old(); }\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.ObsoleteMemberUsed);
+        }
+
         #endregion
 
         #region Built-in targets

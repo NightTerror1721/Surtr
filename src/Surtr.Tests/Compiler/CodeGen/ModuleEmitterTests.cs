@@ -4397,6 +4397,82 @@ var runtime = Run(
 
         #region Atributos built-in: @Value y @Range punta a punta
 
+        [Fact]
+        public void AValueClassAnswersEqualsWithoutDeclaringIt()
+        {
+            var runtime = Run(
+                "@Value\n"
+                    + "class Vec2 {\n"
+                    + "  public let x: float;\n"
+                    + "  public let y: float;\n"
+                    + "  constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "fun equal(): int { return Vec2(1.0, 2.0).equals(Vec2(1.0, 2.0)) ? 1 : 0; }\n"
+                    + "fun different(): int { return Vec2(1.0, 2.0).equals(Vec2(1.0, 3.0)) ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "equal"));
+            Assert.Equal(0, Int(runtime, "different"));
+        }
+
+        /// <summary>
+        /// The value members are real methods, not call-site lowering: they exist in the image as
+        /// the <c>$</c>-prefixed ABI members §11.1 names, and a host can invoke them by reflection.
+        /// </summary>
+        [Fact]
+        public void AValueClassEmitsRealValueMembers()
+        {
+            var emitter = Build(
+                "@Value\n"
+                    + "class Vec2 {\n"
+                    + "  public let x: float;\n"
+                    + "  public let y: float;\n"
+                    + "  constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            var vec = module.FindClass("Vec2")!;
+            Assert.True(vec.TryGetMethods("$equals", out var equals) && equals.Length == 1);
+            Assert.True(vec.TryGetMethods("$hashCode", out var hashCode) && hashCode.Length == 1);
+            Assert.True(vec.TryGetMethods("$toDisplayString", out var display) && display.Length == 1);
+
+            var a = runtime.NewInstance(vec);
+            var b = runtime.NewInstance(vec);
+            var aRef = SurtrValue.CreateReference(a.GetSurtrReference());
+            var bRef = SurtrValue.CreateReference(b.GetSurtrReference());
+
+            // Two freshly allocated, zeroed instances are structurally equal.
+            Assert.True(runtime.Invoke(equals[0], aRef, bRef).AsBool);
+
+            // The hash is a real integer, and equal values share it.
+            var hashA = runtime.Invoke(hashCode[0], aRef).AsInt;
+            var hashB = runtime.Invoke(hashCode[0], bRef).AsInt;
+            Assert.Equal(hashA, hashB);
+
+            // The display names the class and reaches the field labels.
+            var text = runtime.Resolve<SurtrString>(runtime.Invoke(display[0], aRef))!.Text;
+            Assert.StartsWith("Vec2(", text);
+            Assert.Contains("x=", text);
+        }
+
+        [Fact]
+        public void ADeclaredEqualsWinsOverTheSynthesis()
+        {
+            var runtime = Run(
+                "@Value\n"
+                    + "class Picky {\n"
+                    + "  public let n: int;\n"
+                    + "  constructor(n: int) { this.n = n; }\n"
+                    + "  public fun equals(other: Picky): bool { return false; }\n"
+                    + "}\n"
+                    + "fun run(): int { return Picky(1).equals(Picky(1)) ? 1 : 0; }");
+
+            Assert.Equal(0, Int(runtime, "run"));
+        }
+
         /// <summary>
         /// <c>@Value</c> turns <c>==</c> into a field-by-field comparison, so two distinct
         /// instances of the same shape answer as equal - the whole point of the opt-in.

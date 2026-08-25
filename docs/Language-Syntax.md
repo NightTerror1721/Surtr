@@ -3074,6 +3074,14 @@ the same `AttributeTargetMismatch` error, applied to whichever declaration the u
   value. (Value classes already compare structurally on their own, so `@Value` is for the classes
   that would otherwise fall back to identity.)
 
+  A `@Value` class also carries the value members it did not declare, as real emitted methods:
+  `$equals(other)`, `$hashCode()` and `$toDisplayString()` — the `$` ABI prefix, hidden from
+  reflection like every compiler-made member. `equals` and `==` share one field-by-field algorithm,
+  so they always agree; `hashCode` is an FNV fold over per-field hashes, so equal values always
+  hash equal; `toDisplayString` renders `Name(field=value, ...)`. Writing one's own
+  `equals`/`hashCode`/`toDisplayString` is the readable form that wins the call; the `$` forms stay
+  as the ABI contract for hosts and future runtime integration.
+
 - **`@Export("alias")`** marks what a module offers its embedding host: a whole class, or one
   field/property, under an optional alias different from the Surtr name. It changes nothing about
   language visibility — `public`/`internal` still decide reach — and is a read-only contract the

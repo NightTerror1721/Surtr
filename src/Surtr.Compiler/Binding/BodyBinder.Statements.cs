@@ -193,6 +193,9 @@ namespace Surtr.Compiler.Binding
                 ? null
                 : _resolver.Resolve(syntax.Type, _typeScope, _sourceName);
 
+            if (declared?.NonNullable is NamedTypeSymbol declaredType)
+                ReportIfObsoleteType(declaredType, syntax.Type!);
+
             BoundExpression? initializer = null;
 
             if (syntax.Initializer is not null)
@@ -364,6 +367,8 @@ namespace Surtr.Compiler.Binding
             if (syntax.VariableType is not null)
             {
                 var declared = _resolver.Resolve(syntax.VariableType, _typeScope, _sourceName);
+                if (declared.NonNullable is NamedTypeSymbol declaredType)
+                    ReportIfObsoleteType(declaredType, syntax.VariableType);
 
                 if (!element.IsError && !_conversions.IsAssignable(element, declared))
                 {
@@ -508,6 +513,8 @@ namespace Surtr.Compiler.Binding
             {
                 var clause = syntax.Catches[i];
                 var exceptionType = _resolver.Resolve(clause.ExceptionType, _typeScope, _sourceName);
+                if (exceptionType.NonNullable is NamedTypeSymbol caughtType)
+                    ReportIfObsoleteType(caughtType, clause.ExceptionType);
 
                 // §9: every catch clause names a real link in the Exception hierarchy, so matching
                 // one against what the runtime raises is always a walk up a genuine chain.

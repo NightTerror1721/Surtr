@@ -1697,6 +1697,10 @@ namespace Surtr.Compiler.Binding
                     continue;
                 }
 
+                // §11.1: deriving from an obsolete type is a use of it, unless this declaration
+                // carries the mark too.
+                QueueIfObsoleteType(binding.SourceName, symbol, named, baseSyntax.Span);
+
                 if (named.TypeKind == TypeSymbolKind.Interface)
                 {
                     interfaces.Add(named);
@@ -2958,6 +2962,26 @@ namespace Surtr.Compiler.Binding
             foreach (var attribute in _attributes)
                 BindAttributes(attribute);
 
+            // Now that the marks exist, the declaration-signature uses queued during the member
+            // phase can be judged: an @Obsolete type referenced from a non-obsolete declaration
+            // (its base, a field/property type, a method's return) is the warning's point.
+            foreach (var use in _deferredObsoleteTypeUses)
+            {
+                if (!BuiltInAttributes.IsObsolete(use.Type) || BuiltInAttributes.IsObsolete(use.Owner))
+                    continue;
+
+                _diagnostics.ReportWarning(
+                    SurtrDiagnosticCode.ObsoleteMemberUsed,
+                    BuiltInAttributes.ObsoleteMessage(use.Type, use.Type.Name),
+                    use.SourceName,
+                    use.Span);
+            }
+
+            // §11.1: after the @Value marks are known, every class carrying one gains the value
+            // members it did not declare - structural $equals, combined $hashCode, $toDisplayString -
+            // as real methods with bound bodies, so the emitter ships them like any other member.
+            SynthesizeValueMembers();
+
             foreach (var body in _bodies)
                 BindOne(body);
 
@@ -3639,7 +3663,11 @@ namespace Surtr.Compiler.Binding
         #region Member binding
         private FieldSymbol BindField(FieldDeclarationSyntax syntax, NamedTypeSymbol owner, TypeBinding binding)
         {
-            var field = new FieldSymbol(syntax.Name, owner, ResolveOrInfer(syntax.Type, binding.Scope, binding.SourceName))
+            TypeSymbol fieldType = ResolveOrInfer(syntax.Type, binding.Scope, binding.SourceName);
+            if (fieldType.NonNullable is NamedTypeSymbol namedFieldType && syntax.Type is not null)
+                QueueIfObsoleteType(binding.SourceName, owner, namedFieldType, syntax.Type.Span);
+
+            var field = new FieldSymbol(syntax.Name, owner, fieldType)
             {
                 // §7.1: a const is implicitly static and never written to again — there is no
                 // per-instance constant, so neither is read from what was written on the declaration.
@@ -3663,7 +3691,11 @@ namespace Surtr.Compiler.Binding
 
         private FieldSymbol BindModuleField(FieldDeclarationSyntax syntax, ModuleSymbol owner, Scope scope, string sourceName)
         {
-            var field = new FieldSymbol(syntax.Name, owner, ResolveOrInfer(syntax.Type, scope, sourceName))
+            TypeSymbol fieldType = ResolveOrInfer(syntax.Type, scope, sourceName);
+            if (fieldType.NonNullable is NamedTypeSymbol namedFieldType && syntax.Type is not null)
+                QueueIfObsoleteType(sourceName, owner, namedFieldType, syntax.Type.Span);
+
+            var field = new FieldSymbol(syntax.Name, owner, fieldType)
             {
                 IsStatic = true,
                 IsReadOnly = syntax.IsConst || !syntax.IsMutable,
@@ -3825,6 +3857,9 @@ namespace Surtr.Compiler.Binding
             bool isInterface)
         {
             var type = _resolver.Resolve(syntax.Type, binding.Scope, binding.SourceName);
+            if (type.NonNullable is NamedTypeSymbol propertyType)
+                QueueIfObsoleteType(binding.SourceName, owner, propertyType, syntax.Type.Span);
+
             var accessibility = Translate(syntax.Visibility, isInterface ? Accessibility.Public : Accessibility.Private);
 
             var property = new PropertySymbol(syntax.Name, owner, type)
@@ -4068,6 +4103,8 @@ namespace Surtr.Compiler.Binding
             if (syntax.ReturnType is not null)
             {
                 method.ReturnType = _resolver.Resolve(syntax.ReturnType, scope, sourceName);
+                if (method.ReturnType.NonNullable is NamedTypeSymbol returnType)
+                    QueueIfObsoleteType(sourceName, method, returnType, syntax.ReturnType.Span);
                 return;
             }
 
@@ -4904,6 +4941,104 @@ namespace Surtr.Compiler.Binding
 
         private void ReportAt(string sourceName, SourceSpan span, SurtrDiagnosticCode code, string message)
             => _diagnostics.ReportError(code, message, sourceName, span);
+
+        /// <summary>
+        /// Reports the use of an <c>@Obsolete</c> type in a declaration's own signature — the base
+        /// it extends, the type of a field or property, a method's return. Deferred: the marks are
+        /// bound in <see cref="BindAttributes"/>, which runs after every type exists, so whether
+        /// either the referenced type or the referencing declaration carries <c>@Obsolete</c> is
+        /// only known once that phase has run. Drain happens right after it, in
+        /// <see cref="BindBodies"/>, under §11.1's quiet-inside-obsolete rule.
+        /// </summary>
+        private void QueueIfObsoleteType(string sourceName, Symbol owner, NamedTypeSymbol type, SourceSpan span)
+            => _deferredObsoleteTypeUses.Add((sourceName, owner, type, span));
+
+        private readonly List<(string SourceName, Symbol Owner, NamedTypeSymbol Type, SourceSpan Span)> _deferredObsoleteTypeUses =
+            new();
+
+        /// <summary>
+        /// Gives each <c>@Value</c> class the value members it did not declare (§11.1): structural
+        /// <c>$equals</c>, combined <c>$hashCode</c> and <c>$toDisplayString</c>. Runs after
+        /// <see cref="BindAttributes"/> so the mark is known, and creates real methods with bound
+        /// bodies so the emitter ships them like any other member — callable, overridable by
+        /// declaring one's own, and consistent with the <c>==</c>/<c>!=</c> the same mark turns
+        /// structural.
+        /// </summary>
+        private void SynthesizeValueMembers()
+        {
+            foreach (var module in _modules.Values)
+            {
+                foreach (var type in module.Types)
+                    SynthesizeValueMembersFor(type);
+            }
+        }
+
+        private void SynthesizeValueMembersFor(NamedTypeSymbol type)
+        {
+            if (type.TypeKind == TypeSymbolKind.Class && BuiltInAttributes.IsMarkedValue(type.Definition))
+                AddValueMembers(type);
+
+            foreach (var nested in type.NestedTypes)
+                SynthesizeValueMembersFor(nested);
+        }
+
+        private void AddValueMembers(NamedTypeSymbol type)
+        {
+            var definition = type.Definition;
+            var fields = ValueMemberSynthesizer.FieldsOf(definition);
+            var members = new List<Symbol>(definition.Members);
+
+            bool hasEquals = false, hasHashCode = false, hasDisplay = false;
+            foreach (var member in members)
+            {
+                if (member is not MethodSymbol method)
+                    continue;
+
+                hasEquals |= method.Name == ValueMemberSynthesizer.EqualsName;
+                hasHashCode |= method.Name == ValueMemberSynthesizer.HashCodeName;
+                hasDisplay |= method.Name == ValueMemberSynthesizer.ToDisplayStringName;
+            }
+
+            if (!hasEquals)
+            {
+                var method = new MethodSymbol(ValueMemberSynthesizer.EqualsName, definition, _factory.Bool)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    Dispatch = MethodDispatch.Direct,
+                    Parameters = new[] { new ParameterSymbol("other", definition, ordinal: 0) },
+                };
+                members.Add(method);
+                _bound[method] = ValueMemberSynthesizer.EqualsBody(_factory, definition, fields, method);
+            }
+
+            if (!hasHashCode)
+            {
+                var method = new MethodSymbol(ValueMemberSynthesizer.HashCodeName, definition, _factory.Int)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    Dispatch = MethodDispatch.Direct,
+                };
+                members.Add(method);
+                _bound[method] = ValueMemberSynthesizer.HashCodeBody(_factory, MemberLookup, definition, fields, method);
+            }
+
+            if (!hasDisplay)
+            {
+                var method = new MethodSymbol(ValueMemberSynthesizer.ToDisplayStringName, definition, _factory.String)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    Dispatch = MethodDispatch.Direct,
+                };
+                members.Add(method);
+                _bound[method] = ValueMemberSynthesizer.ToDisplayStringBody(_factory, MemberLookup, definition, fields, method);
+            }
+
+            if (members.Count != definition.Members.Count)
+                definition.Members = members;
+        }
 
         private static string Join(IReadOnlyList<string> path, int count)
         {
