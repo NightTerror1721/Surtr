@@ -4681,7 +4681,85 @@ var runtime = Run(
             var failed = Assert.Single(results);
             Assert.Equal("boom", failed.Name);
             Assert.False(failed.Passed);
+            Assert.Equal(SurtrTestOutcome.Failed, failed.Outcome);
             Assert.False(string.IsNullOrEmpty(failed.Failure));
+        }
+
+        /// <summary>
+        /// <c>@TestIgnore</c> is the complement of <c>@Test</c> (§P9): the runner still discovers
+        /// the method and reports it, with the reason the mark carries, but never enters the body -
+        /// which the effect counter is what proves.
+        /// </summary>
+        [Fact]
+        public void TestRunnerReportsAnIgnoredTestAsSkippedWithoutRunningIt()
+        {
+            var runtime = Run(
+                "var ran: int = 0;\n"
+                    + "public fun effects(): int { return ran; }\n"
+                    + "@TestSuite(\"Vec\")\n"
+                    + "class VecTests {\n"
+                    + "  @Test(\"kept\")\n"
+                    + "  public fun kept(): void { ran = ran + 1; }\n"
+                    + "  @Test(\"dropped\")\n"
+                    + "  @TestIgnore(\"flaky on CI\")\n"
+                    + "  public fun dropped(): void { ran = ran + 100; }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var results = SurtrTestRunner.Run(runtime, module);
+
+            Assert.Equal(2, results.Count);
+
+            var kept = Assert.Single(results, r => r.Name == "kept");
+            Assert.Equal(SurtrTestOutcome.Passed, kept.Outcome);
+
+            var dropped = Assert.Single(results, r => r.Name == "dropped");
+            Assert.Equal(SurtrTestOutcome.Skipped, dropped.Outcome);
+            Assert.True(dropped.Skipped);
+            Assert.False(dropped.Passed);
+            Assert.Equal("flaky on CI", dropped.SkipReason);
+            Assert.Null(dropped.Failure);
+
+            Assert.Equal(1, Int(runtime, "effects"));
+        }
+
+        [Fact]
+        public void AnIgnoredTestWithNoReasonStillSkips()
+        {
+            var runtime = Run(
+                "class Tests {\n"
+                    + "  @Test\n"
+                    + "  @TestIgnore\n"
+                    + "  public fun boom(): void { let x: int = 1 / 0; }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var skipped = Assert.Single(SurtrTestRunner.Run(runtime, module));
+
+            Assert.Equal(SurtrTestOutcome.Skipped, skipped.Outcome);
+            Assert.Null(skipped.SkipReason);
+        }
+
+        [Fact]
+        public void ATestIgnoreUseCarriesItsReasonThroughTheImage()
+        {
+            var emitter = Build(
+                "class Tests {\n"
+                    + "  @Test\n"
+                    + "  @TestIgnore(\"waiting on #42\")\n"
+                    + "  public fun pending(): void { }\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            Assert.True(module.FindClass("Tests")!.TryGetMethods("pending", out var overloads));
+            Assert.True(overloads[0].TryGetAttribute(SurtrBuiltIns.TestIgnore, out var usage));
+
+            var instance = runtime.Resolve<SurtrInstance>(SurtrValue.CreateReference(usage.Instance))!;
+            Assert.Equal("waiting on #42", runtime.Resolve<SurtrString>(instance[0])!.Text);
         }
 
         #endregion

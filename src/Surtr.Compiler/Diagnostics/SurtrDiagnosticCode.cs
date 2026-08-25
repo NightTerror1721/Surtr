@@ -596,6 +596,52 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         PureContractViolated = 3081,
 
+        /// <summary>
+        /// A body marked <c>@NoAlloc</c> (§11) contains a construct that allocates on the heap —
+        /// an object creation, a collection literal, a string concatenation or interpolation, a
+        /// lambda, or a <c>yield</c>. A warning, on the same terms as
+        /// <see cref="PureContractViolated"/>: the mark is a contract the compiler checks locally
+        /// rather than proves, so it flags what it can see in the body itself.
+        /// </summary>
+        AllocationInNoAllocBody = 3082,
+
+        /// <summary>
+        /// A case of an enum marked <c>@Flags</c> (§11) holds a value that is not a power of two,
+        /// so it cannot be one bit of a combination. A warning rather than an error: zero is a
+        /// legitimate <c>None</c>, and a deliberate composite case (<c>All = 7</c>) is a pattern
+        /// worth allowing — which is why the compiler reports rather than refuses.
+        /// </summary>
+        FlagCaseNotPowerOfTwo = 3083,
+
+        /// <summary>
+        /// A <c>@Throws("Name")</c> mark (§11) names something that is not an exception: either no
+        /// type of that name is in scope, or the one that is does not descend from
+        /// <c>Exception</c>. A warning — the mark is documentation, so a stale name should be seen
+        /// without failing the build.
+        /// </summary>
+        ThrowsTypeNotException = 3084,
+
+        /// <summary>
+        /// A method marked <c>@TestBefore</c> or <c>@TestAfter</c> (§11) cannot serve as a fixture:
+        /// it takes parameters, returns something, or also carries <c>@Test</c>, which would make
+        /// the same method both the fixture and the thing it wraps.
+        /// </summary>
+        InvalidTestFixture = 3085,
+
+        /// <summary>
+        /// A method carries <c>@TestIgnore</c> (§11) without carrying <c>@Test</c>, so there is
+        /// nothing for the mark to skip — the runner never discovers the method in the first place.
+        /// </summary>
+        IgnoreWithoutTest = 3086,
+
+        /// <summary>
+        /// A method carries both <c>@Benchmark</c> and <c>@Test</c> (§11). The two roles are
+        /// discovered by separate passes and run under different rules — a test once, a benchmark
+        /// repeatedly and timed — so one method answering to both is reported rather than picked
+        /// between.
+        /// </summary>
+        BenchmarkWithTest = 3087,
+
         #endregion
 
         #region Code generation — 4xxx

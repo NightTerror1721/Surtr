@@ -50,6 +50,9 @@ namespace Surtr.Compiler.Binding
         /// <summary>The class name <c>@TestSuite("name")</c> resolves to.</summary>
         internal const string TestSuite = "TestSuite";
 
+        /// <summary>The class name <c>@TestIgnore(reason)</c> resolves to.</summary>
+        internal const string TestIgnore = "TestIgnore";
+
         /// <summary>The class name <c>@Pure</c> resolves to.</summary>
         internal const string Pure = "Pure";
 
@@ -75,6 +78,7 @@ namespace Surtr.Compiler.Binding
                 [Export] = SurtrAttributeTargets.Class | SurtrAttributeTargets.Field | SurtrAttributeTargets.Property,
                 [Test] = SurtrAttributeTargets.Method,
                 [TestSuite] = SurtrAttributeTargets.Class,
+                [TestIgnore] = SurtrAttributeTargets.Method,
                 [Pure] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property,
                 [MainThread] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property | SurtrAttributeTargets.Class,
                 [ThreadSafe] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Class,
@@ -134,6 +138,15 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>Whether this method is marked <c>@NoDiscard</c>.</summary>
         internal static bool IsNoDiscard(Symbol symbol) => Find(symbol, NoDiscard) is not null;
+
+        /// <summary>
+        /// Whether this method is marked <c>@Test</c> — the mark the host-side runner discovers by,
+        /// and the one the role lints ask about when another test-family mark is written beside it.
+        /// </summary>
+        internal static bool IsMarkedTest(Symbol symbol) => Find(symbol, Test) is not null;
+
+        /// <summary>Whether this method is marked <c>@TestIgnore</c>: discovered, reported, not run.</summary>
+        internal static bool IsTestIgnored(Symbol symbol) => Find(symbol, TestIgnore) is not null;
 
         /// <summary>The message an <c>@NoDiscard</c> mark carries, quoted when a result is dropped.</summary>
         internal static string? NoDiscardReason(Symbol symbol) => Reason(Find(symbol, NoDiscard));

@@ -758,5 +758,83 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         #endregion
+
+        #region @TestIgnore (§P9)
+
+        [Fact]
+        public void TestIgnoreIsRejectedOnAClass()
+        {
+            using var compilation = Compile(
+                "@TestIgnore(\"later\")\n"
+                    + "class Target { }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AttributeTargetMismatch);
+        }
+
+        [Fact]
+        public void TestIgnoreIsRejectedOnAField()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @TestIgnore\n"
+                    + "  public let n: int = 0;\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AttributeTargetMismatch);
+        }
+
+        [Fact]
+        public void TestIgnoreBesideTestIsAccepted()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @Test(\"one\")\n"
+                    + "  @TestIgnore(\"flaky on CI\")\n"
+                    + "  public fun first(): void { }\n"
+                    + "}");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.IgnoreWithoutTest);
+        }
+
+        [Fact]
+        public void ANonTextReasonCannotFillTestIgnore()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @Test\n"
+                    + "  @TestIgnore(7)\n"
+                    + "  public fun first(): void { }\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AttributeArgumentTypeMismatch);
+        }
+
+        [Fact]
+        public void TestIgnoreWithoutTestWarnsBecauseThereIsNothingToSkip()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @TestIgnore(\"flaky\")\n"
+                    + "  public fun notATest(): void { }\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.IgnoreWithoutTest);
+            Assert.False(compilation.HasErrors, "The mark is a warning, not an error.");
+        }
+
+        [Fact]
+        public void AMethodWithNeitherMarkIsNeverAsked()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @Obsolete(\"old\")\n"
+                    + "  public fun plain(): void { }\n"
+                    + "}");
+
+            AssertNoReports(compilation, SurtrDiagnosticCode.IgnoreWithoutTest);
+        }
+
+        #endregion
     }
 }

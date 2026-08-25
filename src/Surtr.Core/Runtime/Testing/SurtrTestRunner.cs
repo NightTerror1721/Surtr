@@ -7,15 +7,31 @@ using System.Collections.Generic;
 
 namespace Surtr.Runtime.Testing
 {
+    /// <summary>What became of one discovered <c>@Test</c> method.</summary>
+    public enum SurtrTestOutcome
+    {
+        /// <summary>The body ran to completion.</summary>
+        Passed = 0,
+
+        /// <summary>An exception escaped the body.</summary>
+        Failed = 1,
+
+        /// <summary>
+        /// The method carried <c>@TestIgnore</c>, so it was discovered and reported but never run.
+        /// </summary>
+        Skipped = 2,
+    }
+
     /// <summary>The outcome of running one <c>@Test</c> method.</summary>
     public sealed class SurtrTestResult
     {
-        internal SurtrTestResult(string suite, string name, bool passed, string? failure)
+        internal SurtrTestResult(string suite, string name, SurtrTestOutcome outcome, string? failure, string? skipReason)
         {
             Suite = suite;
             Name = name;
-            Passed = passed;
+            Outcome = outcome;
             Failure = failure;
+            SkipReason = skipReason;
         }
 
         /// <summary>The suite it belongs to: its <c>@TestSuite</c> name, or the class name.</summary>
@@ -24,11 +40,24 @@ namespace Surtr.Runtime.Testing
         /// <summary>Its <c>@Test</c> name, or the method name.</summary>
         public string Name { get; }
 
-        /// <summary>Whether the method ran to completion.</summary>
-        public bool Passed { get; }
+        /// <summary>Which of the three things happened to it.</summary>
+        public SurtrTestOutcome Outcome { get; }
 
-        /// <summary>When it did not, the message of the exception that escaped it.</summary>
+        /// <summary>
+        /// Whether the method ran to completion. A skipped test is not passed — it did not run —
+        /// so a summary that only counts this reports it the way a failure would not be reported
+        /// twice; <see cref="Outcome"/> is what separates the two.
+        /// </summary>
+        public bool Passed => Outcome == SurtrTestOutcome.Passed;
+
+        /// <summary>Whether <c>@TestIgnore</c> kept it from running.</summary>
+        public bool Skipped => Outcome == SurtrTestOutcome.Skipped;
+
+        /// <summary>When it failed, the message of the exception that escaped it.</summary>
         public string? Failure { get; }
+
+        /// <summary>When it was skipped, the reason its <c>@TestIgnore</c> carried, if any.</summary>
+        public string? SkipReason { get; }
     }
 
     /// <summary>
@@ -48,6 +77,12 @@ namespace Surtr.Runtime.Testing
     /// instance, its parameterless constructor first when the class declares one, so field
     /// initializers run the way they would in a hand-driven run. Any exception escaping a test
     /// is reported as its failure.
+    /// </para>
+    /// <para>
+    /// A test also carrying <c>@TestIgnore</c> is discovered and reported as
+    /// <see cref="SurtrTestOutcome.Skipped"/>, with the reason the mark carries, and its body never
+    /// runs. Skipping at report time rather than at discovery is deliberate: a skip nobody can see
+    /// is indistinguishable from a deleted test.
     /// </para>
     /// </remarks>
     public static class SurtrTestRunner
@@ -100,6 +135,19 @@ namespace Surtr.Runtime.Testing
         {
             string name = NameOf(method, SurtrBuiltIns.Test) ?? method.Name;
 
+            // Discovered, reported, not run: the mark's whole point is that the test stays visible
+            // in the report - a skip nobody can see is a deleted test - so this answers before any
+            // instance is allocated rather than by filtering the method out of discovery.
+            if (method.TryGetAttribute(SurtrBuiltIns.TestIgnore, out var ignored))
+            {
+                return new SurtrTestResult(
+                    suite,
+                    name,
+                    SurtrTestOutcome.Skipped,
+                    failure: null,
+                    skipReason: ignored.Arguments.Length > 0 ? ignored.Arguments[0].Text : null);
+            }
+
             try
             {
                 if (method.IsStatic)
@@ -117,11 +165,11 @@ namespace Surtr.Runtime.Testing
                     runtime.Invoke(method, asValue);
                 }
 
-                return new SurtrTestResult(suite, name, passed: true, failure: null);
+                return new SurtrTestResult(suite, name, SurtrTestOutcome.Passed, failure: null, skipReason: null);
             }
             catch (Exception exception)
             {
-                return new SurtrTestResult(suite, name, passed: false, failure: exception.Message);
+                return new SurtrTestResult(suite, name, SurtrTestOutcome.Failed, exception.Message, skipReason: null);
             }
         }
 

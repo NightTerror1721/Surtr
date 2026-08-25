@@ -2969,6 +2969,13 @@ namespace Surtr.Compiler.Binding
             foreach (var attribute in _attributes)
                 BindAttributes(attribute);
 
+            // §11's test-family marks are metadata a host reads, so a combination that cannot hold
+            // is otherwise silent - the runner simply never discovers the method. This is the pass
+            // that says so, and it has to be a second one: a target carries no marks until the loop
+            // above has run over every one of its attributes.
+            foreach (var attribute in _attributes)
+                AttributeRoleCheck.Verify(attribute.Target, attribute.Syntax, attribute.SourceName, _diagnostics);
+
             // Now that the marks exist, the declaration-signature uses queued during the member
             // phase can be judged: an @Obsolete type referenced from a non-obsolete declaration
             // (its base, a field/property type, a method's return) is the warning's point.

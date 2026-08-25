@@ -273,6 +273,13 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass TestSuite;
 
         /// <summary>
+        /// The built-in <c>@TestIgnore("reason")</c> attribute (§11): the complement of
+        /// <see cref="Test"/> — the runner still discovers the method, reports it as skipped with
+        /// the reason written here, and does not run its body.
+        /// </summary>
+        public static readonly SurtrClass TestIgnore;
+
+        /// <summary>
         /// The built-in <c>@Pure</c> attribute (§11): promises a function returns the same value
         /// for the same arguments without observable side effects. A contract for tools first; an
         /// optimizer input later.
@@ -415,6 +422,7 @@ namespace Surtr.Runtime.BuiltIns
             Export = DeclareObject("Export", Attribute);
             Test = DeclareObject("Test", Attribute);
             TestSuite = DeclareObject("TestSuite", Attribute);
+            TestIgnore = DeclareObject("TestIgnore", Attribute);
             Pure = DeclareObject("Pure", Attribute);
             MainThread = DeclareObject("MainThread", Attribute);
             ThreadSafe = DeclareObject("ThreadSafe", Attribute);
@@ -491,6 +499,7 @@ namespace Surtr.Runtime.BuiltIns
             DeclareNamedAttribute(BuilderFor(Export, handles));
             DeclareNamedAttribute(BuilderFor(Test, handles));
             DeclareNamedAttribute(BuilderFor(TestSuite, handles));
+            DeclareReasonAttribute(BuilderFor(TestIgnore, handles));
             // Value, Pure, MainThread and ThreadSafe carry nothing: their meaning is the mark.
             SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
 
