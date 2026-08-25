@@ -10,6 +10,7 @@ using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using Surtr.Runtime.Testing;
+using Surtr.VM;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -40,8 +41,13 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         private ModuleEmitter Build(string source, params (string Path, string Text)[] extra)
+            => Build(source, defineDebug: false, extra);
+
+        private ModuleEmitter Build(string source, bool defineDebug, params (string Path, string Text)[] extra)
         {
             var project = new SurtrProject(Root);
+            if (defineDebug)
+                project.Define("Debug", BuildConstant.Bool(true));
             project.AddSourceFile(Root + "/game/core/Test.surtr", source);
 
             foreach (var (path, text) in extra)
@@ -78,6 +84,10 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         private SurtrRuntime Run(string source, params (string Path, string Text)[] extra) => Load(Build(source, extra));
+
+        /// <summary>Builds and loads a module with the <c>Debug</c> constant defined, so checks on.</summary>
+        private SurtrRuntime RunDebug(string source, params (string Path, string Text)[] extra)
+            => Load(Build(source, defineDebug: true, extra));
 
         private static SurtrMethodInfo Function(SurtrRuntime runtime, string modulePath, string name)
         {
@@ -8399,6 +8409,91 @@ using var compilation = Reject(
 
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedName);
         }
+        #endregion
+
+        #region @Range runtime checks (§P4)
+
+        [Fact]
+        public void AnInRangeAssignmentPassesWhenChecksAreOn()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 50.0;\n"
+                    + "  public fun setHealth(v: float): void { health = v; }\n"
+                    + "}\n"
+                    + "fun run(): float { let p = Player(); p.setHealth(75.0); return p.health; }");
+
+            Assert.Equal(75.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AnOutOfRangeAssignmentThrowsWithTheFieldAndBoundsNamed()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 50.0;\n"
+                    + "  public fun setHealth(v: float): void { health = v; }\n"
+                    + "}\n"
+                    + "fun run(): float { let p = Player(); p.setHealth(150.0); return p.health; }");
+
+            var thrown = Assert.Throws<SurtrThrownException>(() => Call(runtime, "run"));
+            Assert.Contains("ArgumentOutOfRangeException", thrown.Message, StringComparison.Ordinal);
+
+            var raised = runtime.Resolve<SurtrInstance>(SurtrValue.CreateReference(thrown.Reference));
+            Assert.NotNull(raised);
+            string message = runtime.Resolve<SurtrString>(raised![0])!.Text;
+            Assert.Contains("health", message, StringComparison.Ordinal);
+            Assert.Contains("100", message, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void AnIntegerFieldIsCheckedAgainstItsFloatBounds()
+        {
+            var runtime = RunDebug(
+                "class Game {\n"
+                    + "  @Range(1, 8)\n"
+                    + "  public var bounces: int = 3;\n"
+                    + "  public fun setBounces(v: int): void { bounces = v; }\n"
+                    + "}\n"
+                    + "fun run(): int { let g = Game(); g.setBounces(9); return g.bounces; }");
+
+            Assert.Throws<SurtrThrownException>(() => Call(runtime, "run"));
+        }
+
+        [Fact]
+        public void APropertySetIsCheckedLikeAFieldWrite()
+        {
+            var runtime = RunDebug(
+                "class Gauge {\n"
+                    + "  private var _level: float = 0.0;\n"
+                    + "  @Range(0.0, 10.0)\n"
+                    + "  public level: float\n"
+                    + "  {\n"
+                    + "    get { return _level; }\n"
+                    + "    set { _level = value; }\n"
+                    + "  }\n"
+                    + "}\n"
+                    + "fun run(): float { let g = Gauge(); g.level = 42.0; return g.level; }");
+
+            Assert.Throws<SurtrThrownException>(() => Call(runtime, "run"));
+        }
+
+        [Fact]
+        public void AReleaseBuildWithoutDebugCarriesNoCheck()
+        {
+            var runtime = Run(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 50.0;\n"
+                    + "  public fun setHealth(v: float): void { health = v; }\n"
+                    + "}\n"
+                    + "fun run(): float { let p = Player(); p.setHealth(150.0); return p.health; }");
+
+            Assert.Equal(150.0, Call(runtime, "run").AsFloat);
+        }
+
         #endregion
     }
 }

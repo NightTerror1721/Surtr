@@ -42,6 +42,13 @@ namespace Surtr.Compiler.Binding
         private readonly string _sourceName;
         private readonly MethodSymbol _method;
 
+        /// <summary>
+        /// Whether the analyzed body is marked <c>@Pure</c> (§P3). Set by <see cref="Analyze"/> and
+        /// read by the expression walk, so the pure-contract checks know whether this body promised
+        /// referential transparency and is therefore held to it.
+        /// </summary>
+        private readonly bool _isPure;
+
         private readonly HashSet<LocalSymbol> _assigned = new HashSet<LocalSymbol>();
         private readonly HashSet<LocalSymbol> _reported = new HashSet<LocalSymbol>();
 
@@ -76,6 +83,7 @@ namespace Surtr.Compiler.Binding
             _diagnostics = diagnostics;
             _sourceName = sourceName;
             _method = method;
+            _isPure = BuiltInAttributes.IsPure(method);
         }
 
         /// <summary>Checks one body, reporting whatever it finds.</summary>
@@ -380,6 +388,58 @@ namespace Surtr.Compiler.Binding
                 statement.Span);
         }
 
+        /// <summary>
+        /// Reports a call a <c>@Pure</c> body must not make: one that resolved to a method carrying
+        /// no <c>@Pure</c> mark (§P3). The contract is opt-in — the caller marks its own functions
+        /// and the standard library marks its pure ones — so a call to an unmarked function is the
+        /// cheap local signal that referential transparency has no guarantee to rely on.
+        /// </summary>
+        /// <remarks>
+        /// A property read is not a call and is not checked here: reading <c>obj.x</c> is a getter
+        /// call inside the bound tree, but a read is the shape <c>@Pure</c> exists to protect, so
+        /// only a method call — the half that can run arbitrary code — warns.
+        /// </remarks>
+        private void ReportIfPureCallsImpure(BoundCallExpression call)
+        {
+            if (!_isPure || BuiltInAttributes.IsPure(call.Method))
+                return;
+
+            _diagnostics.ReportWarning(
+                SurtrDiagnosticCode.PureContractViolated,
+                $"'{_method.Name}' is marked @Pure but calls '{call.Method.Name}', which is not marked @Pure.",
+                _sourceName,
+                call.Span);
+        }
+
+        /// <summary>
+        /// Reports a write a <c>@Pure</c> body must not make: an assignment whose target is a field
+        /// or property another scope can see (§P3). Writing a local is invisible outside the call,
+        /// so it stays pure; writing a member any other code can observe is not.
+        /// </summary>
+        private void ReportIfPureMutation(BoundAssignmentExpression assignment)
+        {
+            if (!_isPure)
+                return;
+
+            string? member = assignment.Target switch
+            {
+                BoundFieldExpression { Field.Accessibility: Accessibility.Public or Accessibility.Internal } field
+                    => field.Field.Name,
+                BoundPropertyExpression { Property.Accessibility: Accessibility.Public or Accessibility.Internal } property
+                    => property.Property.Name,
+                _ => null,
+            };
+
+            if (member is null)
+                return;
+
+            _diagnostics.ReportWarning(
+                SurtrDiagnosticCode.PureContractViolated,
+                $"'{_method.Name}' is marked @Pure but assigns '{member}', which is visible outside this scope.",
+                _sourceName,
+                assignment.Span);
+        }
+
         private BreakTarget Push(string? label)
         {
             var target = new BreakTarget(label);
@@ -451,6 +511,7 @@ namespace Surtr.Compiler.Binding
                     else
                         Expression(assignment.Target);
 
+                    ReportIfPureMutation(assignment);
                     return;
                 }
 
@@ -513,6 +574,7 @@ namespace Surtr.Compiler.Binding
                     foreach (var argument in call.Arguments)
                         Expression(argument);
 
+                    ReportIfPureCallsImpure(call);
                     return;
                 }
 

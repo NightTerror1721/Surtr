@@ -6,6 +6,7 @@ public value class Angle
         this._radians = radians;
     }
 
+    @Pure
     public radians: float
     {
         get { return this._radians; }

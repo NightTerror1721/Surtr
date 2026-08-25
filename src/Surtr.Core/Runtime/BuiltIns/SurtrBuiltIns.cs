@@ -155,6 +155,14 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass ArgumentException;
 
         /// <summary>
+        /// Raised when a value assigned to a <c>@Range</c>-marked member falls outside the declared
+        /// bounds in a build with checks on (§P4). Kept distinct from
+        /// <see cref="ArgumentException"/>: the argument is the right type and shape, its value is
+        /// simply outside the range the declaration promises.
+        /// </summary>
+        public static readonly SurtrClass ArgumentOutOfRangeException;
+
+        /// <summary>
         /// Raised when text handed to a parsing constructor (<c>int(aString)</c>,
         /// <c>float(aString)</c>, <c>bool(aString)</c>, <c>char(aString)</c>) is not in the shape
         /// that type expects. Kept distinct from <see cref="ArgumentException"/>: the argument here
@@ -389,6 +397,7 @@ namespace Surtr.Runtime.BuiltIns
             // to be a slot the linker lays out and the collector traces.
             Exception = DeclareObject("Exception");
             ArgumentException = DeclareObject("ArgumentException", Exception);
+            ArgumentOutOfRangeException = DeclareObject("ArgumentOutOfRangeException", ArgumentException);
             FormatException = DeclareObject("FormatException", Exception);
             IndexOutOfRangeException = DeclareObject("IndexOutOfRangeException", Exception);
             KeyNotFoundException = DeclareObject("KeyNotFoundException", Exception);
@@ -461,6 +470,7 @@ namespace Surtr.Runtime.BuiltIns
 
             SurtrStandardLibrary.DeclareException(BuilderFor(Exception, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(ArgumentException, handles));
+            SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(ArgumentOutOfRangeException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(FormatException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(IndexOutOfRangeException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(KeyNotFoundException, handles));

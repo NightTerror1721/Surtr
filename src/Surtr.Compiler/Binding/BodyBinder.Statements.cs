@@ -61,8 +61,131 @@ namespace Surtr.Compiler.Binding
                 return BindTupleAssignment(syntax, assignment, targets);
             }
 
-            return new BoundExpressionStatement(syntax, BindExpression(syntax.Expression));
+            var expression = BindExpression(syntax.Expression);
+
+            // A ranged field or property-set in a build with checks on becomes a sequence that
+            // captures the value, guards it, then writes it - so a side-effecting right side is
+            // evaluated exactly once (§P4).
+            if (expression is BoundAssignmentExpression assignmentExpression
+                && RangeCheckAssignment(syntax, assignmentExpression) is BoundStatement guarded)
+            {
+                return guarded;
+            }
+
+            return new BoundExpressionStatement(syntax, expression);
         }
+
+        /// <summary>
+        /// Rewrites an assignment to a <c>@Range</c>-marked numeric field or property-set into a
+        /// block that captures the value, throws when it falls outside the declared bounds, and
+        /// only then writes it. Returns <see langword="null"/> when no check applies.
+        /// </summary>
+        /// <remarks>
+        /// The sequence matters: the right side is bound into a hidden temporary so a call with
+        /// effects is evaluated once, the guard throws before the write, and the write itself is
+        /// the ordinary assignment over the captured value. In a release build
+        /// (<c>_rangeChecksEnabled</c> false) this never runs, so the check costs nothing.
+        /// </remarks>
+        private BoundStatement? RangeCheckAssignment(ExpressionStatementSyntax syntax, BoundAssignmentExpression assignment)
+        {
+            if (!_rangeChecksEnabled)
+                return null;
+
+            Symbol member;
+            TypeSymbol memberType;
+            switch (assignment.Target)
+            {
+                case BoundFieldExpression field:
+                    member = field.Field;
+                    memberType = field.Field.Type;
+                    break;
+                case BoundPropertyExpression property:
+                    member = property.Property;
+                    memberType = property.Property.Type;
+                    break;
+                default:
+                    return null;
+            }
+
+            double? low = BuiltInAttributes.RangeLow(member);
+            double? high = BuiltInAttributes.RangeHigh(member);
+            if (low is null && high is null)
+                return null;
+
+            if (memberType.NonNullable.SpecialType is not (SpecialType.Int or SpecialType.Float))
+                return null;
+
+            var temporary = DeclareLocal(NextRangeTempName(), memberType.NonNullable, isReadOnly: true, syntax.Span);
+
+            BoundExpression? condition = null;
+            var value = new BoundLocalExpression(syntax, temporary);
+
+            if (low is not null)
+                condition = JoinRangeCondition(condition, syntax, BinaryOperator.Less, value, low.Value);
+            if (high is not null)
+                condition = JoinRangeCondition(condition, syntax, BinaryOperator.Greater, value, high.Value);
+
+            if (condition is null)
+                return null;
+
+            var thrown = BuildLibraryException(
+                syntax,
+                "ArgumentOutOfRangeException",
+                RangeMessage(member, low, high));
+
+            if (thrown is null)
+                return null;
+
+            var write = new BoundAssignmentExpression(syntax, assignment.Target, value);
+
+            return new BoundBlockStatement(syntax, new BoundStatement[]
+            {
+                new BoundLocalDeclarationStatement(syntax, temporary, assignment.Value),
+                new BoundIfStatement(syntax, condition, new BoundThrowStatement(syntax, thrown), otherwise: null),
+                new BoundExpressionStatement(syntax, write),
+            });
+        }
+
+        /// <summary>
+        /// Adds one side of a range check to the running condition, widening the compared value to
+        /// the float the bounds are expressed in (§P4).
+        /// </summary>
+        private BoundExpression? JoinRangeCondition(
+            BoundExpression? current,
+            SyntaxNode syntax,
+            BinaryOperator op,
+            BoundExpression value,
+            double bound)
+        {
+            var compared = Widen(value, _factory.Float, syntax);
+            var side = new BoundBinaryExpression(
+                syntax,
+                op,
+                compared,
+                new BoundLiteralExpression(syntax, _factory.Float, bound),
+                _factory.Bool);
+
+            return current is null
+                ? side
+                : new BoundBinaryExpression(syntax, BinaryOperator.LogicalOr, current, side, _factory.Bool);
+        }
+
+        /// <summary>The message an out-of-range assignment throws with.</summary>
+        private static string RangeMessage(Symbol member, double? low, double? high)
+        {
+            string bounds = (low, high) switch
+            {
+                (double lo, double hi) => $"[{lo:G}, {hi:G}]",
+                (double lo, null) => $"[{lo:G}, inf)",
+                (null, double hi) => $"(-inf, {hi:G}]",
+                _ => "a declared range",
+            };
+
+            return $"Assignment to '{member.Name}' is outside {bounds}.";
+        }
+
+        private int _rangeTemps;
+        private string NextRangeTempName() => $"$range{_rangeTemps++}";
 
         /// <summary>
         /// Binds a destructuring declaration: one hidden temporary holds the value, and every

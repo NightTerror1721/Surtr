@@ -3522,7 +3522,8 @@ namespace Surtr.Compiler.Binding
                 body.Module,
                 body.ContainingType,
                 body.Method,
-                ImportedBy(body.Module));
+                ImportedBy(body.Module),
+                rangeChecksEnabled: _compilation.Project.BuildConstants.ContainsKey("Debug"));
 
             var bound = binder.BindBody(body.Syntax);
             _bound.Add(body.Method, bound);

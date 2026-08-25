@@ -5,6 +5,7 @@ using Surtr.Compiler.Binding;
 using Surtr.Compiler.CodeGen;
 using Surtr.Compiler.Compilation;
 using Surtr.Runtime;
+using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using Surtr.Stdlib;
@@ -346,6 +347,22 @@ namespace Surtr.Tests.Stdlib
             Assert.True(runtime.TryGetModule("surtr.math.Angle", out _));
             Assert.False(runtime.TryGetModule("surtr.core.Exception", out _));
             Assert.False(runtime.TryGetModule("surtr.collections.List", out _));
+        }
+
+        /// <summary>
+        /// The <c>@Pure</c> mark on the standard library's pure functions (§P3) travels through the
+        /// image: a user's <c>@Pure</c> body can call <c>Math.max</c> without tripping the purity
+        /// contract check, because the imported method carries the mark.
+        /// </summary>
+        [Fact]
+        public void ThePureMarkSurvivesIntoTheMathImage()
+        {
+            using var runtime = new SurtrRuntime();
+            SurtrStdlib.LoadInto(runtime, new[] { MathImage() });
+
+            Assert.True(
+                Function(runtime, "surtr.math.Math", "max").TryGetAttribute(SurtrBuiltIns.Pure, out _),
+                "Math.max should carry @Pure in the committed image.");
         }
     }
 }

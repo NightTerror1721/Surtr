@@ -587,5 +587,111 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         #endregion
+
+        #region @Pure (§P3)
+
+        [Fact]
+        public void APureBodyThatOnlyCallsPureFunctionsStaysQuiet()
+        {
+            using var compilation = Compile(
+                "@Pure\n"
+                    + "public fun helper(x: int): int { return x * 2; }\n"
+                    + "@Pure\n"
+                    + "public fun run(x: int): int { return helper(x) + 1; }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.PureContractViolated);
+        }
+
+        [Fact]
+        public void APureBodyCallingAnUnmarkedFunctionWarns()
+        {
+            using var compilation = Compile(
+                "@Pure\n"
+                    + "public fun pure(x: int): int { return x * 2; }\n"
+                    + "public fun impure(x: int): int { return x + 1; }\n"
+                    + "@Pure\n"
+                    + "public fun run(x: int): int { return pure(x) + impure(x); }");
+
+            Assert.True(
+                compilation.Diagnostics.Count(d => d.Code == SurtrDiagnosticCode.PureContractViolated) == 1,
+                "Only the call to 'impure' should warn: "
+                    + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+        }
+
+        [Fact]
+        public void APropertyReadInAPureBodyDoesNotWarn()
+        {
+            // Reading `obj.x` runs the getter, but a read is the shape @Pure exists to protect;
+            // the contract check treats method calls as the impure half, not property reads.
+            using var compilation = Compile(
+                "class Box {\n"
+                    + "  public let value: int = 1;\n"
+                    + "}\n"
+                    + "@Pure\n"
+                    + "public fun run(b: Box): int { return b.value + 1; }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.PureContractViolated);
+        }
+
+        [Fact]
+        public void APureBodyAssigningAPublicFieldWarns()
+        {
+            using var compilation = Compile(
+                "class Counter {\n"
+                    + "  public var count: int = 0;\n"
+                    + "  @Pure\n"
+                    + "  public fun nudge(): int { count = count + 1; return count; }\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.PureContractViolated);
+        }
+
+        [Fact]
+        public void APureBodyAssigningAPrivateFieldIsQuiet()
+        {
+            // The report's phase 2 scopes the mutation check to fields another scope can see.
+            using var compilation = Compile(
+                "class Counter {\n"
+                    + "  private var hidden: int = 0;\n"
+                    + "  @Pure\n"
+                    + "  public fun peek(): int { hidden = 5; return hidden; }\n"
+                    + "}");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.PureContractViolated);
+        }
+
+        [Fact]
+        public void ANonPureBodyIsNeverChecked()
+        {
+            using var compilation = Compile(
+                "public fun impure(x: int): int { return x + 1; }\n"
+                    + "public fun run(x: int): int { return impure(x); }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.PureContractViolated);
+        }
+
+        [Fact]
+        public void APureChainOfMarkedCallsStaysQuiet()
+        {
+            // The report's own example shape — clamp01 built from max/min — compiles clean when
+            // every callee carries the mark, which is exactly how the standard library's pure
+            // functions are declared (§P3).
+            using var compilation = Compile(
+                "@Pure\n"
+                    + "public fun max(a: float, b: float): float { return a > b ? a : b; }\n"
+                    + "@Pure\n"
+                    + "public fun min(a: float, b: float): float { return a < b ? a : b; }\n"
+                    + "@Pure\n"
+                    + "public fun clamp01(x: float): float { return max(0.0, min(1.0, x)); }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.PureContractViolated);
+        }
+
+        #endregion
     }
 }

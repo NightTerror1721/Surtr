@@ -588,6 +588,14 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         NoDiscardResultUnused = 3080,
 
+        /// <summary>
+        /// A body marked <c>@Pure</c> (§11) does something a pure function must not: it calls a
+        /// function that does not carry the mark, or writes a field or property another scope can
+        /// see. A warning — the compiler trusts the contract rather than proving it, and flags the
+        /// cheap local cases the report's phase 2 describes.
+        /// </summary>
+        PureContractViolated = 3081,
+
         #endregion
 
         #region Code generation — 4xxx

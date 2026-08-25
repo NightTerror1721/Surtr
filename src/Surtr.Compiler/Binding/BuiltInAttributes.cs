@@ -146,5 +146,41 @@ namespace Surtr.Compiler.Binding
                 ? $"'{used}' is obsolete."
                 : $"'{used}' is obsolete: {reason}";
         }
+
+        /// <summary>
+        /// Whether this declaration is marked <c>@Pure</c>: a promise it mutates no observable
+        /// state and returns the same result for the same arguments.
+        /// </summary>
+        internal static bool IsPure(Symbol symbol) => Find(symbol, Pure) is not null;
+
+        /// <summary>
+        /// The lower bound a <c>@Range(lo, hi)</c> mark fixes, or <see langword="null"/> when no
+        /// bound was written on that side. Bounds are floats (§P4), so the folded constant arrives
+        /// as a <see langword="double"/> — or a <see langword="long"/> before the widening a float
+        /// slot applies to an integer argument.
+        /// </summary>
+        internal static double? RangeLow(Symbol symbol)
+        {
+            var use = Find(symbol, Range);
+            if (use is null || use.Arguments.Count == 0)
+                return null;
+            return AsDouble(use.Arguments[0]);
+        }
+
+        /// <summary>The upper bound a <c>@Range(lo, hi)</c> mark fixes, or <see langword="null"/>.</summary>
+        internal static double? RangeHigh(Symbol symbol)
+        {
+            var use = Find(symbol, Range);
+            if (use is null || use.Arguments.Count < 2)
+                return null;
+            return AsDouble(use.Arguments[1]);
+        }
+
+        private static double? AsDouble(object? value) => value switch
+        {
+            double d => d,
+            long l => l,
+            _ => null,
+        };
     }
 }

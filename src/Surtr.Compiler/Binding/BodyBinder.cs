@@ -49,6 +49,13 @@ namespace Surtr.Compiler.Binding
         private readonly ModuleSymbol _module;
         private readonly MethodSymbol _method;
 
+        /// <summary>
+        /// Whether this build asks for <c>@Range</c> runtime checks (§P4). Backed by the
+        /// <c>Debug</c> build constant: defined, the binder inserts a range check on every
+        /// assignment to a ranged field or property-set; absent, the check costs nothing at all.
+        /// </summary>
+        private readonly bool _rangeChecksEnabled;
+
         // Modules a wildcard import brought in. §2.5 makes a module a container of members, so its
         // functions and variables are in scope unqualified exactly as its types are. A named or
         // selective import that reached a module-level member carries a filter naming exactly
@@ -130,7 +137,8 @@ namespace Surtr.Compiler.Binding
             ModuleSymbol module,
             NamedTypeSymbol? containingType,
             MethodSymbol method,
-            IReadOnlyList<ImportedModule>? imported = null)
+            IReadOnlyList<ImportedModule>? imported = null,
+            bool rangeChecksEnabled = false)
         {
             _imported = imported ?? Array.Empty<ImportedModule>();
             _factory = factory;
@@ -145,6 +153,7 @@ namespace Surtr.Compiler.Binding
             _module = module;
             _containingType = containingType;
             _method = method;
+            _rangeChecksEnabled = rangeChecksEnabled;
 
             _values = new Scope();
             foreach (var parameter in method.Parameters)
