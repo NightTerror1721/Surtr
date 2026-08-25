@@ -5134,6 +5134,142 @@ var runtime = Run(
 
         #endregion
 
+        #region @Flags: representacion entera (§P14)
+
+        private const string Perms =
+            "@Flags\n"
+                + "enum Perm { Read, Write, Execute }\n";
+
+        /// <summary>
+        /// The mark changes the representation (§P14): a case is the integer <c>1 &lt;&lt; ordinal</c>
+        /// rather than a static instance, which is what makes a combination a value of the type at
+        /// all — two references ANDed together name nothing.
+        /// </summary>
+        [Fact]
+        public void EachFlagsCaseIsTheBitAtItsDeclaredPosition()
+        {
+            var runtime = Run(
+                Perms
+                    + "public fun read(): int { return Perm.Read as int; }\n"
+                    + "public fun write(): int { return Perm.Write as int; }\n"
+                    + "public fun execute(): int { return Perm.Execute as int; }");
+
+            Assert.Equal(1, Int(runtime, "read"));
+            Assert.Equal(2, Int(runtime, "write"));
+            Assert.Equal(4, Int(runtime, "execute"));
+        }
+
+        [Fact]
+        public void TheBitwiseOperatorsCombineAndMaskAndProduceTheEnumItself()
+        {
+            var runtime = Run(
+                Perms
+                    + "public fun combined(): int { return (Perm.Read | Perm.Execute) as int; }\n"
+                    + "public fun masked(): int { return ((Perm.Read | Perm.Execute) & Perm.Execute) as int; }\n"
+                    + "public fun toggled(): int { return (Perm.Read ^ Perm.Read) as int; }\n"
+                    // The result being the enum is what lets it land in a declared slot with no cast.
+                    + "public fun assigned(): int { let rw: Perm = Perm.Read | Perm.Write; return rw as int; }");
+
+            Assert.Equal(5, Int(runtime, "combined"));
+            Assert.Equal(4, Int(runtime, "masked"));
+            Assert.Equal(0, Int(runtime, "toggled"));
+            Assert.Equal(3, Int(runtime, "assigned"));
+        }
+
+        [Fact]
+        public void ComplementRemovesAFlag()
+        {
+            var runtime = Run(
+                Perms
+                    + "public fun removed(): int { return ((Perm.Read | Perm.Write) & ~Perm.Write) as int; }");
+
+            Assert.Equal(1, Int(runtime, "removed"));
+        }
+
+        /// <summary>
+        /// Compound assignment comes free: the binder expands <c>p |= f</c> to <c>p = p | f</c>
+        /// before anything reads an operator, so the branch that resolves <c>|</c> is the only one
+        /// there ever was.
+        /// </summary>
+        [Fact]
+        public void CompoundAssignmentWorksThroughTheSameOperator()
+        {
+            var runtime = Run(
+                Perms
+                    + "public fun compound(): int { var p: Perm = Perm.Read; p |= Perm.Execute; return p as int; }\n"
+                    + "public fun cleared(): int { var p: Perm = Perm.Read | Perm.Write; p &= ~Perm.Read; return p as int; }");
+
+            Assert.Equal(5, Int(runtime, "compound"));
+            Assert.Equal(2, Int(runtime, "cleared"));
+        }
+
+        [Fact]
+        public void EqualityComparesValuesRatherThanReferences()
+        {
+            var runtime = Run(
+                Perms
+                    + "public fun holds(): int { let p: Perm = Perm.Read | Perm.Write; return (p & Perm.Write) == Perm.Write ? 1 : 0; }\n"
+                    + "public fun lacks(): int { let p: Perm = Perm.Read | Perm.Write; return (p & Perm.Execute) == Perm.Execute ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "holds"));
+            Assert.Equal(0, Int(runtime, "lacks"));
+        }
+
+        /// <summary>
+        /// The cast is explicit in both directions and moves no bits — but it has to be written,
+        /// because an arbitrary int is not a combination of the enum's cases. It is also what makes
+        /// the empty set expressible, there being no case for zero.
+        /// </summary>
+        [Fact]
+        public void TheCastToAndFromIntRoundTripsAndNamesTheEmptySet()
+        {
+            var runtime = Run(
+                Perms
+                    + "public fun roundTrip(): int { return (5 as Perm) as int; }\n"
+                    + "public fun empty(): int { let none: Perm = 0 as Perm; return (Perm.Read & ~Perm.Read) == none ? 1 : 0; }");
+
+            Assert.Equal(5, Int(runtime, "roundTrip"));
+            Assert.Equal(1, Int(runtime, "empty"));
+        }
+
+        /// <summary>
+        /// An ordinary enum is untouched: its cases stay instances, so combining them is still not
+        /// a thing the language does.
+        /// </summary>
+        [Fact]
+        public void AnUnmarkedEnumKeepsItsInstanceRepresentation()
+        {
+            var runtime = Run(
+                "enum Color { Red, Green }\n"
+                    + "public fun same(): int { return Color.Red == Color.Red ? 1 : 0; }\n"
+                    + "public fun different(): int { return Color.Red == Color.Green ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "same"));
+            Assert.Equal(0, Int(runtime, "different"));
+        }
+
+        /// <summary>
+        /// The mark reaches the image, and the type it marks arrives as a class of int constants —
+        /// the truth of its representation, and the same erasure a <c>value class</c> pays.
+        /// </summary>
+        [Fact]
+        public void AFlagsEnumTravelsAsAClassOfIntConstants()
+        {
+            var emitter = Build(Perms + "public fun unused(): int { return 0; }");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            var perm = module.FindClass("Perm")!;
+            Assert.False(perm.IsEnum, "Its values are ints, so it is not an enum at runtime.");
+            Assert.True(perm.TryGetAttribute(SurtrBuiltIns.Flags, out _), "The mark itself still travels.");
+            Assert.True(perm.TryGetField("Read", out _));
+        }
+
+        #endregion
+
         #region Reflexion de atributos: Type/Member (Fase 6)
 
         /// <summary>

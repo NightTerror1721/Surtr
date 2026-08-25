@@ -6080,6 +6080,11 @@ namespace Surtr.Compiler.CodeGen
                     return underlying is null ? SurtrValueTypeCode.Object : TypeCodeOf(underlying);
                 }
 
+                // A @Flags enum is one int (§P14) - which is what makes `|` an integer opcode and
+                // `==` a comparison of values rather than of references.
+                case TypeSymbolKind.Enum when ((NamedTypeSymbol)bare).IsFlagsEnum:
+                    return SurtrValueTypeCode.Integer;
+
                 default: return SurtrValueTypeCode.Object;
             }
         }

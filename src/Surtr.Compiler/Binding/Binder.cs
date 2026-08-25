@@ -430,6 +430,16 @@ namespace Surtr.Compiler.Binding
 
             var symbol = _factory.DeclareType(syntax.Name, kind, module, containingType);
 
+            // Read off the syntax rather than off a bound AttributeUse, and this is the one mark in
+            // §11 that has to be: @Flags changes the enum's representation to a single int (§P14),
+            // which the member phase, SignatureSet and every descriptor need to know - and marks do
+            // not bind until BindBodies, long after all three. A parameterless attribute's presence
+            // is a question the syntax already answers, so this asks it there, exactly as a
+            // declaration-level `const if` is answered before anything is bound. The bound use is
+            // still recorded later, for the image and for reflection.
+            if (kind == TypeSymbolKind.Enum && HasWrittenAttribute(syntax, BuiltInAttributes.Flags))
+                symbol.IsFlagsEnum = true;
+
             // §3.1's two defaults: a top-level declaration is internal to its module, and one nested
             // inside a type is a member of it and private like any other — except inside an
             // interface, where §2.3 makes every member implicitly public and a nested type is not
@@ -2050,6 +2060,9 @@ namespace Surtr.Compiler.Binding
                     Duplicate(binding, enumCase.Span, enumCase.Name);
             }
 
+            if (symbol.IsFlagsEnum)
+                CheckFlagsEnumIsPlain(binding, syntax, symbol, members);
+
             if (syntax.Kind == TypeDeclarationKind.ValueClass)
                 BindValueClassField(binding, members, letFields);
 
@@ -2057,6 +2070,65 @@ namespace Surtr.Compiler.Binding
                 BindSingletonInstance(binding, symbol, members);
 
             symbol.Members = members;
+        }
+
+        /// <summary>
+        /// Rejects everything a <c>@Flags</c> enum's representation leaves nowhere to put (§P14).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// An ordinary enum is a sealed class whose cases are instances, so it can declare members,
+        /// implement interfaces and give its cases constructor arguments — all of which are things
+        /// done to or through an instance. A <c>@Flags</c> enum has none: its value is one
+        /// <c>int</c>, and a combination like <c>Read | Write</c> is not any case, so there is no
+        /// object for a member to run on and no case for a lookup to land back on.
+        /// </para>
+        /// <para>
+        /// Reported against each offending declaration rather than against the mark, so the message
+        /// points at what has to change. An error, because there is no representation to fall back
+        /// on: unlike §11's other checks this is not advice about intent.
+        /// </para>
+        /// </remarks>
+        private void CheckFlagsEnumIsPlain(
+            TypeBinding binding,
+            TypeDeclarationSyntax syntax,
+            NamedTypeSymbol symbol,
+            List<Symbol> members)
+        {
+            for (int i = 0; i < syntax.EnumCases.Count; i++)
+            {
+                var @case = syntax.EnumCases[i];
+                if (@case.Arguments.Count > 0)
+                {
+                    Report(SurtrDiagnosticCode.InvalidFlagsEnum, binding, @case.Span,
+                        $"'{symbol.Name}' is '@Flags', so '{@case.Name}' is the bit {i} rather than an instance; it cannot take constructor arguments.");
+                }
+            }
+
+            if (syntax.EnumCases.Count > 31)
+            {
+                Report(SurtrDiagnosticCode.InvalidFlagsEnum, binding, syntax.Span,
+                    $"'{symbol.Name}' is '@Flags' with {syntax.EnumCases.Count} cases, and an int holds 31 usable bits.");
+            }
+
+            if (symbol.Interfaces.Count > 0)
+            {
+                Report(SurtrDiagnosticCode.InvalidFlagsEnum, binding, syntax.Span,
+                    $"'{symbol.Name}' is '@Flags', so its values are ints with no receiver to dispatch through; it cannot implement an interface.");
+            }
+
+            foreach (var member in members)
+            {
+                // Its own cases are the members it is allowed to have, and nothing else: they are
+                // the constants, not things declared on an instance.
+                if (member is FieldSymbol { IsStatic: true } @case && ReferenceEquals(@case.Type, symbol))
+                    continue;
+
+                Report(SurtrDiagnosticCode.InvalidFlagsEnum, binding, syntax.Span,
+                    $"'{symbol.Name}' is '@Flags', so it has no instance for '{member.Name}' to belong to; a flags enum declares cases only.");
+
+                break;
+            }
         }
 
         private void BindValueClassField(TypeBinding binding, List<Symbol> members, int letFields)
@@ -5149,6 +5221,26 @@ namespace Surtr.Compiler.Binding
 
         private void ReportAt(string sourceName, SourceSpan span, SurtrDiagnosticCode code, string message)
             => _diagnostics.ReportError(code, message, sourceName, span);
+
+        /// <summary>
+        /// Whether a declaration was written with the named attribute, asked of the syntax.
+        /// </summary>
+        /// <remarks>
+        /// Only sound for a parameterless built-in, and only used for one: what the bound uses add
+        /// over this is folded arguments and a resolved class, and a mark that carries no arguments
+        /// has neither to contribute. §11's recognition is by name at every other site too.
+        /// </remarks>
+        private static bool HasWrittenAttribute(DeclarationSyntax declaration, string name)
+        {
+            var attributes = declaration.Attributes;
+            for (int i = 0; i < attributes.Count; i++)
+            {
+                if (string.Equals(attributes[i].Name, name, StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
+        }
 
         /// <summary>
         /// Reports the use of an <c>@Obsolete</c> type in a declaration's own signature — the base

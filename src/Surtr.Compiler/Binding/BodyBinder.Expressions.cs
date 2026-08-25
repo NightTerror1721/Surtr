@@ -1129,6 +1129,19 @@ namespace Surtr.Compiler.Binding
                         return _factory.Bool;
                     }
 
+                    // §P14: combining the bits of one @Flags enum. Both sides have to be the same
+                    // enum - two different flag sets share no bit meanings, so a combination of
+                    // them would be a number belonging to neither - and the result is that enum,
+                    // which is what makes `let rw: Perm = Perm.Read | Perm.Write;` an ordinary
+                    // assignment rather than a cast. The shifts stay out: the bit a case occupies
+                    // is the compiler's to assign, so moving one produces a value no case names.
+                    if (@operator is BinaryOperator.BitAnd or BinaryOperator.BitOr or BinaryOperator.BitXor
+                        && ReferenceEquals(l, r)
+                        && l is NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum, IsFlagsEnum: true })
+                    {
+                        return l;
+                    }
+
                     return null;
                 }
 
@@ -1372,6 +1385,13 @@ namespace Surtr.Compiler.Binding
                 case UnaryOperator.Complement:
                     if (type.SpecialType == SpecialType.Int)
                         return new BoundUnaryExpression(syntax, syntax.Operator, operand, _factory.Int);
+
+                    // §P14: `~perms` is every bit the value does not have, which is what makes
+                    // removing one writable as `perms & ~Perm.Write`. The result stays the enum -
+                    // the complement of a set of its bits is still a set of its bits.
+                    if (type is NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum, IsFlagsEnum: true })
+                        return new BoundUnaryExpression(syntax, syntax.Operator, operand, type);
+
                     break;
 
                 case UnaryOperator.PreIncrement:

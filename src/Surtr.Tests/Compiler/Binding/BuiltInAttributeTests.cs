@@ -1221,5 +1221,158 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         #endregion
+
+        #region @Flags (§P14)
+
+        [Fact]
+        public void FlagsIsRejectedOnAClass()
+        {
+            using var compilation = Compile(
+                "@Flags\n"
+                    + "class Target { }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AttributeTargetMismatch);
+        }
+
+        [Fact]
+        public void FlagsIsRejectedOnAMethod()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @Flags\n"
+                    + "  public fun run(): void { }\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AttributeTargetMismatch);
+        }
+
+        [Fact]
+        public void APlainFlagsEnumIsAccepted()
+        {
+            using var compilation = Compile(
+                "@Flags\n"
+                    + "enum Perm { Read, Write, Execute }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.InvalidFlagsEnum);
+        }
+
+        /// <summary>
+        /// The representation is what refuses these (§P14): a <c>@Flags</c> value is one int, so
+        /// there is no instance for a member to run on, no receiver for an interface to dispatch
+        /// through, and no case for a constructor argument to build.
+        /// </summary>
+        [Fact]
+        public void AFlagsEnumDeclaringAMemberIsRejected()
+        {
+            using var compilation = Compile(
+                "@Flags\n"
+                    + "enum Perm { Read, Write;\n"
+                    + "  public fun describe(): string { return \"x\"; }\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidFlagsEnum);
+        }
+
+        [Fact]
+        public void AFlagsEnumImplementingAnInterfaceIsRejected()
+        {
+            using var compilation = Compile(
+                "public interface INamed { fun describe(): string; }\n"
+                    + "@Flags\n"
+                    + "enum Perm : INamed { Read, Write;\n"
+                    + "  public fun describe(): string { return \"x\"; }\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidFlagsEnum);
+        }
+
+        [Fact]
+        public void AFlagsCaseWithConstructorArgumentsIsRejected()
+        {
+            using var compilation = Compile(
+                "@Flags\n"
+                    + "enum Perm { Read(1), Write(2) }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidFlagsEnum);
+        }
+
+        [Fact]
+        public void AFlagsEnumWithMoreCasesThanBitsIsRejected()
+        {
+            var cases = new System.Text.StringBuilder();
+            for (int i = 0; i < 32; i++)
+                cases.Append(i == 0 ? "F0" : ", F" + i);
+
+            using var compilation = Compile(
+                "@Flags\n"
+                    + "enum Wide { " + cases + " }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidFlagsEnum);
+        }
+
+        [Fact]
+        public void CombiningTwoDifferentFlagsEnumsIsRejected()
+        {
+            using var compilation = Compile(
+                "@Flags\n"
+                    + "enum Perm { Read, Write }\n"
+                    + "@Flags\n"
+                    + "enum Slot { Head, Chest }\n"
+                    + "public fun mix(): int { return (Perm.Read | Slot.Head) as int; }");
+
+            Assert.True(compilation.HasErrors, "Two flag sets share no bit meanings, so a combination of them belongs to neither.");
+        }
+
+        [Fact]
+        public void CombiningAnUnmarkedEnumIsStillRejected()
+        {
+            using var compilation = Compile(
+                "enum Color { Red, Green }\n"
+                    + "public fun mix(): Color { return Color.Red | Color.Green; }");
+
+            Assert.True(compilation.HasErrors, "Without the mark a case is an instance, and instances do not combine.");
+        }
+
+        [Fact]
+        public void AnIntDoesNotReachAFlagsEnumWithoutACast()
+        {
+            using var compilation = Compile(
+                "@Flags\n"
+                    + "enum Perm { Read, Write }\n"
+                    + "public fun bad(): Perm { return 3; }");
+
+            Assert.True(compilation.HasErrors, "An arbitrary int is not a combination of the enum's cases.");
+        }
+
+        /// <summary>
+        /// The mark erases with the representation, so two overloads that differ only by it would
+        /// collide in the real method table — which is what <c>SignatureSet</c> is for.
+        /// </summary>
+        [Fact]
+        public void AnOverloadDifferingOnlyByAFlagsEnumAndIntCollides()
+        {
+            using var compilation = Compile(
+                "@Flags\n"
+                    + "enum Perm { Read, Write }\n"
+                    + "public fun apply(p: Perm): void { }\n"
+                    + "public fun apply(n: int): void { }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
+        }
+
+        /// <summary>Non-regression: the int and bool arms of the bitwise block are untouched.</summary>
+        [Fact]
+        public void TheOrdinaryBitwiseOperandsStillResolve()
+        {
+            using var compilation = Compile(
+                "public fun ints(a: int, b: int): int { return (a & b) | (a ^ b) | (a << 1) | (a >> 1) | (a >>> 1); }\n"
+                    + "public fun bools(a: bool, b: bool): bool { return (a & b) | (a ^ b); }\n"
+                    + "public fun complement(a: int): int { return ~a; }");
+
+            AssertClean(compilation);
+        }
+
+        #endregion
     }
 }

@@ -321,6 +321,22 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass NoAlloc;
 
         /// <summary>
+        /// The built-in <c>@Flags</c> attribute (§11): marks an enum whose cases are single bits of
+        /// a set rather than alternatives, so they combine with <c>|</c>, <c>&amp;</c>, <c>^</c> and
+        /// <c>~</c>.
+        /// </summary>
+        /// <remarks>
+        /// The mark changes the enum's <em>representation</em>: an ordinary enum case is a static
+        /// instance and a variable of that type holds a reference, which cannot be combined at all —
+        /// two entity ids ANDed together name nothing. A marked enum's cases are the integers
+        /// <c>1 &lt;&lt; ordinal</c> instead, and a variable of it holds one int, exactly as a
+        /// one-field <c>value class</c> over an <c>int</c> does. That is what a combination is a
+        /// value of, and it is why a marked enum has to be plain: with no instance there is nothing
+        /// to declare a member on.
+        /// </remarks>
+        public static readonly SurtrClass Flags;
+
+        /// <summary>
         /// The built-in <c>@Pure</c> attribute (§11): promises a function returns the same value
         /// for the same arguments without observable side effects. A contract for tools first; an
         /// optimizer input later.
@@ -469,6 +485,7 @@ namespace Surtr.Runtime.BuiltIns
             Benchmark = DeclareObject("Benchmark", Attribute);
             Throws = DeclareObject("Throws", Attribute);
             NoAlloc = DeclareObject("NoAlloc", Attribute);
+            Flags = DeclareObject("Flags", Attribute);
             Pure = DeclareObject("Pure", Attribute);
             MainThread = DeclareObject("MainThread", Attribute);
             ThreadSafe = DeclareObject("ThreadSafe", Attribute);
@@ -547,8 +564,8 @@ namespace Surtr.Runtime.BuiltIns
             DeclareNamedAttribute(BuilderFor(TestSuite, handles));
             DeclareReasonAttribute(BuilderFor(TestIgnore, handles));
             DeclareNamedAttribute(BuilderFor(Throws, handles));
-            // Value, Pure, NoAlloc, MainThread, ThreadSafe, TestBefore, TestAfter and Benchmark
-            // carry nothing: their meaning is the mark.
+            // Value, Pure, NoAlloc, Flags, MainThread, ThreadSafe, TestBefore, TestAfter and
+            // Benchmark carry nothing: their meaning is the mark.
             SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
 
             // After Attribute, since Type.attributes()/Member.attributes() both name it, and

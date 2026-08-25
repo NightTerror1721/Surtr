@@ -191,6 +191,32 @@ namespace Surtr.Compiler.Binding.Symbols
         private TypeSymbol? _underlyingType;
 
         /// <summary>
+        /// Whether this enum carries <c>@Flags</c> (§11), which makes its cases the integers
+        /// <c>1 &lt;&lt; ordinal</c> and its values single <c>int</c> slots rather than references.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Set in the declaration phase off the written syntax, because the representation it
+        /// chooses is needed by everything downstream of declaration — the member phase's signature
+        /// keys, every descriptor, every opcode choice — and an attribute does not bind until
+        /// bodies do.
+        /// </para>
+        /// <para>
+        /// Always <see langword="false"/> for a type that is not an enum, and for an enum imported
+        /// from another module: the mark erases with the representation (the descriptor is
+        /// <c>I</c>), which is the same thing that happens to a <c>value class</c> across a module
+        /// boundary.
+        /// </para>
+        /// </remarks>
+        public bool IsFlagsEnum
+        {
+            get => Definition._isFlagsEnum;
+            internal set => Definition._isFlagsEnum = value;
+        }
+
+        private bool _isFlagsEnum;
+
+        /// <summary>
         /// The static field holding a <c>singleton</c>'s one instance (§2.8), or
         /// <see langword="null"/> for every other kind.
         /// </summary>

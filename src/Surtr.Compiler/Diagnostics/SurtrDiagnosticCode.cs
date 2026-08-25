@@ -606,12 +606,19 @@ namespace Surtr.Compiler.Diagnostics
         AllocationInNoAllocBody = 3082,
 
         /// <summary>
-        /// A case of an enum marked <c>@Flags</c> (§11) holds a value that is not a power of two,
-        /// so it cannot be one bit of a combination. A warning rather than an error: zero is a
-        /// legitimate <c>None</c>, and a deliberate composite case (<c>All = 7</c>) is a pattern
-        /// worth allowing — which is why the compiler reports rather than refuses.
+        /// An enum marked <c>@Flags</c> (§11) declares something its representation cannot carry.
+        /// The mark makes its values single <c>int</c>s — its cases are <c>1 &lt;&lt; ordinal</c>
+        /// and a combination of them is no case at all — so there is no instance for a member to
+        /// run on, no receiver for an interface to dispatch through, and no constructor for a case
+        /// to call. An error rather than a warning: unlike every other lint in §11 this one is not
+        /// about intent, it is about a declaration the compiler has no representation for.
         /// </summary>
-        FlagCaseNotPowerOfTwo = 3083,
+        /// <remarks>
+        /// Replaces what was going to be a power-of-two check on written case values. There are no
+        /// written values to check: the bit is the case's position in the declaration, so every
+        /// value is a power of two by construction.
+        /// </remarks>
+        InvalidFlagsEnum = 3083,
 
         /// <summary>
         /// A <c>@Throws("Name")</c> mark (§11) names something that is not an exception: either no

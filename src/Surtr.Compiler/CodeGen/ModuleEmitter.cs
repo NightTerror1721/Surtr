@@ -330,7 +330,13 @@ namespace Surtr.Compiler.CodeGen
                     break;
                 }
 
-                case TypeSymbolKind.Enum:
+                // §P14: a @Flags enum has no instances, so it is not an enum at runtime - it is a
+                // class holding int constants, which is the truth of its representation. Emitting
+                // it as one keeps `EnumCases` from being an empty list on a type that claims to be
+                // an enum, and keeps the linker's assumptions about a case being an instance
+                // intact. What it costs is that reflection reports a class; the same erasure a
+                // `value class` pays for the same reason.
+                case TypeSymbolKind.Enum when !symbol.IsFlagsEnum:
                 {
                     var @enum = declaringClass is null
                         ? module.DefineEnum(declaredName, Visibility(symbol))
@@ -610,8 +616,11 @@ namespace Surtr.Compiler.CodeGen
         private void DeclareField(EmitContext context, SurtrClassBuilder @class, NamedTypeSymbol owner, FieldSymbol field)
         {
             // An enum case is a static of the enum's own type, and the builder is what assigns the
-            // ordinal an exhaustive switch indexes on.
-            if (owner.TypeKind == TypeSymbolKind.Enum && field.IsStatic && ReferenceEquals(field.Type, owner))
+            // ordinal an exhaustive switch indexes on. A @Flags case is not: it is an int constant
+            // (§P14), so it falls through to the ordinary static-field path below, where the
+            // descriptor its type emits to is already `I`.
+            if (owner.TypeKind == TypeSymbolKind.Enum && !owner.IsFlagsEnum
+                && field.IsStatic && ReferenceEquals(field.Type, owner))
             {
                 var @case = @class.DefineEnumCase(field.Name, Visibility(field.Accessibility)).Field;
                 context.Declare(field, @case);

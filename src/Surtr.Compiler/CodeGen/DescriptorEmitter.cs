@@ -202,6 +202,16 @@ namespace Surtr.Compiler.CodeGen
                     throw new InvalidOperationException(
                         $"The error type '{type.ToDisplayString()}' reached emission; the compilation should have stopped at its diagnostics.");
 
+                case TypeSymbolKind.Enum when ((NamedTypeSymbol)type).IsFlagsEnum:
+                {
+                    // A @Flags enum is one int (§P14) - its cases are `1 << ordinal` and a
+                    // combination of them is not any case, so there is no instance to name. It
+                    // erases exactly as a one-field value class over an int does, nullability and
+                    // all, and for the same reason: the descriptor is what the slot holds.
+                    AppendPrimitive(builder, type, SurtrClassReference.SymbolInteger);
+                    return;
+                }
+
                 case TypeSymbolKind.ValueClass:
                 {
                     // A multi-field value class is a value type in its own right: it names its

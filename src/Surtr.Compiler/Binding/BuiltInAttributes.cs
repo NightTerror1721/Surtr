@@ -68,6 +68,9 @@ namespace Surtr.Compiler.Binding
         /// <summary>The class name <c>@NoAlloc</c> resolves to.</summary>
         internal const string NoAlloc = "NoAlloc";
 
+        /// <summary>The class name <c>@Flags</c> resolves to.</summary>
+        internal const string Flags = "Flags";
+
         /// <summary>The class name <c>@Pure</c> resolves to.</summary>
         internal const string Pure = "Pure";
 
@@ -99,6 +102,7 @@ namespace Surtr.Compiler.Binding
                 [Benchmark] = SurtrAttributeTargets.Method,
                 [Throws] = SurtrAttributeTargets.Method,
                 [NoAlloc] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property,
+                [Flags] = SurtrAttributeTargets.Enum,
                 [Pure] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property,
                 [MainThread] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property | SurtrAttributeTargets.Class,
                 [ThreadSafe] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Class,

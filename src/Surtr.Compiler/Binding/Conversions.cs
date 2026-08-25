@@ -536,6 +536,10 @@ namespace Surtr.Compiler.Binding
             return Conversion.None;
         }
 
+        /// <summary>Whether a type is an enum marked <c>@Flags</c>, whose values are single ints (§P14).</summary>
+        private static bool IsFlagsEnum(TypeSymbol type)
+            => type is NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum, IsFlagsEnum: true };
+
         private Conversion ClassifyExplicit(TypeSymbol source, TypeSymbol destination)
         {
             // Reading a concrete type back out of an erased slot is §1.11's second obligation.
@@ -546,6 +550,14 @@ namespace Surtr.Compiler.Binding
             var to = destination.NonNullable;
 
             if (from.IsPrimitive && to.IsPrimitive && !from.IsVoid && !to.IsVoid)
+                return Conversion.Of(ConversionKind.ExplicitNumeric);
+
+            // §P14: a @Flags enum is one int, so this moves no bits - but it has to be written,
+            // because the two are different types to everything above emit, and because the whole
+            // point of the enum is that an arbitrary int is not one of its combinations. It is what
+            // makes the empty set expressible (`0 as Perm`) and what lets a flag set be stored or
+            // sent somewhere that only holds numbers.
+            if (IsFlagsEnum(from) ? to.SpecialType == SpecialType.Int : from.SpecialType == SpecialType.Int && IsFlagsEnum(to))
                 return Conversion.Of(ConversionKind.ExplicitNumeric);
 
             // `T?` narrowing back to `T` is what `!!` asserts, and it is a cast like any other.
