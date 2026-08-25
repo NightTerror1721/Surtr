@@ -65,6 +65,9 @@ namespace Surtr.Compiler.Binding
         /// <summary>The class name <c>@Throws("Name")</c> resolves to — repeatable.</summary>
         internal const string Throws = "Throws";
 
+        /// <summary>The class name <c>@NoAlloc</c> resolves to.</summary>
+        internal const string NoAlloc = "NoAlloc";
+
         /// <summary>The class name <c>@Pure</c> resolves to.</summary>
         internal const string Pure = "Pure";
 
@@ -95,6 +98,7 @@ namespace Surtr.Compiler.Binding
                 [TestAfter] = SurtrAttributeTargets.Method,
                 [Benchmark] = SurtrAttributeTargets.Method,
                 [Throws] = SurtrAttributeTargets.Method,
+                [NoAlloc] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property,
                 [Pure] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property,
                 [MainThread] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property | SurtrAttributeTargets.Class,
                 [ThreadSafe] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Class,
@@ -222,6 +226,12 @@ namespace Surtr.Compiler.Binding
         /// state and returns the same result for the same arguments.
         /// </summary>
         internal static bool IsPure(Symbol symbol) => Find(symbol, Pure) is not null;
+
+        /// <summary>
+        /// Whether this declaration is marked <c>@NoAlloc</c>: a promise its body puts nothing on
+        /// the heap.
+        /// </summary>
+        internal static bool IsNoAlloc(Symbol symbol) => Find(symbol, NoAlloc) is not null;
 
         /// <summary>
         /// The lower bound a <c>@Range(lo, hi)</c> mark fixes, or <see langword="null"/> when no

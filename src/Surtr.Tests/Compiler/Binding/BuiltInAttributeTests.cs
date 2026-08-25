@@ -1063,5 +1063,163 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         #endregion
+
+        #region @NoAlloc (§P13)
+
+        [Fact]
+        public void NoAllocIsRejectedOnAClass()
+        {
+            using var compilation = Compile(
+                "@NoAlloc\n"
+                    + "class Target { }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AttributeTargetMismatch);
+        }
+
+        [Fact]
+        public void NoAllocIsAcceptedOnAProperty()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  private var n: int = 0;\n"
+                    + "  @NoAlloc\n"
+                    + "  public doubled: int { get { return n * 2; } }\n"
+                    + "}");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.AllocationInNoAllocBody);
+        }
+
+        [Fact]
+        public void AnArithmeticBodyKeepsItsNoAllocPromiseQuietly()
+        {
+            using var compilation = Compile(
+                "@NoAlloc\n"
+                    + "public fun lerp(a: float, b: float, t: float): float { return a + (b - a) * t; }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.AllocationInNoAllocBody);
+        }
+
+        [Fact]
+        public void ConstructingAClassInANoAllocBodyIsReported()
+        {
+            using var compilation = Compile(
+                "public class Node { }\n"
+                    + "@NoAlloc\n"
+                    + "public fun build(): Node { return Node(); }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AllocationInNoAllocBody);
+            Assert.False(compilation.HasErrors, "The mark is a contract, so a violation is a warning.");
+        }
+
+        [Fact]
+        public void AnArrayLiteralInANoAllocBodyIsReported()
+        {
+            using var compilation = Compile(
+                "@NoAlloc\n"
+                    + "public fun three(): int[] { return [1, 2, 3]; }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AllocationInNoAllocBody);
+        }
+
+        [Fact]
+        public void ADictLiteralInANoAllocBodyIsReported()
+        {
+            using var compilation = Compile(
+                "@NoAlloc\n"
+                    + "public fun table(): {int: int} { return {1: 2}; }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AllocationInNoAllocBody);
+        }
+
+        [Fact]
+        public void StringInterpolationInANoAllocBodyIsReported()
+        {
+            using var compilation = Compile(
+                "@NoAlloc\n"
+                    + "public fun label(n: int): string { return \"n = ${n}\"; }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AllocationInNoAllocBody);
+        }
+
+        [Fact]
+        public void StringConcatenationInANoAllocBodyIsReported()
+        {
+            using var compilation = Compile(
+                "@NoAlloc\n"
+                    + "public fun label(n: int): string { return \"n = \" + n; }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AllocationInNoAllocBody);
+        }
+
+        [Fact]
+        public void ALambdaInANoAllocBodyIsReported()
+        {
+            using var compilation = Compile(
+                "@NoAlloc\n"
+                    + "public fun make(): (int) -> int { return (x: int) => x + 1; }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AllocationInNoAllocBody);
+        }
+
+        /// <summary>
+        /// A tuple is a value type, laid out inline (§2.9), so a body that only builds one keeps
+        /// its promise — the stated v1 limit, and the reason the check reads the bound tree rather
+        /// than the syntax.
+        /// </summary>
+        [Fact]
+        public void ATupleInANoAllocBodyIsAllowedBecauseItIsAValueType()
+        {
+            using var compilation = Compile(
+                "@NoAlloc\n"
+                    + "public fun pair(a: int, b: int): (int, int) { return (a, b); }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.AllocationInNoAllocBody);
+        }
+
+        /// <summary>
+        /// The other stated limit: a call is not followed, so an allocation inside the callee is
+        /// invisible here. Left explicit so the silence is a documented choice rather than a hole
+        /// nobody noticed.
+        /// </summary>
+        [Fact]
+        public void ACallIsNotFollowedIntoTheCallee()
+        {
+            using var compilation = Compile(
+                "public fun allocates(): int[] { return [1]; }\n"
+                    + "@NoAlloc\n"
+                    + "public fun caller(): int[] { return allocates(); }");
+
+            AssertNoReports(compilation, SurtrDiagnosticCode.AllocationInNoAllocBody);
+        }
+
+        [Fact]
+        public void AnUnmarkedBodyIsNeverWalked()
+        {
+            using var compilation = Compile(
+                "public fun three(): int[] { return [1, 2, 3]; }");
+
+            AssertNoReports(compilation, SurtrDiagnosticCode.AllocationInNoAllocBody);
+        }
+
+        [Fact]
+        public void EveryAllocatingConstructInOneBodyIsReportedSeparately()
+        {
+            using var compilation = Compile(
+                "@NoAlloc\n"
+                    + "public fun several(): int {\n"
+                    + "  let xs: int[] = [1];\n"
+                    + "  let label: string = \"n = ${xs.length}\";\n"
+                    + "  return xs.length + label.length;\n"
+                    + "}");
+
+            Assert.Equal(
+                2,
+                compilation.Diagnostics.Count(d => d.Code == SurtrDiagnosticCode.AllocationInNoAllocBody));
+        }
+
+        #endregion
     }
 }

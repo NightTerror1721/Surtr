@@ -5109,6 +5109,29 @@ var runtime = Run(
             Assert.Equal(new[] { "ArgumentException", "FormatException" }, named);
         }
 
+        /// <summary>
+        /// <c>@NoAlloc</c> reaches the image like every mark but <c>@Value</c> (§P13): its meaning
+        /// is a compile-time check, but a host profiling a build wants to know which members
+        /// promised what.
+        /// </summary>
+        [Fact]
+        public void ANoAllocMarkSurvivesTheImage()
+        {
+            var emitter = Build(
+                "class Physics {\n"
+                    + "  @NoAlloc\n"
+                    + "  public fun step(dt: float): float { return dt * 2.0; }\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            Assert.True(module.FindClass("Physics")!.TryGetMethods("step", out var overloads));
+            Assert.True(overloads[0].TryGetAttribute(SurtrBuiltIns.NoAlloc, out _));
+        }
+
         #endregion
 
         #region Reflexion de atributos: Type/Member (Fase 6)

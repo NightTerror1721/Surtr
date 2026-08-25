@@ -3656,6 +3656,11 @@ namespace Surtr.Compiler.Binding
             // After binding, not during: reachability and definite assignment are questions
             // about a whole body, and the bound tree is the form that has one.
             FlowAnalysis.Analyze(body.Method, bound, _diagnostics, body.SourceName);
+
+            // §11's memory contract, on the same form and for the same reason - and only when the
+            // mark is there, so a body that promised nothing is never walked.
+            if (BuiltInAttributes.IsNoAlloc(body.Method))
+                NoAllocCheck.Verify(body.Method, bound, _diagnostics, body.SourceName);
         }
 
         /// <summary>
