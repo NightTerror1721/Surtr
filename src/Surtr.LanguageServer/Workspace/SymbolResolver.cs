@@ -459,6 +459,11 @@ namespace Surtr.LanguageServer.Workspace
                     WalkExpression(throwExpression.Value, position, anchor, tokens, ref best, snapshot);
                     break;
 
+                case BoundSequenceExpression sequence:
+                    WalkStatement(sequence.Statement, position, anchor, tokens, ref best, snapshot);
+                    WalkExpression(sequence.Value, position, anchor, tokens, ref best, snapshot);
+                    break;
+
                 default:
                     break;
             }

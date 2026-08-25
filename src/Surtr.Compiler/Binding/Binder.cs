@@ -3077,14 +3077,15 @@ namespace Surtr.Compiler.Binding
                 initializer.Module,
                 initializer.ContainingType,
                 owner,
-                ImportedBy(initializer.Module));
+                ImportedBy(initializer.Module),
+                rangeChecksEnabled: _compilation.Project.BuildConstants.ContainsKey("Debug"));
 
             BoundExpression value;
 
             if (initializer.EnumCase is EnumCaseSyntax enumCase)
                 value = binder.BindEnumCase(enumCase, initializer.ContainingType!);
             else if (initializer.Syntax is ExpressionSyntax written)
-                value = binder.BindInitializer(written, initializer.Field.Type);
+                value = binder.BindInitializer(written, initializer.Field.Type, initializer.Field);
             else
                 value = binder.BindSingletonInstance(initializer.ContainingType!, initializer.Anchor);
 

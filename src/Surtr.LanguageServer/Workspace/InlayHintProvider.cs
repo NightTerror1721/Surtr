@@ -287,6 +287,11 @@ namespace Surtr.LanguageServer.Workspace
                 case BoundThrowExpression throwExpression:
                     WalkExpression(throwExpression.Value, text, tokens, lines, hints);
                     break;
+
+                case BoundSequenceExpression sequence:
+                    WalkStatement(sequence.Statement, text, tokens, lines, hints);
+                    WalkExpression(sequence.Value, text, tokens, lines, hints);
+                    break;
             }
         }
 

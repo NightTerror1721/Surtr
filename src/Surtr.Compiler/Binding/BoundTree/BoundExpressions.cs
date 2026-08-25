@@ -903,4 +903,39 @@ namespace Surtr.Compiler.Binding.BoundTree
         /// <summary>True for the <c>yield from</c> form.</summary>
         public bool IsDelegating => DelegatedElementType is not null;
     }
+
+    /// <summary>
+    /// A statement run for its effects followed by an expression whose value this node yields.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// What an expression cannot express on its own is sequencing with a captured value. A range
+    /// check (§P4) is the shape that needs it: the assignment's value has to be evaluated once into
+    /// a temporary, guarded against the field's declared bounds, and only then written - and the
+    /// write is itself an expression whose value something above may read. The binder lowers that
+    /// whole sequence into one of these nodes, and every walker from flow analysis to the emitter
+    /// treats it as "run the statement, then evaluate the value".
+    /// </para>
+    /// <para>
+    /// The statement is a <see cref="BoundBlockStatement"/> in practice - the temporary's
+    /// declaration and the guard's <c>if</c> - and <see cref="Value"/> is the temporary read, so
+    /// the node never changes what the statement's constructs mean; it only gives a statement a
+    /// place to sit where an expression is expected.
+    /// </para>
+    /// </remarks>
+    public sealed class BoundSequenceExpression : BoundExpression
+    {
+        internal BoundSequenceExpression(SyntaxNode syntax, BoundStatement statement, BoundExpression value, TypeSymbol type)
+            : base(syntax, type)
+        {
+            Statement = statement;
+            Value = value;
+        }
+
+        /// <summary>The statement run before the value is produced.</summary>
+        public BoundStatement Statement { get; }
+
+        /// <summary>The value this node yields after the statement has run.</summary>
+        public BoundExpression Value { get; }
+    }
 }

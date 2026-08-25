@@ -469,6 +469,14 @@ namespace Surtr.Compiler.Binding
                 case BoundThrowExpression @throw:
                     Walk(@throw.Value);
                     return;
+
+                case BoundSequenceExpression sequence:
+                    // The statement runs at the same point the value does, so whatever the two read
+                    // between them is read here — a ranged initializer's value is what matters, and
+                    // the guard's own reads are compiler-synthesised.
+                    Walk(sequence.Statement);
+                    Walk(sequence.Value);
+                    return;
             }
         }
         #endregion

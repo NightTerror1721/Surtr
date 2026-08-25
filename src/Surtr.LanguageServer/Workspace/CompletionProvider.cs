@@ -1244,6 +1244,10 @@ namespace Surtr.LanguageServer.Workspace
                 case BoundThrowExpression throwExpression:
                     yield return throwExpression.Value;
                     break;
+
+                case BoundSequenceExpression sequence:
+                    yield return sequence.Value;
+                    break;
             }
         }
 

@@ -5,6 +5,7 @@ using Surtr.Compiler.Binding.Symbols;
 using Surtr.Compiler.Diagnostics;
 using Surtr.Compiler.Syntax;
 using Surtr.Compiler.Syntax.Ast;
+using System;
 using System.Collections.Generic;
 
 namespace Surtr.Compiler.Binding
@@ -61,72 +62,58 @@ namespace Surtr.Compiler.Binding
                 return BindTupleAssignment(syntax, assignment, targets);
             }
 
-            var expression = BindExpression(syntax.Expression);
-
-            // A ranged field or property-set in a build with checks on becomes a sequence that
-            // captures the value, guards it, then writes it - so a side-effecting right side is
-            // evaluated exactly once (§P4).
-            if (expression is BoundAssignmentExpression assignmentExpression
-                && RangeCheckAssignment(syntax, assignmentExpression) is BoundStatement guarded)
-            {
-                return guarded;
-            }
-
-            return new BoundExpressionStatement(syntax, expression);
+            return new BoundExpressionStatement(syntax, BindExpression(syntax.Expression));
         }
 
         /// <summary>
-        /// Rewrites an assignment to a <c>@Range</c>-marked numeric field or property-set into a
-        /// block that captures the value, throws when it falls outside the declared bounds, and
-        /// only then writes it. Returns <see langword="null"/> when no check applies.
+        /// Wraps a value about to be written to a <c>@Range</c>-marked member into a sequence that
+        /// captures it, throws when it falls outside the declared bounds, and yields the captured
+        /// value for the write that follows (§P4). Returns the value unchanged when no check
+        /// applies.
         /// </summary>
         /// <remarks>
-        /// The sequence matters: the right side is bound into a hidden temporary so a call with
-        /// effects is evaluated once, the guard throws before the write, and the write itself is
-        /// the ordinary assignment over the captured value. In a release build
-        /// (<c>_rangeChecksEnabled</c> false) this never runs, so the check costs nothing.
+        /// <para>
+        /// The lowering is the same whether the write is a statement or an expression: the value is
+        /// bound into a hidden temporary so a call with effects is evaluated once, the guard throws
+        /// before the write, and the write itself is the ordinary assignment over the captured
+        /// value. <see cref="BoundSequenceExpression"/> is what lets a statement shape sit where an
+        /// expression is expected, so a nested assignment is guarded exactly like a top-level one.
+        /// </para>
+        /// <para>
+        /// In a release build (<c>_rangeChecksEnabled</c> false) this never runs, so the check costs
+        /// nothing. A missing exception class, or a member with no recorded range, degrades to no
+        /// check at all.
+        /// </para>
         /// </remarks>
-        private BoundStatement? RangeCheckAssignment(ExpressionStatementSyntax syntax, BoundAssignmentExpression assignment)
+        private BoundExpression RangeCheckValue(
+            SyntaxNode syntax,
+            BoundExpression value,
+            Symbol member,
+            TypeSymbol memberType)
         {
             if (!_rangeChecksEnabled)
-                return null;
-
-            Symbol member;
-            TypeSymbol memberType;
-            switch (assignment.Target)
-            {
-                case BoundFieldExpression field:
-                    member = field.Field;
-                    memberType = field.Field.Type;
-                    break;
-                case BoundPropertyExpression property:
-                    member = property.Property;
-                    memberType = property.Property.Type;
-                    break;
-                default:
-                    return null;
-            }
+                return value;
 
             double? low = BuiltInAttributes.RangeLow(member);
             double? high = BuiltInAttributes.RangeHigh(member);
             if (low is null && high is null)
-                return null;
+                return value;
 
             if (memberType.NonNullable.SpecialType is not (SpecialType.Int or SpecialType.Float))
-                return null;
+                return value;
 
             var temporary = DeclareLocal(NextRangeTempName(), memberType.NonNullable, isReadOnly: true, syntax.Span);
 
             BoundExpression? condition = null;
-            var value = new BoundLocalExpression(syntax, temporary);
+            var captured = new BoundLocalExpression(syntax, temporary);
 
             if (low is not null)
-                condition = JoinRangeCondition(condition, syntax, BinaryOperator.Less, value, low.Value);
+                condition = JoinRangeCondition(condition, syntax, BinaryOperator.Less, captured, low.Value);
             if (high is not null)
-                condition = JoinRangeCondition(condition, syntax, BinaryOperator.Greater, value, high.Value);
+                condition = JoinRangeCondition(condition, syntax, BinaryOperator.Greater, captured, high.Value);
 
             if (condition is null)
-                return null;
+                return value;
 
             var thrown = BuildLibraryException(
                 syntax,
@@ -134,17 +121,37 @@ namespace Surtr.Compiler.Binding
                 RangeMessage(member, low, high));
 
             if (thrown is null)
-                return null;
+                return value;
 
-            var write = new BoundAssignmentExpression(syntax, assignment.Target, value);
-
-            return new BoundBlockStatement(syntax, new BoundStatement[]
-            {
-                new BoundLocalDeclarationStatement(syntax, temporary, assignment.Value),
-                new BoundIfStatement(syntax, condition, new BoundThrowStatement(syntax, thrown), otherwise: null),
-                new BoundExpressionStatement(syntax, write),
-            });
+            return new BoundSequenceExpression(
+                syntax,
+                new BoundBlockStatement(syntax, new BoundStatement[]
+                {
+                    new BoundLocalDeclarationStatement(syntax, temporary, value),
+                    new BoundIfStatement(syntax, condition, new BoundThrowStatement(syntax, thrown), otherwise: null),
+                }),
+                captured,
+                memberType.NonNullable);
         }
+
+        /// <summary>
+        /// Whether a write targets a <c>@Range</c>-marked numeric member, and what member that is.
+        /// </summary>
+        private static Symbol? RangedMember(BoundExpression target)
+            => target switch
+            {
+                BoundFieldExpression field => field.Field,
+                BoundPropertyExpression property => property.Property,
+                _ => null,
+            };
+
+        private static TypeSymbol MemberType(Symbol member)
+            => member switch
+            {
+                FieldSymbol field => field.Type,
+                PropertySymbol property => property.Type,
+                _ => throw new ArgumentOutOfRangeException(nameof(member)),
+            };
 
         /// <summary>
         /// Adds one side of a range check to the running condition, widening the compared value to

@@ -271,6 +271,14 @@ namespace Surtr.Compiler.Binding
                 case BoundThrowExpression @throw:
                     Expression(@throw.Value);
                     return;
+
+                case BoundSequenceExpression sequence:
+                    // A range guard over a value is ordinary statements + one expression: the
+                    // temporary's declaration and the `if` are checked like any others, and so is
+                    // the captured value.
+                    Statement(sequence.Statement);
+                    Expression(sequence.Value);
+                    return;
             }
         }
         #endregion

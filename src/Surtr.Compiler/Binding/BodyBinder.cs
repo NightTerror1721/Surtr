@@ -190,10 +190,15 @@ namespace Surtr.Compiler.Binding
         /// An initializer is not a body, but it is an expression in a member's scope and it runs —
         /// a static one from the declaring type's initializer, an instance one from every
         /// constructor. Binding it here rather than at emit is what puts its conversions in the
-        /// tree like everything else's.
+        /// tree like everything else's. A <c>@Range</c> mark on the field wraps the value in its
+        /// guard, so a field that is declared out of range fails at construction rather than
+        /// silently.
         /// </remarks>
-        public BoundExpression BindInitializer(ExpressionSyntax syntax, TypeSymbol declared)
-            => BindConverted(syntax, declared);
+        public BoundExpression BindInitializer(ExpressionSyntax syntax, TypeSymbol declared, FieldSymbol field)
+        {
+            var value = BindConverted(syntax, declared);
+            return RangeCheckValue(syntax, value, field, field.Type);
+        }
 
         /// <summary>Binds one enum case as the construction it is (§2.4).</summary>
         public BoundExpression BindEnumCase(EnumCaseSyntax syntax, NamedTypeSymbol @enum)

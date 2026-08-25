@@ -1809,6 +1809,13 @@ namespace Surtr.Compiler.CodeGen
                     Code.Throw();
                     return;
 
+                case BoundSequenceExpression sequence:
+                    // A statement that runs for its effects (a temporary's declaration and a range
+                    // guard), then the value it captured — left on the stack like any expression's.
+                    Statement(sequence.Statement);
+                    Expression(sequence.Value);
+                    return;
+
                 case BoundNullConditionalExpression conditionalAccess:
                     EmitNullConditional(conditionalAccess, discardResult: false);
                     return;

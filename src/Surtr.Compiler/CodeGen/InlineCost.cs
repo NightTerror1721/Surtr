@@ -194,6 +194,11 @@ namespace Surtr.Compiler.CodeGen
                 case BoundThrowExpression @throw:
                     return EstimateExpression(@throw.Value) + 1;
 
+                case BoundSequenceExpression sequence:
+                    // The statement splices into the caller like any block, and the value it yields
+                    // is what the inline site reads — both paid for.
+                    return Statement(sequence.Statement) + EstimateExpression(sequence.Value) + 1;
+
                 case BoundClosureInvocationExpression invocation:
                 {
                     int total = 4 + EstimateExpression(invocation.Callee);

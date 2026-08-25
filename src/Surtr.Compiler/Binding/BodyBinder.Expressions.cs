@@ -1485,7 +1485,10 @@ namespace Surtr.Compiler.Binding
             }
 
             if (syntax.Operator == AssignmentOperator.Assign)
-                return new BoundAssignmentExpression(syntax, target, BindConverted(syntax.Value, target.Type));
+            {
+                var converted = BindConverted(syntax.Value, target.Type);
+                return RangeCheckWrite(syntax, target, converted);
+            }
 
             // A compound assignment is expanded here, so nothing downstream needs a second form of
             // assignment or a second table of operators.
@@ -1512,7 +1515,23 @@ namespace Surtr.Compiler.Binding
             }
 
             var combined = new BoundBinaryExpression(syntax, @operator, left, right, result);
-            return new BoundAssignmentExpression(syntax, target, Convert(combined, target.Type, syntax.Span));
+            return RangeCheckWrite(syntax, target, Convert(combined, target.Type, syntax.Span));
+        }
+
+        /// <summary>
+        /// Builds the write to <paramref name="target"/>, wrapping the value in a range guard when
+        /// the target is a <c>@Range</c>-marked member. Returns the assignment itself, whose value
+        /// is whatever the surrounding expression should yield.
+        /// </summary>
+        /// <remarks>
+        /// Every assignment to a ranged member goes through here, so a statement, a <c>for</c> loop's
+        /// initializer and a nested assignment are all guarded by the same lowering (§P4).
+        /// </remarks>
+        private BoundExpression RangeCheckWrite(SyntaxNode syntax, BoundExpression target, BoundExpression value)
+        {
+            Symbol? member = RangedMember(target);
+            var guarded = member is null ? value : RangeCheckValue(syntax, value, member, MemberType(member));
+            return new BoundAssignmentExpression(syntax, target, guarded);
         }
 
         /// <summary>

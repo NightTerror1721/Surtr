@@ -566,6 +566,14 @@ namespace Surtr.Compiler.Binding
                     _reachable = false;
                     return;
 
+                case BoundSequenceExpression sequence:
+                    // The statement runs first — its temporary declaration assigns, its guard can
+                    // throw — and only then is the captured value read, exactly as the two would be
+                    // in an `if` over the same statement followed by the value.
+                    Statement(sequence.Statement);
+                    Expression(sequence.Value);
+                    return;
+
                 case BoundCallExpression call:
                 {
                     if (call.Receiver is not null)

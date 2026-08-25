@@ -8494,6 +8494,121 @@ using var compilation = Reject(
             Assert.Equal(150.0, Call(runtime, "run").AsFloat);
         }
 
+        [Fact]
+        public void ASingleLowerBoundRejectsOnlyValuesBelowIt()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(100.0)\n"
+                    + "  public var health: float = 150.0;\n"
+                    + "  public fun setHealth(v: float): void { health = v; }\n"
+                    + "}\n"
+                    + "fun below(): float { let p = Player(); p.setHealth(25.0); return p.health; }\n"
+                    + "fun above(): float { let p = Player(); p.setHealth(200.0); return p.health; }");
+
+            var thrown = Assert.Throws<SurtrThrownException>(() => Call(runtime, "below"));
+            Assert.Contains("ArgumentOutOfRangeException", thrown.Message, StringComparison.Ordinal);
+
+            Assert.Equal(200.0, Call(runtime, "above").AsFloat);
+        }
+
+        [Fact]
+        public void AStaticFieldWriteIsCheckedAgainstItsRange()
+        {
+            var runtime = RunDebug(
+                "class Config {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public static var health: float = 50.0;\n"
+                    + "}\n"
+                    + "fun run(): float { Config.health = 150.0; return Config.health; }");
+
+            Assert.Throws<SurtrThrownException>(() => Call(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnOutOfRangeFieldInitializerThrowsAtConstruction()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 150.0;\n"
+                    + "}\n"
+                    + "fun run(): float { let p = Player(); return p.health; }");
+
+            var thrown = Assert.Throws<SurtrThrownException>(() => Call(runtime, "run"));
+            Assert.Contains("ArgumentOutOfRangeException", thrown.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void AnInRangeFieldInitializerConstructsNormally()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 25.0;\n"
+                    + "}\n"
+                    + "fun run(): float { let p = Player(); return p.health; }");
+
+            Assert.Equal(25.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AnOutOfRangeStaticFieldInitializerThrowsAtLoad()
+        {
+            var thrown = Assert.Throws<SurtrThrownException>(() =>
+            {
+                _ = RunDebug(
+                    "class Config {\n"
+                        + "  @Range(0.0, 100.0)\n"
+                        + "  public static var health: float = 150.0;\n"
+                        + "}\n"
+                        + "fun run(): float { return Config.health; }");
+            });
+
+            Assert.Contains("ArgumentOutOfRangeException", thrown.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ANestedAssignmentIntoARangedFieldIsChecked()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 50.0;\n"
+                    + "}\n"
+                    + "fun run(): float { var result = 0.0; let p = Player(); result = (p.health = 150.0) + 1.0; return result; }");
+
+            Assert.Throws<SurtrThrownException>(() => Call(runtime, "run"));
+        }
+
+        [Fact]
+        public void ACompoundAssignmentIntoARangedFieldIsChecked()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 50.0;\n"
+                    + "}\n"
+                    + "fun run(): float { let p = Player(); p.health += 200.0; return p.health; }");
+
+            Assert.Throws<SurtrThrownException>(() => Call(runtime, "run"));
+        }
+
+        [Fact]
+        public void ARangedAssignmentValueIsEvaluatedExactlyOnce()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 50.0;\n"
+                    + "}\n"
+                    + "var calls: int = 0;\n"
+                    + "fun next(): float { calls = calls + 1; return 75.0; }\n"
+                    + "fun run(): int { let p = Player(); p.health = next(); return calls; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
         #endregion
     }
 }
