@@ -901,6 +901,18 @@ namespace Surtr.Compiler.Binding
                     : userEquality;
             }
 
+            // §11.1: next in line after a declared operator== comes the @Value opt-in - structural,
+            // field-by-field equality built right here rather than identity. A declared operator
+            // still wins (checked above); what the mark changes is exactly the fallback that would
+            // otherwise demand the same object.
+            if (syntax.Operator is BinaryOperator.Equal or BinaryOperator.NotEqual
+                && TryBindStructuralEquality(syntax, left, right) is BoundExpression structural)
+            {
+                return syntax.Operator == BinaryOperator.NotEqual
+                    ? new BoundUnaryExpression(syntax, UnaryOperator.Not, structural, _factory.Bool)
+                    : structural;
+            }
+
             var result = ResolveBinary(syntax, syntax.Operator, ref left, ref right);
             if (result is null)
             {
@@ -918,8 +930,144 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
-        /// Works out what a built-in binary operator produces, widening the operands if it needs to.
+        /// Builds the field-by-field comparison a <c>==</c> between two values of one
+        /// <c>@Value</c>-marked class means, or null when the mark does not apply here.
         /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Only an ordinary class opts in. A value class already compares by its field (§2.9), and
+        /// anything else has no instance state to walk. The mark is read off the class's own uses,
+        /// so a base class carrying it does not turn a silent subclass into a value.
+        /// </para>
+        /// <para>
+        /// The shape is <c>a == b ⇔ reference-same, or neither is null and every field pair is
+        /// equal</c>. The null tests keep a field load off a null receiver; the same-reference test
+        /// both short-circuits the common case and cuts a self-referencing field's walk at identity,
+        /// which §11.1 states as the rule for cycles. A class with no instance fields keeps plain
+        /// identity — there is nothing structural to compare, and silently calling two distinct
+        /// handles equal would surprise.
+        /// </para>
+        /// </remarks>
+        private BoundExpression? TryBindStructuralEquality(BinaryExpressionSyntax syntax, BoundExpression left, BoundExpression right)
+        {
+            if (left.Type.NonNullable is not NamedTypeSymbol type
+                || type.TypeKind != TypeSymbolKind.Class
+                || !ReferenceEquals(type, right.Type.NonNullable)
+                || !BuiltInAttributes.IsMarkedValue(type.Definition))
+            {
+                return null;
+            }
+
+            List<FieldSymbol> fields = EqualityFieldsOf(type);
+            if (fields.Count == 0)
+                return null;
+
+            return StructuralEquality(syntax, left, right, type, fields, new Stack<NamedTypeSymbol>());
+        }
+
+        private BoundExpression StructuralEquality(
+            SyntaxNode syntax,
+            BoundExpression left,
+            BoundExpression right,
+            NamedTypeSymbol type,
+            List<FieldSymbol> fields,
+            Stack<NamedTypeSymbol> expanding)
+        {
+            var same = ReferenceComparison(syntax, BinaryOperator.ReferenceEqual, left, right);
+            var guarded = LogicalChain(syntax, new[]
+            {
+                ReferenceComparison(syntax, BinaryOperator.ReferenceNotEqual, left, NullOf(syntax, left.Type)),
+                ReferenceComparison(syntax, BinaryOperator.ReferenceNotEqual, right, NullOf(syntax, right.Type)),
+            });
+
+            for (int i = 0; i < fields.Count; i++)
+            {
+                var fieldLeft = new BoundFieldExpression(syntax, left, fields[i]);
+                var fieldRight = new BoundFieldExpression(syntax, right, fields[i]);
+                guarded = new BoundBinaryExpression(
+                    syntax, BinaryOperator.LogicalAnd, guarded, FieldPairEquality(syntax, fieldLeft, fieldRight, expanding), _factory.Bool);
+            }
+
+            return new BoundBinaryExpression(syntax, BinaryOperator.LogicalOr, same, guarded, _factory.Bool);
+        }
+
+        /// <summary>One field pair: structural again for a <c>@Value</c>-typed field, plain <c>==</c> otherwise.</summary>
+        private BoundExpression FieldPairEquality(SyntaxNode syntax, BoundExpression fieldLeft, BoundExpression fieldRight, Stack<NamedTypeSymbol> expanding)
+        {
+            if (fieldLeft.Type.NonNullable is NamedTypeSymbol fieldType
+                && fieldType.TypeKind == TypeSymbolKind.Class
+                && BuiltInAttributes.IsMarkedValue(fieldType)
+                && !expanding.Contains(fieldType))
+            {
+                expanding.Push(fieldType);
+                var nested = StructuralEquality(
+                    syntax, fieldLeft, fieldRight, fieldType, EqualityFieldsOf(fieldType), expanding);
+                expanding.Pop();
+                return nested;
+            }
+
+            return new BoundBinaryExpression(syntax, BinaryOperator.Equal, fieldLeft, fieldRight, _factory.Bool);
+        }
+
+        /// <summary>The instance state equality compares: each class's own fields, base chain first.</summary>
+        /// <remarks>
+        /// Backing fields count, because an auto-property's storage is the value its reader sees;
+        /// consts are not slots at all (§7.1) and the compiler's other synthetics name nothing a
+        /// declaration's author wrote.
+        /// </remarks>
+        private static List<FieldSymbol> EqualityFieldsOf(NamedTypeSymbol type)
+        {
+            var fields = new List<FieldSymbol>();
+
+            void Collect(NamedTypeSymbol current)
+            {
+                foreach (Symbol member in current.Definition.Members)
+                {
+                    if (member is not FieldSymbol field || field.IsStatic || field.IsConst)
+                        continue;
+
+                    if (field.IsSynthetic && !IsABackingField(current, field))
+                        continue;
+
+                    fields.Add(field);
+                }
+
+                if (current.BaseType?.NonNullable is NamedTypeSymbol baseType && baseType.TypeKind == TypeSymbolKind.Class)
+                    Collect(baseType);
+            }
+
+            Collect(type);
+            return fields;
+        }
+
+        private static bool IsABackingField(NamedTypeSymbol type, FieldSymbol candidate)
+        {
+            foreach (Symbol member in type.Definition.Members)
+            {
+                if (member is PropertySymbol property && ReferenceEquals(property.BackingField, candidate))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private BoundExpression ReferenceComparison(SyntaxNode syntax, BinaryOperator @operator, BoundExpression left, BoundExpression right)
+            => new BoundBinaryExpression(syntax, @operator, left, right, _factory.Bool);
+
+        private static BoundExpression LogicalChain(SyntaxNode syntax, IReadOnlyList<BoundExpression> parts)
+        {
+            var chain = parts[0];
+            for (int i = 1; i < parts.Count; i++)
+                chain = new BoundBinaryExpression(syntax, BinaryOperator.LogicalAnd, chain, parts[i], chain.Type);
+
+            return chain;
+        }
+
+        /// <summary>A null literal typed as the given type's nullable form, for identity tests.</summary>
+        private static BoundExpression NullOf(SyntaxNode syntax, TypeSymbol ofType)
+            => new BoundLiteralExpression(syntax, ofType.Nullable, null);
+
+
         /// <remarks>
         /// The one interesting case is §5.7's: mixing an <c>int</c> with a <c>float</c> promotes the
         /// whole expression, so <c>7 / 2</c> truncates and <c>7 / 2.0</c> does not.

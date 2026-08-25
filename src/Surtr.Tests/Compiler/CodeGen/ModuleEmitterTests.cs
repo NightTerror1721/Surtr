@@ -9,6 +9,7 @@ using Surtr.Runtime;
 using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
+using Surtr.Runtime.Testing;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -4392,6 +4393,211 @@ var runtime = Run(
 
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.NotAConstant);
         }
+        #endregion
+
+        #region Atributos built-in: @Value y @Range punta a punta
+
+        /// <summary>
+        /// <c>@Value</c> turns <c>==</c> into a field-by-field comparison, so two distinct
+        /// instances of the same shape answer as equal - the whole point of the opt-in.
+        /// </summary>
+        [Fact]
+        public void ValueMarkedClassesCompareStructurally()
+        {
+            var runtime = Run(
+                "@Value\n"
+                    + "class Vec2 {\n"
+                    + "  public let x: float;\n"
+                    + "  public let y: float;\n"
+                    + "  constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "fun equal(): int { return Vec2(1.0, 2.0) == Vec2(1.0, 2.0) ? 1 : 0; }\n"
+                    + "fun different(): int { return Vec2(1.0, 2.0) == Vec2(1.0, 3.0) ? 1 : 0; }\n"
+                    + "fun notEqual(): int { return Vec2(1.0, 2.0) != Vec2(1.0, 3.0) ? 1 : 0; }\n"
+                    + "fun sameInstance(): int { var v = Vec2(9.0, 9.0); return v == v ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "equal"));
+            Assert.Equal(0, Int(runtime, "different"));
+            Assert.Equal(1, Int(runtime, "notEqual"));
+            Assert.Equal(1, Int(runtime, "sameInstance"));
+        }
+
+        [Fact]
+        public void ValueEqualityCoversInheritedFieldsAndNullSafely()
+        {
+            var runtime = Run(
+                "@Value\n"
+                    + "class Base {\n"
+                    + "  public let tag: string;\n"
+                    + "  constructor(tag: string) { this.tag = tag; }\n"
+                    + "}\n"
+                    + "@Value\n"
+                    + "class Item : Base {\n"
+                    + "  public let n: int;\n"
+                    + "  constructor(tag: string, n: int) : super(tag) { this.n = n; }\n"
+                    + "}\n"
+                    + "fun inheritedMatters(): int { return Item(\"a\", 1) == Item(\"b\", 1) ? 1 : 0; }\n"
+                    + "fun inheritedCounts(): int { return Item(\"a\", 1) == Item(\"a\", 1) ? 1 : 0; }\n"
+                    + "fun againstNull(): int { return Item(\"a\", 1) == null ? 1 : 0; }");
+
+            Assert.Equal(0, Int(runtime, "inheritedMatters"));
+            Assert.Equal(1, Int(runtime, "inheritedCounts"));
+            Assert.Equal(0, Int(runtime, "againstNull"));
+        }
+
+        /// <summary>A declared operator== outranks the mark, exactly as §11.1 orders the rules.</summary>
+        [Fact]
+        public void ADeclaredOperatorStillWinsOverTheValueMark()
+        {
+            var runtime = Run(
+                "@Value\n"
+                    + "class Picky {\n"
+                    + "  public let n: int;\n"
+                    + "  constructor(n: int) { this.n = n; }\n"
+                    + "  operator==(a: Picky, b: Picky): bool { return false; }\n"
+                    + "}\n"
+                    + "fun run(): int { return Picky(1) == Picky(1) ? 1 : 0; }");
+
+            Assert.Equal(0, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ANestedValueFieldComparesStructurallyToo()
+        {
+            var runtime = Run(
+                "@Value\n"
+                    + "class Inner {\n"
+                    + "  public let n: int;\n"
+                    + "  constructor(n: int) { this.n = n; }\n"
+                    + "}\n"
+                    + "@Value\n"
+                    + "class Outer {\n"
+                    + "  public let inner: Inner?;\n"
+                    + "  constructor(inner: Inner?) { this.inner = inner; }\n"
+                    + "}\n"
+                    + "fun deep(): int { return Outer(Inner(4)) == Outer(Inner(4)) ? 1 : 0; }\n"
+                    + "fun shallowBreaksIt(): int { return Outer(Inner(4)) == Outer(Inner(5)) ? 1 : 0; }\n"
+                    + "fun nullFieldsAgree(): int { return Outer(null) == Outer(null) ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "deep"));
+            Assert.Equal(0, Int(runtime, "shallowBreaksIt"));
+            Assert.Equal(1, Int(runtime, "nullFieldsAgree"));
+        }
+
+        /// <summary>
+        /// The mark is spent inside the compiler: like everything CompileTimeOnly, the use never
+        /// reaches the image.
+        /// </summary>
+        [Fact]
+        public void AValueUseIsNeverEmitted()
+        {
+            var module = Reload(
+                "@Value\n"
+                    + "class Vec {\n"
+                    + "  public let x: float = 0.0;\n"
+                    + "}");
+
+            Assert.Equal(string.Empty, Describe(module.FindClass("Vec")!));
+        }
+
+        [Fact]
+        public void ARangeUseSurvivesTheImageWithBothBounds()
+        {
+            var emitter = Build(
+                "class Player {\n"
+                    + "  @Range(0, 100)\n"
+                    + "  public var health: float = 100.0;\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            Assert.True(module.FindClass("Player")!.TryGetField("health", out var field));
+            Assert.True(field.TryGetAttribute(SurtrBuiltIns.RangeAttribute, out var usage));
+
+            var instance = runtime.Resolve<SurtrInstance>(SurtrValue.CreateReference(usage.Instance))!;
+            Assert.Equal(0.0, instance[0].AsFloat);
+            Assert.Equal(100.0, instance[1].AsFloat);
+        }
+
+        [Fact]
+        public void AnExportUseCarriesItsAliasThroughTheImage()
+        {
+            var emitter = Build(
+                "@Export\n"
+                    + "class Enemy {\n"
+                    + "  @Export(\"hitPoints\")\n"
+                    + "  public var health: float = 10.0;\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            var enemy = module.FindClass("Enemy")!;
+            Assert.True(enemy.TryGetAttribute(SurtrBuiltIns.Export, out _), "The class mark should survive.");
+
+            Assert.True(enemy.TryGetField("health", out var health));
+            Assert.True(health.TryGetAttribute(SurtrBuiltIns.Export, out var alias));
+            var instance = runtime.Resolve<SurtrInstance>(SurtrValue.CreateReference(alias.Instance))!;
+            Assert.Equal("hitPoints", runtime.Resolve<SurtrString>(instance[0])!.Text);
+        }
+
+        #endregion
+
+        #region Runner de @Test/@TestSuite
+
+        /// <summary>
+        /// The host-side runner discovers tests purely through reflection - the <c>@Test</c> mark
+        /// on parameterless methods, the <c>@TestSuite</c> mark naming a group - and runs them,
+        /// static ones directly and instance ones on a fresh instance whose parameterless
+        /// constructor has run.
+        /// </summary>
+        [Fact]
+        public void TestRunnerDiscoversAndRunsPassingTests()
+        {
+            var runtime = Run(
+                "@TestSuite(\"Vec\")\n"
+                    + "class VecTests {\n"
+                    + "  @Test(\"one\")\n"
+                    + "  public fun first(): void { }\n"
+                    + "  @Test\n"
+                    + "  public static fun second(): void { }\n"
+                    + "  public fun notATest(): void { }\n"
+                    + "}\n"
+                    + "public fun unrelated(): void { }");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var results = SurtrTestRunner.Run(runtime, module);
+
+            Assert.Equal(2, results.Count);
+            Assert.All(results, r => Assert.True(r.Passed));
+            Assert.Contains(results, r => r.Name == "one" && r.Suite == "Vec");
+            Assert.Contains(results, r => r.Name == "second" && r.Suite == "Vec");
+        }
+
+        [Fact]
+        public void TestRunnerReportsAThrowingTestAsFailed()
+        {
+            var runtime = Run(
+                "@TestSuite\n"
+                    + "class MathTests {\n"
+                    + "  @Test(\"boom\")\n"
+                    + "  public fun divides(): void { let x: int = 1 / 0; }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var results = SurtrTestRunner.Run(runtime, module);
+
+            var failed = Assert.Single(results);
+            Assert.Equal("boom", failed.Name);
+            Assert.False(failed.Passed);
+            Assert.False(string.IsNullOrEmpty(failed.Failure));
+        }
+
         #endregion
 
         #region Reflexion de atributos: Type/Member (Fase 6)

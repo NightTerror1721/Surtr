@@ -3150,6 +3150,25 @@ namespace Surtr.Compiler.Binding
                     }
                 }
 
+                // A built-in attribute arrives as imported metadata, whose symbol carries no target
+                // list (that is a declaration-side fact), so the restriction the vocabulary fixes
+                // for it is enforced from the recognition table instead - same check, same error,
+                // one source of truth beside the names themselves.
+                if (BuiltInAttributes.TryGetTargets(type.Name, out SurtrAttributeTargets builtinTargets))
+                {
+                    SurtrAttributeTargets actual = DeclarationTargetOf(binding.Target);
+                    if ((builtinTargets & actual) == 0)
+                    {
+                        ReportAt(
+                            binding.SourceName,
+                            written.Span,
+                            SurtrDiagnosticCode.AttributeTargetMismatch,
+                            $"'{written.Name}' cannot be written here; it applies only to {DescribeBuiltinTargets(builtinTargets)}, not {DescribeAttributeTarget(actual)}.");
+
+                        continue;
+                    }
+                }
+
                 var arguments = new object?[written.Arguments.Count];
                 bool folded = true;
 
@@ -3204,36 +3223,43 @@ namespace Surtr.Compiler.Binding
             AttributeBinding binding,
             AttributeSyntax written,
             NamedTypeSymbol type,
-            IReadOnlyList<object?> arguments)
+            object?[] arguments)
         {
             List<FieldSymbol> fields = AttributeArgumentSlots(type);
 
-            if (arguments.Count > fields.Count)
+            if (arguments.Length > fields.Count)
             {
                 ReportAt(
                     binding.SourceName,
                     written.Span,
                     SurtrDiagnosticCode.AttributeArgumentCountMismatch,
-                    $"'{written.Name}' was given {arguments.Count} argument(s) but its class declares {fields.Count} field(s) to fill.");
+                    $"'{written.Name}' was given {arguments.Length} argument(s) but its class declares {fields.Count} field(s) to fill.");
 
                 return false;
             }
 
-            for (int i = 0; i < arguments.Count; i++)
+            for (int i = 0; i < arguments.Length; i++)
             {
                 if (fields[i].Type.ContainsTypeParameter)
                     continue;
 
-                if (ConstantFitsField(arguments[i], fields[i].Type.NonNullable))
-                    continue;
+                TypeSymbol fieldType = fields[i].Type.NonNullable;
+                if (!ConstantFitsField(arguments[i], fieldType))
+                {
+                    ReportAt(
+                        binding.SourceName,
+                        written.Arguments[i].Span,
+                        SurtrDiagnosticCode.AttributeArgumentTypeMismatch,
+                        $"Argument {i} of '{written.Name}' cannot fill '{fields[i].ToDisplayString()}': {DescribeAttributeConstant(arguments[i])} is not a value of that type.");
 
-                ReportAt(
-                    binding.SourceName,
-                    written.Arguments[i].Span,
-                    SurtrDiagnosticCode.AttributeArgumentTypeMismatch,
-                    $"Argument {i} of '{written.Name}' cannot fill '{fields[i].ToDisplayString()}': {DescribeAttributeConstant(arguments[i])} is not a value of that type.");
+                    return false;
+                }
 
-                return false;
+                // What the use records is what the field will hold, so the widening the check just
+                // allowed is applied here rather than left to whoever materializes the instance -
+                // an integer constant landing in a float slot as raw bits would read back as NaN.
+                if (fieldType.SpecialType == SpecialType.Float && arguments[i] is long widened)
+                    arguments[i] = (double)widened;
             }
 
             return true;
@@ -3320,6 +3346,20 @@ namespace Surtr.Compiler.Binding
             SurtrAttributeTargets.Method => "a method",
             _ => "this kind of declaration",
         };
+
+        /// <summary>Lists what a built-in attribute's targets allow, for its mismatch error.</summary>
+        private static string DescribeBuiltinTargets(SurtrAttributeTargets targets)
+        {
+            var parts = new List<string>();
+            if ((targets & SurtrAttributeTargets.Class) != 0) parts.Add("classes");
+            if ((targets & SurtrAttributeTargets.Interface) != 0) parts.Add("interfaces");
+            if ((targets & SurtrAttributeTargets.Enum) != 0) parts.Add("enums");
+            if ((targets & SurtrAttributeTargets.Field) != 0) parts.Add("fields");
+            if ((targets & SurtrAttributeTargets.Property) != 0) parts.Add("properties");
+            if ((targets & SurtrAttributeTargets.Method) != 0) parts.Add("methods");
+
+            return string.Join(", ", parts);
+        }
 
         /// <summary>
         /// Binds one <c>static { ... }</c> block, in the scope its declaration sits in (§2.5, §3.2).

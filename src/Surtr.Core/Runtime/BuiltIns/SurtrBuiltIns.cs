@@ -228,6 +228,63 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass NoDiscard;
 
         /// <summary>
+        /// The built-in <c>@Range(lo, hi)</c> attribute (§11): documents the range a numeric field
+        /// or property is meant to hold, for hosts that render it (an inspector's slider) and for
+        /// tools that validate it.
+        /// </summary>
+        /// <remarks>
+        /// Named <c>RangeAttribute</c> on the C# side only: <see cref="Range"/> already names the
+        /// value family behind the <c>range</c> primitive. The Surtr-visible class name is
+        /// <c>Range</c>, same as every other attribute here is named on its own side.
+        /// </remarks>
+        public static readonly SurtrClass RangeAttribute;
+
+        /// <summary>
+        /// The built-in <c>@Value</c> attribute (§11): opts a class into structural equality —
+        /// <c>==</c> compares field by field instead of asking for identity. Compile-time only: it
+        /// changes what the compiler emits and carries no data worth reading back.
+        /// </summary>
+        public static readonly SurtrClass Value;
+
+        /// <summary>
+        /// The built-in <c>@Export("name")</c> attribute (§11): marks what a module offers its
+        /// embedding host — a whole class, or one field/property — under an optional alias.
+        /// </summary>
+        public static readonly SurtrClass Export;
+
+        /// <summary>
+        /// The built-in <c>@Test("name")</c> attribute (§11): marks a parameterless method as a
+        /// test a harness can discover through reflection and run.
+        /// </summary>
+        public static readonly SurtrClass Test;
+
+        /// <summary>
+        /// The built-in <c>@TestSuite("name")</c> attribute (§11): names the class a group of
+        /// tests lives in.
+        /// </summary>
+        public static readonly SurtrClass TestSuite;
+
+        /// <summary>
+        /// The built-in <c>@Pure</c> attribute (§11): promises a function returns the same value
+        /// for the same arguments without observable side effects. A contract for tools first; an
+        /// optimizer input later.
+        /// </summary>
+        public static readonly SurtrClass Pure;
+
+        /// <summary>
+        /// The built-in <c>@MainThread</c> attribute (§11): declares a member may only run on the
+        /// embedding host's main thread (a Unity draw call, say). Documentary until a thread model
+        /// exists to lint against.
+        /// </summary>
+        public static readonly SurtrClass MainThread;
+
+        /// <summary>
+        /// The built-in <c>@ThreadSafe</c> attribute (§11): declares a member safe to call from
+        /// any thread.
+        /// </summary>
+        public static readonly SurtrClass ThreadSafe;
+
+        /// <summary>
         /// A first-class handle to another class's metadata, behind every <see cref="SurtrTypeValue"/>.
         /// </summary>
         /// <remarks>
@@ -344,6 +401,14 @@ namespace Surtr.Runtime.BuiltIns
             Attribute = DeclareObject("Attribute", isAbstract: true);
             Obsolete = DeclareObject("Obsolete", Attribute);
             NoDiscard = DeclareObject("NoDiscard", Attribute);
+            RangeAttribute = DeclareObject("Range", Attribute);
+            Value = DeclareObject("Value", Attribute);
+            Export = DeclareObject("Export", Attribute);
+            Test = DeclareObject("Test", Attribute);
+            TestSuite = DeclareObject("TestSuite", Attribute);
+            Pure = DeclareObject("Pure", Attribute);
+            MainThread = DeclareObject("MainThread", Attribute);
+            ThreadSafe = DeclareObject("ThreadSafe", Attribute);
             Type = DeclareObject("Type");
             Member = DeclareObject("Member");
             ModuleType = DeclareObject("Module");
@@ -406,12 +471,17 @@ namespace Surtr.Runtime.BuiltIns
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(InvalidOperationException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(GeneratorExit, handles));
 
-            // The built-in attribute vocabulary (§11): one optional reason string each, which is
-            // both the compiler's warning text and the field reflection hands back. The classes are
-            // declared above, right after their root, because SeedGlobalScope imports every type the
-            // module holds - these two have to exist by then to be nameable as `@Obsolete`.
+            // The built-in attribute vocabulary (§11): declared above, right after their root,
+            // because SeedGlobalScope imports every type the module holds - these have to exist by
+            // then to be nameable as `@Obsolete` and friends. Each gets the fields its syntax
+            // carries; the argument checks at the use site read exactly this shape.
             DeclareReasonAttribute(BuilderFor(Obsolete, handles));
             DeclareReasonAttribute(BuilderFor(NoDiscard, handles));
+            DeclareRangeAttribute(BuilderFor(RangeAttribute, handles));
+            DeclareNamedAttribute(BuilderFor(Export, handles));
+            DeclareNamedAttribute(BuilderFor(Test, handles));
+            DeclareNamedAttribute(BuilderFor(TestSuite, handles));
+            // Value, Pure, MainThread and ThreadSafe carry nothing: their meaning is the mark.
             SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
 
             // After Attribute, since Type.attributes()/Member.attributes() both name it, and
@@ -571,6 +641,24 @@ namespace Surtr.Runtime.BuiltIns
         /// </summary>
         private static void DeclareReasonAttribute(SurtrBuiltInTypeBuilder builder)
             => builder.Field("reason", SurtrClassReference.String, visibility: SurtrVisibility.Public);
+
+        /// <summary>
+        /// Gives <see cref="Range"/> its two bounds. Floats rather than ints so one attribute shape
+        /// covers every numeric field an inspector would draw; integer arguments widen on the way
+        /// in exactly as §5's implicit conversions widen anywhere else.
+        /// </summary>
+        private static void DeclareRangeAttribute(SurtrBuiltInTypeBuilder builder)
+        {
+            builder.Field("lo", SurtrClassReference.Float, visibility: SurtrVisibility.Public);
+            builder.Field("hi", SurtrClassReference.Float, visibility: SurtrVisibility.Public);
+        }
+
+        /// <summary>
+        /// Gives an attribute class its single <c>name</c> field — the alias something is exposed
+        /// or reported under when the declaration's own name will not do.
+        /// </summary>
+        private static void DeclareNamedAttribute(SurtrBuiltInTypeBuilder builder)
+            => builder.Field("name", SurtrClassReference.String, visibility: SurtrVisibility.Public);
 
         /// <summary>
         /// The library class a CLR exception should surface as inside Surtr code, or

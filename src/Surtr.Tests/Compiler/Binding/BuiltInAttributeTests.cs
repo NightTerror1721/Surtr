@@ -168,9 +168,12 @@ namespace Surtr.Tests.Compiler.Binding
         [Fact]
         public void ABuiltInUseWithANonTextReasonReportsTheType()
         {
+            // On a method, so the target check passes and the argument itself is what is wrong.
             using var compilation = Compile(
-                "@NoDiscard(7)\n"
-                    + "class Target { }");
+                "class Target {\n"
+                    + "  @NoDiscard(7)\n"
+                    + "  public fun run(): void { }\n"
+                    + "}");
 
             AssertReports(compilation, SurtrDiagnosticCode.AttributeArgumentTypeMismatch);
         }
@@ -331,6 +334,62 @@ namespace Surtr.Tests.Compiler.Binding
                     + "public fun run(): int { return pick(1); }");
 
             AssertReports(compilation, SurtrDiagnosticCode.ObsoleteMemberUsed);
+        }
+
+        #endregion
+
+        #region Built-in targets
+
+        [Fact]
+        public void RangeIsRejectedOnAMethod()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @Range(0, 100)\n"
+                    + "  public fun health(): float { return 100.0; }\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AttributeTargetMismatch);
+        }
+
+        [Fact]
+        public void RangeIsAcceptedOnAFloatFieldWithIntegerBounds()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @Range(0, 100)\n"
+                    + "  public var health: float = 100.0;\n"
+                    + "}");
+
+            AssertClean(compilation);
+        }
+
+        [Fact]
+        public void TestIsRejectedOnAFieldButAcceptedOnAMethod()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @Test\n"
+                    + "  public let n: int = 0;\n"
+                    + "}\n"
+                    + "class Other {\n"
+                    + "  @Test(\"works\")\n"
+                    + "  public fun run(): void { }\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AttributeTargetMismatch);
+        }
+
+        [Fact]
+        public void ValueIsRejectedOnAMethod()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @Value\n"
+                    + "  public fun thing(): int { return 1; }\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AttributeTargetMismatch);
         }
 
         #endregion

@@ -3031,6 +3031,78 @@ their built-in classes (`surtr:Obsolete`, `surtr:NoDiscard`), materialize at loa
 host-side through `TryGetAttribute(SurtrBuiltIns.Obsolete, ...)` and script-side through
 `(m.attributes()[0] as Obsolete).reason`.
 
+The rest of the built-in vocabulary sits alongside them, declared by the same built-in module, each
+with its own targets: `@Range` on fields and properties, `@Value` on classes, `@Export` on classes,
+fields and properties, `@Test` on methods, `@TestSuite` on classes, `@Pure` on methods and
+properties, `@MainThread` and `@ThreadSafe` on classes and methods. Because they arrive as imported
+metadata their target lists are enforced from the recognition table rather than the declaration —
+the same `AttributeTargetMismatch` error, applied to whichever declaration the use lands on.
+
+- **`@Range(lo, hi)`** documents the bounds a numeric field or property is meant to stay within.
+  `lo` and `hi` are floats (integer literals widen on the way in), and the use carries them into the
+  image so a host — an inspector drawing a slider, say — reads them back through
+  `TryGetAttribute(SurtrBuiltIns.RangeAttribute)`. The compiler stores what the field will hold,
+  so the bounds materialize as the floats they were declared, not as raw integers.
+
+  ```
+  class Player {
+      @Range(0.0, 100.0)
+      public var health: float = 100.0;
+  }
+  ```
+
+- **`@Value`** opts a *class* into structural equality: where two values of a plain class compare
+  by identity, two of a `@Value` class compare field by field. `==` becomes "same reference, or
+  neither is null and every field pair is equal" — inherited fields included, a nested `@Value`
+  field recursing, and a self-referencing field stopping at identity so cycles cannot loop forever.
+  A declared `operator==` still wins; `!=` is the negation; `===` is untouched. A class with no
+  instance fields keeps plain identity (there is nothing structural to compare). The mark is
+  compile-time only: it shapes what the compiler emits and never reaches the image.
+
+  ```
+  @Value
+  class Vec2 {
+      public let x: float;
+      public let y: float;
+      constructor(x: float, y: float) { this.x = x; this.y = y; }
+  }
+
+  fun same(): bool { return Vec2(1.0, 2.0) == Vec2(1.0, 2.0); }   // true
+  ```
+
+  The opt-in is per class — a base class marked `@Value` does not turn a silent subclass into a
+  value. (Value classes already compare structurally on their own, so `@Value` is for the classes
+  that would otherwise fall back to identity.)
+
+- **`@Export("alias")`** marks what a module offers its embedding host: a whole class, or one
+  field/property, under an optional alias different from the Surtr name. It changes nothing about
+  language visibility — `public`/`internal` still decide reach — and is a read-only contract the
+  host consumes through `TryGetAttribute(SurtrBuiltIns.Export)`, the way a C# `[SerializeField]` is
+  a hint to Unity rather than a language rule.
+
+- **`@Test("name")`** marks a parameterless method as a test; **`@TestSuite("name")`** names the
+  class a group of tests lives in. Discovery and execution are pure reflection: the host-side
+  `SurtrTestRunner.Run(runtime, modules)` walks each module's classes, finds the `@Test` methods
+  (suites named by their `@TestSuite` mark or falling back to the class name), and runs them —
+  statics directly, instance tests on a fresh instance whose parameterless constructor has run —
+  reporting the exception message of any that fail. Because everything rides the ordinary image
+  and reflection machinery, a Surtr project gains tests with no compiler change.
+
+  ```
+  @TestSuite("Vec2")
+  class Vec2Tests {
+      @Test("sums components")
+      public fun sumWorks(): void { assert(Vec2(1.0, 2.0).add(Vec2(3.0, 4.0)) == Vec2(4.0, 6.0)); }
+  }
+  ```
+
+- **`@Pure`, `@MainThread` and `@ThreadSafe`** are contracts the language records today and verifies
+  later. `@Pure` promises a function returns the same value for the same arguments with no
+  observable side effects — a tooling/optimizer input; `@MainThread` declares a member may only run
+  on the embedding host's main thread (a Unity draw call, say); `@ThreadSafe` declares one safe to
+  call from any thread. All three stay readable through reflection from the start, ready for the
+  verifier that will eventually lint them.
+
 ---
 
 ## 12. Comments and documentation

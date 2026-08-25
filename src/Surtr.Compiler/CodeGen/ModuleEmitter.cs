@@ -648,7 +648,7 @@ namespace Surtr.Compiler.CodeGen
         {
             foreach (var use in symbol.Attributes)
             {
-                if (use.Type.IsCompileTimeOnlyAttribute)
+                if (!BuiltInAttributes.ReachesImage(use.Type))
                     continue;
 
                 member.AddAttribute(Usage(context, use));
@@ -685,7 +685,7 @@ namespace Surtr.Compiler.CodeGen
 
             foreach (var use in property.Attributes)
             {
-                if (use.Type.IsCompileTimeOnlyAttribute)
+                if (!BuiltInAttributes.ReachesImage(use.Type))
                     continue;
 
                 declared.AddAttribute(Usage(context, use));
@@ -771,7 +771,7 @@ namespace Surtr.Compiler.CodeGen
 
                 foreach (var use in method.Attributes)
                 {
-                    if (use.Type.IsCompileTimeOnlyAttribute)
+                    if (!BuiltInAttributes.ReachesImage(use.Type))
                         continue;
 
                     constructor.AddAttribute(Usage(context, use));
@@ -844,7 +844,7 @@ namespace Surtr.Compiler.CodeGen
 
             foreach (var use in method.Attributes)
             {
-                if (use.Type.IsCompileTimeOnlyAttribute)
+                if (!BuiltInAttributes.ReachesImage(use.Type))
                     continue;
 
                 builder.AddAttribute(Usage(context, use));
@@ -1083,7 +1083,7 @@ namespace Surtr.Compiler.CodeGen
 
                 foreach (var use in method.Attributes)
                 {
-                    if (use.Type.IsCompileTimeOnlyAttribute)
+                    if (!BuiltInAttributes.ReachesImage(use.Type))
                         continue;
 
                     function.AddAttribute(Usage(context, use));
@@ -1166,7 +1166,7 @@ namespace Surtr.Compiler.CodeGen
 
             foreach (var use in method.Attributes)
             {
-                if (use.Type.IsCompileTimeOnlyAttribute)
+                if (!BuiltInAttributes.ReachesImage(use.Type))
                     continue;
 
                 function.AddAttribute(Usage(context, use));

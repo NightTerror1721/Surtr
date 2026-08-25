@@ -1,7 +1,9 @@
 #nullable enable
 
 using Surtr.Compiler.Binding.Symbols;
+using Surtr.Compiler.Syntax.Ast;
 using System;
+using System.Collections.Generic;
 
 namespace Surtr.Compiler.Binding
 {
@@ -33,6 +35,65 @@ namespace Surtr.Compiler.Binding
         /// <summary>The class name <c>@NoDiscard(reason)</c> resolves to.</summary>
         internal const string NoDiscard = "NoDiscard";
 
+        /// <summary>The class name <c>@Range(lo, hi)</c> resolves to.</summary>
+        internal const string Range = "Range";
+
+        /// <summary>The class name <c>@Value</c> resolves to — structural equality for a class.</summary>
+        internal const string Value = "Value";
+
+        /// <summary>The class name <c>@Export("name")</c> resolves to.</summary>
+        internal const string Export = "Export";
+
+        /// <summary>The class name <c>@Test("name")</c> resolves to.</summary>
+        internal const string Test = "Test";
+
+        /// <summary>The class name <c>@TestSuite("name")</c> resolves to.</summary>
+        internal const string TestSuite = "TestSuite";
+
+        /// <summary>The class name <c>@Pure</c> resolves to.</summary>
+        internal const string Pure = "Pure";
+
+        /// <summary>The class name <c>@MainThread</c> resolves to.</summary>
+        internal const string MainThread = "MainThread";
+
+        /// <summary>The class name <c>@ThreadSafe</c> resolves to.</summary>
+        internal const string ThreadSafe = "ThreadSafe";
+
+        /// <summary>
+        /// Where each built-in may be written. The classes arrive as imported metadata, whose
+        /// symbols carry no target list of their own (that is a declaration-side fact), so the
+        /// restriction travels here beside the recognition that already lives in this file.
+        /// </summary>
+        private static readonly Dictionary<string, SurtrAttributeTargets> TargetsByBuiltinName =
+            new(StringComparer.Ordinal)
+            {
+                [Obsolete] = SurtrAttributeTargets.Class | SurtrAttributeTargets.Interface | SurtrAttributeTargets.Enum
+                    | SurtrAttributeTargets.Field | SurtrAttributeTargets.Property | SurtrAttributeTargets.Method,
+                [NoDiscard] = SurtrAttributeTargets.Method,
+                [Range] = SurtrAttributeTargets.Field | SurtrAttributeTargets.Property,
+                [Value] = SurtrAttributeTargets.Class,
+                [Export] = SurtrAttributeTargets.Class | SurtrAttributeTargets.Field | SurtrAttributeTargets.Property,
+                [Test] = SurtrAttributeTargets.Method,
+                [TestSuite] = SurtrAttributeTargets.Class,
+                [Pure] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property,
+                [MainThread] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Property | SurtrAttributeTargets.Class,
+                [ThreadSafe] = SurtrAttributeTargets.Method | SurtrAttributeTargets.Class,
+            };
+
+        /// <summary>
+        /// The target list a built-in attribute's documentation fixes, when the name is one.
+        /// </summary>
+        internal static bool TryGetTargets(string attributeName, out SurtrAttributeTargets targets)
+            => TargetsByBuiltinName.TryGetValue(attributeName, out targets);
+
+        /// <summary>
+        /// Whether an attribute use reaches the compiled image: <c>CompileTimeOnly</c> never does,
+        /// and neither does <c>@Value</c>, whose whole meaning is spent inside the compiler.
+        /// </summary>
+        internal static bool ReachesImage(NamedTypeSymbol attributeType)
+            => !attributeType.IsCompileTimeOnlyAttribute
+                && !string.Equals(attributeType.Name, Value, StringComparison.Ordinal);
+
         /// <summary>The recorded use of the named built-in on this symbol, if there is one.</summary>
         private static AttributeUse? Find(Symbol symbol, string name)
         {
@@ -60,6 +121,13 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>Whether this declaration is marked <c>@Obsolete</c>.</summary>
         internal static bool IsObsolete(Symbol symbol) => Find(symbol, Obsolete) is not null;
+
+        /// <summary>
+        /// Whether this class opts into structural equality with <c>@Value</c>. Checked on the
+        /// class's own uses; a base class's mark does not spread — identity stays the default for
+        /// a subclass that says nothing.
+        /// </summary>
+        internal static bool IsMarkedValue(Symbol symbol) => Find(symbol, Value) is not null;
 
         /// <summary>The message an <c>@Obsolete</c> mark carries, quoted at every warning site.</summary>
         internal static string? ObsoleteReason(Symbol symbol) => Reason(Find(symbol, Obsolete));
