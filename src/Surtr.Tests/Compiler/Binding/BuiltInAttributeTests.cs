@@ -914,5 +914,58 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         #endregion
+
+        #region @Benchmark (§P11)
+
+        [Fact]
+        public void BenchmarkIsRejectedOnAField()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @Benchmark\n"
+                    + "  public let n: int = 0;\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AttributeTargetMismatch);
+        }
+
+        [Fact]
+        public void BenchmarkIsRejectedOnAClass()
+        {
+            using var compilation = Compile(
+                "@Benchmark\n"
+                    + "class Target { }");
+
+            AssertReports(compilation, SurtrDiagnosticCode.AttributeTargetMismatch);
+        }
+
+        [Fact]
+        public void BenchmarkOnAMethodIsAccepted()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @Benchmark\n"
+                    + "  public fun work(): void { }\n"
+                    + "}");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.BenchmarkWithTest);
+        }
+
+        [Fact]
+        public void AMethodThatIsBothATestAndABenchmarkIsReported()
+        {
+            using var compilation = Compile(
+                "class Target {\n"
+                    + "  @Test\n"
+                    + "  @Benchmark\n"
+                    + "  public fun both(): void { }\n"
+                    + "}");
+
+            AssertReports(compilation, SurtrDiagnosticCode.BenchmarkWithTest);
+            Assert.False(compilation.HasErrors, "A mixed role is a warning, not an error.");
+        }
+
+        #endregion
     }
 }

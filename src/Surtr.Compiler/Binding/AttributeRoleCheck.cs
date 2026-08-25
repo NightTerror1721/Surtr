@@ -11,8 +11,8 @@ namespace Surtr.Compiler.Binding
     /// <summary>
     /// Reports a declaration carrying test-family marks (§11) that cannot all be true of it at
     /// once — <c>@TestIgnore</c> with nothing to skip, a fixture that is also a test, a fixture
-    /// the runner could not call — and the other combinations the runner would have to pick
-    /// between.
+    /// the runner could not call, a method that is both a test and a benchmark — and the other
+    /// combinations the runner would have to pick between.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -59,6 +59,20 @@ namespace Surtr.Compiler.Binding
                     diagnostics.ReportWarning(
                         SurtrDiagnosticCode.IgnoreWithoutTest,
                         $"'{method.Name}' carries '@TestIgnore' but not '@Test', so there is nothing to skip; the runner never discovers it.",
+                        sourceName,
+                        attribute.Span);
+                }
+
+                // Two discovery passes with different rules - a test runs once, a benchmark runs
+                // repeatedly and timed - so one method answering to both is reported rather than
+                // picked between.
+                if (Is(attribute, BuiltInAttributes.Benchmark)
+                    && BuiltInAttributes.IsBenchmark(method)
+                    && BuiltInAttributes.IsMarkedTest(method))
+                {
+                    diagnostics.ReportWarning(
+                        SurtrDiagnosticCode.BenchmarkWithTest,
+                        $"'{method.Name}' is both a test and a benchmark; the two are discovered separately and run under different rules.",
                         sourceName,
                         attribute.Span);
                 }

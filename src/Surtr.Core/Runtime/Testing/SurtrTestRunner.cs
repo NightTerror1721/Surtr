@@ -5,6 +5,7 @@ using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 
 namespace Surtr.Runtime.Testing
 {
@@ -61,6 +62,64 @@ namespace Surtr.Runtime.Testing
         public string? SkipReason { get; }
     }
 
+    /// <summary>The measurement of one <c>@Benchmark</c> method.</summary>
+    /// <remarks>
+    /// Deliberately not a <see cref="SurtrTestResult"/> with extra fields: a benchmark answers a
+    /// different question — how long, not whether — and folding it into the test outcomes would put
+    /// timings on every passing test and a pass/fail on every measurement.
+    /// </remarks>
+    public sealed class SurtrBenchmarkResult
+    {
+        internal SurtrBenchmarkResult(
+            string suite,
+            string name,
+            int iterations,
+            double medianMilliseconds,
+            double minimumMilliseconds,
+            double totalMilliseconds,
+            string? failure)
+        {
+            Suite = suite;
+            Name = name;
+            Iterations = iterations;
+            MedianMilliseconds = medianMilliseconds;
+            MinimumMilliseconds = minimumMilliseconds;
+            TotalMilliseconds = totalMilliseconds;
+            Failure = failure;
+        }
+
+        /// <summary>The suite it belongs to: its class's <c>@TestSuite</c> name, or the class name.</summary>
+        public string Suite { get; }
+
+        /// <summary>The method's name.</summary>
+        public string Name { get; }
+
+        /// <summary>How many measured calls were made, warmup excluded.</summary>
+        public int Iterations { get; }
+
+        /// <summary>
+        /// The middle measurement. The headline number rather than the mean, for the usual reason:
+        /// one call that lost its slice to the host is an outlier a mean carries and a median does
+        /// not.
+        /// </summary>
+        public double MedianMilliseconds { get; }
+
+        /// <summary>The fastest measurement — the closest thing to an uninterrupted run.</summary>
+        public double MinimumMilliseconds { get; }
+
+        /// <summary>Every measured call together, warmup excluded.</summary>
+        public double TotalMilliseconds { get; }
+
+        /// <summary>The median expressed per call, which is the shape a comparison is usually read in.</summary>
+        public double NanosecondsPerOperation => MedianMilliseconds * 1_000_000.0;
+
+        /// <summary>When a call threw, the message that escaped it; the measurement is then meaningless.</summary>
+        public string? Failure { get; }
+
+        /// <summary>Whether every call completed, so the numbers mean something.</summary>
+        public bool Measured => Failure is null;
+    }
+
     /// <summary>
     /// Discovers and runs the <c>@Test</c>/<c>@TestSuite</c> tests in a set of loaded modules.
     /// </summary>
@@ -100,9 +159,20 @@ namespace Surtr.Runtime.Testing
     /// top-level container, so a loose <c>@Test fun</c> is as ordinary a test as one inside a
     /// class. Its suite is the module's path, there being no <c>@TestSuite</c> to name it.
     /// </para>
+    /// <para>
+    /// <c>@Benchmark</c> is discovered by a pass of its own — <see cref="RunBenchmarks(SurtrRuntime, SurtrModule[])"/> —
+    /// because how long is a different question from whether, and a host usually wants one of the
+    /// two rather than both at once.
+    /// </para>
     /// </remarks>
     public static class SurtrTestRunner
     {
+        /// <summary>Untimed calls a benchmark makes first when the caller names no count.</summary>
+        private const int DefaultWarmup = 8;
+
+        /// <summary>Timed calls a benchmark makes when the caller names no count.</summary>
+        private const int DefaultIterations = 32;
+
         /// <summary>Runs every <c>@Test</c> in the given modules, in discovery order.</summary>
         public static IReadOnlyList<SurtrTestResult> Run(SurtrRuntime runtime, params SurtrModule[] modules)
         {
@@ -313,6 +383,165 @@ namespace Surtr.Runtime.Testing
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Runs every <c>@Benchmark</c> in the given modules, warming up and then timing, with the
+        /// default counts.
+        /// </summary>
+        public static IReadOnlyList<SurtrBenchmarkResult> RunBenchmarks(SurtrRuntime runtime, params SurtrModule[] modules)
+            => RunBenchmarks(runtime, DefaultWarmup, DefaultIterations, modules);
+
+        /// <summary>
+        /// Runs every <c>@Benchmark</c> in the given modules, in discovery order.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A pass of its own rather than a branch inside <see cref="Run"/>, because the two answer
+        /// different questions and a host usually wants one of them: a test suite that silently
+        /// took a hundred timed calls per benchmark would be a slow test suite, and a benchmark run
+        /// that also reported passes and failures would be a test run.
+        /// </para>
+        /// <para>
+        /// An instance benchmark builds its receiver once, before the warmup, so construction and
+        /// field initialization are not what gets measured. Fixtures are deliberately not run
+        /// around a benchmark: inside the loop they would be measured, and outside it they would
+        /// mean something different from what <c>@TestBefore</c> promises — per-benchmark setup is
+        /// a concept the vocabulary does not have yet.
+        /// </para>
+        /// <para>
+        /// The warmup exists for the same reason <c>Surtr.Bench</c>'s does: a method is promoted
+        /// out of tier 0 after a few dozen calls, so the first ones measure the JIT rather than the
+        /// code. The counts are the caller's, since what is enough depends entirely on how long one
+        /// call takes.
+        /// </para>
+        /// </remarks>
+        /// <param name="runtime">The runtime the modules are loaded into.</param>
+        /// <param name="warmup">Untimed calls made first; may be zero.</param>
+        /// <param name="iterations">Timed calls; at least one.</param>
+        /// <param name="modules">The modules to walk.</param>
+        public static IReadOnlyList<SurtrBenchmarkResult> RunBenchmarks(
+            SurtrRuntime runtime,
+            int warmup,
+            int iterations,
+            params SurtrModule[] modules)
+        {
+            if (runtime is null)
+                throw new ArgumentNullException(nameof(runtime));
+
+            if (warmup < 0)
+                throw new ArgumentOutOfRangeException(nameof(warmup), "A warmup cannot be negative.");
+
+            if (iterations < 1)
+                throw new ArgumentOutOfRangeException(nameof(iterations), "A benchmark needs at least one timed call.");
+
+            var results = new List<SurtrBenchmarkResult>();
+
+            if (modules is not null)
+            {
+                foreach (var module in modules)
+                {
+                    foreach (var overloads in module.Methods)
+                    {
+                        for (int i = 0; i < overloads.Length; i++)
+                        {
+                            if (IsBenchmark(overloads[i]))
+                                results.Add(Measure(runtime, cls: null, overloads[i], module.Path, warmup, iterations));
+                        }
+                    }
+
+                    foreach (var cls in module.Classes)
+                        MeasureClass(runtime, cls, suite: null, warmup, iterations, results);
+                }
+            }
+
+            return results;
+        }
+
+        private static void MeasureClass(
+            SurtrRuntime runtime,
+            SurtrClass cls,
+            string? suite,
+            int warmup,
+            int iterations,
+            List<SurtrBenchmarkResult> results)
+        {
+            string suiteName = NameOf(cls, SurtrBuiltIns.TestSuite) ?? suite ?? cls.Name;
+
+            foreach (var overloads in cls.Methods)
+            {
+                for (int i = 0; i < overloads.Length; i++)
+                {
+                    if (IsBenchmark(overloads[i]))
+                        results.Add(Measure(runtime, cls, overloads[i], suiteName, warmup, iterations));
+                }
+            }
+
+            foreach (var nested in cls.NestedClasses)
+                MeasureClass(runtime, nested, suiteName, warmup, iterations, results);
+        }
+
+        private static bool IsBenchmark(SurtrMethodInfo method)
+            => method.IsConstructor is false
+                && method.Parameters.Length == 0
+                && method.TryGetAttribute(SurtrBuiltIns.Benchmark, out _);
+
+        private static SurtrBenchmarkResult Measure(
+            SurtrRuntime runtime,
+            SurtrClass? cls,
+            SurtrMethodInfo method,
+            string suite,
+            int warmup,
+            int iterations)
+        {
+            var samples = new double[iterations];
+            double total = 0.0;
+
+            try
+            {
+                SurtrInstance? instance = null;
+                SurtrValue receiver = default;
+
+                if (cls is not null && !method.IsStatic)
+                {
+                    instance = runtime.NewInstance(cls);
+                    receiver = SurtrValue.CreateReference(instance.GetSurtrReference());
+
+                    if (ParameterlessConstructorOf(cls) is SurtrMethodInfo ctor)
+                        runtime.Invoke(ctor, receiver);
+                }
+
+                for (int i = 0; i < warmup; i++)
+                    InvokeOne(runtime, method, instance, receiver);
+
+                var clock = new Stopwatch();
+
+                for (int i = 0; i < iterations; i++)
+                {
+                    clock.Restart();
+                    InvokeOne(runtime, method, instance, receiver);
+                    clock.Stop();
+
+                    double elapsed = clock.Elapsed.TotalMilliseconds;
+                    samples[i] = elapsed;
+                    total += elapsed;
+                }
+            }
+            catch (Exception exception)
+            {
+                return new SurtrBenchmarkResult(suite, method.Name, iterations, 0.0, 0.0, 0.0, exception.Message);
+            }
+
+            Array.Sort(samples);
+
+            return new SurtrBenchmarkResult(
+                suite,
+                method.Name,
+                iterations,
+                medianMilliseconds: samples[samples.Length / 2],
+                minimumMilliseconds: samples[0],
+                totalMilliseconds: total,
+                failure: null);
         }
 
         private static string? NameOf(SurtrMemberInfo member, SurtrClass attributeClass)

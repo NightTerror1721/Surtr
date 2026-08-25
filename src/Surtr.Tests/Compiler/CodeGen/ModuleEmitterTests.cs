@@ -4952,6 +4952,126 @@ var runtime = Run(
 
         #endregion
 
+        #region Runner de @Benchmark (§P11)
+
+        /// <summary>
+        /// A benchmark is discovered like a test and run unlike one (§P11): repeatedly, warmup
+        /// first, and timed. The effect counter is what proves the repetition — one call would be
+        /// a test.
+        /// </summary>
+        [Fact]
+        public void BenchmarkRunnerWarmsUpThenTimesEachDiscoveredMethod()
+        {
+            var runtime = Run(
+                "var calls: int = 0;\n"
+                    + "public fun readCalls(): int { return calls; }\n"
+                    + "@TestSuite(\"Math\")\n"
+                    + "class MathBenchmarks {\n"
+                    + "  @Benchmark\n"
+                    + "  public static fun addition(): void { calls = calls + 1; }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var measured = Assert.Single(SurtrTestRunner.RunBenchmarks(runtime, warmup: 2, iterations: 5, module));
+
+            Assert.Equal("addition", measured.Name);
+            Assert.Equal("Math", measured.Suite);
+            Assert.Equal(5, measured.Iterations);
+            Assert.True(measured.Measured);
+            Assert.Null(measured.Failure);
+            Assert.True(measured.TotalMilliseconds >= 0.0);
+            Assert.True(measured.MinimumMilliseconds <= measured.MedianMilliseconds);
+            Assert.Equal(measured.MedianMilliseconds * 1_000_000.0, measured.NanosecondsPerOperation);
+
+            Assert.Equal(7, Int(runtime, "readCalls"));
+        }
+
+        [Fact]
+        public void TheTestPassAndTheBenchmarkPassDiscoverDifferentMethods()
+        {
+            var runtime = Run(
+                "class Suite {\n"
+                    + "  @Test(\"t\")\n"
+                    + "  public static fun t(): void { }\n"
+                    + "  @Benchmark\n"
+                    + "  public static fun b(): void { }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+
+            var tests = SurtrTestRunner.Run(runtime, module);
+            Assert.Equal("t", Assert.Single(tests).Name);
+
+            var benchmarks = SurtrTestRunner.RunBenchmarks(runtime, warmup: 0, iterations: 1, module);
+            Assert.Equal("b", Assert.Single(benchmarks).Name);
+        }
+
+        [Fact]
+        public void AnInstanceBenchmarkBuildsItsReceiverOnceBeforeTheWarmup()
+        {
+            var runtime = Run(
+                "var constructions: int = 0;\n"
+                    + "public fun readConstructions(): int { return constructions; }\n"
+                    + "class Benchmarks {\n"
+                    + "  public constructor() { constructions = constructions + 1; }\n"
+                    + "  @Benchmark\n"
+                    + "  public fun work(): void { }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var measured = Assert.Single(SurtrTestRunner.RunBenchmarks(runtime, warmup: 3, iterations: 4, module));
+
+            Assert.True(measured.Measured);
+            Assert.Equal(1, Int(runtime, "readConstructions"));
+        }
+
+        [Fact]
+        public void AThrowingBenchmarkReportsItsFailureRatherThanANumber()
+        {
+            var runtime = Run(
+                "class Benchmarks {\n"
+                    + "  @Benchmark\n"
+                    + "  public static fun boom(): void { let x: int = 1 / 0; }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var measured = Assert.Single(SurtrTestRunner.RunBenchmarks(runtime, warmup: 0, iterations: 1, module));
+
+            Assert.False(measured.Measured);
+            Assert.False(string.IsNullOrEmpty(measured.Failure));
+            Assert.Equal(0.0, measured.MedianMilliseconds);
+        }
+
+        [Fact]
+        public void ABenchmarkPassNeedsAtLeastOneTimedCall()
+        {
+            var runtime = Run("class Empty { }");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            Assert.Throws<System.ArgumentOutOfRangeException>(
+                () => SurtrTestRunner.RunBenchmarks(runtime, warmup: 0, iterations: 0, module));
+        }
+
+        [Fact]
+        public void ABenchmarkUseSurvivesTheImage()
+        {
+            var emitter = Build(
+                "class Benchmarks {\n"
+                    + "  @Benchmark\n"
+                    + "  public fun work(): void { }\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            Assert.True(module.FindClass("Benchmarks")!.TryGetMethods("work", out var overloads));
+            Assert.True(overloads[0].TryGetAttribute(SurtrBuiltIns.Benchmark, out _));
+        }
+
+        #endregion
+
         #region Reflexion de atributos: Type/Member (Fase 6)
 
         /// <summary>
