@@ -47,6 +47,15 @@ Las tres rondas con orden aleatorio existen por una razón concreta: sin ellas e
 caso dependía de qué caso se hubiera ejecutado antes. Aleatorizar el orden y quedarse con la
 mediana de tres rondas hace que ese efecto se promedie en lugar de sesgar una fila en particular.
 
+**Sobre el despacho y los números de esta corrida.** El intérprete se entrega por el op-cache
+(µop cache decodificado), indexado por la dirección absoluta del código; esa dirección se re-rolla
+por proceso (ASLR) y por estado de la máquina, y el intérprete salta entre dos estados ~20-50 %
+apartes. Una corrida como esta, en un solo proceso, muestrea **un** estado — los números de abajo
+pueden ser el estado rápido o el lento según el proceso en que cayeron. Para un número absoluto
+que represente el throughput real, el harness tiene `--processes <n>` (mide cada caso en n
+procesos frescos y reporta el mínimo más el spread de estado); para A/B entre dos builds,
+`scripts/ab-suite.ps1`. El detalle completo está en `docs/Informe-Volatilidad-Run.md`.
+
 ### 2.2 Columnas
 
 | Columna | Significado |

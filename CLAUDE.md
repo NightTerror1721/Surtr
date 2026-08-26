@@ -1,4 +1,4 @@
-﻿# CLAUDE.md
+# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -26,6 +26,8 @@ This file is the orientation; each of these goes deep on one thing. Read the rel
 | `docs/VM-Plan.md` | The interpreter's design decisions, the remaining gaps, and the ordered plan. |
 | `docs/Plan-Generadores.md` | Generators: the comparative study, the three suspension strategies and why the frame copy won (§4), the closed design decisions (§12, which override §3/§5/§6), the `yield*` evaluation (§11), and what each of the three phases built and measured (§13, §14, §15 — §15 overrides §12.8). |
 | `docs/Plan-Opcodes-Extendidos.md` | The extended instruction space: the measured cost of the `0xFF` prefix, the admission rule it fixes, the catalogue of superinstructions planned for it, and the phase plan. |
+| `docs/Informe-Volatilidad-Run.md` | Why adding opcode bodies moves `Run()`'s whole performance by ±20-45 % — measured as per-process bimodality of the indirect dispatch plus a real layout flip — and the corrected A/B protocol (`scripts/ab-suite.ps1`). §10 documents the register-pressure fix applied to `Run()` (−4.6 % median on the fast state). |
+| `docs/Informe-Benchmarks-Extremo.md` | The extreme suite run under the bimodality-aware protocol (`--processes 9`): per-case fast state + state spread, full breakdown by category. Raw data: `bench_results_extreme.csv`. |
 | `docs/Plan-Disposicion.md` | Deterministic disposal: why the registry's lack of a finalization hook makes it a language question, the comparison with C#/Java/Python, the built-in `IDisposable`, `using`, and what a `for-in`'s close costs. |
 
 ## Performance is CRITICAL
@@ -206,7 +208,7 @@ A member implementing a generic interface is matched on the **erased** signature
 
 **The extended space exists, holds thirteen instructions, and is closed to new ones.** `0xFF` is a prefix opening a second 256-value space (`SurtrExtOpCode`), measured at **0.44-0.48 ns** per prefixed dispatch by `surtrbench --prefix-tax` - half the estimate, because the nested `switch` is a separate prediction site with a much narrower target distribution. What lives there is one family: the fused loop steps (`ArrForNext`, `StrForNext`, `TupForNext`, `DictForNext`, `ForRangeNextLE`/`LT` and their `X` twins), which collapse the whole per-element overhead of a `for-in` - ten dispatches, seventeen over a dictionary - into one. Measured at **-47 %** on `forIn` and **-20 %** on `forInDict`. Plus `Probe`, which is not an instruction but the calibration instrument the prefix's price is re-measured with.
 
-**Three more families were built, measured and reverted, and the reason is a hard constraint on anything that would follow them.** Compare-and-branch on slots delivered nothing; slot arithmetic won 10 % on its own target and cost **+3.9 % across the whole suite**; fused member access made its own targets slower. The cause is not any of them: **`Run()` has reached a size where adding opcode bodies moves the performance of the entire interpreter by ±20-45 % per case, unpredictably and unrelated to what the new opcode does.** The C# control stayed flat through every one of those measurements, so it is not the machine. The practical rule is that **the budget for new opcodes is not 256 values but a handful of bodies**, and a new instruction has to justify the layout it displaces rather than only its own saving - the fused loop steps did, nothing since has. `docs/Plan-Opcodes-Extendidos.md` §11 has the evidence and the rules; §9 has what each phase measured, including three propositions from `docs/Informe-Optimizaciones-Bytecode.md` closed with numbers rather than opinions (a bytecode sort is 54 % slower than the native one that re-enters per comparison; a cross-module call costs 1.25 ns more than a local one).
+**Three more families were built, measured and reverted, and the reason is a hard constraint on anything that would follow them.** Compare-and-branch on slots delivered nothing; slot arithmetic won 10 % on its own target and cost **+3.9 % across the whole suite**; fused member access made its own targets slower. `docs/Informe-Volatilidad-Run.md` explains the cause: those ±20-45 % swings were mostly **per-process bimodality of the indirect dispatch** (the same binary lands in two states, ~20-50 % apart, depending on process launch), which the old one-process-per-side protocol could not see, on top of a real but smaller layout flip. The practical rules stand: **the budget for new opcodes is a handful of bodies, not 256 values**, a new instruction has to justify the layout it displaces, and any A/B must use `scripts/ab-suite.ps1` (multiple processes per side, min-per-process as the metric). It also documents the one ceiling broken since: dropping `frames`/`roots`/`maxDepth`/`stackLimit` from `Run()`'s locals cut the method 46.4 → 42.8 KB, removed the `IncLocal` spills, and measured **−4.6 %** median on the fast state — so `Run()` is not untouchable, it is *measurable*. `docs/Plan-Opcodes-Extendidos.md` §11 has the original evidence and rules; §9 has what each phase measured.
 
 Surtr is a stack machine. Operands come from the evaluation stack; pool indices, jump offsets and argument counts are encoded inline after the opcode byte as little-endian immediates.
 
@@ -424,7 +426,7 @@ The VM opcode suites in `src/Surtr.Tests/VM` predate the emitter and still use t
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Surtr** (10943 symbols, 44324 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Surtr** (11078 symbols, 44789 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
