@@ -749,22 +749,70 @@ namespace Surtr.Compiler.CodeGen
             var step = Code.NewLabel();
             var end = Code.NewLabel();
 
-            Code.MarkLabel(top);
-            EmitLoadLocal(variable);
-            EmitLoadLocal(limit);
-            Code.JumpIfCompare(
-                limitIsInclusive ? SurtrComparison.Greater : SurtrComparison.GreaterOrEqual,
-                SurtrValueTypeCode.Integer,
-                end);
+            // Fused when the two slots address in one byte, which is the encoding's only
+            // restriction and true of every ordinary method. Past that the classic sequence still
+            // emits, exactly as the grouped local helpers fall back from LdlS to Ldl.
+            bool fused = FitsInSlotByte(variable, limit);
+
+            if (fused)
+            {
+                // The guard runs once, above the loop, rather than at the top of every iteration:
+                // the step at the bottom does its own test. Unlike an indexed walk this cannot
+                // rotate its entry away entirely - the counter is the variable the program
+                // declared, so starting it one below its bound would wrap at int.MinValue - which
+                // is why the guard survives for the first iteration and only the step is fused.
+                EmitLoadLocal(variable);
+                EmitLoadLocal(limit);
+                Code.JumpIfCompare(
+                    limitIsInclusive ? SurtrComparison.Greater : SurtrComparison.GreaterOrEqual,
+                    SurtrValueTypeCode.Integer,
+                    end);
+
+                Code.MarkLabel(top);
+            }
+            else
+            {
+                Code.MarkLabel(top);
+                EmitLoadLocal(variable);
+                EmitLoadLocal(limit);
+                Code.JumpIfCompare(
+                    limitIsInclusive ? SurtrComparison.Greater : SurtrComparison.GreaterOrEqual,
+                    SurtrValueTypeCode.Integer,
+                    end);
+            }
 
             PushLoop(step, end);
             Statement(loop.Body);
             PopTargets();
 
             Code.MarkLabel(step);
-            Code.IncrementLocal(variable, 1);
-            Code.Jump(top);
+
+            if (fused)
+            {
+                Code.ForRangeNext(variable.Index, limit.Index, limitIsInclusive, top);
+            }
+            else
+            {
+                Code.IncrementLocal(variable, 1);
+                Code.Jump(top);
+            }
+
             Code.MarkLabel(end);
+        }
+
+        /// <summary>
+        /// Whether every one of these locals addresses in the single byte a fused loop step
+        /// encodes its slots in.
+        /// </summary>
+        private static bool FitsInSlotByte(params SurtrLocal[] locals)
+        {
+            for (int i = 0; i < locals.Length; i++)
+            {
+                if ((uint)locals[i].Index > byte.MaxValue)
+                    return false;
+            }
+
+            return true;
         }
 
         private SurtrMethodInfo RangeAccessor(string property)
@@ -791,36 +839,76 @@ namespace Surtr.Compiler.CodeGen
             }
 
             EmitStoreLocal(source);
-            Code.LoadInt(0);
-            EmitStoreLocal(index);
 
             var top = Code.NewLabel();
             var step = Code.NewLabel();
             var end = Code.NewLabel();
 
-            Code.MarkLabel(top);
-            EmitLoadLocal(index);
-            EmitLoadLocal(source);
-            Length(kind);
-            Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
+            // The fused step writes exactly one slot, so a loop variable that stores inline still
+            // needs the unpack the written-out form performs and keeps the classic sequence. The
+            // slot-width restriction is the encoding's, and is the same one every fused step has.
+            bool fused = SlotCountOfType(loop.Variable.Type) == 1
+                && FitsInSlotByte(source, index, variable);
 
-            EmitLoadLocal(source);
-            EmitLoadLocal(index);
-            Element(kind);
-            // An element read off a collection's own storage arrives as the boxed form when its
-            // type stores inline - the collection keeps one reference per element - so the
-            // walk's variable, which holds the value itself, unpacks it.
-            UnpackIfMultiSlot(loop.Variable.Type);
-            EmitStoreLocal(variable);
+            if (fused)
+            {
+                // Rotated: the whole step lives at the bottom, and the loop is entered by jumping
+                // straight to it with the index one below its start. Safe here where it is not for
+                // a range, because this index is a compiler temporary that always begins at zero.
+                Code.LoadInt(-1);
+                EmitStoreLocal(index);
+                Code.Jump(step);
+                Code.MarkLabel(top);
+            }
+            else
+            {
+                Code.LoadInt(0);
+                EmitStoreLocal(index);
+
+                Code.MarkLabel(top);
+                EmitLoadLocal(index);
+                EmitLoadLocal(source);
+                Length(kind);
+                Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
+
+                EmitLoadLocal(source);
+                EmitLoadLocal(index);
+                Element(kind);
+                // An element read off a collection's own storage arrives as the boxed form when its
+                // type stores inline - the collection keeps one reference per element - so the
+                // walk's variable, which holds the value itself, unpacks it.
+                UnpackIfMultiSlot(loop.Variable.Type);
+                EmitStoreLocal(variable);
+            }
 
             PushLoop(step, end);
             Statement(loop.Body);
             PopTargets();
 
             Code.MarkLabel(step);
-            Code.IncrementLocal(index, 1);
-            Code.Jump(top);
+
+            if (fused)
+            {
+                ForNext(kind, source.Index, index.Index, variable.Index, top);
+            }
+            else
+            {
+                Code.IncrementLocal(index, 1);
+                Code.Jump(top);
+            }
+
             Code.MarkLabel(end);
+        }
+
+        /// <summary>The fused loop step for an indexed walk over <paramref name="kind"/>.</summary>
+        private void ForNext(SurtrIterationKind kind, int sourceSlot, int indexSlot, int variableSlot, SurtrLabel body)
+        {
+            switch (kind)
+            {
+                case SurtrIterationKind.Array: Code.ArrForNext(sourceSlot, indexSlot, variableSlot, body); return;
+                case SurtrIterationKind.String: Code.StrForNext(sourceSlot, indexSlot, variableSlot, body); return;
+                default: Code.TupForNext(sourceSlot, indexSlot, variableSlot, body); return;
+            }
         }
 
         private void Length(SurtrIterationKind kind)
@@ -869,12 +957,35 @@ namespace Surtr.Compiler.CodeGen
             EmitLoadLocal(source);
             Code.DictionaryKeys(SurtrClassReference.Array(Descriptors.Emit(dictionary.KeyType)));
             EmitStoreLocal(keys);
-            Code.LoadInt(0);
-            EmitStoreLocal(index);
-
             var top = Code.NewLabel();
             var step = Code.NewLabel();
             var end = Code.NewLabel();
+
+            // Seventeen dispatches of overhead per entry, written out - four to guard, four to read
+            // the key, four to look the value up, three to lay the pair down and two to step - and
+            // one instruction fused. It is the largest of the loop fusions and the key/value
+            // temporaries disappear with it, since the step writes the pair's two slots directly.
+            bool fused = FitsInSlotByte(keys, index, source, variable);
+
+            if (fused)
+            {
+                Code.LoadInt(-1);
+                EmitStoreLocal(index);
+                Code.Jump(step);
+                Code.MarkLabel(top);
+
+                PushLoop(step, end);
+                Statement(loop.Body);
+                PopTargets();
+
+                Code.MarkLabel(step);
+                Code.DictForNext(keys.Index, index.Index, source.Index, variable.Index, top);
+                Code.MarkLabel(end);
+                return;
+            }
+
+            Code.LoadInt(0);
+            EmitStoreLocal(index);
 
             Code.MarkLabel(top);
             EmitLoadLocal(index);

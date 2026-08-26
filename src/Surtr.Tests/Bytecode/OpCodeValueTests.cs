@@ -94,7 +94,13 @@ namespace Surtr.Tests.Bytecode
         /// </remarks>
         private static readonly (SurtrExtOpCode Op, byte Value)[] AssignedExt = new (SurtrExtOpCode, byte)[]
         {
-            (SurtrExtOpCode.Probe, 0x00)
+            (SurtrExtOpCode.Probe, 0x00),
+            (SurtrExtOpCode.ArrForNext, 0x01), (SurtrExtOpCode.ArrForNextX, 0x02),
+            (SurtrExtOpCode.StrForNext, 0x03), (SurtrExtOpCode.StrForNextX, 0x04),
+            (SurtrExtOpCode.TupForNext, 0x05), (SurtrExtOpCode.TupForNextX, 0x06),
+            (SurtrExtOpCode.DictForNext, 0x07), (SurtrExtOpCode.DictForNextX, 0x08),
+            (SurtrExtOpCode.ForRangeNextLE, 0x09), (SurtrExtOpCode.ForRangeNextLEX, 0x0A),
+            (SurtrExtOpCode.ForRangeNextLT, 0x0B), (SurtrExtOpCode.ForRangeNextLTX, 0x0C)
         };
 
         [Fact]

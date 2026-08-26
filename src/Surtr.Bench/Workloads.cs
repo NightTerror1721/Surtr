@@ -386,6 +386,18 @@ namespace Surtr.Bench
                 return acc;
             }
 
+            // The dictionary walk, which is the most expensive of the three for-in lowerings to
+            // write out: guard, read the key from the snapshot, look the value up, lay the pair
+            // into the loop variable's two slots, step, jump. The pair is a value, so the loop
+            // allocates nothing per entry either way.
+            fun forInDict(n: int): int {
+                let m: {int: int} = {};
+                for (var i = 0; i < n; i += 1) { m[i] = i * 3; }
+                var acc: int = 0;
+                for (e in m) { acc = (acc + e[0] + e[1]) % 100000007; }
+                return acc;
+            }
+
             // The same loop with the sequence typed as the interface, which is what stops the
             // compiler lowering it to an indexed walk and forces the real iterate()/moveNext()
             // path. VM-Plan §3.1 records that cost; this is what measures it.
@@ -1010,6 +1022,14 @@ namespace Surtr.Bench
                 return acc
             end
 
+            function forInDict(n)
+                local m = {}
+                for i = 0, n - 1 do m[i] = i * 3 end
+                local acc = 0
+                for k, v in pairs(m) do acc = (acc + k + v) % 100000007 end
+                return acc
+            end
+
             function forIn(n)
                 local xs = {}
                 for i = 0, n - 1 do xs[#xs + 1] = i end
@@ -1351,6 +1371,7 @@ namespace Surtr.Bench
             new Workload("propertyAccess", 300000, WorkloadKind.Int, "get_x/set_x accessor pair", PropertyAccess),
             new Workload("exceptions", 8000, WorkloadKind.Int, "raise and handler-table search", Exceptions),
             new Workload("forIn", 50000, WorkloadKind.Int, "for-in lowered to an indexed loop", ForIn),
+            new Workload("forInDict", 50000, WorkloadKind.Int, "for-in over a dictionary: key snapshot, value lookup and pair per entry", ForInDict),
             new Workload("iterator", 50000, WorkloadKind.Int, "the general iterate()/moveNext() path", Iterator),
             new Workload("genYield", 50000, WorkloadKind.Int, "generator: suspend and resume a frame per element", GenYield),
             new Workload("handIterator", 50000, WorkloadKind.Int, "the cursor class a generator replaces", HandIterator),
@@ -1681,6 +1702,17 @@ namespace Surtr.Bench
             long acc = 0;
             foreach (long x in xs)
                 acc = (acc + x) % Modulus;
+            return acc;
+        }
+
+        private static long ForInDict(long n)
+        {
+            var m = new Dictionary<long, long>();
+            for (long i = 0; i < n; i++)
+                m[i] = i * 3;
+            long acc = 0;
+            foreach (var entry in m)
+                acc = (acc + entry.Key + entry.Value) % Modulus;
             return acc;
         }
 

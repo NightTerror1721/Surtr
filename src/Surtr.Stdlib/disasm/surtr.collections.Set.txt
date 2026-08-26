@@ -161,118 +161,118 @@ class ReadOnlySet`1<T> : surtr.collections.Set:IReadOnlySet<T0>  [public]
 
   [public] property isEmpty: bool { get; }
     get:
-      ; entry 4, locals 1, stack 2, code 006A..0073
-        006A  Ldl0
-        006B  FieldGet 0 (_dict)
-        006E  DictLen
-        006F  PushI8 0
-        0071  EQ
-        0072  ReturnValue
-
-  [public] property length: int { get; }
-    get:
-      ; entry 3, locals 1, stack 1, code 0064..006A
+      ; entry 4, locals 1, stack 2, code 0064..006D
         0064  Ldl0
         0065  FieldGet 0 (_dict)
         0068  DictLen
-        0069  ReturnValue
+        0069  PushI8 0
+        006B  EQ
+        006C  ReturnValue
+
+  [public] property length: int { get; }
+    get:
+      ; entry 3, locals 1, stack 1, code 005E..0064
+        005E  Ldl0
+        005F  FieldGet 0 (_dict)
+        0062  DictLen
+        0063  ReturnValue
 
   [public] contains(item: T0): bool
-    ; entry 5, locals 2, stack 2, code 0073..007A
-      0073  Ldl0
-      0074  FieldGet 0 (_dict)
-      0077  Ldl1
-      0078  DictIn
-      0079  ReturnValue
+    ; entry 5, locals 2, stack 2, code 006D..0074
+      006D  Ldl0
+      006E  FieldGet 0 (_dict)
+      0071  Ldl1
+      0072  DictIn
+      0073  ReturnValue
 
   [public] virtual contains(item: unknown): bool
-    ; entry 34, locals 2, stack 2, code 0356..0361
-      0356  Ldl0
-      0357  Ldl1
-      0358  Cast 6 (T0)
-      035B  InvokeSpecial 17 (contains) args=2 ret=1
-      0360  ReturnValue
+    ; entry 34, locals 2, stack 2, code 0350..035B
+      0350  Ldl0
+      0351  Ldl1
+      0352  Cast 6 (T0)
+      0355  InvokeSpecial 17 (contains) args=2 ret=1
+      035A  ReturnValue
 
   [public] copyTo(array: T0[], arrayIndex: int): void
-    ; entry 12, locals 8, stack 3, code 019A..020C
-      019A  Ldl2
-      019B  PushI8 0
-      019D  LT
-      019E  Dup
-      019F  JPNZ +8 -> L0 (01AA)
-      01A2  Pop
-      01A3  Ldl2
-      01A4  Ldl1
-      01A5  ArrLen
-      01A6  GE
-      01A7  JP +0 -> L0 (01AA)
+    ; entry 12, locals 8, stack 3, code 0194..0206
+      0194  Ldl2
+      0195  PushI8 0
+      0197  LT
+      0198  Dup
+      0199  JPNZ +8 -> L0 (01A4)
+      019C  Pop
+      019D  Ldl2
+      019E  Ldl1
+      019F  ArrLen
+      01A0  GE
+      01A1  JP +0 -> L0 (01A4)
     L0:
-      01AA  JPZ +11 -> L1 (01B8)
-      01AD  ObjNew 1 (surtr:IndexOutOfRangeException)
-      01B0  Dup
-      01B1  Ldc0
-      01B2  InvokeSpecial 75 (ctor) args=2 ret=0
-      01B7  Throw
+      01A4  JPZ +11 -> L1 (01B2)
+      01A7  ObjNew 1 (surtr:IndexOutOfRangeException)
+      01AA  Dup
+      01AB  Ldc0
+      01AC  InvokeSpecial 75 (ctor) args=2 ret=0
+      01B1  Throw
     L1:
-      01B8  Ldl1
-      01B9  ArrLen
-      01BA  Ldl2
-      01BB  Sub
-      01BC  Ldl0
-      01BD  Stl3
-      01BE  Ldl3
-      01BF  FieldGet 0 (_dict)
-      01C2  DictLen
-      01C3  JPGE +11 -> L2 (01D1)
-      01C6  ObjNew 2 (surtr:ArgumentException)
-      01C9  Dup
-      01CA  Ldc1
-      01CB  InvokeSpecial 76 (ctor) args=2 ret=0
-      01D0  Throw
+      01B2  Ldl1
+      01B3  ArrLen
+      01B4  Ldl2
+      01B5  Sub
+      01B6  Ldl0
+      01B7  Stl3
+      01B8  Ldl3
+      01B9  FieldGet 0 (_dict)
+      01BC  DictLen
+      01BD  JPGE +11 -> L2 (01CB)
+      01C0  ObjNew 2 (surtr:ArgumentException)
+      01C3  Dup
+      01C4  Ldc1
+      01C5  InvokeSpecial 76 (ctor) args=2 ret=0
+      01CA  Throw
     L2:
-      01D1  Ldl2
-      01D2  Stl4
-      01D3  Ldl0
-      01D4  InvokeInterface 69 (iterate) args=1 ret=1
-      01D9  Stl5
+      01CB  Ldl2
+      01CC  Stl4
+      01CD  Ldl0
+      01CE  InvokeInterface 69 (iterate) args=1 ret=1
+      01D3  Stl5
     ; try_0 begin
     L3:
-      01DA  Ldl5
-      01DB  InvokeInterface 70 (moveNext) args=1 ret=1
-      01E0  JPZ +20 -> L4 (01F7)
-      01E3  Ldl5
-      01E4  InvokeInterface 71 (get_current) args=1 ret=1
-      01E9  StlS 6
-      01EB  Ldl1
-      01EC  Ldl4
-      01ED  LdlS 6
-      01EF  UnboxDynamic
-      01F0  ArrSet
-      01F1  IncLocal 4 by 1
-      01F4  JP -29 -> L3 (01DA)
+      01D4  Ldl5
+      01D5  InvokeInterface 70 (moveNext) args=1 ret=1
+      01DA  JPZ +20 -> L4 (01F1)
+      01DD  Ldl5
+      01DE  InvokeInterface 71 (get_current) args=1 ret=1
+      01E3  StlS 6
+      01E5  Ldl1
+      01E6  Ldl4
+      01E7  LdlS 6
+      01E9  UnboxDynamic
+      01EA  ArrSet
+      01EB  IncLocal 4 by 1
+      01EE  JP -29 -> L3 (01D4)
     ; try_0 end
     L4:
-      01F7  Ldl5
-      01F8  InvokeInterface 72 (dispose) args=1 ret=0
-      01FD  JP +11 -> L5 (020B)
+      01F1  Ldl5
+      01F2  InvokeInterface 72 (dispose) args=1 ret=0
+      01F7  JP +11 -> L5 (0205)
     ; catch_0 (*)
-      0200  StlS 7
-      0202  Ldl5
-      0203  InvokeInterface 72 (dispose) args=1 ret=0
-      0208  LdlS 7
-      020A  Throw
+      01FA  StlS 7
+      01FC  Ldl5
+      01FD  InvokeInterface 72 (dispose) args=1 ret=0
+      0202  LdlS 7
+      0204  Throw
     L5:
-      020B  ReturnVoid
-    handler [01DA, 01F7) -> 0200  catch *
+      0205  ReturnVoid
+    handler [01D4, 01F1) -> 01FA  catch *
 
   [public] virtual copyTo(array: unknown[], arrayIndex: int): void
-    ; entry 35, locals 3, stack 3, code 0361..036D
-      0361  Ldl0
-      0362  Ldl1
-      0363  Cast 7 (T0[])
-      0366  Ldl2
-      0367  InvokeSpecial 24 (copyTo) args=3 ret=0
-      036C  ReturnVoid
+    ; entry 35, locals 3, stack 3, code 035B..0367
+      035B  Ldl0
+      035C  Ldl1
+      035D  Cast 7 (T0[])
+      0360  Ldl2
+      0361  InvokeSpecial 24 (copyTo) args=3 ret=0
+      0366  ReturnVoid
 
   [public] ctor (): void
     ; entry 0, locals 1, stack 2, code 0000..000A
@@ -319,443 +319,435 @@ class ReadOnlySet`1<T> : surtr.collections.Set:IReadOnlySet<T0>  [public]
     handler [001A, 0034) -> 003D  catch *
 
   [public] ctor (items: T0...): void
-    ; entry 2, locals 5, stack 3, code 0047..0064
+    ; entry 2, locals 5, stack 3, code 0047..005E
       0047  Ldl1
       0048  Stl2
-      0049  PushI8 0
+      0049  PushI8 -1
       004B  Stl3
+      004C  JP +7 -> L1 (0056)
     L0:
-      004C  Ldl3
-      004D  Ldl2
-      004E  ArrLen
-      004F  JPGE +17 -> L1 (0063)
-      0052  Ldl2
-      0053  Ldl3
-      0054  ArrGet
-      0055  Stl4
-      0056  Ldl0
-      0057  FieldGet 0 (_dict)
-      005A  Ldl4
-      005B  PushTrue
-      005C  DictSet
-      005D  IncLocal 3 by 1
-      0060  JP -23 -> L0 (004C)
+      004F  Ldl0
+      0050  FieldGet 0 (_dict)
+      0053  Ldl4
+      0054  PushTrue
+      0055  DictSet
     L1:
-      0063  ReturnVoid
+      0056  ArrForNext 2 3 4 -> L0 (004F)
+      005D  ReturnVoid
 
   [public] equals(other: surtr.collections.Set:IReadOnlySet<T0>): bool
-    ; entry 11, locals 3, stack 2, code 0180..019A
-      0180  Ldl0
-      0181  Stl2
-      0182  Ldl2
-      0183  FieldGet 0 (_dict)
-      0186  DictLen
-      0187  Ldl1
-      0188  InvokeInterface 74 (get_length) args=1 ret=1
-      018D  JPEQ +2 -> L0 (0192)
-      0190  PushFalse
-      0191  ReturnValue
+    ; entry 11, locals 3, stack 2, code 017A..0194
+      017A  Ldl0
+      017B  Stl2
+      017C  Ldl2
+      017D  FieldGet 0 (_dict)
+      0180  DictLen
+      0181  Ldl1
+      0182  InvokeInterface 74 (get_length) args=1 ret=1
+      0187  JPEQ +2 -> L0 (018C)
+      018A  PushFalse
+      018B  ReturnValue
     L0:
-      0192  Ldl0
-      0193  Ldl1
-      0194  InvokeSpecial 18 (isSubsetOf) args=2 ret=1
-      0199  ReturnValue
+      018C  Ldl0
+      018D  Ldl1
+      018E  InvokeSpecial 18 (isSubsetOf) args=2 ret=1
+      0193  ReturnValue
 
   [public] virtual equals(other: surtr.collections.Set:IReadOnlySet<unknown>): bool
-    ; entry 32, locals 2, stack 2, code 0344..034F
-      0344  Ldl0
-      0345  Ldl1
-      0346  Cast 5 (surtr.collections.Set:IReadOnlySet<T0>)
-      0349  InvokeSpecial 23 (equals) args=2 ret=1
-      034E  ReturnValue
+    ; entry 32, locals 2, stack 2, code 033E..0349
+      033E  Ldl0
+      033F  Ldl1
+      0340  Cast 5 (surtr.collections.Set:IReadOnlySet<T0>)
+      0343  InvokeSpecial 23 (equals) args=2 ret=1
+      0348  ReturnValue
 
   [public] static except(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:ReadOnlySet<T0>
-    ; entry 24, locals 2, stack 4, code 02E4..02F5
-      02E4  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
-      02E7  Dup
-      02E8  Ldl0
-      02E9  Ldl1
-      02EA  InvokeStatic 67 (except) args=2 ret=1
-      02EF  InvokeSpecial 13 (ctor) args=2 ret=0
-      02F4  ReturnValue
+    ; entry 24, locals 2, stack 4, code 02DE..02EF
+      02DE  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
+      02E1  Dup
+      02E2  Ldl0
+      02E3  Ldl1
+      02E4  InvokeStatic 67 (except) args=2 ret=1
+      02E9  InvokeSpecial 13 (ctor) args=2 ret=0
+      02EE  ReturnValue
 
   [public] virtual get_isEmpty(): bool
-    ; entry 26, locals 1, stack 1, code 0306..030D
-      0306  Ldl0
-      0307  InvokeSpecial 16 (get_isEmpty) args=1 ret=1
-      030C  ReturnValue
+    ; entry 26, locals 1, stack 1, code 0300..0307
+      0300  Ldl0
+      0301  InvokeSpecial 16 (get_isEmpty) args=1 ret=1
+      0306  ReturnValue
 
   [public] virtual get_length(): int
-    ; entry 33, locals 1, stack 1, code 034F..0356
-      034F  Ldl0
-      0350  InvokeSpecial 15 (get_length) args=1 ret=1
-      0355  ReturnValue
+    ; entry 33, locals 1, stack 1, code 0349..0350
+      0349  Ldl0
+      034A  InvokeSpecial 15 (get_length) args=1 ret=1
+      034F  ReturnValue
 
   [public] static intersect(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:ReadOnlySet<T0>
-    ; entry 23, locals 2, stack 4, code 02D3..02E4
-      02D3  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
-      02D6  Dup
-      02D7  Ldl0
-      02D8  Ldl1
-      02D9  InvokeStatic 66 (intersect) args=2 ret=1
-      02DE  InvokeSpecial 13 (ctor) args=2 ret=0
-      02E3  ReturnValue
+    ; entry 23, locals 2, stack 4, code 02CD..02DE
+      02CD  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
+      02D0  Dup
+      02D1  Ldl0
+      02D2  Ldl1
+      02D3  InvokeStatic 66 (intersect) args=2 ret=1
+      02D8  InvokeSpecial 13 (ctor) args=2 ret=0
+      02DD  ReturnValue
 
   [public] isProperSubsetOf(other: surtr.collections.Set:IReadOnlySet<T0>): bool
-    ; entry 9, locals 3, stack 2, code 0123..013D
-      0123  Ldl0
-      0124  Stl2
-      0125  Ldl2
-      0126  FieldGet 0 (_dict)
-      0129  DictLen
-      012A  Ldl1
-      012B  InvokeInterface 74 (get_length) args=1 ret=1
-      0130  JPLT +2 -> L0 (0135)
-      0133  PushFalse
-      0134  ReturnValue
+    ; entry 9, locals 3, stack 2, code 011D..0137
+      011D  Ldl0
+      011E  Stl2
+      011F  Ldl2
+      0120  FieldGet 0 (_dict)
+      0123  DictLen
+      0124  Ldl1
+      0125  InvokeInterface 74 (get_length) args=1 ret=1
+      012A  JPLT +2 -> L0 (012F)
+      012D  PushFalse
+      012E  ReturnValue
     L0:
-      0135  Ldl0
-      0136  Ldl1
-      0137  InvokeSpecial 18 (isSubsetOf) args=2 ret=1
-      013C  ReturnValue
+      012F  Ldl0
+      0130  Ldl1
+      0131  InvokeSpecial 18 (isSubsetOf) args=2 ret=1
+      0136  ReturnValue
 
   [public] virtual isProperSubsetOf(other: surtr.collections.Set:IReadOnlySet<unknown>): bool
-    ; entry 30, locals 2, stack 2, code 032E..0339
-      032E  Ldl0
-      032F  Ldl1
-      0330  Cast 5 (surtr.collections.Set:IReadOnlySet<T0>)
-      0333  InvokeSpecial 21 (isProperSubsetOf) args=2 ret=1
-      0338  ReturnValue
+    ; entry 30, locals 2, stack 2, code 0328..0333
+      0328  Ldl0
+      0329  Ldl1
+      032A  Cast 5 (surtr.collections.Set:IReadOnlySet<T0>)
+      032D  InvokeSpecial 21 (isProperSubsetOf) args=2 ret=1
+      0332  ReturnValue
 
   [public] isProperSupersetOf(other: surtr.collections.Set:IReadOnlySet<T0>): bool
-    ; entry 8, locals 3, stack 2, code 0109..0123
-      0109  Ldl0
-      010A  Stl2
-      010B  Ldl2
-      010C  FieldGet 0 (_dict)
-      010F  DictLen
-      0110  Ldl1
-      0111  InvokeInterface 74 (get_length) args=1 ret=1
-      0116  JPGT +2 -> L0 (011B)
-      0119  PushFalse
-      011A  ReturnValue
+    ; entry 8, locals 3, stack 2, code 0103..011D
+      0103  Ldl0
+      0104  Stl2
+      0105  Ldl2
+      0106  FieldGet 0 (_dict)
+      0109  DictLen
+      010A  Ldl1
+      010B  InvokeInterface 74 (get_length) args=1 ret=1
+      0110  JPGT +2 -> L0 (0115)
+      0113  PushFalse
+      0114  ReturnValue
     L0:
-      011B  Ldl0
-      011C  Ldl1
-      011D  InvokeSpecial 19 (isSupersetOf) args=2 ret=1
-      0122  ReturnValue
+      0115  Ldl0
+      0116  Ldl1
+      0117  InvokeSpecial 19 (isSupersetOf) args=2 ret=1
+      011C  ReturnValue
 
   [public] virtual isProperSupersetOf(other: surtr.collections.Set:IReadOnlySet<unknown>): bool
-    ; entry 29, locals 2, stack 2, code 0323..032E
-      0323  Ldl0
-      0324  Ldl1
-      0325  Cast 5 (surtr.collections.Set:IReadOnlySet<T0>)
-      0328  InvokeSpecial 20 (isProperSupersetOf) args=2 ret=1
-      032D  ReturnValue
+    ; entry 29, locals 2, stack 2, code 031D..0328
+      031D  Ldl0
+      031E  Ldl1
+      031F  Cast 5 (surtr.collections.Set:IReadOnlySet<T0>)
+      0322  InvokeSpecial 20 (isProperSupersetOf) args=2 ret=1
+      0327  ReturnValue
 
   [public] isSubsetOf(other: surtr.collections.Set:IReadOnlySet<T0>): bool
-    ; entry 6, locals 6, stack 2, code 007A..00BE
-      007A  Ldl0
-      007B  InvokeInterface 69 (iterate) args=1 ret=1
-      0080  Stl2
+    ; entry 6, locals 6, stack 2, code 0074..00B8
+      0074  Ldl0
+      0075  InvokeInterface 69 (iterate) args=1 ret=1
+      007A  Stl2
     ; try_0 begin
     L0:
-      0081  Ldl2
-      0082  InvokeInterface 70 (moveNext) args=1 ret=1
-      0087  JPZ +32 -> L2 (00AA)
-      008A  Ldl2
-      008B  InvokeInterface 71 (get_current) args=1 ret=1
-      0090  Stl3
-      0091  Ldl1
-      0092  Ldl3
-      0093  BoxDynamic
-      0094  InvokeInterface 73 (contains) args=2 ret=1
-      0099  Inv
-      009A  JPZ +10 -> L1 (00A7)
-      009D  PushFalse
-      009E  Stl4
-      009F  Ldl2
-      00A0  InvokeInterface 72 (dispose) args=1 ret=0
-      00A5  Ldl4
-      00A6  ReturnValue
+      007B  Ldl2
+      007C  InvokeInterface 70 (moveNext) args=1 ret=1
+      0081  JPZ +32 -> L2 (00A4)
+      0084  Ldl2
+      0085  InvokeInterface 71 (get_current) args=1 ret=1
+      008A  Stl3
+      008B  Ldl1
+      008C  Ldl3
+      008D  BoxDynamic
+      008E  InvokeInterface 73 (contains) args=2 ret=1
+      0093  Inv
+      0094  JPZ +10 -> L1 (00A1)
+      0097  PushFalse
+      0098  Stl4
+      0099  Ldl2
+      009A  InvokeInterface 72 (dispose) args=1 ret=0
+      009F  Ldl4
+      00A0  ReturnValue
     L1:
-      00A7  JP -41 -> L0 (0081)
+      00A1  JP -41 -> L0 (007B)
     ; try_0 end
     L2:
-      00AA  Ldl2
-      00AB  InvokeInterface 72 (dispose) args=1 ret=0
-      00B0  JP +9 -> L3 (00BC)
+      00A4  Ldl2
+      00A5  InvokeInterface 72 (dispose) args=1 ret=0
+      00AA  JP +9 -> L3 (00B6)
     ; catch_0 (*)
-      00B3  Stl5
-      00B4  Ldl2
-      00B5  InvokeInterface 72 (dispose) args=1 ret=0
-      00BA  Ldl5
-      00BB  Throw
+      00AD  Stl5
+      00AE  Ldl2
+      00AF  InvokeInterface 72 (dispose) args=1 ret=0
+      00B4  Ldl5
+      00B5  Throw
     L3:
-      00BC  PushTrue
-      00BD  ReturnValue
-    handler [0081, 00AA) -> 00B3  catch *
+      00B6  PushTrue
+      00B7  ReturnValue
+    handler [007B, 00A4) -> 00AD  catch *
 
   [public] virtual isSubsetOf(other: surtr.collections.Set:IReadOnlySet<unknown>): bool
-    ; entry 27, locals 2, stack 2, code 030D..0318
-      030D  Ldl0
-      030E  Ldl1
-      030F  Cast 5 (surtr.collections.Set:IReadOnlySet<T0>)
-      0312  InvokeSpecial 18 (isSubsetOf) args=2 ret=1
-      0317  ReturnValue
+    ; entry 27, locals 2, stack 2, code 0307..0312
+      0307  Ldl0
+      0308  Ldl1
+      0309  Cast 5 (surtr.collections.Set:IReadOnlySet<T0>)
+      030C  InvokeSpecial 18 (isSubsetOf) args=2 ret=1
+      0311  ReturnValue
 
   [public] isSupersetOf(other: surtr.collections.Set:IReadOnlySet<T0>): bool
-    ; entry 7, locals 8, stack 2, code 00BE..0109
-      00BE  Ldl1
-      00BF  InvokeInterface 69 (iterate) args=1 ret=1
-      00C4  Stl2
+    ; entry 7, locals 8, stack 2, code 00B8..0103
+      00B8  Ldl1
+      00B9  InvokeInterface 69 (iterate) args=1 ret=1
+      00BE  Stl2
     ; try_0 begin
     L0:
-      00C5  Ldl2
-      00C6  InvokeInterface 70 (moveNext) args=1 ret=1
-      00CB  JPZ +37 -> L2 (00F3)
-      00CE  Ldl2
-      00CF  InvokeInterface 71 (get_current) args=1 ret=1
-      00D4  Stl3
-      00D5  Ldl0
-      00D6  Stl4
-      00D7  Ldl3
-      00D8  BoxDynamic
-      00D9  Stl5
-      00DA  Ldl4
-      00DB  FieldGet 0 (_dict)
-      00DE  Ldl5
-      00DF  DictIn
-      00E0  Inv
-      00E1  JPZ +12 -> L1 (00F0)
-      00E4  PushFalse
-      00E5  StlS 6
-      00E7  Ldl2
-      00E8  InvokeInterface 72 (dispose) args=1 ret=0
-      00ED  LdlS 6
-      00EF  ReturnValue
+      00BF  Ldl2
+      00C0  InvokeInterface 70 (moveNext) args=1 ret=1
+      00C5  JPZ +37 -> L2 (00ED)
+      00C8  Ldl2
+      00C9  InvokeInterface 71 (get_current) args=1 ret=1
+      00CE  Stl3
+      00CF  Ldl0
+      00D0  Stl4
+      00D1  Ldl3
+      00D2  BoxDynamic
+      00D3  Stl5
+      00D4  Ldl4
+      00D5  FieldGet 0 (_dict)
+      00D8  Ldl5
+      00D9  DictIn
+      00DA  Inv
+      00DB  JPZ +12 -> L1 (00EA)
+      00DE  PushFalse
+      00DF  StlS 6
+      00E1  Ldl2
+      00E2  InvokeInterface 72 (dispose) args=1 ret=0
+      00E7  LdlS 6
+      00E9  ReturnValue
     L1:
-      00F0  JP -46 -> L0 (00C5)
+      00EA  JP -46 -> L0 (00BF)
     ; try_0 end
     L2:
-      00F3  Ldl2
-      00F4  InvokeInterface 72 (dispose) args=1 ret=0
-      00F9  JP +11 -> L3 (0107)
+      00ED  Ldl2
+      00EE  InvokeInterface 72 (dispose) args=1 ret=0
+      00F3  JP +11 -> L3 (0101)
     ; catch_0 (*)
-      00FC  StlS 7
-      00FE  Ldl2
-      00FF  InvokeInterface 72 (dispose) args=1 ret=0
-      0104  LdlS 7
-      0106  Throw
+      00F6  StlS 7
+      00F8  Ldl2
+      00F9  InvokeInterface 72 (dispose) args=1 ret=0
+      00FE  LdlS 7
+      0100  Throw
     L3:
-      0107  PushTrue
-      0108  ReturnValue
-    handler [00C5, 00F3) -> 00FC  catch *
+      0101  PushTrue
+      0102  ReturnValue
+    handler [00BF, 00ED) -> 00F6  catch *
 
   [public] virtual isSupersetOf(other: surtr.collections.Set:IReadOnlySet<unknown>): bool
-    ; entry 28, locals 2, stack 2, code 0318..0323
-      0318  Ldl0
-      0319  Ldl1
-      031A  Cast 5 (surtr.collections.Set:IReadOnlySet<T0>)
-      031D  InvokeSpecial 19 (isSupersetOf) args=2 ret=1
-      0322  ReturnValue
+    ; entry 28, locals 2, stack 2, code 0312..031D
+      0312  Ldl0
+      0313  Ldl1
+      0314  Cast 5 (surtr.collections.Set:IReadOnlySet<T0>)
+      0317  InvokeSpecial 19 (isSupersetOf) args=2 ret=1
+      031C  ReturnValue
 
   [public] iterate(): surtr:IIterator<T0>
-    ; entry 13, locals 1, stack 3, code 020C..021A
-      020C  ObjNew 3 (surtr.collections.Set:ReadOnlySet.Iterator<T0>)
-      020F  Dup
-      0210  Ldl0
-      0211  FieldGet 0 (_dict)
-      0214  InvokeSpecial 38 (ctor) args=2 ret=0
-      0219  ReturnValue
+    ; entry 13, locals 1, stack 3, code 0206..0214
+      0206  ObjNew 3 (surtr.collections.Set:ReadOnlySet.Iterator<T0>)
+      0209  Dup
+      020A  Ldl0
+      020B  FieldGet 0 (_dict)
+      020E  InvokeSpecial 38 (ctor) args=2 ret=0
+      0213  ReturnValue
 
   [public] virtual iterate(): surtr:IIterator<unknown>
-    ; entry 36, locals 1, stack 1, code 036D..0374
-      036D  Ldl0
-      036E  InvokeSpecial 25 (iterate) args=1 ret=1
-      0373  ReturnValue
+    ; entry 36, locals 1, stack 1, code 0367..036E
+      0367  Ldl0
+      0368  InvokeSpecial 25 (iterate) args=1 ret=1
+      036D  ReturnValue
 
   [public] static op_&(left: surtr.collections.Set:ReadOnlySet<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:ReadOnlySet<T0>
-    ; entry 14, locals 4, stack 4, code 021A..022F
-      021A  Ldl0
-      021B  Stl2
-      021C  Ldl1
-      021D  Stl3
-      021E  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
-      0221  Dup
-      0222  Ldl2
-      0223  Ldl3
-      0224  InvokeStatic 66 (intersect) args=2 ret=1
-      0229  InvokeSpecial 13 (ctor) args=2 ret=0
-      022E  ReturnValue
+    ; entry 14, locals 4, stack 4, code 0214..0229
+      0214  Ldl0
+      0215  Stl2
+      0216  Ldl1
+      0217  Stl3
+      0218  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
+      021B  Dup
+      021C  Ldl2
+      021D  Ldl3
+      021E  InvokeStatic 66 (intersect) args=2 ret=1
+      0223  InvokeSpecial 13 (ctor) args=2 ret=0
+      0228  ReturnValue
 
   [public] static op_&(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:ReadOnlySet<T0>): surtr.collections.Set:ReadOnlySet<T0>
-    ; entry 15, locals 4, stack 4, code 022F..0244
-      022F  Ldl0
-      0230  Stl2
-      0231  Ldl1
-      0232  Stl3
-      0233  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
-      0236  Dup
-      0237  Ldl2
-      0238  Ldl3
-      0239  InvokeStatic 66 (intersect) args=2 ret=1
-      023E  InvokeSpecial 13 (ctor) args=2 ret=0
-      0243  ReturnValue
+    ; entry 15, locals 4, stack 4, code 0229..023E
+      0229  Ldl0
+      022A  Stl2
+      022B  Ldl1
+      022C  Stl3
+      022D  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
+      0230  Dup
+      0231  Ldl2
+      0232  Ldl3
+      0233  InvokeStatic 66 (intersect) args=2 ret=1
+      0238  InvokeSpecial 13 (ctor) args=2 ret=0
+      023D  ReturnValue
 
   [public] static op_-(left: surtr.collections.Set:ReadOnlySet<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:ReadOnlySet<T0>
-    ; entry 18, locals 4, stack 4, code 026E..0283
-      026E  Ldl0
-      026F  Stl2
-      0270  Ldl1
-      0271  Stl3
-      0272  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
-      0275  Dup
-      0276  Ldl2
-      0277  Ldl3
-      0278  InvokeStatic 67 (except) args=2 ret=1
-      027D  InvokeSpecial 13 (ctor) args=2 ret=0
-      0282  ReturnValue
+    ; entry 18, locals 4, stack 4, code 0268..027D
+      0268  Ldl0
+      0269  Stl2
+      026A  Ldl1
+      026B  Stl3
+      026C  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
+      026F  Dup
+      0270  Ldl2
+      0271  Ldl3
+      0272  InvokeStatic 67 (except) args=2 ret=1
+      0277  InvokeSpecial 13 (ctor) args=2 ret=0
+      027C  ReturnValue
 
   [public] static op_-(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:ReadOnlySet<T0>): surtr.collections.Set:ReadOnlySet<T0>
-    ; entry 19, locals 4, stack 4, code 0283..0298
-      0283  Ldl0
-      0284  Stl2
-      0285  Ldl1
-      0286  Stl3
-      0287  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
-      028A  Dup
-      028B  Ldl2
-      028C  Ldl3
-      028D  InvokeStatic 67 (except) args=2 ret=1
-      0292  InvokeSpecial 13 (ctor) args=2 ret=0
-      0297  ReturnValue
+    ; entry 19, locals 4, stack 4, code 027D..0292
+      027D  Ldl0
+      027E  Stl2
+      027F  Ldl1
+      0280  Stl3
+      0281  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
+      0284  Dup
+      0285  Ldl2
+      0286  Ldl3
+      0287  InvokeStatic 67 (except) args=2 ret=1
+      028C  InvokeSpecial 13 (ctor) args=2 ret=0
+      0291  ReturnValue
 
   [public] static op_^(left: surtr.collections.Set:ReadOnlySet<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:ReadOnlySet<T0>
-    ; entry 20, locals 4, stack 4, code 0298..02AD
-      0298  Ldl0
-      0299  Stl2
-      029A  Ldl1
-      029B  Stl3
-      029C  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
-      029F  Dup
-      02A0  Ldl2
-      02A1  Ldl3
-      02A2  InvokeStatic 68 (symmetricExcept) args=2 ret=1
-      02A7  InvokeSpecial 13 (ctor) args=2 ret=0
-      02AC  ReturnValue
+    ; entry 20, locals 4, stack 4, code 0292..02A7
+      0292  Ldl0
+      0293  Stl2
+      0294  Ldl1
+      0295  Stl3
+      0296  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
+      0299  Dup
+      029A  Ldl2
+      029B  Ldl3
+      029C  InvokeStatic 68 (symmetricExcept) args=2 ret=1
+      02A1  InvokeSpecial 13 (ctor) args=2 ret=0
+      02A6  ReturnValue
 
   [public] static op_^(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:ReadOnlySet<T0>): surtr.collections.Set:ReadOnlySet<T0>
-    ; entry 21, locals 4, stack 4, code 02AD..02C2
-      02AD  Ldl0
-      02AE  Stl2
-      02AF  Ldl1
-      02B0  Stl3
-      02B1  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
-      02B4  Dup
-      02B5  Ldl2
-      02B6  Ldl3
-      02B7  InvokeStatic 68 (symmetricExcept) args=2 ret=1
-      02BC  InvokeSpecial 13 (ctor) args=2 ret=0
-      02C1  ReturnValue
+    ; entry 21, locals 4, stack 4, code 02A7..02BC
+      02A7  Ldl0
+      02A8  Stl2
+      02A9  Ldl1
+      02AA  Stl3
+      02AB  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
+      02AE  Dup
+      02AF  Ldl2
+      02B0  Ldl3
+      02B1  InvokeStatic 68 (symmetricExcept) args=2 ret=1
+      02B6  InvokeSpecial 13 (ctor) args=2 ret=0
+      02BB  ReturnValue
 
   [public] static op_|(left: surtr.collections.Set:ReadOnlySet<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:ReadOnlySet<T0>
-    ; entry 16, locals 4, stack 4, code 0244..0259
-      0244  Ldl0
-      0245  Stl2
-      0246  Ldl1
-      0247  Stl3
-      0248  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
-      024B  Dup
-      024C  Ldl2
-      024D  Ldl3
-      024E  InvokeStatic 65 (union) args=2 ret=1
-      0253  InvokeSpecial 13 (ctor) args=2 ret=0
-      0258  ReturnValue
+    ; entry 16, locals 4, stack 4, code 023E..0253
+      023E  Ldl0
+      023F  Stl2
+      0240  Ldl1
+      0241  Stl3
+      0242  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
+      0245  Dup
+      0246  Ldl2
+      0247  Ldl3
+      0248  InvokeStatic 65 (union) args=2 ret=1
+      024D  InvokeSpecial 13 (ctor) args=2 ret=0
+      0252  ReturnValue
 
   [public] static op_|(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:ReadOnlySet<T0>): surtr.collections.Set:ReadOnlySet<T0>
-    ; entry 17, locals 4, stack 4, code 0259..026E
-      0259  Ldl0
-      025A  Stl2
-      025B  Ldl1
-      025C  Stl3
-      025D  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
-      0260  Dup
-      0261  Ldl2
-      0262  Ldl3
-      0263  InvokeStatic 65 (union) args=2 ret=1
-      0268  InvokeSpecial 13 (ctor) args=2 ret=0
-      026D  ReturnValue
+    ; entry 17, locals 4, stack 4, code 0253..0268
+      0253  Ldl0
+      0254  Stl2
+      0255  Ldl1
+      0256  Stl3
+      0257  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
+      025A  Dup
+      025B  Ldl2
+      025C  Ldl3
+      025D  InvokeStatic 65 (union) args=2 ret=1
+      0262  InvokeSpecial 13 (ctor) args=2 ret=0
+      0267  ReturnValue
 
   [public] overlaps(other: surtr.collections.Set:IReadOnlySet<T0>): bool
-    ; entry 10, locals 6, stack 2, code 013D..0180
-      013D  Ldl0
-      013E  InvokeInterface 69 (iterate) args=1 ret=1
-      0143  Stl2
+    ; entry 10, locals 6, stack 2, code 0137..017A
+      0137  Ldl0
+      0138  InvokeInterface 69 (iterate) args=1 ret=1
+      013D  Stl2
     ; try_0 begin
     L0:
-      0144  Ldl2
-      0145  InvokeInterface 70 (moveNext) args=1 ret=1
-      014A  JPZ +31 -> L2 (016C)
-      014D  Ldl2
-      014E  InvokeInterface 71 (get_current) args=1 ret=1
-      0153  Stl3
-      0154  Ldl1
-      0155  Ldl3
-      0156  BoxDynamic
-      0157  InvokeInterface 73 (contains) args=2 ret=1
-      015C  JPZ +10 -> L1 (0169)
-      015F  PushTrue
-      0160  Stl4
-      0161  Ldl2
-      0162  InvokeInterface 72 (dispose) args=1 ret=0
-      0167  Ldl4
-      0168  ReturnValue
+      013E  Ldl2
+      013F  InvokeInterface 70 (moveNext) args=1 ret=1
+      0144  JPZ +31 -> L2 (0166)
+      0147  Ldl2
+      0148  InvokeInterface 71 (get_current) args=1 ret=1
+      014D  Stl3
+      014E  Ldl1
+      014F  Ldl3
+      0150  BoxDynamic
+      0151  InvokeInterface 73 (contains) args=2 ret=1
+      0156  JPZ +10 -> L1 (0163)
+      0159  PushTrue
+      015A  Stl4
+      015B  Ldl2
+      015C  InvokeInterface 72 (dispose) args=1 ret=0
+      0161  Ldl4
+      0162  ReturnValue
     L1:
-      0169  JP -40 -> L0 (0144)
+      0163  JP -40 -> L0 (013E)
     ; try_0 end
     L2:
-      016C  Ldl2
-      016D  InvokeInterface 72 (dispose) args=1 ret=0
-      0172  JP +9 -> L3 (017E)
+      0166  Ldl2
+      0167  InvokeInterface 72 (dispose) args=1 ret=0
+      016C  JP +9 -> L3 (0178)
     ; catch_0 (*)
-      0175  Stl5
-      0176  Ldl2
-      0177  InvokeInterface 72 (dispose) args=1 ret=0
-      017C  Ldl5
-      017D  Throw
+      016F  Stl5
+      0170  Ldl2
+      0171  InvokeInterface 72 (dispose) args=1 ret=0
+      0176  Ldl5
+      0177  Throw
     L3:
-      017E  PushFalse
-      017F  ReturnValue
-    handler [0144, 016C) -> 0175  catch *
+      0178  PushFalse
+      0179  ReturnValue
+    handler [013E, 0166) -> 016F  catch *
 
   [public] virtual overlaps(other: surtr.collections.Set:IReadOnlySet<unknown>): bool
-    ; entry 31, locals 2, stack 2, code 0339..0344
-      0339  Ldl0
-      033A  Ldl1
-      033B  Cast 5 (surtr.collections.Set:IReadOnlySet<T0>)
-      033E  InvokeSpecial 22 (overlaps) args=2 ret=1
-      0343  ReturnValue
+    ; entry 31, locals 2, stack 2, code 0333..033E
+      0333  Ldl0
+      0334  Ldl1
+      0335  Cast 5 (surtr.collections.Set:IReadOnlySet<T0>)
+      0338  InvokeSpecial 22 (overlaps) args=2 ret=1
+      033D  ReturnValue
 
   [public] static symmetricExcept(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:ReadOnlySet<T0>
-    ; entry 25, locals 2, stack 4, code 02F5..0306
-      02F5  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
-      02F8  Dup
-      02F9  Ldl0
-      02FA  Ldl1
-      02FB  InvokeStatic 68 (symmetricExcept) args=2 ret=1
-      0300  InvokeSpecial 13 (ctor) args=2 ret=0
-      0305  ReturnValue
+    ; entry 25, locals 2, stack 4, code 02EF..0300
+      02EF  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
+      02F2  Dup
+      02F3  Ldl0
+      02F4  Ldl1
+      02F5  InvokeStatic 68 (symmetricExcept) args=2 ret=1
+      02FA  InvokeSpecial 13 (ctor) args=2 ret=0
+      02FF  ReturnValue
 
   [public] static union(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:ReadOnlySet<T0>
-    ; entry 22, locals 2, stack 4, code 02C2..02D3
-      02C2  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
-      02C5  Dup
-      02C6  Ldl0
-      02C7  Ldl1
-      02C8  InvokeStatic 65 (union) args=2 ret=1
-      02CD  InvokeSpecial 13 (ctor) args=2 ret=0
-      02D2  ReturnValue
+    ; entry 22, locals 2, stack 4, code 02BC..02CD
+      02BC  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
+      02BF  Dup
+      02C0  Ldl0
+      02C1  Ldl1
+      02C2  InvokeStatic 65 (union) args=2 ret=1
+      02C7  InvokeSpecial 13 (ctor) args=2 ret=0
+      02CC  ReturnValue
 
   sealed class Iterator`1<T> : surtr:IIterator<T0>  [private]
     [private] field _index: int
@@ -763,923 +755,877 @@ class ReadOnlySet`1<T> : surtr.collections.Set:IReadOnlySet<T0>  [public]
 
     [public] property current: T0 { get; }
       get:
-        ; entry 38, locals 1, stack 3, code 0383..03B5
-          0383  Ldl0
-          0384  FieldGet 2 (_index)
-          0387  PushI8 0
-          0389  LT
-          038A  Dup
-          038B  JPNZ +14 -> L0 (039C)
-          038E  Pop
-          038F  Ldl0
-          0390  FieldGet 2 (_index)
-          0393  Ldl0
-          0394  FieldGet 1 (_items)
-          0397  ArrLen
-          0398  GE
-          0399  JP +0 -> L0 (039C)
+        ; entry 38, locals 1, stack 3, code 037D..03AF
+          037D  Ldl0
+          037E  FieldGet 2 (_index)
+          0381  PushI8 0
+          0383  LT
+          0384  Dup
+          0385  JPNZ +14 -> L0 (0396)
+          0388  Pop
+          0389  Ldl0
+          038A  FieldGet 2 (_index)
+          038D  Ldl0
+          038E  FieldGet 1 (_items)
+          0391  ArrLen
+          0392  GE
+          0393  JP +0 -> L0 (0396)
         L0:
-          039C  JPZ +11 -> L1 (03AA)
-          039F  ObjNew 8 (surtr:InvalidOperationException)
-          03A2  Dup
-          03A3  Ldc2
-          03A4  InvokeSpecial 88 (ctor) args=2 ret=0
-          03A9  Throw
+          0396  JPZ +11 -> L1 (03A4)
+          0399  ObjNew 8 (surtr:InvalidOperationException)
+          039C  Dup
+          039D  Ldc2
+          039E  InvokeSpecial 88 (ctor) args=2 ret=0
+          03A3  Throw
         L1:
-          03AA  Ldl0
-          03AB  FieldGet 1 (_items)
-          03AE  Ldl0
-          03AF  FieldGet 2 (_index)
-          03B2  ArrGet
-          03B3  BoxDynamic
-          03B4  ReturnValue
+          03A4  Ldl0
+          03A5  FieldGet 1 (_items)
+          03A8  Ldl0
+          03A9  FieldGet 2 (_index)
+          03AC  ArrGet
+          03AD  BoxDynamic
+          03AE  ReturnValue
 
     [public] ctor (dict: {T0: bool}): void
-      ; entry 37, locals 2, stack 2, code 0374..0383
-        0374  Ldl0
-        0375  Ldl1
-        0376  DictKeys 7 (T0[])
-        0379  FieldSet 1 (_items)
-        037C  Ldl0
-        037D  PushI8 -1
-        037F  FieldSet 2 (_index)
-        0382  ReturnVoid
+      ; entry 37, locals 2, stack 2, code 036E..037D
+        036E  Ldl0
+        036F  Ldl1
+        0370  DictKeys 7 (T0[])
+        0373  FieldSet 1 (_items)
+        0376  Ldl0
+        0377  PushI8 -1
+        0379  FieldSet 2 (_index)
+        037C  ReturnVoid
 
     [public] dispose(): void
-      ; entry 39, locals 1, stack 0, code 03B5..03B6
-        03B5  ReturnVoid
+      ; entry 39, locals 1, stack 0, code 03AF..03B0
+        03AF  ReturnVoid
 
     [public] virtual dispose(): void
-      ; entry 43, locals 1, stack 1, code 03E3..03EA
-        03E3  Ldl0
-        03E4  InvokeSpecial 40 (dispose) args=1 ret=0
-        03E9  ReturnVoid
+      ; entry 43, locals 1, stack 1, code 03DD..03E4
+        03DD  Ldl0
+        03DE  InvokeSpecial 40 (dispose) args=1 ret=0
+        03E3  ReturnVoid
 
     [public] virtual get_current(): unknown
-      ; entry 42, locals 1, stack 1, code 03DB..03E3
-        03DB  Ldl0
-        03DC  InvokeSpecial 39 (get_current) args=1 ret=1
-        03E1  BoxDynamic
-        03E2  ReturnValue
+      ; entry 42, locals 1, stack 1, code 03D5..03DD
+        03D5  Ldl0
+        03D6  InvokeSpecial 39 (get_current) args=1 ret=1
+        03DB  BoxDynamic
+        03DC  ReturnValue
 
     [public] moveNext(): bool
-      ; entry 40, locals 1, stack 3, code 03B6..03D4
-        03B6  Ldl0
-        03B7  FieldGet 2 (_index)
-        03BA  PushI8 1
-        03BC  Add
-        03BD  Ldl0
-        03BE  FieldGet 1 (_items)
-        03C1  ArrLen
-        03C2  JPGE +13 -> L0 (03D2)
-        03C5  Ldl0
-        03C6  Ldl0
-        03C7  FieldGet 2 (_index)
-        03CA  PushI8 1
-        03CC  Add
-        03CD  FieldSet 2 (_index)
-        03D0  PushTrue
-        03D1  ReturnValue
+      ; entry 40, locals 1, stack 3, code 03B0..03CE
+        03B0  Ldl0
+        03B1  FieldGet 2 (_index)
+        03B4  PushI8 1
+        03B6  Add
+        03B7  Ldl0
+        03B8  FieldGet 1 (_items)
+        03BB  ArrLen
+        03BC  JPGE +13 -> L0 (03CC)
+        03BF  Ldl0
+        03C0  Ldl0
+        03C1  FieldGet 2 (_index)
+        03C4  PushI8 1
+        03C6  Add
+        03C7  FieldSet 2 (_index)
+        03CA  PushTrue
+        03CB  ReturnValue
       L0:
-        03D2  PushFalse
-        03D3  ReturnValue
+        03CC  PushFalse
+        03CD  ReturnValue
 
     [public] virtual moveNext(): bool
-      ; entry 41, locals 1, stack 1, code 03D4..03DB
-        03D4  Ldl0
-        03D5  InvokeSpecial 41 (moveNext) args=1 ret=1
-        03DA  ReturnValue
+      ; entry 41, locals 1, stack 1, code 03CE..03D5
+        03CE  Ldl0
+        03CF  InvokeSpecial 41 (moveNext) args=1 ret=1
+        03D4  ReturnValue
 
 class Set`1<T> : surtr.collections.Set:ReadOnlySet<T0>, surtr.collections.Set:ISet<T0>  [public]
 
   [public] property isReadOnly: bool { get; }
     get:
-      ; entry 44, locals 1, stack 1, code 03EA..03EC
-        03EA  PushFalse
-        03EB  ReturnValue
+      ; entry 44, locals 1, stack 1, code 03E4..03E6
+        03E4  PushFalse
+        03E5  ReturnValue
 
   [public] add(item: T0): void
-    ; entry 52, locals 2, stack 3, code 0446..044E
-      0446  Ldl0
-      0447  FieldGet 0 (_dict)
-      044A  Ldl1
-      044B  PushTrue
-      044C  DictSet
-      044D  ReturnVoid
+    ; entry 52, locals 2, stack 3, code 0440..0448
+      0440  Ldl0
+      0441  FieldGet 0 (_dict)
+      0444  Ldl1
+      0445  PushTrue
+      0446  DictSet
+      0447  ReturnVoid
 
   [public] virtual add(item: unknown): void
-    ; entry 76, locals 2, stack 2, code 090D..0918
-      090D  Ldl0
-      090E  Ldl1
-      090F  Cast 6 (T0)
-      0912  InvokeSpecial 50 (add) args=2 ret=0
-      0917  ReturnVoid
+    ; entry 76, locals 2, stack 2, code 08BC..08C7
+      08BC  Ldl0
+      08BD  Ldl1
+      08BE  Cast 6 (T0)
+      08C1  InvokeSpecial 50 (add) args=2 ret=0
+      08C6  ReturnVoid
 
   [public] clear(): void
-    ; entry 54, locals 1, stack 1, code 0455..045B
-      0455  Ldl0
-      0456  FieldGet 0 (_dict)
-      0459  DictClear
-      045A  ReturnVoid
+    ; entry 54, locals 1, stack 1, code 044F..0455
+      044F  Ldl0
+      0450  FieldGet 0 (_dict)
+      0453  DictClear
+      0454  ReturnVoid
 
   [public] virtual clear(): void
-    ; entry 78, locals 1, stack 1, code 0923..092A
-      0923  Ldl0
-      0924  InvokeSpecial 52 (clear) args=1 ret=0
-      0929  ReturnVoid
+    ; entry 78, locals 1, stack 1, code 08D2..08D9
+      08D2  Ldl0
+      08D3  InvokeSpecial 52 (clear) args=1 ret=0
+      08D8  ReturnVoid
 
   [public] ctor (): void
-    ; entry 45, locals 1, stack 1, code 03EC..03F3
-      03EC  Ldl0
-      03ED  InvokeSpecial 12 (ctor) args=1 ret=0
-      03F2  ReturnVoid
+    ; entry 45, locals 1, stack 1, code 03E6..03ED
+      03E6  Ldl0
+      03E7  InvokeSpecial 12 (ctor) args=1 ret=0
+      03EC  ReturnVoid
 
   [public] ctor (collection: surtr:IIterable<T0>): void
-    ; entry 46, locals 2, stack 2, code 03F3..03FB
-      03F3  Ldl0
-      03F4  Ldl1
-      03F5  InvokeSpecial 13 (ctor) args=2 ret=0
-      03FA  ReturnVoid
+    ; entry 46, locals 2, stack 2, code 03ED..03F5
+      03ED  Ldl0
+      03EE  Ldl1
+      03EF  InvokeSpecial 13 (ctor) args=2 ret=0
+      03F4  ReturnVoid
 
   [public] ctor (items: T0...): void
-    ; entry 47, locals 2, stack 2, code 03FB..0403
-      03FB  Ldl0
-      03FC  Ldl1
-      03FD  InvokeSpecial 13 (ctor) args=2 ret=0
-      0402  ReturnVoid
+    ; entry 47, locals 2, stack 2, code 03F5..03FD
+      03F5  Ldl0
+      03F6  Ldl1
+      03F7  InvokeSpecial 13 (ctor) args=2 ret=0
+      03FC  ReturnVoid
 
   [public] static except(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:Set<T0>
-    ; entry 69, locals 8, stack 3, code 07D7..082E
-      07D7  ObjNew 9 (surtr.collections.Set:Set<T0>)
-      07DA  Dup
-      07DB  InvokeSpecial 43 (ctor) args=1 ret=0
-      07E0  Stl2
-      07E1  Ldl0
-      07E2  InvokeInterface 69 (iterate) args=1 ret=1
-      07E7  Stl3
+    ; entry 69, locals 8, stack 3, code 0786..07DD
+      0786  ObjNew 9 (surtr.collections.Set:Set<T0>)
+      0789  Dup
+      078A  InvokeSpecial 43 (ctor) args=1 ret=0
+      078F  Stl2
+      0790  Ldl0
+      0791  InvokeInterface 69 (iterate) args=1 ret=1
+      0796  Stl3
     ; try_0 begin
     L0:
-      07E8  Ldl3
-      07E9  InvokeInterface 70 (moveNext) args=1 ret=1
-      07EE  JPZ +39 -> L2 (0818)
-      07F1  Ldl3
-      07F2  InvokeInterface 71 (get_current) args=1 ret=1
-      07F7  Stl4
-      07F8  Ldl1
-      07F9  Ldl4
-      07FA  BoxDynamic
-      07FB  InvokeInterface 73 (contains) args=2 ret=1
-      0800  Inv
-      0801  JPZ +17 -> L1 (0815)
-      0804  Ldl2
-      0805  Stl5
-      0806  Ldl4
-      0807  BoxDynamic
-      0808  StlS 6
-      080A  Ldl5
-      080B  FieldGet 0 (_dict)
-      080E  LdlS 6
-      0810  PushTrue
-      0811  DictSet
-      0812  JP +0 -> L1 (0815)
+      0797  Ldl3
+      0798  InvokeInterface 70 (moveNext) args=1 ret=1
+      079D  JPZ +39 -> L2 (07C7)
+      07A0  Ldl3
+      07A1  InvokeInterface 71 (get_current) args=1 ret=1
+      07A6  Stl4
+      07A7  Ldl1
+      07A8  Ldl4
+      07A9  BoxDynamic
+      07AA  InvokeInterface 73 (contains) args=2 ret=1
+      07AF  Inv
+      07B0  JPZ +17 -> L1 (07C4)
+      07B3  Ldl2
+      07B4  Stl5
+      07B5  Ldl4
+      07B6  BoxDynamic
+      07B7  StlS 6
+      07B9  Ldl5
+      07BA  FieldGet 0 (_dict)
+      07BD  LdlS 6
+      07BF  PushTrue
+      07C0  DictSet
+      07C1  JP +0 -> L1 (07C4)
     L1:
-      0815  JP -48 -> L0 (07E8)
+      07C4  JP -48 -> L0 (0797)
     ; try_0 end
     L2:
-      0818  Ldl3
-      0819  InvokeInterface 72 (dispose) args=1 ret=0
-      081E  JP +11 -> L3 (082C)
+      07C7  Ldl3
+      07C8  InvokeInterface 72 (dispose) args=1 ret=0
+      07CD  JP +11 -> L3 (07DB)
     ; catch_0 (*)
-      0821  StlS 7
-      0823  Ldl3
-      0824  InvokeInterface 72 (dispose) args=1 ret=0
-      0829  LdlS 7
-      082B  Throw
+      07D0  StlS 7
+      07D2  Ldl3
+      07D3  InvokeInterface 72 (dispose) args=1 ret=0
+      07D8  LdlS 7
+      07DA  Throw
     L3:
-      082C  Ldl2
-      082D  ReturnValue
-    handler [07E8, 0818) -> 0821  catch *
+      07DB  Ldl2
+      07DC  ReturnValue
+    handler [0797, 07C7) -> 07D0  catch *
 
   [public] exceptWith(other: surtr.collections.Set:ISet<T0>): void
-    ; entry 57, locals 15, stack 3, code 0521..05A8
-      0521  DictNew 0 ({T0: bool})
-      0524  Stl2
-      0525  Ldl1
-      0526  InvokeInterface 69 (iterate) args=1 ret=1
-      052B  Stl3
+    ; entry 57, locals 15, stack 3, code 0502..0570
+      0502  DictNew 0 ({T0: bool})
+      0505  Stl2
+      0506  Ldl1
+      0507  InvokeInterface 69 (iterate) args=1 ret=1
+      050C  Stl3
     ; try_0 begin
     L0:
-      052C  Ldl3
-      052D  InvokeInterface 70 (moveNext) args=1 ret=1
-      0532  JPZ +25 -> L2 (054E)
-      0535  Ldl3
-      0536  InvokeInterface 71 (get_current) args=1 ret=1
-      053B  Stl4
-      053C  Ldl0
-      053D  Ldl4
-      053E  BoxDynamic
-      053F  InvokeSpecial 17 (contains) args=2 ret=1
-      0544  JPZ +4 -> L1 (054B)
-      0547  Ldl2
-      0548  Ldl4
-      0549  PushTrue
-      054A  DictSet
+      050D  Ldl3
+      050E  InvokeInterface 70 (moveNext) args=1 ret=1
+      0513  JPZ +25 -> L2 (052F)
+      0516  Ldl3
+      0517  InvokeInterface 71 (get_current) args=1 ret=1
+      051C  Stl4
+      051D  Ldl0
+      051E  Ldl4
+      051F  BoxDynamic
+      0520  InvokeSpecial 17 (contains) args=2 ret=1
+      0525  JPZ +4 -> L1 (052C)
+      0528  Ldl2
+      0529  Ldl4
+      052A  PushTrue
+      052B  DictSet
     L1:
-      054B  JP -34 -> L0 (052C)
+      052C  JP -34 -> L0 (050D)
     ; try_0 end
     L2:
-      054E  Ldl3
-      054F  InvokeInterface 72 (dispose) args=1 ret=0
-      0554  JP +9 -> L3 (0560)
+      052F  Ldl3
+      0530  InvokeInterface 72 (dispose) args=1 ret=0
+      0535  JP +9 -> L3 (0541)
     ; catch_0 (*)
-      0557  Stl5
-      0558  Ldl3
-      0559  InvokeInterface 72 (dispose) args=1 ret=0
-      055E  Ldl5
-      055F  Throw
+      0538  Stl5
+      0539  Ldl3
+      053A  InvokeInterface 72 (dispose) args=1 ret=0
+      053F  Ldl5
+      0540  Throw
     L3:
-      0560  Ldl2
-      0561  StlS 6
-      0563  LdlS 6
-      0565  DictKeys 7 (T0[])
-      0568  StlS 7
-      056A  PushI8 0
-      056C  StlS 8
+      0541  Ldl2
+      0542  StlS 6
+      0544  LdlS 6
+      0546  DictKeys 7 (T0[])
+      0549  StlS 7
+      054B  PushI8 -1
+      054D  StlS 8
+      054F  JP +21 -> L5 (0567)
     L4:
-      056E  LdlS 8
-      0570  LdlS 7
-      0572  ArrLen
-      0573  JPGE +49 -> L5 (05A7)
-      0576  LdlS 7
-      0578  LdlS 8
-      057A  ArrGet
-      057B  StlS 9
-      057D  LdlS 6
-      057F  LdlS 9
-      0581  DictGet
-      0582  StlS 10
-      0584  LdlS 9
-      0586  LdlS 10
-      0588  StoreValueLocal 11 x2
-      058C  Ldl0
-      058D  StlS 13
-      058F  LoadLocalField 11+0
-      0594  BoxDynamic
-      0595  BoxDynamic
-      0596  StlS 14
-      0598  LdlS 13
-      059A  FieldGet 0 (_dict)
-      059D  LdlS 14
-      059F  DictDel
-      05A0  Pop
-      05A1  IncLocal 8 by 1
-      05A4  JP -57 -> L4 (056E)
+      0552  Ldl0
+      0553  StlS 13
+      0555  LoadLocalField 11+0
+      055A  BoxDynamic
+      055B  BoxDynamic
+      055C  StlS 14
+      055E  LdlS 13
+      0560  FieldGet 0 (_dict)
+      0563  LdlS 14
+      0565  DictDel
+      0566  Pop
     L5:
-      05A7  ReturnVoid
-    handler [052C, 054E) -> 0557  catch *
+      0567  DictForNext 7 8 6 11 -> L4 (0552)
+      056F  ReturnVoid
+    handler [050D, 052F) -> 0538  catch *
 
   [public] virtual exceptWith(other: surtr.collections.Set:ISet<unknown>): void
-    ; entry 73, locals 2, stack 2, code 08F0..08FB
-      08F0  Ldl0
-      08F1  Ldl1
-      08F2  Cast 10 (surtr.collections.Set:ISet<T0>)
-      08F5  InvokeSpecial 55 (exceptWith) args=2 ret=0
-      08FA  ReturnVoid
+    ; entry 73, locals 2, stack 2, code 089F..08AA
+      089F  Ldl0
+      08A0  Ldl1
+      08A1  Cast 10 (surtr.collections.Set:ISet<T0>)
+      08A4  InvokeSpecial 55 (exceptWith) args=2 ret=0
+      08A9  ReturnVoid
 
   [public] virtual get_isReadOnly(): bool
-    ; entry 75, locals 1, stack 1, code 0906..090D
-      0906  Ldl0
-      0907  InvokeSpecial 42 (get_isReadOnly) args=1 ret=1
-      090C  ReturnValue
+    ; entry 75, locals 1, stack 1, code 08B5..08BC
+      08B5  Ldl0
+      08B6  InvokeSpecial 42 (get_isReadOnly) args=1 ret=1
+      08BB  ReturnValue
 
   [public] static intersect(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:Set<T0>
-    ; entry 68, locals 13, stack 3, code 072D..07D7
-      072D  ObjNew 9 (surtr.collections.Set:Set<T0>)
-      0730  Dup
-      0731  InvokeSpecial 43 (ctor) args=1 ret=0
-      0736  Stl2
-      0737  Ldl0
-      0738  InvokeInterface 69 (iterate) args=1 ret=1
-      073D  Stl3
+    ; entry 68, locals 13, stack 3, code 06DC..0786
+      06DC  ObjNew 9 (surtr.collections.Set:Set<T0>)
+      06DF  Dup
+      06E0  InvokeSpecial 43 (ctor) args=1 ret=0
+      06E5  Stl2
+      06E6  Ldl0
+      06E7  InvokeInterface 69 (iterate) args=1 ret=1
+      06EC  Stl3
     ; try_0 begin
     L0:
-      073E  Ldl3
-      073F  InvokeInterface 70 (moveNext) args=1 ret=1
-      0744  JPZ +38 -> L2 (076D)
-      0747  Ldl3
-      0748  InvokeInterface 71 (get_current) args=1 ret=1
-      074D  Stl4
-      074E  Ldl1
-      074F  Ldl4
-      0750  BoxDynamic
-      0751  InvokeInterface 73 (contains) args=2 ret=1
-      0756  JPZ +17 -> L1 (076A)
-      0759  Ldl2
-      075A  Stl5
-      075B  Ldl4
-      075C  BoxDynamic
-      075D  StlS 6
-      075F  Ldl5
-      0760  FieldGet 0 (_dict)
-      0763  LdlS 6
-      0765  PushTrue
-      0766  DictSet
-      0767  JP +0 -> L1 (076A)
+      06ED  Ldl3
+      06EE  InvokeInterface 70 (moveNext) args=1 ret=1
+      06F3  JPZ +38 -> L2 (071C)
+      06F6  Ldl3
+      06F7  InvokeInterface 71 (get_current) args=1 ret=1
+      06FC  Stl4
+      06FD  Ldl1
+      06FE  Ldl4
+      06FF  BoxDynamic
+      0700  InvokeInterface 73 (contains) args=2 ret=1
+      0705  JPZ +17 -> L1 (0719)
+      0708  Ldl2
+      0709  Stl5
+      070A  Ldl4
+      070B  BoxDynamic
+      070C  StlS 6
+      070E  Ldl5
+      070F  FieldGet 0 (_dict)
+      0712  LdlS 6
+      0714  PushTrue
+      0715  DictSet
+      0716  JP +0 -> L1 (0719)
     L1:
-      076A  JP -47 -> L0 (073E)
+      0719  JP -47 -> L0 (06ED)
     ; try_0 end
     L2:
-      076D  Ldl3
-      076E  InvokeInterface 72 (dispose) args=1 ret=0
-      0773  JP +11 -> L3 (0781)
+      071C  Ldl3
+      071D  InvokeInterface 72 (dispose) args=1 ret=0
+      0722  JP +11 -> L3 (0730)
     ; catch_0 (*)
-      0776  StlS 7
-      0778  Ldl3
-      0779  InvokeInterface 72 (dispose) args=1 ret=0
-      077E  LdlS 7
-      0780  Throw
+      0725  StlS 7
+      0727  Ldl3
+      0728  InvokeInterface 72 (dispose) args=1 ret=0
+      072D  LdlS 7
+      072F  Throw
     L3:
-      0781  Ldl1
-      0782  InvokeInterface 69 (iterate) args=1 ret=1
-      0787  StlS 8
+      0730  Ldl1
+      0731  InvokeInterface 69 (iterate) args=1 ret=1
+      0736  StlS 8
     ; try_1 begin
     L4:
-      0789  LdlS 8
-      078B  InvokeInterface 70 (moveNext) args=1 ret=1
-      0790  JPZ +44 -> L6 (07BF)
-      0793  LdlS 8
-      0795  InvokeInterface 71 (get_current) args=1 ret=1
-      079A  StlS 9
-      079C  Ldl0
-      079D  LdlS 9
-      079F  BoxDynamic
-      07A0  InvokeInterface 73 (contains) args=2 ret=1
-      07A5  JPZ +20 -> L5 (07BC)
-      07A8  Ldl2
-      07A9  StlS 10
-      07AB  LdlS 9
-      07AD  BoxDynamic
-      07AE  StlS 11
-      07B0  LdlS 10
-      07B2  FieldGet 0 (_dict)
-      07B5  LdlS 11
-      07B7  PushTrue
-      07B8  DictSet
-      07B9  JP +0 -> L5 (07BC)
+      0738  LdlS 8
+      073A  InvokeInterface 70 (moveNext) args=1 ret=1
+      073F  JPZ +44 -> L6 (076E)
+      0742  LdlS 8
+      0744  InvokeInterface 71 (get_current) args=1 ret=1
+      0749  StlS 9
+      074B  Ldl0
+      074C  LdlS 9
+      074E  BoxDynamic
+      074F  InvokeInterface 73 (contains) args=2 ret=1
+      0754  JPZ +20 -> L5 (076B)
+      0757  Ldl2
+      0758  StlS 10
+      075A  LdlS 9
+      075C  BoxDynamic
+      075D  StlS 11
+      075F  LdlS 10
+      0761  FieldGet 0 (_dict)
+      0764  LdlS 11
+      0766  PushTrue
+      0767  DictSet
+      0768  JP +0 -> L5 (076B)
     L5:
-      07BC  JP -54 -> L4 (0789)
+      076B  JP -54 -> L4 (0738)
     ; try_1 end
     L6:
-      07BF  LdlS 8
-      07C1  InvokeInterface 72 (dispose) args=1 ret=0
-      07C6  JP +12 -> L7 (07D5)
+      076E  LdlS 8
+      0770  InvokeInterface 72 (dispose) args=1 ret=0
+      0775  JP +12 -> L7 (0784)
     ; catch_1 (*)
-      07C9  StlS 12
-      07CB  LdlS 8
-      07CD  InvokeInterface 72 (dispose) args=1 ret=0
-      07D2  LdlS 12
-      07D4  Throw
+      0778  StlS 12
+      077A  LdlS 8
+      077C  InvokeInterface 72 (dispose) args=1 ret=0
+      0781  LdlS 12
+      0783  Throw
     L7:
-      07D5  Ldl2
-      07D6  ReturnValue
-    handler [073E, 076D) -> 0776  catch *
-    handler [0789, 07BF) -> 07C9  catch *
+      0784  Ldl2
+      0785  ReturnValue
+    handler [06ED, 071C) -> 0725  catch *
+    handler [0738, 076E) -> 0778  catch *
 
   [public] intersectWith(other: surtr.collections.Set:ISet<T0>): void
-    ; entry 56, locals 15, stack 3, code 0499..0521
-      0499  DictNew 0 ({T0: bool})
-      049C  Stl2
-      049D  Ldl0
-      049E  InvokeInterface 69 (iterate) args=1 ret=1
-      04A3  Stl3
+    ; entry 56, locals 15, stack 3, code 0493..0502
+      0493  DictNew 0 ({T0: bool})
+      0496  Stl2
+      0497  Ldl0
+      0498  InvokeInterface 69 (iterate) args=1 ret=1
+      049D  Stl3
     ; try_0 begin
     L0:
-      04A4  Ldl3
-      04A5  InvokeInterface 70 (moveNext) args=1 ret=1
-      04AA  JPZ +26 -> L2 (04C7)
-      04AD  Ldl3
-      04AE  InvokeInterface 71 (get_current) args=1 ret=1
-      04B3  Stl4
-      04B4  Ldl1
-      04B5  Ldl4
-      04B6  BoxDynamic
-      04B7  InvokeInterface 73 (contains) args=2 ret=1
-      04BC  Inv
-      04BD  JPZ +4 -> L1 (04C4)
-      04C0  Ldl2
-      04C1  Ldl4
-      04C2  PushTrue
-      04C3  DictSet
+      049E  Ldl3
+      049F  InvokeInterface 70 (moveNext) args=1 ret=1
+      04A4  JPZ +26 -> L2 (04C1)
+      04A7  Ldl3
+      04A8  InvokeInterface 71 (get_current) args=1 ret=1
+      04AD  Stl4
+      04AE  Ldl1
+      04AF  Ldl4
+      04B0  BoxDynamic
+      04B1  InvokeInterface 73 (contains) args=2 ret=1
+      04B6  Inv
+      04B7  JPZ +4 -> L1 (04BE)
+      04BA  Ldl2
+      04BB  Ldl4
+      04BC  PushTrue
+      04BD  DictSet
     L1:
-      04C4  JP -35 -> L0 (04A4)
+      04BE  JP -35 -> L0 (049E)
     ; try_0 end
     L2:
-      04C7  Ldl3
-      04C8  InvokeInterface 72 (dispose) args=1 ret=0
-      04CD  JP +9 -> L3 (04D9)
+      04C1  Ldl3
+      04C2  InvokeInterface 72 (dispose) args=1 ret=0
+      04C7  JP +9 -> L3 (04D3)
     ; catch_0 (*)
-      04D0  Stl5
-      04D1  Ldl3
-      04D2  InvokeInterface 72 (dispose) args=1 ret=0
-      04D7  Ldl5
-      04D8  Throw
+      04CA  Stl5
+      04CB  Ldl3
+      04CC  InvokeInterface 72 (dispose) args=1 ret=0
+      04D1  Ldl5
+      04D2  Throw
     L3:
-      04D9  Ldl2
-      04DA  StlS 6
-      04DC  LdlS 6
-      04DE  DictKeys 7 (T0[])
-      04E1  StlS 7
-      04E3  PushI8 0
-      04E5  StlS 8
+      04D3  Ldl2
+      04D4  StlS 6
+      04D6  LdlS 6
+      04D8  DictKeys 7 (T0[])
+      04DB  StlS 7
+      04DD  PushI8 -1
+      04DF  StlS 8
+      04E1  JP +21 -> L5 (04F9)
     L4:
-      04E7  LdlS 8
-      04E9  LdlS 7
-      04EB  ArrLen
-      04EC  JPGE +49 -> L5 (0520)
-      04EF  LdlS 7
-      04F1  LdlS 8
-      04F3  ArrGet
-      04F4  StlS 9
-      04F6  LdlS 6
-      04F8  LdlS 9
-      04FA  DictGet
-      04FB  StlS 10
-      04FD  LdlS 9
-      04FF  LdlS 10
-      0501  StoreValueLocal 11 x2
-      0505  Ldl0
-      0506  StlS 13
-      0508  LoadLocalField 11+0
-      050D  BoxDynamic
-      050E  BoxDynamic
-      050F  StlS 14
-      0511  LdlS 13
-      0513  FieldGet 0 (_dict)
-      0516  LdlS 14
-      0518  DictDel
-      0519  Pop
-      051A  IncLocal 8 by 1
-      051D  JP -57 -> L4 (04E7)
+      04E4  Ldl0
+      04E5  StlS 13
+      04E7  LoadLocalField 11+0
+      04EC  BoxDynamic
+      04ED  BoxDynamic
+      04EE  StlS 14
+      04F0  LdlS 13
+      04F2  FieldGet 0 (_dict)
+      04F5  LdlS 14
+      04F7  DictDel
+      04F8  Pop
     L5:
-      0520  ReturnVoid
-    handler [04A4, 04C7) -> 04D0  catch *
+      04F9  DictForNext 7 8 6 11 -> L4 (04E4)
+      0501  ReturnVoid
+    handler [049E, 04C1) -> 04CA  catch *
 
   [public] virtual intersectWith(other: surtr.collections.Set:ISet<unknown>): void
-    ; entry 72, locals 2, stack 2, code 08E5..08F0
-      08E5  Ldl0
-      08E6  Ldl1
-      08E7  Cast 10 (surtr.collections.Set:ISet<T0>)
-      08EA  InvokeSpecial 54 (intersectWith) args=2 ret=0
-      08EF  ReturnVoid
+    ; entry 72, locals 2, stack 2, code 0894..089F
+      0894  Ldl0
+      0895  Ldl1
+      0896  Cast 10 (surtr.collections.Set:ISet<T0>)
+      0899  InvokeSpecial 54 (intersectWith) args=2 ret=0
+      089E  ReturnVoid
 
   [public] static of(): surtr.collections.Set:Set<T0>
-    ; entry 48, locals 0, stack 2, code 0403..040D
-      0403  ObjNew 9 (surtr.collections.Set:Set<T0>)
-      0406  Dup
-      0407  InvokeSpecial 43 (ctor) args=1 ret=0
-      040C  ReturnValue
+    ; entry 48, locals 0, stack 2, code 03FD..0407
+      03FD  ObjNew 9 (surtr.collections.Set:Set<T0>)
+      0400  Dup
+      0401  InvokeSpecial 43 (ctor) args=1 ret=0
+      0406  ReturnValue
 
   [public] static of(item: T0): surtr.collections.Set:Set<T0>
-    ; entry 49, locals 1, stack 3, code 040D..041E
-      040D  ObjNew 9 (surtr.collections.Set:Set<T0>)
-      0410  Dup
-      0411  Ldl0
-      0412  UnboxDynamic
-      0413  ArrPack 7 (T0[]) count=1
-      0418  InvokeSpecial 45 (ctor) args=2 ret=0
-      041D  ReturnValue
+    ; entry 49, locals 1, stack 3, code 0407..0418
+      0407  ObjNew 9 (surtr.collections.Set:Set<T0>)
+      040A  Dup
+      040B  Ldl0
+      040C  UnboxDynamic
+      040D  ArrPack 7 (T0[]) count=1
+      0412  InvokeSpecial 45 (ctor) args=2 ret=0
+      0417  ReturnValue
 
   [public] static of(item1: T0, item2: T0): surtr.collections.Set:Set<T0>
-    ; entry 50, locals 2, stack 4, code 041E..0431
-      041E  ObjNew 9 (surtr.collections.Set:Set<T0>)
-      0421  Dup
-      0422  Ldl0
-      0423  UnboxDynamic
-      0424  Ldl1
-      0425  UnboxDynamic
-      0426  ArrPack 7 (T0[]) count=2
-      042B  InvokeSpecial 45 (ctor) args=2 ret=0
-      0430  ReturnValue
+    ; entry 50, locals 2, stack 4, code 0418..042B
+      0418  ObjNew 9 (surtr.collections.Set:Set<T0>)
+      041B  Dup
+      041C  Ldl0
+      041D  UnboxDynamic
+      041E  Ldl1
+      041F  UnboxDynamic
+      0420  ArrPack 7 (T0[]) count=2
+      0425  InvokeSpecial 45 (ctor) args=2 ret=0
+      042A  ReturnValue
 
   [public] static of(item1: T0, item2: T0, item3: T0): surtr.collections.Set:Set<T0>
-    ; entry 51, locals 3, stack 5, code 0431..0446
-      0431  ObjNew 9 (surtr.collections.Set:Set<T0>)
-      0434  Dup
-      0435  Ldl0
-      0436  UnboxDynamic
-      0437  Ldl1
-      0438  UnboxDynamic
-      0439  Ldl2
-      043A  UnboxDynamic
-      043B  ArrPack 7 (T0[]) count=3
-      0440  InvokeSpecial 45 (ctor) args=2 ret=0
-      0445  ReturnValue
+    ; entry 51, locals 3, stack 5, code 042B..0440
+      042B  ObjNew 9 (surtr.collections.Set:Set<T0>)
+      042E  Dup
+      042F  Ldl0
+      0430  UnboxDynamic
+      0431  Ldl1
+      0432  UnboxDynamic
+      0433  Ldl2
+      0434  UnboxDynamic
+      0435  ArrPack 7 (T0[]) count=3
+      043A  InvokeSpecial 45 (ctor) args=2 ret=0
+      043F  ReturnValue
 
   [public] static op_&(left: surtr.collections.Set:Set<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:Set<T0>
-    ; entry 59, locals 2, stack 2, code 065A..0662
-      065A  Ldl0
-      065B  Ldl1
-      065C  InvokeStatic 66 (intersect) args=2 ret=1
-      0661  ReturnValue
+    ; entry 59, locals 2, stack 2, code 0609..0611
+      0609  Ldl0
+      060A  Ldl1
+      060B  InvokeStatic 66 (intersect) args=2 ret=1
+      0610  ReturnValue
 
   [public] static op_&(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:Set<T0>): surtr.collections.Set:Set<T0>
-    ; entry 60, locals 2, stack 2, code 0662..066A
-      0662  Ldl0
-      0663  Ldl1
-      0664  InvokeStatic 66 (intersect) args=2 ret=1
-      0669  ReturnValue
+    ; entry 60, locals 2, stack 2, code 0611..0619
+      0611  Ldl0
+      0612  Ldl1
+      0613  InvokeStatic 66 (intersect) args=2 ret=1
+      0618  ReturnValue
 
   [public] static op_-(left: surtr.collections.Set:Set<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:Set<T0>
-    ; entry 63, locals 2, stack 2, code 067A..0682
-      067A  Ldl0
-      067B  Ldl1
-      067C  InvokeStatic 67 (except) args=2 ret=1
-      0681  ReturnValue
+    ; entry 63, locals 2, stack 2, code 0629..0631
+      0629  Ldl0
+      062A  Ldl1
+      062B  InvokeStatic 67 (except) args=2 ret=1
+      0630  ReturnValue
 
   [public] static op_-(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:Set<T0>): surtr.collections.Set:Set<T0>
-    ; entry 64, locals 2, stack 2, code 0682..068A
-      0682  Ldl0
-      0683  Ldl1
-      0684  InvokeStatic 67 (except) args=2 ret=1
-      0689  ReturnValue
+    ; entry 64, locals 2, stack 2, code 0631..0639
+      0631  Ldl0
+      0632  Ldl1
+      0633  InvokeStatic 67 (except) args=2 ret=1
+      0638  ReturnValue
 
   [public] static op_^(left: surtr.collections.Set:Set<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:Set<T0>
-    ; entry 65, locals 2, stack 2, code 068A..0692
-      068A  Ldl0
-      068B  Ldl1
-      068C  InvokeStatic 68 (symmetricExcept) args=2 ret=1
-      0691  ReturnValue
+    ; entry 65, locals 2, stack 2, code 0639..0641
+      0639  Ldl0
+      063A  Ldl1
+      063B  InvokeStatic 68 (symmetricExcept) args=2 ret=1
+      0640  ReturnValue
 
   [public] static op_^(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:Set<T0>): surtr.collections.Set:Set<T0>
-    ; entry 66, locals 2, stack 2, code 0692..069A
-      0692  Ldl0
-      0693  Ldl1
-      0694  InvokeStatic 68 (symmetricExcept) args=2 ret=1
-      0699  ReturnValue
+    ; entry 66, locals 2, stack 2, code 0641..0649
+      0641  Ldl0
+      0642  Ldl1
+      0643  InvokeStatic 68 (symmetricExcept) args=2 ret=1
+      0648  ReturnValue
 
   [public] static op_|(left: surtr.collections.Set:Set<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:Set<T0>
-    ; entry 61, locals 2, stack 2, code 066A..0672
-      066A  Ldl0
-      066B  Ldl1
-      066C  InvokeStatic 65 (union) args=2 ret=1
-      0671  ReturnValue
+    ; entry 61, locals 2, stack 2, code 0619..0621
+      0619  Ldl0
+      061A  Ldl1
+      061B  InvokeStatic 65 (union) args=2 ret=1
+      0620  ReturnValue
 
   [public] static op_|(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:Set<T0>): surtr.collections.Set:Set<T0>
-    ; entry 62, locals 2, stack 2, code 0672..067A
-      0672  Ldl0
-      0673  Ldl1
-      0674  InvokeStatic 65 (union) args=2 ret=1
-      0679  ReturnValue
+    ; entry 62, locals 2, stack 2, code 0621..0629
+      0621  Ldl0
+      0622  Ldl1
+      0623  InvokeStatic 65 (union) args=2 ret=1
+      0628  ReturnValue
 
   [public] remove(item: T0): bool
-    ; entry 53, locals 2, stack 2, code 044E..0455
-      044E  Ldl0
-      044F  FieldGet 0 (_dict)
-      0452  Ldl1
-      0453  DictDel
-      0454  ReturnValue
+    ; entry 53, locals 2, stack 2, code 0448..044F
+      0448  Ldl0
+      0449  FieldGet 0 (_dict)
+      044C  Ldl1
+      044D  DictDel
+      044E  ReturnValue
 
   [public] virtual remove(item: unknown): bool
-    ; entry 77, locals 2, stack 2, code 0918..0923
-      0918  Ldl0
-      0919  Ldl1
-      091A  Cast 6 (T0)
-      091D  InvokeSpecial 51 (remove) args=2 ret=1
-      0922  ReturnValue
+    ; entry 77, locals 2, stack 2, code 08C7..08D2
+      08C7  Ldl0
+      08C8  Ldl1
+      08C9  Cast 6 (T0)
+      08CC  InvokeSpecial 51 (remove) args=2 ret=1
+      08D1  ReturnValue
 
   [public] static symmetricExcept(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:Set<T0>
-    ; entry 70, locals 13, stack 3, code 082E..08DA
-      082E  ObjNew 9 (surtr.collections.Set:Set<T0>)
-      0831  Dup
-      0832  InvokeSpecial 43 (ctor) args=1 ret=0
-      0837  Stl2
-      0838  Ldl0
-      0839  InvokeInterface 69 (iterate) args=1 ret=1
-      083E  Stl3
+    ; entry 70, locals 13, stack 3, code 07DD..0889
+      07DD  ObjNew 9 (surtr.collections.Set:Set<T0>)
+      07E0  Dup
+      07E1  InvokeSpecial 43 (ctor) args=1 ret=0
+      07E6  Stl2
+      07E7  Ldl0
+      07E8  InvokeInterface 69 (iterate) args=1 ret=1
+      07ED  Stl3
     ; try_0 begin
     L0:
-      083F  Ldl3
-      0840  InvokeInterface 70 (moveNext) args=1 ret=1
-      0845  JPZ +39 -> L2 (086F)
-      0848  Ldl3
-      0849  InvokeInterface 71 (get_current) args=1 ret=1
-      084E  Stl4
-      084F  Ldl1
-      0850  Ldl4
-      0851  BoxDynamic
-      0852  InvokeInterface 73 (contains) args=2 ret=1
-      0857  Inv
-      0858  JPZ +17 -> L1 (086C)
-      085B  Ldl2
-      085C  Stl5
-      085D  Ldl4
-      085E  BoxDynamic
-      085F  StlS 6
-      0861  Ldl5
-      0862  FieldGet 0 (_dict)
-      0865  LdlS 6
-      0867  PushTrue
-      0868  DictSet
-      0869  JP +0 -> L1 (086C)
+      07EE  Ldl3
+      07EF  InvokeInterface 70 (moveNext) args=1 ret=1
+      07F4  JPZ +39 -> L2 (081E)
+      07F7  Ldl3
+      07F8  InvokeInterface 71 (get_current) args=1 ret=1
+      07FD  Stl4
+      07FE  Ldl1
+      07FF  Ldl4
+      0800  BoxDynamic
+      0801  InvokeInterface 73 (contains) args=2 ret=1
+      0806  Inv
+      0807  JPZ +17 -> L1 (081B)
+      080A  Ldl2
+      080B  Stl5
+      080C  Ldl4
+      080D  BoxDynamic
+      080E  StlS 6
+      0810  Ldl5
+      0811  FieldGet 0 (_dict)
+      0814  LdlS 6
+      0816  PushTrue
+      0817  DictSet
+      0818  JP +0 -> L1 (081B)
     L1:
-      086C  JP -48 -> L0 (083F)
+      081B  JP -48 -> L0 (07EE)
     ; try_0 end
     L2:
-      086F  Ldl3
-      0870  InvokeInterface 72 (dispose) args=1 ret=0
-      0875  JP +11 -> L3 (0883)
+      081E  Ldl3
+      081F  InvokeInterface 72 (dispose) args=1 ret=0
+      0824  JP +11 -> L3 (0832)
     ; catch_0 (*)
-      0878  StlS 7
-      087A  Ldl3
-      087B  InvokeInterface 72 (dispose) args=1 ret=0
-      0880  LdlS 7
-      0882  Throw
+      0827  StlS 7
+      0829  Ldl3
+      082A  InvokeInterface 72 (dispose) args=1 ret=0
+      082F  LdlS 7
+      0831  Throw
     L3:
-      0883  Ldl1
-      0884  InvokeInterface 69 (iterate) args=1 ret=1
-      0889  StlS 8
+      0832  Ldl1
+      0833  InvokeInterface 69 (iterate) args=1 ret=1
+      0838  StlS 8
     ; try_1 begin
     L4:
-      088B  LdlS 8
-      088D  InvokeInterface 70 (moveNext) args=1 ret=1
-      0892  JPZ +45 -> L6 (08C2)
-      0895  LdlS 8
-      0897  InvokeInterface 71 (get_current) args=1 ret=1
-      089C  StlS 9
-      089E  Ldl0
-      089F  LdlS 9
-      08A1  BoxDynamic
-      08A2  InvokeInterface 73 (contains) args=2 ret=1
-      08A7  Inv
-      08A8  JPZ +20 -> L5 (08BF)
-      08AB  Ldl2
-      08AC  StlS 10
-      08AE  LdlS 9
-      08B0  BoxDynamic
-      08B1  StlS 11
-      08B3  LdlS 10
-      08B5  FieldGet 0 (_dict)
-      08B8  LdlS 11
-      08BA  PushTrue
-      08BB  DictSet
-      08BC  JP +0 -> L5 (08BF)
+      083A  LdlS 8
+      083C  InvokeInterface 70 (moveNext) args=1 ret=1
+      0841  JPZ +45 -> L6 (0871)
+      0844  LdlS 8
+      0846  InvokeInterface 71 (get_current) args=1 ret=1
+      084B  StlS 9
+      084D  Ldl0
+      084E  LdlS 9
+      0850  BoxDynamic
+      0851  InvokeInterface 73 (contains) args=2 ret=1
+      0856  Inv
+      0857  JPZ +20 -> L5 (086E)
+      085A  Ldl2
+      085B  StlS 10
+      085D  LdlS 9
+      085F  BoxDynamic
+      0860  StlS 11
+      0862  LdlS 10
+      0864  FieldGet 0 (_dict)
+      0867  LdlS 11
+      0869  PushTrue
+      086A  DictSet
+      086B  JP +0 -> L5 (086E)
     L5:
-      08BF  JP -55 -> L4 (088B)
+      086E  JP -55 -> L4 (083A)
     ; try_1 end
     L6:
-      08C2  LdlS 8
-      08C4  InvokeInterface 72 (dispose) args=1 ret=0
-      08C9  JP +12 -> L7 (08D8)
+      0871  LdlS 8
+      0873  InvokeInterface 72 (dispose) args=1 ret=0
+      0878  JP +12 -> L7 (0887)
     ; catch_1 (*)
-      08CC  StlS 12
-      08CE  LdlS 8
-      08D0  InvokeInterface 72 (dispose) args=1 ret=0
-      08D5  LdlS 12
-      08D7  Throw
+      087B  StlS 12
+      087D  LdlS 8
+      087F  InvokeInterface 72 (dispose) args=1 ret=0
+      0884  LdlS 12
+      0886  Throw
     L7:
-      08D8  Ldl2
-      08D9  ReturnValue
-    handler [083F, 086F) -> 0878  catch *
-    handler [088B, 08C2) -> 08CC  catch *
+      0887  Ldl2
+      0888  ReturnValue
+    handler [07EE, 081E) -> 0827  catch *
+    handler [083A, 0871) -> 087B  catch *
 
   [public] symmetricExceptWith(other: surtr.collections.Set:ISet<T0>): void
-    ; entry 58, locals 17, stack 3, code 05A8..065A
-      05A8  DictNew 0 ({T0: bool})
-      05AB  Stl2
-      05AC  Ldl1
-      05AD  InvokeInterface 69 (iterate) args=1 ret=1
-      05B2  Stl3
+    ; entry 58, locals 17, stack 3, code 0570..0609
+      0570  DictNew 0 ({T0: bool})
+      0573  Stl2
+      0574  Ldl1
+      0575  InvokeInterface 69 (iterate) args=1 ret=1
+      057A  Stl3
     ; try_0 begin
     L0:
-      05B3  Ldl3
-      05B4  InvokeInterface 70 (moveNext) args=1 ret=1
-      05B9  JPZ +32 -> L3 (05DC)
-      05BC  Ldl3
-      05BD  InvokeInterface 71 (get_current) args=1 ret=1
-      05C2  Stl4
-      05C3  Ldl0
-      05C4  Ldl4
-      05C5  BoxDynamic
-      05C6  InvokeSpecial 17 (contains) args=2 ret=1
-      05CB  JPZ +7 -> L1 (05D5)
-      05CE  Ldl2
-      05CF  Ldl4
-      05D0  PushFalse
-      05D1  DictSet
-      05D2  JP +4 -> L2 (05D9)
+      057B  Ldl3
+      057C  InvokeInterface 70 (moveNext) args=1 ret=1
+      0581  JPZ +32 -> L3 (05A4)
+      0584  Ldl3
+      0585  InvokeInterface 71 (get_current) args=1 ret=1
+      058A  Stl4
+      058B  Ldl0
+      058C  Ldl4
+      058D  BoxDynamic
+      058E  InvokeSpecial 17 (contains) args=2 ret=1
+      0593  JPZ +7 -> L1 (059D)
+      0596  Ldl2
+      0597  Ldl4
+      0598  PushFalse
+      0599  DictSet
+      059A  JP +4 -> L2 (05A1)
     L1:
-      05D5  Ldl2
-      05D6  Ldl4
-      05D7  PushTrue
-      05D8  DictSet
+      059D  Ldl2
+      059E  Ldl4
+      059F  PushTrue
+      05A0  DictSet
     L2:
-      05D9  JP -41 -> L0 (05B3)
+      05A1  JP -41 -> L0 (057B)
     ; try_0 end
     L3:
-      05DC  Ldl3
-      05DD  InvokeInterface 72 (dispose) args=1 ret=0
-      05E2  JP +9 -> L4 (05EE)
+      05A4  Ldl3
+      05A5  InvokeInterface 72 (dispose) args=1 ret=0
+      05AA  JP +9 -> L4 (05B6)
     ; catch_0 (*)
-      05E5  Stl5
-      05E6  Ldl3
-      05E7  InvokeInterface 72 (dispose) args=1 ret=0
-      05EC  Ldl5
-      05ED  Throw
+      05AD  Stl5
+      05AE  Ldl3
+      05AF  InvokeInterface 72 (dispose) args=1 ret=0
+      05B4  Ldl5
+      05B5  Throw
     L4:
-      05EE  Ldl2
-      05EF  StlS 6
-      05F1  LdlS 6
-      05F3  DictKeys 7 (T0[])
-      05F6  StlS 7
-      05F8  PushI8 0
-      05FA  StlS 8
+      05B6  Ldl2
+      05B7  StlS 6
+      05B9  LdlS 6
+      05BB  DictKeys 7 (T0[])
+      05BE  StlS 7
+      05C0  PushI8 -1
+      05C2  StlS 8
+      05C4  JP +57 -> L7 (0600)
     L5:
-      05FC  LdlS 8
-      05FE  LdlS 7
-      0600  ArrLen
-      0601  JPGE +85 -> L8 (0659)
-      0604  LdlS 7
-      0606  LdlS 8
-      0608  ArrGet
-      0609  StlS 9
-      060B  LdlS 6
-      060D  LdlS 9
-      060F  DictGet
-      0610  StlS 10
-      0612  LdlS 9
-      0614  LdlS 10
-      0616  StoreValueLocal 11 x2
-      061A  LoadLocalField 11+1
-      061F  PushFalse
-      0620  JPNE +24 -> L6 (063B)
-      0623  Ldl0
-      0624  StlS 13
-      0626  LoadLocalField 11+0
-      062B  BoxDynamic
-      062C  BoxDynamic
-      062D  StlS 14
-      062F  LdlS 13
-      0631  FieldGet 0 (_dict)
-      0634  LdlS 14
-      0636  DictDel
-      0637  Pop
-      0638  JP +24 -> L7 (0653)
+      05C7  LoadLocalField 11+1
+      05CC  PushFalse
+      05CD  JPNE +24 -> L6 (05E8)
+      05D0  Ldl0
+      05D1  StlS 13
+      05D3  LoadLocalField 11+0
+      05D8  BoxDynamic
+      05D9  BoxDynamic
+      05DA  StlS 14
+      05DC  LdlS 13
+      05DE  FieldGet 0 (_dict)
+      05E1  LdlS 14
+      05E3  DictDel
+      05E4  Pop
+      05E5  JP +24 -> L7 (0600)
     L6:
-      063B  Ldl0
-      063C  StlS 15
-      063E  LoadLocalField 11+0
-      0643  BoxDynamic
-      0644  BoxDynamic
-      0645  StlS 16
-      0647  LdlS 15
-      0649  FieldGet 0 (_dict)
-      064C  LdlS 16
-      064E  PushTrue
-      064F  DictSet
-      0650  JP +0 -> L7 (0653)
+      05E8  Ldl0
+      05E9  StlS 15
+      05EB  LoadLocalField 11+0
+      05F0  BoxDynamic
+      05F1  BoxDynamic
+      05F2  StlS 16
+      05F4  LdlS 15
+      05F6  FieldGet 0 (_dict)
+      05F9  LdlS 16
+      05FB  PushTrue
+      05FC  DictSet
+      05FD  JP +0 -> L7 (0600)
     L7:
-      0653  IncLocal 8 by 1
-      0656  JP -93 -> L5 (05FC)
-    L8:
-      0659  ReturnVoid
-    handler [05B3, 05DC) -> 05E5  catch *
+      0600  DictForNext 7 8 6 11 -> L5 (05C7)
+      0608  ReturnVoid
+    handler [057B, 05A4) -> 05AD  catch *
 
   [public] virtual symmetricExceptWith(other: surtr.collections.Set:ISet<unknown>): void
-    ; entry 74, locals 2, stack 2, code 08FB..0906
-      08FB  Ldl0
-      08FC  Ldl1
-      08FD  Cast 10 (surtr.collections.Set:ISet<T0>)
-      0900  InvokeSpecial 56 (symmetricExceptWith) args=2 ret=0
-      0905  ReturnVoid
+    ; entry 74, locals 2, stack 2, code 08AA..08B5
+      08AA  Ldl0
+      08AB  Ldl1
+      08AC  Cast 10 (surtr.collections.Set:ISet<T0>)
+      08AF  InvokeSpecial 56 (symmetricExceptWith) args=2 ret=0
+      08B4  ReturnVoid
 
   [public] static union(left: surtr.collections.Set:IReadOnlySet<T0>, right: surtr.collections.Set:IReadOnlySet<T0>): surtr.collections.Set:Set<T0>
-    ; entry 67, locals 13, stack 3, code 069A..072D
-      069A  ObjNew 9 (surtr.collections.Set:Set<T0>)
-      069D  Dup
-      069E  InvokeSpecial 43 (ctor) args=1 ret=0
-      06A3  Stl2
-      06A4  Ldl0
-      06A5  InvokeInterface 69 (iterate) args=1 ret=1
-      06AA  Stl3
+    ; entry 67, locals 13, stack 3, code 0649..06DC
+      0649  ObjNew 9 (surtr.collections.Set:Set<T0>)
+      064C  Dup
+      064D  InvokeSpecial 43 (ctor) args=1 ret=0
+      0652  Stl2
+      0653  Ldl0
+      0654  InvokeInterface 69 (iterate) args=1 ret=1
+      0659  Stl3
     ; try_0 begin
     L0:
-      06AB  Ldl3
-      06AC  InvokeInterface 70 (moveNext) args=1 ret=1
-      06B1  JPZ +27 -> L2 (06CF)
-      06B4  Ldl3
-      06B5  InvokeInterface 71 (get_current) args=1 ret=1
-      06BA  Stl4
-      06BB  Ldl2
-      06BC  Stl5
-      06BD  Ldl4
-      06BE  BoxDynamic
-      06BF  StlS 6
-      06C1  Ldl5
-      06C2  FieldGet 0 (_dict)
-      06C5  LdlS 6
-      06C7  PushTrue
-      06C8  DictSet
-      06C9  JP +0 -> L1 (06CC)
+      065A  Ldl3
+      065B  InvokeInterface 70 (moveNext) args=1 ret=1
+      0660  JPZ +27 -> L2 (067E)
+      0663  Ldl3
+      0664  InvokeInterface 71 (get_current) args=1 ret=1
+      0669  Stl4
+      066A  Ldl2
+      066B  Stl5
+      066C  Ldl4
+      066D  BoxDynamic
+      066E  StlS 6
+      0670  Ldl5
+      0671  FieldGet 0 (_dict)
+      0674  LdlS 6
+      0676  PushTrue
+      0677  DictSet
+      0678  JP +0 -> L1 (067B)
     L1:
-      06CC  JP -36 -> L0 (06AB)
+      067B  JP -36 -> L0 (065A)
     ; try_0 end
     L2:
-      06CF  Ldl3
-      06D0  InvokeInterface 72 (dispose) args=1 ret=0
-      06D5  JP +11 -> L3 (06E3)
+      067E  Ldl3
+      067F  InvokeInterface 72 (dispose) args=1 ret=0
+      0684  JP +11 -> L3 (0692)
     ; catch_0 (*)
-      06D8  StlS 7
-      06DA  Ldl3
-      06DB  InvokeInterface 72 (dispose) args=1 ret=0
-      06E0  LdlS 7
-      06E2  Throw
+      0687  StlS 7
+      0689  Ldl3
+      068A  InvokeInterface 72 (dispose) args=1 ret=0
+      068F  LdlS 7
+      0691  Throw
     L3:
-      06E3  Ldl1
-      06E4  InvokeInterface 69 (iterate) args=1 ret=1
-      06E9  StlS 8
+      0692  Ldl1
+      0693  InvokeInterface 69 (iterate) args=1 ret=1
+      0698  StlS 8
     ; try_1 begin
     L4:
-      06EB  LdlS 8
-      06ED  InvokeInterface 70 (moveNext) args=1 ret=1
-      06F2  JPZ +32 -> L6 (0715)
-      06F5  LdlS 8
-      06F7  InvokeInterface 71 (get_current) args=1 ret=1
-      06FC  StlS 9
-      06FE  Ldl2
-      06FF  StlS 10
-      0701  LdlS 9
-      0703  BoxDynamic
-      0704  StlS 11
-      0706  LdlS 10
-      0708  FieldGet 0 (_dict)
-      070B  LdlS 11
-      070D  PushTrue
-      070E  DictSet
-      070F  JP +0 -> L5 (0712)
+      069A  LdlS 8
+      069C  InvokeInterface 70 (moveNext) args=1 ret=1
+      06A1  JPZ +32 -> L6 (06C4)
+      06A4  LdlS 8
+      06A6  InvokeInterface 71 (get_current) args=1 ret=1
+      06AB  StlS 9
+      06AD  Ldl2
+      06AE  StlS 10
+      06B0  LdlS 9
+      06B2  BoxDynamic
+      06B3  StlS 11
+      06B5  LdlS 10
+      06B7  FieldGet 0 (_dict)
+      06BA  LdlS 11
+      06BC  PushTrue
+      06BD  DictSet
+      06BE  JP +0 -> L5 (06C1)
     L5:
-      0712  JP -42 -> L4 (06EB)
+      06C1  JP -42 -> L4 (069A)
     ; try_1 end
     L6:
-      0715  LdlS 8
-      0717  InvokeInterface 72 (dispose) args=1 ret=0
-      071C  JP +12 -> L7 (072B)
+      06C4  LdlS 8
+      06C6  InvokeInterface 72 (dispose) args=1 ret=0
+      06CB  JP +12 -> L7 (06DA)
     ; catch_1 (*)
-      071F  StlS 12
-      0721  LdlS 8
-      0723  InvokeInterface 72 (dispose) args=1 ret=0
-      0728  LdlS 12
-      072A  Throw
+      06CE  StlS 12
+      06D0  LdlS 8
+      06D2  InvokeInterface 72 (dispose) args=1 ret=0
+      06D7  LdlS 12
+      06D9  Throw
     L7:
-      072B  Ldl2
-      072C  ReturnValue
-    handler [06AB, 06CF) -> 06D8  catch *
-    handler [06EB, 0715) -> 071F  catch *
+      06DA  Ldl2
+      06DB  ReturnValue
+    handler [065A, 067E) -> 0687  catch *
+    handler [069A, 06C4) -> 06CE  catch *
 
   [public] unionWith(other: surtr.collections.Set:ISet<T0>): void
-    ; entry 55, locals 7, stack 3, code 045B..0499
-      045B  Ldl1
-      045C  InvokeInterface 69 (iterate) args=1 ret=1
-      0461  Stl2
+    ; entry 55, locals 7, stack 3, code 0455..0493
+      0455  Ldl1
+      0456  InvokeInterface 69 (iterate) args=1 ret=1
+      045B  Stl2
     ; try_0 begin
     L0:
-      0462  Ldl2
-      0463  InvokeInterface 70 (moveNext) args=1 ret=1
-      0468  JPZ +25 -> L2 (0484)
-      046B  Ldl2
-      046C  InvokeInterface 71 (get_current) args=1 ret=1
-      0471  Stl3
-      0472  Ldl0
-      0473  Stl4
-      0474  Ldl3
-      0475  BoxDynamic
-      0476  Stl5
-      0477  Ldl4
-      0478  FieldGet 0 (_dict)
-      047B  Ldl5
-      047C  PushTrue
-      047D  DictSet
-      047E  JP +0 -> L1 (0481)
+      045C  Ldl2
+      045D  InvokeInterface 70 (moveNext) args=1 ret=1
+      0462  JPZ +25 -> L2 (047E)
+      0465  Ldl2
+      0466  InvokeInterface 71 (get_current) args=1 ret=1
+      046B  Stl3
+      046C  Ldl0
+      046D  Stl4
+      046E  Ldl3
+      046F  BoxDynamic
+      0470  Stl5
+      0471  Ldl4
+      0472  FieldGet 0 (_dict)
+      0475  Ldl5
+      0476  PushTrue
+      0477  DictSet
+      0478  JP +0 -> L1 (047B)
     L1:
-      0481  JP -34 -> L0 (0462)
+      047B  JP -34 -> L0 (045C)
     ; try_0 end
     L2:
-      0484  Ldl2
-      0485  InvokeInterface 72 (dispose) args=1 ret=0
-      048A  JP +11 -> L3 (0498)
+      047E  Ldl2
+      047F  InvokeInterface 72 (dispose) args=1 ret=0
+      0484  JP +11 -> L3 (0492)
     ; catch_0 (*)
-      048D  StlS 6
-      048F  Ldl2
-      0490  InvokeInterface 72 (dispose) args=1 ret=0
-      0495  LdlS 6
-      0497  Throw
+      0487  StlS 6
+      0489  Ldl2
+      048A  InvokeInterface 72 (dispose) args=1 ret=0
+      048F  LdlS 6
+      0491  Throw
     L3:
-      0498  ReturnVoid
-    handler [0462, 0484) -> 048D  catch *
+      0492  ReturnVoid
+    handler [045C, 047E) -> 0487  catch *
 
   [public] virtual unionWith(other: surtr.collections.Set:ISet<unknown>): void
-    ; entry 71, locals 2, stack 2, code 08DA..08E5
-      08DA  Ldl0
-      08DB  Ldl1
-      08DC  Cast 10 (surtr.collections.Set:ISet<T0>)
-      08DF  InvokeSpecial 53 (unionWith) args=2 ret=0
-      08E4  ReturnVoid
+    ; entry 71, locals 2, stack 2, code 0889..0894
+      0889  Ldl0
+      088A  Ldl1
+      088B  Cast 10 (surtr.collections.Set:ISet<T0>)
+      088E  InvokeSpecial 53 (unionWith) args=2 ret=0
+      0893  ReturnVoid

@@ -1421,6 +1421,35 @@ namespace Surtr.Bytecode.Emit
             return this;
         }
 
+        /// <summary>Emits <see cref="SurtrExtOpCode.ArrForNext"/>, widening if the body is long.</summary>
+        public SurtrCodeEmitter ArrForNext(int sourceSlot, int indexSlot, int variableSlot, SurtrLabel body, SurtrJumpWidth width = SurtrJumpWidth.Auto)
+            => ExtBranch(SurtrExtOpCode.ArrForNext, SurtrExtOpCode.ArrForNextX, body, width, sourceSlot, indexSlot, variableSlot);
+
+        /// <summary>Emits <see cref="SurtrExtOpCode.StrForNext"/>, widening if the body is long.</summary>
+        public SurtrCodeEmitter StrForNext(int sourceSlot, int indexSlot, int variableSlot, SurtrLabel body, SurtrJumpWidth width = SurtrJumpWidth.Auto)
+            => ExtBranch(SurtrExtOpCode.StrForNext, SurtrExtOpCode.StrForNextX, body, width, sourceSlot, indexSlot, variableSlot);
+
+        /// <summary>Emits <see cref="SurtrExtOpCode.TupForNext"/>, widening if the body is long.</summary>
+        public SurtrCodeEmitter TupForNext(int sourceSlot, int indexSlot, int variableSlot, SurtrLabel body, SurtrJumpWidth width = SurtrJumpWidth.Auto)
+            => ExtBranch(SurtrExtOpCode.TupForNext, SurtrExtOpCode.TupForNextX, body, width, sourceSlot, indexSlot, variableSlot);
+
+        /// <summary>Emits <see cref="SurtrExtOpCode.DictForNext"/>, widening if the body is long.</summary>
+        /// <remarks><paramref name="pairSlot"/> is the base of the loop variable's two-slot range.</remarks>
+        public SurtrCodeEmitter DictForNext(int keysSlot, int indexSlot, int dictionarySlot, int pairSlot, SurtrLabel body, SurtrJumpWidth width = SurtrJumpWidth.Auto)
+            => ExtBranch(SurtrExtOpCode.DictForNext, SurtrExtOpCode.DictForNextX, body, width, keysSlot, indexSlot, dictionarySlot, pairSlot);
+
+        /// <summary>Emits the counted-loop step, in whichever of the two bound forms applies.</summary>
+        /// <remarks>
+        /// <paramref name="inclusive"/> picks between <see cref="SurtrExtOpCode.ForRangeNextLE"/>
+        /// and <see cref="SurtrExtOpCode.ForRangeNextLT"/>. The caller knows statically which
+        /// bound it has, and two opcodes are what let the exclusive form avoid a
+        /// <c>limit - 1</c> that would wrap at <c>int.MinValue</c>.
+        /// </remarks>
+        public SurtrCodeEmitter ForRangeNext(int variableSlot, int limitSlot, bool inclusive, SurtrLabel body, SurtrJumpWidth width = SurtrJumpWidth.Auto)
+            => inclusive
+                ? ExtBranch(SurtrExtOpCode.ForRangeNextLE, SurtrExtOpCode.ForRangeNextLEX, body, width, variableSlot, limitSlot)
+                : ExtBranch(SurtrExtOpCode.ForRangeNextLT, SurtrExtOpCode.ForRangeNextLTX, body, width, variableSlot, limitSlot);
+
         #endregion
     }
 }

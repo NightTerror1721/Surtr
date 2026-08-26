@@ -732,9 +732,35 @@ slot does not fit.
 
 ### Instructions
 
+**Loop steps.** The family below is the whole per-element overhead of a `for-in` in one
+instruction. Each sits at the *bottom* of its loop: it steps the index, tests it, fetches the
+element into a slot and branches back into the body — and falling through is the loop's exit, so
+the exit label follows the instruction immediately. An indexed walk is entered by jumping straight
+to the step with the index at −1, which is safe because that index is a compiler temporary; the
+range family cannot do that (its counter is the one the program declared, and starting it one below
+its bound would wrap at `int.MinValue`), so it keeps a header guard for the first iteration and
+fuses only the step.
+
+None of them skips a bounds check. The test that decides whether to continue *is* the test that
+would have checked the read, so the read cannot be out of range — that is what makes these fusions
+rather than unchecked instructions, and why the validation policy in §5 is untouched.
+
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
 | `0x00` | `Probe` | `0xFF sub(1) localIdx(1)` · 3 bytes | `... -> ..., value` | Pushes a local, exactly as `LdlS` does. The one member of this space that is not meant to be useful: the compiler never emits it, and it exists to *measure* the prefix. Running a hot loop's local loads through it instead of `LdlS` changes exactly one thing — the dispatch path — so the delta is the prefix's price with nothing else mixed in. Keeping it means that price can be re-measured on new hardware or a new backend rather than assumed from the last time anyone checked. `src/Surtr.Bench/PrefixTax.cs` is the harness. |
+
+| `0x01` | `ArrForNext` | `0xFF sub(1) srcSlot(1) idxSlot(1) varSlot(1) offset(2)` · 7 bytes | `... -> ...` | Steps an indexed walk over an array. Increments the index, reloads the array's `Count` (the body may have pushed, and the walk is defined to see that), and while the index is in range writes the element into `varSlot` and branches back. Written out this is ten dispatches per element: `Ldl idx · Ldl src · ArrLen · JPGE end` to guard, `Ldl src · Ldl idx · ArrGet · Stl var` to read, and `IncLocal · Jump` to step. Emitted only when the loop variable occupies one slot. Measured at **−47 %** on `forIn`. |
+| `0x02` | `ArrForNextX` | `... offset(4)` · 9 bytes | `... -> ...` | What relaxation rewrites `ArrForNext` into when the body it reaches back over outgrew a signed 2-byte offset. |
+| `0x03` | `StrForNext` | `0xFF sub(1) srcSlot(1) idxSlot(1) varSlot(1) offset(2)` · 7 bytes | `... -> ...` | The same over a string; the element written is a character. |
+| `0x04` | `StrForNextX` | `... offset(4)` · 9 bytes | `... -> ...` | The wide form. |
+| `0x05` | `TupForNext` | `0xFF sub(1) srcSlot(1) idxSlot(1) varSlot(1) offset(2)` · 7 bytes | `... -> ...` | The same over a tuple. The source is the boxed tuple the lowering packs once at loop entry, since the frame has no addressing mode for a dynamic offset into a local range. |
+| `0x06` | `TupForNextX` | `... offset(4)` · 9 bytes | `... -> ...` | The wide form. |
+| `0x07` | `DictForNext` | `0xFF sub(1) keysSlot(1) idxSlot(1) dictSlot(1) pairSlot(1) offset(2)` · 8 bytes | `... -> ...` | The largest fusion in the set. Written out, a dictionary walk's step is **seventeen** dispatches: four to guard the index against the key snapshot, four to read the key out of it, four to look the value up, three to lay the pair into the loop variable's two slots, and two to step and jump. This does all of it — and it is the one member of the family that writes two slots, `pairSlot` and `pairSlot + 1`, because the loop variable is always a `(K, V)` pair. The specialised int-keyed store is chosen inside the body, so the `dict`-with-`int`-keys fast path costs nothing extra here. The absent-key trap is kept: the body can delete a key the snapshot still lists. Measured at **−20 %** on `forInDict`. |
+| `0x08` | `DictForNextX` | `... offset(4)` · 10 bytes | `... -> ...` | The wide form. |
+| `0x09` | `ForRangeNextLE` | `0xFF sub(1) varSlot(1) limitSlot(1) offset(2)` · 6 bytes | `... -> ...` | Steps a counted loop over an inclusive range: increments the loop variable **unconditionally** — which is what `IncLocal` plus a top-of-loop guard did, so the value left behind is unchanged — and branches back while it is `<=` the limit. Overflow wraps, exactly as the written-out form wrapped. Five dispatches into one. |
+| `0x0A` | `ForRangeNextLEX` | `... offset(4)` · 8 bytes | `... -> ...` | The wide form. |
+| `0x0B` | `ForRangeNextLT` | `0xFF sub(1) varSlot(1) limitSlot(1) offset(2)` · 6 bytes | `... -> ...` | The exclusive-bound twin: branches back while the incremented variable is `<` the limit. Two opcodes rather than one plus a normalised limit, because normalising an exclusive bound means `limit - 1`, which wraps at `int.MinValue` — the exact case the escaped-range lowering already handles by hand. The emitter knows statically which form it has. |
+| `0x0C` | `ForRangeNextLTX` | `... offset(4)` · 8 bytes | `... -> ...` | The wide form. |
 
 `docs/Plan-Opcodes-Extendidos.md` carries the cost model, the catalogue of what is planned here and
 the measurement protocol behind all of it.

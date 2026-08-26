@@ -484,14 +484,26 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(0, Count(code, "IncLocal"));
         }
 
+        /// <summary>
+        /// The whole per-element step of a <c>for-in</c> over an array is one instruction.
+        /// </summary>
+        /// <remarks>
+        /// This used to assert one <c>IncLocal</c> - the step's own increment, back when the step
+        /// was <c>IncLocal</c> plus a jump and the guard and the read were four more instructions
+        /// each at the top. <c>ArrForNext</c> is all of it, so there is no increment left to count.
+        /// </remarks>
         [Fact]
         public void AForInOverAnArrayStepsWithTheFusedInstruction()
         {
             string code = Disassemble(
                 "fun run(xs: int[]): int { var total: int = 0; for (x in xs) { total = total + x; } return total; }");
 
-            // The loop counter's step. `total = total + x` is not one: its right side is no constant.
-            Assert.Equal(1, Count(code, "IncLocal"));
+            Assert.Equal(1, Count(code, "ArrForNext"));
+            Assert.Equal(0, Count(code, "IncLocal"));
+
+            // The guard and the element read are inside the step now, not instructions of their own.
+            Assert.Equal(0, Count(code, "ArrLen"));
+            Assert.Equal(0, Count(code, "ArrGet"));
         }
 
         #endregion

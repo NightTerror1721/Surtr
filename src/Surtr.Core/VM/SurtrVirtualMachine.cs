@@ -4149,6 +4149,280 @@ namespace Surtr.VM
                             *sp++ = frameBase[*ip++];
                             goto Dispatch;
 
+                        // ---- Loop steps ---------------------------------------------------
+                        // Each of these is a whole for-in iteration's overhead. They are written
+                        // out twice, once per offset width, rather than sharing a body through a
+                        // flag: the width is known at emit time and a test per element is exactly
+                        // what the fusion exists to remove. Every taken branch leaves through
+                        // Branched so the step budget still bounds the loop.
+
+                        case SurtrExtOpCode.ArrForNext:
+                        {
+                            SurtrRawValue* slot = frameBase + ip[1];
+                            int index = (int)*slot + 1;
+                            var array = (SurtrArray)entities[(SurtrRef)frameBase[ip[0]]]!;
+
+                            // Count is reloaded per element on purpose: the body may push, and the
+                            // walk is defined to see that. The index slot is left alone on the way
+                            // out - it is a compiler temporary nothing reads after the loop.
+                            if ((uint)index >= (uint)array.Count)
+                            {
+                                ip += 5;
+                                goto Dispatch;
+                            }
+
+                            *slot = SurtrValue.TagMaskInt | (uint)index;
+                            frameBase[ip[2]] = array.Items[index];
+                            ip += 5 + (short)(ip[3] | (ip[4] << 8));
+                            goto Branched;
+                        }
+
+                        case SurtrExtOpCode.ArrForNextX:
+                        {
+                            SurtrRawValue* slot = frameBase + ip[1];
+                            int index = (int)*slot + 1;
+                            var array = (SurtrArray)entities[(SurtrRef)frameBase[ip[0]]]!;
+
+                            if ((uint)index >= (uint)array.Count)
+                            {
+                                ip += 7;
+                                goto Dispatch;
+                            }
+
+                            *slot = SurtrValue.TagMaskInt | (uint)index;
+                            frameBase[ip[2]] = array.Items[index];
+                            ip += 7 + (ip[3] | (ip[4] << 8) | (ip[5] << 16) | (ip[6] << 24));
+                            goto Branched;
+                        }
+
+                        case SurtrExtOpCode.StrForNext:
+                        {
+                            SurtrRawValue* slot = frameBase + ip[1];
+                            int index = (int)*slot + 1;
+                            string text = ((SurtrString)entities[(SurtrRef)frameBase[ip[0]]]!).Value;
+
+                            if ((uint)index >= (uint)text.Length)
+                            {
+                                ip += 5;
+                                goto Dispatch;
+                            }
+
+                            *slot = SurtrValue.TagMaskInt | (uint)index;
+                            frameBase[ip[2]] = SurtrValue.TagMaskChar | (uint)text[index];
+                            ip += 5 + (short)(ip[3] | (ip[4] << 8));
+                            goto Branched;
+                        }
+
+                        case SurtrExtOpCode.StrForNextX:
+                        {
+                            SurtrRawValue* slot = frameBase + ip[1];
+                            int index = (int)*slot + 1;
+                            string text = ((SurtrString)entities[(SurtrRef)frameBase[ip[0]]]!).Value;
+
+                            if ((uint)index >= (uint)text.Length)
+                            {
+                                ip += 7;
+                                goto Dispatch;
+                            }
+
+                            *slot = SurtrValue.TagMaskInt | (uint)index;
+                            frameBase[ip[2]] = SurtrValue.TagMaskChar | (uint)text[index];
+                            ip += 7 + (ip[3] | (ip[4] << 8) | (ip[5] << 16) | (ip[6] << 24));
+                            goto Branched;
+                        }
+
+                        case SurtrExtOpCode.TupForNext:
+                        {
+                            SurtrRawValue* slot = frameBase + ip[1];
+                            int index = (int)*slot + 1;
+                            var elements = ((SurtrTuple)entities[(SurtrRef)frameBase[ip[0]]]!).Elements;
+
+                            if ((uint)index >= (uint)elements.Length)
+                            {
+                                ip += 5;
+                                goto Dispatch;
+                            }
+
+                            *slot = SurtrValue.TagMaskInt | (uint)index;
+                            frameBase[ip[2]] = elements[index].Raw;
+                            ip += 5 + (short)(ip[3] | (ip[4] << 8));
+                            goto Branched;
+                        }
+
+                        case SurtrExtOpCode.TupForNextX:
+                        {
+                            SurtrRawValue* slot = frameBase + ip[1];
+                            int index = (int)*slot + 1;
+                            var elements = ((SurtrTuple)entities[(SurtrRef)frameBase[ip[0]]]!).Elements;
+
+                            if ((uint)index >= (uint)elements.Length)
+                            {
+                                ip += 7;
+                                goto Dispatch;
+                            }
+
+                            *slot = SurtrValue.TagMaskInt | (uint)index;
+                            frameBase[ip[2]] = elements[index].Raw;
+                            ip += 7 + (ip[3] | (ip[4] << 8) | (ip[5] << 16) | (ip[6] << 24));
+                            goto Branched;
+                        }
+
+                        case SurtrExtOpCode.DictForNext:
+                        {
+                            SurtrRawValue* slot = frameBase + ip[1];
+                            int index = (int)*slot + 1;
+                            var keys = (SurtrArray)entities[(SurtrRef)frameBase[ip[0]]]!;
+
+                            if ((uint)index >= (uint)keys.Count)
+                            {
+                                ip += 6;
+                                goto Dispatch;
+                            }
+
+                            SurtrRawValue key = keys.Items[index];
+                            var dictionary = (SurtrDictionary)entities[(SurtrRef)frameBase[ip[2]]]!;
+
+                            // The specialised int store is picked here rather than in a
+                            // DictGet of its own, which is where the fused form pays twice: the
+                            // two arms are written out exactly as DictGet writes them, and the
+                            // dispatch that would have separated them is gone.
+                            var ints = dictionary.IntEntries;
+                            bool present;
+                            SurtrValue found;
+
+                            if (ints != null && (key & SurtrValue.TagMask) == SurtrValue.TagMaskInt)
+                                present = ints.TryGetValue((SurtrInt)key, out found);
+                            else
+                                present = dictionary.TryGetGeneral(SurtrValue.FromRaw(key), out found);
+
+                            // Still trapping, and the trap is still reachable: the body can delete
+                            // a key the snapshot was taken before.
+                            if (!present)
+                            {
+                                current.IP = ip;
+                                _sp = sp;
+                                throw MissingKey();
+                            }
+
+                            *slot = SurtrValue.TagMaskInt | (uint)index;
+
+                            SurtrRawValue* pair = frameBase + ip[3];
+                            pair[0] = key;
+                            pair[1] = found.Raw;
+
+                            ip += 6 + (short)(ip[4] | (ip[5] << 8));
+                            goto Branched;
+                        }
+
+                        case SurtrExtOpCode.DictForNextX:
+                        {
+                            SurtrRawValue* slot = frameBase + ip[1];
+                            int index = (int)*slot + 1;
+                            var keys = (SurtrArray)entities[(SurtrRef)frameBase[ip[0]]]!;
+
+                            if ((uint)index >= (uint)keys.Count)
+                            {
+                                ip += 8;
+                                goto Dispatch;
+                            }
+
+                            SurtrRawValue key = keys.Items[index];
+                            var dictionary = (SurtrDictionary)entities[(SurtrRef)frameBase[ip[2]]]!;
+
+                            var ints = dictionary.IntEntries;
+                            bool present;
+                            SurtrValue found;
+
+                            if (ints != null && (key & SurtrValue.TagMask) == SurtrValue.TagMaskInt)
+                                present = ints.TryGetValue((SurtrInt)key, out found);
+                            else
+                                present = dictionary.TryGetGeneral(SurtrValue.FromRaw(key), out found);
+
+                            if (!present)
+                            {
+                                current.IP = ip;
+                                _sp = sp;
+                                throw MissingKey();
+                            }
+
+                            *slot = SurtrValue.TagMaskInt | (uint)index;
+
+                            SurtrRawValue* pair = frameBase + ip[3];
+                            pair[0] = key;
+                            pair[1] = found.Raw;
+
+                            ip += 8 + (ip[4] | (ip[5] << 8) | (ip[6] << 16) | (ip[7] << 24));
+                            goto Branched;
+                        }
+
+                        case SurtrExtOpCode.ForRangeNextLE:
+                        {
+                            SurtrRawValue* slot = frameBase + ip[0];
+
+                            // Written unconditionally, which is what IncLocal plus a top-of-loop
+                            // guard did: the variable's value after the loop is observable and has
+                            // to stay what it was. Wrapping is preserved for the same reason.
+                            int value = unchecked((int)*slot + 1);
+                            *slot = SurtrValue.TagMaskInt | (uint)value;
+
+                            if (value <= (int)frameBase[ip[1]])
+                            {
+                                ip += 4 + (short)(ip[2] | (ip[3] << 8));
+                                goto Branched;
+                            }
+
+                            ip += 4;
+                            goto Dispatch;
+                        }
+
+                        case SurtrExtOpCode.ForRangeNextLEX:
+                        {
+                            SurtrRawValue* slot = frameBase + ip[0];
+                            int value = unchecked((int)*slot + 1);
+                            *slot = SurtrValue.TagMaskInt | (uint)value;
+
+                            if (value <= (int)frameBase[ip[1]])
+                            {
+                                ip += 6 + (ip[2] | (ip[3] << 8) | (ip[4] << 16) | (ip[5] << 24));
+                                goto Branched;
+                            }
+
+                            ip += 6;
+                            goto Dispatch;
+                        }
+
+                        case SurtrExtOpCode.ForRangeNextLT:
+                        {
+                            SurtrRawValue* slot = frameBase + ip[0];
+                            int value = unchecked((int)*slot + 1);
+                            *slot = SurtrValue.TagMaskInt | (uint)value;
+
+                            if (value < (int)frameBase[ip[1]])
+                            {
+                                ip += 4 + (short)(ip[2] | (ip[3] << 8));
+                                goto Branched;
+                            }
+
+                            ip += 4;
+                            goto Dispatch;
+                        }
+
+                        case SurtrExtOpCode.ForRangeNextLTX:
+                        {
+                            SurtrRawValue* slot = frameBase + ip[0];
+                            int value = unchecked((int)*slot + 1);
+                            *slot = SurtrValue.TagMaskInt | (uint)value;
+
+                            if (value < (int)frameBase[ip[1]])
+                            {
+                                ip += 6 + (ip[2] | (ip[3] << 8) | (ip[4] << 16) | (ip[5] << 24));
+                                goto Branched;
+                            }
+
+                            ip += 6;
+                            goto Dispatch;
+                        }
+
                         default:
                             current.IP = ip;
                             _sp = sp;

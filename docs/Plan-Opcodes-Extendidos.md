@@ -443,6 +443,43 @@ mediana, y tamaños suficientes para mantener el spread bajo el 10 % (la propia 
 nueve casos con dispersión >10 %, todos con medianas bajo ~4 ms; un A/B nuevo necesita **tamaños
 mayores, no más iteraciones**).
 
+**Fase 2 — grupo A completo, y el resultado tiene dos mitades que hay que separar.**
+
+Doce opcodes (`ArrForNext`, `StrForNext`, `TupForNext`, `DictForNext`, `ForRangeNextLE/LT`, más sus
+seis gemelos `X`), la relajación de saltos generalizada al espacio extendido, y los tres lowerings
+de bucle reescritos. La medición es un A/B contra un worktree en el commit de la Fase 1, mismos
+flags, misma semilla, con la columna de C# como control.
+
+**La mitad atribuible.** Subconjunto de cuatro casos, flags idénticos:
+
+| Caso | Fase 1 | Grupo A | Δ |
+|---|---|---|---|
+| `forIn` (recorrido de array) | 0.990 | **0.521** | **−47.4 %** |
+| `forInDict` (recorrido de diccionario) | 2.486 | **1.997** | **−19.7 %** |
+| `iterator` (control: ruta de contrato, sin tocar) | 2.166 | 2.086 | −3.7 % |
+| `handIterator` (control: cursor a mano) | 1.712 | 1.802 | +5.3 % |
+
+Ambos criterios de §8 cumplidos: ≥15 % en `forIn` (47 %) y ≥20 % en el diccionario (19.7 %, justo
+en la raya). `forInDict` no existía en el catálogo y se añadió con este trabajo, porque afirmar
+17 → 1 sin medirlo no era afirmar nada.
+
+**La mitad no atribuible, y es la más interesante.** La suite completa (46 casos) da una mediana de
+**−5.0 %** con 29 casos mejorando más de un 3 % y 9 empeorando — y la mediana de la columna de C#
+es **−0.1 %**, así que la máquina estuvo estable y el movimiento es real. Pero buena parte cae en
+casos que la fusión **no toca**: `valueClass` −30 %, `floatLoop` −25 %, `methodCalls` −25 %,
+`arrayIndex` −32 %, `intLoop` −21 %, ninguno de los cuales usa `for-in`. Y en el otro sentido,
+`handIterator` +15 %, `sortArray` +6 %, `switchDense` +5 %.
+
+Eso es **layout de código en `Run()`**, no la fusión: añadir trece cuerpos al `switch` cambió cómo
+el JIT dispone el método y los opcodes calientes cayeron mejor. Es reproducible (dos semillas
+distintas, mismos deltas) pero es suerte, no ingeniería, y hay que decirlo así: el criterio de
+`intLoop` ≥8 % de §8 aparece cumplido con creces y **no cuenta**, porque `intLoop` es un `for`
+clásico que ninguna instrucción nueva alcanza.
+
+Es también el riesgo §7.1 materializándose con el signo contrario. Que esta vez saliera a favor no
+lo convierte en un beneficio con el que contar: la próxima fase que añada cuerpos puede moverlo al
+otro lado, y por eso la comprobación de suite completa se repite en cada una.
+
 **Fase 1 — P1 aterrizado, P9 cerrado en negativo.**
 
 **P1 (plegado constante).** `ConstantOf` existía y solo lo preguntaban dos sitios; ahora
@@ -531,7 +568,7 @@ P1), y un `for-in` sobre array lo bastante largo para que el spread baje del 10 
 |---|---|---|
 | **0** ✅ | Abrir el prefijo (`OpCode.Ext`, `SurtrExtOpCode`, switch anidado, disassembler, `FormatVersion` → 13) + el experimento nulo de §8. **Hecho**: prefijo a 0.44-0.48 ns, sin degradación de la suite | — |
 | **1** ✅ | **P1** plegado constante en `EmitBinary`/`EmitUnary` + **P9** sort en Surtr. **Hecho**: P1 aterrizado, P9 medido y cerrado en negativo | Nada; fue en paralelo con la 0 |
-| **2** | **Grupo A** (superinstrucciones de bucle). Cierra P4 y P5 | 0 |
+| **2** ✅ | **Grupo A** (superinstrucciones de bucle). Cierra P4 y P5. **Hecho**: `forIn` −47 %, `forInDict` −20 % | 0 |
 | **3** | **Ventana de fusión** en `SurtrCodeEmitter` (§6) + **grupo C**, su consumidor más simple | 0 |
 | **4** | **Grupos B y D**. Cierra P2 y P3 en su forma rentable | 3 |
 | **5** | **Grupo E** (previa comprobación de solape con `LoadValueLocal`), **P7** versión barata, y cierre documentado de **P8** | 4 |

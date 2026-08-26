@@ -852,7 +852,7 @@ namespace Surtr.Bytecode.Emit
             // read. Decoding lives in its own method for the same reason the interpreter's lives
             // in its own switch - the two spaces are independent.
             if (op == OpCode.Ext)
-                return AppendExtInstruction(builder, chunk, position, indent);
+                return AppendExtInstruction(builder, chunk, position, jumpTargets, labels, indent);
 
             builder.Append(indent).Append("  ").Append(Hex(position)).Append("  ").Append(op.ToString());
 
@@ -1488,6 +1488,8 @@ namespace Surtr.Bytecode.Emit
             StringBuilder builder,
             SurtrChunk chunk,
             int position,
+            List<int>? jumpTargets,
+            Dictionary<int, string>? labels,
             string indent)
         {
             var op = (SurtrExtOpCode)chunk.Code[position + 1];
@@ -1501,12 +1503,71 @@ namespace Surtr.Bytecode.Emit
                     builder.Append(' ').Append(chunk.Code[operand]).AppendLine();
                     return operand + 1;
 
+                // ---- loop steps: slot operands, then a branch back into the body -------------
+                case SurtrExtOpCode.ArrForNext:
+                case SurtrExtOpCode.StrForNext:
+                case SurtrExtOpCode.TupForNext:
+                    return AppendExtLoopStep(builder, chunk, operand, slots: 3, offsetWidth: 2, jumpTargets, labels);
+
+                case SurtrExtOpCode.ArrForNextX:
+                case SurtrExtOpCode.StrForNextX:
+                case SurtrExtOpCode.TupForNextX:
+                    return AppendExtLoopStep(builder, chunk, operand, slots: 3, offsetWidth: 4, jumpTargets, labels);
+
+                case SurtrExtOpCode.DictForNext:
+                    return AppendExtLoopStep(builder, chunk, operand, slots: 4, offsetWidth: 2, jumpTargets, labels);
+
+                case SurtrExtOpCode.DictForNextX:
+                    return AppendExtLoopStep(builder, chunk, operand, slots: 4, offsetWidth: 4, jumpTargets, labels);
+
+                case SurtrExtOpCode.ForRangeNextLE:
+                case SurtrExtOpCode.ForRangeNextLT:
+                    return AppendExtLoopStep(builder, chunk, operand, slots: 2, offsetWidth: 2, jumpTargets, labels);
+
+                case SurtrExtOpCode.ForRangeNextLEX:
+                case SurtrExtOpCode.ForRangeNextLTX:
+                    return AppendExtLoopStep(builder, chunk, operand, slots: 2, offsetWidth: 4, jumpTargets, labels);
+
                 default:
                     builder.Append(" ; unknown extended opcode 0x")
                         .Append(((byte)op).ToString("X2", CultureInfo.InvariantCulture))
                         .AppendLine();
                     return operand;
             }
+        }
+
+        /// <summary>Renders a loop step's slot operands and the branch back into the body.</summary>
+        /// <remarks>
+        /// One shape covers the whole family: <paramref name="slots"/> single-byte frame indices,
+        /// then a signed offset of <paramref name="offsetWidth"/> bytes measured from the end of
+        /// the instruction, exactly like every branch outside <c>Switch</c>.
+        /// </remarks>
+        private static int AppendExtLoopStep(
+            StringBuilder builder,
+            SurtrChunk chunk,
+            int operand,
+            int slots,
+            int offsetWidth,
+            List<int>? jumpTargets,
+            Dictionary<int, string>? labels)
+        {
+            for (int i = 0; i < slots; i++)
+                builder.Append(' ').Append(chunk.Code[operand + i]);
+
+            int offsetAt = operand + slots;
+            int offset = offsetWidth == 2
+                ? (short)ReadU16(chunk, offsetAt)
+                : ReadI32(chunk, offsetAt);
+
+            int end = offsetAt + offsetWidth;
+            int target = end + offset;
+
+            jumpTargets?.Add(target);
+            builder.Append(" -> ");
+            AppendTargetRef(builder, target, labels);
+            builder.AppendLine();
+
+            return end;
         }
 
         private static int ReadU16(SurtrChunk chunk, int position)

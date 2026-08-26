@@ -166,10 +166,10 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       009F  PushI8 1
       00A1  Sub
       00A2  Stl4
-    L0:
       00A3  Ldl3
       00A4  Ldl4
       00A5  JPGE +19 -> L1 (00BB)
+    L0:
       00A8  Ldl1
       00A9  Ldl2
       00AA  Ldl3
@@ -181,8 +181,7 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       00B2  BoxDynamic
       00B3  UnboxDynamic
       00B4  ArrSet
-      00B5  IncLocal 3 by 1
-      00B8  JP -24 -> L0 (00A3)
+      00B5  ForRangeNextLT 3 4 -> L0 (00A8)
     L1:
       00BB  ReturnVoid
 

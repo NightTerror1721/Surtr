@@ -141,68 +141,68 @@ module surtr.collections.Sequence
     #115  $lambda$asSequence$0() -> surtr:IIterator<T0>
 
 [private] static $generator$seqCast$0(source: surtr:IIterator<T0>): void
-  ; entry 25, locals 2, stack 1, code 035D..0383
+  ; entry 25, locals 2, stack 1, code 0356..037C
   ; try_0 begin
   L0:
-    035D  Ldl0
-    035E  InvokeInterface 99 (moveNext) args=1 ret=1
-    0363  JPZ +10 -> L1 (0370)
-    0366  Ldl0
-    0367  InvokeInterface 100 (get_current) args=1 ret=1
-    036C  Yield
-    036D  JP -19 -> L0 (035D)
+    0356  Ldl0
+    0357  InvokeInterface 99 (moveNext) args=1 ret=1
+    035C  JPZ +10 -> L1 (0369)
+    035F  Ldl0
+    0360  InvokeInterface 100 (get_current) args=1 ret=1
+    0365  Yield
+    0366  JP -19 -> L0 (0356)
   L1:
-    0370  Ldl0
-    0371  InvokeInterface 112 (dispose) args=1 ret=0
-    0376  JP +9 -> L2 (0382)
+    0369  Ldl0
+    036A  InvokeInterface 112 (dispose) args=1 ret=0
+    036F  JP +9 -> L2 (037B)
   ; try_0 end
   ; catch_0 (*)
-    0379  Stl1
-    037A  Ldl0
-    037B  InvokeInterface 112 (dispose) args=1 ret=0
-    0380  Ldl1
-    0381  Throw
+    0372  Stl1
+    0373  Ldl0
+    0374  InvokeInterface 112 (dispose) args=1 ret=0
+    0379  Ldl1
+    037A  Throw
   L2:
-    0382  ReturnVoid
-  handler [035D, 0379) -> 0379  catch *
+    037B  ReturnVoid
+  handler [0356, 0372) -> 0372  catch *
 
 [private] static $generator$seqChain$0(first: surtr:IIterator<T0>, second: surtr:IIterator<T0>): void
-  ; entry 17, locals 3, stack 1, code 0238..027D
+  ; entry 17, locals 3, stack 1, code 0231..0276
   ; try_0 begin
   L0:
-    0238  Ldl0
-    0239  InvokeInterface 99 (moveNext) args=1 ret=1
-    023E  JPZ +10 -> L1 (024B)
-    0241  Ldl0
-    0242  InvokeInterface 100 (get_current) args=1 ret=1
-    0247  Yield
-    0248  JP -19 -> L0 (0238)
+    0231  Ldl0
+    0232  InvokeInterface 99 (moveNext) args=1 ret=1
+    0237  JPZ +10 -> L1 (0244)
+    023A  Ldl0
+    023B  InvokeInterface 100 (get_current) args=1 ret=1
+    0240  Yield
+    0241  JP -19 -> L0 (0231)
   L1:
-    024B  Ldl1
-    024C  InvokeInterface 99 (moveNext) args=1 ret=1
-    0251  JPZ +10 -> L2 (025E)
-    0254  Ldl1
-    0255  InvokeInterface 100 (get_current) args=1 ret=1
-    025A  Yield
-    025B  JP -19 -> L1 (024B)
+    0244  Ldl1
+    0245  InvokeInterface 99 (moveNext) args=1 ret=1
+    024A  JPZ +10 -> L2 (0257)
+    024D  Ldl1
+    024E  InvokeInterface 100 (get_current) args=1 ret=1
+    0253  Yield
+    0254  JP -19 -> L1 (0244)
   L2:
-    025E  Ldl0
-    025F  InvokeInterface 112 (dispose) args=1 ret=0
-    0264  Ldl1
-    0265  InvokeInterface 112 (dispose) args=1 ret=0
-    026A  JP +15 -> L3 (027C)
+    0257  Ldl0
+    0258  InvokeInterface 112 (dispose) args=1 ret=0
+    025D  Ldl1
+    025E  InvokeInterface 112 (dispose) args=1 ret=0
+    0263  JP +15 -> L3 (0275)
   ; try_0 end
   ; catch_0 (*)
-    026D  Stl2
-    026E  Ldl0
-    026F  InvokeInterface 112 (dispose) args=1 ret=0
-    0274  Ldl1
-    0275  InvokeInterface 112 (dispose) args=1 ret=0
-    027A  Ldl2
-    027B  Throw
+    0266  Stl2
+    0267  Ldl0
+    0268  InvokeInterface 112 (dispose) args=1 ret=0
+    026D  Ldl1
+    026E  InvokeInterface 112 (dispose) args=1 ret=0
+    0273  Ldl2
+    0274  Throw
   L3:
-    027C  ReturnVoid
-  handler [0238, 026D) -> 026D  catch *
+    0275  ReturnVoid
+  handler [0231, 0266) -> 0266  catch *
 
 [private] static $generator$seqDistinct$0(source: surtr:IIterator<T0>): void
   ; entry 13, locals 3, stack 3, code 0198..01D9
@@ -245,36 +245,36 @@ module surtr.collections.Sequence
   handler [019E, 01CF) -> 01CF  catch *
 
 [private] static $generator$seqEnumerate$0(source: surtr:IIterator<T0>): void
-  ; entry 21, locals 3, stack 2, code 02DA..030C
-    02DA  PushI8 0
-    02DC  Stl1
+  ; entry 21, locals 3, stack 2, code 02D3..0305
+    02D3  PushI8 0
+    02D5  Stl1
   ; try_0 begin
   L0:
-    02DD  Ldl0
-    02DE  InvokeInterface 99 (moveNext) args=1 ret=1
-    02E3  JPZ +19 -> L1 (02F9)
-    02E6  Ldl1
-    02E7  Ldl0
-    02E8  InvokeInterface 100 (get_current) args=1 ret=1
-    02ED  UnboxDynamic
-    02EE  TupPack 14 ((int, T0)) count=2
-    02F2  Yield
-    02F3  IncLocal 1 by 1
-    02F6  JP -28 -> L0 (02DD)
+    02D6  Ldl0
+    02D7  InvokeInterface 99 (moveNext) args=1 ret=1
+    02DC  JPZ +19 -> L1 (02F2)
+    02DF  Ldl1
+    02E0  Ldl0
+    02E1  InvokeInterface 100 (get_current) args=1 ret=1
+    02E6  UnboxDynamic
+    02E7  TupPack 14 ((int, T0)) count=2
+    02EB  Yield
+    02EC  IncLocal 1 by 1
+    02EF  JP -28 -> L0 (02D6)
   L1:
-    02F9  Ldl0
-    02FA  InvokeInterface 112 (dispose) args=1 ret=0
-    02FF  JP +9 -> L2 (030B)
+    02F2  Ldl0
+    02F3  InvokeInterface 112 (dispose) args=1 ret=0
+    02F8  JP +9 -> L2 (0304)
   ; try_0 end
   ; catch_0 (*)
-    0302  Stl2
-    0303  Ldl0
-    0304  InvokeInterface 112 (dispose) args=1 ret=0
-    0309  Ldl2
-    030A  Throw
+    02FB  Stl2
+    02FC  Ldl0
+    02FD  InvokeInterface 112 (dispose) args=1 ret=0
+    0302  Ldl2
+    0303  Throw
   L2:
-    030B  ReturnVoid
-  handler [02DD, 0302) -> 0302  catch *
+    0304  ReturnVoid
+  handler [02D6, 02FB) -> 02FB  catch *
 
 [private] static $generator$seqFilter$0(source: surtr:IIterator<T0>, predicate: (T0) -> bool): void
   ; entry 7, locals 3, stack 2, code 00D1..0104
@@ -418,118 +418,118 @@ module surtr.collections.Sequence
   handler [000F, 0022) -> 002B  catch *
 
 [private] static $generator$seqOnEach$0(source: surtr:IIterator<T0>, action: (T0) -> void): void
-  ; entry 33, locals 3, stack 2, code 0474..04A4
+  ; entry 33, locals 3, stack 2, code 046D..049D
   ; try_0 begin
   L0:
-    0474  Ldl0
-    0475  InvokeInterface 99 (moveNext) args=1 ret=1
-    047A  JPZ +20 -> L1 (0491)
-    047D  Ldl1
-    047E  Ldl0
-    047F  InvokeInterface 100 (get_current) args=1 ret=1
-    0484  InvokeClosure args=1 ret=0
-    0487  Ldl0
-    0488  InvokeInterface 100 (get_current) args=1 ret=1
-    048D  Yield
-    048E  JP -29 -> L0 (0474)
+    046D  Ldl0
+    046E  InvokeInterface 99 (moveNext) args=1 ret=1
+    0473  JPZ +20 -> L1 (048A)
+    0476  Ldl1
+    0477  Ldl0
+    0478  InvokeInterface 100 (get_current) args=1 ret=1
+    047D  InvokeClosure args=1 ret=0
+    0480  Ldl0
+    0481  InvokeInterface 100 (get_current) args=1 ret=1
+    0486  Yield
+    0487  JP -29 -> L0 (046D)
   L1:
-    0491  Ldl0
-    0492  InvokeInterface 112 (dispose) args=1 ret=0
-    0497  JP +9 -> L2 (04A3)
+    048A  Ldl0
+    048B  InvokeInterface 112 (dispose) args=1 ret=0
+    0490  JP +9 -> L2 (049C)
   ; try_0 end
   ; catch_0 (*)
-    049A  Stl2
-    049B  Ldl0
-    049C  InvokeInterface 112 (dispose) args=1 ret=0
-    04A1  Ldl2
-    04A2  Throw
+    0493  Stl2
+    0494  Ldl0
+    0495  InvokeInterface 112 (dispose) args=1 ret=0
+    049A  Ldl2
+    049B  Throw
   L2:
-    04A3  ReturnVoid
-  handler [0474, 049A) -> 049A  catch *
+    049C  ReturnVoid
+  handler [046D, 0493) -> 0493  catch *
 
 [private] static $generator$seqReverse$0(source: surtr:IIterator<T0>): void
-  ; entry 23, locals 4, stack 2, code 0314..0355
-    0314  ArrPack 10 (T0[]) count=0
-    0319  Stl1
+  ; entry 23, locals 4, stack 2, code 030D..034E
+    030D  ArrPack 10 (T0[]) count=0
+    0312  Stl1
   ; try_0 begin
   L0:
-    031A  Ldl0
-    031B  InvokeInterface 99 (moveNext) args=1 ret=1
-    0320  JPZ +11 -> L1 (032E)
-    0323  Ldl1
-    0324  Ldl0
-    0325  InvokeInterface 100 (get_current) args=1 ret=1
-    032A  ArrPush
-    032B  JP -20 -> L0 (031A)
+    0313  Ldl0
+    0314  InvokeInterface 99 (moveNext) args=1 ret=1
+    0319  JPZ +11 -> L1 (0327)
+    031C  Ldl1
+    031D  Ldl0
+    031E  InvokeInterface 100 (get_current) args=1 ret=1
+    0323  ArrPush
+    0324  JP -20 -> L0 (0313)
   L1:
-    032E  Ldl0
-    032F  InvokeInterface 112 (dispose) args=1 ret=0
-    0334  JP +9 -> L2 (0340)
+    0327  Ldl0
+    0328  InvokeInterface 112 (dispose) args=1 ret=0
+    032D  JP +9 -> L2 (0339)
   ; try_0 end
   ; catch_0 (*)
-    0337  Stl2
-    0338  Ldl0
-    0339  InvokeInterface 112 (dispose) args=1 ret=0
-    033E  Ldl2
-    033F  Throw
+    0330  Stl2
+    0331  Ldl0
+    0332  InvokeInterface 112 (dispose) args=1 ret=0
+    0337  Ldl2
+    0338  Throw
   L2:
-    0340  Ldl1
-    0341  ArrLen
-    0342  Stl3
+    0339  Ldl1
+    033A  ArrLen
+    033B  Stl3
   L3:
-    0343  Ldl3
-    0344  PushI8 0
-    0346  JPLE +11 -> L4 (0354)
-    0349  IncLocal 3 by -1
-    034C  Ldl1
-    034D  Ldl3
-    034E  ArrGet
-    034F  BoxDynamic
-    0350  Yield
-    0351  JP -17 -> L3 (0343)
+    033C  Ldl3
+    033D  PushI8 0
+    033F  JPLE +11 -> L4 (034D)
+    0342  IncLocal 3 by -1
+    0345  Ldl1
+    0346  Ldl3
+    0347  ArrGet
+    0348  BoxDynamic
+    0349  Yield
+    034A  JP -17 -> L3 (033C)
   L4:
-    0354  ReturnVoid
-  handler [031A, 0337) -> 0337  catch *
+    034D  ReturnVoid
+  handler [0313, 0330) -> 0330  catch *
 
 [private] static $generator$seqSafeCast$0(source: surtr:IIterator<T0>): void
-  ; entry 27, locals 2, stack 3, code 038B..03CF
+  ; entry 27, locals 2, stack 3, code 0384..03C8
   ; try_0 begin
   L0:
-    038B  Ldl0
-    038C  InvokeInterface 99 (moveNext) args=1 ret=1
-    0391  JPZ +40 -> L3 (03BC)
-    0394  Ldl0
-    0395  InvokeInterface 100 (get_current) args=1 ret=1
-    039A  CastOrNull 15 (T1)
-    039D  IsNotNull
-    039E  JPZ +12 -> L1 (03AD)
-    03A1  Ldl0
-    03A2  InvokeInterface 100 (get_current) args=1 ret=1
-    03A7  CastOrNull 15 (T1)
-    03AA  JP +11 -> L2 (03B8)
+    0384  Ldl0
+    0385  InvokeInterface 99 (moveNext) args=1 ret=1
+    038A  JPZ +40 -> L3 (03B5)
+    038D  Ldl0
+    038E  InvokeInterface 100 (get_current) args=1 ret=1
+    0393  CastOrNull 15 (T1)
+    0396  IsNotNull
+    0397  JPZ +12 -> L1 (03A6)
+    039A  Ldl0
+    039B  InvokeInterface 100 (get_current) args=1 ret=1
+    03A0  CastOrNull 15 (T1)
+    03A3  JP +11 -> L2 (03B1)
   L1:
-    03AD  ObjNew 16 (surtr:InvalidCastException)
-    03B0  Dup
-    03B1  Ldc1
-    03B2  InvokeSpecial 114 (ctor) args=2 ret=0
-    03B7  Throw
+    03A6  ObjNew 16 (surtr:InvalidCastException)
+    03A9  Dup
+    03AA  Ldc1
+    03AB  InvokeSpecial 114 (ctor) args=2 ret=0
+    03B0  Throw
   L2:
-    03B8  Yield
-    03B9  JP -49 -> L0 (038B)
+    03B1  Yield
+    03B2  JP -49 -> L0 (0384)
   L3:
-    03BC  Ldl0
-    03BD  InvokeInterface 112 (dispose) args=1 ret=0
-    03C2  JP +9 -> L4 (03CE)
+    03B5  Ldl0
+    03B6  InvokeInterface 112 (dispose) args=1 ret=0
+    03BB  JP +9 -> L4 (03C7)
   ; try_0 end
   ; catch_0 (*)
-    03C5  Stl1
-    03C6  Ldl0
-    03C7  InvokeInterface 112 (dispose) args=1 ret=0
-    03CC  Ldl1
-    03CD  Throw
+    03BE  Stl1
+    03BF  Ldl0
+    03C0  InvokeInterface 112 (dispose) args=1 ret=0
+    03C5  Ldl1
+    03C6  Throw
   L4:
-    03CE  ReturnVoid
-  handler [038B, 03C5) -> 03C5  catch *
+    03C7  ReturnVoid
+  handler [0384, 03BE) -> 03BE  catch *
 
 [private] static $generator$seqSkip$0(source: surtr:IIterator<T0>, count: int): void
   ; entry 11, locals 4, stack 2, code 014D..0190
@@ -574,52 +574,52 @@ module surtr.collections.Sequence
   handler [0150, 0186) -> 0186  catch *
 
 [private] static $generator$seqSkipWhile$0(source: surtr:IIterator<T0>, predicate: (T0) -> bool): void
-  ; entry 31, locals 4, stack 2, code 0425..046B
-    0425  PushTrue
-    0426  Stl2
+  ; entry 31, locals 4, stack 2, code 041E..0464
+    041E  PushTrue
+    041F  Stl2
   ; try_0 begin
   L0:
-    0427  Ldl0
-    0428  InvokeInterface 99 (moveNext) args=1 ret=1
-    042D  JPZ +40 -> L4 (0458)
-    0430  Ldl2
-    0431  JPZ +26 -> L2 (044E)
-    0434  Ldl1
-    0435  Ldl0
-    0436  InvokeInterface 100 (get_current) args=1 ret=1
-    043B  InvokeClosure args=1 ret=1
-    043E  Inv
-    043F  JPZ +9 -> L1 (044B)
-    0442  PushFalse
-    0443  Stl2
-    0444  Ldl0
-    0445  InvokeInterface 100 (get_current) args=1 ret=1
-    044A  Yield
+    0420  Ldl0
+    0421  InvokeInterface 99 (moveNext) args=1 ret=1
+    0426  JPZ +40 -> L4 (0451)
+    0429  Ldl2
+    042A  JPZ +26 -> L2 (0447)
+    042D  Ldl1
+    042E  Ldl0
+    042F  InvokeInterface 100 (get_current) args=1 ret=1
+    0434  InvokeClosure args=1 ret=1
+    0437  Inv
+    0438  JPZ +9 -> L1 (0444)
+    043B  PushFalse
+    043C  Stl2
+    043D  Ldl0
+    043E  InvokeInterface 100 (get_current) args=1 ret=1
+    0443  Yield
   L1:
-    044B  JP +7 -> L3 (0455)
+    0444  JP +7 -> L3 (044E)
   L2:
-    044E  Ldl0
-    044F  InvokeInterface 100 (get_current) args=1 ret=1
-    0454  Yield
+    0447  Ldl0
+    0448  InvokeInterface 100 (get_current) args=1 ret=1
+    044D  Yield
   L3:
-    0455  JP -49 -> L0 (0427)
+    044E  JP -49 -> L0 (0420)
   L4:
-    0458  Ldl0
-    0459  InvokeInterface 112 (dispose) args=1 ret=0
-    045E  JP +9 -> L5 (046A)
+    0451  Ldl0
+    0452  InvokeInterface 112 (dispose) args=1 ret=0
+    0457  JP +9 -> L5 (0463)
   ; try_0 end
   ; catch_0 (*)
-    0461  Stl3
-    0462  Ldl0
-    0463  InvokeInterface 112 (dispose) args=1 ret=0
-    0468  Ldl3
-    0469  Throw
+    045A  Stl3
+    045B  Ldl0
+    045C  InvokeInterface 112 (dispose) args=1 ret=0
+    0461  Ldl3
+    0462  Throw
   L5:
-    046A  ReturnVoid
-  handler [0427, 0461) -> 0461  catch *
+    0463  ReturnVoid
+  handler [0420, 045A) -> 045A  catch *
 
 [private] static $generator$seqSorted$0(source: surtr:IIterator<T0>, comparator: (T0, T0) -> int): void
-  ; entry 15, locals 7, stack 2, code 01E2..022F
+  ; entry 15, locals 7, stack 2, code 01E2..0228
     01E2  ArrPack 10 (T0[]) count=0
     01E7  Stl2
   ; try_0 begin
@@ -649,23 +649,15 @@ module surtr.collections.Sequence
     0210  InvokeSpecial 113 (sort) args=2 ret=0
     0215  Ldl2
     0216  Stl4
-    0217  PushI8 0
+    0217  PushI8 -1
     0219  Stl5
+    021A  JP +3 -> L4 (0220)
   L3:
-    021A  Ldl5
-    021B  Ldl4
-    021C  ArrLen
-    021D  JPGE +14 -> L4 (022E)
-    0220  Ldl4
-    0221  Ldl5
-    0222  ArrGet
-    0223  StlS 6
-    0225  LdlS 6
-    0227  Yield
-    0228  IncLocal 5 by 1
-    022B  JP -20 -> L3 (021A)
+    021D  LdlS 6
+    021F  Yield
   L4:
-    022E  ReturnVoid
+    0220  ArrForNext 4 5 6 -> L3 (021D)
+    0227  ReturnVoid
   handler [01E8, 0205) -> 0205  catch *
 
 [private] static $generator$seqTake$0(source: surtr:IIterator<T0>, count: int): void
@@ -706,310 +698,310 @@ module surtr.collections.Sequence
   handler [0110, 013A) -> 013A  catch *
 
 [private] static $generator$seqTakeWhile$0(source: surtr:IIterator<T0>, predicate: (T0) -> bool): void
-  ; entry 29, locals 4, stack 2, code 03D8..041C
-    03D8  PushFalse
-    03D9  Stl2
+  ; entry 29, locals 4, stack 2, code 03D1..0415
+    03D1  PushFalse
+    03D2  Stl2
   ; try_0 begin
   L0:
-    03DA  Ldl2
-    03DB  Inv
-    03DC  Dup
-    03DD  JPZ +10 -> L1 (03EA)
-    03E0  Pop
-    03E1  Ldl0
-    03E2  InvokeInterface 99 (moveNext) args=1 ret=1
-    03E7  JP +0 -> L1 (03EA)
+    03D3  Ldl2
+    03D4  Inv
+    03D5  Dup
+    03D6  JPZ +10 -> L1 (03E3)
+    03D9  Pop
+    03DA  Ldl0
+    03DB  InvokeInterface 99 (moveNext) args=1 ret=1
+    03E0  JP +0 -> L1 (03E3)
   L1:
-    03EA  JPZ +28 -> L4 (0409)
-    03ED  Ldl1
-    03EE  Ldl0
-    03EF  InvokeInterface 100 (get_current) args=1 ret=1
-    03F4  InvokeClosure args=1 ret=1
-    03F7  JPZ +10 -> L2 (0404)
-    03FA  Ldl0
-    03FB  InvokeInterface 100 (get_current) args=1 ret=1
-    0400  Yield
-    0401  JP +2 -> L3 (0406)
+    03E3  JPZ +28 -> L4 (0402)
+    03E6  Ldl1
+    03E7  Ldl0
+    03E8  InvokeInterface 100 (get_current) args=1 ret=1
+    03ED  InvokeClosure args=1 ret=1
+    03F0  JPZ +10 -> L2 (03FD)
+    03F3  Ldl0
+    03F4  InvokeInterface 100 (get_current) args=1 ret=1
+    03F9  Yield
+    03FA  JP +2 -> L3 (03FF)
   L2:
-    0404  PushTrue
-    0405  Stl2
+    03FD  PushTrue
+    03FE  Stl2
   L3:
-    0406  JP -47 -> L0 (03DA)
+    03FF  JP -47 -> L0 (03D3)
   L4:
-    0409  Ldl0
-    040A  InvokeInterface 112 (dispose) args=1 ret=0
-    040F  JP +9 -> L5 (041B)
+    0402  Ldl0
+    0403  InvokeInterface 112 (dispose) args=1 ret=0
+    0408  JP +9 -> L5 (0414)
   ; try_0 end
   ; catch_0 (*)
-    0412  Stl3
-    0413  Ldl0
-    0414  InvokeInterface 112 (dispose) args=1 ret=0
-    0419  Ldl3
-    041A  Throw
+    040B  Stl3
+    040C  Ldl0
+    040D  InvokeInterface 112 (dispose) args=1 ret=0
+    0412  Ldl3
+    0413  Throw
   L5:
-    041B  ReturnVoid
-  handler [03DA, 0412) -> 0412  catch *
+    0414  ReturnVoid
+  handler [03D3, 040B) -> 040B  catch *
 
 [private] static $generator$seqZip$0(first: surtr:IIterator<T0>, second: surtr:IIterator<T1>): void
-  ; entry 19, locals 3, stack 2, code 0286..02D2
+  ; entry 19, locals 3, stack 2, code 027F..02CB
   ; try_0 begin
   L0:
-    0286  Ldl0
-    0287  InvokeInterface 99 (moveNext) args=1 ret=1
-    028C  Dup
-    028D  JPZ +10 -> L1 (029A)
-    0290  Pop
-    0291  Ldl1
-    0292  InvokeInterface 99 (moveNext) args=1 ret=1
-    0297  JP +0 -> L1 (029A)
+    027F  Ldl0
+    0280  InvokeInterface 99 (moveNext) args=1 ret=1
+    0285  Dup
+    0286  JPZ +10 -> L1 (0293)
+    0289  Pop
+    028A  Ldl1
+    028B  InvokeInterface 99 (moveNext) args=1 ret=1
+    0290  JP +0 -> L1 (0293)
   L1:
-    029A  JPZ +22 -> L2 (02B3)
-    029D  Ldl0
+    0293  JPZ +22 -> L2 (02AC)
+    0296  Ldl0
+    0297  InvokeInterface 100 (get_current) args=1 ret=1
+    029C  UnboxDynamic
+    029D  Ldl1
     029E  InvokeInterface 100 (get_current) args=1 ret=1
     02A3  UnboxDynamic
-    02A4  Ldl1
-    02A5  InvokeInterface 100 (get_current) args=1 ret=1
-    02AA  UnboxDynamic
-    02AB  TupPack 12 ((T0, T1)) count=2
-    02AF  Yield
-    02B0  JP -45 -> L0 (0286)
+    02A4  TupPack 12 ((T0, T1)) count=2
+    02A8  Yield
+    02A9  JP -45 -> L0 (027F)
   L2:
-    02B3  Ldl0
-    02B4  InvokeInterface 112 (dispose) args=1 ret=0
-    02B9  Ldl1
-    02BA  InvokeInterface 112 (dispose) args=1 ret=0
-    02BF  JP +15 -> L3 (02D1)
+    02AC  Ldl0
+    02AD  InvokeInterface 112 (dispose) args=1 ret=0
+    02B2  Ldl1
+    02B3  InvokeInterface 112 (dispose) args=1 ret=0
+    02B8  JP +15 -> L3 (02CA)
   ; try_0 end
   ; catch_0 (*)
-    02C2  Stl2
-    02C3  Ldl0
-    02C4  InvokeInterface 112 (dispose) args=1 ret=0
-    02C9  Ldl1
-    02CA  InvokeInterface 112 (dispose) args=1 ret=0
-    02CF  Ldl2
-    02D0  Throw
+    02BB  Stl2
+    02BC  Ldl0
+    02BD  InvokeInterface 112 (dispose) args=1 ret=0
+    02C2  Ldl1
+    02C3  InvokeInterface 112 (dispose) args=1 ret=0
+    02C8  Ldl2
+    02C9  Throw
   L3:
-    02D1  ReturnVoid
-  handler [0286, 02C2) -> 02C2  catch *
+    02CA  ReturnVoid
+  handler [027F, 02BB) -> 02BB  catch *
 
 [private] static $lambda$asSequence$0(): surtr:IIterator<T0>
-  ; entry 64, locals 0, stack 1, code 0613..061B
-    0613  UpValueGet 0
-    0615  InvokeInterface 111 (iterate) args=1 ret=1
-    061A  ReturnValue
+  ; entry 64, locals 0, stack 1, code 060C..0614
+    060C  UpValueGet 0
+    060E  InvokeInterface 111 (iterate) args=1 ret=1
+    0613  ReturnValue
 
 [private] static $lambda$cast$0(): surtr:IIterator<T0>
-  ; entry 59, locals 0, stack 1, code 05D6..05E1
-    05D6  UpValueGet 0
-    05D8  InvokeClosure args=0 ret=1
-    05DB  CallLocalModule 59 (seqCast) args=1 ret=1
-    05E0  ReturnValue
+  ; entry 59, locals 0, stack 1, code 05CF..05DA
+    05CF  UpValueGet 0
+    05D1  InvokeClosure args=0 ret=1
+    05D4  CallLocalModule 59 (seqCast) args=1 ret=1
+    05D9  ReturnValue
 
 [private] static $lambda$chain$0(): surtr:IIterator<T0>
-  ; entry 55, locals 0, stack 2, code 05A0..05B0
-    05A0  UpValueGet 0
-    05A2  InvokeClosure args=0 ret=1
-    05A5  UpValueGet 1
-    05A7  InvokeClosure args=0 ret=1
-    05AA  CallLocalModule 51 (seqChain) args=2 ret=1
-    05AF  ReturnValue
+  ; entry 55, locals 0, stack 2, code 0599..05A9
+    0599  UpValueGet 0
+    059B  InvokeClosure args=0 ret=1
+    059E  UpValueGet 1
+    05A0  InvokeClosure args=0 ret=1
+    05A3  CallLocalModule 51 (seqChain) args=2 ret=1
+    05A8  ReturnValue
 
 [private] static $lambda$distinct$0(): surtr:IIterator<T0>
-  ; entry 53, locals 0, stack 1, code 0588..0593
-    0588  UpValueGet 0
-    058A  InvokeClosure args=0 ret=1
-    058D  CallLocalModule 47 (seqDistinct) args=1 ret=1
-    0592  ReturnValue
+  ; entry 53, locals 0, stack 1, code 0581..058C
+    0581  UpValueGet 0
+    0583  InvokeClosure args=0 ret=1
+    0586  CallLocalModule 47 (seqDistinct) args=1 ret=1
+    058B  ReturnValue
 
 [private] static $lambda$enumerate$0(): surtr:IIterator<(int, T0)>
-  ; entry 57, locals 0, stack 1, code 05C0..05CB
-    05C0  UpValueGet 0
-    05C2  InvokeClosure args=0 ret=1
-    05C5  CallLocalModule 55 (seqEnumerate) args=1 ret=1
-    05CA  ReturnValue
+  ; entry 57, locals 0, stack 1, code 05B9..05C4
+    05B9  UpValueGet 0
+    05BB  InvokeClosure args=0 ret=1
+    05BE  CallLocalModule 55 (seqEnumerate) args=1 ret=1
+    05C3  ReturnValue
 
 [private] static $lambda$filter$0(): surtr:IIterator<T0>
-  ; entry 50, locals 0, stack 2, code 0561..056E
-    0561  UpValueGet 0
-    0563  InvokeClosure args=0 ret=1
-    0566  UpValueGet 1
-    0568  CallLocalModule 41 (seqFilter) args=2 ret=1
-    056D  ReturnValue
+  ; entry 50, locals 0, stack 2, code 055A..0567
+    055A  UpValueGet 0
+    055C  InvokeClosure args=0 ret=1
+    055F  UpValueGet 1
+    0561  CallLocalModule 41 (seqFilter) args=2 ret=1
+    0566  ReturnValue
 
 [private] static $lambda$flatMap$0(): surtr:IIterator<T0>
-  ; entry 49, locals 0, stack 2, code 0554..0561
-    0554  UpValueGet 0
-    0556  InvokeClosure args=0 ret=1
-    0559  UpValueGet 1
-    055B  CallLocalModule 39 (seqFlatMap) args=2 ret=1
-    0560  ReturnValue
+  ; entry 49, locals 0, stack 2, code 054D..055A
+    054D  UpValueGet 0
+    054F  InvokeClosure args=0 ret=1
+    0552  UpValueGet 1
+    0554  CallLocalModule 39 (seqFlatMap) args=2 ret=1
+    0559  ReturnValue
 
 [private] static $lambda$get_empty$0(): surtr:IIterator<T0>
-  ; entry 46, locals 0, stack 2, code 0535..053F
-    0535  ObjNew 0 (surtr.collections.Sequence:EmptyIterator<T0>)
-    0538  Dup
-    0539  InvokeSpecial 31 (ctor) args=1 ret=0
-    053E  ReturnValue
+  ; entry 46, locals 0, stack 2, code 052E..0538
+    052E  ObjNew 0 (surtr.collections.Sequence:EmptyIterator<T0>)
+    0531  Dup
+    0532  InvokeSpecial 31 (ctor) args=1 ret=0
+    0537  ReturnValue
 
 [private] static $lambda$map$0(): surtr:IIterator<T0>
-  ; entry 48, locals 0, stack 2, code 0547..0554
-    0547  UpValueGet 0
-    0549  InvokeClosure args=0 ret=1
-    054C  UpValueGet 1
-    054E  CallLocalModule 37 (seqMap) args=2 ret=1
-    0553  ReturnValue
+  ; entry 48, locals 0, stack 2, code 0540..054D
+    0540  UpValueGet 0
+    0542  InvokeClosure args=0 ret=1
+    0545  UpValueGet 1
+    0547  CallLocalModule 37 (seqMap) args=2 ret=1
+    054C  ReturnValue
 
 [private] static $lambda$of$0(): surtr:IIterator<T0>
-  ; entry 47, locals 0, stack 1, code 053F..0547
-    053F  UpValueGet 0
-    0541  CallLocalModule 35 (seqOf) args=1 ret=1
-    0546  ReturnValue
+  ; entry 47, locals 0, stack 1, code 0538..0540
+    0538  UpValueGet 0
+    053A  CallLocalModule 35 (seqOf) args=1 ret=1
+    053F  ReturnValue
 
 [private] static $lambda$onEach$0(): surtr:IIterator<T0>
-  ; entry 63, locals 0, stack 2, code 0606..0613
-    0606  UpValueGet 0
-    0608  InvokeClosure args=0 ret=1
-    060B  UpValueGet 1
-    060D  CallLocalModule 67 (seqOnEach) args=2 ret=1
-    0612  ReturnValue
+  ; entry 63, locals 0, stack 2, code 05FF..060C
+    05FF  UpValueGet 0
+    0601  InvokeClosure args=0 ret=1
+    0604  UpValueGet 1
+    0606  CallLocalModule 67 (seqOnEach) args=2 ret=1
+    060B  ReturnValue
 
 [private] static $lambda$reverse$0(): surtr:IIterator<T0>
-  ; entry 58, locals 0, stack 1, code 05CB..05D6
-    05CB  UpValueGet 0
-    05CD  InvokeClosure args=0 ret=1
-    05D0  CallLocalModule 57 (seqReverse) args=1 ret=1
-    05D5  ReturnValue
+  ; entry 58, locals 0, stack 1, code 05C4..05CF
+    05C4  UpValueGet 0
+    05C6  InvokeClosure args=0 ret=1
+    05C9  CallLocalModule 57 (seqReverse) args=1 ret=1
+    05CE  ReturnValue
 
 [private] static $lambda$safeCast$0(): surtr:IIterator<T0>
-  ; entry 60, locals 0, stack 1, code 05E1..05EC
-    05E1  UpValueGet 0
-    05E3  InvokeClosure args=0 ret=1
-    05E6  CallLocalModule 61 (seqSafeCast) args=1 ret=1
-    05EB  ReturnValue
+  ; entry 60, locals 0, stack 1, code 05DA..05E5
+    05DA  UpValueGet 0
+    05DC  InvokeClosure args=0 ret=1
+    05DF  CallLocalModule 61 (seqSafeCast) args=1 ret=1
+    05E4  ReturnValue
 
 [private] static $lambda$skip$0(): surtr:IIterator<T0>
-  ; entry 52, locals 0, stack 2, code 057B..0588
-    057B  UpValueGet 0
-    057D  InvokeClosure args=0 ret=1
-    0580  UpValueGet 1
-    0582  CallLocalModule 45 (seqSkip) args=2 ret=1
-    0587  ReturnValue
+  ; entry 52, locals 0, stack 2, code 0574..0581
+    0574  UpValueGet 0
+    0576  InvokeClosure args=0 ret=1
+    0579  UpValueGet 1
+    057B  CallLocalModule 45 (seqSkip) args=2 ret=1
+    0580  ReturnValue
 
 [private] static $lambda$skipWhile$0(): surtr:IIterator<T0>
-  ; entry 62, locals 0, stack 2, code 05F9..0606
-    05F9  UpValueGet 0
-    05FB  InvokeClosure args=0 ret=1
-    05FE  UpValueGet 1
-    0600  CallLocalModule 65 (seqSkipWhile) args=2 ret=1
-    0605  ReturnValue
+  ; entry 62, locals 0, stack 2, code 05F2..05FF
+    05F2  UpValueGet 0
+    05F4  InvokeClosure args=0 ret=1
+    05F7  UpValueGet 1
+    05F9  CallLocalModule 65 (seqSkipWhile) args=2 ret=1
+    05FE  ReturnValue
 
 [private] static $lambda$sorted$0(): surtr:IIterator<T0>
-  ; entry 54, locals 0, stack 2, code 0593..05A0
-    0593  UpValueGet 0
-    0595  InvokeClosure args=0 ret=1
-    0598  UpValueGet 1
-    059A  CallLocalModule 49 (seqSorted) args=2 ret=1
-    059F  ReturnValue
+  ; entry 54, locals 0, stack 2, code 058C..0599
+    058C  UpValueGet 0
+    058E  InvokeClosure args=0 ret=1
+    0591  UpValueGet 1
+    0593  CallLocalModule 49 (seqSorted) args=2 ret=1
+    0598  ReturnValue
 
 [private] static $lambda$take$0(): surtr:IIterator<T0>
-  ; entry 51, locals 0, stack 2, code 056E..057B
-    056E  UpValueGet 0
-    0570  InvokeClosure args=0 ret=1
-    0573  UpValueGet 1
-    0575  CallLocalModule 43 (seqTake) args=2 ret=1
-    057A  ReturnValue
+  ; entry 51, locals 0, stack 2, code 0567..0574
+    0567  UpValueGet 0
+    0569  InvokeClosure args=0 ret=1
+    056C  UpValueGet 1
+    056E  CallLocalModule 43 (seqTake) args=2 ret=1
+    0573  ReturnValue
 
 [private] static $lambda$takeWhile$0(): surtr:IIterator<T0>
-  ; entry 61, locals 0, stack 2, code 05EC..05F9
-    05EC  UpValueGet 0
-    05EE  InvokeClosure args=0 ret=1
-    05F1  UpValueGet 1
-    05F3  CallLocalModule 63 (seqTakeWhile) args=2 ret=1
-    05F8  ReturnValue
+  ; entry 61, locals 0, stack 2, code 05E5..05F2
+    05E5  UpValueGet 0
+    05E7  InvokeClosure args=0 ret=1
+    05EA  UpValueGet 1
+    05EC  CallLocalModule 63 (seqTakeWhile) args=2 ret=1
+    05F1  ReturnValue
 
 [private] static $lambda$zip$0(): surtr:IIterator<(T0, T0)>
-  ; entry 56, locals 0, stack 2, code 05B0..05C0
-    05B0  UpValueGet 0
-    05B2  InvokeClosure args=0 ret=1
-    05B5  UpValueGet 1
-    05B7  InvokeClosure args=0 ret=1
-    05BA  CallLocalModule 53 (seqZip) args=2 ret=1
-    05BF  ReturnValue
+  ; entry 56, locals 0, stack 2, code 05A9..05B9
+    05A9  UpValueGet 0
+    05AB  InvokeClosure args=0 ret=1
+    05AE  UpValueGet 1
+    05B0  InvokeClosure args=0 ret=1
+    05B3  CallLocalModule 53 (seqZip) args=2 ret=1
+    05B8  ReturnValue
 
 [public] static all(self: surtr:IIterable<T0>, predicate: (T0) -> bool): bool
-  ; entry 39, locals 2, stack 2, code 04DD..04EA
-    04DD  Ldl0
-    04DE  CallLocalModule 69 (asSequence) args=1 ret=1
-    04E3  Ldl1
-    04E4  InvokeSpecial 24 (all) args=2 ret=1
-    04E9  ReturnValue
+  ; entry 39, locals 2, stack 2, code 04D6..04E3
+    04D6  Ldl0
+    04D7  CallLocalModule 69 (asSequence) args=1 ret=1
+    04DC  Ldl1
+    04DD  InvokeSpecial 24 (all) args=2 ret=1
+    04E2  ReturnValue
 
 [public] static any(self: surtr:IIterable<T0>, predicate: (T0) -> bool): bool
-  ; entry 38, locals 2, stack 2, code 04D0..04DD
-    04D0  Ldl0
-    04D1  CallLocalModule 69 (asSequence) args=1 ret=1
-    04D6  Ldl1
-    04D7  InvokeSpecial 23 (any) args=2 ret=1
-    04DC  ReturnValue
+  ; entry 38, locals 2, stack 2, code 04C9..04D6
+    04C9  Ldl0
+    04CA  CallLocalModule 69 (asSequence) args=1 ret=1
+    04CF  Ldl1
+    04D0  InvokeSpecial 23 (any) args=2 ret=1
+    04D5  ReturnValue
 
 [public] static asSequence(self: surtr:IIterable<T0>): () -> surtr:IIterator<T0>
-  ; entry 34, locals 1, stack 1, code 04A4..04AA
-    04A4  Ldl0
-    04A5  NewClosure 115 ($lambda$asSequence$0) upvalues=1
-    04A9  ReturnValue
+  ; entry 34, locals 1, stack 1, code 049D..04A3
+    049D  Ldl0
+    049E  NewClosure 115 ($lambda$asSequence$0) upvalues=1
+    04A2  ReturnValue
 
 [public] static count(self: surtr:IIterable<T0>): int
-  ; entry 40, locals 1, stack 1, code 04EA..04F6
-    04EA  Ldl0
-    04EB  CallLocalModule 69 (asSequence) args=1 ret=1
-    04F0  InvokeSpecial 25 (count) args=1 ret=1
-    04F5  ReturnValue
+  ; entry 40, locals 1, stack 1, code 04E3..04EF
+    04E3  Ldl0
+    04E4  CallLocalModule 69 (asSequence) args=1 ret=1
+    04E9  InvokeSpecial 25 (count) args=1 ret=1
+    04EE  ReturnValue
 
 [public] static firstOrNull(self: surtr:IIterable<T0>): T0
-  ; entry 36, locals 1, stack 1, code 04B7..04C3
-    04B7  Ldl0
-    04B8  CallLocalModule 69 (asSequence) args=1 ret=1
-    04BD  InvokeSpecial 21 (firstOrNull) args=1 ret=1
-    04C2  ReturnValue
+  ; entry 36, locals 1, stack 1, code 04B0..04BC
+    04B0  Ldl0
+    04B1  CallLocalModule 69 (asSequence) args=1 ret=1
+    04B6  InvokeSpecial 21 (firstOrNull) args=1 ret=1
+    04BB  ReturnValue
 
 [public] static firstOrNull(self: surtr:IIterable<T0>, predicate: (T0) -> bool): T0
-  ; entry 37, locals 2, stack 2, code 04C3..04D0
-    04C3  Ldl0
-    04C4  CallLocalModule 69 (asSequence) args=1 ret=1
-    04C9  Ldl1
-    04CA  InvokeSpecial 22 (firstOrNull) args=2 ret=1
-    04CF  ReturnValue
+  ; entry 37, locals 2, stack 2, code 04BC..04C9
+    04BC  Ldl0
+    04BD  CallLocalModule 69 (asSequence) args=1 ret=1
+    04C2  Ldl1
+    04C3  InvokeSpecial 22 (firstOrNull) args=2 ret=1
+    04C8  ReturnValue
 
 [public] static forEach(self: surtr:IIterable<T0>, action: (T0) -> void): void
-  ; entry 35, locals 2, stack 2, code 04AA..04B7
-    04AA  Ldl0
-    04AB  CallLocalModule 69 (asSequence) args=1 ret=1
-    04B0  Ldl1
-    04B1  InvokeSpecial 19 (forEach) args=2 ret=0
-    04B6  ReturnVoid
+  ; entry 35, locals 2, stack 2, code 04A3..04B0
+    04A3  Ldl0
+    04A4  CallLocalModule 69 (asSequence) args=1 ret=1
+    04A9  Ldl1
+    04AA  InvokeSpecial 19 (forEach) args=2 ret=0
+    04AF  ReturnVoid
 
 [public] static reduce(self: surtr:IIterable<T0>, reducer: (T1, T0) -> T1, initialValue: T1): T1
-  ; entry 45, locals 3, stack 3, code 0526..0535
-    0526  Ldl0
-    0527  CallLocalModule 69 (asSequence) args=1 ret=1
-    052C  Ldl1
-    052D  Ldl2
-    052E  BoxDynamic
-    052F  InvokeSpecial 20 (reduce) args=3 ret=1
-    0534  ReturnValue
+  ; entry 45, locals 3, stack 3, code 051F..052E
+    051F  Ldl0
+    0520  CallLocalModule 69 (asSequence) args=1 ret=1
+    0525  Ldl1
+    0526  Ldl2
+    0527  BoxDynamic
+    0528  InvokeSpecial 20 (reduce) args=3 ret=1
+    052D  ReturnValue
 
 [private] static seqCast(source: surtr:IIterator<T0>): generator<T1>
-  ; entry 24, locals 1, stack 1, code 0355..035D
-    0355  Ldl0
-    0356  GenNew 60 ($generator$seqCast$0)  7 (generator<T1>) args=1
-    035C  ReturnValue
+  ; entry 24, locals 1, stack 1, code 034E..0356
+    034E  Ldl0
+    034F  GenNew 60 ($generator$seqCast$0)  7 (generator<T1>) args=1
+    0355  ReturnValue
 
 [private] static seqChain(first: surtr:IIterator<T0>, second: surtr:IIterator<T0>): generator<T0>
-  ; entry 16, locals 2, stack 2, code 022F..0238
-    022F  Ldl0
-    0230  Ldl1
-    0231  GenNew 52 ($generator$seqChain$0)  6 (generator<T0>) args=2
-    0237  ReturnValue
+  ; entry 16, locals 2, stack 2, code 0228..0231
+    0228  Ldl0
+    0229  Ldl1
+    022A  GenNew 52 ($generator$seqChain$0)  6 (generator<T0>) args=2
+    0230  ReturnValue
 
 [private] static seqDistinct(source: surtr:IIterator<T0>): generator<T0>
   ; entry 12, locals 1, stack 1, code 0190..0198
@@ -1018,10 +1010,10 @@ module surtr.collections.Sequence
     0197  ReturnValue
 
 [private] static seqEnumerate(source: surtr:IIterator<T0>): generator<(int, T0)>
-  ; entry 20, locals 1, stack 1, code 02D2..02DA
-    02D2  Ldl0
-    02D3  GenNew 56 ($generator$seqEnumerate$0)  13 (generator<(int, T0)>) args=1
-    02D9  ReturnValue
+  ; entry 20, locals 1, stack 1, code 02CB..02D3
+    02CB  Ldl0
+    02CC  GenNew 56 ($generator$seqEnumerate$0)  13 (generator<(int, T0)>) args=1
+    02D2  ReturnValue
 
 [private] static seqFilter(source: surtr:IIterator<T0>, predicate: (T0) -> bool): generator<T0>
   ; entry 6, locals 2, stack 2, code 00C8..00D1
@@ -1051,23 +1043,23 @@ module surtr.collections.Sequence
     0007  ReturnValue
 
 [private] static seqOnEach(source: surtr:IIterator<T0>, action: (T0) -> void): generator<T0>
-  ; entry 32, locals 2, stack 2, code 046B..0474
-    046B  Ldl0
-    046C  Ldl1
-    046D  GenNew 68 ($generator$seqOnEach$0)  6 (generator<T0>) args=2
-    0473  ReturnValue
+  ; entry 32, locals 2, stack 2, code 0464..046D
+    0464  Ldl0
+    0465  Ldl1
+    0466  GenNew 68 ($generator$seqOnEach$0)  6 (generator<T0>) args=2
+    046C  ReturnValue
 
 [private] static seqReverse(source: surtr:IIterator<T0>): generator<T0>
-  ; entry 22, locals 1, stack 1, code 030C..0314
-    030C  Ldl0
-    030D  GenNew 58 ($generator$seqReverse$0)  6 (generator<T0>) args=1
-    0313  ReturnValue
+  ; entry 22, locals 1, stack 1, code 0305..030D
+    0305  Ldl0
+    0306  GenNew 58 ($generator$seqReverse$0)  6 (generator<T0>) args=1
+    030C  ReturnValue
 
 [private] static seqSafeCast(source: surtr:IIterator<T0>): generator<T1>
-  ; entry 26, locals 1, stack 1, code 0383..038B
-    0383  Ldl0
-    0384  GenNew 62 ($generator$seqSafeCast$0)  7 (generator<T1>) args=1
-    038A  ReturnValue
+  ; entry 26, locals 1, stack 1, code 037C..0384
+    037C  Ldl0
+    037D  GenNew 62 ($generator$seqSafeCast$0)  7 (generator<T1>) args=1
+    0383  ReturnValue
 
 [private] static seqSkip(source: surtr:IIterator<T0>, count: int): generator<T0>
   ; entry 10, locals 2, stack 2, code 0144..014D
@@ -1077,11 +1069,11 @@ module surtr.collections.Sequence
     014C  ReturnValue
 
 [private] static seqSkipWhile(source: surtr:IIterator<T0>, predicate: (T0) -> bool): generator<T0>
-  ; entry 30, locals 2, stack 2, code 041C..0425
-    041C  Ldl0
-    041D  Ldl1
-    041E  GenNew 66 ($generator$seqSkipWhile$0)  6 (generator<T0>) args=2
-    0424  ReturnValue
+  ; entry 30, locals 2, stack 2, code 0415..041E
+    0415  Ldl0
+    0416  Ldl1
+    0417  GenNew 66 ($generator$seqSkipWhile$0)  6 (generator<T0>) args=2
+    041D  ReturnValue
 
 [private] static seqSorted(source: surtr:IIterator<T0>, comparator: (T0, T0) -> int): generator<T0>
   ; entry 14, locals 2, stack 2, code 01D9..01E2
@@ -1098,457 +1090,457 @@ module surtr.collections.Sequence
     010C  ReturnValue
 
 [private] static seqTakeWhile(source: surtr:IIterator<T0>, predicate: (T0) -> bool): generator<T0>
-  ; entry 28, locals 2, stack 2, code 03CF..03D8
-    03CF  Ldl0
-    03D0  Ldl1
-    03D1  GenNew 64 ($generator$seqTakeWhile$0)  6 (generator<T0>) args=2
-    03D7  ReturnValue
+  ; entry 28, locals 2, stack 2, code 03C8..03D1
+    03C8  Ldl0
+    03C9  Ldl1
+    03CA  GenNew 64 ($generator$seqTakeWhile$0)  6 (generator<T0>) args=2
+    03D0  ReturnValue
 
 [private] static seqZip(first: surtr:IIterator<T0>, second: surtr:IIterator<T1>): generator<(T0, T1)>
-  ; entry 18, locals 2, stack 2, code 027D..0286
-    027D  Ldl0
-    027E  Ldl1
-    027F  GenNew 54 ($generator$seqZip$0)  11 (generator<(T0, T1)>) args=2
-    0285  ReturnValue
+  ; entry 18, locals 2, stack 2, code 0276..027F
+    0276  Ldl0
+    0277  Ldl1
+    0278  GenNew 54 ($generator$seqZip$0)  11 (generator<(T0, T1)>) args=2
+    027E  ReturnValue
 
 [public] static toArray(self: surtr:IIterable<T0>): T0[]
-  ; entry 41, locals 1, stack 1, code 04F6..0502
-    04F6  Ldl0
-    04F7  CallLocalModule 69 (asSequence) args=1 ret=1
-    04FC  InvokeSpecial 26 (toArray) args=1 ret=1
-    0501  ReturnValue
+  ; entry 41, locals 1, stack 1, code 04EF..04FB
+    04EF  Ldl0
+    04F0  CallLocalModule 69 (asSequence) args=1 ret=1
+    04F5  InvokeSpecial 26 (toArray) args=1 ret=1
+    04FA  ReturnValue
 
 [public] static toList(self: surtr:IIterable<T0>): surtr.collections.List:List<T0>
-  ; entry 42, locals 1, stack 1, code 0502..050E
-    0502  Ldl0
-    0503  CallLocalModule 69 (asSequence) args=1 ret=1
-    0508  InvokeSpecial 27 (toList) args=1 ret=1
-    050D  ReturnValue
+  ; entry 42, locals 1, stack 1, code 04FB..0507
+    04FB  Ldl0
+    04FC  CallLocalModule 69 (asSequence) args=1 ret=1
+    0501  InvokeSpecial 27 (toList) args=1 ret=1
+    0506  ReturnValue
 
 [public] static toReadOnlySet(self: surtr:IIterable<T0>): surtr.collections.Set:IReadOnlySet<T0>
-  ; entry 44, locals 1, stack 1, code 051A..0526
-    051A  Ldl0
-    051B  CallLocalModule 69 (asSequence) args=1 ret=1
-    0520  InvokeSpecial 29 (toReadOnlySet) args=1 ret=1
-    0525  ReturnValue
+  ; entry 44, locals 1, stack 1, code 0513..051F
+    0513  Ldl0
+    0514  CallLocalModule 69 (asSequence) args=1 ret=1
+    0519  InvokeSpecial 29 (toReadOnlySet) args=1 ret=1
+    051E  ReturnValue
 
 [public] static toSet(self: surtr:IIterable<T0>): surtr.collections.Set:Set<T0>
-  ; entry 43, locals 1, stack 1, code 050E..051A
-    050E  Ldl0
-    050F  CallLocalModule 69 (asSequence) args=1 ret=1
-    0514  InvokeSpecial 28 (toSet) args=1 ret=1
-    0519  ReturnValue
+  ; entry 43, locals 1, stack 1, code 0507..0513
+    0507  Ldl0
+    0508  CallLocalModule 69 (asSequence) args=1 ret=1
+    050D  InvokeSpecial 28 (toSet) args=1 ret=1
+    0512  ReturnValue
 
 class EmptyIterator`1<T> : surtr:IIterator<T0>  [internal]
 
   [public] property current: T0 { get; }
     get:
-      ; entry 98, locals 1, stack 3, code 0822..082D
-        0822  ObjNew 5 (surtr:InvalidOperationException)
-        0825  Dup
-        0826  Ldc0
-        0827  InvokeSpecial 107 (ctor) args=2 ret=0
-        082C  Throw
+      ; entry 98, locals 1, stack 3, code 081B..0826
+        081B  ObjNew 5 (surtr:InvalidOperationException)
+        081E  Dup
+        081F  Ldc0
+        0820  InvokeSpecial 107 (ctor) args=2 ret=0
+        0825  Throw
 
   [public] ctor (): void
-    ; entry 97, locals 1, stack 0, code 0821..0822
-      0821  ReturnVoid
+    ; entry 97, locals 1, stack 0, code 081A..081B
+      081A  ReturnVoid
 
   [public] dispose(): void
-    ; entry 99, locals 1, stack 0, code 082D..082E
-      082D  ReturnVoid
+    ; entry 99, locals 1, stack 0, code 0826..0827
+      0826  ReturnVoid
 
   [public] virtual dispose(): void
-    ; entry 103, locals 1, stack 1, code 083F..0846
-      083F  Ldl0
-      0840  InvokeSpecial 33 (dispose) args=1 ret=0
-      0845  ReturnVoid
+    ; entry 103, locals 1, stack 1, code 0838..083F
+      0838  Ldl0
+      0839  InvokeSpecial 33 (dispose) args=1 ret=0
+      083E  ReturnVoid
 
   [public] virtual get_current(): unknown
-    ; entry 102, locals 1, stack 1, code 0837..083F
-      0837  Ldl0
-      0838  InvokeSpecial 32 (get_current) args=1 ret=1
-      083D  BoxDynamic
-      083E  ReturnValue
+    ; entry 102, locals 1, stack 1, code 0830..0838
+      0830  Ldl0
+      0831  InvokeSpecial 32 (get_current) args=1 ret=1
+      0836  BoxDynamic
+      0837  ReturnValue
 
   [public] moveNext(): bool
-    ; entry 100, locals 1, stack 1, code 082E..0830
-      082E  PushFalse
-      082F  ReturnValue
+    ; entry 100, locals 1, stack 1, code 0827..0829
+      0827  PushFalse
+      0828  ReturnValue
 
   [public] virtual moveNext(): bool
-    ; entry 101, locals 1, stack 1, code 0830..0837
-      0830  Ldl0
-      0831  InvokeSpecial 34 (moveNext) args=1 ret=1
-      0836  ReturnValue
+    ; entry 101, locals 1, stack 1, code 0829..0830
+      0829  Ldl0
+      082A  InvokeSpecial 34 (moveNext) args=1 ret=1
+      082F  ReturnValue
 
 sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
   [private] readonly field _provider: () -> surtr:IIterator<T0>
 
   [public] static property empty: () -> surtr:IIterator<T0> { get; }
     get:
-      ; entry 66, locals 0, stack 1, code 061C..0620
-        061C  NewFunction 81 ($lambda$get_empty$0)
-        061F  ReturnValue
+      ; entry 66, locals 0, stack 1, code 0615..0619
+        0615  NewFunction 81 ($lambda$get_empty$0)
+        0618  ReturnValue
 
   [public] all(predicate: (T0) -> bool): bool
-    ; entry 89, locals 3, stack 2, code 072E..0751
-      072E  Ldl0
-      072F  InvokeClosure args=0 ret=1
-      0732  Stl2
+    ; entry 89, locals 3, stack 2, code 0727..074A
+      0727  Ldl0
+      0728  InvokeClosure args=0 ret=1
+      072B  Stl2
     L0:
-      0733  Ldl2
-      0734  InvokeInterface 99 (moveNext) args=1 ret=1
-      0739  JPZ +19 -> L2 (074F)
-      073C  Ldl1
-      073D  Ldl2
-      073E  InvokeInterface 100 (get_current) args=1 ret=1
-      0743  InvokeClosure args=1 ret=1
-      0746  Inv
-      0747  JPZ +2 -> L1 (074C)
-      074A  PushFalse
-      074B  ReturnValue
+      072C  Ldl2
+      072D  InvokeInterface 99 (moveNext) args=1 ret=1
+      0732  JPZ +19 -> L2 (0748)
+      0735  Ldl1
+      0736  Ldl2
+      0737  InvokeInterface 100 (get_current) args=1 ret=1
+      073C  InvokeClosure args=1 ret=1
+      073F  Inv
+      0740  JPZ +2 -> L1 (0745)
+      0743  PushFalse
+      0744  ReturnValue
     L1:
-      074C  JP -28 -> L0 (0733)
+      0745  JP -28 -> L0 (072C)
     L2:
-      074F  PushTrue
-      0750  ReturnValue
+      0748  PushTrue
+      0749  ReturnValue
 
   [public] any(predicate: (T0) -> bool): bool
-    ; entry 88, locals 3, stack 2, code 070C..072E
-      070C  Ldl0
-      070D  InvokeClosure args=0 ret=1
-      0710  Stl2
+    ; entry 88, locals 3, stack 2, code 0705..0727
+      0705  Ldl0
+      0706  InvokeClosure args=0 ret=1
+      0709  Stl2
     L0:
-      0711  Ldl2
-      0712  InvokeInterface 99 (moveNext) args=1 ret=1
-      0717  JPZ +18 -> L2 (072C)
-      071A  Ldl1
-      071B  Ldl2
-      071C  InvokeInterface 100 (get_current) args=1 ret=1
-      0721  InvokeClosure args=1 ret=1
-      0724  JPZ +2 -> L1 (0729)
-      0727  PushTrue
-      0728  ReturnValue
+      070A  Ldl2
+      070B  InvokeInterface 99 (moveNext) args=1 ret=1
+      0710  JPZ +18 -> L2 (0725)
+      0713  Ldl1
+      0714  Ldl2
+      0715  InvokeInterface 100 (get_current) args=1 ret=1
+      071A  InvokeClosure args=1 ret=1
+      071D  JPZ +2 -> L1 (0722)
+      0720  PushTrue
+      0721  ReturnValue
     L1:
-      0729  JP -27 -> L0 (0711)
+      0722  JP -27 -> L0 (070A)
     L2:
-      072C  PushFalse
-      072D  ReturnValue
+      0725  PushFalse
+      0726  ReturnValue
 
   [public] cast(): () -> surtr:IIterator<T0>
-    ; entry 79, locals 1, stack 1, code 0670..0676
-      0670  Ldl0
-      0671  NewClosure 94 ($lambda$cast$0) upvalues=1
-      0675  ReturnValue
+    ; entry 79, locals 1, stack 1, code 0669..066F
+      0669  Ldl0
+      066A  NewClosure 94 ($lambda$cast$0) upvalues=1
+      066E  ReturnValue
 
   [public] chain(other: () -> surtr:IIterator<T0>): () -> surtr:IIterator<T0>
-    ; entry 75, locals 2, stack 2, code 0656..065D
-      0656  Ldl0
-      0657  Ldl1
-      0658  NewClosure 90 ($lambda$chain$0) upvalues=2
-      065C  ReturnValue
-
-  [public] count(): int
-    ; entry 90, locals 3, stack 1, code 0751..076A
-      0751  PushI8 0
-      0753  Stl1
-      0754  Ldl0
-      0755  InvokeClosure args=0 ret=1
-      0758  Stl2
-    L0:
-      0759  Ldl2
-      075A  InvokeInterface 99 (moveNext) args=1 ret=1
-      075F  JPZ +6 -> L1 (0768)
-      0762  IncLocal 1 by 1
-      0765  JP -15 -> L0 (0759)
-    L1:
-      0768  Ldl1
-      0769  ReturnValue
-
-  [public] ctor (provider: () -> surtr:IIterator<T0>): void
-    ; entry 65, locals 2, stack 0, code 061B..061C
-      061B  ReturnVoid
-
-  [public] distinct(): () -> surtr:IIterator<T0>
-    ; entry 73, locals 1, stack 1, code 0649..064F
-      0649  Ldl0
-      064A  NewClosure 88 ($lambda$distinct$0) upvalues=1
-      064E  ReturnValue
-
-  [public] enumerate(): () -> surtr:IIterator<T0>
-    ; entry 77, locals 1, stack 1, code 0664..066A
-      0664  Ldl0
-      0665  NewClosure 92 ($lambda$enumerate$0) upvalues=1
-      0669  ReturnValue
-
-  [public] filter(predicate: (T0) -> bool): () -> surtr:IIterator<T0>
-    ; entry 70, locals 2, stack 2, code 0634..063B
-      0634  Ldl0
-      0635  Ldl1
-      0636  NewClosure 85 ($lambda$filter$0) upvalues=2
-      063A  ReturnValue
-
-  [public] firstOrNull(): T0
-    ; entry 86, locals 2, stack 1, code 06CE..06E5
-      06CE  Ldl0
-      06CF  InvokeClosure args=0 ret=1
-      06D2  Stl1
-      06D3  Ldl1
-      06D4  InvokeInterface 99 (moveNext) args=1 ret=1
-      06D9  JPZ +7 -> L0 (06E3)
-      06DC  Ldl1
-      06DD  InvokeInterface 100 (get_current) args=1 ret=1
-      06E2  ReturnValue
-    L0:
-      06E3  PushNull
-      06E4  ReturnValue
-
-  [public] firstOrNull(predicate: (T0) -> bool): T0
-    ; entry 87, locals 3, stack 2, code 06E5..070C
-      06E5  Ldl0
-      06E6  InvokeClosure args=0 ret=1
-      06E9  Stl2
-    L0:
-      06EA  Ldl2
-      06EB  InvokeInterface 99 (moveNext) args=1 ret=1
-      06F0  JPZ +23 -> L2 (070A)
-      06F3  Ldl1
-      06F4  Ldl2
-      06F5  InvokeInterface 100 (get_current) args=1 ret=1
-      06FA  InvokeClosure args=1 ret=1
-      06FD  JPZ +7 -> L1 (0707)
-      0700  Ldl2
-      0701  InvokeInterface 100 (get_current) args=1 ret=1
-      0706  ReturnValue
-    L1:
-      0707  JP -32 -> L0 (06EA)
-    L2:
-      070A  PushNull
-      070B  ReturnValue
-
-  [public] flatMap(mapper: (T0) -> () -> surtr:IIterator<T0>): () -> surtr:IIterator<T0>
-    ; entry 69, locals 2, stack 2, code 062D..0634
-      062D  Ldl0
-      062E  Ldl1
-      062F  NewClosure 84 ($lambda$flatMap$0) upvalues=2
-      0633  ReturnValue
-
-  [public] forEach(action: (T0) -> void): void
-    ; entry 84, locals 3, stack 2, code 0691..06AD
-      0691  Ldl0
-      0692  InvokeClosure args=0 ret=1
-      0695  Stl2
-    L0:
-      0696  Ldl2
-      0697  InvokeInterface 99 (moveNext) args=1 ret=1
-      069C  JPZ +13 -> L1 (06AC)
-      069F  Ldl1
-      06A0  Ldl2
-      06A1  InvokeInterface 100 (get_current) args=1 ret=1
-      06A6  InvokeClosure args=1 ret=0
-      06A9  JP -22 -> L0 (0696)
-    L1:
-      06AC  ReturnVoid
-
-  [public] iterate(): surtr:IIterator<T0>
-    ; entry 95, locals 1, stack 1, code 0814..0819
-      0814  Ldl0
-      0815  InvokeClosure args=0 ret=1
-      0818  ReturnValue
-
-  [public] virtual iterate(): surtr:IIterator<unknown>
-    ; entry 96, locals 1, stack 1, code 0819..0821
-      0819  Ldl0
-      081A  Unbox
-      081B  InvokeSpecial 30 (iterate) args=1 ret=1
-      0820  ReturnValue
-
-  [public] map(mapper: (T0) -> T0): () -> surtr:IIterator<T0>
-    ; entry 68, locals 2, stack 2, code 0626..062D
-      0626  Ldl0
-      0627  Ldl1
-      0628  NewClosure 83 ($lambda$map$0) upvalues=2
-      062C  ReturnValue
-
-  [public] static of(elements: T0...): () -> surtr:IIterator<T0>
-    ; entry 67, locals 1, stack 1, code 0620..0626
-      0620  Ldl0
-      0621  NewClosure 82 ($lambda$of$0) upvalues=1
-      0625  ReturnValue
-
-  [public] onEach(action: (T0) -> void): () -> surtr:IIterator<T0>
-    ; entry 83, locals 2, stack 2, code 068A..0691
-      068A  Ldl0
-      068B  Ldl1
-      068C  NewClosure 98 ($lambda$onEach$0) upvalues=2
-      0690  ReturnValue
-
-  [public] reduce(reducer: (T0, T0) -> T0, initialValue: T0): T0
-    ; entry 85, locals 5, stack 3, code 06AD..06CE
-      06AD  Ldl2
-      06AE  Stl3
-      06AF  Ldl0
-      06B0  InvokeClosure args=0 ret=1
-      06B3  Stl4
-    L0:
-      06B4  Ldl4
-      06B5  InvokeInterface 99 (moveNext) args=1 ret=1
-      06BA  JPZ +15 -> L1 (06CC)
-      06BD  Ldl1
-      06BE  Ldl3
-      06BF  Ldl4
-      06C0  InvokeInterface 100 (get_current) args=1 ret=1
-      06C5  InvokeClosure args=2 ret=1
-      06C8  Stl3
-      06C9  JP -24 -> L0 (06B4)
-    L1:
-      06CC  Ldl3
-      06CD  ReturnValue
-
-  [public] reverse(): () -> surtr:IIterator<T0>
-    ; entry 78, locals 1, stack 1, code 066A..0670
-      066A  Ldl0
-      066B  NewClosure 93 ($lambda$reverse$0) upvalues=1
-      066F  ReturnValue
-
-  [public] safeCast(): () -> surtr:IIterator<T0>
-    ; entry 80, locals 1, stack 1, code 0676..067C
-      0676  Ldl0
-      0677  NewClosure 95 ($lambda$safeCast$0) upvalues=1
-      067B  ReturnValue
-
-  [public] skip(count: int): () -> surtr:IIterator<T0>
-    ; entry 72, locals 2, stack 2, code 0642..0649
-      0642  Ldl0
-      0643  Ldl1
-      0644  NewClosure 87 ($lambda$skip$0) upvalues=2
-      0648  ReturnValue
-
-  [public] skipWhile(predicate: (T0) -> bool): () -> surtr:IIterator<T0>
-    ; entry 82, locals 2, stack 2, code 0683..068A
-      0683  Ldl0
-      0684  Ldl1
-      0685  NewClosure 97 ($lambda$skipWhile$0) upvalues=2
-      0689  ReturnValue
-
-  [public] sorted(comparator: (T0, T0) -> int): () -> surtr:IIterator<T0>
-    ; entry 74, locals 2, stack 2, code 064F..0656
+    ; entry 75, locals 2, stack 2, code 064F..0656
       064F  Ldl0
       0650  Ldl1
-      0651  NewClosure 89 ($lambda$sorted$0) upvalues=2
+      0651  NewClosure 90 ($lambda$chain$0) upvalues=2
       0655  ReturnValue
 
-  [public] take(count: int): () -> surtr:IIterator<T0>
-    ; entry 71, locals 2, stack 2, code 063B..0642
+  [public] count(): int
+    ; entry 90, locals 3, stack 1, code 074A..0763
+      074A  PushI8 0
+      074C  Stl1
+      074D  Ldl0
+      074E  InvokeClosure args=0 ret=1
+      0751  Stl2
+    L0:
+      0752  Ldl2
+      0753  InvokeInterface 99 (moveNext) args=1 ret=1
+      0758  JPZ +6 -> L1 (0761)
+      075B  IncLocal 1 by 1
+      075E  JP -15 -> L0 (0752)
+    L1:
+      0761  Ldl1
+      0762  ReturnValue
+
+  [public] ctor (provider: () -> surtr:IIterator<T0>): void
+    ; entry 65, locals 2, stack 0, code 0614..0615
+      0614  ReturnVoid
+
+  [public] distinct(): () -> surtr:IIterator<T0>
+    ; entry 73, locals 1, stack 1, code 0642..0648
+      0642  Ldl0
+      0643  NewClosure 88 ($lambda$distinct$0) upvalues=1
+      0647  ReturnValue
+
+  [public] enumerate(): () -> surtr:IIterator<T0>
+    ; entry 77, locals 1, stack 1, code 065D..0663
+      065D  Ldl0
+      065E  NewClosure 92 ($lambda$enumerate$0) upvalues=1
+      0662  ReturnValue
+
+  [public] filter(predicate: (T0) -> bool): () -> surtr:IIterator<T0>
+    ; entry 70, locals 2, stack 2, code 062D..0634
+      062D  Ldl0
+      062E  Ldl1
+      062F  NewClosure 85 ($lambda$filter$0) upvalues=2
+      0633  ReturnValue
+
+  [public] firstOrNull(): T0
+    ; entry 86, locals 2, stack 1, code 06C7..06DE
+      06C7  Ldl0
+      06C8  InvokeClosure args=0 ret=1
+      06CB  Stl1
+      06CC  Ldl1
+      06CD  InvokeInterface 99 (moveNext) args=1 ret=1
+      06D2  JPZ +7 -> L0 (06DC)
+      06D5  Ldl1
+      06D6  InvokeInterface 100 (get_current) args=1 ret=1
+      06DB  ReturnValue
+    L0:
+      06DC  PushNull
+      06DD  ReturnValue
+
+  [public] firstOrNull(predicate: (T0) -> bool): T0
+    ; entry 87, locals 3, stack 2, code 06DE..0705
+      06DE  Ldl0
+      06DF  InvokeClosure args=0 ret=1
+      06E2  Stl2
+    L0:
+      06E3  Ldl2
+      06E4  InvokeInterface 99 (moveNext) args=1 ret=1
+      06E9  JPZ +23 -> L2 (0703)
+      06EC  Ldl1
+      06ED  Ldl2
+      06EE  InvokeInterface 100 (get_current) args=1 ret=1
+      06F3  InvokeClosure args=1 ret=1
+      06F6  JPZ +7 -> L1 (0700)
+      06F9  Ldl2
+      06FA  InvokeInterface 100 (get_current) args=1 ret=1
+      06FF  ReturnValue
+    L1:
+      0700  JP -32 -> L0 (06E3)
+    L2:
+      0703  PushNull
+      0704  ReturnValue
+
+  [public] flatMap(mapper: (T0) -> () -> surtr:IIterator<T0>): () -> surtr:IIterator<T0>
+    ; entry 69, locals 2, stack 2, code 0626..062D
+      0626  Ldl0
+      0627  Ldl1
+      0628  NewClosure 84 ($lambda$flatMap$0) upvalues=2
+      062C  ReturnValue
+
+  [public] forEach(action: (T0) -> void): void
+    ; entry 84, locals 3, stack 2, code 068A..06A6
+      068A  Ldl0
+      068B  InvokeClosure args=0 ret=1
+      068E  Stl2
+    L0:
+      068F  Ldl2
+      0690  InvokeInterface 99 (moveNext) args=1 ret=1
+      0695  JPZ +13 -> L1 (06A5)
+      0698  Ldl1
+      0699  Ldl2
+      069A  InvokeInterface 100 (get_current) args=1 ret=1
+      069F  InvokeClosure args=1 ret=0
+      06A2  JP -22 -> L0 (068F)
+    L1:
+      06A5  ReturnVoid
+
+  [public] iterate(): surtr:IIterator<T0>
+    ; entry 95, locals 1, stack 1, code 080D..0812
+      080D  Ldl0
+      080E  InvokeClosure args=0 ret=1
+      0811  ReturnValue
+
+  [public] virtual iterate(): surtr:IIterator<unknown>
+    ; entry 96, locals 1, stack 1, code 0812..081A
+      0812  Ldl0
+      0813  Unbox
+      0814  InvokeSpecial 30 (iterate) args=1 ret=1
+      0819  ReturnValue
+
+  [public] map(mapper: (T0) -> T0): () -> surtr:IIterator<T0>
+    ; entry 68, locals 2, stack 2, code 061F..0626
+      061F  Ldl0
+      0620  Ldl1
+      0621  NewClosure 83 ($lambda$map$0) upvalues=2
+      0625  ReturnValue
+
+  [public] static of(elements: T0...): () -> surtr:IIterator<T0>
+    ; entry 67, locals 1, stack 1, code 0619..061F
+      0619  Ldl0
+      061A  NewClosure 82 ($lambda$of$0) upvalues=1
+      061E  ReturnValue
+
+  [public] onEach(action: (T0) -> void): () -> surtr:IIterator<T0>
+    ; entry 83, locals 2, stack 2, code 0683..068A
+      0683  Ldl0
+      0684  Ldl1
+      0685  NewClosure 98 ($lambda$onEach$0) upvalues=2
+      0689  ReturnValue
+
+  [public] reduce(reducer: (T0, T0) -> T0, initialValue: T0): T0
+    ; entry 85, locals 5, stack 3, code 06A6..06C7
+      06A6  Ldl2
+      06A7  Stl3
+      06A8  Ldl0
+      06A9  InvokeClosure args=0 ret=1
+      06AC  Stl4
+    L0:
+      06AD  Ldl4
+      06AE  InvokeInterface 99 (moveNext) args=1 ret=1
+      06B3  JPZ +15 -> L1 (06C5)
+      06B6  Ldl1
+      06B7  Ldl3
+      06B8  Ldl4
+      06B9  InvokeInterface 100 (get_current) args=1 ret=1
+      06BE  InvokeClosure args=2 ret=1
+      06C1  Stl3
+      06C2  JP -24 -> L0 (06AD)
+    L1:
+      06C5  Ldl3
+      06C6  ReturnValue
+
+  [public] reverse(): () -> surtr:IIterator<T0>
+    ; entry 78, locals 1, stack 1, code 0663..0669
+      0663  Ldl0
+      0664  NewClosure 93 ($lambda$reverse$0) upvalues=1
+      0668  ReturnValue
+
+  [public] safeCast(): () -> surtr:IIterator<T0>
+    ; entry 80, locals 1, stack 1, code 066F..0675
+      066F  Ldl0
+      0670  NewClosure 95 ($lambda$safeCast$0) upvalues=1
+      0674  ReturnValue
+
+  [public] skip(count: int): () -> surtr:IIterator<T0>
+    ; entry 72, locals 2, stack 2, code 063B..0642
       063B  Ldl0
       063C  Ldl1
-      063D  NewClosure 86 ($lambda$take$0) upvalues=2
+      063D  NewClosure 87 ($lambda$skip$0) upvalues=2
       0641  ReturnValue
 
-  [public] takeWhile(predicate: (T0) -> bool): () -> surtr:IIterator<T0>
-    ; entry 81, locals 2, stack 2, code 067C..0683
+  [public] skipWhile(predicate: (T0) -> bool): () -> surtr:IIterator<T0>
+    ; entry 82, locals 2, stack 2, code 067C..0683
       067C  Ldl0
       067D  Ldl1
-      067E  NewClosure 96 ($lambda$takeWhile$0) upvalues=2
+      067E  NewClosure 97 ($lambda$skipWhile$0) upvalues=2
       0682  ReturnValue
 
+  [public] sorted(comparator: (T0, T0) -> int): () -> surtr:IIterator<T0>
+    ; entry 74, locals 2, stack 2, code 0648..064F
+      0648  Ldl0
+      0649  Ldl1
+      064A  NewClosure 89 ($lambda$sorted$0) upvalues=2
+      064E  ReturnValue
+
+  [public] take(count: int): () -> surtr:IIterator<T0>
+    ; entry 71, locals 2, stack 2, code 0634..063B
+      0634  Ldl0
+      0635  Ldl1
+      0636  NewClosure 86 ($lambda$take$0) upvalues=2
+      063A  ReturnValue
+
+  [public] takeWhile(predicate: (T0) -> bool): () -> surtr:IIterator<T0>
+    ; entry 81, locals 2, stack 2, code 0675..067C
+      0675  Ldl0
+      0676  Ldl1
+      0677  NewClosure 96 ($lambda$takeWhile$0) upvalues=2
+      067B  ReturnValue
+
   [public] toArray(): T0[]
-    ; entry 91, locals 3, stack 2, code 076A..078B
-      076A  ArrPack 1 (T0[]) count=0
-      076F  Stl1
-      0770  Ldl0
-      0771  InvokeClosure args=0 ret=1
-      0774  Stl2
+    ; entry 91, locals 3, stack 2, code 0763..0784
+      0763  ArrPack 1 (T0[]) count=0
+      0768  Stl1
+      0769  Ldl0
+      076A  InvokeClosure args=0 ret=1
+      076D  Stl2
     L0:
-      0775  Ldl2
-      0776  InvokeInterface 99 (moveNext) args=1 ret=1
-      077B  JPZ +11 -> L1 (0789)
-      077E  Ldl1
-      077F  Ldl2
-      0780  InvokeInterface 100 (get_current) args=1 ret=1
-      0785  ArrPush
-      0786  JP -20 -> L0 (0775)
+      076E  Ldl2
+      076F  InvokeInterface 99 (moveNext) args=1 ret=1
+      0774  JPZ +11 -> L1 (0782)
+      0777  Ldl1
+      0778  Ldl2
+      0779  InvokeInterface 100 (get_current) args=1 ret=1
+      077E  ArrPush
+      077F  JP -20 -> L0 (076E)
     L1:
-      0789  Ldl1
-      078A  ReturnValue
+      0782  Ldl1
+      0783  ReturnValue
 
   [public] toList(): surtr.collections.List:List<T0>
-    ; entry 92, locals 3, stack 3, code 078B..07B7
-      078B  ObjNew 2 (surtr.collections.List:List<T0>)
-      078E  Dup
-      078F  PushI8 16
-      0791  InvokeSpecial 101 (ctor) args=2 ret=0
-      0796  Stl1
-      0797  Ldl0
-      0798  InvokeClosure args=0 ret=1
-      079B  Stl2
+    ; entry 92, locals 3, stack 3, code 0784..07B0
+      0784  ObjNew 2 (surtr.collections.List:List<T0>)
+      0787  Dup
+      0788  PushI8 16
+      078A  InvokeSpecial 101 (ctor) args=2 ret=0
+      078F  Stl1
+      0790  Ldl0
+      0791  InvokeClosure args=0 ret=1
+      0794  Stl2
     L0:
-      079C  Ldl2
-      079D  InvokeInterface 99 (moveNext) args=1 ret=1
-      07A2  JPZ +16 -> L1 (07B5)
-      07A5  Ldl1
-      07A6  Ldl2
-      07A7  InvokeInterface 100 (get_current) args=1 ret=1
-      07AC  BoxDynamic
-      07AD  InvokeSpecial 102 (add) args=2 ret=0
-      07B2  JP -25 -> L0 (079C)
+      0795  Ldl2
+      0796  InvokeInterface 99 (moveNext) args=1 ret=1
+      079B  JPZ +16 -> L1 (07AE)
+      079E  Ldl1
+      079F  Ldl2
+      07A0  InvokeInterface 100 (get_current) args=1 ret=1
+      07A5  BoxDynamic
+      07A6  InvokeSpecial 102 (add) args=2 ret=0
+      07AB  JP -25 -> L0 (0795)
     L1:
-      07B5  Ldl1
-      07B6  ReturnValue
+      07AE  Ldl1
+      07AF  ReturnValue
 
   [public] toReadOnlySet(): surtr.collections.Set:IReadOnlySet<T0>
-    ; entry 94, locals 3, stack 3, code 07E1..0814
-      07E1  ObjNew 3 (surtr.collections.Set:Set<T0>)
-      07E4  Dup
-      07E5  InvokeSpecial 103 (ctor) args=1 ret=0
-      07EA  Stl1
-      07EB  Ldl0
-      07EC  InvokeClosure args=0 ret=1
-      07EF  Stl2
+    ; entry 94, locals 3, stack 3, code 07DA..080D
+      07DA  ObjNew 3 (surtr.collections.Set:Set<T0>)
+      07DD  Dup
+      07DE  InvokeSpecial 103 (ctor) args=1 ret=0
+      07E3  Stl1
+      07E4  Ldl0
+      07E5  InvokeClosure args=0 ret=1
+      07E8  Stl2
     L0:
-      07F0  Ldl2
-      07F1  InvokeInterface 99 (moveNext) args=1 ret=1
-      07F6  JPZ +16 -> L1 (0809)
-      07F9  Ldl1
-      07FA  Ldl2
-      07FB  InvokeInterface 100 (get_current) args=1 ret=1
-      0800  BoxDynamic
-      0801  InvokeSpecial 104 (add) args=2 ret=0
-      0806  JP -25 -> L0 (07F0)
+      07E9  Ldl2
+      07EA  InvokeInterface 99 (moveNext) args=1 ret=1
+      07EF  JPZ +16 -> L1 (0802)
+      07F2  Ldl1
+      07F3  Ldl2
+      07F4  InvokeInterface 100 (get_current) args=1 ret=1
+      07F9  BoxDynamic
+      07FA  InvokeSpecial 104 (add) args=2 ret=0
+      07FF  JP -25 -> L0 (07E9)
     L1:
-      0809  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
-      080C  Dup
-      080D  Ldl1
-      080E  InvokeSpecial 105 (ctor) args=2 ret=0
-      0813  ReturnValue
+      0802  ObjNew 4 (surtr.collections.Set:ReadOnlySet<T0>)
+      0805  Dup
+      0806  Ldl1
+      0807  InvokeSpecial 105 (ctor) args=2 ret=0
+      080C  ReturnValue
 
   [public] toSet(): surtr.collections.Set:Set<T0>
-    ; entry 93, locals 3, stack 2, code 07B7..07E1
-      07B7  ObjNew 3 (surtr.collections.Set:Set<T0>)
-      07BA  Dup
-      07BB  InvokeSpecial 103 (ctor) args=1 ret=0
-      07C0  Stl1
-      07C1  Ldl0
-      07C2  InvokeClosure args=0 ret=1
-      07C5  Stl2
+    ; entry 93, locals 3, stack 2, code 07B0..07DA
+      07B0  ObjNew 3 (surtr.collections.Set:Set<T0>)
+      07B3  Dup
+      07B4  InvokeSpecial 103 (ctor) args=1 ret=0
+      07B9  Stl1
+      07BA  Ldl0
+      07BB  InvokeClosure args=0 ret=1
+      07BE  Stl2
     L0:
-      07C6  Ldl2
-      07C7  InvokeInterface 99 (moveNext) args=1 ret=1
-      07CC  JPZ +16 -> L1 (07DF)
-      07CF  Ldl1
-      07D0  Ldl2
-      07D1  InvokeInterface 100 (get_current) args=1 ret=1
-      07D6  BoxDynamic
-      07D7  InvokeSpecial 104 (add) args=2 ret=0
-      07DC  JP -25 -> L0 (07C6)
+      07BF  Ldl2
+      07C0  InvokeInterface 99 (moveNext) args=1 ret=1
+      07C5  JPZ +16 -> L1 (07D8)
+      07C8  Ldl1
+      07C9  Ldl2
+      07CA  InvokeInterface 100 (get_current) args=1 ret=1
+      07CF  BoxDynamic
+      07D0  InvokeSpecial 104 (add) args=2 ret=0
+      07D5  JP -25 -> L0 (07BF)
     L1:
-      07DF  Ldl1
-      07E0  ReturnValue
+      07D8  Ldl1
+      07D9  ReturnValue
 
   [public] zip(other: () -> surtr:IIterator<T0>): () -> surtr:IIterator<T0>
-    ; entry 76, locals 2, stack 2, code 065D..0664
-      065D  Ldl0
-      065E  Ldl1
-      065F  NewClosure 91 ($lambda$zip$0) upvalues=2
-      0663  ReturnValue
+    ; entry 76, locals 2, stack 2, code 0656..065D
+      0656  Ldl0
+      0657  Ldl1
+      0658  NewClosure 91 ($lambda$zip$0) upvalues=2
+      065C  ReturnValue

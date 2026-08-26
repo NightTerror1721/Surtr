@@ -1635,76 +1635,67 @@ class ReadOnlyList`1<T> : surtr.collections.List:IReadOnlyList<T0>  [public]
         083A  ReturnValue
 
   [public] contains(item: T0): bool
-    ; entry 78, locals 5, stack 2, code 084A..086C
+    ; entry 78, locals 5, stack 2, code 084A..0866
       084A  Ldl0
       084B  FieldGet 14 (_items)
       084E  Stl2
-      084F  PushI8 0
+      084F  PushI8 -1
       0851  Stl3
+      0852  JP +8 -> L1 (085D)
     L0:
-      0852  Ldl3
-      0853  Ldl2
-      0854  ArrLen
-      0855  JPGE +18 -> L2 (086A)
-      0858  Ldl2
-      0859  Ldl3
-      085A  ArrGet
-      085B  Stl4
-      085C  Ldl4
-      085D  Ldl1
-      085E  DynEQ
-      085F  JPZ +2 -> L1 (0864)
-      0862  PushTrue
-      0863  ReturnValue
+      0855  Ldl4
+      0856  Ldl1
+      0857  DynEQ
+      0858  JPZ +2 -> L1 (085D)
+      085B  PushTrue
+      085C  ReturnValue
     L1:
-      0864  IncLocal 3 by 1
-      0867  JP -24 -> L0 (0852)
-    L2:
-      086A  PushFalse
-      086B  ReturnValue
+      085D  ArrForNext 2 3 4 -> L0 (0855)
+      0864  PushFalse
+      0865  ReturnValue
 
   [public] virtual contains(item: unknown): bool
-    ; entry 84, locals 2, stack 2, code 08B1..08BC
-      08B1  Ldl0
-      08B2  Ldl1
-      08B3  Cast 4 (T0)
-      08B6  InvokeSpecial 51 (contains) args=2 ret=1
-      08BB  ReturnValue
+    ; entry 84, locals 2, stack 2, code 08AB..08B6
+      08AB  Ldl0
+      08AC  Ldl1
+      08AD  Cast 4 (T0)
+      08B0  InvokeSpecial 51 (contains) args=2 ret=1
+      08B5  ReturnValue
 
   [public] copyTo(array: T0[], arrayIndex: int): void
-    ; entry 79, locals 4, stack 4, code 086C..088C
-      086C  PushI8 0
-      086E  Stl3
+    ; entry 79, locals 4, stack 4, code 0866..0886
+      0866  PushI8 0
+      0868  Stl3
     L0:
-      086F  Ldl3
-      0870  Ldl0
-      0871  FieldGet 14 (_items)
-      0874  ArrLen
-      0875  JPGE +19 -> L1 (088B)
-      0878  Ldl1
-      0879  Ldl2
+      0869  Ldl3
+      086A  Ldl0
+      086B  FieldGet 14 (_items)
+      086E  ArrLen
+      086F  JPGE +19 -> L1 (0885)
+      0872  Ldl1
+      0873  Ldl2
+      0874  Ldl3
+      0875  Add
+      0876  Ldl0
+      0877  FieldGet 14 (_items)
       087A  Ldl3
-      087B  Add
-      087C  Ldl0
-      087D  FieldGet 14 (_items)
-      0880  Ldl3
-      0881  ArrGet
-      0882  BoxDynamic
-      0883  UnboxDynamic
-      0884  ArrSet
-      0885  IncLocal 3 by 1
-      0888  JP -28 -> L0 (086F)
+      087B  ArrGet
+      087C  BoxDynamic
+      087D  UnboxDynamic
+      087E  ArrSet
+      087F  IncLocal 3 by 1
+      0882  JP -28 -> L0 (0869)
     L1:
-      088B  ReturnVoid
+      0885  ReturnVoid
 
   [public] virtual copyTo(array: unknown[], arrayIndex: int): void
-    ; entry 85, locals 3, stack 3, code 08BC..08C8
-      08BC  Ldl0
-      08BD  Ldl1
-      08BE  Cast 1 (T0[])
-      08C1  Ldl2
-      08C2  InvokeSpecial 52 (copyTo) args=3 ret=0
-      08C7  ReturnVoid
+    ; entry 85, locals 3, stack 3, code 08B6..08C2
+      08B6  Ldl0
+      08B7  Ldl1
+      08B8  Cast 1 (T0[])
+      08BB  Ldl2
+      08BC  InvokeSpecial 52 (copyTo) args=3 ret=0
+      08C1  ReturnVoid
 
   [public] ctor (items: T0...): void
     ; entry 74, locals 2, stack 2, code 082F..0835
@@ -1723,18 +1714,18 @@ class ReadOnlyList`1<T> : surtr.collections.List:IReadOnlyList<T0>  [public]
       0842  ReturnValue
 
   [public] virtual get(index: int): unknown
-    ; entry 81, locals 2, stack 2, code 0896..089F
-      0896  Ldl0
-      0897  Ldl1
-      0898  InvokeSpecial 49 (get) args=2 ret=1
-      089D  BoxDynamic
-      089E  ReturnValue
+    ; entry 81, locals 2, stack 2, code 0890..0899
+      0890  Ldl0
+      0891  Ldl1
+      0892  InvokeSpecial 49 (get) args=2 ret=1
+      0897  BoxDynamic
+      0898  ReturnValue
 
   [public] virtual get_length(): int
-    ; entry 83, locals 1, stack 1, code 08AA..08B1
-      08AA  Ldl0
-      08AB  InvokeSpecial 48 (get_length) args=1 ret=1
-      08B0  ReturnValue
+    ; entry 83, locals 1, stack 1, code 08A4..08AB
+      08A4  Ldl0
+      08A5  InvokeSpecial 48 (get_length) args=1 ret=1
+      08AA  ReturnValue
 
   [public] indexOf(item: T0): int
     ; entry 77, locals 2, stack 2, code 0843..084A
@@ -1745,22 +1736,22 @@ class ReadOnlyList`1<T> : surtr.collections.List:IReadOnlyList<T0>  [public]
       0849  ReturnValue
 
   [public] virtual indexOf(item: unknown): int
-    ; entry 82, locals 2, stack 2, code 089F..08AA
-      089F  Ldl0
-      08A0  Ldl1
-      08A1  Cast 4 (T0)
-      08A4  InvokeSpecial 50 (indexOf) args=2 ret=1
-      08A9  ReturnValue
+    ; entry 82, locals 2, stack 2, code 0899..08A4
+      0899  Ldl0
+      089A  Ldl1
+      089B  Cast 4 (T0)
+      089E  InvokeSpecial 50 (indexOf) args=2 ret=1
+      08A3  ReturnValue
 
   [public] iterate(): surtr:IIterator<T0>
-    ; entry 80, locals 1, stack 1, code 088C..0896
-      088C  Ldl0
-      088D  FieldGet 14 (_items)
-      0890  InvokeVirtual 89 (iterate) args=1 ret=1
-      0895  ReturnValue
+    ; entry 80, locals 1, stack 1, code 0886..0890
+      0886  Ldl0
+      0887  FieldGet 14 (_items)
+      088A  InvokeVirtual 89 (iterate) args=1 ret=1
+      088F  ReturnValue
 
   [public] virtual iterate(): surtr:IIterator<unknown>
-    ; entry 86, locals 1, stack 1, code 08C8..08CF
-      08C8  Ldl0
-      08C9  InvokeSpecial 53 (iterate) args=1 ret=1
-      08CE  ReturnValue
+    ; entry 86, locals 1, stack 1, code 08C2..08C9
+      08C2  Ldl0
+      08C3  InvokeSpecial 53 (iterate) args=1 ret=1
+      08C8  ReturnValue
