@@ -26,6 +26,14 @@ en `src/` relacionada con rendimiento; las oportunidades documentadas viven en `
 >   lento que el nativo (14.62 ms contra 9.47): el merge que el nativo obtiene gratis de C# cuesta
 >   mas en bytecode que la reentrada en la frontera. Lo que si valia era la asignacion que la
 >   medicion destapo - `ArraySort` asignaba 156 KB por llamada, y ahora no asigna nada.
+> - **P7 tiene por fin su numero: 1.25 ns por llamada cruzada de modulo**, medido con dos casos
+>   gemelos (`crossModule` contra `localModule`, el mismo cuerpo alcanzado por CallModule y por
+>   CallLocalModule). La estimacion del informe era correcta, y ese es el techo de lo que la
+>   propuesta podria devolver. Cerrada por coste/beneficio, no por error.
+> - **P8 y P2/P3 quedan cerradas por una razon que el informe no podia conocer**: `Run()` ha
+>   llegado a un tamano donde anadir cuerpos de opcode mueve el rendimiento de todo el interprete
+>   en un +-20-45 % por caso, de forma impredecible. El presupuesto real no es de valores de opcode
+>   sino de cuerpos. `docs/Plan-Opcodes-Extendidos.md` §11.
 > - La escala de beneficio se recalibro: un despacho vale ~1 ns y un test de tipo predicho ~0.25 ns,
 >   asi que P2 y P3 sueltas quedan dentro del ruido y solo pagan fusionadas.
 

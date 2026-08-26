@@ -93,7 +93,24 @@ namespace Surtr.Bench
     internal static class Workloads
     {
         /// <summary>The single Surtr module, compiled once and loaded into one runtime.</summary>
+        /// <summary>A second module, so that a cross-module call has something to call.</summary>
+        /// <remarks>
+        /// Deliberately one trivial function. What <c>crossModule</c> measures is the
+        /// difference between <c>CallModule</c> and <c>CallLocalModule</c> - the module table
+        /// hop and the second method table - not anything the callee does.
+        /// </remarks>
+        public const string OtherModuleSource = """
+            public fun step(value: int): int {
+                var t = value;
+                if (t > 1000000) { t = t - 1000000; }
+                if (t < 0) { t = 0 - t; }
+                return t + 1;
+            }
+            """;
+
         public const string ModuleSource = """
+            import bench.Other;
+
             value class EntityId {
                 public let raw: int;
                 public constructor(raw: int) { this.raw = raw; }
@@ -192,6 +209,33 @@ namespace Surtr.Bench
             // chain between iterations and nothing for the out-of-order engine to hide the guard
             // behind. intLoop cannot answer that question: its body carries a
             // `%`, an integer division of some thirty cycles that everything else overlaps with.
+            // A call that crosses a module boundary, against methodCalls as its own control.
+            // CallModule resolves through the module table and then that module's method table;
+            // CallLocalModule reads one table. This is the only case in the catalogue that pays
+            // the difference, and it exists so the question is answerable.
+            // The control for crossModule: byte-for-byte the same callee, reached through
+            // CallLocalModule instead of CallModule. The delta between the two rows is exactly
+            // what resolving through the module table costs, which is the whole of what a flat
+            // per-runtime table would remove.
+            fun localStep(value: int): int {
+                var t = value;
+                if (t > 1000000) { t = t - 1000000; }
+                if (t < 0) { t = 0 - t; }
+                return t + 1;
+            }
+
+            fun localModule(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) { acc = (acc + localStep(i)) % 100000007; }
+                return acc;
+            }
+
+            fun crossModule(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) { acc = (acc + step(i)) % 100000007; }
+                return acc;
+            }
+
             fun tightGuard(n: int): int {
                 var acc: int = 0;
                 for (var i = 0; i < n; i += 1) { acc = i + 1; }
@@ -866,6 +910,14 @@ namespace Surtr.Bench
                 return fib(n - 1) + fib(n - 2)
             end
 
+            function crossModule(n)
+                local acc = 0
+                for i = 0, n - 1 do acc = (acc + i + 1) % 100000007 end
+                return acc
+            end
+
+            localModule = crossModule
+
             function tightGuard(n)
                 local acc = 0
                 for i = 0, n - 1 do acc = i + 1 end
@@ -1382,6 +1434,8 @@ namespace Surtr.Bench
             new Workload("methodGroupInvoke", 300000, WorkloadKind.Int, "invocation through a method-group value, non-inlinable target", MethodGroupInvoke),
             new Workload("closureCapture", 300000, WorkloadKind.Int, "closure environment + upvalue read/write", ClosureCapture),
             new Workload("methodCalls", 300000, WorkloadKind.Int, "direct instance dispatch", MethodCalls),
+            new Workload("localModule", 300000, WorkloadKind.Int, "the same call inside one module: the control for crossModule", CrossModule),
+            new Workload("crossModule", 300000, WorkloadKind.Int, "a call that crosses a module boundary: two table hops instead of one", CrossModule),
             new Workload("virtualCalls", 300000, WorkloadKind.Int, "vtable dispatch", VirtualCalls),
             new Workload("interfaceCalls", 300000, WorkloadKind.Int, "interfaceId table dispatch", InterfaceCalls),
             new Workload("fieldAccess", 300000, WorkloadKind.Int, "instance field get/set", FieldAccess),
@@ -1481,6 +1535,14 @@ namespace Surtr.Bench
         }
 
         private static long Fib(long n) => n < 2 ? n : Fib(n - 1) + Fib(n - 2);
+
+        private static long CrossModule(long n)
+        {
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+                acc = (acc + i + 1) % Modulus;
+            return acc;
+        }
 
         private static long TightGuard(long n)
         {

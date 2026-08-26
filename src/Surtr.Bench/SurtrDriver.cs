@@ -52,6 +52,14 @@ namespace Surtr.Bench
             var project = new SurtrProject(SourceRoot);
             project.AddSourceFile(SourceRoot + "/bench/Bench.surtr", moduleSource);
 
+            // A second module, so a cross-module call is measurable at all. CallModule does two
+            // dependent loads where CallLocalModule does one - the module table, then that
+            // module's own method table - and until there was a case that exercised it, the
+            // question of what that costs had no answer. Deliberately trivial and marked
+            // forceinline-proof by being in another module: the delta against methodCalls is the
+            // frame protocol plus the extra resolution, nothing else.
+            project.AddSourceFile(SourceRoot + "/bench/Other.surtr", Workloads.OtherModuleSource);
+
             var compilation = SurtrCompilation.Create(project);
             var binder = compilation.Bind();
             binder.BindBodies();

@@ -452,6 +452,49 @@ mediana, y tamaños suficientes para mantener el spread bajo el 10 % (la propia 
 nueve casos con dispersión >10 %, todos con medianas bajo ~4 ms; un A/B nuevo necesita **tamaños
 mayores, no más iteraciones**).
 
+**Fase 5 — las tres propuestas restantes cerradas, dos de ellas con datos que no existían.**
+
+Bajo §11 ninguna de las tres podía construirse tal como estaba planteada: las tres añaden cuerpos a
+`Run()` o estado caliente a su marco. Así que la fase se dedicó a lo único que quedaba por hacer
+honestamente — **contestar las preguntas que estaban abiertas** — y a cerrarlas con la respuesta.
+
+**P7 (llamada cruzada de módulo): medida por primera vez, y cerrada.** El informe la estimaba en
+1-3 ns por llamada y la suite no tenía ningún caso que la ejerciera, así que la estimación llevaba
+un año sin poder confirmarse. Se añadieron dos casos gemelos: `crossModule` llama a una función de
+otro módulo (`CallModule`: tabla de módulos, luego la tabla de métodos de *ese* módulo) y
+`localModule` llama a **el mismo cuerpo, byte por byte**, dentro del propio módulo
+(`CallLocalModule`: una tabla). El callee es deliberadamente lo bastante grande para que el inliner
+lo deje en paz, o ambos casos medirían un `add` inlineado y nada más.
+
+| | corridas | mediana |
+|---|---|---|
+| `localModule` | 8.095 · 7.971 · 8.179 | **8.095** |
+| `crossModule` | 8.438 · 8.482 · 8.469 | **8.469** |
+
+**1.25 ns por llamada**, un 4.6 % sobre un bucle que no hace otra cosa que llamar. La estimación del
+informe era correcta. Y ese es el **techo absoluto** de lo que P7 podría recuperar, en el caso más
+favorable imaginable; en un programa donde las llamadas cruzadas son una fracción del trabajo queda
+muy por debajo del 1 %.
+
+Cerrada, porque cualquiera de sus formas cuesta más de lo que devuelve: la versión con opcode añade
+un cuerpo, la versión con tabla plana añade un local caliente al marco de `Run()` — que es
+exactamente lo que la Fase 4 midió como contraproducente — y la versión con caché en `SurtrModule`
+introduce un campo que hay que mantener en sincronía con uno mutable. Los dos casos se quedan en el
+catálogo: la próxima vez que alguien quiera abrir esta pregunta, ya tiene el número.
+
+**P8 (partir el switch caliente/frío): cerrada bajo §11, y con el objetivo cambiado.** El plan la
+tenía como experimento de bajo coste y baja expectativa. Ya no es eso. La Fase 4 midió que la
+posición de `Run()` domina el rendimiento del intérprete, así que partir el `switch` deja de ser
+"quizá ahorra algo de I-cache" y pasa a ser **la única palanca conocida sobre el techo** — y también
+un experimento mucho más arriesgado, porque mueve exactamente aquello cuyo movimiento resultó valer
+±45 %. Se cierra sin construir, con el objetivo reescrito en §11.5: no reducir la tabla de saltos,
+sino aislar los cuerpos fríos para que el asignador de registros deje de tratarlos como una sola
+región.
+
+**Grupo E (`LdlRange`): cerrado sin construir.** Un cuerpo más, para una fusión de la clase que la
+Fase 4 midió en negativo. La comprobación de solape con `LoadValueLocal` que el plan pedía tampoco
+llegó a hacer falta.
+
 **Fase 4 — los dos grupos construidos, los dos revertidos, y el techo encontrado.**
 
 **Grupo B (aritmética con operandos en slots).** Entró como sondeo de dos opcodes, porque la Fase 3
@@ -686,7 +729,7 @@ P1), y un `for-in` sobre array lo bastante largo para que el spread baje del 10 
 | **2** ✅ | **Grupo A** (superinstrucciones de bucle). Cierra P4 y P5. **Hecho**: `forIn` −47 %, `forInDict` −20 % | 0 |
 | **3** ⛔ | **Ventana de fusión** (§6) + **grupo C**. **Construido, medido y revertido**: cero ganancia. La ventana resultó innecesaria | 0 |
 | **4** ⛔ | **Grupos B y D**. **Construidos, medidos y revertidos**, y el porqué cierra el plan entero (§11) | 3 |
-| **5** | **P7** versión sin opcodes (tabla plana en el chunk, cero cuerpos nuevos), y cierre documentado de **P8** y del **grupo E** — ambos añadirían cuerpos, y §11 dice que ya no hay sitio | 4 |
+| **5** ✅ | **P7 medido y cerrado** con su número (1.25 ns/llamada), **P8** y **grupo E** cerrados bajo §11. Deja dos casos de bench nuevos y ningún opcode | 4 |
 
 Cada fase entra con su A/B según §8, `OpCodeValueTests.cs` actualizado y la sección
 correspondiente de `docs/Opcodes.md` escrita en el mismo commit.
@@ -732,10 +775,11 @@ El control de C# está plano (±0.1 %) en las tres, así que no es la máquina.
 3. **La única medida válida es la suite completa contra un worktree, con el control de C#.** Medir
    el caso objetivo en un subconjunto contesta una pregunta que ya no es la que importa.
 4. **Lo que queda por optimizar no está en el juego de instrucciones.** Está en lo que no toca
-   `Run()`: trabajo movido al cargador (P7), a la emisión (P1, que aterrizó), o fuera del
-   intérprete (la asignación del sort, que aterrizó). Todas las propuestas restantes del informe que
-   añaden cuerpos — grupo E, y lo que quedaba de P2/P3 — quedan **cerradas por esta razón**, no por
-   estar mal pensadas.
+   `Run()`: la emisión (P1, que aterrizó) o fuera del intérprete (la asignación del sort, que
+   aterrizó). Todas las propuestas restantes del informe que añaden cuerpos — grupo E, lo que
+   quedaba de P2/P3, y P7 en cualquiera de sus formas — quedan **cerradas por esta razón**, no por
+   estar mal pensadas. P7 además tiene ahora su número: 1.25 ns por llamada cruzada (§9, Fase 5),
+   que es el techo de lo que podría devolver.
 5. **Si alguna vez hace falta romper el techo**, la vía no es añadir menos: es partir `Run()` de
    forma que el JIT deje de tratarlo como una única región de asignación. Eso es P8 con otro
    objetivo — no reducir la tabla de saltos, sino aislar los cuerpos fríos — y sigue siendo un
