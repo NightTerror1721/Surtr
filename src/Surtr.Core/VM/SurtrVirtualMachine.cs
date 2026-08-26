@@ -1102,13 +1102,22 @@ namespace Surtr.VM
         {
             var runtime = _runtime;
             var comparer = _comparer;
-            ref SurtrContext context = ref runtime.Context;
 
-            var frames = _frames;
-            var roots = _roots;
-            int maxDepth = frames.Length;
+            // `context` se mantiene como local a prop??sito: Context es un getter ref que el inliner
+            // deja como llamada real en un m??todo de este tama??o (medido: 45 get_Context por Run),
+            // as?? que re-leer _runtime.Context en cada sitio fr??o costaba una llamada por uso ??? y
+            // `interop` paga el camino nativo en bucle. Un solo acceso en el pr??logo y punteros
+            // despu??s. Los arrays de frames/roots y el l??mite de pila s?? se leen de los campos
+            // (ver abajo): esos no pasan por ning??n getter.
+            ref SurtrContext context = ref _runtime.Context;
 
-            SurtrRawValue* stackLimit = _stackLimit;
+            // The call/generator paths read the frame array, the roots array and the stack limit
+            // straight off the instance fields. Holding them in locals made five live ranges span
+            // the whole method and cost three callee-saved registers that the dispatch loop would
+            // rather spend on `constants` and `entities`. They are cold paths (once per call); the
+            // extra field load does not show up there, and the loop stops paying for the pressure.
+            // Diagnosed in docs/Informe-Volatilidad-Run.md ??2.
+
             SurtrRawValue* sp;
 
             // Held in a local for the same reason ip and sp are: a field read per instruction
@@ -1125,7 +1134,7 @@ namespace Surtr.VM
             // Per-frame state, reloaded at LoadFrame whenever the executing frame changes. `current`
             // is what makes publishing the instruction pointer a single store with no bounds check,
             // which is why it is worth publishing at every site that can raise.
-            ref SurtrCallFrame current = ref frames[0];
+            ref SurtrCallFrame current = ref _frames[0];
             byte* ip;
             SurtrRawValue* frameBase;
             SurtrChunk chunk;
@@ -1152,7 +1161,7 @@ namespace Surtr.VM
 
         LoadFrame:
             {
-                current = ref frames[_frameCount - 1];
+                current = ref _frames[_frameCount - 1];
                 ip = current.IP;
                 frameBase = current.Base;
                 chunk = current.Chunk!;
@@ -3467,7 +3476,7 @@ namespace Surtr.VM
                 case OpCode.ReturnVoid:
                 {
                     int depth = _frameCount - 1;
-                    ref SurtrCallFrame finished = ref frames[depth];
+                    ref SurtrCallFrame finished = ref _frames[depth];
 
                     sp = finished.Base;
                     int expected = finished.ExpectedResults;
@@ -3482,7 +3491,7 @@ namespace Surtr.VM
                     finished.Method = null;
                     finished.Closure = null;
                     finished.Generator = null;
-                    roots[depth + 1] = 0;
+                    _roots[depth + 1] = 0;
                     _frameCount = depth;
 
                     if (ended is not null)
@@ -3529,7 +3538,7 @@ namespace Surtr.VM
                 {
                     SurtrRawValue result = *(sp - 1);
                     int depth = _frameCount - 1;
-                    ref SurtrCallFrame finished = ref frames[depth];
+                    ref SurtrCallFrame finished = ref _frames[depth];
 
                     sp = finished.Base;
                     int expected = finished.ExpectedResults;
@@ -3548,7 +3557,7 @@ namespace Surtr.VM
                     finished.Method = null;
                     finished.Closure = null;
                     finished.Generator = null;
-                    roots[depth + 1] = 0;
+                    _roots[depth + 1] = 0;
                     _frameCount = depth;
 
                     if (ended is not null)
@@ -3592,7 +3601,7 @@ namespace Surtr.VM
                     SurtrRawValue* source = sp - slotCount;
 
                     int depth = _frameCount - 1;
-                    ref SurtrCallFrame finished = ref frames[depth];
+                    ref SurtrCallFrame finished = ref _frames[depth];
 
                     SurtrRawValue* destination = finished.Base;
                     int expected = finished.ExpectedResults;
@@ -3601,7 +3610,7 @@ namespace Surtr.VM
                     finished.Method = null;
                     finished.Closure = null;
                     finished.Generator = null;
-                    roots[depth + 1] = 0;
+                    _roots[depth + 1] = 0;
                     _frameCount = depth;
 
                     if (expected != 0)
@@ -4038,14 +4047,14 @@ namespace Surtr.VM
                         inner.DelegatedBy = outer;
 
                         int outerDepth = _frameCount - 1;
-                        ref SurtrCallFrame parked = ref frames[outerDepth];
+                        ref SurtrCallFrame parked = ref _frames[outerDepth];
 
                         sp = outerStart;
                         parked.Chunk = null;
                         parked.Method = null;
                         parked.Closure = null;
                         parked.Generator = null;
-                        roots[outerDepth + 1] = 0;
+                        _roots[outerDepth + 1] = 0;
                         _frameCount = outerDepth;
                     }
 
@@ -4114,14 +4123,14 @@ namespace Surtr.VM
                     // is popped and control goes back to whoever resumed it, which is what lets one
                     // Yield serve both the compiled fast path and a resume driven by host code.
                     int depth = _frameCount - 1;
-                    ref SurtrCallFrame parked = ref frames[depth];
+                    ref SurtrCallFrame parked = ref _frames[depth];
 
                     sp = frameStart;
                     parked.Chunk = null;
                     parked.Method = null;
                     parked.Closure = null;
                     parked.Generator = null;
-                    roots[depth + 1] = 0;
+                    _roots[depth + 1] = 0;
                     _frameCount = depth;
 
                     _sp = sp;
@@ -4465,16 +4474,16 @@ namespace Surtr.VM
                 var entering = pendingGenerator;
 
                 int resumeDepth = _frameCount;
-                if (resumeDepth == maxDepth)
+                if (resumeDepth == _frames.Length)
                 {
                     _sp = sp;
-                    throw CallStackOverflow(maxDepth);
+                    throw CallStackOverflow(_frames.Length);
                 }
 
                 int generatorLocals = entering.LocalCount;
                 int liveSlots = entering.SlotCount;
 
-                if (sp + generatorLocals + entering.MaxStackSize > stackLimit)
+                if (sp + generatorLocals + entering.MaxStackSize > _stackLimit)
                 {
                     _sp = sp;
                     throw DataStackOverflow();
@@ -4500,7 +4509,7 @@ namespace Surtr.VM
                 var generatorChunk = entering.Chunk;
                 byte* generatorCodeBase = generatorChunk.Code.Pointer;
 
-                ref SurtrCallFrame generatorFrame = ref frames[resumeDepth];
+                ref SurtrCallFrame generatorFrame = ref _frames[resumeDepth];
                 generatorFrame.Base = sp;
                 generatorFrame.CodeBase = generatorCodeBase;
                 generatorFrame.IP = generatorCodeBase + entering.ResumeOffset;
@@ -4519,7 +4528,7 @@ namespace Surtr.VM
                 // A generator body captures nothing, so the roots slot its frame would have used
                 // for a closure is free for the generator itself - which is what keeps it alive
                 // across the collection its own body may trigger.
-                roots[resumeDepth + 1] = SurtrValue.TagMaskReference | (uint)entering.GetSurtrReference();
+                _roots[resumeDepth + 1] = SurtrValue.TagMaskReference | (uint)entering.GetSurtrReference();
 
                 entering.State = SurtrGeneratorState.Running;
                 _frameCount = resumeDepth + 1;
@@ -4573,11 +4582,11 @@ namespace Surtr.VM
                 var target = (SurtrBytecodeMethodInfo)pendingMethod;
 
                 int depth = _frameCount;
-                if (depth == maxDepth)
+                if (depth == _frames.Length)
                 {
                     current.IP = ip;
                     _sp = sp;
-                    throw CallStackOverflow(maxDepth);
+                    throw CallStackOverflow(_frames.Length);
                 }
 
                 SurtrRawValue* newBase = sp - pendingArguments;
@@ -4585,7 +4594,7 @@ namespace Surtr.VM
 
                 // The only stack-overflow check in the whole interpreter: the callee's own high
                 // water mark is known at compile time, so nothing has to be checked per push.
-                if (newBase + localCount + target.MaxStackSize > stackLimit)
+                if (newBase + localCount + target.MaxStackSize > _stackLimit)
                 {
                     current.IP = ip;
                     _sp = sp;
@@ -4618,7 +4627,7 @@ namespace Surtr.VM
                 var targetChunk = target.Chunk;
                 byte* targetCodeBase = targetChunk.Code.Pointer;
 
-                ref SurtrCallFrame entered = ref frames[depth];
+                ref SurtrCallFrame entered = ref _frames[depth];
                 entered.Base = newBase;
                 entered.CodeBase = targetCodeBase;
                 entered.IP = targetCodeBase + target.CodeOffset;
@@ -4630,7 +4639,7 @@ namespace Surtr.VM
                 entered.ArgumentCount = pendingArguments;
                 entered.ExpectedResults = pendingResults;
 
-                roots[depth + 1] = pendingClosure is null
+                _roots[depth + 1] = pendingClosure is null
                     ? 0
                     : SurtrValue.TagMaskReference | (uint)pendingClosure.GetSurtrReference();
 
