@@ -9,14 +9,17 @@ only make sense across the whole set. `docs/VM-Plan.md` has the *why* behind the
 shape, and `docs/Module-Format.md` describes the file these bytes live in.
 
 **240 opcodes are defined, numbered contiguously from `0x00` (`Nop`) through `0xEF`
-(`GenResumed`), family by family, with the free values - `0xF0` through `0xFF` - all at the end.**
+(`GenResumed`), family by family. Above them, `0xF0` through `0xFE` are free and `0xFF` is `Ext`,
+a prefix rather than an instruction: it opens a second 256-value space, documented in §8.**
 The set has been renumbered into that shape once, deliberately: seven instructions with no
 producer (`Dup2`, `Swap`, `Swap2`, `Pow`, `FPow`, `ArrNIn`, `DictNIn`) plus the long-retired
 host-globals opcodes had left holes nothing could ever fill, so rather than grow around them the
 whole set was laid out again - same names, same semantics, new numbers. Every opcode byte in an
 image written before that reset means something different now, which is why
 `SurtrModuleImage.FormatVersion` was bumped to 10 and a reader refuses anything older instead of
-misreading it. There is no upgrade path; recompile.
+misreading it. There is no upgrade path; recompile. The version has moved on since - it is **13**
+now - for reasons that are about how a module is framed rather than about opcode values, except
+for the last bump, which opened the extension prefix (§8).
 
 ---
 
@@ -674,4 +677,64 @@ A generator is reached through a **stub**: the compiler emits two methods per de
 | `0xEE` | `GenDelegate` | `opcode(1)` · 1 byte | `..., inner -> ` (the outer frame is suspended, and the inner one entered) | Delegates the executing generator to another one, and resumes that one now — what `yield from` lowers to when the operand is statically a generator. The outer generator's frame is copied out once and a link to `inner` recorded on it; from then on a resume walks the chain straight to the innermost generator that still has a frame, so an N-deep delegation costs one frame copy per element rather than N. When the inner ends, the return path finds the link and enters the outer's frame at the very same base and answer slot, so a consumer never learns a delegation happened. Delegating to an exhausted generator produces nothing and simply continues; delegating to a running one — directly or around a cycle — traps with `InvalidOperationException`. Any other iterable is lowered to a loop of ordinary `Yield`s instead, since there is no frame to link to. |
 | `0xEF` | `GenResumed` | `opcode(1)` · 1 byte | `... -> ..., value` | Pushes the value the executing generator's last suspension was resumed with. What makes `yield` and `yield from` *expressions*: for a `yield` it is what `send(v)` injected, and for a `yield from` it is what the delegated-to generator returned — in both cases "the value that flowed back in when this suspension ended", which is why one opcode reads both. The statement forms emit `Yield` or `GenDelegate` alone and pay nothing for this, which is why the suspension opcodes keep the stack effect they were given rather than growing one. Every resumption that carries nothing clears the field first, so a stale injection can never be read as a fresh one. Always `unknown`: a generator declares its element (§3.7) and has nowhere to name a second type. |
 
+---
 
+## 8. The extended space
+
+`0xFF` is not an instruction. It is a **prefix**: the byte after it is a `SurtrExtOpCode`, an
+independent 256-value space with its own enum, its own disassembler decoder and its own nested
+`switch` in the interpreter. It sits at the very top of the byte space rather than at the first
+free value so the primary set stays contiguous and can keep growing upward into `0xF0`–`0xFE`.
+`0xFF` *inside* the extended space is reserved as a second prefix, so the space can be extended
+again without another format decision.
+
+```
+0xFF  sub(1)  <immediates>
+```
+
+Offsets are measured from the end of the instruction, prefix included, like every branch except
+`Switch`.
+
+### What may live here
+
+A prefixed instruction costs one extra byte, one extra load and one extra indirect branch. That
+was measured rather than assumed — `surtrbench --prefix-tax` runs a null experiment, two
+hand-emitted bodies identical but for the dispatch path — and on a Ryzen 9800X3D under .NET 8 it
+comes to **0.44–0.48 ns**, against roughly **1 ns** for a dispatch saved. Half the estimate: the
+nested `switch` is a separate prediction site with a much narrower target distribution than the
+main one, and the predictor exploits that.
+
+So the admission rule is:
+
+> **An extended opcode must save at least one dispatch.** One saved dispatch (~1 ns) against one
+> prefix (~0.46 ns) wins comfortably. What loses is an opcode that saves *no* dispatch and only
+> removes a type test, a tag compare or a bounds check — about 0.25 ns of saving against 0.46 ns
+> of prefix.
+
+In practice that makes this the space for **superinstructions and fusions**: a whole emitted
+sequence collapsed into one instruction. A specialisation reaches it only fused with the operand
+loads around it, where the fusion is what pays. Anything whose entire benefit is smaller than one
+dispatch belongs in the free primary values instead — which is why those are held in reserve
+rather than spent.
+
+Every member here must also: charge the step budget through `Branched` if it transfers control;
+carry a 4-byte-offset `X` twin if it branches, so jump relaxation can widen it; and take slot
+operands in one byte, which the emitter guarantees by falling back to the classic sequence when a
+slot does not fit.
+
+### Naming
+
+| Affix | Meaning |
+|---|---|
+| `LL` suffix | Both operands are read from frame slots rather than from the stack. |
+| `LI` suffix | Left operand from a slot, right operand an immediate. |
+| `Next` suffix | A loop step: increment, test, and branch backwards. Falling through is the loop's exit. |
+
+### Instructions
+
+| Value | Opcode | Encoding | Stack | What it does |
+|---|---|---|---|---|
+| `0x00` | `Probe` | `0xFF sub(1) localIdx(1)` · 3 bytes | `... -> ..., value` | Pushes a local, exactly as `LdlS` does. The one member of this space that is not meant to be useful: the compiler never emits it, and it exists to *measure* the prefix. Running a hot loop's local loads through it instead of `LdlS` changes exactly one thing — the dispatch path — so the delta is the prefix's price with nothing else mixed in. Keeping it means that price can be re-measured on new hardware or a new backend rather than assumed from the last time anyone checked. `src/Surtr.Bench/PrefixTax.cs` is the harness. |
+
+`docs/Plan-Opcodes-Extendidos.md` carries the cost model, the catalogue of what is planned here and
+the measurement protocol behind all of it.

@@ -1,4 +1,4 @@
-# The Surtr VM: decisions, gaps and remaining work
+﻿# The Surtr VM: decisions, gaps and remaining work
 
 Companion to `src/Surtr.Core/VM/`. The *why* behind each choice lives in the XML docs and
 comments next to the code; this file is the map — what was decided, what the surrounding
@@ -286,12 +286,20 @@ the other's block. A context now starts its numbering at `SurtrBuiltIns.Reserved
 This section still depends on `SurtrMethodInfo.DeclaringType` naming the declaring *interface* for
 an interface method. The compiler must honour that.
 
-### 3.2 Array element access pays two bounds checks
+### 3.2 Array element access pays two bounds checks - closed
 
-The explicit trap check, plus the CLR's own on the managed buffer, which the JIT cannot elide
-because it compares against `Items.Length` rather than `Count`. Removing the second needs
+**Closed, and not the way this section expected.** It was written when `SurtrArray` held a managed
+`SurtrValue[]`: the explicit trap check plus the CLR's own on the buffer, the second uneliminable
+because the JIT compares against `Items.Length` rather than `Count`. The fix looked like it needed
 `Unsafe.Add`, which netstandard2.1 does not carry without a NuGet package a Unity host would also
-have to ship. Revisit if the target framework moves.
+have to ship.
+
+`SurtrArray.Items` is an unmanaged `SurtrRawValue*` today (`SurtrArray.cs:50`), so there is no CLR
+bounds check to elide: `ArrGet` pays the explicit trap and nothing else, which is the comment
+sitting next to it in the interpreter. The remaining redundancy is different in kind and belongs to
+the compiler rather than the framework - a `for-in` guard that already proved the index in range,
+followed by an `ArrGet` that checks it again - and it is closed by fusing the two into one loop
+instruction rather than by removing a check. See `docs/Plan-Opcodes-Extendidos.md` §5 group A.
 
 ### 3.3 A module belongs to one runtime — closed twice over
 
@@ -1068,8 +1076,8 @@ measurement rather than argument:
   open-addressed probe to skip and this has nothing. The ceiling on any resolution improvement is
   the `virtualCalls − methodCalls` delta (~6 ns/call), and that ceiling is set by the frame
   protocol behind it, not by resolution. Recorded in `benchmark_report.md` §8.
-- **§3.2 remains**, blocked on netstandard2.1 not carrying `Unsafe.Add` without a NuGet dependency
-  a Unity host would also ship. Revisit if the target framework moves.
+- **§3.2 is closed** - the premise it rested on, a managed element buffer, stopped being true when
+  `SurtrArray.Items` became an unmanaged pointer; what is left of it is a compiler-side fusion.
 
 None of what landed disturbs the frame protocol. §4.5 raised the priority of §3.1, since `for-in`'s
 general path goes through interface dispatch — which is why §3.1 went first, back when it was open.

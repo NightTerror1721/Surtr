@@ -154,8 +154,19 @@ namespace Surtr.Bytecode.Image
         /// declaration position. A version 11 reader would read the value bytes as the next
         /// case's name, so it is refused like every other older format.
         /// </para>
+        /// <para>
+        /// Version 13 opens the extended instruction space: <c>0xFF</c> stops being a free value
+        /// and becomes <see cref="OpCode.Ext"/>, a prefix whose next byte is a
+        /// <see cref="SurtrExtOpCode"/>. Nothing about how a module is *framed* changed, which is
+        /// what this number normally tracks - the bump is deliberate anyway, because a version 12
+        /// reader meeting a prefixed instruction would trap on an unknown opcode somewhere in the
+        /// middle of a run instead of refusing the image at load. Failing at the boundary is the
+        /// whole point of having a version. From here, <b>adding extended opcodes does not bump
+        /// it again</b>: an instruction the reader does not know is a build that is too old, and
+        /// this version already says so.
+        /// </para>
         /// </remarks>
-        internal const ushort FormatVersion = 12;
+        internal const ushort FormatVersion = 13;
 
         private readonly byte[] _bytes;
         private readonly string _path;

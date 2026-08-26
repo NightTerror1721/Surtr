@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 
@@ -25,6 +25,23 @@ namespace Surtr.Bench
             {
                 Console.WriteLine(RunnerOptions.Usage);
                 return 0;
+            }
+
+            // Not a workload and not a filter over them: it measures the interpreter's dispatch
+            // path itself, so it runs instead of the catalogue rather than alongside it.
+            if (options.PrefixTax)
+            {
+                try
+                {
+                    return PrefixTax.Run(
+                        iterations: options.Iterations >= 1000 ? options.Iterations : 2_000_000,
+                        samples: Math.Max(options.Rounds, 9));
+                }
+                catch (Exception exception)
+                {
+                    Console.Error.WriteLine("prefix tax measurement failed: " + exception);
+                    return 1;
+                }
             }
 
             try

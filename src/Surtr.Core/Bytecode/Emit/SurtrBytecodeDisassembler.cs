@@ -847,6 +847,13 @@ namespace Surtr.Bytecode.Emit
             var op = (OpCode)chunk.Code[position];
             int operand = position + 1;
 
+            // The prefix is not an instruction, so it is not printed as one: the line names the
+            // sub-opcode, and the whole two-byte header is accounted for before any immediate is
+            // read. Decoding lives in its own method for the same reason the interpreter's lives
+            // in its own switch - the two spaces are independent.
+            if (op == OpCode.Ext)
+                return AppendExtInstruction(builder, chunk, position, indent);
+
             builder.Append(indent).Append("  ").Append(Hex(position)).Append("  ").Append(op.ToString());
 
             switch (op)
@@ -1470,6 +1477,36 @@ namespace Surtr.Bytecode.Emit
             }
 
             return operand + 8 + (count * 8);
+        }
+
+        /// <summary>Decodes one instruction from the extended space, prefix included.</summary>
+        /// <remarks>
+        /// <paramref name="position"/> is the prefix byte; the sub-opcode is the next one and its
+        /// immediates start two bytes in. The returned position is past the whole instruction.
+        /// </remarks>
+        private static int AppendExtInstruction(
+            StringBuilder builder,
+            SurtrChunk chunk,
+            int position,
+            string indent)
+        {
+            var op = (SurtrExtOpCode)chunk.Code[position + 1];
+            int operand = position + 2;
+
+            builder.Append(indent).Append("  ").Append(Hex(position)).Append("  ").Append(op.ToString());
+
+            switch (op)
+            {
+                case SurtrExtOpCode.Probe:
+                    builder.Append(' ').Append(chunk.Code[operand]).AppendLine();
+                    return operand + 1;
+
+                default:
+                    builder.Append(" ; unknown extended opcode 0x")
+                        .Append(((byte)op).ToString("X2", CultureInfo.InvariantCulture))
+                        .AppendLine();
+                    return operand;
+            }
         }
 
         private static int ReadU16(SurtrChunk chunk, int position)

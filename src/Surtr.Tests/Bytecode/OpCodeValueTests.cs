@@ -82,7 +82,19 @@ namespace Surtr.Tests.Bytecode
             (OpCode.InvokeClosure, 0xE0), (OpCode.NewClosure, 0xE1), (OpCode.NewClosureX, 0xE2), (OpCode.NewFunction, 0xE3),
             (OpCode.NewFunctionX, 0xE4), (OpCode.ReturnVoid, 0xE5), (OpCode.ReturnValue, 0xE6), (OpCode.ReturnValues, 0xE7),
             (OpCode.Throw, 0xE8), (OpCode.GenNew, 0xE9), (OpCode.GenIterate, 0xEA), (OpCode.GenResume, 0xEB),
-            (OpCode.GenCurrent, 0xEC), (OpCode.Yield, 0xED), (OpCode.GenDelegate, 0xEE), (OpCode.GenResumed, 0xEF)
+            (OpCode.GenCurrent, 0xEC), (OpCode.Yield, 0xED), (OpCode.GenDelegate, 0xEE), (OpCode.GenResumed, 0xEF),
+            (OpCode.Ext, 0xFF)
+        };
+
+        /// <summary>Every extended opcode and the value it is defined to have.</summary>
+        /// <remarks>
+        /// The same contract as <see cref="Assigned"/>, over the second space the
+        /// <see cref="OpCode.Ext"/> prefix opens. Values here are equally on-disk and equally
+        /// final; <c>0xFF</c> stays reserved as a second prefix.
+        /// </remarks>
+        private static readonly (SurtrExtOpCode Op, byte Value)[] AssignedExt = new (SurtrExtOpCode, byte)[]
+        {
+            (SurtrExtOpCode.Probe, 0x00)
         };
 
         [Fact]
@@ -123,7 +135,16 @@ namespace Surtr.Tests.Bytecode
         [Fact]
         public void TheAssignedValuesAreContiguousExceptAtRetiredSlots()
         {
-            var ordered = new List<(OpCode Op, byte Value)>(Assigned);
+            // Ext is deliberately not part of the contiguous run: it is the last value in the
+            // byte space, so the primary set can keep growing upward into 0xF0..0xFE without ever
+            // colliding with the prefix.
+            var ordered = new List<(OpCode Op, byte Value)>();
+            foreach (var entry in Assigned)
+            {
+                if (entry.Op != OpCode.Ext)
+                    ordered.Add(entry);
+            }
+
             ordered.Sort((a, b) => a.Value.CompareTo(b.Value));
 
             int expected = 0;
@@ -159,6 +180,11 @@ namespace Surtr.Tests.Bytecode
         {
             foreach (OpCode op in (OpCode[])Enum.GetValues(typeof(OpCode)))
             {
+                // The prefix has no line of its own - a prefixed instruction is printed under the
+                // sub-opcode's name - so it is covered by the extended test below instead.
+                if (op == OpCode.Ext)
+                    continue;
+
                 var module = new SurtrModule("test");
                 var builder = new BytecodeBuilder();
                 builder.Op(op);
@@ -174,6 +200,69 @@ namespace Surtr.Tests.Bytecode
                 Assert.Contains(op.ToString(), text, StringComparison.Ordinal);
             }
         }
+
+        #region Extended space
+
+        [Fact]
+        public void EveryExtendedOpCodeHasTheValueTheFormatSaysItHas()
+        {
+            foreach (var (op, value) in AssignedExt)
+                Assert.Equal(value, (byte)op);
+        }
+
+        /// <summary>Nothing is defined in the extended space that the table above does not name.</summary>
+        [Fact]
+        public void TheExtendedTableCoversTheWholeSpace()
+        {
+            var declared = (SurtrExtOpCode[])Enum.GetValues(typeof(SurtrExtOpCode));
+
+            Assert.Equal(declared.Length, AssignedExt.Length);
+
+            var named = new HashSet<SurtrExtOpCode>();
+            foreach (var (op, _) in AssignedExt)
+                Assert.True(named.Add(op), $"{op} appears twice in the extended table.");
+
+            foreach (var op in declared)
+                Assert.Contains(op, named);
+        }
+
+        /// <summary>
+        /// 0xFF stays out of the extended space, reserved as a second prefix. Spending it on an
+        /// ordinary instruction would close the only door out if 256 values ever ran short.
+        /// </summary>
+        [Fact]
+        public void TheExtendedSpaceKeepsItsOwnPrefixReserved()
+        {
+            foreach (var (op, _) in AssignedExt)
+                Assert.NotEqual(0xFF, (byte)op);
+        }
+
+        /// <summary>
+        /// Every extended opcode decodes, for the same reason the primary ones must: the
+        /// disassembler carries its own copy of the byte layout, and one it does not know takes
+        /// every instruction after it down with it.
+        /// </summary>
+        [Fact]
+        public void TheDisassemblerKnowsEveryExtendedOpCode()
+        {
+            foreach (SurtrExtOpCode op in (SurtrExtOpCode[])Enum.GetValues(typeof(SurtrExtOpCode)))
+            {
+                var module = new SurtrModule("test");
+                var builder = new BytecodeBuilder();
+                builder.Op(OpCode.Ext);
+                builder.U8((byte)op);
+
+                for (int i = 0; i < 16; i++)
+                    builder.U8(0);
+
+                string text = SurtrBytecodeDisassembler.Disassemble(builder.Build(module, localCount: 0, maxStackSize: 8));
+
+                Assert.DoesNotContain("unknown extended opcode", text, StringComparison.Ordinal);
+                Assert.Contains(op.ToString(), text, StringComparison.Ordinal);
+            }
+        }
+
+        #endregion
     }
 }
 

@@ -47,7 +47,8 @@ namespace Surtr.Bytecode
     /// <para>
     /// <b>New opcodes take a free value at the end and are never given one already in use.</b>
     /// The set is numbered contiguously from 0x00, family by family, and every value between Nop
-    /// and GenResumed is assigned; 0xF0 through 0xFF are free. When the set did carry holes -
+    /// and GenResumed is assigned; 0xF0 through 0xFE are free, and 0xFF is <see cref="Ext"/>, the
+    /// prefix that opens a second 256-value space (<see cref="SurtrExtOpCode"/>). When the set did carry holes -
     /// retired instructions whose old bytes could never be reused - it was renumbered back into
     /// one contiguous run instead of growing around the gaps, a deliberate reset recorded here
     /// and in <c>OpCodeValueTests</c>: every byte of every image written before that reset means
@@ -2222,6 +2223,29 @@ namespace Surtr.Bytecode
         /// compiler guarantees that by never emitting it anywhere else.
         /// </remarks>
         GenResumed = 0xEF,
+        #endregion
+
+        #region Extension
+
+        /// <summary>Prefix: the next byte is a <see cref="SurtrExtOpCode"/>.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) sub(1) ...</c> - the sub-opcode's own immediates follow.<br/>
+        /// Stack: whatever the sub-opcode says.<br/>
+        /// Notes: not an instruction. It opens a second 256-value space so the set can keep
+        /// growing without renumbering, and it is the *last* value rather than the first free one
+        /// because the primary space above it stays contiguous that way.
+        /// <para>
+        /// A prefixed instruction pays one extra byte, one extra load and one extra indirect
+        /// branch - roughly one dispatch. That is what fixes the admission rule for the extended
+        /// space: <b>an extended opcode has to save at least two dispatches to be worth its
+        /// prefix</b>, so the space is for superinstructions that collapse a whole emitted
+        /// sequence, never for a specialisation that only removes a type test. Anything whose
+        /// whole benefit is smaller than one dispatch belongs in the free primary values instead,
+        /// which is why those are held in reserve. <c>docs/Plan-Opcodes-Extendidos.md</c> has the
+        /// cost model and the catalogue.
+        /// </para>
+        /// </remarks>
+        Ext = 0xFF,
         #endregion
 
     }

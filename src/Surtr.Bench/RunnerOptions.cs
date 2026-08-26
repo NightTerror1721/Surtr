@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -47,6 +47,14 @@ namespace Surtr.Bench
 
         /// <summary>List the catalogue and what each case measures, then exit without running.</summary>
         public bool ListOnly;
+
+        /// <summary>Run the extended-prefix calibration instead of the catalogue.</summary>
+        /// <remarks>
+        /// A different question from every other mode: not "how fast is this workload" but "what
+        /// does one <c>Ext</c> dispatch cost", which is the number the extended instruction
+        /// space's admission rule rests on. See <see cref="PrefixTax"/>.
+        /// </remarks>
+        public bool PrefixTax;
 
         /// <summary>Run every workload once at its size and check the engines against the C# baseline, no timing.</summary>
         public bool VerifyOnly;
@@ -137,6 +145,8 @@ namespace Surtr.Bench
             + "  --baseline-only         run only the C# baseline\n"
             + "  --csv <path>            append the results to <path> as CSV\n"
             + "  --list                  list the catalogue and what each case measures, then exit\n"
+            + "  --prefix-tax            measure what one Ext-prefixed dispatch costs, and exit;\n"
+            + "                          --iters sets the loop size, --rounds the sample count\n"
             + "  -h, --help              show this help\n";
 
         public static RunnerOptions Parse(string[] args)
@@ -236,6 +246,9 @@ namespace Surtr.Bench
                         break;
                     case "--list":
                         options.ListOnly = true;
+                        break;
+                    case "--prefix-tax":
+                        options.PrefixTax = true;
                         break;
                     default:
                         throw new ArgumentException($"unknown option '{arg}'.");

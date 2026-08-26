@@ -13,6 +13,20 @@ en `src/` relacionada con rendimiento; las oportunidades documentadas viven en `
 
 ---
 
+> **Nota de seguimiento (2026-08-26).** Este informe sigue siendo la investigacion de partida, y
+> su inventario de §2.3 es exacto. Tres de sus propuestas han sido revisadas en
+> `docs/Plan-Opcodes-Extendidos.md`, que es el plan que se esta ejecutando:
+>
+> - **P3** queda recortada: afirma que `IntEntries` nunca vuelve a null, y
+>   `SurtrDictionary.Deoptimize()` lo pone a null desde el host, asi que el opcode rapido esta
+>   obligado a conservar el test.
+> - **P4 y P5** quedan supersedidas por el grupo A de ese plan, que colapsa el ciclo entero de un
+>   `for-in` en una instruccion en vez de solo el paso.
+> - La escala de beneficio se recalibro: un despacho vale ~1 ns y un test de tipo predicho ~0.25 ns,
+>   asi que P2 y P3 sueltas quedan dentro del ruido y solo pagan fusionadas.
+
+---
+
 ## 1. Resumen ejecutivo
 
 Surtr ya aplica casi todo el catálogo clásico de un intérprete sin JIT bien construido: despacho

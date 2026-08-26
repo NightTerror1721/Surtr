@@ -342,6 +342,21 @@ namespace Surtr.Bytecode.Emit
             return this;
         }
 
+        /// <summary>Writes the extension prefix and a sub-opcode byte, and accounts for the stack effect.</summary>
+        /// <remarks>
+        /// The raw tier for <see cref="OpCode.Ext"/>. Immediates are still the caller's to write.
+        /// Two bytes go out, so anything measuring an instruction's length has to count the prefix
+        /// - see <see cref="SurtrExtOpCode"/> for what may live here at all.
+        /// </remarks>
+        public SurtrCodeEmitter EmitExt(SurtrExtOpCode op, int pop = 0, int push = 0)
+        {
+            ThrowIfFinished();
+            Track(pop, push);
+            _code.Add((byte)OpCode.Ext);
+            _code.Add((byte)op);
+            return this;
+        }
+
         /// <summary>Writes a single immediate byte.</summary>
         public SurtrCodeEmitter EmitU8(int value)
         {

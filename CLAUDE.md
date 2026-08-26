@@ -1,4 +1,4 @@
-# CLAUDE.md
+﻿# CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -21,10 +21,11 @@ This file is the orientation; each of these goes deep on one thing. Read the rel
 |---|---|
 | `docs/Language-Syntax.md` | The surface language, and the reasoning behind each choice. §1.2 is the authoritative reserved word list, §5.7 the operator table. |
 | `docs/Runtime-Model.md` | How classes, methods, properties, enums, interfaces and modules fit together, what linking builds, and what the compiler owes the runtime. |
-| `docs/Opcodes.md` | All 247 opcodes by family, with values, encodings and stack effects. Mirrors `OpCode.cs`, which stays the source of truth. |
+| `docs/Opcodes.md` | All 240 opcodes by family, with values, encodings and stack effects, plus the extended space behind the `0xFF` prefix (§8). Mirrors `OpCode.cs` and `SurtrExtOpCode.cs`, which stay the source of truth. |
 | `docs/Module-Format.md` | The `.surtrc` byte layout, and what is bound at load rather than written. |
 | `docs/VM-Plan.md` | The interpreter's design decisions, the remaining gaps, and the ordered plan. |
 | `docs/Plan-Generadores.md` | Generators: the comparative study, the three suspension strategies and why the frame copy won (§4), the closed design decisions (§12, which override §3/§5/§6), the `yield*` evaluation (§11), and what each of the three phases built and measured (§13, §14, §15 — §15 overrides §12.8). |
+| `docs/Plan-Opcodes-Extendidos.md` | The extended instruction space: the measured cost of the `0xFF` prefix, the admission rule it fixes, the catalogue of superinstructions planned for it, and the phase plan. |
 | `docs/Plan-Disposicion.md` | Deterministic disposal: why the registry's lack of a finalization hook makes it a language question, the comparison with C#/Java/Python, the built-in `IDisposable`, `using`, and what a `for-in`'s close costs. |
 
 ## Performance is CRITICAL
@@ -177,7 +178,7 @@ Members are native methods linked by function pointer via `SurtrBuiltInTypeBuild
 
 **`yield from` is a link, not a loop** (§3.7). Delegating to another generator suspends the delegating one *without a frame* and records `SurtrGenerator.Delegate`, so every later resume walks straight to the innermost generator that still has one — three levels cost 7 % more than none, where a language without the construct pays per level at each. The link is two-way, and `DelegatedBy` is the load-bearing half: when a delegated-to generator ends, the ordinary return path would tell the consumer the sequence is over, which is true of the inner generator and false of the outer one, so `ReturnVoid` uses the back-pointer to enter the delegator's frame at the very same base and answer slot. Delegating to anything that is not a generator lowers to the loop it means, since an array has no frame to link to — and so does delegating with an element conversion, because a link hands the inner values over untouched.
 
-**A generator is a coroutine, and the whole of that cost one opcode.** `send(v)` resumes a suspended `yield` with a value, `yield from` evaluates to what the generator it delegated to returned, `raise(e)` throws where the body is suspended, and `dispose()` ends it running its pending `finally` blocks — which is what makes `yield` inside a `try` legal at last. The budget mattered: only four opcode values were free, and the naive shape wanted five. What paid for it was refusing to change any existing byte's meaning. `Yield` keeps its stack effect and a second opcode, **`GenResumed` (`0xFC`)**, pushes the resumed value — so the statement form still costs one instruction and only an expression `yield` emits the read. One field, `SurtrGenerator.Resumed`, serves both `send` and a finished delegation, because both are "the value that flowed back in". `return expr;` in a body is `ReturnValue` with the generator branch `ReturnVoid` already had, on a path no older module can reach since the binder refused it outright. And `send`/`raise`/`dispose`/`result` are ordinary native methods. Three values (`0xFD`–`0xFF`) stay free and there was no format bump. `docs/Plan-Generadores.md` §15.2 has the table.
+**A generator is a coroutine, and the whole of that cost one opcode.** `send(v)` resumes a suspended `yield` with a value, `yield from` evaluates to what the generator it delegated to returned, `raise(e)` throws where the body is suspended, and `dispose()` ends it running its pending `finally` blocks — which is what makes `yield` inside a `try` legal at last. The budget mattered: only four opcode values were free, and the naive shape wanted five. What paid for it was refusing to change any existing byte's meaning. `Yield` keeps its stack effect and a second opcode, **`GenResumed`**, pushes the resumed value — so the statement form still costs one instruction and only an expression `yield` emits the read. One field, `SurtrGenerator.Resumed`, serves both `send` and a finished delegation, because both are "the value that flowed back in". `return expr;` in a body is `ReturnValue` with the generator branch `ReturnVoid` already had, on a path no older module can reach since the binder refused it outright. And `send`/`raise`/`dispose`/`result` are ordinary native methods. There was no format bump. `docs/Plan-Generadores.md` §15.2 has the table.
 
 **`GeneratorExit` is the one class no typed `catch` ever matches.** `dispose()` unwinds a suspended body by raising it, and `Catches` refuses it to every handler with a declared type — so only a `finally` sees it, and a body wrapping its suspension in `catch (e: Exception)` still gets closed. It is Python's `BaseException` rule written as one condition rather than as a second hierarchy root, which a language with a single exception root (§9) has no room for.
 
@@ -201,7 +202,7 @@ A member implementing a generic interface is matched on the **erased** signature
 
 ## The instruction set
 
-`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — **247 opcodes**, `0x00`–`0xFC`, leaving 9 free values in the `byte` space (`0xFD`–`0xFF`, plus the six retired ones). It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
+`src/Surtr.Core/Bytecode/OpCode.cs` holds the VM's complete instruction set — **240 opcodes**, `0x00`–`0xEF`, contiguous and with no retired holes. `0xF0`–`0xFE` are free and deliberately held in reserve; `0xFF` is `Ext`, a **prefix** whose next byte is a `SurtrExtOpCode` from a second 256-value space. It is the authoritative reference; don't restate opcode semantics elsewhere, link to it.
 
 Surtr is a stack machine. Operands come from the evaluation stack; pool indices, jump offsets and argument counts are encoded inline after the opcode byte as little-endian immediates.
 
@@ -408,7 +409,7 @@ Runtime-side gaps are in `docs/VM-Plan.md` §3; what the language design newly o
 
 The VM opcode suites in `src/Surtr.Tests/VM` predate the emitter and still use their own `BytecodeBuilder`, which pokes at `SurtrChunk` directly. That is deliberate: an opcode test should exercise the byte layout it is testing, not whatever the emitter decided to emit. New tests that are *about* a whole module belong in `src/Surtr.Tests/Bytecode/Emit` and should go through `SurtrModuleBuilder`.
 
-**Opcode values are final, not append-only.** `Bytecode/Image/` serializes bytecode, so an enum value is on disk somewhere. The set was regrouped by family and renumbered once — the pass that also wrote every value out explicitly — and `SurtrModuleImage.FormatVersion` went to **3** so an image written before it is refused rather than misread. That is the last renumbering: from here a new opcode takes a free value (`0xE0`+) and is filed with its family, and `SurtrModuleImage.FormatVersion` goes back to covering only how a module is *framed* rather than what runs inside it. It is at **9** now: the generator work inserted `SurtrValueTypeCode.Generator` inside the built-in run, which shifted every code from `Range` up and so changed the meaning of a byte already in the layout — the one thing a refused version exists to catch. `GenResumed` (`0xFC`) is the first opcode added under the new rule and needed **no** bump, which is the rule working: an added instruction changes nothing about how a module is framed.
+**Opcode values are final, not append-only.** `Bytecode/Image/` serializes bytecode, so an enum value is on disk somewhere. The set was regrouped by family and renumbered once — the pass that also wrote every value out explicitly — and `SurtrModuleImage.FormatVersion` went to **3** so an image written before it is refused rather than misread. That is the last renumbering: from here a new opcode takes a free value (`0xE0`+) and is filed with its family, and `SurtrModuleImage.FormatVersion` goes back to covering only how a module is *framed* rather than what runs inside it. It is at **13** now: the generator work inserted `SurtrValueTypeCode.Generator` inside the built-in run, which shifted every code from `Range` up and so changed the meaning of a byte already in the layout — the one thing a refused version exists to catch. `GenResumed` is the first opcode added under the new rule and needed **no** bump, which is the rule working: an added instruction changes nothing about how a module is framed. The last bump is the one exception that proves it: opening the `0xFF` prefix does not change framing either, but a build that predates it would trap on an unknown opcode in the middle of a run rather than refuse the image at load, and failing at the boundary is what a version is for. Adding *extended* opcodes does not bump it again.
 
 ## Coding conventions
 
@@ -419,7 +420,7 @@ The VM opcode suites in `src/Surtr.Tests/VM` predate the emitter and still use t
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Surtr** (10809 symbols, 43594 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Surtr** (10943 symbols, 44324 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

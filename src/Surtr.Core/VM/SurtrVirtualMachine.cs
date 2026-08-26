@@ -4136,6 +4136,26 @@ namespace Surtr.VM
                 }
                 #endregion
 
+                #region Extension
+                // The prefix. One extra load and one extra indirect branch buy a second 256-value
+                // space, which is why nothing lands here that saves less than the dispatch it
+                // costs - see SurtrExtOpCode for the admission rule. The nested switch is written
+                // the same way as the outer one: every body inline, every exit a goto, nothing
+                // spilled across a call.
+                case OpCode.Ext:
+                    switch ((SurtrExtOpCode)(*ip++))
+                    {
+                        case SurtrExtOpCode.Probe:
+                            *sp++ = frameBase[*ip++];
+                            goto Dispatch;
+
+                        default:
+                            current.IP = ip;
+                            _sp = sp;
+                            throw InvalidExtOpCode(*(ip - 1));
+                    }
+                #endregion
+
                 default:
                     current.IP = ip;
                     _sp = sp;
@@ -4405,6 +4425,10 @@ namespace Surtr.VM
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException InvalidOpCode(byte opCode)
             => new SurtrExecutionException($"0x{opCode:X2} is not a valid opcode.", SurtrBuiltIns.InvalidOperationException);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static SurtrExecutionException InvalidExtOpCode(byte subOpCode)
+            => new SurtrExecutionException($"0xFF 0x{subOpCode:X2} is not a valid extended opcode.", SurtrBuiltIns.InvalidOperationException);
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException GeneratorAlreadyStarted()

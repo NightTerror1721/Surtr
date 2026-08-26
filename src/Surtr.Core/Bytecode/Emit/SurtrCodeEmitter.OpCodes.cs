@@ -1401,5 +1401,26 @@ namespace Surtr.Bytecode.Emit
         }
 
         #endregion
+
+        #region Extended Operations
+
+        /// <summary>Emits <see cref="SurtrExtOpCode.Probe"/>.</summary>
+        /// <remarks>
+        /// The calibration instrument, not a code generation tool: it does what
+        /// <see cref="LdlS"/> does, through the prefix, so a benchmark can price the extra
+        /// dispatch. Nothing in the compiler emits it.
+        /// </remarks>
+        public SurtrCodeEmitter Probe(int localIndex)
+        {
+            ThrowIfFinished();
+            CheckRange(localIndex, 0, byte.MaxValue, OpCode.Ext, "localIdx");
+            Track(0, 1);
+            _code.Add((byte)OpCode.Ext);
+            _code.Add((byte)SurtrExtOpCode.Probe);
+            _code.Add((byte)localIndex);
+            return this;
+        }
+
+        #endregion
     }
 }
