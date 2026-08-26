@@ -58,6 +58,17 @@ namespace Surtr.Compiler.CodeGen
         {
             var bare = type.NonNullable;
 
+            // A nullable multi-field value class (or enum with user fields) has no inline "absent"
+            // representation (§5.1, value-types handoff): its nullable form is a reference - a boxed
+            // instance of the value when present, a null reference when absent - exactly the
+            // convention an erased slot already rides. So it occupies one slot, never its block's
+            // width, which is what makes `T? -> T` an unbox and `T -> T?` a box.
+            if (type.IsNullable && bare is NamedTypeSymbol nullableNamed && IsBlockValueClass(nullableNamed))
+            {
+                width = 1;
+                return false;
+            }
+
             if (bare.SpecialType == SpecialType.Range)
             {
                 width = 3;
@@ -231,7 +242,14 @@ namespace Surtr.Compiler.CodeGen
                     var fieldType = fields[i].Type.NonNullable;
 
                     int width;
-                    if (fieldType.SpecialType == SpecialType.Range)
+                    if (fields[i].Type.IsNullable)
+                    {
+                        // A nullable field is one slot whatever its element: a nullable primitive
+                        // carries its absent tag inline, and a nullable multi-field value is a
+                        // reference (present = boxed, absent = null). Both are width 1.
+                        width = 1;
+                    }
+                    else if (fieldType.SpecialType == SpecialType.Range)
                     {
                         // A range's width rides its descriptor alone - three slots, always.
                         width = 3;

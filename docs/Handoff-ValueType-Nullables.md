@@ -1,8 +1,16 @@
 # Handoff — Value classes multi-campo nullable: sin representación de null
 
-> **Estado:** limitación descubierta durante la Fase 3 de la migración de enums a clases de valor
-> (`c300cf4`). No es un bug introducido por la migración: es una carencia preexistente del lenguaje
-> que la migración sacó a la luz. Documentada aquí para resolverla en otra sesión.
+> **Estado: RESUELTO** (Opción A, "Null como boxed") — implementado y verificado en esta sesión:
+> `T?` multi-campo se representa como referencia (presente = `SurtrInstance` boxeado, ausente =
+> referencia null), con boxeo en `T → T?`, desboxeo en `T? → T` (cast, `!!`, narrowing, `?.`) y
+> test de referencia para `== null`/`!= null`. `of` se sintetiza ahora también para enums
+> multi-campo. Todos los tests (3037) en verde. Lo que sigue es el registro histórico del
+> diagnóstico que motivó el cambio.
+>
+> La implementación tocó: `ValueTypeLayout.IsInlineType`/`TryGet` (anulable multi-campo = 1 slot),
+> `MethodBodyEmitter` (`EmitConversionTail` box/desbox, `EmitReturnValue`, `UnboxIfNullableBlock`,
+> `EnsureBlockSlot`, receptores de llamada inline/directa), `Binder.AddEnumMembers` (guard
+> `canBeNull` eliminado), y tests en `ModuleEmitterTests`.
 
 ## El problema en una frase
 

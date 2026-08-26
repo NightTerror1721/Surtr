@@ -1649,6 +1649,10 @@ namespace Surtr.Compiler.CodeGen
                 if (@return.Value is not null && frame.HasResult)
                 {
                     Expression(@return.Value);
+                    // An inlined multi-field value returned through its nullable form crosses as a
+                    // boxed reference, matching the callee's `E?` return slot.
+                    if (frame.Method.ReturnType.IsNullable && TryMultiSlotWidth(@return.Value.Type, out _))
+                        BoxIfMultiSlot(@return.Value.Type);
                     EmitStoreLocal(frame.Result);
                 }
                 else if (@return.Value is not null)
@@ -1677,12 +1681,23 @@ namespace Surtr.Compiler.CodeGen
                 EmitStoreLocal(result);
                 UnwindTo(0);
                 EmitLoadLocal(result);
-                EmitReturnOf(@return.Value.Type);
+                EmitReturnValue(@return.Value.Type);
                 return;
             }
 
             Expression(@return.Value);
-            EmitReturnOf(@return.Value.Type);
+            EmitReturnValue(@return.Value.Type);
+        }
+
+        /// <summary>Leaves the computed value in the form the frame's declared return type demands.</summary>
+        private void EmitReturnValue(TypeSymbol valueType)
+        {
+            // A multi-field value class returned through its nullable form (`Vec2 -> Vec2?`) must
+            // box: the value is a block but the return type's single slot is a reference.
+            if (_symbol.ReturnType.IsNullable && TryMultiSlotWidth(valueType, out _))
+                BoxIfMultiSlot(valueType);
+
+            EmitReturnOf(_symbol.ReturnType);
         }
 
         /// <summary>Returns whatever is on top of the operand stack, in the form its width demands.</summary>
@@ -1762,10 +1777,12 @@ namespace Surtr.Compiler.CodeGen
 
                 case BoundLocalExpression local:
                     LoadSymbol(local.Local, () => EmitLoadLocal(Slot(local.Local)));
+                    UnboxIfNullableBlock(local.Local.Type, local.Type);
                     return;
 
                 case BoundParameterExpression parameter:
                     LoadSymbol(parameter.Parameter, () => EmitLoadLocal(ParameterSlot(parameter.Parameter)));
+                    UnboxIfNullableBlock(parameter.Parameter.Type, parameter.Type);
                     return;
 
                 case BoundThisExpression:
@@ -1885,6 +1902,10 @@ namespace Surtr.Compiler.CodeGen
                         _conditionalReceivers.Count > 0
                             ? _conditionalReceivers[_conditionalReceivers.Count - 1]
                             : throw Unsupported("a '?.' receiver outside the access it belongs to"));
+
+                    // The receiver of a `?.` on a nullable multi-field value was stored as a boxed
+                    // reference; the access expects the block, so unbox on the way in.
+                    UnboxIfNullableBlock(expression.Type);
 
                     return;
 
@@ -2030,8 +2051,13 @@ namespace Surtr.Compiler.CodeGen
             {
                 case ConversionKind.Identity:
                 case ConversionKind.ImplicitNullable:
-                    // Nothing to emit: a primitive widening into its own nullable form keeps the
-                    // same representation, and a reference is its payload either way.
+                    // A primitive widening into its own nullable form keeps the same representation
+                    // (the absent tag lives in the same slot), and a reference is its payload either
+                    // way. A multi-field value class, though, has no inline "absent" form: entering
+                    // its nullable type boxes the block into the reference its `T?` rides (present
+                    // = boxed instance, absent = null). §5.1 / value-types handoff.
+                    if (!BoxIfMultiSlot(from))
+                        return;
                     return;
 
                 case ConversionKind.ImplicitReference:
@@ -2069,7 +2095,13 @@ namespace Surtr.Compiler.CodeGen
                     // `T?` narrowing back to `T` names the same class, so there is nothing to check
                     // that the cast would not accept anyway.
                     if (ReferenceEquals(from.NonNullable, to.NonNullable))
+                    {
+                        // ...except when the nullable was a multi-field value class: it held a boxed
+                        // reference, and the target wants the block back, so the cast is an unbox.
+                        if (from.IsNullable && TryMultiSlotWidth(to, out _))
+                            UnpackIfMultiSlot(to);
                         return;
+                    }
 
                     Code.CastTo(Descriptors.Emit(to.NonNullable));
                     return;
@@ -2235,6 +2267,39 @@ namespace Surtr.Compiler.CodeGen
             }
 
             return false;
+        }
+
+        /// <summary>Whether a type is a multi-field value class (or enum with user fields) whose block is wider than one slot.</summary>
+        private static bool IsBlockValueClass(TypeSymbol type)
+            => type.NonNullable is NamedTypeSymbol named && ValueTypeLayout.IsBlockValueClass(named);
+
+        /// <summary>
+        /// Unboxes a value just loaded from a slot that stored a nullable multi-field value as a
+        /// boxed reference, when the expression's own type wants the block back (a null-check,
+        /// <c>!!</c> or <c>?.</c> narrowed it to the non-null form).
+        /// </summary>
+        private void UnboxIfNullableBlock(TypeSymbol storageType, TypeSymbol useType)
+        {
+            if (storageType.IsNullable && TryMultiSlotWidth(useType, out _))
+                UnpackIfMultiSlot(useType);
+        }
+
+        /// <summary>The single-type form used where only the expression's type is in hand (a <c>?.</c> receiver).</summary>
+        private void UnboxIfNullableBlock(TypeSymbol useType)
+        {
+            if (TryMultiSlotWidth(useType, out _))
+                UnpackIfMultiSlot(useType);
+        }
+
+        /// <summary>
+        /// Unboxes a call receiver that is a nullable multi-field value, so the block a value-class
+        /// instance dispatch expects is what the frame holds. A direct dispatch on a value class
+        /// never boxes the receiver, so a reference left here would underflow the call.
+        /// </summary>
+        private void UnboxNullableBlockReceiver(TypeSymbol receiverType)
+        {
+            if (receiverType.IsNullable && IsBlockValueClass(receiverType))
+                UnpackIfMultiSlot(receiverType.NonNullable);
         }
 
         /// <summary>
@@ -2707,6 +2772,10 @@ namespace Surtr.Compiler.CodeGen
             Expression(assertion.Thrown);
             Code.Throw();
             Code.MarkLabel(ok);
+
+            // `!!` yields the non-null block: the operand was a boxed reference, so unbox it now
+            // that it is known present.
+            UnboxIfNullableBlock(assertion.Operand.Type, assertion.Type);
         }
 
         /// <summary>Pushes the "no value" of a type: the absent tag for a primitive, null otherwise.</summary>
@@ -4341,8 +4410,12 @@ namespace Surtr.Compiler.CodeGen
             {
                 Expression(call.Receiver);
 
-                // �6.3: a value class is the field it wraps, and a field is not something to
-                // dispatch on � so a call that might resolve through the receiver's class boxes
+                // A nullable multi-field value's receiver is a boxed reference; a value-class
+                // instance dispatch expects the block, so unbox it first.
+                UnboxNullableBlockReceiver(call.Receiver.Type);
+
+                // ?6.3: a value class is the field it wraps, and a field is not something to
+                // dispatch on ? so a call that might resolve through the receiver's class boxes
                 // first, and `this` inside the callee unwraps. A direct dispatch needs neither.
                 BoxReceiverForCall(call.Method, call.Receiver.Type);
             }
@@ -5099,9 +5172,11 @@ namespace Surtr.Compiler.CodeGen
             {
                 // Sized by the receiver's own type, not the caller's: a module function splicing a
                 // value-class method's body has no receiver of its own, and a multi-field value
-                // occupies its whole width.
-                var slot = DeclareTemp("$inlineThis", call.Receiver.Type);
+                // occupies its whole width. The non-nullable form is what a value-class dispatch
+                // needs - a nullable multi-field receiver is stored boxed and unboxes here.
+                var slot = DeclareTemp("$inlineThis", call.Receiver.Type.NonNullable);
                 Expression(call.Receiver);
+                UnboxNullableBlockReceiver(call.Receiver.Type);
                 EmitStoreLocal(slot);
                 receiver = slot;
             }
@@ -5132,7 +5207,11 @@ namespace Surtr.Compiler.CodeGen
                 if (tailReturn.Value is not null)
                 {
                     if (hasResult)
+                    {
                         Expression(tailReturn.Value);
+                        if (call.Method.ReturnType.IsNullable && TryMultiSlotWidth(tailReturn.Value.Type, out _))
+                            BoxIfMultiSlot(tailReturn.Value.Type);
+                    }
                     else
                         EffectOnly(tailReturn.Value);
                 }
@@ -6162,10 +6241,10 @@ namespace Surtr.Compiler.CodeGen
             switch (expression)
             {
                 case BoundLocalExpression local:
-                    return Slot(local.Local).Index;
+                    return EnsureBlockSlot(local.Local.Type, width, () => Slot(local.Local).Index, () => EmitLoadLocal(Slot(local.Local)));
 
                 case BoundParameterExpression parameter:
-                    return ParameterSlot(parameter.Parameter).Index;
+                    return EnsureBlockSlot(parameter.Parameter.Type, width, () => ParameterSlot(parameter.Parameter).Index, () => EmitLoadLocal(ParameterSlot(parameter.Parameter)));
 
                 default:
                 {
@@ -6176,6 +6255,26 @@ namespace Surtr.Compiler.CodeGen
                     return spilled.Index;
                 }
             }
+        }
+
+        /// <summary>
+        /// The base slot of a local or parameter read as a value-class block. A slot that stored a
+        /// <em>nullable</em> value holds a boxed reference, not the block, so reading it as the
+        /// block has to spill the unboxed block to a temp first.
+        /// </summary>
+        private int EnsureBlockSlot(TypeSymbol storageType, int width, Func<int> slot, Action load)
+        {
+            if (storageType.IsNullable && width > 1)
+            {
+                var spilled = _method.DeclareLocals("$vt", width);
+                _slotWidthsByIndex[spilled.Index] = width;
+                load();
+                UnpackIfMultiSlot(storageType.NonNullable);
+                EmitStoreLocal(spilled);
+                return spilled.Index;
+            }
+
+            return slot();
         }
 
         private SurtrLocal Declare(LocalSymbol local)

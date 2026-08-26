@@ -1970,6 +1970,167 @@ var runtime = Run(
         }
 
         /// <summary>
+        /// A case-carrying enum's nullable form is a boxed reference (§5.1, value-types handoff),
+        /// so its <c>of</c> is synthesized even multi-field: it boxes a matching case's block and
+        /// returns the null reference for an unknown value.
+        /// </summary>
+        [Fact]
+        public void OfIsSynthesizedForACaseCarryingEnumAndReturnsNullForUnknowns()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(\"h\"), Spades(\"s\");\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun known(): int { let s = Suit.of(1); return s == null ? -1 : s.glyph == \"s\" ? 1 : 0; }\n"
+                    + "fun unknown(): int { return Suit.of(99) == null ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "known"));
+            Assert.Equal(1, Int(runtime, "unknown"));
+        }
+
+        /// <summary>
+        /// A multi-field value class's nullable form can be returned as null without underflow: its
+        /// <c>T?</c> is a boxed reference (present = boxed instance, absent = null), so the null
+        /// occupies the same single slot a present value is boxed into.
+        /// </summary>
+        [Fact]
+        public void ANullableMultiFieldValueClassCanReturnNull()
+        {
+            var runtime = Run(
+                "value class Vec2 {\n"
+                    + "  public let x: int;\n"
+                    + "  public let y: int;\n"
+                    + "  public constructor(x: int, y: int) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "fun nothing(): Vec2? { return null; }\n"
+                    + "fun something(): Vec2? { return Vec2(1, 2); }\n"
+                    + "fun check(): int { return nothing() == null ? (something() == null ? 0 : 1) : 0; }");
+
+            Assert.Equal(1, Int(runtime, "check"));
+        }
+
+        /// <summary>
+        /// A nullable multi-field value class unboxes when a null-check narrows it to the block
+        /// form, so reading a field off it works.
+        /// </summary>
+        [Fact]
+        public void ANullableMultiFieldValueClassUnboxesForFieldAccess()
+        {
+            var runtime = Run(
+                "value class Vec2 {\n"
+                    + "  public let x: int;\n"
+                    + "  public let y: int;\n"
+                    + "  public constructor(x: int, y: int) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "fun roundTrip(): int { let v: Vec2? = Vec2(3, 4); return v == null ? -1 : v.x; }");
+
+            Assert.Equal(3, Int(runtime, "roundTrip"));
+        }
+
+        /// <summary>
+        /// A nullable multi-field value class round-trips through <c>of</c>/<c>.value</c>-style
+        /// access: the boxed reference unboxes back into the block on read.
+        /// </summary>
+        [Fact]
+        public void ANullableMultiFieldValueClassRoundTripsThroughAssert()
+        {
+            var runtime = Run(
+                "value class Vec2 {\n"
+                    + "  public let x: int;\n"
+                    + "  public let y: int;\n"
+                    + "  public constructor(x: int, y: int) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "fun roundTrip(): int { let v: Vec2? = Vec2(7, 8); let w = v!!; return w.x; }");
+
+            Assert.Equal(7, Int(runtime, "roundTrip"));
+        }
+
+        /// <summary>
+        /// A nullable multi-field value class works with <c>?.</c>: the boxed receiver unboxes
+        /// before the member access, and a null receiver produces the nullable result's absent
+        /// value.
+        /// </summary>
+        [Fact]
+        public void ANullableMultiFieldValueClassSupportsNullConditional()
+        {
+            var runtime = Run(
+                "value class Vec2 {\n"
+                    + "  public let x: int;\n"
+                    + "  public let y: int;\n"
+                    + "  public constructor(x: int, y: int) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "fun present(): int { let v: Vec2? = Vec2(9, 1); return (v?.x ?? 0); }\n"
+                    + "fun absent(): int { let v: Vec2? = null; return (v?.x ?? 0); }");
+
+            Assert.Equal(9, Int(runtime, "present"));
+            Assert.Equal(0, Int(runtime, "absent"));
+        }
+
+        /// <summary>
+        /// A case-carrying enum's <c>of</c> round-trips through <c>.value</c>: the boxed case
+        /// unboxes back into the block, so reading the value slot off it works.
+        /// </summary>
+        [Fact]
+        public void OfRoundTripsForACaseCarryingEnum()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(\"h\"), Spades(\"s\");\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun roundTrip(): int { let s = Suit.of(Suit.Spades.value); return s == null ? -1 : s.value; }");
+
+            Assert.Equal(1, Int(runtime, "roundTrip"));
+        }
+
+        /// <summary>
+        /// Calling a method on a nullable multi-field value (narrowed to its block form) unboxes
+        /// the boxed receiver before the dispatch, so instance methods work off an <c>of</c> result.
+        /// </summary>
+        [Fact]
+        public void AMethodOnANarrowedNullableBlockUnboxesItsReceiver()
+        {
+            var runtime = Run(
+                "value class Vec2 {\n"
+                    + "  public let x: int;\n"
+                    + "  public let y: int;\n"
+                    + "  public constructor(x: int, y: int) { this.x = x; this.y = y; }\n"
+                    + "  public fun sum(): int { return this.x + this.y; }\n"
+                    + "}\n"
+                    + "fun run(): int { let v: Vec2? = Vec2(3, 4); return v == null ? -1 : v.sum(); }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The value-types handoff's original repros now emit: a multi-field value class and a
+        /// case-carrying enum can return <c>null</c> from their nullable type without underflow.
+        /// </summary>
+        [Fact]
+        public void NullableMultiFieldValuesReturnNullWithoutUnderflow()
+        {
+            var runtime = Run(
+                "value class Vec2 {\n"
+                    + "  public let x: int;\n"
+                    + "  public let y: int;\n"
+                    + "  public constructor(x: int, y: int) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "enum Suit {\n"
+                    + "  Hearts(\"h\"), Spades(\"s\");\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun make(): Vec2? { return null; }\n"
+                    + "fun pick(): Suit? { return null; }\n"
+                    + "fun check(): int { return make() == null && pick() == null ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "check"));
+        }
+
+        /// <summary>
         /// The synthesized bodies carry the <c>@Pure</c>/<c>@NoAlloc</c> marks (§2.3bis): a user
         /// <c>@NoAlloc</c> body may call them, and the analyzer accepts the synthesized bodies as
         /// written.

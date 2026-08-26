@@ -5737,13 +5737,11 @@ if (members.Count != definition.Members.Count)
                 _bound[method] = EnumMemberSynthesizer.ValuesBody(_factory, definition, cases, method);
             }
 
-            // `of` returns E? — a null for "no such case". A null needs a single slot (the absent
-            // tag), which only a bare enum (its `value` is the whole value) or a @Flags one can
-            // carry: a nullable multi-field value type has no null representation (the same
-            // limitation a `Vec2?` hits today), so those enums defer `of` to when it does.
-            bool canBeNull = fields.Count == 1;
-
-            if (canBeNull && !HasMethod(members, EnumMemberSynthesizer.OfName, isStatic: true, _factory.Int))
+            // `of` returns E? — a null for "no such case". The nullable form is a boxed reference
+            // for a multi-field enum, so its `E?` can carry null like any other's (§5.1, value-types
+            // handoff): the synthesized body boxes a matching case's block and returns the null
+            // reference otherwise. Synthesized for every enum, multi-field included.
+            if (!HasMethod(members, EnumMemberSynthesizer.OfName, isStatic: true, _factory.Int))
             {
                 var method = new MethodSymbol(EnumMemberSynthesizer.OfName, definition, definition.Nullable)
                 {
@@ -5759,7 +5757,7 @@ if (members.Count != definition.Members.Count)
                 _bound[method] = EnumMemberSynthesizer.OfValueBody(_factory, definition, cases, method, definition.IsFlagsEnum);
             }
 
-            if (canBeNull && !HasMethod(members, EnumMemberSynthesizer.OfName, isStatic: true, _factory.String))
+            if (!HasMethod(members, EnumMemberSynthesizer.OfName, isStatic: true, _factory.String))
             {
                 var method = new MethodSymbol(EnumMemberSynthesizer.OfName, definition, definition.Nullable)
                 {
