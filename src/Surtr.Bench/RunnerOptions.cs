@@ -71,6 +71,17 @@ namespace Surtr.Bench
         /// <summary>Whole-catalogue passes; the reported number per workload is the median across rounds.</summary>
         public int Rounds = 1;
 
+        /// <summary>
+        /// Fresh processes per workload, when &gt; 1. The interpreter's dispatch loop is delivered
+        /// through the op cache (the decoded µop cache), which is indexed by the code's absolute
+        /// address — re-rolled by ASLR on every process launch. A single process therefore samples
+        /// ONE of the interpreter's two bimodal states, and its median is that state's, not the
+        /// interpreter's. Sampling several fresh processes and reporting the fastest gives the
+        /// true throughput; the state spread shows how far the unlucky state was. See
+        /// docs/Informe-Volatilidad-Run.md.
+        /// </summary>
+        public int Processes = 1;
+
         /// <summary>Print the reference engine's p90 and p99 alongside the median.</summary>
         public bool Percentiles;
 
@@ -122,6 +133,10 @@ namespace Surtr.Bench
             + "  --no-warmup             skip the warm-up entirely; expect a much wider spread\n"
             + "  --rounds <n>            run the whole catalogue <n> times and report the median across\n"
             + "                          rounds (default 1); the best defence against cross-talk between cases\n"
+            + "  --processes <n>         measure each case in <n> fresh processes and report the fastest\n"
+            + "                          per case (the op-cache-friendly state) plus the state spread; a\n"
+            + "                          single process samples one of the interpreter's two bimodal states,\n"
+            + "                          so without this flag a run's numbers are that one state's\n"
             + "  --shuffle               run the cases in a seeded random order instead of declaration order\n"
             + "  --seed <n>              the shuffle seed (default 12345); also implies --shuffle\n"
             + "  --gc-inclusive          collect inside the timed region, so each sample pays for the\n"
@@ -193,6 +208,11 @@ namespace Surtr.Bench
                         options.Rounds = ParseInt(NextValue(args, ref i, arg), arg);
                         if (options.Rounds < 1)
                             throw new ArgumentException("--rounds must be at least 1.");
+                        break;
+                    case "--processes":
+                        options.Processes = ParseInt(NextValue(args, ref i, arg), arg);
+                        if (options.Processes < 1)
+                            throw new ArgumentException("--processes must be at least 1.");
                         break;
                     case "--shuffle":
                         options.Shuffle = true;

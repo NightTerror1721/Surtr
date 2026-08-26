@@ -80,6 +80,9 @@ namespace Surtr.Bench
             if (_options.VerifyOnly || _options.Smoke)
                 return VerifyRun();
 
+            if (_options.Processes > 1)
+                return RunMultiProcess();
+
             SurtrDriver? surtr = null;
             SurtrDriver? surtrAuto = null;
             LuaDriver? moon = null;
@@ -370,6 +373,479 @@ namespace Surtr.Bench
                 surtr?.Dispose();
                 surtrAuto?.Dispose();
                 luajit?.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// The <c>--processes</c> mode: every selected case runs in <paramref name="processes"/>
+        /// fresh processes (this executable, restricted to that one case) and the reported number
+        /// per engine is the fastest sample — the op-cache-friendly state, which is the
+        /// interpreter's true throughput. A single process samples one of the two bimodal states
+        /// the interpreter's dispatch loop flips between, and a median drawn from one process is
+        /// that state's, not the interpreter's (docs/Informe-Volatilidad-Run.md §4). The state
+        /// spread — how far above the fastest the slowest sampled state was — is reported per case
+        /// so a bimodal case is not mistaken for a stable one.
+        /// </summary>
+        private int RunMultiProcess()
+        {
+            // The child CSV's engine columns come in this order (BuildSurtrEngines, then MoonSharp,
+            // then LuaJIT), and each engine column is followed by its ms figures.
+            var engineNames = new List<string>();
+            if (_options.RunSurtr)
+            {
+                engineNames.Add("surtr");
+                if (_options.SurtrGc == SurtrGcBenchMode.Both)
+                    engineNames.Add("surtr-auto");
+            }
+            if (_options.RunMoonSharp)
+                engineNames.Add("lua");
+            if (_options.RunLuaJit)
+                engineNames.Add("luajit");
+            if (engineNames.Count == 0)
+                throw new InvalidOperationException("--processes needs an engine to time; --baseline-only has none.");
+
+            Console.WriteLine();
+            Console.WriteLine(
+                "Fresh-process measurement: {0} process(es) per case; the ms reported is the fastest\n" +
+                "(the op-cache-friendly state), and the state spread is how far the slowest state was.\n" +
+                "A single-state result means all N processes landed in the same state — the fast state\n" +
+                "is not always reachable: its probability depends on the machine's code-layout state\n" +
+                "and can drop to zero for hours (docs/Informe-Volatilidad-Run.md). Use >= 7 processes.", _options.Processes);
+            Console.WriteLine();
+
+            var header = new List<string> { Pad("workload", 15), Pad("size", 9) };
+            foreach (string engine in engineNames)
+                header.Add(Pad(engine + " ms", 11));
+            header.Add(Pad("c# ms", 11));
+            for (int i = 1; i < engineNames.Count; i++)
+                header.Add(Pad("vs " + engineNames[i], 10));
+            header.Add(Pad("vs c#", 8));
+            header.Add(Pad("bytes", 9));
+            header.Add(Pad("objs", 8));
+            header.Add(Pad("kept", 8));
+            header.Add(Pad("c#B", 9));
+            header.Add(Pad("state", 8));
+            header.Add("result");
+            Console.WriteLine(string.Join("  ", header));
+
+            var rows = new List<(CsvRow Row, double StateSpread)>();
+            bool allOk = true;
+
+            foreach (var workload in Workloads.AllWorkloads)
+            {
+                if (!Matches(workload.Name))
+                    continue;
+
+                long size = ScaledSize(workload.Size);
+
+                // The op-cache state is a property of the process (the JIT code's absolute
+                // addresses, re-rolled by ASLR per launch), so sampling more than one state means
+                // launching more than one process. Run them sequentially: parallel children would
+                // share the cores and blur the very timing being measured.
+                var samples = new List<ChildSample>();
+                bool ok = true;
+                for (int i = 0; i < _options.Processes; i++)
+                {
+                    string tmp = Path.Combine(Path.GetTempPath(), "surtrbench-" + Guid.NewGuid().ToString("N") + ".csv");
+                    ChildSample? sample = RunChildProcess(workload.Name, tmp, engineNames);
+                    if (sample == null)
+                    {
+                        ok = false;
+                        break;
+                    }
+                    samples.Add(sample.Value);
+                }
+
+                if (samples.Count == 0)
+                {
+                    Console.WriteLine(Pad(workload.Name, 15) + Pad("FAIL", 9));
+                    allOk = false;
+                    continue;
+                }
+
+                var engineMin = new double[engineNames.Count];
+                var engineMax = new double[engineNames.Count];
+                for (int e = 0; e < engineNames.Count; e++)
+                {
+                    double min = double.MaxValue, max = double.MinValue;
+                    foreach (ChildSample sample in samples)
+                    {
+                        if (sample.EngineMs[e] < min) min = sample.EngineMs[e];
+                        if (sample.EngineMs[e] > max) max = sample.EngineMs[e];
+                    }
+                    engineMin[e] = min;
+                    engineMax[e] = max;
+                }
+
+                double baselineMin = double.MaxValue;
+                foreach (ChildSample sample in samples)
+                    if (sample.CsharpMs < baselineMin)
+                        baselineMin = sample.CsharpMs;
+
+                // The memory of the fastest child: memory is not bimodal (it does not depend on
+                // the op cache), so the representative run's figures are the workload's.
+                ChildSample fastest = samples[0];
+                for (int i = 1; i < samples.Count; i++)
+                    if (samples[i].EngineMs[0] < fastest.EngineMs[0])
+                        fastest = samples[i];
+
+                // How far the unlucky state was above the fast one, on the reference engine.
+                double stateSpread = engineMin[0] > 0 ? (engineMax[0] - engineMin[0]) / engineMin[0] : 0;
+                bool bimodal = stateSpread > 0.20;
+
+                // A synthetic Measurement whose "median" is the fast state, so the ratios and the
+                // summary behave; the quartiles are pinned to the min so the within-process Spread
+                // is zero and the state spread is the number that describes the case.
+                var engineMs = new Measurement[engineNames.Count];
+                for (int e = 0; e < engineNames.Count; e++)
+                    engineMs[e] = new Measurement(engineMin[e], engineMin[e], engineMax[e], engineMin[e], engineMin[e], engineMax[e], engineMax[e], e == 0 ? fastest.SurtrMemory : MemorySample.None);
+                var baseline = new Measurement(baselineMin, baselineMin, baselineMin, baselineMin, baselineMin, baselineMin, baselineMin, fastest.CsharpMemory);
+
+                var cells = new List<string>
+                {
+                    Pad(workload.Name, 15),
+                    Pad(size.ToString(CultureInfo.InvariantCulture), 9),
+                };
+                foreach (Measurement measurement in engineMs)
+                    cells.Add(Pad(FormatMs(measurement.Median), 11));
+                cells.Add(Pad(FormatMs(baseline.Median), 11));
+                for (int i = 1; i < engineNames.Count; i++)
+                {
+                    string ratio = engineMs[0].Median > 0 && engineMs[i].Median > 0
+                        ? FormatRatio(engineMs[i].Median / engineMs[0].Median)
+                        : "  —  ";
+                    cells.Add(Pad(ratio, 10));
+                }
+                string overBaseline = engineMs[0].Median > 0 && baseline.Median > 0
+                    ? FormatRatio(engineMs[0].Median / baseline.Median)
+                    : "  —  ";
+                cells.Add(Pad(overBaseline, 8));
+                cells.Add(Pad(FormatBytes(engineMs[0].Memory.AllocatedBytes), 9));
+                cells.Add(Pad(FormatCount(engineMs[0].Memory.AllocatedObjects), 8));
+                cells.Add(Pad(FormatCount(engineMs[0].Memory.LiveObjects), 8));
+                cells.Add(Pad(FormatBytes(baseline.Memory.AllocatedBytes), 9));
+                cells.Add(Pad(FormatPercent(stateSpread), 8));
+                cells.Add(Pad(bimodal ? "bimodal" : "single", 8));
+                cells.Add(ok ? "ok" : "FAIL");
+                Console.WriteLine(string.Join("  ", cells));
+
+                rows.Add((new CsvRow(workload.Name, size, workload.Measures, engineMs, baseline, ok), stateSpread));
+                allOk = allOk && ok;
+            }
+
+            var csvRows = new List<CsvRow>();
+            foreach ((CsvRow row, double _) in rows)
+                csvRows.Add(row);
+            PrintSummaryMulti(csvRows, engineNames);
+
+            if (_options.CsvPath != null)
+                AppendMultiCsv(_options.CsvPath, rows, engineNames, _options.Processes);
+
+            return allOk ? 0 : 1;
+        }
+
+        /// <summary>
+        /// Runs this same executable restricted to one workload, waits for it, and returns the
+        /// engine times (and the C# baseline) it reported, plus the memory figures — one fresh
+        /// process, one sample of the op-cache state. Null means the child failed its verification
+        /// or crashed.
+        /// </summary>
+        private ChildSample? RunChildProcess(string workloadName, string csvPath, IReadOnlyList<string> engineNames)
+        {
+            // Rebuild the parent's command for the child: same options, minus --processes (so it
+            // does not recurse), minus the parent's --workload filters and --csv (each child writes
+            // its own fresh CSV for exactly this workload).
+            var childArgs = new List<string>();
+            string[] args = Environment.GetCommandLineArgs();
+            for (int i = 1; i < args.Length; i++)
+            {
+                if (args[i] == "--processes" || args[i] == "--csv" || args[i] == "--workload")
+                {
+                    i++; // skip the option's value
+                    continue;
+                }
+                childArgs.Add(args[i]);
+            }
+            childArgs.Add("--workload");
+            childArgs.Add(workloadName);
+            childArgs.Add("--csv");
+            childArgs.Add(csvPath);
+
+            try
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = Environment.ProcessPath!,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    WorkingDirectory = AppContext.BaseDirectory,
+                };
+                foreach (string argument in childArgs)
+                    startInfo.ArgumentList.Add(argument);
+
+                using Process process = Process.Start(startInfo)!;
+                // Drain both streams concurrently so a chatty child cannot deadlock the parent.
+                var stdout = process.StandardOutput.ReadToEndAsync();
+                var stderr = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit(TimeSpan.FromMinutes(10)))
+                {
+                    process.Kill();
+                    return null;
+                }
+                if (process.ExitCode != 0)
+                    return null;
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine("child process for '{0}' failed: {1}", workloadName, exception.Message);
+                return null;
+            }
+
+            try
+            {
+                // The child's CSV: "#"-prefixed comment lines, then a header row, then one data row
+                // per case. The data rows are real CSV (the measures column is quoted and can hold
+                // a comma), so fields are split with quotes honoured, and columns are found by name
+                // against the header rather than by position.
+                string? header = null;
+                string? row = null;
+                foreach (string line in File.ReadLines(csvPath))
+                {
+                    if (line.Length == 0 || line[0] == '#')
+                        continue;
+                    if (header == null)
+                    {
+                        header = line;
+                        continue;
+                    }
+                    if (row == null && StartsWithField(line, workloadName))
+                        row = line;
+                    if (row != null && header != null)
+                        break;
+                }
+                if (header == null || row == null)
+                    return null;
+
+                List<string> headerFields = SplitCsvLine(header);
+                List<string> dataFields = SplitCsvLine(row);
+                if (headerFields.Count != dataFields.Count)
+                    return null;
+
+                var column = new Dictionary<string, int>(StringComparer.Ordinal);
+                for (int i = 0; i < headerFields.Count; i++)
+                    column[headerFields[i]] = i;
+
+                var engineMs = new double[engineNames.Count];
+                for (int e = 0; e < engineNames.Count; e++)
+                {
+                    if (!column.TryGetValue(engineNames[e] + "_ms", out int index)
+                        || !double.TryParse(dataFields[index], NumberStyles.Float, CultureInfo.InvariantCulture, out engineMs[e]))
+                        return null;
+                }
+                if (!column.TryGetValue("csharp_ms", out int csharpIndex)
+                    || !double.TryParse(dataFields[csharpIndex], NumberStyles.Float, CultureInfo.InvariantCulture, out double csharpMs))
+                    return null;
+
+                return new ChildSample(
+                    engineMs,
+                    csharpMs,
+                    ReadMemory(column, dataFields, "surtr_alloc_bytes", "surtr_alloc_objects", "surtr_kept_objects", "surtr_heap_bytes"),
+                    ReadMemory(column, dataFields, "csharp_alloc_bytes", null, null, null));
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+            finally
+            {
+                try { File.Delete(csvPath); } catch (IOException) { }
+            }
+        }
+
+        /// <summary>Whether a CSV data row begins with this workload's name.</summary>
+        private static bool StartsWithField(string line, string field)
+        {
+            int comma = line.IndexOf(',');
+            return comma > 0 && line.AsSpan(0, comma).SequenceEqual(field);
+        }
+
+        /// <summary>
+        /// Splits a CSV line honouring double-quoted fields and the "" escape, because the measures
+        /// column is quoted and several of its values contain a comma.
+        /// </summary>
+        private static List<string> SplitCsvLine(string line)
+        {
+            var fields = new List<string>();
+            var current = new StringBuilder();
+            bool inQuotes = false;
+            for (int i = 0; i < line.Length; i++)
+            {
+                char c = line[i];
+                if (inQuotes)
+                {
+                    if (c == '"')
+                    {
+                        if (i + 1 < line.Length && line[i + 1] == '"')
+                        {
+                            current.Append('"');
+                            i++;
+                        }
+                        else
+                        {
+                            inQuotes = false;
+                        }
+                    }
+                    else
+                    {
+                        current.Append(c);
+                    }
+                }
+                else if (c == '"')
+                {
+                    inQuotes = true;
+                }
+                else if (c == ',')
+                {
+                    fields.Add(current.ToString());
+                    current.Clear();
+                }
+                else
+                {
+                    current.Append(c);
+                }
+            }
+            fields.Add(current.ToString());
+            return fields;
+        }
+
+        /// <summary>One memory sample read by column name from the child's CSV; absent columns read as unavailable.</summary>
+        private static MemorySample ReadMemory(
+            IReadOnlyDictionary<string, int> column,
+            IReadOnlyList<string> data,
+            string bytesColumn,
+            string? objectsColumn,
+            string? keptColumn,
+            string? heapColumn)
+        {
+            long Field(string name)
+                => name != null && column.TryGetValue(name, out int index)
+                    && long.TryParse(data[index], NumberStyles.Integer, CultureInfo.InvariantCulture, out long value)
+                    ? value
+                    : MemorySample.Unavailable;
+
+            return new MemorySample(
+                Field(bytesColumn),
+                Field(objectsColumn!),
+                Field(keptColumn!),
+                Field(heapColumn!));
+        }
+
+        /// <summary>One fresh-process sample: the per-engine times, the C# baseline, and the memory figures.</summary>
+        private readonly struct ChildSample
+        {
+            public readonly double[] EngineMs;
+            public readonly double CsharpMs;
+            public readonly MemorySample SurtrMemory;
+            public readonly MemorySample CsharpMemory;
+
+            public ChildSample(double[] engineMs, double csharpMs, MemorySample surtrMemory, MemorySample csharpMemory)
+            {
+                EngineMs = engineMs;
+                CsharpMs = csharpMs;
+                SurtrMemory = surtrMemory;
+                CsharpMemory = csharpMemory;
+            }
+        }
+
+        /// <summary>The geometric-mean speed-ups for the multi-process mode, over the fast states.</summary>
+        private static void PrintSummaryMulti(IReadOnlyList<CsvRow> rows, IReadOnlyList<string> engineNames)
+        {
+            bool wrote = false;
+            for (int i = 1; i < engineNames.Count; i++)
+            {
+                double logSum = 0;
+                int count = 0;
+                foreach (CsvRow row in rows)
+                {
+                    double referenceMs = row.EngineMeasurements[0].Median;
+                    double otherMs = row.EngineMeasurements[i].Median;
+                    if (referenceMs > 0 && otherMs > 0)
+                    {
+                        logSum += Math.Log(otherMs / referenceMs);
+                        count++;
+                    }
+                }
+
+                if (count > 0)
+                {
+                    if (!wrote)
+                    {
+                        Console.WriteLine();
+                        wrote = true;
+                    }
+                    Console.WriteLine(
+                        "geometric mean speed-up ({0} over {1}, {2} cases): {3}x",
+                        engineNames[0],
+                        engineNames[i],
+                        count,
+                        Math.Exp(logSum / count).ToString("F1", CultureInfo.InvariantCulture));
+                }
+            }
+        }
+
+        /// <summary>
+        /// The multi-process CSV: the same <c>*_ms</c> column names a single-process run writes,
+        /// but holding the fast state (the min across processes) rather than a within-process
+        /// median, plus the state spread so nobody mistakes a bimodal case for a stable one. The
+        /// settings line carries <c>processes=N</c>, which is what tells a reader which of the two
+        /// meanings a column has.
+        /// </summary>
+        private void AppendMultiCsv(string path, IReadOnlyList<(CsvRow Row, double StateSpread)> rows, IReadOnlyList<string> engineNames, int processes)
+        {
+            bool appendHeader = !File.Exists(path) || new FileInfo(path).Length == 0;
+            using var writer = new StreamWriter(path, append: true);
+            if (appendHeader)
+            {
+                writer.WriteLine("# machine: " + SystemInfo.FingerprintLine());
+                writer.WriteLine("# settings: iters={0} warmup={1} rounds={2} shuffle={3} seed={4} gc-inclusive={5} memory-runs={6} surtr-gc={7} processes={8}",
+                    _options.Iterations, _options.WarmupIterations, _options.Rounds, _options.Shuffle, _options.ShuffleSeed, _options.GcInclusive, _options.MemoryRuns, _options.SurtrGc.ToString().ToLowerInvariant(), processes);
+                writer.WriteLine("# processes=N: every *_ms column is the fastest of N fresh processes (the op-cache-friendly state), not a within-process median; state_spread_pct is how far the slowest state was; memory columns are the fastest process's.");
+                var line = new StringBuilder("workload,size");
+                foreach (string engine in engineNames)
+                    line.Append(',').Append(engine).Append("_ms");
+                line.Append(",csharp_ms");
+                line.Append(",surtr_alloc_bytes,surtr_alloc_objects,surtr_kept_objects,surtr_heap_bytes");
+                line.Append(",csharp_alloc_bytes");
+                line.Append(",state_spread_pct,processes,ok");
+                writer.WriteLine(line);
+            }
+
+            foreach ((CsvRow row, double stateSpread) in rows)
+            {
+                var line = new StringBuilder();
+                line.Append(row.Name);
+                line.Append(',').Append(row.Size.ToString(CultureInfo.InvariantCulture));
+                foreach (Measurement measurement in row.EngineMeasurements)
+                    line.Append(',').Append(measurement.Median.ToString("F3", CultureInfo.InvariantCulture));
+                line.Append(',').Append(row.Baseline.Median.ToString("F3", CultureInfo.InvariantCulture));
+                if (row.EngineMeasurements.Length > 0)
+                {
+                    MemorySample memory = row.EngineMeasurements[0].Memory;
+                    line.Append(',').Append(Number(memory.AllocatedBytes));
+                    line.Append(',').Append(Number(memory.AllocatedObjects));
+                    line.Append(',').Append(Number(memory.LiveObjects));
+                    line.Append(',').Append(Number(memory.HeapBytes));
+                }
+                else
+                {
+                    line.Append(",,,,");
+                }
+                line.Append(',').Append(Number(row.Baseline.Memory.AllocatedBytes));
+                line.Append(',').Append((stateSpread * 100.0).ToString("F1", CultureInfo.InvariantCulture));
+                line.Append(',').Append(processes.ToString(CultureInfo.InvariantCulture));
+                line.Append(',').Append(row.Ok ? "ok" : "FAIL");
+                writer.WriteLine(line);
             }
         }
 
