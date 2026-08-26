@@ -190,8 +190,10 @@ namespace Surtr.Interop.SourceGenerator
 
         private static void EmitEnumRegistration(StringBuilder builder, INamedTypeSymbol type, AttributeData attribute, string name, string? module, string fullName, string indent)
         {
-            string enumType = type.ToDisplayString();
             var fields = type.GetMembers().OfType<IFieldSymbol>().Where(static f => f.HasConstantValue).ToList();
+
+            // A [Flags] CLR enum registers as a Surtr @Flags enum, so `| & ^` work on it.
+            bool isFlags = type.GetAttributes().Any(static a => a.AttributeClass?.Name is "FlagsAttribute" or "Flags");
 
             builder.AppendLine(indent + "internal static class SurtrGenerated_" + type.Name);
             builder.AppendLine(indent + "{");
@@ -203,8 +205,17 @@ namespace Surtr.Interop.SourceGenerator
             builder.AppendLine(indent + "            FullName = \"" + fullName + "\",");
             builder.AppendLine(indent + "            Name = \"" + name + "\",");
             builder.AppendLine(indent + "            Kind = NativeTypeKind.Enum,");
-            builder.AppendLine(indent + "            EnumCases = new string[] { " + string.Join(", ", fields.Select(f => "\"" + f.Name + "\"")) + " },");
-            builder.AppendLine(indent + "            EnumValues = new object[] { " + string.Join(", ", fields.Select(f => "(object)" + enumType + "." + f.Name)) + " },");
+            builder.AppendLine(indent + "            IsFlags = " + (isFlags ? "true" : "false") + ",");
+            builder.AppendLine(indent + "            EnumCases = new NativeEnumCaseDescriptor[]");
+            builder.AppendLine(indent + "            {");
+
+            foreach (var field in fields)
+            {
+                long value = Convert.ToInt64(field.ConstantValue, System.Globalization.CultureInfo.InvariantCulture);
+                builder.AppendLine(indent + "                new NativeEnumCaseDescriptor { Name = \"" + field.Name + "\", Value = " + value + "L },");
+            }
+
+            builder.AppendLine(indent + "            },");
             builder.AppendLine(indent + "        };");
             builder.AppendLine(indent + "        return SurtrBridge.Register(runtime, d);");
             builder.AppendLine(indent + "    }");
@@ -1240,11 +1251,14 @@ namespace Surtr.Interop.SourceGenerator
 
         private sealed class SurtrSyntaxReceiver : ISyntaxReceiver
         {
-            internal readonly List<TypeDeclarationSyntax> Candidates = new();
+            internal readonly List<BaseTypeDeclarationSyntax> Candidates = new();
 
             public void OnVisitSyntaxNode(SyntaxNode syntaxNode)
             {
-                if (syntaxNode is TypeDeclarationSyntax { AttributeLists.Count: > 0 } type)
+                // `BaseTypeDeclarationSyntax` rather than `TypeDeclarationSyntax`: an enum is the
+                // one declaration that derives from the base but not the type kind, and an enum is
+                // exactly a `[SurtrNativeType]` registration target.
+                if (syntaxNode is BaseTypeDeclarationSyntax { AttributeLists.Count: > 0 } type)
                     Candidates.Add(type);
             }
         }

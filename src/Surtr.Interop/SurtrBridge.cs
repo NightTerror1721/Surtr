@@ -67,7 +67,7 @@ namespace Surtr.Interop
                 TypeArguments = descriptor.TypeArguments,
                 Members = descriptor.Members,
                 EnumCases = descriptor.EnumCases,
-                EnumValues = descriptor.EnumValues,
+                IsFlags = descriptor.IsFlags,
             };
 
             return Register(runtime, scoped);

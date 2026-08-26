@@ -118,6 +118,37 @@ namespace Sample
             Assert.Contains("SurtrBindings", all);
         }
 
+        /// <summary>
+        /// An enum's registration carries each case's constant value and the CLR <c>[Flags]</c>
+        /// mark (§2.7) — the materializer needs the values, and the <c>|</c>/<c>&amp;</c>/<c>^</c>
+        /// operators need to know the enum is a Surtr <c>@Flags</c> one.
+        /// </summary>
+        [Fact]
+        public void Generator_EmitsEnumCaseValuesAndTheFlagsMark()
+        {
+            const string source = @"
+using System;
+using Surtr.Interop.Attributes;
+
+namespace Sample
+{
+    [SurtrNativeType]
+    [Flags]
+    public enum Perm
+    {
+        None = 0,
+        Read = 1,
+        Write = 2,
+    }
+}
+";
+            RunGenerator(source, out var result);
+
+            var all = string.Join("\n", result.Results.SelectMany(static r => r.GeneratedSources).Select(static g => g.SourceText.ToString()));
+            Assert.Contains("new NativeEnumCaseDescriptor { Name = \"Read\", Value = 1L }", all);
+            Assert.Contains("IsFlags = true", all);
+        }
+
         [Fact]
         public void GeneratedBindings_RegisterAndInvoke()
         {

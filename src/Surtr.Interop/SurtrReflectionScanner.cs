@@ -12,7 +12,9 @@ namespace Surtr.Interop
     /// <summary>
     /// The reflection fallback: builds a <see cref="NativeTypeDescriptor"/> from a CLR type and its
     /// attributes, exactly as the source generator does at compile time. Entry points come from
-    /// <see cref="SurtrReflectionInvoker"/> (DynamicMethod shims), so this path is not AOT-safe.
+    /// <see cref="SurtrReflectionInvoker"/> (DynamicMethod shims), so this path is not AOT-safe —
+    /// except for enums, whose values are read with <c>Enum.GetValues</c>/<c>IConvertible</c> and
+    /// need no shim at all (§2.7).
     /// </summary>
     public static class SurtrReflectionScanner
     {
@@ -51,8 +53,23 @@ namespace Surtr.Interop
 
             if (descriptor.Kind == NativeTypeKind.Enum)
             {
-                descriptor.EnumCases = Enum.GetNames(type);
-                descriptor.EnumValues = Enum.GetValues(type).Cast<object>().ToArray();
+                // Names plus numeric values, AOT-safe: no DynamicMethod shim is needed to read an
+                // enum's underlying values, so the reflection fallback for enums is the one path
+                // that never invokes. A [Flags] mark registers the enum as a Surtr @Flags one.
+                var names = Enum.GetNames(type);
+                var values = Enum.GetValues(type);
+                var cases = new NativeEnumCaseDescriptor[names.Length];
+                for (int i = 0; i < names.Length; i++)
+                {
+                    cases[i] = new NativeEnumCaseDescriptor
+                    {
+                        Name = names[i],
+                        Value = ((IConvertible)values.GetValue(i)!).ToInt64(System.Globalization.CultureInfo.InvariantCulture),
+                    };
+                }
+
+                descriptor.EnumCases = cases;
+                descriptor.IsFlags = type.IsDefined(typeof(FlagsAttribute), inherit: false);
                 return descriptor;
             }
 

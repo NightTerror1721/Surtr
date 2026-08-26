@@ -45,9 +45,11 @@ namespace Surtr.Interop
 
                 case SurtrValueTypeCode.Native:
                 {
-                    var enumType = value.GetType();
-                    if (enumType.IsEnum && SurtrInteropState.For(runtime).TryGetEnumCache(enumType, out var cache))
-                        return SurtrValue.CreateReference(cache.GetReference(value));
+                    // An enum is its int from the migration (§2.7): marshaling a CLR enum is pure
+                    // arithmetic, with no proxy, no root and no per-runtime cache — a combination
+                    // of bits with no named case marshals exactly as well as a named one.
+                    if (value.GetType().IsEnum)
+                        return SurtrValue.CreateInt(Convert.ToInt32(value, System.Globalization.CultureInfo.InvariantCulture));
 
                     // A host class deriving from SurtrNativeObject is adopted as the entity itself;
                     // anything else is wrapped in a fresh proxy. One crossing point, both shapes.
@@ -85,12 +87,6 @@ namespace Surtr.Interop
                 var code = descriptor.TypeCode;
                 if (code == SurtrValueTypeCode.String)
                     return runtime.Resolve<SurtrString>(value)?.Text;
-
-                if (code == SurtrValueTypeCode.Native && clrType.IsEnum)
-                {
-                    if (SurtrInteropState.For(runtime).TryGetEnumCache(clrType, out var cache))
-                        return cache.FromReference(value);
-                }
 
                 // A proxy unwraps to its target; an adopted SurtrNativeObject is the host object
                 // itself, and digging for a target would reach null or the wrong thing.

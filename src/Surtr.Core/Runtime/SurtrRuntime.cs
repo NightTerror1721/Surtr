@@ -48,11 +48,11 @@ namespace Surtr.Runtime
         private long _pendingInstructionBudget;
         private bool _disposed;
 
-        // Native enum case instances awaiting their static slot, keyed by declaring class. Filled by
+        // Native enum case values awaiting their static slot, keyed by declaring class. Filled by
         // DefineNativeEnumCase (before linking, when AddEnumCase is legal) and drained by
         // FinishNativeClass (after linking, when the case fields' static addresses exist).
-        private readonly Dictionary<SurtrClass, Dictionary<string, SurtrNativeObject>> _nativeEnumCases =
-            new Dictionary<SurtrClass, Dictionary<string, SurtrNativeObject>>();
+        private readonly Dictionary<SurtrClass, Dictionary<string, long>> _nativeEnumValues =
+            new Dictionary<SurtrClass, Dictionary<string, long>>();
 
         // Host objects adopted as entities in their own right (RegisterHost), keyed by the CLR
         // instance itself: the entry dies with the key, which is what bounds the root each one
@@ -1442,7 +1442,12 @@ namespace Surtr.Runtime
                 SurtrVisibility.Public,
                 declaringType: null,
                 isSealed: true,
-                isEnum: true);
+                isEnum: true)
+            {
+                // An enum is a value class whose first field is the synthetic `value` (§2.4); the
+                // linker reads this flag to lay it out as one flattened slot.
+                IsValueType = true,
+            };
 
             _context.NativeClasses.Add(fullName, declared);
             TypeHandle(reference);
@@ -1450,19 +1455,17 @@ namespace Surtr.Runtime
         }
 
         /// <summary>
-        /// Declares one case of a native enum, backed by a cached instance.
+        /// Declares one case of a native enum, backed by a static field holding its value.
         /// </summary>
         /// <remarks>
-        /// <para>
-        /// The ordinal follows declaration order, the same rule a source enum's cases follow. The
-        /// supplied <paramref name="instance"/> must be a registered <see cref="SurtrNativeObject"/>
-        /// wrapping the host enum value; its reference is written into the case's static field when
-        /// <see cref="FinishNativeClass"/> links the enum.
-        /// </para>
+        /// An enum is a value class from the migration (§2.4), so a case is its <c>value</c>: the
+        /// static field is created here and the value is written into it when
+        /// <see cref="FinishNativeClass"/> links the enum. No proxy, no cache — the value is an
+        /// int, which is what every operation on the enum already reads.
         /// </remarks>
         /// <exception cref="ArgumentException"><paramref name="enumClass"/> is not an enum.</exception>
         /// <exception cref="InvalidOperationException">The enum is already built.</exception>
-        public SurtrEnumCaseInfo DefineNativeEnumCase(SurtrClass enumClass, string name, SurtrNativeObject instance)
+        public SurtrEnumCaseInfo DefineNativeEnumCase(SurtrClass enumClass, string name, long value)
         {
             if (enumClass is null)
                 throw new ArgumentNullException(nameof(enumClass));
@@ -1470,24 +1473,17 @@ namespace Surtr.Runtime
             if (!enumClass.IsEnum)
                 throw new ArgumentException($"'{enumClass.Name}' is not an enum and cannot declare enum cases.", nameof(enumClass));
 
-            if (instance is null)
-                throw new ArgumentNullException(nameof(instance));
-
             var selfHandle = TypeHandle(enumClass.SelfReference);
             var field = new SurtrFieldInfo(name, selfHandle, isStatic: true, isReadOnly: true, SurtrVisibility.Public, selfHandle);
+            var caseInfo = enumClass.AddEnumCase(field, checked((int)value));
 
-            // The host enum's underlying value is the case's value: a CLR enum implements
-            // IConvertible, so the boxed instance converts straight to its underlying int.
-            int value = instance.Target is null ? 0 : Convert.ToInt32(instance.Target, System.Globalization.CultureInfo.InvariantCulture);
-            var caseInfo = enumClass.AddEnumCase(field, value);
-
-            if (!_nativeEnumCases.TryGetValue(enumClass, out var cases))
+            if (!_nativeEnumValues.TryGetValue(enumClass, out var cases))
             {
-                cases = new Dictionary<string, SurtrNativeObject>(StringComparer.Ordinal);
-                _nativeEnumCases.Add(enumClass, cases);
+                cases = new Dictionary<string, long>(StringComparer.Ordinal);
+                _nativeEnumValues.Add(enumClass, cases);
             }
 
-            cases[name] = instance;
+            cases[name] = value;
             return caseInfo;
         }
 
@@ -1533,25 +1529,26 @@ namespace Surtr.Runtime
         {
             RetryHostHandles();
             SurtrTypeLinker.LinkClass(nativeClass, ref _context.NextInterfaceId);
-            SealNativeEnumCases(nativeClass);
+            SealNativeEnumValues(nativeClass);
         }
 
         /// <summary>
-        /// Writes each pending native enum case's cached instance into its static field, now that
-        /// linking has laid the static storage out and resolved every field address.
+        /// Writes each pending native enum case's value into its static field, now that linking has
+        /// laid the static storage out and resolved every field address. An enum case is the value
+        /// itself from the migration (§2.4), so the write is one int.
         /// </summary>
-        private void SealNativeEnumCases(SurtrClass enumClass)
+        private void SealNativeEnumValues(SurtrClass enumClass)
         {
-            if (!_nativeEnumCases.TryGetValue(enumClass, out var cases))
+            if (!_nativeEnumValues.TryGetValue(enumClass, out var cases))
                 return;
 
             foreach (var pair in cases)
             {
                 if (enumClass.TryGetField(pair.Key, out var field))
-                    *field.StaticAddress = SurtrValue.CreateReference(pair.Value.GetSurtrReference()).Raw;
+                    *field.StaticAddress = SurtrValue.CreateInt(checked((int)pair.Value)).Raw;
             }
 
-            _nativeEnumCases.Remove(enumClass);
+            _nativeEnumValues.Remove(enumClass);
         }
 
         /// <summary>Looks up a host-declared native class by its full name.</summary>

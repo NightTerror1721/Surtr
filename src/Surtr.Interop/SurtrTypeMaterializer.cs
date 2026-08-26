@@ -2,6 +2,7 @@
 
 using Surtr.Interop.Attributes;
 using Surtr.Runtime;
+using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using System;
@@ -97,25 +98,21 @@ namespace Surtr.Interop
         {
             var declared = runtime.DefineNativeEnum(descriptor.FullName, TypeArguments(descriptor));
 
-            Type enumType = typeof(void);
-            var entries = new List<KeyValuePair<object, SurtrRef>>(descriptor.EnumCases.Length);
+            // An enum is a value class whose first field is the synthetic `value` (§2.4); the
+            // host's enum carries just it, and the case statics hold the values.
+            runtime.DefineValueField(declared, "value", SurtrClassReference.Integer, SurtrVisibility.Public);
 
             for (int i = 0; i < descriptor.EnumCases.Length; i++)
             {
-                object boxed = descriptor.EnumValues[i];
-                enumType = boxed.GetType();
-
-                var proxy = runtime.WrapNative(declared, boxed);
-                runtime.AddRoot(proxy);
-                runtime.DefineNativeEnumCase(declared, descriptor.EnumCases[i], proxy);
-                entries.Add(new KeyValuePair<object, SurtrRef>(boxed, proxy.GetSurtrReference()));
+                var @case = descriptor.EnumCases[i];
+                runtime.DefineNativeEnumCase(declared, @case.Name, @case.Value);
             }
 
+            // A [Flags] CLR enum registers as a Surtr @Flags enum, so `| & ^` work on it (§2.7).
+            if (descriptor.IsFlags)
+                declared.AddAttribute(new SurtrAttributeUsage(runtime.TypeHandle(SurtrBuiltIns.Flags.SelfReference), Array.Empty<SurtrConstant>()));
+
             runtime.FinishNativeClass(declared);
-
-            if (descriptor.EnumCases.Length > 0)
-                SurtrInteropState.For(runtime).AddEnumCache(enumType, new SurtrEnumCache(runtime, enumType, entries));
-
             return declared;
         }
 

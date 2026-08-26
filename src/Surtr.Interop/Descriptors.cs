@@ -58,14 +58,15 @@ namespace Surtr.Interop
         /// <summary>The exposed members, in declaration order.</summary>
         public NativeMemberDescriptor[] Members = Array.Empty<NativeMemberDescriptor>();
 
-        /// <summary>Enum case names, in declaration order. Only for <see cref="NativeTypeKind.Enum"/>.</summary>
-        public string[] EnumCases = Array.Empty<string>();
+        /// <summary>Enum cases, in declaration order, each with its constant value. Only for <see cref="NativeTypeKind.Enum"/>.</summary>
+        public NativeEnumCaseDescriptor[] EnumCases = Array.Empty<NativeEnumCaseDescriptor>();
 
         /// <summary>
-        /// The boxed CLR values backing <see cref="EnumCases"/>, in the same order. Only for
-        /// <see cref="NativeTypeKind.Enum"/>; the materializer caches one object per value.
+        /// Whether the CLR enum is marked <c>[Flags]</c>, so the materializer registers it as a
+        /// Surtr <c>@Flags</c> enum and <c>|</c>/<c>&amp;</c>/<c>^</c> work on it. Only for
+        /// <see cref="NativeTypeKind.Enum"/>.
         /// </summary>
-        public object[] EnumValues = Array.Empty<object>();
+        public bool IsFlags;
 
         /// <summary>
         /// Whether a <see cref="NativeTypeKind.Struct"/> is exposed as an inline value type rather
@@ -104,6 +105,16 @@ namespace Surtr.Interop
 
         /// <summary>Whether the member belongs to the type rather than to its instances.</summary>
         public bool IsStatic;
+    }
+
+    /// <summary>One case of a native enum: its name and its constant value (§2.7).</summary>
+    public sealed class NativeEnumCaseDescriptor
+    {
+        /// <summary>The case's Surtr name.</summary>
+        public string Name = string.Empty;
+
+        /// <summary>The case's underlying CLR value, as a <c>long</c>.</summary>
+        public long Value;
     }
 
     /// <summary>One exposed method or constructor.</summary>
