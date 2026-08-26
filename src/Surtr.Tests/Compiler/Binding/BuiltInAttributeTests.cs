@@ -1311,6 +1311,26 @@ namespace Surtr.Tests.Compiler.Binding
             AssertReports(compilation, SurtrDiagnosticCode.InvalidFlagsEnum);
         }
 
+        /// <summary>
+        /// The 31-case ceiling is about implicit bits — a case past it would shift past an int. An
+        /// explicit value may repeat a bit, which is exactly what lets a flags enum name more than
+        /// 31 cases (§2.1).
+        /// </summary>
+        [Fact]
+        public void AFlagsEnumWithExplicitValuesMayRepeatBitsPastTheThirtyFirstCase()
+        {
+            var cases = new System.Text.StringBuilder();
+            for (int i = 0; i < 40; i++)
+                cases.Append(i == 0 ? "F0 = " + (1 << (i % 5)) : ", F" + i + " = " + (1 << (i % 5)));
+
+            using var compilation = Compile(
+                "@Flags\n"
+                    + "enum Wide { " + cases + " }");
+
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.InvalidFlagsEnum);
+        }
+
         [Fact]
         public void CombiningTwoDifferentFlagsEnumsIsRejected()
         {
@@ -1346,11 +1366,12 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         /// <summary>
-        /// The mark erases with the representation, so two overloads that differ only by it would
-        /// collide in the real method table — which is what <c>SignatureSet</c> is for.
+        /// From the migration a <c>@Flags</c> enum is a nominal value class (§2.4), so
+        /// <c>apply(Perm)</c> and <c>apply(int)</c> are two real method table slots — the old
+        /// erasure that made them collide is gone.
         /// </summary>
         [Fact]
-        public void AnOverloadDifferingOnlyByAFlagsEnumAndIntCollides()
+        public void AnOverloadDifferingByAFlagsEnumAndIntIsAllowed()
         {
             using var compilation = Compile(
                 "@Flags\n"
@@ -1358,7 +1379,8 @@ namespace Surtr.Tests.Compiler.Binding
                     + "public fun apply(p: Perm): void { }\n"
                     + "public fun apply(n: int): void { }");
 
-            AssertReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
+            AssertClean(compilation);
+            AssertNoReports(compilation, SurtrDiagnosticCode.DuplicateOverload);
         }
 
         /// <summary>Non-regression: the int and bool arms of the bitwise block are untouched.</summary>

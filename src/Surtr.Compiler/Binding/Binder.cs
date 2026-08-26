@@ -2146,15 +2146,15 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
-        /// Rejects everything a <c>@Flags</c> enum's representation leaves nowhere to put (§P14).
+        /// Rejects everything a <c>@Flags</c> enum's representation leaves nowhere to put.
         /// </summary>
         /// <remarks>
         /// <para>
-        /// An ordinary enum is a sealed class whose cases are instances, so it can declare members,
-        /// implement interfaces and give its cases constructor arguments — all of which are things
-        /// done to or through an instance. A <c>@Flags</c> enum has none: its value is one
-        /// <c>int</c>, and a combination like <c>Read | Write</c> is not any case, so there is no
-        /// object for a member to run on and no case for a lookup to land back on.
+        /// A <c>@Flags</c> enum is a bare value class whose <c>value</c> is a set of bits, so a
+        /// combination like <c>Read | Write</c> is not any case: there is no object for a member to
+        /// run on, no receiver for a declared interface to dispatch through, and no constructor
+        /// argument to build. It may only satisfy the two implicit contracts, and its own cases —
+        /// the constants, not things declared on an instance.
         /// </para>
         /// <para>
         /// Reported against each offending declaration rather than against the mark, so the message
@@ -2176,12 +2176,16 @@ namespace Surtr.Compiler.Binding
                     Report(SurtrDiagnosticCode.InvalidFlagsEnum, binding, @case.Span,
                         $"'{symbol.Name}' is '@Flags', so '{@case.Name}' is the bit {i} rather than an instance; it cannot take constructor arguments.");
                 }
-            }
 
-            if (syntax.EnumCases.Count > 31)
-            {
-                Report(SurtrDiagnosticCode.InvalidFlagsEnum, binding, syntax.Span,
-                    $"'{symbol.Name}' is '@Flags' with {syntax.EnumCases.Count} cases, and an int holds 31 usable bits.");
+                // An implicit case is the bit at its own position, and an int holds 31 usable
+                // bits — so the 32nd implicit case would overflow. An explicit value is checked
+                // per-value instead: the bits may repeat, which is exactly what lets a flags enum
+                // go past 31 cases by naming them (§2.1).
+                if (@case.ExplicitValue is null && i >= 31)
+                {
+                    Report(SurtrDiagnosticCode.InvalidFlagsEnum, binding, @case.Span,
+                        $"'{symbol.Name}' is '@Flags', so '{@case.Name}' is the bit {i}; an int holds 31 usable bits, and a case past that has to write its value explicitly.");
+                }
             }
 
             if (symbol.Interfaces.Count > 0)

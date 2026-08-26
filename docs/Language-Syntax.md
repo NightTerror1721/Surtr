@@ -365,19 +365,19 @@ interface IShape {
 }
 ```
 
-### 2.4 Enums — Java-style, each value is a real instance
+### 2.4 Enums — a value class with a fixed set of named values
 
 ```
 enum Suit : ICardSuit {
-    Hearts("♥", true),
-    Spades("♠", false),
-    Diamonds("♦", true),
+    Hearts("♥", true) = 1,
+    Spades("♠", false) = 10,
+    Diamonds("♦", true) = 11,
     Clubs("♣", false);
 
     private let _symbol: string;
     private let _isRed: bool;
 
-    constructor(symbol: string, isRed: bool) {
+    private constructor(symbol: string, isRed: bool) {
         _symbol = symbol;
         _isRed = isRed;
     }
@@ -388,31 +388,50 @@ enum Suit : ICardSuit {
 }
 ```
 
-An enum is a sealed class with a fixed set of named static instances. Each case list entry is a
-constructor call against the enum's own constructor; a case with no arguments (`enum Color { Red,
-Green, Blue }`) just calls the implicit parameterless constructor. The `;` after the case list is
-required exactly when member declarations follow it (same rule as Java), so the simple all-constant
-form needs no trailing punctuation:
+An enum is a **sealed value class** whose first instance field is the synthetic
+`public let value: int` — the case's own value. Its descriptor stays nominal (§6.1 of the migration
+design), so another module sees the enum, not an `int`; only the choice of opcode treats it as one.
+
+Each case list entry is a call to the enum's own constructor — always **private**, since only the
+case list may build one. A case with no arguments (`enum Color { Red, Green, Blue }`) calls the
+implicit parameterless constructor. The `;` after the case list is required exactly when member
+declarations follow it, so the simple all-constant form needs no trailing punctuation.
+
+**Every case has a value.** The implicit progression starts at `0` and adds `1` per case; an explicit
+value is written `Label(args…) = n` after the arguments, and the progression continues from it.
+`n` must be an integer literal ≥ 0 (negatives are rejected). Duplicates are an error in a plain enum
+(`DuplicateEnumValue`) — they would break the reverse value→name lookup — and allowed in a
+`@Flags` one (§2.4 Flags below). Ordering, `==`, `switch` and `toString` all use the value, so with
+explicit values it is the numeric order that counts, not the declaration position.
 
 ```
-enum Color { Red, Green, Blue }
+enum Suit { Hearts, Spades, Clubs }          // 0, 1, 2
+enum Rank { Ace = 1, Two, Three }            // 1, 2, 3
 ```
 
 A member's own leading identifier (a no-modifier property's name) and a bare case name are the same
 shape, so the parser tells the case list's end from a following member by looking one token past the
-identifier: only a case is ever followed by `(`, `,`, `;` or `}`; a property name is always followed
-by `:`. Missing the `;` before a member is therefore still an error rather than a silent
-misparse — the case list ends at the property either way.
+identifier: only a case is ever followed by `(`, `=`, `,`, `;` or `}`; a property name is always
+followed by `:`. Missing the `;` before a member is therefore still an error rather than a silent
+misparse.
 
-Enums can implement interfaces (`: ICardSuit` above) since each case is a genuine instance, but
-cannot declare a base class — the enum class itself already occupies that slot, and naming one there
-is rejected.
+Enums can implement interfaces, and cannot declare a base class — the enum class itself already
+occupies that slot.
 
-**`@Flags` (§11.1) makes the cases bits of a set rather than alternatives**, and it is the one
-attribute in the language that changes what its target *is*. An ordinary enum's cases are instances,
-so combining two of them is not something the language can express — a value would have to be two
-references at once. A marked enum's cases are the integers `1 << ordinal` instead, and a variable of
-it holds one `int`, exactly as a one-field `value class` over an `int` does:
+**Every enum answers to a synthesized API** — real methods with bound bodies, emitted into the image,
+overridable by declaring one's own (for the names that are not reserved): structural `equals(other)`
+and `hashCode()`; `toString()` naming the case (or `Name(value)` for a value no case carries);
+`static values()` returning a fresh array of every case in declaration order; `static of(value: int)`
+and `static of(name: string)` returning the matching case or `null`; and `compareTo(other)` plus
+`operator<=>`, which give `< <= > >=` for free. `value`, `values` and `of` are reserved names inside
+an enum. An enum also satisfies `IEquatable<E>` and `IComparable<E>` implicitly. `==` compares the
+value (it never lowers to a call to `equals`), and `===` is rejected over an enum, exactly as over
+any value.
+
+**`@Flags` (§11.1) makes the cases bits of a set rather than alternatives.** A marked enum is still a
+bare value class — one field, `value` — and its cases are the integers `1 << position` when implicit,
+or the written power-of-two (or zero) when explicit. A variable of it holds one `int`, and a
+combination of cases is a value of the type:
 
 ```
 @Flags
@@ -429,27 +448,26 @@ compound forms (`|=`, `&=`, `^=`) follow from those. Two *different* flag enums 
 meanings, so combining them is rejected; the shifts are rejected too, since which bit a case
 occupies is the compiler's to assign and moving one produces a value no case names.
 
-`contains(flag)` is `(value & flag) == flag`, written as a call because that is how it reads. It is
-the only member a marked enum has, and it is built in rather than declared for the same reason the
-enum may declare none of its own: **a marked enum must be plain** — no members, no interfaces, no
-constructor arguments on its cases, and at most 31 of them. There is no instance for any of those to
-attach to, and giving the type one would mean boxing at every call, which is the cost the
-representation exists to avoid. Writing one is an error (`InvalidFlagsEnum`) rather than a warning,
-because there is no fallback representation to compile it into.
+`contains(flag)` is `(value & flag) == flag`, written as a call because that is how it reads. A
+marked enum must be plain — no members, no interfaces, no constructor arguments on its cases — but
+it may satisfy the two implicit contracts. An implicit case is the bit at its own position, and an
+`int` holds 31 usable bits, so the 32nd *implicit* case is rejected; an explicit value may repeat a
+bit, which is what lets a flags enum name more than 31 cases. Writing a forbidden declaration is an
+error (`InvalidFlagsEnum`).
 
-The cast to and from `int` is explicit in both directions. It moves no bits, but it has to be
-written, because an arbitrary `int` is not a combination of the enum's cases — and it is what makes
-the empty set expressible, there being no case for zero:
+The cast to and from `int` is explicit in both directions, for a marked enum only. It moves no bits,
+but it has to be written, because an arbitrary `int` is not a combination of the enum's cases — and
+it is what makes the empty set expressible, there being no case for zero. A plain enum's inverse of
+`value` is the synthesized `of(value)`:
 
 ```
 let none: Perm = 0 as Perm;
 let raw: int = rw as int;                 // 3, for storing or sending somewhere
+let suit: Suit? = Suit.of(10);            // Spades, or null for a value no case names
 ```
 
-Two consequences worth knowing. A marked enum is a *class of int constants* at runtime, not an enum,
-so host reflection reports it as one — the same erasure a `value class` pays. And because its
-descriptor is `I`, the flags-ness does not survive a module boundary: another module sees `int`,
-again exactly as it would for a `value class`.
+Because a flags enum is a value class, `of(value)` on it is **total**: any `int` is a representable
+combination, so `Perm.of(3)` is never null. The flags-ness travels in the image with the enum itself.
 
 **Per-case method bodies (Java's anonymous-constant pattern) are not supported.** Behavior always
 lives on the enum class itself, shared by every case — branch inside a method on `this` (or on a
@@ -3128,7 +3146,8 @@ Four of them are worth reading past the table, because each does something the o
   `throws X, Y` line, because what a function can raise is something a *caller* has to act on.
 
 **`@Flags` is the one that changes what its target *is*.** Everything else in this section records
-something about a declaration; `@Flags` changes an enum's representation, and §2.4 covers it.
+something about a declaration; `@Flags` turns an enum's cases into bits of a set — the enum stays a
+value class, but its values combine with `|`/`&`/`^` and `contains`. §2.4 covers it.
 
 - **`@Range(lo, hi)`** documents the bounds a numeric field or property is meant to stay within.
   `lo` and `hi` are floats (integer literals widen on the way in), and the use carries them into the

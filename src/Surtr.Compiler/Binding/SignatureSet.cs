@@ -182,11 +182,12 @@ namespace Surtr.Compiler.Binding
                 case ClosureTypeSymbol closure:
                     return Reference(_factory.Closure(EraseAll(closure.ParameterTypes), Erase(closure.ReturnType)));
 
-                case NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum, IsFlagsEnum: true }:
-                    // §P14 makes a @Flags enum one int, so `f(Perm)` and `f(int)` reach the same
-                    // real method table slot - which is exactly the collision this set exists to
-                    // catch before the linker has to.
-                    return _factory.Int.WithNullability(type.IsNullable);
+                case NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum }:
+                    // An enum is a nominal value class from the migration (§2.4): its descriptor is
+                    // its own, so `f(Perm)` and `f(int)` are two real method table slots. What
+                    // erases — for the erased-signature contract slots — is the generic parameter,
+                    // not an enum's own name.
+                    return Reference(type);
 
                 case NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } valueClass:
                 {
