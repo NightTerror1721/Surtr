@@ -146,8 +146,16 @@ namespace Surtr.Bytecode.Image
         /// never an execution path. A version 10 reader would read the first variance byte as
         /// the constraint count, so it is refused like every other older format.
         /// </para>
+        /// <para>
+        /// Version 12 gives every enum case its <c>value</c> in the <c>Class</c> section: each
+        /// <c>enumCases</c> entry is now <c>{ name, value: i32, visibility }</c> instead of
+        /// <c>{ name, visibility }</c>. The value is the key an exhaustive <c>switch</c> over the
+        /// enum dispatches on (§2.4), so it travels explicitly rather than being re-derived from
+        /// declaration position. A version 11 reader would read the value bytes as the next
+        /// case's name, so it is refused like every other older format.
+        /// </para>
         /// </remarks>
-        internal const ushort FormatVersion = 11;
+        internal const ushort FormatVersion = 12;
 
         private readonly byte[] _bytes;
         private readonly string _path;

@@ -513,14 +513,15 @@ namespace Surtr.Runtime.Classes
         }
 
         /// <summary>
-        /// Declares the next enum case, backed by a static field holding the instance.
+        /// Declares the next enum case, backed by a static field holding the value.
         /// </summary>
         /// <remarks>
         /// The ordinal is assigned here rather than accepted, so it always matches declaration
-        /// order and can never be handed out twice.
+        /// order and can never be handed out twice. The value is the case's <c>= n</c> (or implied
+        /// progression), the key a <c>switch</c> over the enum dispatches on.
         /// </remarks>
         /// <exception cref="InvalidOperationException">The class is already built, or is not an enum.</exception>
-        public SurtrEnumCaseInfo AddEnumCase(SurtrFieldInfo field)
+        public SurtrEnumCaseInfo AddEnumCase(SurtrFieldInfo field, int value)
         {
             ThrowIfBuilt();
 
@@ -530,7 +531,7 @@ namespace Surtr.Runtime.Classes
             if (!field.IsStatic)
                 throw new ArgumentException($"Enum case '{field.Name}' must be a static field.", nameof(field));
 
-            var caseInfo = new SurtrEnumCaseInfo(field.Name, _enumCases.Length, field);
+            var caseInfo = new SurtrEnumCaseInfo(field.Name, _enumCases.Length, value, field);
 
             Array.Resize(ref _enumCases, _enumCases.Length + 1);
             _enumCases[^1] = caseInfo;

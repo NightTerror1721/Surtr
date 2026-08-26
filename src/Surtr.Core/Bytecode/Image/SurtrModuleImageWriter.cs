@@ -522,13 +522,15 @@ namespace Surtr.Bytecode.Image
             }
 
             // Enum cases come before the fields so the reader can register each case's backing
-            // field through AddEnumCase, which is what assigns the ordinal - writing the ordinal
-            // and trusting it would let a hand-edited image renumber a switch.
+            // field through AddEnumCase, which is what assigns the ordinal. The value is written
+            // with the case - it is the key an exhaustive switch dispatches on, so writing it and
+            // trusting it is exactly what the ordinal-for-switches once wrongly did with position.
             var cases = type.EnumCases;
             writer.Write(cases.Length);
             for (int i = 0; i < cases.Length; i++)
             {
                 writer.Write(Intern(state, cases[i].Name));
+                writer.Write(cases[i].Value);
                 writer.Write((byte)cases[i].Field.Visibility);
             }
 

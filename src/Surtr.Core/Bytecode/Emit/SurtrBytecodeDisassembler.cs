@@ -320,7 +320,7 @@ namespace Surtr.Bytecode.Emit
 
         private static void AppendEnumCase(StringBuilder builder, string indent, SurtrEnumCaseInfo enumCase)
         {
-            builder.Append(indent).Append("case ").Append(enumCase.Name).Append(" = ").Append(enumCase.Ordinal);
+            builder.Append(indent).Append("case ").Append(enumCase.Name).Append(" = ").Append(enumCase.Value);
 
             if (enumCase.Field.Slot >= 0)
                 builder.Append("  ; slot ").Append(enumCase.Field.Slot);

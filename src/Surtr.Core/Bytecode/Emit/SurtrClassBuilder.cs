@@ -373,16 +373,17 @@ namespace Surtr.Bytecode.Emit
 
         /// <summary>
         /// Declares the next case of this enum: a static, read-only field of the enum's own type,
-        /// holding an instance the static initializer constructs.
+        /// holding a value the static initializer constructs.
         /// </summary>
         /// <remarks>
-        /// The ordinal follows the order the cases are declared in, which is what an exhaustive
-        /// switch over the enum indexes on.
+        /// The ordinal follows the order the cases are declared in; the value is the case's
+        /// <c>= n</c> (or implied progression), the key an exhaustive switch over the enum
+        /// dispatches on.
         /// </remarks>
-        public SurtrEnumCaseInfo DefineEnumCase(string name, SurtrVisibility visibility = SurtrVisibility.Public)
+        public SurtrEnumCaseInfo DefineEnumCase(string name, int value, SurtrVisibility visibility = SurtrVisibility.Public)
         {
             var field = new SurtrFieldInfo(name, _selfHandle, true, true, visibility, _selfHandle);
-            return _class.AddEnumCase(field);
+            return _class.AddEnumCase(field, value);
         }
 
         /// <summary>Declares an interface nested inside this class.</summary>

@@ -621,7 +621,7 @@ namespace Surtr.Compiler.CodeGen
             if (owner.TypeKind == TypeSymbolKind.Enum
                 && field.IsStatic && ReferenceEquals(field.Type, owner))
             {
-                var @case = @class.DefineEnumCase(field.Name, Visibility(field.Accessibility)).Field;
+                var @case = @class.DefineEnumCase(field.Name, field.EnumValue ?? 0, Visibility(field.Accessibility)).Field;
                 context.Declare(field, @case);
                 Attach(context, field, @case);
                 return;

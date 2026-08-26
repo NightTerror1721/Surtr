@@ -1724,6 +1724,25 @@ var runtime = Run(
 
             Assert.Equal(4, Int(runtime, "run"));
         }
+
+        /// <summary>
+        /// A switch over a case-carrying enum dispatches on the <c>value</c> slot of the block
+        /// (§2.4) — the user fields stay out of the key, and explicit case values are the keys.
+        /// </summary>
+        [Fact]
+        public void ASwitchOverAMultiFieldEnumMatchesByExplicitValue()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(\"h\") = 1, Spades(\"s\") = 10, Clubs(\"c\") = 11;\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun rank(s: Suit): int { switch (s) { case Suit.Hearts: return 1; case Suit.Spades: return 4; case Suit.Clubs: return 7; } return 0; }\n"
+                    + "fun run(): int { return rank(Suit.Spades); }");
+
+            Assert.Equal(4, Int(runtime, "run"));
+        }
         #endregion
 
         #region The lowerings Step 5 owed

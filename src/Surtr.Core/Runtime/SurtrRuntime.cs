@@ -1475,7 +1475,11 @@ namespace Surtr.Runtime
 
             var selfHandle = TypeHandle(enumClass.SelfReference);
             var field = new SurtrFieldInfo(name, selfHandle, isStatic: true, isReadOnly: true, SurtrVisibility.Public, selfHandle);
-            var caseInfo = enumClass.AddEnumCase(field);
+
+            // The host enum's underlying value is the case's value: a CLR enum implements
+            // IConvertible, so the boxed instance converts straight to its underlying int.
+            int value = instance.Target is null ? 0 : Convert.ToInt32(instance.Target, System.Globalization.CultureInfo.InvariantCulture);
+            var caseInfo = enumClass.AddEnumCase(field, value);
 
             if (!_nativeEnumCases.TryGetValue(enumClass, out var cases))
             {

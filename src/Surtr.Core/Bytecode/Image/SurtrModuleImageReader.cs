@@ -663,11 +663,13 @@ namespace Surtr.Bytecode.Image
             for (int i = 0; i < caseCount; i++)
             {
                 string caseName = state.Text();
+                int caseValue = reader.ReadInt32();
                 var caseVisibility = (SurtrVisibility)reader.ReadByte();
 
                 // Through AddEnumCase so the ordinal is assigned by declaration order here, the
-                // same way it was when the enum was first declared.
-                type.AddEnumCase(new SurtrFieldInfo(caseName, selfHandle, true, true, caseVisibility, selfHandle));
+                // same way it was when the enum was first declared. The value travels explicitly:
+                // it is the key a switch dispatches on, not something to re-derive from position.
+                type.AddEnumCase(new SurtrFieldInfo(caseName, selfHandle, true, true, caseVisibility, selfHandle), caseValue);
             }
 
             int fieldCount = state.Count();

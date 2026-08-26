@@ -246,9 +246,9 @@ namespace Surtr.Tests.Bytecode.Image
             var builder = new SurtrModuleBuilder("cards");
 
             var suit = builder.DefineEnum("Suit");
-            suit.DefineEnumCase("Hearts");
-            suit.DefineEnumCase("Spades");
-            suit.DefineEnumCase("Clubs");
+            suit.DefineEnumCase("Hearts", 0);
+            suit.DefineEnumCase("Spades", 1);
+            suit.DefineEnumCase("Clubs", 4);
 
             var image = SurtrModuleImage.FromModule(builder.Build());
 
@@ -265,6 +265,12 @@ namespace Surtr.Tests.Bytecode.Image
             Assert.Equal(0, cases[0].Ordinal);
             Assert.Equal("Clubs", cases[2].Name);
             Assert.Equal(2, cases[2].Ordinal);
+
+            // The value travels explicitly (§2.4): it is the key an exhaustive switch dispatches
+            // on, so the round trip must preserve it, not re-derive it from position.
+            Assert.Equal(0, cases[0].Value);
+            Assert.Equal(1, cases[1].Value);
+            Assert.Equal(4, cases[2].Value);
         }
 
         [Fact]

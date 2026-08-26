@@ -1498,5 +1498,64 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         #endregion
+
+        #region Enum switches (§2.4)
+
+        /// <summary>
+        /// A case's label folds to its value (§2.4), so a switch over a bare enum dispatches on
+        /// the subject's int with a jump table — the whole point of the migration — rather than a
+        /// chain of comparisons. No <c>JPEQ</c>, no static loads per arm.
+        /// </summary>
+        [Fact]
+        public void ASwitchOverABareEnumCompilesToAJumpTable()
+        {
+            string code = Disassemble(
+                "enum Suit { Hearts, Spades, Clubs }\n"
+                + "fun run(s: Suit): int { switch (s) { case Suit.Hearts: return 1; case Suit.Spades: return 4; case Suit.Clubs: return 7; } return 0; }");
+
+            Assert.True(Count(code, "Switch") > 0 || Count(code, "SwitchLookup") > 0,
+                "The case labels fold to their values, so the dispatch is a table:\n" + code);
+            Assert.Equal(0, Count(code, "JPEQ"));
+        }
+
+        /// <summary>
+        /// A case-carrying enum's subject is a multi-field value class, so the dispatch lowers to
+        /// the <c>value</c> slot of the block; the table still engages on the folded labels.
+        /// </summary>
+        [Fact]
+        public void ASwitchOverAMultiFieldEnumCompilesToAJumpTableOnTheValueSlot()
+        {
+            string code = Disassemble(
+                "enum Suit {\n"
+                + "  Hearts(\"h\"), Spades(\"s\"), Clubs(\"c\");\n"
+                + "  public let glyph: string;\n"
+                + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                + "}\n"
+                + "fun run(s: Suit): int { switch (s) { case Suit.Hearts: return 1; case Suit.Spades: return 4; case Suit.Clubs: return 7; } return 0; }");
+
+            Assert.True(Count(code, "Switch") > 0 || Count(code, "SwitchLookup") > 0,
+                "A multi-field enum dispatches on its value slot with a table:\n" + code);
+            Assert.Equal(0, Count(code, "JPEQ"));
+        }
+
+        /// <summary>
+        /// A switch over a <c>@Flags</c> enum stays on the chain when a key repeats (a bit alias is
+        /// a duplicate value), which is the same first-match semantics a dense table would have to
+        /// guess at — <c>TryCollectIntegerCases</c> gives up and the chain takes over.
+        /// </summary>
+        [Fact]
+        public void ASwitchOverAFlagsEnumWithDuplicateValuesFallsBackToAChain()
+        {
+            string code = Disassemble(
+                "@Flags enum Perm { None = 0, Read = 1, Write = 2, ReadAlias = 1 }\n"
+                + "fun run(p: Perm): int { switch (p) { case Perm.None: return 0; case Perm.Read: return 1; case Perm.ReadAlias: return 2; case Perm.Write: return 3; } return -1; }");
+
+            Assert.Equal(0, Count(code, "Switch"));
+            Assert.Equal(0, Count(code, "SwitchLookup"));
+            Assert.True(Count(code, "JPEQ") > 0,
+                "Duplicate keys must fall back to the first-match comparison chain:\n" + code);
+        }
+
+        #endregion
     }
 }

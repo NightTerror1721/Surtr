@@ -201,9 +201,9 @@ namespace Surtr.Tests.Runtime.Classes
             var suit = DefineClass(module, "Suit", isEnum: true);
             var selfHandle = HandleFor(module, suit);
 
-            suit.AddEnumCase(new SurtrFieldInfo("Hearts", selfHandle, true, true, SurtrVisibility.Public, selfHandle));
-            suit.AddEnumCase(new SurtrFieldInfo("Spades", selfHandle, true, true, SurtrVisibility.Public, selfHandle));
-            suit.AddEnumCase(new SurtrFieldInfo("Clubs", selfHandle, true, true, SurtrVisibility.Public, selfHandle));
+            suit.AddEnumCase(new SurtrFieldInfo("Hearts", selfHandle, true, true, SurtrVisibility.Public, selfHandle), 0);
+            suit.AddEnumCase(new SurtrFieldInfo("Spades", selfHandle, true, true, SurtrVisibility.Public, selfHandle), 1);
+            suit.AddEnumCase(new SurtrFieldInfo("Clubs", selfHandle, true, true, SurtrVisibility.Public, selfHandle), 4);
 
             var cases = suit.EnumCases;
             Assert.Equal(3, cases.Length);
@@ -212,6 +212,11 @@ namespace Surtr.Tests.Runtime.Classes
             Assert.Equal(0, cases[0].Ordinal);
             Assert.Equal("Clubs", cases[2].Name);
             Assert.Equal(2, cases[2].Ordinal);
+
+            // The value is the case's own constant, independent of position (§2.4).
+            Assert.Equal(0, cases[0].Value);
+            Assert.Equal(1, cases[1].Value);
+            Assert.Equal(4, cases[2].Value);
 
             // The case is reachable as an ordinary static field too - the storage is not special.
             Assert.True(suit.TryGetField("Spades", out var spades));
@@ -226,7 +231,7 @@ namespace Surtr.Tests.Runtime.Classes
             var handle = HandleFor(module, plain);
 
             Assert.Throws<InvalidOperationException>(() => plain.AddEnumCase(
-                new SurtrFieldInfo("Nope", handle, true, true, SurtrVisibility.Public, handle)));
+                new SurtrFieldInfo("Nope", handle, true, true, SurtrVisibility.Public, handle), 0));
         }
 
         [Fact]
@@ -237,7 +242,7 @@ namespace Surtr.Tests.Runtime.Classes
             var handle = HandleFor(module, suit);
 
             Assert.Throws<ArgumentException>(() => suit.AddEnumCase(
-                new SurtrFieldInfo("Hearts", handle, false, true, SurtrVisibility.Public, handle)));
+                new SurtrFieldInfo("Hearts", handle, false, true, SurtrVisibility.Public, handle), 0));
         }
 
         [Fact]

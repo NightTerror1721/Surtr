@@ -1092,7 +1092,7 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private void EmitSwitchStatement(BoundSwitchStatement @switch)
         {
-            var subject = _method.DeclareLocal("$subject");
+            var subject = DeclareTemp("$subject", @switch.Subject.Type);
 
             Expression(@switch.Subject);
             EmitStoreLocal(subject);
@@ -1145,10 +1145,19 @@ namespace Surtr.Compiler.CodeGen
         {
             var family = TypeCodeOf(subjectType);
 
+            // An enum switches on its `value` slot, not on the whole value: a case-carrying enum's
+            // block has user fields that must stay out of the key (§2.4). For a bare enum the slot
+            // is the value, so the load is the same either way; only the block needs the sub-slot.
+            bool multiFieldEnum = subjectType.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum } enumType
+                && ValueTypeLayout.IsMultiField(enumType);
+
             if (family is SurtrValueTypeCode.Integer or SurtrValueTypeCode.Character
                 && TryCollectIntegerCases(arms, labels, out var cases))
             {
-                EmitLoadLocal(subject);
+                if (multiFieldEnum)
+                    EmitEnumValueOf(subject, subjectType);
+                else
+                    EmitLoadLocal(subject);
 
                 if (family == SurtrValueTypeCode.Character)
                     Code.Convert(SurtrValueTypeCode.Character, SurtrValueTypeCode.Integer);
@@ -1164,13 +1173,44 @@ namespace Surtr.Compiler.CodeGen
             {
                 foreach (var label in labels[i])
                 {
-                    EmitLoadLocal(subject);
-                    Expression(label);
-                    Code.JumpIfCompare(SurtrComparison.Equal, family, arms[i]);
+                    if (multiFieldEnum)
+                    {
+                        // Both sides of the comparison reduce to the `value` slot.
+                        EmitEnumValueOf(subject, subjectType);
+                        var labelTemp = DeclareTemp("$label", label.Type);
+                        Expression(label);
+                        EmitStoreLocal(labelTemp);
+                        EmitEnumValueOf(labelTemp, label.Type);
+                        Code.JumpIfCompare(SurtrComparison.Equal, SurtrValueTypeCode.Integer, arms[i]);
+                    }
+                    else
+                    {
+                        EmitLoadLocal(subject);
+                        Expression(label);
+                        Code.JumpIfCompare(SurtrComparison.Equal, family, arms[i]);
+                    }
                 }
             }
 
             Code.Jump(fallback);
+        }
+
+        /// <summary>Pushes the first slot of an enum value in a local range - its synthetic <c>value</c> field.</summary>
+        /// <remarks>
+        /// <c>value</c> is always the enum's first instance field (§2.4), so its slot is the block's
+        /// base. A bare enum occupies exactly that one slot; the same read is the whole value.
+        /// </remarks>
+        private void EmitEnumValueOf(SurtrLocal local, TypeSymbol enumType)
+        {
+            if (enumType.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum } named
+                && ValueTypeLayout.TryGet(named, out _, out _))
+            {
+                Code.LoadLocalField(local.Index, 0);
+            }
+            else
+            {
+                EmitLoadLocal(local);
+            }
         }
 
         /// <summary>
@@ -1193,11 +1233,16 @@ namespace Surtr.Compiler.CodeGen
             {
                 foreach (var label in labels[i])
                 {
-                    if (ConstantOf(label) is not object value)
+                    // An enum case's static read is a switch key too: its value is the constant
+                    // the case was bound with (§2.4). Folding it here rather than in ConstantOf
+                    // keeps the fold out of const-call arguments, where a case-carrying enum's
+                    // whole value — not its int — is what an argument is.
+                    object? value = ConstantOf(label) ?? EnumCaseKey(label);
+                    if (value is not object constant)
                         return false;
 
                     int key;
-                    switch (value)
+                    switch (constant)
                     {
                         case long integer when integer >= int.MinValue && integer <= int.MaxValue:
                             key = (int)integer;
@@ -1220,6 +1265,17 @@ namespace Surtr.Compiler.CodeGen
 
             return cases.Count > 0;
         }
+
+        /// <summary>The value of an enum case static, as the switch key it dispatches on (§2.4).</summary>
+        /// <remarks>
+        /// Imported enums carry no value (only their ordinal), so those stay on the comparison
+        /// chain — the same fallback a non-case label takes.
+        /// </remarks>
+        private static object? EnumCaseKey(BoundExpression expression)
+            => expression is BoundFieldExpression { Field: FieldSymbol { IsStatic: true, EnumValue: not null } @case }
+                && @case.Type.NonNullable.TypeKind == TypeSymbolKind.Enum
+                ? (long)@case.EnumValue!.Value
+                : null;
 
         /// <summary>
         /// Emits a string switch as a hash lookup with an equality confirmation.
@@ -5755,7 +5811,7 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         private void EmitSwitchExpression(BoundSwitchExpression @switch)
         {
-            var subject = _method.DeclareLocal("$subject");
+            var subject = DeclareTemp("$subject", @switch.Subject.Type);
 
             Expression(@switch.Subject);
             EmitStoreLocal(subject);
