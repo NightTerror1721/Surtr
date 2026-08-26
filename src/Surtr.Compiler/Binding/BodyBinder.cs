@@ -209,29 +209,29 @@ namespace Surtr.Compiler.Binding
         /// <summary>Binds one enum case as the construction it is (§2.4).</summary>
         public BoundExpression BindEnumCase(EnumCaseSyntax syntax, NamedTypeSymbol @enum)
         {
-            // §P14: a @Flags case is a single bit, not an instance. Which bit is its position in
-            // the declaration, so the case list itself is the whole notation - nothing has to be
-            // written down, and every value is a power of two by construction rather than by a
-            // convention a lint would have to police.
+            // §P14: a @Flags case is a single bit, not an instance. Which bit is either written on
+            // the case (`Perm.Read = 8,`) or its position in the declaration — so a plain case
+            // list is still the whole notation, and every implicit value is a power of two by
+            // construction rather than by a convention a lint would have to police.
             if (@enum.IsFlagsEnum)
             {
-                int ordinal = OrdinalOf(syntax, @enum);
-                return new BoundLiteralExpression(syntax, @enum, 1L << ordinal);
+                int value = CaseValueOf(syntax, @enum);
+                return new BoundLiteralExpression(syntax, @enum, (long)value);
             }
 
             return BindObjectCreation(syntax, syntax.Arguments, @enum);
         }
 
         /// <summary>
-        /// A case's position in its enum's declaration, which for a <c>@Flags</c> enum is the bit
-        /// it stands for.
+        /// A case's value in its enum: the <c>= n</c> written on it, or its position in the
+        /// declaration, which for a <c>@Flags</c> enum is the bit it stands for.
         /// </summary>
         /// <remarks>
-        /// Read off the enum's own member list rather than passed in, so it agrees with the ordinal
-        /// every other part of the compiler reads — the two coming apart would give one case two
-        /// values with nothing to notice.
+        /// Read off the enum's own member list rather than passed in, so it agrees with the value
+        /// the declaration phase stored on the case's field — the two coming apart would give one
+        /// case two values with nothing to notice.
         /// </remarks>
-        private static int OrdinalOf(EnumCaseSyntax syntax, NamedTypeSymbol @enum)
+        private static int CaseValueOf(EnumCaseSyntax syntax, NamedTypeSymbol @enum)
         {
             int ordinal = 0;
 
@@ -241,12 +241,12 @@ namespace Surtr.Compiler.Binding
                     continue;
 
                 if (string.Equals(@case.Name, syntax.Name, StringComparison.Ordinal))
-                    return ordinal;
+                    return @case.EnumValue ?? (1 << ordinal);
 
                 ordinal++;
             }
 
-            return ordinal;
+            return 1 << ordinal;
         }
 
         /// <summary>Binds a <c>singleton</c>'s one instance, which its module builds at load (§2.8).</summary>

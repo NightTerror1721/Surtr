@@ -590,6 +590,75 @@ namespace Surtr.Tests.Compiler.Binding
             Assert.Equal(2, cases.Count);
             Assert.All(cases, c => Assert.True(c.IsStatic && c.IsReadOnly));
             Assert.All(cases, c => Assert.Same(suit, c.Type));
+
+            // Each case carries its implied value: progression from 0 (§2.4).
+            Assert.Equal(0, cases[0].EnumValue);
+            Assert.Equal(1, cases[1].EnumValue);
+        }
+
+        [Fact]
+        public void ExplicitValuesOnCasesSetTheStoredConstantAndContinueTheProgression()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "enum Suit { Hearts = 1, Spades, Clubs = 10, Diamonds }"));
+
+            AssertNoErrors(compilation);
+
+            var suit = Type(binder, "game.core.Test", "Suit");
+            var cases = suit.Members.OfType<FieldSymbol>().OrderBy(c => c.Name).ToList();
+            Assert.Equal(1, cases.Single(c => c.Name == "Hearts").EnumValue);
+            Assert.Equal(2, cases.Single(c => c.Name == "Spades").EnumValue);
+            Assert.Equal(10, cases.Single(c => c.Name == "Clubs").EnumValue);
+            Assert.Equal(11, cases.Single(c => c.Name == "Diamonds").EnumValue);
+        }
+
+        [Fact]
+        public void AFlagsCaseRejectsANonPowerOfTwoValue()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "@Flags enum Perm { Read = 1, Write = 2, Execute = 3 }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidEnumValue);
+        }
+
+        [Fact]
+        public void AFlagsEnumAllowsDuplicateValuesAsBitAliases()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "@Flags enum Perm { None = 0, Read = 1, Write = 2, ReadAlias = 1 }"));
+
+            AssertNoErrors(compilation);
+
+            var perm = Type(binder, "game.core.Test", "Perm");
+            Assert.Equal(1, perm.Members.OfType<FieldSymbol>().Single(c => c.Name == "ReadAlias").EnumValue);
+        }
+
+        [Fact]
+        public void APlainEnumRejectsDuplicateValues()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "enum Suit { Hearts = 1, Spades = 1 }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateEnumValue);
+        }
+
+        [Fact]
+        public void AnEnumConstructorMustBePrivate()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "enum Suit { Hearts;\n  private let rank: int;\n  public constructor(rank: int) { this.rank = rank; } }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidEnumConstructor);
+        }
+
+        [Fact]
+        public void AnEnumReservesValueValuesAndOf()
+        {
+            Bind(out var first, ("game/core/Test.surtr", "enum Suit { Hearts;\n  public fun values(): int { return 1; } }"));
+            AssertReports(first, SurtrDiagnosticCode.ReservedEnumMember);
+
+            Bind(out var second, ("game/core/Test.surtr", "enum Suit { Hearts = 0;\n  private let of: int; }"));
+            AssertReports(second, SurtrDiagnosticCode.ReservedEnumMember);
         }
         #endregion
 

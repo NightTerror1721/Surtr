@@ -482,6 +482,12 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>The constructor arguments, empty when written bare.</summary>
         public IReadOnlyList<ArgumentSyntax> Arguments { get; }
 
+        /// <summary>
+        /// The explicit <c>= n</c> value written on the case, or <see langword="null"/> when the
+        /// case takes the implied progression (§2.4).
+        /// </summary>
+        public long? ExplicitValue { get; }
+
         /// <summary>The <c>///</c> doc comment lines preceding this case.</summary>
         public IReadOnlyList<string> DocComment { get; }
 
@@ -490,12 +496,14 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="name">The case's name.</param>
         /// <param name="arguments">The constructor arguments.</param>
         /// <param name="docComment">Doc comment lines preceding it.</param>
-        public EnumCaseSyntax(SourceSpan span, string name, IReadOnlyList<ArgumentSyntax> arguments, IReadOnlyList<string> docComment)
+        /// <param name="explicitValue">The written <c>= n</c> value, or <see langword="null"/>.</param>
+        public EnumCaseSyntax(SourceSpan span, string name, IReadOnlyList<ArgumentSyntax> arguments, IReadOnlyList<string> docComment, long? explicitValue = null)
             : base(span)
         {
             Name = name;
             Arguments = arguments;
             DocComment = docComment;
+            ExplicitValue = explicitValue;
         }
     }
 

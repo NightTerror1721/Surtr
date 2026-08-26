@@ -2040,13 +2040,61 @@ namespace Surtr.Compiler.Binding
                 }
             }
 
+            int nextValue = 0;
+            int position = 0;
+            var caseValues = new HashSet<int>();
             foreach (var enumCase in syntax.EnumCases)
             {
+                int value;
+                if (enumCase.ExplicitValue is { } explicitValue)
+                {
+                    if (explicitValue < 0)
+                    {
+                        Report(SurtrDiagnosticCode.InvalidEnumValue, binding, enumCase.Span,
+                            $"'{symbol.Name}' case '{enumCase.Name}' has value {explicitValue}, which is negative; an enum value is 0 or more.");
+                        value = 0;
+                    }
+                    else if (explicitValue > int.MaxValue)
+                    {
+                        Report(SurtrDiagnosticCode.InvalidEnumValue, binding, enumCase.Span,
+                            $"'{symbol.Name}' case '{enumCase.Name}' has value {explicitValue}, which does not fit an int.");
+                        value = 0;
+                    }
+                    else
+                    {
+                        value = (int)explicitValue;
+
+                        if (symbol.IsFlagsEnum && value != 0 && !IsPowerOfTwo(value))
+                        {
+                            Report(SurtrDiagnosticCode.InvalidEnumValue, binding, enumCase.Span,
+                                $"'{symbol.Name}' is '@Flags', so '{enumCase.Name}' must be a power of two (or 0); {value} is not.");
+                        }
+                    }
+                }
+                else
+                {
+                    value = symbol.IsFlagsEnum ? 1 << position : nextValue;
+                }
+
+                // Duplicates are idiom in a @Flags enum (bit aliases, an explicit 0); in a plain
+                // enum they would break the reverse value-to-name lookup behind toString and the
+                // dense switch tables (§2.4).
+                if (!symbol.IsFlagsEnum && !caseValues.Add(value))
+                {
+                    Report(SurtrDiagnosticCode.DuplicateEnumValue, binding, enumCase.Span,
+                        $"'{symbol.Name}' already has a case with value {value}; a plain enum names each value once.");
+                }
+                else
+                {
+                    _ = caseValues.Add(value);
+                }
+
                 var field = new FieldSymbol(enumCase.Name, symbol, symbol)
                 {
                     IsStatic = true,
                     IsReadOnly = true,
                     Accessibility = Accessibility.Public,
+                    EnumValue = value,
                 };
 
                 members.Add(field);
@@ -2058,10 +2106,16 @@ namespace Surtr.Compiler.Binding
 
                 if (!names.Add(enumCase.Name))
                     Duplicate(binding, enumCase.Span, enumCase.Name);
+
+                nextValue = value + 1;
+                position++;
             }
 
             if (symbol.IsFlagsEnum)
                 CheckFlagsEnumIsPlain(binding, syntax, symbol, members);
+
+            if (syntax.Kind == TypeDeclarationKind.Enum)
+                CheckEnumReservedNames(binding, syntax, members);
 
             if (syntax.Kind == TypeDeclarationKind.ValueClass)
                 BindValueClassField(binding, members, letFields);
@@ -2130,6 +2184,46 @@ namespace Surtr.Compiler.Binding
                 break;
             }
         }
+
+        /// <summary>
+        /// Rejects an enum member or case named after the synthesized enum API (§2.4).
+        /// </summary>
+        /// <remarks>
+        /// <c>value</c>, <c>values</c> and <c>of</c> are part of what every enum answers to, so a
+        /// declaration stealing one would collide with the synthesis later. Reported once against
+        /// the whole declaration rather than per member — one offender is enough to know the enum
+        /// has to change.
+        /// </remarks>
+        private void CheckEnumReservedNames(TypeBinding binding, TypeDeclarationSyntax syntax, List<Symbol> members)
+        {
+            foreach (var member in members)
+            {
+                if (IsReservedEnumName(member.Name))
+                {
+                    Report(SurtrDiagnosticCode.ReservedEnumMember, binding, syntax.Span,
+                        $"'{member.Name}' is reserved on an enum: every enum answers to 'value', 'values' and 'of' (§2.4).");
+                    return;
+                }
+            }
+
+            foreach (var @case in syntax.EnumCases)
+            {
+                if (IsReservedEnumName(@case.Name))
+                {
+                    Report(SurtrDiagnosticCode.ReservedEnumMember, binding, @case.Span,
+                        $"'{@case.Name}' is reserved on an enum: every enum answers to 'value', 'values' and 'of' (§2.4).");
+                    return;
+                }
+            }
+        }
+
+        private static bool IsReservedEnumName(string name) => name switch
+        {
+            "value" or "values" or "of" => true,
+            _ => false,
+        };
+
+        private static bool IsPowerOfTwo(int value) => value > 0 && (value & (value - 1)) == 0;
 
         private void BindValueClassField(TypeBinding binding, List<Symbol> members, int letFields)
         {
@@ -4485,9 +4579,18 @@ namespace Surtr.Compiler.Binding
         {
             var method = new MethodSymbol(MemberNames.Constructor, owner, _factory.Void)
             {
-                Accessibility = Translate(syntax.Visibility, Accessibility.Public),
+                Accessibility = Translate(syntax.Visibility, owner.TypeKind == TypeSymbolKind.Enum ? Accessibility.Private : Accessibility.Public),
                 Role = MethodRole.Constructor,
             };
+
+            // §2.4: an enum's only instances are its cases, so nothing but the case list may call
+            // the constructor. A written visibility other than private is reported and forced.
+            if (owner.TypeKind == TypeSymbolKind.Enum && method.Accessibility != Accessibility.Private)
+            {
+                Report(SurtrDiagnosticCode.InvalidEnumConstructor, binding, syntax.Span,
+                    $"'{owner.Name}' is an enum; its constructor is always private, since only the case list may call it.");
+                method.Accessibility = Accessibility.Private;
+            }
 
             method.Parameters = BindParameters(syntax.Parameters, method, binding.Scope, binding.SourceName);
             RecordBody(method, syntax.Body, binding.Scope, binding.Module, owner, binding.SourceName);

@@ -115,6 +115,20 @@ namespace Surtr.Tests.Compiler.Syntax
             Assert.Single(type.Members);
         }
 
+        /// <summary>§2.4: a case may carry an explicit value after its arguments: `Hearts(1) = 5,`.</summary>
+        [Fact]
+        public void EnumParsesExplicitValuesAfterArguments()
+        {
+            TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>(
+                "enum Suit { Hearts(\"h\") = 1, Spades, Clubs = 10; }");
+
+            Assert.Equal(3, type.EnumCases.Count);
+            Assert.Equal(1, type.EnumCases[0].ExplicitValue);
+            Assert.Null(type.EnumCases[1].ExplicitValue);
+            Assert.Equal(10, type.EnumCases[2].ExplicitValue);
+            Assert.Equal("Spades", type.EnumCases[1].Name);
+        }
+
         /// <summary>§2.4: the trailing `;` is only needed when members follow.</summary>
         [Fact]
         public void BareEnumNeedsNoTrailingSemicolon()

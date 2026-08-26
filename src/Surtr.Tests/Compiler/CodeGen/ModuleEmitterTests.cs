@@ -1649,7 +1649,7 @@ var runtime = Run(
                 "enum Suit {\n"
                     + "  Hearts(1), Spades(4);\n"
                     + "  public let rank: int;\n"
-                    + "  public constructor(rank: int) { this.rank = rank; }\n"
+                    + "  private constructor(rank: int) { this.rank = rank; }\n"
                     + "}\n"
                     + "fun run(): int { return Suit.Spades.rank; }");
 

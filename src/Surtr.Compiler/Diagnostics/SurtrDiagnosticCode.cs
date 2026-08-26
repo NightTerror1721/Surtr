@@ -614,9 +614,9 @@ namespace Surtr.Compiler.Diagnostics
         /// about intent, it is about a declaration the compiler has no representation for.
         /// </summary>
         /// <remarks>
-        /// Replaces what was going to be a power-of-two check on written case values. There are no
-        /// written values to check: the bit is the case's position in the declaration, so every
-        /// value is a power of two by construction.
+        /// The power-of-two check on written case values is <see cref="InvalidEnumValue"/>; this
+        /// one covers everything the integer representation leaves nowhere to put — members,
+        /// interfaces and constructor arguments on the cases.
         /// </remarks>
         InvalidFlagsEnum = 3083,
 
@@ -648,6 +648,34 @@ namespace Surtr.Compiler.Diagnostics
         /// between.
         /// </summary>
         BenchmarkWithTest = 3087,
+
+        /// <summary>
+        /// An enum case's explicit value (§2.4) is invalid: negative, beyond an <c>int</c>, or not
+        /// a power of two on a <c>@Flags</c> enum. A plain enum numbers its cases 0, 1, 2… unless
+        /// told otherwise; a marked enum's cases are single bits, so an explicit value must be a
+        /// power of two (0 names the empty set).
+        /// </summary>
+        InvalidEnumValue = 3088,
+
+        /// <summary>
+        /// Two cases of a plain enum carry the same value (§2.4). A duplicate would break the
+        /// reverse value-to-name lookup behind <c>toString</c> and the dense switch tables, so it
+        /// is refused; a <c>@Flags</c> enum allows duplicates (bit aliases).
+        /// </summary>
+        DuplicateEnumValue = 3089,
+
+        /// <summary>
+        /// An enum declares a constructor with a visibility other than <c>private</c> (§2.4). An
+        /// enum's only instances are its cases, so nothing but the case list may call the
+        /// constructor; the compiler forces it private.
+        /// </summary>
+        InvalidEnumConstructor = 3090,
+
+        /// <summary>
+        /// An enum's own declaration names a member reserved by the synthesized enum API (§2.4):
+        /// <c>value</c>, <c>values</c> or <c>of</c>.
+        /// </summary>
+        ReservedEnumMember = 3091,
 
         #endregion
 

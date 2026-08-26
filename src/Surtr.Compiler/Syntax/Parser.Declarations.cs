@@ -568,7 +568,20 @@ namespace Surtr.Compiler.Syntax
                     ? ParseArgumentList()
                     : Array.Empty<ArgumentSyntax>();
 
-                cases.Add(new EnumCaseSyntax(SpanFrom(start), name, arguments, caseDoc));
+                // §2.4: a case may carry an explicit value, written after its arguments:
+                // `Hearts("♥", true) = 1,`. Only an integer literal is accepted - the value has
+                // to fold at compile time, so an expression would be a promise the compiler
+                // cannot keep cheaply.
+                long? explicitValue = null;
+                if (reader.Match(TokenType.Assign))
+                {
+                    if (reader.CurrentType != TokenType.IntegerLiteral)
+                        throw reader.Error(SurtrDiagnosticCode.UnexpectedToken, "an integer literal as the case's value after '='");
+
+                    explicitValue = reader.Advance().Payload.AsInteger;
+                }
+
+                cases.Add(new EnumCaseSyntax(SpanFrom(start), name, arguments, caseDoc, explicitValue));
 
                 if (!reader.Match(TokenType.Comma))
                 {

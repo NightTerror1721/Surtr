@@ -382,6 +382,14 @@ namespace Surtr.Compiler.Binding.Symbols
         public bool IsSynthetic { get; internal set; }
 
         /// <summary>
+        /// The constant value of an enum case (§2.4): its explicit <c>= n</c>, or its implied
+        /// position (progression for a plain enum, a single bit for a <c>@Flags</c> one).
+        /// <see langword="null"/> on anything that is not a case of a source enum — an imported
+        /// enum's cases carry only their ordinal.
+        /// </summary>
+        public int? EnumValue { get; internal set; }
+
+        /// <summary>
         /// Whether it names a host global rather than storage of its own (§10).
         /// </summary>
         /// <remarks>
