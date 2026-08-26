@@ -109,6 +109,15 @@ en consecuencia y queda **más permisiva** de lo que el diseño anticipaba:
 > Lo que sigue perdiendo es el opcode que **no ahorra ningún despacho** y solo elimina un test de
 > tipo, un test de tag o una comparación: ~0.25 ns de ahorro contra ~0.46 ns de prefijo.
 
+**Corregida por la Fase 3 (§9), y esta es la forma buena.** Contar despachos como si valieran todos
+lo mismo es demasiado grueso: el grupo C eliminó dos por iteración y no movió nada, ni siquiera en
+un bucle construido para exponerlo. Un `Ldl` es una carga sin dependencias cuya rama indirecta es la
+mejor predicha del intérprete, y quitarlo quita trabajo que el motor fuera de orden ya solapaba.
+
+> Lo que paga no es el número de despachos sino **el trabajo que serializa** dentro de ellos: una
+> rama que decide el flujo, una dependencia de memoria, una búsqueda en una tabla, una comprobación
+> de rango. El grupo A ganó un 47 % quitando eso; el grupo C perdió quitando cargas baratas.
+
 Corolario práctico, que no cambia: el espacio extendido es para **fusiones**, no para
 micro-especializaciones sueltas. Lo que sí cambia es el margen — el grupo D, que ahorra uno o dos
 despachos *además* del test, entra con holgura en vez de entrar al límite, y `NativeFieldGetL`
@@ -443,6 +452,71 @@ mediana, y tamaños suficientes para mantener el spread bajo el 10 % (la propia 
 nueve casos con dispersión >10 %, todos con medianas bajo ~4 ms; un A/B nuevo necesita **tamaños
 mayores, no más iteraciones**).
 
+**Fase 3 — construida, medida y revertida. El resultado negativo es lo valioso.**
+
+Se implementaron 24 opcodes (`JPEQLL`…`JPLELIX`: seis comparaciones × dos formas de operando ×
+dos anchos de offset), con su reconocimiento en el emisor y sus tests. Funcionaban: los tests
+dorados confirman que `for (var i = 0; i < n; i += 1)` emite `JPGELL` y que `i < 10` emite
+`JPGELI`, y que una variable capturada, un flotante o una constante mayor que un byte caen a la
+forma escrita.
+
+**Y no sirvieron para nada.** Medido contra un worktree en el commit de la Fase 2:
+
+| Caso | Fase 2 | Fase 3 | |
+|---|---|---|---|
+| `intLoop` | 7.983 | 7.978 | idéntico |
+| `fib` | 2.765 | 2.763 | idéntico |
+| `floatLoop` | 6.174 | 6.155 | idéntico |
+| `switchDense` | 5.952 | 5.943 | idéntico |
+| suite completa (47 casos) | — | — | mediana **+0.3 %**, control de C# +0.0 % |
+
+La sospecha inmediata era que ningún caso del catálogo estuviera dominado por el guard: `intLoop`
+lleva un `%` en el cuerpo, y una división entera de ~30 ciclos esconde detrás casi cualquier cosa.
+Así que se añadió `tightGuard` — un bucle contado cuyo cuerpo es un solo `store` de un valor
+fresco, sin cadena de dependencia entre iteraciones y sin nada que solape el guard. Tres corridas
+por lado:
+
+| | corridas | mediana |
+|---|---|---|
+| Fase 2 (sin grupo C) | 5.705 · 5.687 · 5.675 | **5.687** |
+| Fase 3 (con grupo C) | 5.375 · 5.753 · 5.846 | **5.753** |
+
+Ni siquiera ahí. **Revertido.**
+
+**Lo que esto corrige del modelo de coste, y es la parte que importa.** La regla de §3.2 medía todo
+en "despachos ahorrados" tratándolos como intercambiables a ~1 ns. Eso es falso, y la Fase 2 y la
+Fase 3 juntas dicen por qué: **no todos los despachos cuestan lo mismo**.
+
+- Un `Ldl` es una carga y un almacenamiento sin dependencias, y su rama indirecta es la mejor
+  predicha del intérprete porque es el opcode más frecuente que hay. Quitar dos de ellos de un
+  bucle quita trabajo que el motor fuera de orden **ya estaba solapando** con lo que sí serializa.
+- Lo que pagó en el grupo A no fue el número de despachos sino **qué** llevaban dentro: una
+  comprobación de rango, una búsqueda en el registro de entidades, una dependencia de memoria, y
+  el colapso de una estructura de bucle de dos ramas en una.
+
+La regla queda así:
+
+> Un opcode extendido paga cuando elimina **trabajo que serializa** — una rama que decide el flujo,
+> una dependencia de memoria, una búsqueda, una comprobación — no cuando elimina instrucciones
+> baratas e independientes, por muchas que sean.
+
+Eso reordena lo que queda: el **grupo B** (`AddLL` y compañía) tiene exactamente la forma que acaba
+de fallar — cargas baratas de slots fusionadas — así que entra en la Fase 4 **solo como sondeo de
+un opcode**, no como grupo completo. El **grupo D** es de la otra clase: elimina una búsqueda de
+entidad y un test de tipo además de los despachos, que es lo que el grupo A demostró que sí cuenta.
+
+**La ventana de fusión (§6, P6 reformulado) no llegó a hacer falta y no se construyó.** El diseño
+suponía que fusionar el grupo C exigía reconocer un patrón repartido en varias instrucciones ya
+emitidas. Es falso: `EmitConditionalJump` tiene los **operandos bindeados en la mano** antes de
+emitir nada, así que la pregunta "¿son los dos lados slots?" tiene respuesta directa, sin reescribir
+bytes y sin tener que demostrar que ninguna etiqueta cae en medio. Un pase posterior habría tenido
+que redescubrir información que ese lado ya tiene. Si algún día hace falta fusionar algo que el
+emisor genuinamente no ve como una unidad, la ventana sigue siendo el diseño correcto; nada de lo
+propuesto hasta ahora lo es.
+
+`tightGuard` se queda en el catálogo del bench, igual que `sortBytecode`: es el instrumento con el
+que se cerró esta pregunta y con el que habrá que volver a abrirla en otro backend.
+
 **Fase 2 — grupo A completo, y el resultado tiene dos mitades que hay que separar.**
 
 Doce opcodes (`ArrForNext`, `StrForNext`, `TupForNext`, `DictForNext`, `ForRangeNextLE/LT`, más sus
@@ -569,8 +643,8 @@ P1), y un `for-in` sobre array lo bastante largo para que el spread baje del 10 
 | **0** ✅ | Abrir el prefijo (`OpCode.Ext`, `SurtrExtOpCode`, switch anidado, disassembler, `FormatVersion` → 13) + el experimento nulo de §8. **Hecho**: prefijo a 0.44-0.48 ns, sin degradación de la suite | — |
 | **1** ✅ | **P1** plegado constante en `EmitBinary`/`EmitUnary` + **P9** sort en Surtr. **Hecho**: P1 aterrizado, P9 medido y cerrado en negativo | Nada; fue en paralelo con la 0 |
 | **2** ✅ | **Grupo A** (superinstrucciones de bucle). Cierra P4 y P5. **Hecho**: `forIn` −47 %, `forInDict` −20 % | 0 |
-| **3** | **Ventana de fusión** en `SurtrCodeEmitter` (§6) + **grupo C**, su consumidor más simple | 0 |
-| **4** | **Grupos B y D**. Cierra P2 y P3 en su forma rentable | 3 |
+| **3** ⛔ | **Ventana de fusión** (§6) + **grupo C**. **Construido, medido y revertido**: cero ganancia. La ventana resultó innecesaria | 0 |
+| **4** | **Grupo D** (P2 y P3 fusionadas). El **grupo B queda condicionado** a un sondeo de un solo opcode, porque la Fase 3 dice que su forma no paga | 3 |
 | **5** | **Grupo E** (previa comprobación de solape con `LoadValueLocal`), **P7** versión barata, y cierre documentado de **P8** | 4 |
 
 Cada fase entra con su A/B según §8, `OpCodeValueTests.cs` actualizado y la sección

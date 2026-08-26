@@ -188,6 +188,16 @@ namespace Surtr.Bench
                 return fib(n - 1) + fib(n - 2);
             }
 
+            // A loop whose body is one store of a fresh value - no accumulation, so no dependent
+            // chain between iterations and nothing for the out-of-order engine to hide the guard
+            // behind. intLoop cannot answer that question: its body carries a
+            // `%`, an integer division of some thirty cycles that everything else overlaps with.
+            fun tightGuard(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) { acc = i + 1; }
+                return acc;
+            }
+
             fun intLoop(n: int): int {
                 var acc: int = 0;
                 for (var i = 0; i < n; i += 1) { acc = (acc + i * 31) % 100000007; }
@@ -856,6 +866,12 @@ namespace Surtr.Bench
                 return fib(n - 1) + fib(n - 2)
             end
 
+            function tightGuard(n)
+                local acc = 0
+                for i = 0, n - 1 do acc = i + 1 end
+                return acc
+            end
+
             function intLoop(n)
                 local acc = 0
                 for i = 0, n - 1 do acc = (acc + i * 31) % 100000007 end
@@ -1349,6 +1365,7 @@ namespace Surtr.Bench
         {
             new Workload("fib", 24, WorkloadKind.Int, "recursive calls, frame setup", Fib),
             new Workload("intLoop", 1000000, WorkloadKind.Int, "integer arithmetic and branching", IntLoop),
+            new Workload("tightGuard", 1000000, WorkloadKind.Int, "a counted loop whose body is one store: the guard is a real fraction of it", TightGuard),
             new Workload("floatLoop", 1000000, WorkloadKind.Float, "float arithmetic, NaN-boxed", baselineFloat: FloatLoop),
             new Workload("mathFns", 100000, WorkloadKind.Float, "float calls across the native boundary", baselineFloat: MathFns),
             new Workload("arrayFill", 50000, WorkloadKind.Int, "array growth via push", ArrayFill),
@@ -1464,6 +1481,14 @@ namespace Surtr.Bench
         }
 
         private static long Fib(long n) => n < 2 ? n : Fib(n - 1) + Fib(n - 2);
+
+        private static long TightGuard(long n)
+        {
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+                acc = i + 1;
+            return acc;
+        }
 
         private static long IntLoop(long n)
         {
