@@ -452,6 +452,47 @@ mediana, y tamaños suficientes para mantener el spread bajo el 10 % (la propia 
 nueve casos con dispersión >10 %, todos con medianas bajo ~4 ms; un A/B nuevo necesita **tamaños
 mayores, no más iteraciones**).
 
+**Fase 4 — los dos grupos construidos, los dos revertidos, y el techo encontrado.**
+
+**Grupo B (aritmética con operandos en slots).** Entró como sondeo de dos opcodes, porque la Fase 3
+había tumbado una forma parecida. **El sondeo salió bien**: `AddLL`/`AddLI` sobre `tightGuard`, a
+escala 5 y tres corridas por lado, dieron 29.114 · 29.366 · 29.066 contra 26.659 · 26.481 · 27.584 —
+**−8.4 %**, distribuciones que no se solapan y control de C# idéntico. La explicación encajaba con lo
+aprendido en la Fase 3: lo que esto quita y el grupo C no quitaba es el **viaje de ida y vuelta por
+la pila de datos**, que es tráfico de memoria y no despacho. Así que se completó a nueve opcodes
+(`Add`/`Sub`/`Mul` × slot-slot y slot-constante, más las tres formas flotantes).
+
+**Grupo D (accesos fusionados).** Seis opcodes — `FieldGetL`, `FieldSetL`, `ArrGetLL`, `ArrSetLL`,
+`DictGetLL`, `DictSetLL` — que quitan una búsqueda en el registro de entidades y el tráfico de pila
+además de los despachos, que es la clase de trabajo que el grupo A demostró que sí cuenta. Se
+emiten correctamente (test dorado sobre las tres formas) y **empeoraron sus propios objetivos**:
+`arrayIndex` +10 %, `fieldAccess` +6 %, `dictOps` +8 %, medido a escala 5 con tres corridas por lado.
+
+**Y entonces la medición se cayó.** Al revertir el grupo D para quedarse con el B, `arrayIndex` daba
+21.6 en una corrida y 31.2 en la siguiente **con el mismo binario**. Un 44 % de oscilación bimodal
+invalida cualquier conclusión de ±10 %, incluida la que acababa de tomar sobre el grupo D. Así que
+la pregunta hubo que hacerla al revés: en vez de "¿cuánto gana este opcode?", **"¿qué le pasa al
+intérprete entero cuando se le añaden cuerpos?"**. Suite completa, grupo B solo, contra la Fase 3:
+
+| | |
+|---|---|
+| mediana | **+3.9 %** |
+| control de C# | +0.0 % |
+| casos que empeoran >5 % | **20 de 48** |
+| peores | `arrayIndex` +45 %, `valueClass` +38 %, `stringOps` +38 %, `methodCalls` +36 %, `floatLoop` +35 % |
+| `tightGuard` (su objetivo) | −10.5 % |
+
+Nueve cuerpos aritméticos de cinco líneas cada uno hacen al intérprete un 3.9 % más lento de
+mediana. **Revertido también.** La Fase 4 no deja código.
+
+**Lo que sí deja, y es el hallazgo que cierra el plan.** Esas veinte regresiones son casi
+exactamente el reverso de las ganancias que la Fase 2 había anotado como "layout, no la fusión":
+`valueClass` −30 % → +38 %, `floatLoop` −25 % → +35 %, `methodCalls` −25 % → +36 %, `arrayIndex`
+−32 % → +45 %, `intLoop` −21 % → +23 %. La suerte de la Fase 2 no era un regalo: era la posición de
+`Run()` en un espacio donde añadir cuerpos la mueve, y añadir nueve más la movió de vuelta.
+
+Ver §11.
+
 **Fase 3 — construida, medida y revertida. El resultado negativo es lo valioso.**
 
 Se implementaron 24 opcodes (`JPEQLL`…`JPLELIX`: seis comparaciones × dos formas de operando ×
@@ -644,8 +685,8 @@ P1), y un `for-in` sobre array lo bastante largo para que el spread baje del 10 
 | **1** ✅ | **P1** plegado constante en `EmitBinary`/`EmitUnary` + **P9** sort en Surtr. **Hecho**: P1 aterrizado, P9 medido y cerrado en negativo | Nada; fue en paralelo con la 0 |
 | **2** ✅ | **Grupo A** (superinstrucciones de bucle). Cierra P4 y P5. **Hecho**: `forIn` −47 %, `forInDict` −20 % | 0 |
 | **3** ⛔ | **Ventana de fusión** (§6) + **grupo C**. **Construido, medido y revertido**: cero ganancia. La ventana resultó innecesaria | 0 |
-| **4** | **Grupo D** (P2 y P3 fusionadas). El **grupo B queda condicionado** a un sondeo de un solo opcode, porque la Fase 3 dice que su forma no paga | 3 |
-| **5** | **Grupo E** (previa comprobación de solape con `LoadValueLocal`), **P7** versión barata, y cierre documentado de **P8** | 4 |
+| **4** ⛔ | **Grupos B y D**. **Construidos, medidos y revertidos**, y el porqué cierra el plan entero (§11) | 3 |
+| **5** | **P7** versión sin opcodes (tabla plana en el chunk, cero cuerpos nuevos), y cierre documentado de **P8** y del **grupo E** — ambos añadirían cuerpos, y §11 dice que ya no hay sitio | 4 |
 
 Cada fase entra con su A/B según §8, `OpCodeValueTests.cs` actualizado y la sección
 correspondiente de `docs/Opcodes.md` escrita en el mismo commit.
@@ -656,6 +697,64 @@ el plan se recortaría al grupo A emitido desde los **15 valores primarios**, do
 (seis formas más sus seis gemelos `X` son doce valores). Midió 0.44-0.48 ns y no degradó nada, así
 que el plan sigue completo y los quince valores primarios siguen reservados. El criterio se deja
 escrito porque vuelve a aplicar en cada backend nuevo: en IL2CPP hay que volver a medirlo.
+
+---
+
+## 11. El techo: `Run()` no admite más cuerpos
+
+Este es el resultado principal de todo el trabajo, y no estaba en el diseño.
+
+`SurtrVirtualMachine.Run()` son ~4700 líneas de `switch` con trece valores calientes compitiendo
+por registros. El riesgo estaba anotado en §7.1 como "podría derramar"; lo que las Fases 2, 3 y 4
+midieron es más concreto y más duro:
+
+> **Añadir cuerpos de opcode a `Run()` mueve el rendimiento de *todo* el intérprete en ±20-45 %
+> por caso, en una dirección que no se puede predecir y que no tiene nada que ver con lo que el
+> opcode nuevo hace.**
+
+La evidencia son tres experimentos independientes:
+
+| Fase | Cuerpos añadidos | Efecto en su objetivo | Efecto en la suite (mediana) |
+|---|---|---|---|
+| 2 (grupo A) | 13 | `forIn` **−47 %** | −5.0 % — favorable **por suerte** |
+| 3 (grupo C) | 24 | ninguno | +0.3 % |
+| 4 (grupo B) | 9 | `tightGuard` −10.5 % | **+3.9 %**, 20 casos peor |
+
+El control de C# está plano (±0.1 %) en las tres, así que no es la máquina.
+
+**Consecuencias, y son las reglas con las que hay que seguir:**
+
+1. **El presupuesto de opcodes nuevos no es de 256 valores; es de un puñado de cuerpos.** El espacio
+   extendido resuelve el problema equivocado: nunca faltaron valores, falta sitio en el método.
+2. **Un opcode nuevo tiene que justificar el layout que desplaza, no solo su propio ahorro.** El
+   grupo A lo hizo (−47 % en su objetivo, y aun así su beneficio de suite era prestado). El grupo B
+   ganó un 10 % en su objetivo y costó un 3.9 % en todo lo demás: ese cambio no se hace.
+3. **La única medida válida es la suite completa contra un worktree, con el control de C#.** Medir
+   el caso objetivo en un subconjunto contesta una pregunta que ya no es la que importa.
+4. **Lo que queda por optimizar no está en el juego de instrucciones.** Está en lo que no toca
+   `Run()`: trabajo movido al cargador (P7), a la emisión (P1, que aterrizó), o fuera del
+   intérprete (la asignación del sort, que aterrizó). Todas las propuestas restantes del informe que
+   añaden cuerpos — grupo E, y lo que quedaba de P2/P3 — quedan **cerradas por esta razón**, no por
+   estar mal pensadas.
+5. **Si alguna vez hace falta romper el techo**, la vía no es añadir menos: es partir `Run()` de
+   forma que el JIT deje de tratarlo como una única región de asignación. Eso es P8 con otro
+   objetivo — no reducir la tabla de saltos, sino aislar los cuerpos fríos — y sigue siendo un
+   experimento sin evidencia.
+
+**Lo que sí queda en pie del trabajo**, medido de punta a punta contra el estado anterior al grupo A
+(suite completa, control de C# a −0.1 %):
+
+| | |
+|---|---|
+| mediana | **−5.7 %** |
+| casos que mejoran >5 % | **25 de 46** |
+| casos que empeoran >5 % | 3 |
+| `forIn` | −47.6 % |
+| `forInDict` | −19.7 % |
+
+De ese −5.7 %, lo atribuible a ingeniería es el recorrido de `for-in`; el resto es la posición
+afortunada en la que quedó `Run()`, que la Fase 4 demostró que se pierde en cuanto se le añade algo.
+Vale la pena tenerlo, y no vale la pena construir sobre ello.
 
 ---
 
