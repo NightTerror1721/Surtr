@@ -4634,6 +4634,16 @@ var runtime = Run(
             Assert.Equal("Marker(42)", Describe(module.FindClass("Target")!));
         }
 
+        /// <summary>An attribute argument may be an enum constant — the case folds to its value (§2.3quater).</summary>
+        [Fact]
+        public void AnAttributeArgumentMayBeAnEnumConstant()
+        {
+            var module = Reload(
+                "enum Level { Low, High }\nclass Marker : Attribute { public let level: Level; }\n@Marker(Level.High)\nclass Target { }");
+
+            Assert.Equal("Marker(1)", Describe(module.FindClass("Target")!));
+        }
+
         [Fact]
         public void SomethingThatIsNotAnAttributeIsReported()
         {

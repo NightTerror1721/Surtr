@@ -4852,6 +4852,16 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private bool TryFoldConstCall(BoundCallExpression call, bool discardResult)
         {
+            // §2.3quater: a call on an enum's synthesized API with constant arguments — the receiver
+            // included, since every case is a literal for a bare enum — folds to the value the enum
+            // itself computes. Fitted before the receiver guard below because this is the one
+            // instance-call family the constant evaluator answers.
+            if (!discardResult && call.Method.IsConst && TryFoldEnumMember(call, out object? enumValue))
+            {
+                EmitLiteral(new BoundLiteralExpression(call.Syntax, call.Type, enumValue));
+                return true;
+            }
+
             if (discardResult || !call.Method.IsConst || _context.Folder is null || call.Receiver is not null)
                 return false;
 
@@ -4880,6 +4890,131 @@ namespace Surtr.Compiler.CodeGen
                     return false;
             }
         }
+
+        /// <summary>
+        /// Folds a call on an enum's synthesized API (§2.3quater) when every part is constant: a
+        /// static <c>of</c>/<c>values</c>, or an instance member whose receiver is a case. Only a
+        /// bare enum folds — its value is an int, which is all a constant can hold.
+        /// </summary>
+        private bool TryFoldEnumMember(BoundCallExpression call, out object? value)
+        {
+            value = null;
+
+            var method = call.Method;
+            if (method.ContainingType is not NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum } @enum)
+                return false;
+
+            object? receiver = null;
+            if (call.Receiver is not null)
+            {
+                if (!TryFoldEnumValue(call.Receiver, out receiver))
+                    return false;
+            }
+            else if (!method.IsStatic)
+            {
+                return false;
+            }
+
+            var arguments = new object?[call.Arguments.Count];
+            for (int i = 0; i < arguments.Length; i++)
+            {
+                if (!TryFoldEnumValue(call.Arguments[i], out arguments[i]))
+                    return false;
+            }
+
+            var cases = Binding.EnumMemberSynthesizer.CasesOf(@enum);
+
+            switch (method.Name)
+            {
+                case Binding.EnumMemberSynthesizer.OfName when arguments.Length == 1 && arguments[0] is long wanted:
+                {
+                    foreach (var @case in cases)
+                    {
+                        if ((@case.EnumValue ?? 0) == (int)wanted)
+                        {
+                            value = wanted;
+                            return true;
+                        }
+                    }
+
+                    // A @Flags enum is total — any int is a representable combination; a plain one
+                    // answers null for a value no case carries.
+                    value = @enum.IsFlagsEnum ? wanted : null;
+                    return true;
+                }
+
+                case Binding.EnumMemberSynthesizer.OfName when arguments.Length == 1 && arguments[0] is string name:
+                {
+                    foreach (var @case in cases)
+                    {
+                        if (string.Equals(@case.Name, name, StringComparison.Ordinal))
+                        {
+                            value = (long)(@case.EnumValue ?? 0);
+                            return true;
+                        }
+                    }
+
+                    value = null;
+                    return true;
+                }
+
+                case Binding.EnumMemberSynthesizer.ToStringName when arguments.Length == 0 && receiver is long self:
+                {
+                    foreach (var @case in cases)
+                    {
+                        if ((@case.EnumValue ?? 0) == (int)self)
+                        {
+                            value = @case.Name;
+                            return true;
+                        }
+                    }
+
+                    value = @enum.Name + "(" + self + ")";
+                    return true;
+                }
+
+                case Binding.EnumMemberSynthesizer.EqualsName when arguments.Length == 1 && receiver is long self:
+                    value = self == EnumFoldInt(arguments[0]);
+                    return true;
+
+                case Binding.EnumMemberSynthesizer.HashCodeName when arguments.Length == 0 && receiver is long self:
+                    value = self;
+                    return true;
+
+                case Binding.EnumMemberSynthesizer.CompareToName when arguments.Length == 1 && receiver is long self:
+                    value = self - EnumFoldInt(arguments[0]);
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Reads a value a constant enum expression folds to, when it is one.</summary>
+        private bool TryFoldEnumValue(BoundExpression expression, out object? value)
+        {
+            switch (expression)
+            {
+                case BoundLiteralExpression literal:
+                    value = literal.Value;
+                    return literal.Value is long or bool or char or string or null;
+
+                case BoundFieldExpression { Field: FieldSymbol { IsStatic: true, EnumValue: not null } field }
+                    when field.Type.NonNullable.TypeKind == TypeSymbolKind.Enum:
+                    value = (long)field.EnumValue!.Value;
+                    return true;
+
+                case BoundConversionExpression { Conversion.Kind: ConversionKind.Identity or ConversionKind.ImplicitNumeric } conversion:
+                    return TryFoldEnumValue(conversion.Operand, out value);
+
+                case BoundCallExpression call:
+                    return TryFoldEnumMember(call, out value);
+            }
+
+            value = null;
+            return false;
+        }
+
+        private static long EnumFoldInt(object? value) => value is long l ? l : 0;
 
         /// <summary>
         /// Whether the default heuristic � no <c>inline</c> written � still wants this body spliced

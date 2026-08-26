@@ -143,6 +143,93 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(55L, Fold(binder, "triangular", 10L));
         }
 
+        #region Enum expressions in constants (§2.3quater)
+
+        /// <summary>A case read is a constant: it is the enum's value.</summary>
+        [Fact]
+        public void AConstInitializerFoldsAnEnumCaseRead()
+        {
+            using var binder = Bind(out var compilation,
+                "enum Suit { Hearts, Spades }\nconst First: int = Suit.Hearts.value;");
+
+            AssertNoErrors(compilation);
+            Assert.True(binder.Constants.TryGetValue("First", out object? value));
+            Assert.Equal(0L, value);
+        }
+
+        /// <summary><c>of(value)</c> is the inverse of <c>.value</c>, and folds to the matching case's value.</summary>
+        [Fact]
+        public void AConstInitializerFoldsOfValue()
+        {
+            using var binder = Bind(out var compilation,
+                "enum Suit { Hearts, Spades }\nconst Second: int = Suit.of(1).value;");
+
+            AssertNoErrors(compilation);
+            Assert.True(binder.Constants.TryGetValue("Second", out object? value));
+            Assert.Equal(1L, value);
+        }
+
+        /// <summary><c>of(name)</c> folds to the named case's value, and null for an unknown name.</summary>
+        [Fact]
+        public void AConstInitializerFoldsOfName()
+        {
+            using var binder = Bind(out var compilation,
+                "enum Suit { Hearts, Spades }\n"
+                    + "const Named: int = Suit.of(\"Spades\").value;\n"
+                    + "const Unknown: bool = Suit.of(\"Clubs\") == null;");
+
+            AssertNoErrors(compilation);
+            Assert.True(binder.Constants.TryGetValue("Named", out object? named));
+            Assert.Equal(1L, named);
+            Assert.True(binder.Constants.TryGetValue("Unknown", out object? unknown));
+            Assert.Equal(true, unknown);
+        }
+
+        /// <summary><c>toString</c> folds to the case's name.</summary>
+        [Fact]
+        public void AConstInitializerFoldsToString()
+        {
+            using var binder = Bind(out var compilation,
+                "enum Suit { Hearts, Spades }\nconst Named: string = Suit.Spades.toString();");
+
+            AssertNoErrors(compilation);
+            Assert.True(binder.Constants.TryGetValue("Named", out object? value));
+            Assert.Equal("Spades", value);
+        }
+
+        /// <summary>Instance members with a constant receiver fold by direct dispatch (§2.3quater).</summary>
+        [Fact]
+        public void AConstInitializerFoldsInstanceMembersOnACase()
+        {
+            using var binder = Bind(out var compilation,
+                "enum Suit { Hearts, Spades }\n"
+                    + "const Same: bool = Suit.Hearts.equals(Suit.Hearts);\n"
+                    + "const Hash: int = Suit.Hearts.hashCode();\n"
+                    + "const Order: int = Suit.Spades.compareTo(Suit.Hearts);");
+
+            AssertNoErrors(compilation);
+            Assert.True(binder.Constants.TryGetValue("Same", out object? same));
+            Assert.Equal(true, same);
+            Assert.True(binder.Constants.TryGetValue("Hash", out object? hash));
+            Assert.Equal(0L, hash);
+            Assert.True(binder.Constants.TryGetValue("Order", out object? order));
+            Assert.Equal(1L, order);
+        }
+
+        /// <summary>A <c>@Flags</c> enum's <c>of(value)</c> is total even in a constant: any int is a representable combination.</summary>
+        [Fact]
+        public void AFlagsOfValueIsTotalInAConstant()
+        {
+            using var binder = Bind(out var compilation,
+                "@Flags enum Perm { None = 0, Read = 1, Write = 2 }\nconst Combined: int = Perm.of(3).value;");
+
+            AssertNoErrors(compilation);
+            Assert.True(binder.Constants.TryGetValue("Combined", out object? value));
+            Assert.Equal(3L, value);
+        }
+
+        #endregion
+
         [Fact]
         public void AConstFunctionFoldsOverStrings()
         {

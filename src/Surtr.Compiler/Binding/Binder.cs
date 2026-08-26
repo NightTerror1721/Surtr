@@ -3651,6 +3651,10 @@ namespace Surtr.Compiler.Binding
             SpecialType.Bool => value is bool,
             SpecialType.Char => value is char,
             SpecialType.String => value is string or null,
+
+            // §2.3quater: an enum argument folds to its `value`, so it fills an enum-typed field
+            // as the int it is.
+            SpecialType.None when fieldType.TypeKind == TypeSymbolKind.Enum => value is long or null,
             SpecialType.None => value is null,
             _ => false,
         };
@@ -3909,11 +3913,18 @@ namespace Surtr.Compiler.Binding
                 any = true;
             }
 
+            // The enum members fold whenever the enums are bound (§2.3quater): a case read, or a
+            // call on the synthesized API, resolves against the enum the evaluator named. Set
+            // regardless of whether any `const fun` exists, since a compilation may only use enums
+            // in constants.
+            Constants.EnumFolder = FoldEnumConstant;
+
             if (!any)
                 return;
 
             _constFolder = new ConstFolder(_bound);
             Constants.CallFolder = FoldConstCall;
+            Constants.EnumFolder = FoldEnumConstant;
         }
 
         /// <summary>
@@ -4035,6 +4046,136 @@ namespace Surtr.Compiler.Binding
                 _lastFoldFailure = failure;
 
             return folded;
+        }
+
+        /// <summary>
+        /// Folds an enum expression the evaluator recognised (§2.3quater): a case read, or a call
+        /// on the synthesized API. Only a bare enum folds as a constant — its value is an int, which
+        /// is all a constant can hold; a case-carrying enum's block has no constant form.
+        /// </summary>
+        private bool FoldEnumConstant(string enumName, object? receiverValue, string member, object?[]? arguments, out object? value)
+        {
+            value = null;
+
+            var @enum = FindEnumByName(enumName);
+            if (@enum is null)
+                return false;
+
+            // A plain read: a case's value.
+            if (arguments is null)
+            {
+                foreach (var field in EnumMemberSynthesizer.CasesOf(@enum))
+                {
+                    if (string.Equals(field.Name, member, StringComparison.Ordinal))
+                    {
+                        value = (long)(field.EnumValue ?? 0);
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            if (InstanceFieldsOf(@enum).Count != 1)
+                return false;
+
+            switch (member)
+            {
+                case EnumMemberSynthesizer.OfName when arguments.Length == 1 && arguments[0] is long wanted:
+                {
+                    foreach (var field in EnumMemberSynthesizer.CasesOf(@enum))
+                    {
+                        if ((field.EnumValue ?? 0) == (int)wanted)
+                        {
+                            value = wanted;
+                            return true;
+                        }
+                    }
+
+                    // A @Flags enum is total — any int is a representable combination; a plain one
+                    // answers null for a value no case carries.
+                    value = @enum.IsFlagsEnum ? wanted : null;
+                    return true;
+                }
+
+                case EnumMemberSynthesizer.OfName when arguments.Length == 1 && arguments[0] is string name:
+                {
+                    foreach (var field in EnumMemberSynthesizer.CasesOf(@enum))
+                    {
+                        if (string.Equals(field.Name, name, StringComparison.Ordinal))
+                        {
+                            value = (long)(field.EnumValue ?? 0);
+                            return true;
+                        }
+                    }
+
+                    value = null;
+                    return true;
+                }
+
+                case EnumMemberSynthesizer.ToStringName when arguments.Length == 0 && receiverValue is long receiver:
+                {
+                    foreach (var field in EnumMemberSynthesizer.CasesOf(@enum))
+                    {
+                        if ((field.EnumValue ?? 0) == (int)receiver)
+                        {
+                            value = field.Name;
+                            return true;
+                        }
+                    }
+
+                    value = @enum.Name + "(" + receiver + ")";
+                    return true;
+                }
+
+                case EnumMemberSynthesizer.EqualsName when arguments.Length == 1 && receiverValue is long self:
+                    value = self == FoldToInt(arguments[0]);
+                    return true;
+
+                case EnumMemberSynthesizer.HashCodeName when arguments.Length == 0 && receiverValue is long self:
+                    value = self;
+                    return true;
+
+                case EnumMemberSynthesizer.CompareToName when arguments.Length == 1 && receiverValue is long self:
+                    value = self - FoldToInt(arguments[0]);
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static long FoldToInt(object? value) => value is long l ? l : 0;
+
+        /// <summary>Finds a source enum by its written name, across every module.</summary>
+        private NamedTypeSymbol? FindEnumByName(string name)
+        {
+            foreach (var module in _modules.Values)
+            {
+                foreach (var type in module.Types)
+                {
+                    if (type.TypeKind == TypeSymbolKind.Enum && string.Equals(type.Name, name, StringComparison.Ordinal))
+                        return type;
+
+                    if (FindNestedEnum(type, name) is NamedTypeSymbol nested)
+                        return nested;
+                }
+            }
+
+            return null;
+        }
+
+        private static NamedTypeSymbol? FindNestedEnum(NamedTypeSymbol type, string name)
+        {
+            foreach (var nested in type.NestedTypes)
+            {
+                if (nested.TypeKind == TypeSymbolKind.Enum && string.Equals(nested.Name, name, StringComparison.Ordinal))
+                    return nested;
+
+                if (FindNestedEnum(nested, name) is NamedTypeSymbol deeper)
+                    return deeper;
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -5531,6 +5672,10 @@ if (members.Count != definition.Members.Count)
             var cases = EnumMemberSynthesizer.CasesOf(definition);
             var fields = InstanceFieldsOf(definition);
 
+            // A bare enum — its `value` is the whole value — is the one whose members fold as
+            // constants (§2.3quater): a constant can only hold an int, which is exactly it.
+            bool canBeConst = fields.Count == 1;
+
             AddEnumContracts(definition);
 
             if (!HasMethod(members, EnumMemberSynthesizer.EqualsName, isStatic: false, definition))
@@ -5540,6 +5685,7 @@ if (members.Count != definition.Members.Count)
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
                     IsInline = true,
+                    IsConst = canBeConst,
                     Parameters = new[] { new ParameterSymbol("other", definition, ordinal: 0) },
                     Attributes = PureAndNoAlloc(),
                 };
@@ -5554,6 +5700,7 @@ if (members.Count != definition.Members.Count)
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
                     IsInline = true,
+                    IsConst = canBeConst,
                     Attributes = PureAndNoAlloc(),
                 };
                 members.Add(method);
@@ -5566,6 +5713,7 @@ if (members.Count != definition.Members.Count)
                 {
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
+                    IsConst = canBeConst,
                     Attributes = PureOnly(),
                 };
                 members.Add(method);
@@ -5579,6 +5727,7 @@ if (members.Count != definition.Members.Count)
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
                     IsStatic = true,
+                    IsConst = canBeConst,
                 };
                 members.Add(method);
                 _bound[method] = EnumMemberSynthesizer.ValuesBody(_factory, definition, cases, method);
@@ -5598,6 +5747,7 @@ if (members.Count != definition.Members.Count)
                     Accessibility = Accessibility.Public,
                     IsStatic = true,
                     IsInline = true,
+                    IsConst = canBeConst,
                     Parameters = new[] { new ParameterSymbol("value", _factory.Int, ordinal: 0) },
                     Attributes = PureAndNoAlloc(),
                 };
@@ -5612,6 +5762,7 @@ if (members.Count != definition.Members.Count)
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
                     IsStatic = true,
+                    IsConst = canBeConst,
                     Parameters = new[] { new ParameterSymbol("name", _factory.String, ordinal: 0) },
                     Attributes = PureAndNoAlloc(),
                 };
@@ -5626,6 +5777,7 @@ if (members.Count != definition.Members.Count)
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
                     IsInline = true,
+                    IsConst = canBeConst,
                     Parameters = new[] { new ParameterSymbol("other", definition, ordinal: 0) },
                     Attributes = PureAndNoAlloc(),
                 };

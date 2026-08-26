@@ -1572,6 +1572,21 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(0, Count(run, "CallLocalModule"));
         }
 
+        /// <summary>
+        /// A call on an enum's synthesized API with constant parts folds away entirely (§2.3quater):
+        /// the receiver is a case (a literal for a bare enum), so the call becomes the value itself.
+        /// </summary>
+        [Fact]
+        public void AConstEnumCallFoldsAwayEntirely()
+        {
+            string code = Disassemble(
+                "enum Suit { Hearts, Spades }\n"
+                + "fun run(): bool { return Suit.Hearts.equals(Suit.Spades); }");
+
+            string run = MethodBody(code, "run(): bool");
+            Assert.Equal(0, Count(run, "InvokeSpecial"));
+        }
+
         #endregion
     }
 }
