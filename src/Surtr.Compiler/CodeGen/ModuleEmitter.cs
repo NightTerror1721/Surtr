@@ -1544,15 +1544,16 @@ namespace Surtr.Compiler.CodeGen
             // Record the slot so subclasses inherit the answer instead of re-bridging it.
             owner.Definition.AddBridgeKey(SlotKey(declared));
 
-            // The bridge is Virtual, so a value class receiver arrives boxed at this slot exactly
+            // The bridge is Virtual, so a value-class receiver arrives boxed at this slot exactly
             // as it does for any other interface-dispatched call on one (§6.3) — the same test
             // MethodBodyEmitter.LoadReceiver makes for a value class's own virtual-dispatch body,
-            // applied here since the bridge plays that same role. The `target` it forwards to keeps
-            // `Direct` dispatch and so expects the unboxed field, never the boxed form. A
-            // multi-field value class arrives as the SurtrInstance BoxValue packed rather than the
-            // SurtrBoxed BoxAs produced, so its mirror is UnboxValue over the whole width - the
-            // frame the forwarding call enters claims every field slot.
-            if (owner.TypeKind == TypeSymbolKind.ValueClass)
+            // applied here since the bridge plays that same role. An enum is a value class from
+            // the migration (§2.4), so its bridge unboxes the same way. The `target` it forwards
+            // to keeps `Direct` dispatch and so expects the unboxed field, never the boxed form.
+            // A multi-field value class arrives as the SurtrInstance BoxValue packed rather than
+            // the SurtrBoxed BoxAs produced, so its mirror is UnboxValue over the whole width -
+            // the frame the forwarding call enters claims every field slot.
+            if (owner.TypeKind is TypeSymbolKind.ValueClass or TypeSymbolKind.Enum)
             {
                 if (ValueTypeLayout.WidthOfType(owner) > 1 && ValueTypeLayout.TryGet(owner, out var bridgeLayout, out _))
                     code.UnboxValue(bridgeLayout.Width);
@@ -1596,10 +1597,40 @@ namespace Surtr.Compiler.CodeGen
         {
             var bare = target.NonNullable;
 
+            if (bare.TypeKind == TypeSymbolKind.Enum)
+            {
+                // An enum boxes as its own value: a bare one as the int it is (Box(Integer)), a
+                // case-carrying one as a SurtrInstance of the enum class (BoxValue). Either way
+                // the payload is the whole value, so unboxing reads it back.
+                if (ValueTypeLayout.WidthOfType((NamedTypeSymbol)bare) > 1
+                    && ValueTypeLayout.TryGet((NamedTypeSymbol)bare, out var enumLayout, out _))
+                {
+                    code.UnboxValue(enumLayout.Width);
+                }
+                else
+                {
+                    code.Unbox();
+                }
+
+                return;
+            }
+
             if (bare.TypeKind == TypeSymbolKind.ValueClass)
             {
                 code.CastTo(_descriptors.EmitBoxedForm((NamedTypeSymbol)bare));
-                code.Unbox();
+
+                // A multi-field value arrives as a SurtrInstance (BoxValue) whose whole block has
+                // to come back out, not the single-slot SurtrBoxed Unbox reads.
+                if (ValueTypeLayout.WidthOfType((NamedTypeSymbol)bare) > 1
+                    && ValueTypeLayout.TryGet((NamedTypeSymbol)bare, out var narrowLayout, out _))
+                {
+                    code.UnboxValue(narrowLayout.Width);
+                }
+                else
+                {
+                    code.Unbox();
+                }
+
                 return;
             }
 

@@ -2111,6 +2111,16 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
+            // A bare enum boxes as the int it is (Box(Integer)) on the way into an erased slot,
+            // so reading it back out is the primitive case — `UnboxDynamic` covers both the boxed
+            // and the raw representation, and allocates nothing. A case-carrying enum boxes as an
+            // instance of the enum class and took the multi-slot branch above.
+            if (bare.TypeKind == TypeSymbolKind.Enum)
+            {
+                Code.UnboxDynamic();
+                return;
+            }
+
             // A primitive read back out of an erased slot arrives in one of two representations,
             // and the reader cannot tell which. The compiler boxes a primitive on the way into an
             // erased slot (§1.11), so most of them are boxes - but a built-in's own storage never
@@ -2202,15 +2212,20 @@ namespace Surtr.Compiler.CodeGen
             if (UnpackIfTuple(type) || UnpackIfRange(type))
                 return true;
 
-            if (type.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } valueClass)
+            if (type.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass or TypeSymbolKind.Enum } valueClass)
             {
-                // A wrapper erased to an inline value unboxes as that value does.
-                if (valueClass.UnderlyingType is TypeSymbol erased
+                // A wrapper erased to an inline value unboxes as that value does. An enum never
+                // erases to a wrapped field, so this is value-class-only.
+                if (valueClass.TypeKind == TypeSymbolKind.ValueClass
+                    && valueClass.UnderlyingType is TypeSymbol erased
                     && ValueTypeLayout.WidthOfType(erased.NonNullable) > 1)
                 {
                     return UnpackIfMultiSlot(erased.NonNullable);
                 }
 
+                // A case-carrying value — value class or enum — arrives as a SurtrInstance
+                // (BoxValue) and unboxes over its whole width; a bare enum boxes as the int it is
+                // and needs no unpacking.
                 if (ValueTypeLayout.IsBlockValueClass(valueClass)
                     && ValueTypeLayout.TryGet(valueClass, out var layout, out _))
                 {
@@ -2235,10 +2250,11 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private bool BoxIfValueClass(TypeSymbol type)
         {
-            if (type.NonNullable is not NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } valueClass)
+            if (type.NonNullable is not NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass or TypeSymbolKind.Enum } valueClass)
                 return false;
 
-            if (valueClass.UnderlyingType is TypeSymbol erasedTo
+            if (valueClass.TypeKind == TypeSymbolKind.ValueClass
+                && valueClass.UnderlyingType is TypeSymbol erasedTo
                 && ValueTypeLayout.WidthOfType(erasedTo.NonNullable) > 1)
             {
                 return BoxIfRange(erasedTo.NonNullable)
@@ -2246,6 +2262,9 @@ namespace Surtr.Compiler.CodeGen
                     || BoxIfValueClass(erasedTo.NonNullable);
             }
 
+            // A case-carrying value — value class or enum — boxes as an instance of its own class,
+            // which is how a one-reference slot names it. A bare enum boxes as the int it is
+            // (Box(Integer), emitted by the caller when this says no), since its value IS an int.
             if (ValueTypeLayout.IsBlockValueClass(valueClass))
             {
                 if (!ValueTypeLayout.TryGet(valueClass, out var boxLayout, out var boxError))
@@ -2255,8 +2274,13 @@ namespace Surtr.Compiler.CodeGen
                 return true;
             }
 
-            Code.BoxAs(Descriptors.EmitBoxedForm(valueClass));
-            return true;
+            if (valueClass.TypeKind != TypeSymbolKind.Enum)
+            {
+                Code.BoxAs(Descriptors.EmitBoxedForm(valueClass));
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -2698,8 +2722,10 @@ namespace Surtr.Compiler.CodeGen
         /// Whether a type's "no value" is the absent tag rather than a null reference (�5.1).
         /// </summary>
         private static bool IsNullablePrimitive(TypeSymbol type)
-            => type.IsNullable && type.NonNullable.SpecialType is SpecialType.Int or SpecialType.Float
-                or SpecialType.Bool or SpecialType.Char;
+            => type.IsNullable
+               && SlotCountOfType(type) == 1
+               && TypeCodeOf(type) is SurtrValueTypeCode.Integer or SurtrValueTypeCode.Float
+                   or SurtrValueTypeCode.Boolean or SurtrValueTypeCode.Character;
 
         /// <summary>
         /// Emits <c>x == null</c> / <c>x != null</c> on a nullable primitive as a tag test, and
@@ -3508,8 +3534,10 @@ namespace Surtr.Compiler.CodeGen
             // A value class is its one field, so reading that field off one is the value itself �
             // there is no instance to load from (�2.9). A field declared against the class's own
             // type parameter is still an erased slot, so a value that reached it was boxed on the
-            // way in and has to come back out the same way any other erased field does.
-            if (receiver.Type.NonNullable.TypeKind == TypeSymbolKind.ValueClass)
+            // way in and has to come back out the same way any other erased field does. A bare
+            // enum is the same shape from the migration: its only field is `value`, so reading it
+            // off one is the value itself. (A case-carrying enum takes the block branch above.)
+            if (receiver.Type.NonNullable.TypeKind is TypeSymbolKind.ValueClass or TypeSymbolKind.Enum)
             {
                 Expression(receiver);
                 UnerasedFieldResult(field.Field);
@@ -4934,7 +4962,10 @@ namespace Surtr.Compiler.CodeGen
             SurtrLocal? receiver = null;
             if (call.Receiver is not null)
             {
-                var slot = _method.HasReceiver ? DeclareTemp("$inlineThis", _symbol.ContainingType!) : _method.DeclareLocal("$inlineThis");
+                // Sized by the receiver's own type, not the caller's: a module function splicing a
+                // value-class method's body has no receiver of its own, and a multi-field value
+                // occupies its whole width.
+                var slot = DeclareTemp("$inlineThis", call.Receiver.Type);
                 Expression(call.Receiver);
                 EmitStoreLocal(slot);
                 receiver = slot;

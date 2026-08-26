@@ -2187,7 +2187,7 @@ namespace Surtr.Compiler.Binding
             if (symbol.Interfaces.Count > 0)
             {
                 Report(SurtrDiagnosticCode.InvalidFlagsEnum, binding, syntax.Span,
-                    $"'{symbol.Name}' is '@Flags', so its values are ints with no receiver to dispatch through; it cannot implement an interface.");
+                    $"'{symbol.Name}' is '@Flags', so its values are ints with no receiver to dispatch through; it may only satisfy the implicit IEquatable and IComparable contracts, never one written here.");
             }
 
             foreach (var member in members)
@@ -3213,6 +3213,10 @@ namespace Surtr.Compiler.Binding
             // members it did not declare - structural $equals, combined $hashCode, $toDisplayString -
             // as real methods with bound bodies, so the emitter ships them like any other member.
             SynthesizeValueMembers();
+
+            // §2.4: every enum gains the members it answers to - equals/hashCode/toString/values/
+            // of×2/compareTo/operator<=> - and the implicit IEquatable<E>/IComparable<E> contracts.
+            SynthesizeEnumMembers();
 
             // The @Pure functions first, for the same reason the const funs are: §P3 folds a call by
             // running the callee's emitted body, so an ordinary body can only be answered once every
@@ -5488,8 +5492,290 @@ namespace Surtr.Compiler.Binding
                 _bound[method] = ValueMemberSynthesizer.ToDisplayStringBody(_factory, MemberLookup, definition, fields, method);
             }
 
+if (members.Count != definition.Members.Count)
+                definition.Members = members;
+        }
+
+        /// <summary>
+        /// Gives every source enum the members it did not declare (§2.4, §2.3): <c>equals</c>,
+        /// <c>hashCode</c>, <c>toString</c>, <c>values</c>, the two <c>of</c> forms,
+        /// <c>compareTo</c> and <c>operator&lt;=&gt;</c>, plus the implicit
+        /// <c>IEquatable&lt;E&gt;</c>/<c>IComparable&lt;E&gt;</c> contracts. Real methods with
+        /// bound bodies, emitted like any other member — callable from source, overridable by
+        /// declaring one's own (for the names that are not reserved), and consistent with the
+        /// <c>==</c>/<c>!=</c> and relational forms the same representation already answers.
+        /// </summary>
+        private void SynthesizeEnumMembers()
+        {
+            foreach (var module in _modules.Values)
+            {
+                foreach (var type in module.Types)
+                    SynthesizeEnumMembersFor(type);
+            }
+        }
+
+        private void SynthesizeEnumMembersFor(NamedTypeSymbol type)
+        {
+            if (type.TypeKind == TypeSymbolKind.Enum)
+                AddEnumMembers(type);
+
+            foreach (var nested in type.NestedTypes)
+                SynthesizeEnumMembersFor(nested);
+        }
+
+        private void AddEnumMembers(NamedTypeSymbol type)
+        {
+            var definition = type.Definition;
+            var members = new List<Symbol>(definition.Members);
+
+            var cases = EnumMemberSynthesizer.CasesOf(definition);
+            var fields = InstanceFieldsOf(definition);
+
+            AddEnumContracts(definition);
+
+            if (!HasMethod(members, EnumMemberSynthesizer.EqualsName, isStatic: false, definition))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.EqualsName, definition, _factory.Bool)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsInline = true,
+                    Parameters = new[] { new ParameterSymbol("other", definition, ordinal: 0) },
+                    Attributes = PureAndNoAlloc(),
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.EqualsBody(_factory, definition, fields, method);
+            }
+
+            if (!HasMethod(members, EnumMemberSynthesizer.HashCodeName, isStatic: false, null))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.HashCodeName, definition, _factory.Int)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsInline = true,
+                    Attributes = PureAndNoAlloc(),
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.HashCodeBody(_factory, MemberLookup, definition, fields, method);
+            }
+
+            if (!HasMethod(members, EnumMemberSynthesizer.ToStringName, isStatic: false, null))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.ToStringName, definition, _factory.String)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    Attributes = PureOnly(),
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.ToStringBody(_factory, definition, cases, method);
+            }
+
+            if (!HasMethod(members, EnumMemberSynthesizer.ValuesName, isStatic: true, null))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.ValuesName, definition, _factory.Array(definition))
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsStatic = true,
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.ValuesBody(_factory, definition, cases, method);
+            }
+
+            // `of` returns E? — a null for "no such case". A null needs a single slot (the absent
+            // tag), which only a bare enum (its `value` is the whole value) or a @Flags one can
+            // carry: a nullable multi-field value type has no null representation (the same
+            // limitation a `Vec2?` hits today), so those enums defer `of` to when it does.
+            bool canBeNull = fields.Count == 1;
+
+            if (canBeNull && !HasMethod(members, EnumMemberSynthesizer.OfName, isStatic: true, _factory.Int))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.OfName, definition, definition.Nullable)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsStatic = true,
+                    IsInline = true,
+                    Parameters = new[] { new ParameterSymbol("value", _factory.Int, ordinal: 0) },
+                    Attributes = PureAndNoAlloc(),
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.OfValueBody(_factory, definition, cases, method, definition.IsFlagsEnum);
+            }
+
+            if (canBeNull && !HasMethod(members, EnumMemberSynthesizer.OfName, isStatic: true, _factory.String))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.OfName, definition, definition.Nullable)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsStatic = true,
+                    Parameters = new[] { new ParameterSymbol("name", _factory.String, ordinal: 0) },
+                    Attributes = PureAndNoAlloc(),
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.OfNameBody(_factory, definition, cases, method);
+            }
+
+            if (!HasMethod(members, EnumMemberSynthesizer.CompareToName, isStatic: false, definition))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.CompareToName, definition, _factory.Int)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsInline = true,
+                    Parameters = new[] { new ParameterSymbol("other", definition, ordinal: 0) },
+                    Attributes = PureAndNoAlloc(),
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.CompareToBody(_factory, definition, method);
+            }
+
+            if (!HasMethod(members, EnumMemberSynthesizer.SpaceshipName, isStatic: true, definition))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.SpaceshipName, definition, _factory.Int)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsStatic = true,
+                    Role = MethodRole.Operator,
+                    IsForceInline = true,
+                    Parameters = new[]
+                    {
+                        new ParameterSymbol("a", definition, ordinal: 0),
+                        new ParameterSymbol("b", definition, ordinal: 1),
+                    },
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.SpaceshipBody(_factory, definition, method);
+            }
+
             if (members.Count != definition.Members.Count)
                 definition.Members = members;
+        }
+
+        /// <summary>The enum's instance fields, <c>value</c> first, in declaration order.</summary>
+        private static List<FieldSymbol> InstanceFieldsOf(NamedTypeSymbol type)
+        {
+            var fields = new List<FieldSymbol>();
+            foreach (var member in type.Definition.Members)
+            {
+                if (member is FieldSymbol { IsStatic: false } field)
+                    fields.Add(field);
+            }
+
+            return fields;
+        }
+
+        /// <summary>Whether the enum already declares the member the synthesis would add.</summary>
+        private static bool HasMethod(List<Symbol> members, string name, bool isStatic, TypeSymbol? parameterType)
+        {
+            int parameterCount = parameterType is null ? 0 : 1;
+            foreach (var member in members)
+            {
+                if (member is not MethodSymbol { IsStatic: var declaredStatic } method
+                    || declaredStatic != isStatic
+                    || !string.Equals(method.Name, name, StringComparison.Ordinal)
+                    || method.Parameters.Count != parameterCount)
+                {
+                    continue;
+                }
+
+                if (parameterType is null
+                    || ReferenceEquals(method.Parameters[0].Type.NonNullable, parameterType.NonNullable))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>Adds <c>IComparable&lt;E&gt;</c> and <c>IEquatable&lt;E&gt;</c> to the enum's declared interfaces (§6.8).</summary>
+        private void AddEnumContracts(NamedTypeSymbol definition)
+        {
+            if (definition.Interfaces.Count > 0)
+            {
+                bool hasComparable = false, hasEquatable = false;
+                foreach (var contract in definition.Interfaces)
+                {
+                    hasComparable |= string.Equals(contract.Name, "IComparable", StringComparison.Ordinal);
+                    hasEquatable |= string.Equals(contract.Name, "IEquatable", StringComparison.Ordinal);
+                }
+
+                if (hasComparable && hasEquatable)
+                    return;
+            }
+
+            var contracts = new List<NamedTypeSymbol>(definition.Interfaces);
+            AddEnumContract(contracts, "IComparable", definition);
+            AddEnumContract(contracts, "IEquatable", definition);
+            definition.Interfaces = contracts;
+        }
+
+        private void AddEnumContract(List<NamedTypeSymbol> contracts, string name, NamedTypeSymbol argument)
+        {
+            foreach (var existing in contracts)
+            {
+                if (string.Equals(existing.Name, name, StringComparison.Ordinal))
+                    return;
+            }
+
+            if (ResolveGlobalType(name) is NamedTypeSymbol { TypeKind: TypeSymbolKind.Interface } contract)
+                contracts.Add(contract.Construct(new[] { (TypeSymbol)argument }));
+        }
+
+        private NamedTypeSymbol? _pureAttribute;
+        private NamedTypeSymbol? _noAllocAttribute;
+
+        /// <summary>The <c>@Pure @NoAlloc</c> marks a synthesized body's promises carry (§2.3bis).</summary>
+        private IReadOnlyList<AttributeUse> PureAndNoAlloc()
+        {
+            var uses = new List<AttributeUse>();
+            if (_pureAttribute is null)
+                _pureAttribute = ResolveGlobalType("Pure");
+            if (_noAllocAttribute is null)
+                _noAllocAttribute = ResolveGlobalType("NoAlloc");
+
+            if (_pureAttribute is not null)
+                uses.Add(new AttributeUse(_pureAttribute, Array.Empty<object?>()));
+            if (_noAllocAttribute is not null)
+                uses.Add(new AttributeUse(_noAllocAttribute, Array.Empty<object?>()));
+
+            return uses;
+        }
+
+        /// <summary>The <c>@Pure</c> mark, for a body that is deterministic but may interpolate (§2.3bis).</summary>
+        private IReadOnlyList<AttributeUse> PureOnly()
+        {
+            if (_pureAttribute is null)
+                _pureAttribute = ResolveGlobalType("Pure");
+
+            return _pureAttribute is null
+                ? Array.Empty<AttributeUse>()
+                : new[] { new AttributeUse(_pureAttribute, Array.Empty<object?>()) };
+        }
+
+        /// <summary>Resolves a name from the outermost scope — the standard library's implicit import (§13).</summary>
+        private NamedTypeSymbol? ResolveGlobalType(string name)
+        {
+            var found = _globalScope.LookupLocal(name);
+
+            if (found.Symbol is NamedTypeSymbol named)
+                return named;
+
+            if (found.IsAmbiguous)
+            {
+                foreach (var candidate in found.Candidates)
+                {
+                    if (candidate is NamedTypeSymbol ambiguous)
+                        return ambiguous;
+                }
+            }
+
+            return null;
         }
 
         private static string Join(IReadOnlyList<string> path, int count)
@@ -5499,7 +5785,6 @@ namespace Surtr.Compiler.Binding
             {
                 if (i > 0)
                     builder.Append('.');
-
                 builder.Append(path[i]);
             }
 

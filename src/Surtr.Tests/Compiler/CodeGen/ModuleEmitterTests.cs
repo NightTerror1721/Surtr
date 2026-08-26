@@ -1743,6 +1743,285 @@ var runtime = Run(
 
             Assert.Equal(4, Int(runtime, "run"));
         }
+
+        /// <summary>
+        /// The synthesized API every enum answers to (§2.3): structural <c>equals</c>, a
+        /// <c>hashCode</c> equal to the value's own for a bare enum, and a <c>toString</c> naming
+        /// the case.
+        /// </summary>
+        [Fact]
+        public void AnEnumAnswersEqualsHashCodeAndToString()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades }\n"
+                + "fun run(): int {\n"
+                + "  var n = 0;\n"
+                + "  if (Suit.Hearts.equals(Suit.Hearts)) { n = n + 1; }\n"
+                + "  if (!Suit.Hearts.equals(Suit.Spades)) { n = n + 10; }\n"
+                + "  if (Suit.Hearts.hashCode() == 0) { n = n + 100; }\n"
+                + "  if (Suit.Hearts.toString() == \"Hearts\") { n = n + 1000; }\n"
+                + "  return n;\n"
+                + "}");
+
+            Assert.Equal(1111, Int(runtime, "run"));
+        }
+
+        /// <summary>A <c>toString</c> on a value no case names falls back to <c>Name(value)</c>.</summary>
+        [Fact]
+        public void ToStringFallsBackToTheQualifiedNameForAnUnknownValue()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts }\n"
+                + "fun run(): string { return Suit.of(77) == null ? \"fallback\" : \"case\"; }");
+
+            Assert.Equal("fallback", Text(runtime, "run"));
+        }
+
+        /// <summary><c>values()</c> returns every case in declaration order.</summary>
+        [Fact]
+        public void ValuesReturnsEveryCaseInDeclarationOrder()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades, Clubs }\n"
+                + "fun run(): int { let all = Suit.values(); return all.length * 100 + (all[2] == Suit.Clubs ? 1 : 0); }");
+
+            Assert.Equal(301, Int(runtime, "run"));
+        }
+
+        /// <summary><c>values()</c> returns a fresh array per call (§6.7) — mutating one call's copy never leaks into the next.</summary>
+        [Fact]
+        public void ValuesReturnsAFreshArrayPerCall()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades }\n"
+                + "fun run(): int { let a = Suit.values(); a[0] = Suit.Spades; return Suit.values()[0] == Suit.Hearts ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary><c>of(value)</c> is the inverse of <c>.value</c>, and null when no case carries the value.</summary>
+        [Fact]
+        public void OfValueRoundTripsAndIsNullForUnknowns()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts = 1, Spades = 4 }\n"
+                + "fun roundTrip(): int { return Suit.of(Suit.Spades.value).value; }\n"
+                + "fun unknown(): int { return Suit.of(99) == null ? 1 : 0; }");
+
+            Assert.Equal(4, Int(runtime, "roundTrip"));
+            Assert.Equal(1, Int(runtime, "unknown"));
+        }
+
+        /// <summary><c>of(name)</c> finds a case by its exact name, and null otherwise.</summary>
+        [Fact]
+        public void OfNameFindsCasesExactlyAndIsNullOtherwise()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades }\n"
+                + "fun found(): int { return Suit.of(\"Spades\") == Suit.Spades ? 1 : 0; }\n"
+                + "fun wrongCase(): int { return Suit.of(\"hearts\") == null ? 1 : 0; }\n"
+                + "fun unknown(): int { return Suit.of(\"Diamonds\") == null ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "found"));
+            Assert.Equal(1, Int(runtime, "wrongCase"));
+            Assert.Equal(1, Int(runtime, "unknown"));
+        }
+
+        /// <summary>
+        /// A <c>@Flags</c> enum's <c>of(value)</c> is total: any int is a representable
+        /// combination, so it is never null (§2.3).
+        /// </summary>
+        [Fact]
+        public void AFlagsEnumsOfValueIsTotal()
+        {
+            var runtime = Run(
+                Perms + "fun run(): int { return Perm.of(3) == null ? 0 : (Perm.of(3) == (Perm.Read | Perm.Write) ? 1 : 0); }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>Enums order by value, through the synthesized <c>compareTo</c> and <c>operator&lt;=&gt;</c> (§2.3, §5.6).</summary>
+        [Fact]
+        public void EnumsOrderByValueThroughCompareToAndSpaceship()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades, Clubs }\n"
+                + "fun compare(): int { return Suit.Spades.compareTo(Suit.Hearts) > 0 ? 1 : 0; }\n"
+                + "fun less(): int { return Suit.Hearts < Suit.Spades ? 1 : 0; }\n"
+                + "fun greaterOrEqual(): int { return Suit.Spades >= Suit.Hearts ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "compare"));
+            Assert.Equal(1, Int(runtime, "less"));
+            Assert.Equal(1, Int(runtime, "greaterOrEqual"));
+        }
+
+        /// <summary>
+        /// Every enum satisfies <c>IEquatable&lt;E&gt;</c> and <c>IComparable&lt;E&gt;</c> (§6.8):
+        /// a generic constraint instantiates with an enum, and the contract slots dispatch through
+        /// the synthesized members via the bridge.
+        /// </summary>
+        [Fact]
+        public void AnEnumSatisfiesTheComparableAndEquatableContracts()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades }\n"
+                + "fun biggest<T : IComparable<T>>(a: T, b: T): T { return a.compareTo(b) >= 0 ? a : b; }\n"
+                + "fun same<E : IEquatable<E>>(a: E, b: E): bool { return a.equals(b); }\n"
+                + "fun run(): int { return biggest(Suit.Spades, Suit.Hearts) == Suit.Spades && same(Suit.Hearts, Suit.Hearts) ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>A case-carrying enum satisfies the same contracts; the bridge unboxes its block receiver and arguments.</summary>
+        [Fact]
+        public void ACaseCarryingEnumSatisfiesTheContracts()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(\"h\"), Spades(\"s\");\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun biggest<T : IComparable<T>>(a: T, b: T): T { return a.compareTo(b) >= 0 ? a : b; }\n"
+                    + "fun run(): int { return biggest(Suit.Spades, Suit.Hearts) == Suit.Spades ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// §2.3ter: <c>==</c> over an enum is a slot comparison and never lowers to a call to
+        /// <c>equals</c> — even a user-written <c>equals</c> that lies cannot change it.
+        /// </summary>
+        [Fact]
+        public void EqualityOverAnEnumNeverCallsEquals()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades;\n"
+                + "  public fun equals(other: Suit): bool { return false; } }\n"
+                + "fun run(): int { return Suit.Hearts == Suit.Hearts ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>A member the source declares replaces the synthesized one (§2.3, R9).</summary>
+        [Fact]
+        public void AUserWrittenEqualsOverridesTheSynthesizedOne()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades;\n"
+                + "  public fun equals(other: Suit): bool { return false; } }\n"
+                + "fun run(): int { return Suit.Hearts.equals(Suit.Hearts) ? 1 : 0; }");
+
+            Assert.Equal(0, Int(runtime, "run"));
+        }
+
+        /// <summary>Duplicate values in a <c>@Flags</c> enum are equal for both comparison and equality (§2.3).</summary>
+        [Fact]
+        public void DuplicateFlagsValuesCompareEqual()
+        {
+            var runtime = Run(
+                "@Flags enum Perm { None = 0, Read = 1, Write = 2, ReadAlias = 1 }\n"
+                + "fun run(): int { return Perm.Read.compareTo(Perm.ReadAlias) == 0 && Perm.Read.equals(Perm.ReadAlias) ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary><c>of(value)</c> on a duplicate <c>@Flags</c> value returns the first case (§2.3).</summary>
+        [Fact]
+        public void OfValueReturnsTheFirstCaseForADuplicateFlagsValue()
+        {
+            var runtime = Run(
+                "@Flags enum Perm { None = 0, Read = 1, ReadAlias = 1 }\n"
+                + "fun run(): int { return Perm.of(1) == Perm.Read ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>Ordering is by value, not declaration position (§6.8).</summary>
+        [Fact]
+        public void OrderingIsByExplicitValueNotDeclarationOrder()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts = 1, Spades = 100 }\n"
+                + "fun run(): int { return Suit.Hearts < Suit.Spades && Suit.Spades > Suit.Hearts ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>The synthesized API works for a case-carrying enum too: values holds the blocks, equality walks every field, and ordering reads the <c>value</c> slot.</summary>
+        [Fact]
+        public void TheSynthesizedApiWorksForACaseCarryingEnum()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(\"h\"), Spades(\"s\");\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "  var n = 0;\n"
+                    + "  if (Suit.values().length == 2) { n = n + 1; }\n"
+                    + "  if (Suit.Hearts.equals(Suit.Hearts) && !Suit.Hearts.equals(Suit.Spades)) { n = n + 10; }\n"
+                    + "  if (Suit.Hearts.compareTo(Suit.Spades) < 0 && Suit.Spades > Suit.Hearts) { n = n + 100; }\n"
+                    + "  return n;\n"
+                    + "}");
+
+            Assert.Equal(111, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The synthesized bodies carry the <c>@Pure</c>/<c>@NoAlloc</c> marks (§2.3bis): a user
+        /// <c>@NoAlloc</c> body may call them, and the analyzer accepts the synthesized bodies as
+        /// written.
+        /// </summary>
+        [Fact]
+        public void TheSynthesizedBodiesPassTheNoAllocPromise()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades }\n"
+                + "@NoAlloc\n"
+                + "public fun run(): bool { return Suit.Hearts.equals(Suit.Hearts) && Suit.of(0) != null; }");
+
+            Assert.True(Call(runtime, "run").AsBool);
+        }
+
+        /// <summary>
+        /// A <c>@Flags</c> combination no case names still renders — the <c>toString</c> fallback
+        /// is <c>Name(value)</c> (§2.3).
+        /// </summary>
+        [Fact]
+        public void AFlagsCombinationToStringsThroughTheFallback()
+        {
+            var runtime = Run(
+                Perms + "fun run(): string { return (Perm.Read | Perm.Write).toString(); }");
+
+            Assert.Equal("Perm(3)", Text(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The <c>@Pure</c>/<c>@NoAlloc</c> marks the synthesized members carry (§2.3bis) travel
+        /// through the image, so a module importing the enum sees them exactly as a source author
+        /// would have written them.
+        /// </summary>
+        [Fact]
+        public void TheSynthesizedMarksSurviveTheImage()
+        {
+            var emitter = Build(
+                "enum Suit { Hearts, Spades }");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            var suit = module.FindClass("Suit")!;
+            Assert.True(suit.TryGetMethods("equals", out var equals));
+            Assert.True(equals[0].TryGetAttribute(SurtrBuiltIns.Pure, out _), "equals is @Pure.");
+            Assert.True(equals[0].TryGetAttribute(SurtrBuiltIns.NoAlloc, out _), "equals is @NoAlloc.");
+
+            Assert.True(suit.TryGetMethods("values", out var values));
+            Assert.False(values[0].TryGetAttribute(SurtrBuiltIns.Pure, out _), "values() is deliberately not @Pure (§6.7).");
+        }
         #endregion
 
         #region The lowerings Step 5 owed

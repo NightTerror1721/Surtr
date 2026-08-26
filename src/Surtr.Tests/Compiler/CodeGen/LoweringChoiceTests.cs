@@ -1556,6 +1556,22 @@ namespace Surtr.Tests.Compiler.CodeGen
                 "Duplicate keys must fall back to the first-match comparison chain:\n" + code);
         }
 
+        /// <summary>
+        /// §2.3ter: the synthesized <c>operator&lt;=&gt;</c> is <c>forceinline</c>, so a relational
+        /// over an enum splices it — the body of <c>run</c> contains no call at all.
+        /// </summary>
+        [Fact]
+        public void ARelationalOverAnEnumSplicesTheForceInlineOperator()
+        {
+            string code = Disassemble(
+                "enum Suit { Hearts, Spades }\n"
+                + "fun run(a: Suit, b: Suit): bool { return a < b; }");
+
+            string run = MethodBody(code, "run(a: game.core.Test:Suit, b: game.core.Test:Suit): bool");
+            Assert.Equal(0, Count(run, "InvokeSpecial"));
+            Assert.Equal(0, Count(run, "CallLocalModule"));
+        }
+
         #endregion
     }
 }
