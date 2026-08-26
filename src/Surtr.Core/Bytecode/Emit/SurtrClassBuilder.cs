@@ -365,6 +365,7 @@ namespace Surtr.Bytecode.Emit
         public SurtrClassBuilder DefineNestedEnum(string name, SurtrVisibility visibility = SurtrVisibility.Public)
         {
             var nested = new SurtrClassBuilder(_module, this, name, null, false, visibility, isSealed: true, isEnum: true);
+            nested.Class.IsValueType = true;
             _class.AddNestedClass(nested.Class);
             _nestedClasses.Add(nested);
             return nested;

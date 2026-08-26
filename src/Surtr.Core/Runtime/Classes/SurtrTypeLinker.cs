@@ -520,6 +520,11 @@ namespace Surtr.Runtime.Classes
 
                 int offset = 0;
                 int staticSlots = 0;
+
+                // Statics are collected first and sized afterwards, because one can hold a value
+                // of the class itself - an enum case is exactly that - and its width is the
+                // flattened value this walk is computing. Sized against `offset` in the second
+                // pass, a self-typed static contributes the very width being built.
                 foreach (var field in type.Fields)
                 {
                     // Same rule as the ordinary layout: a native field lives in the host and
@@ -532,14 +537,7 @@ namespace Surtr.Runtime.Classes
 
                     if (field.IsStatic)
                     {
-                        // Statics are ordinary named storage, not part of any inline value - but
-                        // one holding an inline value claims that value's whole width, exactly as
-                        // a static of an ordinary class does.
-                        int width = FieldSlotWidth(field, visiting);
-                        field.SlotIndex = staticSlots;
-                        staticSlots += width;
                         staticFields.Add(field);
-                        field.MarkBuilt();
                         continue;
                     }
 
@@ -571,6 +569,20 @@ namespace Surtr.Runtime.Classes
                     // its three slots, a nested value class its flattened layout, everything
                     // else one slot.
                     offset += nestedValue?.FlattenedSlotWidth ?? FieldSlotWidth(field, visiting);
+                    field.MarkBuilt();
+                }
+
+                foreach (var field in staticFields)
+                {
+                    // Statics are ordinary named storage, not part of any inline value - but
+                    // one holding an inline value claims that value's whole width, exactly as
+                    // a static of an ordinary class does. A static holding the class's own
+                    // value (an enum case) claims the flattened width just computed.
+                    int width = ReferenceEquals(field.FieldType.ResolvedType, type)
+                        ? offset
+                        : FieldSlotWidth(field, visiting);
+                    field.SlotIndex = staticSlots;
+                    staticSlots += width;
                     field.MarkBuilt();
                 }
 

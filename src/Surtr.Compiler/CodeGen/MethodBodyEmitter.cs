@@ -1084,10 +1084,10 @@ namespace Surtr.Compiler.CodeGen
         /// the compiler as at run time � that is the whole reason <c>StrHash</c> exists.
         /// </para>
         /// <para>
-        /// Everything else is a chain of comparisons. That covers <c>bool</c>, <c>float</c> and an
-        /// enum, and for an enum it is also the <em>right</em> shape: a case is a singleton
-        /// instance, so matching one is a reference compare, and switching on an ordinal would need
-        /// a member the enum does not have.
+        /// Everything else is a chain of comparisons. That covers <c>bool</c>, <c>float</c> and —
+        /// until a case binds as a constant (§2.4) — an enum, whose labels are statics of the
+        /// enum's own value type. From the migration the subject is an int, so the chain compares
+        /// values; the dense table arrives when the labels fold to constants in Fase 2.
         /// </para>
         /// </remarks>
         private void EmitSwitchStatement(BoundSwitchStatement @switch)
@@ -2310,6 +2310,17 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitBinary(BoundBinaryExpression binary)
         {
+            // §6.2: an enum is a value, so identity over one is refused outright — the same
+            // rejection the multi-slot walk below gives a value class, extended to the single-slot
+            // enum whose comparison would otherwise degrade to a reference compare. `==`/`!=`
+            // compare the value itself and are unaffected.
+            if (binary.Operator is BinaryOperator.ReferenceEqual or BinaryOperator.ReferenceNotEqual
+                && (binary.Left.Type.NonNullable.TypeKind == TypeSymbolKind.Enum
+                    || binary.Right.Type.NonNullable.TypeKind == TypeSymbolKind.Enum))
+            {
+                throw Unsupported("'===' over a value: a value has no identity to compare (use '==')");
+            }
+
             if (binary.Operator is BinaryOperator.Equal or BinaryOperator.NotEqual
                     or BinaryOperator.ReferenceEqual or BinaryOperator.ReferenceNotEqual
                 && (SlotCountOfType(binary.Left.Type) > 1 || SlotCountOfType(binary.Right.Type) > 1))
@@ -3399,9 +3410,9 @@ namespace Surtr.Compiler.CodeGen
             if (field.Field.IsStatic)
             {
                 // An enum case is exactly this: a static, read-only field of the enum's own type
-                // holding the one instance its static initializer built. A static whose declared
-                // type is an inline value reads its whole block instead, from the widened storage
-                // the linker gave it.
+                // holding the value its static initializer built. A static whose declared type is
+                // an inline value reads its whole block instead, from the widened storage the
+                // linker gave it.
                 if (TryMultiSlotWidth(field.Field.Type, out int staticWidth))
                     Code.LoadValueStatic(info, staticWidth);
                 else
@@ -3852,6 +3863,12 @@ namespace Surtr.Compiler.CodeGen
         {
             var type = (NamedTypeSymbol)creation.Type.NonNullable;
 
+            if (type.TypeKind == TypeSymbolKind.Enum)
+            {
+                EmitEnumCaseCreation(creation, type);
+                return;
+            }
+
             if (type.TypeKind == TypeSymbolKind.ValueClass)
             {
                 EmitValueClassCreation(creation, type);
@@ -3906,6 +3923,74 @@ namespace Surtr.Compiler.CodeGen
                 Expression(argument);
 
             EmitResolvedCall(creation.Constructor, virtualCall: false, discardResult: true);
+        }
+
+        /// <summary>
+        /// Builds an enum case (§2.2): a value class whose first field is the synthetic
+        /// <c>value</c>, filled from the case's own value rather than from any constructor
+        /// parameter.
+        /// </summary>
+        /// <remarks>
+        /// A case whose enum carries nothing but <c>value</c> never reaches here — it bound as a
+        /// literal, so the static it fills is loaded straight out. A multi-field enum does: the
+        /// case's constructor assigns its own fields, and the value is the block's first slot, so
+        /// it is pushed before the constructor's assignments run. The block comes out in field
+        /// order, exactly as <see cref="EmitMultiValueClassCreation"/> assembles one.
+        /// </remarks>
+        private void EmitEnumCaseCreation(BoundObjectCreationExpression creation, NamedTypeSymbol type)
+        {
+            if (creation.EnumValue is not long enumValue)
+                throw Unsupported($"building a '{type.Name}', whose case value the emitter does not know");
+
+            if (!ValueTypeLayout.TryGet(type, out var layout, out var layoutError))
+                throw Unsupported(layoutError!);
+
+            // A single-field enum's case binds as a literal and never constructs; this defends
+            // the one place the two could still meet.
+            if (layout.Fields.Length == 1)
+            {
+                EmitLiteral(new BoundLiteralExpression(creation.Syntax, type, enumValue));
+                return;
+            }
+
+            if (creation.Constructor is not MethodSymbol constructor)
+                throw Unsupported($"building a '{type.Name}': it declares several fields, so a case needs a constructor that assigns each one");
+
+            var original = constructor.OriginalDefinition ?? constructor;
+
+            if (_context.Bodies is null
+                || !_context.Bodies.TryGetValue(original, out var body)
+                || !TryGetFieldAssignments(body, out var assignments))
+            {
+                throw Unsupported(
+                    $"building a '{type.Name}': its constructor must be exactly one 'this.field = expression' per field, with no other statements");
+            }
+
+            // The synthetic `value` is the first field, so the user's constructor is only
+            // responsible for the rest.
+            if (assignments.Count != layout.Fields.Length - 1)
+                throw Unsupported($"building a '{type.Name}': its constructor assigns {assignments.Count} field(s), but the class declares {layout.Fields.Length - 1} besides 'value'");
+
+            for (int i = 0; i < creation.Arguments.Count; i++)
+            {
+                var slot = DeclareTemp("$value$" + original.Parameters[i].Name, original.Parameters[i].Type);
+                Expression(creation.Arguments[i]);
+                EmitStoreLocal(slot);
+                _splicedParameters[original.Parameters[i]] = slot;
+            }
+
+            // Field order: `value` first, then the constructor's assignments by their field
+            // index — the same block shape the multi-field splice assembles.
+            EmitLiteral(new BoundLiteralExpression(creation.Syntax, type, enumValue));
+
+            var ordered = new List<(int Index, BoundExpression Value)>(assignments.Count);
+            foreach (var entry in assignments)
+                ordered.Add((Array.IndexOf(layout.Fields, entry.Field), entry.Value));
+
+            ordered.Sort((x, y) => x.Index.CompareTo(y.Index));
+
+            foreach (var entry in ordered)
+                Expression(entry.Value);
         }
 
         /// <summary>
@@ -6080,9 +6165,11 @@ namespace Surtr.Compiler.CodeGen
                     return underlying is null ? SurtrValueTypeCode.Object : TypeCodeOf(underlying);
                 }
 
-                // A @Flags enum is one int (§P14) - which is what makes `|` an integer opcode and
-                // `==` a comparison of values rather than of references.
-                case TypeSymbolKind.Enum when ((NamedTypeSymbol)bare).IsFlagsEnum:
+                // An enum is one int from the migration (§2.2): its first field is the synthetic
+                // `value`, so a value of it lives in exactly the slot an int does — which is
+                // what makes `|` an integer opcode, `==` a comparison of values, and the
+                // relational operators one comparison of the same slot.
+                case TypeSymbolKind.Enum:
                     return SurtrValueTypeCode.Integer;
 
                 default: return SurtrValueTypeCode.Object;

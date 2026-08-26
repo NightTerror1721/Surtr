@@ -524,19 +524,21 @@ namespace Surtr.Bytecode.Emit
         }
 
         /// <summary>
-        /// Declares an enum directly in this module: a sealed class with a fixed set of named
-        /// static instances.
+        /// Declares an enum directly in this module: a value class whose first field is the
+        /// synthetic <c>value</c>, with a fixed set of named static cases (§2.4).
         /// </summary>
         /// <remarks>
         /// Cases go on the returned builder through <see cref="SurtrClassBuilder.DefineEnumCase"/>,
-        /// and the instances are built by the enum's static initializer - a case is a constructor
-        /// call against the enum's own constructor, not a separate kind of member.
+        /// and the values are built by the enum's static initializer. <c>IsValueType</c> is set here
+        /// because the linker reads it to lay the enum out as one flattened block — a bare enum is a
+        /// single <c>value</c> slot, a case-carrying one is the whole block.
         /// </remarks>
         public SurtrClassBuilder DefineEnum(string name, SurtrVisibility visibility = SurtrVisibility.Public)
         {
             ThrowIfBuilt();
 
             var builder = new SurtrClassBuilder(this, null, name, null, false, visibility, isSealed: true, isEnum: true);
+            builder.Class.IsValueType = true;
             _module.AddClass(builder.Class);
             _classes.Add(builder);
             return builder;

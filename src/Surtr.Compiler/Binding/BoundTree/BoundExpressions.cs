@@ -322,11 +322,13 @@ namespace Surtr.Compiler.Binding.BoundTree
             SyntaxNode syntax,
             NamedTypeSymbol type,
             MethodSymbol? constructor,
-            IReadOnlyList<BoundExpression> arguments)
+            IReadOnlyList<BoundExpression> arguments,
+            long? enumValue = null)
             : base(syntax, type)
         {
             Constructor = constructor;
             Arguments = arguments;
+            EnumValue = enumValue;
         }
 
         /// <summary>The constructor, or <see langword="null"/> for a type that declares none.</summary>
@@ -334,6 +336,14 @@ namespace Surtr.Compiler.Binding.BoundTree
 
         /// <summary>The arguments, in parameter order.</summary>
         public IReadOnlyList<BoundExpression> Arguments { get; }
+
+        /// <summary>
+        /// The value an enum case construction stores in its synthetic <c>value</c> field (§2.2),
+        /// or <see langword="null"/> when this is not an enum case's construction. The field is
+        /// never a constructor parameter — the emitter fills it as the first slot of the built
+        /// block — so the value rides on the node itself.
+        /// </summary>
+        public long? EnumValue { get; }
     }
 
     /// <summary>A built-in binary operation between two primitives, strings or references.</summary>

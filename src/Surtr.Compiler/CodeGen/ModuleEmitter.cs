@@ -330,13 +330,12 @@ namespace Surtr.Compiler.CodeGen
                     break;
                 }
 
-                // §P14: a @Flags enum has no instances, so it is not an enum at runtime - it is a
-                // class holding int constants, which is the truth of its representation. Emitting
-                // it as one keeps `EnumCases` from being an empty list on a type that claims to be
-                // an enum, and keeps the linker's assumptions about a case being an instance
-                // intact. What it costs is that reflection reports a class; the same erasure a
-                // `value class` pays for the same reason.
-                case TypeSymbolKind.Enum when !symbol.IsFlagsEnum:
+                // §2.4: an enum is a value class whose first field is the synthetic `value`, so every enum —
+                // plain and @Flags alike — is a real class here, marked as a value type for the
+                // linker. Its descriptor stays nominal (§6.1); only the choice of opcode erases it
+                // to an int. `DefineEnum` carries `isEnum` so the reflection layer and the
+                // EnumCases table keep working.
+                case TypeSymbolKind.Enum:
                 {
                     var @enum = declaringClass is null
                         ? module.DefineEnum(declaredName, Visibility(symbol))
@@ -616,10 +615,10 @@ namespace Surtr.Compiler.CodeGen
         private void DeclareField(EmitContext context, SurtrClassBuilder @class, NamedTypeSymbol owner, FieldSymbol field)
         {
             // An enum case is a static of the enum's own type, and the builder is what assigns the
-            // ordinal an exhaustive switch indexes on. A @Flags case is not: it is an int constant
-            // (§P14), so it falls through to the ordinary static-field path below, where the
-            // descriptor its type emits to is already `I`.
-            if (owner.TypeKind == TypeSymbolKind.Enum && !owner.IsFlagsEnum
+            // ordinal an exhaustive switch indexes on. Every enum case - a plain enum's and a
+            // @Flags one's alike - is now a value of the enum's type, so none of them falls to the
+            // ordinary static-field path below.
+            if (owner.TypeKind == TypeSymbolKind.Enum
                 && field.IsStatic && ReferenceEquals(field.Type, owner))
             {
                 var @case = @class.DefineEnumCase(field.Name, Visibility(field.Accessibility)).Field;

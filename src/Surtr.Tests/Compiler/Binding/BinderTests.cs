@@ -585,10 +585,18 @@ namespace Surtr.Tests.Compiler.Binding
             var suit = Type(binder, "game.core.Test", "Suit");
             Assert.True(suit.IsSealed);
 
+            // Every enum carries a synthetic `public let value: int` as its first instance field
+            // (§2.4) - the case value the compiler writes when it builds each case.
+            var value = suit.Members.OfType<FieldSymbol>().Single(f => f.Name == "value");
+            Assert.False(value.IsStatic);
+            Assert.True(value.IsReadOnly);
+            Assert.True(value.IsSynthetic);
+            Assert.Same(compilation.TypeFactory.Int, value.Type);
+
             // Each case is a static readonly of the enum's own type.
-            var cases = suit.Members.OfType<FieldSymbol>().ToList();
+            var cases = suit.Members.OfType<FieldSymbol>().Where(c => c.IsStatic).ToList();
             Assert.Equal(2, cases.Count);
-            Assert.All(cases, c => Assert.True(c.IsStatic && c.IsReadOnly));
+            Assert.All(cases, c => Assert.True(c.IsReadOnly));
             Assert.All(cases, c => Assert.Same(suit, c.Type));
 
             // Each case carries its implied value: progression from 0 (§2.4).

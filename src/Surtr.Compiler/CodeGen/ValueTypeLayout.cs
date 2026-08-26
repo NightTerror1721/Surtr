@@ -64,12 +64,14 @@ namespace Surtr.Compiler.CodeGen
                 return true;
             }
 
-            if (bare is NamedTypeSymbol named && named.TypeKind == TypeSymbolKind.ValueClass)
+            if (bare is NamedTypeSymbol named && named.TypeKind is TypeSymbolKind.ValueClass or TypeSymbolKind.Enum)
             {
                 // A one-field wrapper is erased to the field it wraps - so it occupies exactly
                 // that field's own width. `EntityId` over an `int` stays one slot; a wrapper
                 // over a range or a tuple rides the whole block, which is what every load and
-                // store of the wrapper already moves once the width says so.
+                // store of the wrapper already moves once the width says so. An enum never sets
+                // `UnderlyingType` (§6.1: its descriptor stays nominal), so it always falls
+                // through to the field-based width below.
                 if (named.UnderlyingType is TypeSymbol underlying)
                 {
                     width = WidthOfType(underlying.NonNullable);
@@ -103,10 +105,12 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// Whether this named value class lives as a multi-field slot block rather than erasing
-        /// to its single field - the shapes whose own layout the emitter reads per field.
+        /// to its single field - the shapes whose own layout the emitter reads per field. An
+        /// enum is always block-shaped once it has user fields; a single-field enum (just its
+        /// synthetic <c>value</c>) rides one slot without erasing.
         /// </summary>
         internal static bool IsBlockValueClass(NamedTypeSymbol type)
-            => type.TypeKind == TypeSymbolKind.ValueClass
+            => type.TypeKind is TypeSymbolKind.ValueClass or TypeSymbolKind.Enum
                && type.UnderlyingType is null
                && IsMultiField(type);
 
@@ -147,15 +151,25 @@ namespace Surtr.Compiler.CodeGen
         /// block rather than erasing to its single field.
         /// </summary>
         /// <remarks>
+        /// <para>
         /// Counts the declared instance fields rather than trusting
         /// <see cref="NamedTypeSymbol.UnderlyingType"/> alone: a substituted generic clone carries
         /// the value-class kind but not the original's underlying field, and a one-field wrapper
         /// must stay on its erasure path even through a clone.
+        /// </para>
+        /// <para>
+        /// An enum is included: from §2.4's migration it is a value class whose synthetic
+        /// <c>value</c> field is always present, so an enum with user fields is block-shaped and
+        /// one without is a single slot.
+        /// </para>
         /// </remarks>
         internal static bool IsMultiField(NamedTypeSymbol type)
         {
-            if (type.TypeKind != TypeSymbolKind.ValueClass || type.UnderlyingType is not null)
+            if (type.TypeKind is not (TypeSymbolKind.ValueClass or TypeSymbolKind.Enum)
+                || type.UnderlyingType is not null)
+            {
                 return false;
+            }
 
             int instanceFields = 0;
             foreach (var member in type.Members)
@@ -230,11 +244,13 @@ namespace Surtr.Compiler.CodeGen
 
                         width = Math.Min(total, MaxSlots);
                     }
-                    else if (fieldType is NamedTypeSymbol nested && nested.TypeKind == TypeSymbolKind.ValueClass)
+                    else if (fieldType is NamedTypeSymbol nested
+                             && nested.TypeKind is TypeSymbolKind.ValueClass or TypeSymbolKind.Enum)
                     {
                         // A nested wrapper rides the value it erases to; a multi-field class
                         // keeps its own error path, so an unflattenable declaration refuses here
-                        // rather than shrinking to one silent slot.
+                        // rather than shrinking to one silent slot. An enum field flattens the
+                        // same way, since an enum is now a value class.
                         if (nested.UnderlyingType is TypeSymbol erasedTo)
                         {
                             width = WidthOfType(erasedTo.NonNullable);

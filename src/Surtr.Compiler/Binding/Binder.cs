@@ -1846,6 +1846,25 @@ namespace Surtr.Compiler.Binding
             var names = new HashSet<string>(StringComparer.Ordinal);
             int letFields = 0;
 
+            // §2.4: every enum declares `public let value: int` as its first instance field. The
+            // compiler owns the field and fills it when it builds each case (§2.2); the name is
+            // reserved (CheckEnumReservedNames below) so no source member can steal it. Placed
+            // before the declared members so the field order an enum's flattened value layout
+            // reads — value first, then whatever the cases carry — is also `Members` order.
+            if (syntax.Kind == TypeDeclarationKind.Enum)
+            {
+                var value = new FieldSymbol("value", symbol, _factory.Int)
+                {
+                    IsReadOnly = true,
+                    Accessibility = Accessibility.Public,
+                    IsSynthetic = true,
+                };
+
+                members.Add(value);
+                names.Add("value");
+                letFields++;
+            }
+
             foreach (var member in binding.Members)
             {
                 switch (member)
@@ -2099,8 +2118,8 @@ namespace Surtr.Compiler.Binding
 
                 members.Add(field);
 
-                // A case is a static holding one instance the enum's own initializer builds, so it
-                // is an initializer like any other — with a construction on the right.
+                // A case is a static holding one value the enum's own initializer builds, so it
+                // is an initializer like any other — with the case's value on the right.
                 _initializers.Add(new InitializerBinding(
                     field, null, enumCase, binding.Scope, binding.Module, symbol, binding.SourceName, _nextInitializerOrder++));
 
@@ -2117,7 +2136,7 @@ namespace Surtr.Compiler.Binding
             if (syntax.Kind == TypeDeclarationKind.Enum)
                 CheckEnumReservedNames(binding, syntax, members);
 
-            if (syntax.Kind == TypeDeclarationKind.ValueClass)
+            if (syntax.Kind is TypeDeclarationKind.Enum or TypeDeclarationKind.ValueClass)
                 BindValueClassField(binding, members, letFields);
 
             if (syntax.Kind == TypeDeclarationKind.Singleton)
@@ -2174,7 +2193,11 @@ namespace Surtr.Compiler.Binding
             foreach (var member in members)
             {
                 // Its own cases are the members it is allowed to have, and nothing else: they are
-                // the constants, not things declared on an instance.
+                // the constants, not things declared on an instance. The synthetic `value` field is
+                // the compiler's, not a declaration, so it is exempt.
+                if (IsSyntheticMember(member))
+                    continue;
+
                 if (member is FieldSymbol { IsStatic: true } @case && ReferenceEquals(@case.Type, symbol))
                     continue;
 
@@ -2198,6 +2221,11 @@ namespace Surtr.Compiler.Binding
         {
             foreach (var member in members)
             {
+                // The synthetic `value` field is the compiler's answer to the name, not a
+                // declaration stealing it.
+                if (IsSyntheticMember(member))
+                    continue;
+
                 if (IsReservedEnumName(member.Name))
                 {
                     Report(SurtrDiagnosticCode.ReservedEnumMember, binding, syntax.Span,
@@ -2223,10 +2251,28 @@ namespace Surtr.Compiler.Binding
             _ => false,
         };
 
+        /// <summary>Whether the compiler synthesised the member, so source never collided with it.</summary>
+        private static bool IsSyntheticMember(Symbol member) => member switch
+        {
+            FieldSymbol { IsSynthetic: true } => true,
+            MethodSymbol { IsSynthetic: true } => true,
+            _ => false,
+        };
+
         private static bool IsPowerOfTwo(int value) => value > 0 && (value & (value - 1)) == 0;
 
+        /// <summary>
+        /// Enforces the field discipline a value-shaped type shares: every instance field is
+        /// declared <c>let</c>, and the class either erases to its one field (§2.9) or lays out as
+        /// a flattened value block. An enum is the same shape from the migration: its synthetic
+        /// <c>value</c> field plus whatever the cases carry, all readonly — but its descriptor
+        /// stays nominal (§6.1), so the single-field erasure (<see cref="NamedTypeSymbol.UnderlyingType"/>)
+        /// is deliberately never applied to it.
+        /// </summary>
         private void BindValueClassField(TypeBinding binding, List<Symbol> members, int letFields)
         {
+            bool isEnum = binding.Syntax.Kind == TypeDeclarationKind.Enum;
+
             // §2.9, generalized: every instance field is declared `let`, and there is at least one.
             // Exactly one field keeps the erasure the section introduced - the class IS that field
             // wherever its type is statically known. Several fields make the class a value type in
@@ -2242,7 +2288,7 @@ namespace Surtr.Compiler.Binding
             if (instanceFields.Count == 0 || instanceFields.Count != letFields)
             {
                 Report(SurtrDiagnosticCode.InvalidValueClass, binding, binding.Syntax.Span,
-                    $"A value class declares its fields 'let'; '{binding.Symbol.Name}' declares {instanceFields.Count} instance field(s), {letFields} of them 'let'.");
+                    $"{(isEnum ? "An enum" : "A value class")} declares its fields 'let'; '{binding.Symbol.Name}' declares {instanceFields.Count} instance field(s), {letFields} of them 'let'.");
 
                 return;
             }
@@ -2257,7 +2303,10 @@ namespace Surtr.Compiler.Binding
 
             if (instanceFields.Count == 1)
             {
-                binding.Symbol.UnderlyingType = instanceFields[0].Type;
+                // An enum's descriptor stays nominal whatever its width (§6.1), so only a value
+                // class ever erases to its single field.
+                if (!isEnum)
+                    binding.Symbol.UnderlyingType = instanceFields[0].Type;
                 return;
             }
 

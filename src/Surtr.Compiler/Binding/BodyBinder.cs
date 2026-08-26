@@ -209,17 +209,45 @@ namespace Surtr.Compiler.Binding
         /// <summary>Binds one enum case as the construction it is (§2.4).</summary>
         public BoundExpression BindEnumCase(EnumCaseSyntax syntax, NamedTypeSymbol @enum)
         {
-            // §P14: a @Flags case is a single bit, not an instance. Which bit is either written on
-            // the case (`Perm.Read = 8,`) or its position in the declaration — so a plain case
-            // list is still the whole notation, and every implicit value is a power of two by
-            // construction rather than by a convention a lint would have to police.
-            if (@enum.IsFlagsEnum)
-            {
-                int value = CaseValueOf(syntax, @enum);
+            int value = CaseValueOf(syntax, @enum);
+
+            // §2.2: an enum is a value class whose first field is `value`, so a case whose enum
+            // has no fields besides it IS that value — the case reads as the literal, which is
+            // what makes `Suit.Hearts` usable wherever a constant is. That covers a @Flags enum
+            // (its value is a single bit) and a plain enum that carries nothing.
+            if (@enum.IsFlagsEnum || !HasUserInstanceFields(@enum))
                 return new BoundLiteralExpression(syntax, @enum, (long)value);
+
+            // A multi-field enum builds a real value: the case's constructor arguments, with the
+            // case value attached so the emitter can fill the `value` slot of the constructed
+            // block (§2.2) — the field is never a constructor parameter.
+            return WithEnumValue(BindObjectCreation(syntax, syntax.Arguments, @enum), value);
+        }
+
+        /// <summary>
+        /// Rebuilds a construction carrying the enum case value it stores in the synthetic
+        /// <c>value</c> field, so the emitter can put it in the right slot of the built block.
+        /// </summary>
+        private static BoundExpression WithEnumValue(BoundExpression construction, int value)
+            => construction is BoundObjectCreationExpression creation
+                ? new BoundObjectCreationExpression(creation.Syntax, (NamedTypeSymbol)creation.Type, creation.Constructor, creation.Arguments, value)
+                : construction;
+
+        /// <summary>Whether the enum declares any instance field besides the synthetic <c>value</c>.</summary>
+        private static bool HasUserInstanceFields(NamedTypeSymbol @enum)
+        {
+            int fields = 0;
+            foreach (var member in @enum.Members)
+            {
+                if (member is FieldSymbol { IsStatic: false })
+                {
+                    fields++;
+                    if (fields > 1)
+                        return true;
+                }
             }
 
-            return BindObjectCreation(syntax, syntax.Arguments, @enum);
+            return false;
         }
 
         /// <summary>

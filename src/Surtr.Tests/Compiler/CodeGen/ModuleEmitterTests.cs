@@ -1623,23 +1623,44 @@ var runtime = Run(
 
         #region Enums
         [Fact]
-        public void AnEnumCaseIsAStaticInstanceTheInitializerBuilt()
+        public void AnEnumCaseIsAStaticTheInitializerBuilt()
         {
             var runtime = Run(
                 "enum Suit { Hearts, Spades }\n"
-                    + "fun run(): bool { return Suit.Hearts === Suit.Hearts; }");
+                    + "fun run(): bool { return Suit.Hearts == Suit.Hearts; }");
 
             Assert.True(Call(runtime, "run").AsBool);
         }
 
         [Fact]
-        public void TwoEnumCasesAreDifferentInstances()
+        public void TwoEnumCasesCompareByValue()
         {
             var runtime = Run(
                 "enum Suit { Hearts, Spades }\n"
-                    + "fun run(): bool { return Suit.Hearts === Suit.Spades; }");
+                    + "fun run(): bool { return Suit.Hearts == Suit.Spades; }");
 
             Assert.False(Call(runtime, "run").AsBool);
+        }
+
+        /// <summary>
+        /// §6.2: an enum is a value, so identity over one is refused outright — the same rejection
+        /// a value class gets, surfaced at emission like the value-class one.
+        /// </summary>
+        [Fact]
+        public void IdentityComparisonOverAnEnumIsRejected()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(Root + "/game/core/Test.surtr",
+                "enum Suit { Hearts, Spades }\nfun run(): bool { return Suit.Hearts === Suit.Spades; }");
+
+            var compilation = SurtrCompilation.Create(project);
+            _owned.Add(compilation);
+            var binder = compilation.Bind();
+            binder.BindBodies();
+
+            Assert.True(!compilation.HasErrors, "Binding must pass: identity over a value is refused at emission, like over a value class.");
+
+            Assert.False(new ModuleEmitter(compilation, binder).TryEmit(), "'===' over an enum must be rejected.");
         }
 
         [Fact]
@@ -1654,6 +1675,43 @@ var runtime = Run(
                     + "fun run(): int { return Suit.Spades.rank; }");
 
             Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The synthetic <c>value</c> is filled by the compiler, not the constructor: each case's
+        /// own implied value lands in the first field of the constructed block (§2.2).
+        /// </summary>
+        [Fact]
+        public void TheSyntheticValueFieldIsFilledPerCase()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(1), Spades(4);\n"
+                    + "  public let rank: int;\n"
+                    + "  private constructor(rank: int) { this.rank = rank; }\n"
+                    + "}\n"
+                    + "fun run(): int { return Suit.Spades.value; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A case-carrying enum is a multi-field value class, so <c>==</c> walks its fields
+        /// structurally: different values mean different instances, exactly like the old
+        /// representation promised with different singleton objects.
+        /// </summary>
+        [Fact]
+        public void MultiFieldEnumsCompareStructurallyByValue()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(\"h\"), Spades(\"s\");\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun run(): bool { return Suit.Hearts == Suit.Spades; }");
+
+            Assert.False(Call(runtime, "run").AsBool);
         }
 
         [Fact]
@@ -3692,7 +3750,7 @@ var runtime = Run(
                     + "class Circle : IShape {\n"
                     + "  public fun getKind(): IShape.Kind { return IShape.Kind.Circle; }\n"
                     + "}\n"
-                    + "fun run(): int { let c: IShape = Circle(); return c.getKind() === IShape.Kind.Circle ? 1 : 0; }");
+                    + "fun run(): int { let c: IShape = Circle(); return c.getKind() == IShape.Kind.Circle ? 1 : 0; }");
 
             Assert.Equal(1, Int(runtime, "run"));
         }
@@ -5249,11 +5307,12 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// The mark reaches the image, and the type it marks arrives as a class of int constants —
-        /// the truth of its representation, and the same erasure a <c>value class</c> pays.
+        /// The mark reaches the image, and the type it marks arrives as a value-class enum: the
+        /// shared representation of every enum from the migration, with <c>IsValueType</c> set for
+        /// the linker and the synthetic <c>value</c> field present.
         /// </summary>
         [Fact]
-        public void AFlagsEnumTravelsAsAClassOfIntConstants()
+        public void AFlagsEnumTravelsAsAValueClassEnum()
         {
             var emitter = Build(Perms + "public fun unused(): int { return 0; }");
 
@@ -5263,9 +5322,11 @@ var runtime = Run(
             runtime.LoadModule(module);
 
             var perm = module.FindClass("Perm")!;
-            Assert.False(perm.IsEnum, "Its values are ints, so it is not an enum at runtime.");
+            Assert.True(perm.IsEnum, "A @Flags enum is an enum at runtime — a value class over the synthetic 'value' field.");
+            Assert.True(perm.IsValueType, "An enum is a value class, so the linker flattens it.");
             Assert.True(perm.TryGetAttribute(SurtrBuiltIns.Flags, out _), "The mark itself still travels.");
             Assert.True(perm.TryGetField("Read", out _));
+            Assert.True(perm.TryGetField("value", out _), "The synthetic 'value' field travels with the enum.");
         }
 
         /// <summary>
