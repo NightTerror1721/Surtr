@@ -2455,6 +2455,11 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitBinary(BoundBinaryExpression binary)
         {
+            // Before anything else, because an expression built entirely of literals has no
+            // operands to evaluate and no opcode to pick: it has an answer.
+            if (TryEmitFoldedConstant(binary))
+                return;
+
             // §6.2: an enum is a value, so identity over one is refused outright — the same
             // rejection the multi-slot walk below gives a value class, extended to the single-slot
             // enum whose comparison would otherwise degrade to a reference compare. `==`/`!=`
@@ -3241,6 +3246,11 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitUnary(BoundUnaryExpression unary)
         {
+            // `-1` reaches here as Negate over a literal, so this is the fold that fires most
+            // often of all: one PushI8 instead of a push and a negation.
+            if (TryEmitFoldedConstant(unary))
+                return;
+
             switch (unary.Operator)
             {
                 case UnaryOperator.Negate:
@@ -6399,18 +6409,36 @@ namespace Surtr.Compiler.CodeGen
 
             if (left is long li && right is long ri)
             {
+                // Folded in int, not in long, and wrapped at every step. The machine computes in
+                // int with wrap-around (Add, Sub, Mul all mask to 32 bits), so a fold that stayed
+                // in long would answer 4000000000 where the instruction answers -294967296. That
+                // was harmless while the only consumers were switch keys and const-fun arguments,
+                // which are small by nature; emitting the result as a literal makes any divergence
+                // a miscompile, so the arithmetic is done in the same width the VM uses.
+                int l = unchecked((int)li);
+                int r = unchecked((int)ri);
+
                 return binary.Operator switch
                 {
-                    BinaryOperator.Add => li + ri,
-                    BinaryOperator.Subtract => li - ri,
-                    BinaryOperator.Multiply => li * ri,
-                    BinaryOperator.Divide => ri != 0 ? li / ri : (object?)null,
-                    BinaryOperator.Modulo => ri != 0 ? li % ri : (object?)null,
-                    BinaryOperator.BitAnd => li & ri,
-                    BinaryOperator.BitOr => li | ri,
-                    BinaryOperator.BitXor => li ^ ri,
-                    BinaryOperator.ShiftLeft => li << (int)(ri & 31),
-                    BinaryOperator.ShiftRight => li >> (int)(ri & 31),
+                    BinaryOperator.Add => (long)unchecked(l + r),
+                    BinaryOperator.Subtract => (long)unchecked(l - r),
+                    BinaryOperator.Multiply => (long)unchecked(l * r),
+
+                    // The two shapes the interpreter traps on - a zero divisor, and the one
+                    // quotient that has no int - are refused rather than folded, so the trap stays
+                    // observable exactly where the program wrote it. This is the same rule that
+                    // keeps a folded expression from swallowing a fault the unfolded one raises.
+                    BinaryOperator.Divide => r != 0 && !(r == -1 && l == int.MinValue) ? (long)(l / r) : (object?)null,
+                    BinaryOperator.Modulo => r != 0 && !(r == -1 && l == int.MinValue) ? (long)(l % r) : (object?)null,
+
+                    BinaryOperator.BitAnd => (long)(l & r),
+                    BinaryOperator.BitOr => (long)(l | r),
+                    BinaryOperator.BitXor => (long)(l ^ r),
+
+                    // Masked, not trapped, because that is what Shl/Shr/UShr do.
+                    BinaryOperator.ShiftLeft => (long)unchecked(l << (r & 31)),
+                    BinaryOperator.ShiftRight => (long)(l >> (r & 31)),
+                    BinaryOperator.UnsignedShiftRight => (long)unchecked((int)((uint)l >> (r & 31))),
                     _ => null,
                 };
             }
@@ -6439,14 +6467,66 @@ namespace Surtr.Compiler.CodeGen
             if (ConstantOf(unary.Operand) is not object operand)
                 return null;
 
+            // Wrapped in int for the same reason the binary folds are: negating int.MinValue is
+            // itself on this machine, and folding it in long would answer 2147483648 instead.
             return (unary.Operator, operand) switch
             {
                 (UnaryOperator.Not, bool b) => !b,
-                (UnaryOperator.Negate, long i) => -i,
+                (UnaryOperator.Negate, long i) => (long)unchecked(-(int)i),
                 (UnaryOperator.Negate, double d) => -d,
-                (UnaryOperator.Complement, long c) => ~c,
+                (UnaryOperator.Complement, long c) => (long)(~unchecked((int)c)),
                 _ => null,
             };
+        }
+
+        /// <summary>
+        /// Emits a composite expression as the literal it folds to, and says whether it did.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <see cref="ConstantOf"/> could already answer this and was only ever asked by two
+        /// callers - a <c>switch</c>'s case keys and a <c>const fun</c>'s arguments - so
+        /// <c>let n = 2 * 3;</c> emitted <c>PushI8, PushI8, Mul</c> and a loop bound written
+        /// <c>N - 1</c> paid for a subtraction on every entry. Asking the same question during
+        /// emission costs nothing and removes the instructions outright.
+        /// </para>
+        /// <para>
+        /// Only a <em>composite</em> is worth folding: a literal already emits itself, and the
+        /// binder's conversion nodes are its own business. The result is gated on the expression's
+        /// static type rather than on the folded value's CLR type, so a fold can never quietly
+        /// change what a slot holds - a <c>char</c> arithmetic result, a nullable, or anything
+        /// whose declared type and folded shape disagree is emitted the long way instead.
+        /// </para>
+        /// </remarks>
+        private bool TryEmitFoldedConstant(BoundExpression expression)
+        {
+            if (expression is not (BoundBinaryExpression or BoundUnaryExpression))
+                return false;
+
+            var type = expression.Type;
+            if (type.IsNullable)
+                return false;
+
+            if (ConstantOf(expression) is not object folded)
+                return false;
+
+            switch (folded)
+            {
+                case long value when type.SpecialType == SpecialType.Int:
+                    Code.LoadInt(unchecked((int)value));
+                    return true;
+
+                case double value when type.SpecialType == SpecialType.Float:
+                    Code.LoadFloat(value);
+                    return true;
+
+                case bool value when type.SpecialType == SpecialType.Bool:
+                    Code.LoadBool(value);
+                    return true;
+
+                default:
+                    return false;
+            }
         }
 
         /// <summary>

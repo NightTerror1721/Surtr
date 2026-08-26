@@ -22,6 +22,10 @@ en `src/` relacionada con rendimiento; las oportunidades documentadas viven en `
 >   obligado a conservar el test.
 > - **P4 y P5** quedan supersedidas por el grupo A de ese plan, que colapsa el ciclo entero de un
 >   `for-in` en una instruccion en vez de solo el paso.
+> - **P9 esta cerrada en negativo, medida.** El mismo merge sort escrito en Surtr sale un 54 % mas
+>   lento que el nativo (14.62 ms contra 9.47): el merge que el nativo obtiene gratis de C# cuesta
+>   mas en bytecode que la reentrada en la frontera. Lo que si valia era la asignacion que la
+>   medicion destapo - `ArraySort` asignaba 156 KB por llamada, y ahora no asigna nada.
 > - La escala de beneficio se recalibro: un despacho vale ~1 ns y un test de tipo predicho ~0.25 ns,
 >   asi que P2 y P3 sueltas quedan dentro del ruido y solo pagan fusionadas.
 

@@ -46,7 +46,7 @@ Con ese criterio, las nueve propuestas quedan así:
 | **A. Hacer** | **P4** paso de bucle contado | 5 despachos → 1 | Correcta, pero **infradimensionada**: ver §5 grupo A, que colapsa 10 → 1 en el recorrido indexado y **17 → 1** en el de diccionario |
 | | **P5** lectura indexada sin guard duplicado | 1 comparación | **Absorbida** por el grupo A: el test de rango y la lectura pasan a ser la misma instrucción, así que no queda comprobación duplicada que eliminar ni hace falta un opcode «inseguro por contrato» |
 | | **P1** plegado constante | n instrucciones en código constante-pesado | Correcta, sin riesgo, sin opcodes. Las dos cautelas que enumera son las buenas (envolver a 32 bits; no plegar lo que trapea) |
-| | **P9** sort en Surtr | 2 fronteras VM/nativo por comparación | Ortogonal a todo lo demás, sin tocar VM ni formato |
+| | **P9** sort en Surtr | 1 reentrada al VM por comparación | Ortogonal a todo lo demás, sin tocar VM ni formato. **Medida y cerrada en negativo** (§9, Fase 1): el sort en bytecode es un 54 % más lento |
 | **B. Solo fusionadas** | **P2** campos nativos | 1 `isinst` + 1 rama predicha | La estimación «3-8 % en `fieldAccess`» no se sostiene: realista 1-2 %, dentro del ruido. **No** justifica gastar 4 valores primarios. Sí paga fusionada (§5 grupo D) |
 | | **P3** diccionarios `int` | 1 test de tag | Peor de lo que el informe cree: como `Deoptimize()` existe, el opcode rápido **está obligado** a conservar el test de `IntEntries != null`. Solo queda el test de tag. Paga fusionada, no suelta |
 | **C. Reformular** | **P6** peephole/liveness sobre bytes | infraestructura | Destino correcto, vehículo equivocado: un pase sobre el buffer emitido tiene que **reconstruir** fronteras de etiqueta y rangos de handler que el emisor ya conoce. Ver §6 |
@@ -443,6 +443,47 @@ mediana, y tamaños suficientes para mantener el spread bajo el 10 % (la propia 
 nueve casos con dispersión >10 %, todos con medianas bajo ~4 ms; un A/B nuevo necesita **tamaños
 mayores, no más iteraciones**).
 
+**Fase 1 — P1 aterrizado, P9 cerrado en negativo.**
+
+**P1 (plegado constante).** `ConstantOf` existía y solo lo preguntaban dos sitios; ahora
+`EmitBinary` y `EmitUnary` lo preguntan primero y emiten el literal. Lo delicado no era plegar sino
+**plegar lo mismo que habría contestado la instrucción**, y ahí el evaluador tenía dos divergencias
+reales, ninguna visible mientras sus únicos consumidores fueran claves de `switch` y argumentos de
+`const fun`:
+
+- Plegaba en `long` mientras la máquina calcula en `int` con envoltura, así que
+  `2000000000 + 2000000000` contestaba 4·10⁹ donde la instrucción contesta −294967296. Todas las
+  operaciones enteras se pliegan ahora en `int`, envolviendo en cada paso.
+- Plegaba `int.MinValue / -1`, que el intérprete **trapea** explícitamente. Se refusa, igual que ya
+  se refusaba la división por cero: un plegado no puede tragarse una falla que el programa tiene
+  derecho a observar.
+
+`src/Surtr.Tests/Compiler/CodeGen/ConstantFoldingTests.cs` fija las dos, comparando cada plegado
+contra la misma aritmética alcanzada por variables — que no puede plegarse — en vez de contra un
+número escrito a mano.
+
+**P9 (sort en Surtr): medido, y la hipótesis del informe es falsa.** El mismo merge sort estable,
+escrito en Surtr y compilado a bytecode, contra el nativo, sobre los mismos datos y el mismo
+comparador (`surtrbench --workload sort`, ambos verificados por checksum):
+
+| Caso | ms | vs C# |
+|---|---|---|
+| `sortArray` (nativo, reentra por comparación) | **9.47** | 10.8x |
+| `sortBytecode` (Surtr, sin frontera) | **14.62** | 16.8x |
+
+Un **54 % más lento**. El razonamiento del informe —que las fronteras dominan— no se sostiene: el
+merge que el nativo obtiene gratis de C# cuesta más en bytecode que lo que cuesta la reentrada en
+la frontera. El caso `sortBytecode` se queda en el catálogo del bench como registro permanente del
+A/B, igual que se cerró la caché virtual.
+
+**Lo que sí encontró la medición.** La columna `bytes` delataba que `ArraySort` asignaba un
+`SurtrValue[]` gestionado **por llamada** — 156.4 KB para ordenar 20k elementos, en un motor con
+presupuesto de frame. El scratch se alquila ahora de `SurtrValueBufferPool` y el par de operandos
+del comparador es un `stackalloc`, así que **un sort no asigna nada**: 156.4 KB → 56 B, con el
+tiempo sin cambio (9.80 ms contra 9.47, dentro de un spread del 7 %). Alquilar es seguro pese a
+que el buffer no es raíz de recolección, porque todo valor del scratch es copia de uno que sigue
+vivo en `SurtrArray.Items`, y el receptor está en la pila de datos durante toda la llamada.
+
 **Fase 0 — el experimento nulo. Hecho; resultados en §3.2 y aquí.** Dos funciones emitidas a mano,
 idénticas salvo que una carga sus locales con `LdlS` y la otra con `SurtrExtOpCode.Probe`, que hace
 lo mismo a través del prefijo. Vive en `src/Surtr.Bench/PrefixTax.cs` y se invoca con
@@ -489,7 +530,7 @@ P1), y un `for-in` sobre array lo bastante largo para que el spread baje del 10 
 | Fase | Contenido | Depende de |
 |---|---|---|
 | **0** ✅ | Abrir el prefijo (`OpCode.Ext`, `SurtrExtOpCode`, switch anidado, disassembler, `FormatVersion` → 13) + el experimento nulo de §8. **Hecho**: prefijo a 0.44-0.48 ns, sin degradación de la suite | — |
-| **1** | **P1** plegado constante en `EmitBinary`/`EmitUnary` + **P9** sort en Surtr | Nada; puede ir en paralelo con la 0 |
+| **1** ✅ | **P1** plegado constante en `EmitBinary`/`EmitUnary` + **P9** sort en Surtr. **Hecho**: P1 aterrizado, P9 medido y cerrado en negativo | Nada; fue en paralelo con la 0 |
 | **2** | **Grupo A** (superinstrucciones de bucle). Cierra P4 y P5 | 0 |
 | **3** | **Ventana de fusión** en `SurtrCodeEmitter` (§6) + **grupo C**, su consumidor más simple | 0 |
 | **4** | **Grupos B y D**. Cierra P2 y P3 en su forma rentable | 3 |

@@ -321,47 +321,47 @@ module surtr.math.Math
 
 @surtr:Pure
 [public] static repeat(value: float, length: float): float
-  ; entry 18, locals 6, stack 3, code 00FE..012A
-    00FE  Ldl0
-    00FF  Ldl0
-    0100  Ldl1
-    0101  FDiv
-    0102  CallLocalModule 12 (floor) args=1 ret=1
-    0107  Ldl1
-    0108  FMul
-    0109  FSub
-    010A  Stl2
-    010B  Ldc4
-    010C  Stl3
-    010D  Ldl1
-    010E  Stl4
-    010F  Ldl2
-    0110  Ldl3
-    0111  JPFGE +5 -> L0 (0119)
-    0114  Ldl3
-    0115  Stl5
-    0116  JP +15 -> L2 (0128)
+  ; entry 18, locals 6, stack 3, code 00FC..0128
+    00FC  Ldl0
+    00FD  Ldl0
+    00FE  Ldl1
+    00FF  FDiv
+    0100  CallLocalModule 12 (floor) args=1 ret=1
+    0105  Ldl1
+    0106  FMul
+    0107  FSub
+    0108  Stl2
+    0109  Ldc4
+    010A  Stl3
+    010B  Ldl1
+    010C  Stl4
+    010D  Ldl2
+    010E  Ldl3
+    010F  JPFGE +5 -> L0 (0117)
+    0112  Ldl3
+    0113  Stl5
+    0114  JP +15 -> L2 (0126)
   L0:
-    0119  Ldl2
-    011A  Ldl4
-    011B  JPFLE +5 -> L1 (0123)
-    011E  Ldl4
-    011F  Stl5
-    0120  JP +5 -> L2 (0128)
+    0117  Ldl2
+    0118  Ldl4
+    0119  JPFLE +5 -> L1 (0121)
+    011C  Ldl4
+    011D  Stl5
+    011E  JP +5 -> L2 (0126)
   L1:
-    0123  Ldl2
-    0124  Stl5
-    0125  JP +0 -> L2 (0128)
+    0121  Ldl2
+    0122  Stl5
+    0123  JP +0 -> L2 (0126)
   L2:
-    0128  Ldl5
-    0129  ReturnValue
+    0126  Ldl5
+    0127  ReturnValue
 
 [public] static native round(x: float): float
   ; native link="surtr.math.Math.round" unbound declared
 
 @surtr:Pure
 [public] static sign(n: float): int
-  ; entry 16, locals 1, stack 2, code 00D4..00E8
+  ; entry 16, locals 1, stack 2, code 00D4..00E7
     00D4  Ldl0
     00D5  Ldc4
     00D6  JPFLE +3 -> L0 (00DC)
@@ -370,32 +370,30 @@ module surtr.math.Math
   L0:
     00DC  Ldl0
     00DD  Ldc4
-    00DE  JPFGE +4 -> L1 (00E5)
-    00E1  PushI8 1
-    00E3  Neg
-    00E4  ReturnValue
+    00DE  JPFGE +3 -> L1 (00E4)
+    00E1  PushI8 -1
+    00E3  ReturnValue
   L1:
-    00E5  PushI8 0
-    00E7  ReturnValue
+    00E4  PushI8 0
+    00E6  ReturnValue
 
 @surtr:Pure
 [public] static sign(n: int): int
-  ; entry 17, locals 1, stack 2, code 00E8..00FE
-    00E8  Ldl0
-    00E9  PushI8 0
-    00EB  JPLE +3 -> L0 (00F1)
-    00EE  PushI8 1
-    00F0  ReturnValue
+  ; entry 17, locals 1, stack 2, code 00E7..00FC
+    00E7  Ldl0
+    00E8  PushI8 0
+    00EA  JPLE +3 -> L0 (00F0)
+    00ED  PushI8 1
+    00EF  ReturnValue
   L0:
-    00F1  Ldl0
-    00F2  PushI8 0
-    00F4  JPGE +4 -> L1 (00FB)
-    00F7  PushI8 1
-    00F9  Neg
-    00FA  ReturnValue
+    00F0  Ldl0
+    00F1  PushI8 0
+    00F3  JPGE +3 -> L1 (00F9)
+    00F6  PushI8 -1
+    00F8  ReturnValue
   L1:
-    00FB  PushI8 0
-    00FD  ReturnValue
+    00F9  PushI8 0
+    00FB  ReturnValue
 
 [public] static native sin(x: float): float
   ; native link="surtr.math.Math.sin" unbound declared

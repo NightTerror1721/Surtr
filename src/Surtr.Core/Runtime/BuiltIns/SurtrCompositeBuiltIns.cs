@@ -98,6 +98,23 @@ namespace Surtr.Runtime.BuiltIns
         /// language rather than a cost this shape adds, and the frame protocol supports it - but it
         /// does mean sorting is not something to do per frame.
         /// </para>
+        /// <para>
+        /// Writing the whole sort in Surtr instead, so that a comparison is an ordinary closure
+        /// call inside the running loop with no boundary to cross, was tried and measured: it is
+        /// <b>54 % slower</b> (14.6 ms against 9.5 ms on the 20k-element case). The merge
+        /// bookkeeping this gets from C# for free costs more in bytecode than the re-entry costs
+        /// at the boundary. <c>surtrbench --workload sort</c> keeps both sides of that A/B, and
+        /// <c>docs/Plan-Opcodes-Extendidos.md</c> §2 records it.
+        /// </para>
+        /// <para>
+        /// What the measurement did find is the scratch buffer: it used to be a managed
+        /// <c>SurtrValue[]</c> allocated per call, which handed the collector 156 KB for that same
+        /// 20k sort. It is rented from <see cref="SurtrValueBufferPool"/> now, so a sort allocates
+        /// nothing at all. Renting is safe across the re-entry despite the buffer not being a
+        /// collection root: every value in the scratch is a copy of one still live in
+        /// <see cref="SurtrArray.Items"/>, which is rooted by the receiver on the data stack for
+        /// the whole call, so nothing is ever uniquely reachable from here.
+        /// </para>
         /// </remarks>
         private static int ArraySort(SurtrCallArguments arguments)
         {
@@ -110,24 +127,27 @@ namespace Surtr.Runtime.BuiltIns
                 return arguments.Return(SurtrValue.Null);
 
             var items = self.Items;
-            var scratch = new SurtrValue[length];
+            SurtrRawValue* scratch = SurtrValueBufferPool.Rent(length, out int capacity);
 
-            // Reused across every comparison rather than allocated per call: a sort makes
-            // n log n of them.
-            var operands = new SurtrValue[2];
-
-            for (int width = 1; width < length; width <<= 1)
+            try
             {
-                for (int start = 0; start < length; start += width << 1)
+                for (int width = 1; width < length; width <<= 1)
                 {
-                    int middle = Math.Min(start + width, length);
-                    int end = Math.Min(start + (width << 1), length);
+                    for (int start = 0; start < length; start += width << 1)
+                    {
+                        int middle = Math.Min(start + width, length);
+                        int end = Math.Min(start + (width << 1), length);
 
-                    Merge(items, scratch, start, middle, end, runtime, comparator, operands);
+                        Merge(items, scratch, start, middle, end, runtime, comparator);
+                    }
+
+                    for (int i = 0; i < length; i++)
+                        items[i] = scratch[i];
                 }
-
-                for (int i = 0; i < length; i++)
-                    items[i] = scratch[i].Raw;
+            }
+            finally
+            {
+                SurtrValueBufferPool.Return(scratch, capacity);
             }
 
             return arguments.Return(SurtrValue.Null);
@@ -135,13 +155,12 @@ namespace Surtr.Runtime.BuiltIns
 
         private static void Merge(
             SurtrRawValue* items,
-            SurtrValue[] scratch,
+            SurtrRawValue* scratch,
             int start,
             int middle,
             int end,
             SurtrRuntime runtime,
-            SurtrClosure comparator,
-            SurtrValue[] operands)
+            SurtrClosure comparator)
         {
             int left = start;
             int right = middle;
@@ -150,23 +169,29 @@ namespace Surtr.Runtime.BuiltIns
             {
                 // `<= 0` rather than `< 0` is what makes this stable: on a tie the left run, which
                 // held the earlier element, goes first.
-                bool takeLeft = left < middle && (right >= end || Compare(runtime, comparator, operands, SurtrValue.FromRaw(items[left]), SurtrValue.FromRaw(items[right])) <= 0);
+                bool takeLeft = left < middle && (right >= end || Compare(runtime, comparator, items[left], items[right]) <= 0);
 
-                scratch[next] = SurtrValue.FromRaw(takeLeft ? items[left++] : items[right++]);
+                scratch[next] = takeLeft ? items[left++] : items[right++];
             }
         }
 
+        /// <summary>One comparison, through the comparator's own frame.</summary>
+        /// <remarks>
+        /// The operand pair is stack-allocated rather than a reusable field: a sort makes n log n
+        /// comparisons, and a two-slot span on the stack costs a pointer bump where a shared array
+        /// cost a field read and left one more allocation per call to explain.
+        /// </remarks>
         private static int Compare(
             SurtrRuntime runtime,
             SurtrClosure comparator,
-            SurtrValue[] operands,
-            SurtrValue left,
-            SurtrValue right)
+            SurtrRawValue left,
+            SurtrRawValue right)
         {
-            operands[0] = left;
-            operands[1] = right;
+            SurtrValue* operands = stackalloc SurtrValue[2];
+            operands[0] = SurtrValue.FromRaw(left);
+            operands[1] = SurtrValue.FromRaw(right);
 
-            return runtime.InvokeClosure(comparator, operands).AsInt;
+            return runtime.InvokeClosure(comparator, new ReadOnlySpan<SurtrValue>(operands, 2)).AsInt;
         }
 
         // A G0 argument arrives as whatever the caller had on the stack, tag and all - the

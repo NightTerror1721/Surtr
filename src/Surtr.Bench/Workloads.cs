@@ -603,6 +603,62 @@ namespace Surtr.Bench
                 return acc;
             }
 
+            // The same stable merge sort array.sort runs natively, written in Surtr. The A/B for
+            // P9: a native sort calls its comparator by re-entering the interpreter once per
+            // comparison, while this one calls it as an ordinary closure inside the running loop -
+            // and pays for the merge bookkeeping the native version got from C# for free. Which
+            // way that trade falls is the measurement, not a rule.
+            fun mergeSort(items: int[], comparator: (int, int) -> int): void {
+                let length = items.length;
+                if (length < 2) { return; }
+
+                let scratch = array<int>(length);
+                var width = 1;
+
+                while (width < length) {
+                    let span = width + width;
+                    var start = 0;
+
+                    while (start < length) {
+                        var middle = start + width;
+                        if (middle > length) { middle = length; }
+                        var end = start + span;
+                        if (end > length) { end = length; }
+
+                        var left = start;
+                        var right = middle;
+                        var next = start;
+
+                        while (next < end) {
+                            var takeLeft = right >= end;
+                            if (!takeLeft && left < middle) {
+                                takeLeft = comparator(items[left], items[right]) <= 0;
+                            }
+
+                            if (takeLeft) { scratch[next] = items[left]; left = left + 1; }
+                            else { scratch[next] = items[right]; right = right + 1; }
+
+                            next = next + 1;
+                        }
+
+                        start = start + span;
+                    }
+
+                    var i = 0;
+                    while (i < length) { items[i] = scratch[i]; i = i + 1; }
+                    width = span;
+                }
+            }
+
+            fun sortBytecode(n: int): int {
+                let xs: int[] = [];
+                for (var i = 0; i < n; i += 1) { xs.push((i * 7919) % 10007); }
+                mergeSort(xs, (a: int, b: int) => a - b);
+                var acc: int = 0;
+                for (var i = 0; i < xs.length; i += 1) { acc = (acc + xs[i] * (i % 7 + 1)) % 100000007; }
+                return acc;
+            }
+
             fun tuples(n: int): int {
                 var acc: int = 0;
                 for (var i = 0; i < n; i += 1) {
@@ -1162,6 +1218,10 @@ namespace Surtr.Bench
                 return acc
             end
 
+            -- Lua has one sort, so both Surtr sort cases compare against the same Lua row: the
+            -- question the A/B asks is Surtr-internal.
+            sortBytecode = sortArray
+
             function tuples(n)
                 local acc = 0
                 for i = 0, n - 1 do
@@ -1307,6 +1367,7 @@ namespace Surtr.Bench
             new Workload("nullable", 300000, WorkloadKind.Int, "nullable primitive, absent tag", Nullable),
             new Workload("enums", 300000, WorkloadKind.Int, "enum case access and comparison", Enums),
             new Workload("sortArray", 20000, WorkloadKind.Int, "native member re-entering the VM per compare", SortArray),
+            new Workload("sortBytecode", 20000, WorkloadKind.Int, "the same merge sort in Surtr: no boundary per compare, but the merge costs bytecode", SortArray),
             new Workload("tuples", 300000, WorkloadKind.Int, "tuple literal and element read, inline slots", Tuples),
             new Workload("vec2Math", 300000, WorkloadKind.Float, "multi-field value type: construct, pass and return by value", baselineFloat: Vec2Math),
             new Workload("vec2Fields", 300000, WorkloadKind.Float, "value-type fields stored inline in an instance", baselineFloat: Vec2Fields),
