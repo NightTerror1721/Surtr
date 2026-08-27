@@ -29,6 +29,7 @@ This file is the orientation; each of these goes deep on one thing. Read the rel
 | `docs/Informe-Volatilidad-Run.md` | Why adding opcode bodies moves `Run()`'s whole performance by ±20-45 % — measured as per-process bimodality of the indirect dispatch plus a real layout flip — and the corrected A/B protocol (`scripts/ab-suite.ps1`). §10 documents the register-pressure fix applied to `Run()` (−4.6 % median on the fast state). |
 | `docs/Informe-Benchmarks-Extremo.md` | The extreme suite run under the bimodality-aware protocol (`--processes 9`): per-case fast state + state spread, full breakdown by category. Raw data: `bench_results_extreme.csv`. |
 | `docs/Plan-Disposicion.md` | Deterministic disposal: why the registry's lack of a finalization hook makes it a language question, the comparison with C#/Java/Python, the built-in `IDisposable`, `using`, and what a `for-in`'s close costs. |
+| `docs/Plan-Presion-Registros-Run.md` | The plan to get `Run()` under the register budget, continuing the one fix that measured (`Informe-Volatilidad-Run.md` §10). §3 inventories every local with its usage count, §4 the ordered candidates, §5 what is measured-untouchable and why. §0 closes two alternatives with numbers: dropping NaN tagging buys ~1 % measured (2-3 % extrapolated) and a function-pointer table costs a call per instruction against a ~1.2 ns budget — do not re-propose either without new evidence. §6 has the deterministic asm-diff protocol this work is measured by. |
 
 ## Performance is CRITICAL
 
