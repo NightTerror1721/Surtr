@@ -121,6 +121,17 @@ namespace Surtr.VM
 
         // Zero means unlimited, which is what every ordinary run uses. See StepBudget.
         private long _stepsRemaining;
+
+        /// <summary>The operands of the shared call and generator-entry sequences, delivered as
+        /// fields rather than locals so the dispatch loop does not hold six live ranges across the
+        /// whole method for values written and read only on the call/generator paths (cold, once
+        /// per call). They are copied back into short-lived locals at the top of the shared
+        /// sequences, which is what keeps them safe from a native call that re-enters Run().</summary>
+        private SurtrMethodInfo _pendingMethod = null!;
+        private SurtrClosure? _pendingClosure = null;
+        private int _pendingArguments = 0;
+        private int _pendingResults = 0;
+        private SurtrGenerator _pendingGenerator = null!;
         private bool _disposed;
 
         /// <summary>Creates a machine with the default stack sizes.</summary>
@@ -134,7 +145,7 @@ namespace Surtr.VM
         internal SurtrVirtualMachine(SurtrRuntime runtime, int dataStackSlots, int maxCallDepth)
         {
             _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
-            _comparer = runtime.ValueComparer;
+            _comparer = _runtime.ValueComparer;
 
             if (dataStackSlots < MinimumDataStackSlots)
                 dataStackSlots = MinimumDataStackSlots;
@@ -1100,8 +1111,8 @@ namespace Surtr.VM
         [MethodImpl((MethodImplOptions)512)]
         private SurtrValue Run(int entryDepth)
         {
-            var runtime = _runtime;
-            var comparer = _comparer;
+            
+            
 
             // `context` se mantiene como local a prop??sito: Context es un getter ref que el inliner
             // deja como llamada real en un m??todo de este tama??o (medido: 45 get_Context por Run),
@@ -1123,8 +1134,9 @@ namespace Surtr.VM
             // Held in a local for the same reason ip and sp are: a field read per instruction
             // would defeat the point. long.MaxValue stands in for "no limit" so the check itself
             // is unconditional and the branch predicts perfectly either way.
-            bool budgeted = _stepsRemaining != 0;
-            long steps = budgeted ? _stepsRemaining : long.MaxValue;
+            
+            long steps = _stepsRemaining;
+            if (steps == 0) steps = long.MaxValue;
 
             // Both of these can move: registering an entity may grow the registry's array, and a
             // native call may register one. Every site that can cause either reloads them, and
@@ -1139,25 +1151,19 @@ namespace Surtr.VM
             SurtrRawValue* frameBase;
             SurtrChunk chunk;
             SurtrRawValue* constants;
-            SurtrTypeHandle[] typeTable;
-            SurtrFieldInfo[] fieldTable;
-            SurtrMethodInfo[] methodTable;
-            SurtrModule[] moduleTable;
+            
 
             SurtrClosure? closure;
 
             // The operands of the shared call-entry sequences below. Passing them in locals and
             // jumping keeps every call opcode from carrying its own copy of a twenty-line frame
             // setup, without turning that setup into a real call.
-            SurtrMethodInfo pendingMethod = null!;
-            SurtrClosure? pendingClosure = null;
-            int pendingArguments = 0;
-            int pendingResults = 0;
+            
 
             // The operand of the shared generator-entry sequence, which three sites reach: a
             // resume, a delegation, and a delegated-to body ending. All three enter a frame at
             // `sp` with the answer slot at `sp - 1`, so they share one copy of the setup.
-            SurtrGenerator pendingGenerator = null!;
+            
 
         LoadFrame:
             {
@@ -1169,10 +1175,7 @@ namespace Surtr.VM
                 sp = _sp;
 
                 constants = chunk.Constants.Pointer;
-                typeTable = chunk.TypeTable;
-                fieldTable = chunk.FieldTable;
-                methodTable = chunk.MethodTable;
-                moduleTable = chunk.ModuleTable;
+                
             }
 
             // Inline immediates are read a byte at a time and recomposed with shifts rather than
@@ -1509,7 +1512,7 @@ namespace Surtr.VM
                 {
                     SurtrValue right = SurtrValue.FromRaw(*--sp);
                     SurtrValue left = SurtrValue.FromRaw(*(sp - 1));
-                    *(sp - 1) = SurtrValue.TagMaskBool | (comparer.ValuesEqual(left, right) ? 1UL : 0UL);
+                    *(sp - 1) = SurtrValue.TagMaskBool | (_comparer.ValuesEqual(left, right) ? 1UL : 0UL);
                     goto Dispatch;
                 }
 
@@ -1517,7 +1520,7 @@ namespace Surtr.VM
                 {
                     SurtrValue right = SurtrValue.FromRaw(*--sp);
                     SurtrValue left = SurtrValue.FromRaw(*(sp - 1));
-                    *(sp - 1) = SurtrValue.TagMaskBool | (comparer.ValuesEqual(left, right) ? 0UL : 1UL);
+                    *(sp - 1) = SurtrValue.TagMaskBool | (_comparer.ValuesEqual(left, right) ? 0UL : 1UL);
                     goto Dispatch;
                 }
 
@@ -1587,7 +1590,7 @@ namespace Surtr.VM
 
                 case OpCode.InstanceOf:
                 {
-                    var target = typeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
+                    var target = chunk.TypeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
                     ip += 2;
 
                     SurtrRef subject = (SurtrRef)(*(sp - 1));
@@ -1606,7 +1609,7 @@ namespace Surtr.VM
 
                 case OpCode.InstanceOfX:
                 {
-                    var target = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
+                    var target = chunk.TypeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
                     ip += 4;
 
                     SurtrRef subject = (SurtrRef)(*(sp - 1));
@@ -1625,13 +1628,13 @@ namespace Surtr.VM
 
                 case OpCode.LoadType:
                 {
-                    ref var typeHandle = ref typeTable[(ip[0] | (ip[1] << 8))];
+                    ref var typeHandle = ref chunk.TypeTable[(ip[0] | (ip[1] << 8))];
                     var target = typeHandle.ResolvedType!;
                     ip += 2;
                     current.IP = ip;
                     _sp = sp;
 
-                    var typeValue = runtime.GetOrCreateTypeValue(target, typeHandle.Reference);
+                    var typeValue = _runtime.GetOrCreateTypeValue(target, typeHandle.Reference);
                     entities = context.EntityRegistry.Entities;
                     *sp++ = SurtrValue.TagMaskReference | (uint)typeValue.GetSurtrReference();
                     goto Dispatch;
@@ -1639,13 +1642,13 @@ namespace Surtr.VM
 
                 case OpCode.LoadTypeX:
                 {
-                    ref var typeHandleX = ref typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    ref var typeHandleX = ref chunk.TypeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     var targetX = typeHandleX.ResolvedType!;
                     ip += 4;
                     current.IP = ip;
                     _sp = sp;
 
-                    var typeValueX = runtime.GetOrCreateTypeValue(targetX, typeHandleX.Reference);
+                    var typeValueX = _runtime.GetOrCreateTypeValue(targetX, typeHandleX.Reference);
                     entities = context.EntityRegistry.Entities;
                     *sp++ = SurtrValue.TagMaskReference | (uint)typeValueX.GetSurtrReference();
                     goto Dispatch;
@@ -1661,7 +1664,7 @@ namespace Surtr.VM
                     current.IP = ip;
                     _sp = sp;
 
-                    var typeValue = runtime.GetOrCreateTypeValue(valueClass);
+                    var typeValue = _runtime.GetOrCreateTypeValue(valueClass);
                     entities = context.EntityRegistry.Entities;
                     *(sp - 1) = SurtrValue.TagMaskReference | (uint)typeValue.GetSurtrReference();
                     goto Dispatch;
@@ -1670,42 +1673,12 @@ namespace Surtr.VM
 
                 #region Module Access
                 case OpCode.LoadModule:
-                {
-                    var target = moduleTable[(ip[0] | (ip[1] << 8))]!;
-                    ip += 2;
-                    current.IP = ip;
-                    _sp = sp;
-
-                    var moduleValue = runtime.GetOrCreateModuleValue(target);
-                    entities = context.EntityRegistry.Entities;
-                    *sp++ = SurtrValue.TagMaskReference | (uint)moduleValue.GetSurtrReference();
-                    goto Dispatch;
-                }
-
                 case OpCode.LoadModuleX:
-                {
-                    var target = moduleTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))]!;
-                    ip += 4;
-                    current.IP = ip;
-                    _sp = sp;
-
-                    var moduleValue = runtime.GetOrCreateModuleValue(target);
-                    entities = context.EntityRegistry.Entities;
-                    *sp++ = SurtrValue.TagMaskReference | (uint)moduleValue.GetSurtrReference();
-                    goto Dispatch;
-                }
-
-                // A module does not reach itself through moduleTable - the same rule
-                // CallLocalModule already follows for a call - so this reads the owning module off
-                // the executing chunk instead of an index.
                 case OpCode.LoadCurrentModule:
                 {
-                    current.IP = ip;
-                    _sp = sp;
-
-                    var moduleValue = runtime.GetOrCreateModuleValue(chunk.OwningModule!);
-                    entities = context.EntityRegistry.Entities;
-                    *sp++ = SurtrValue.TagMaskReference | (uint)moduleValue.GetSurtrReference();
+                    HState s = HandleModuleOp(new HState { ip = ip, sp = sp }, ref entities, ref current, chunk, ref context);
+                    ip = s.ip;
+                    sp = s.sp;
                     goto Dispatch;
                 }
                 #endregion
@@ -1886,7 +1859,7 @@ namespace Surtr.VM
 
                 case OpCode.Cast:
                 {
-                    var target = typeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
+                    var target = chunk.TypeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
                     ip += 2;
 
                     SurtrRef subject = (SurtrRef)(*(sp - 1));
@@ -1910,7 +1883,7 @@ namespace Surtr.VM
 
                 case OpCode.CastX:
                 {
-                    var target = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
+                    var target = chunk.TypeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
                     ip += 4;
 
                     SurtrRef subject = (SurtrRef)(*(sp - 1));
@@ -1937,7 +1910,7 @@ namespace Surtr.VM
                 // the subject occupies.
                 case OpCode.CastOrNull:
                 {
-                    var target = typeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
+                    var target = chunk.TypeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
                     ip += 2;
 
                     SurtrRef subject = (SurtrRef)(*(sp - 1));
@@ -1957,7 +1930,7 @@ namespace Surtr.VM
 
                 case OpCode.CastOrNullX:
                 {
-                    var target = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
+                    var target = chunk.TypeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
                     ip += 4;
 
                     SurtrRef subject = (SurtrRef)(*(sp - 1));
@@ -2051,7 +2024,7 @@ namespace Surtr.VM
                 #region Array Operations
                 case OpCode.ArrNew:
                 {
-                    var arrayType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
+                    var arrayType = chunk.TypeTable[(ip[0] | (ip[1] << 8))].Reference;
                     ip += 2;
                     current.IP = ip;
                     _sp = sp;
@@ -2079,7 +2052,7 @@ namespace Surtr.VM
 
                 case OpCode.ArrNewX:
                 {
-                    var arrayType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
+                    var arrayType = chunk.TypeTable[(ip[0] | (ip[1] << 8))].Reference;
                     int length = (ip[2] | (ip[3] << 8) | (ip[4] << 16) | (ip[5] << 24));
                     ip += 6;
                     current.IP = ip;
@@ -2104,7 +2077,7 @@ namespace Surtr.VM
 
                 case OpCode.ArrPack:
                 {
-                    var arrayType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
+                    var arrayType = chunk.TypeTable[(ip[0] | (ip[1] << 8))].Reference;
                     int count = (ip[2] | (ip[3] << 8));
                     ip += 4;
                     current.IP = ip;
@@ -2247,7 +2220,7 @@ namespace Surtr.VM
                 {
                     SurtrValue needle = SurtrValue.FromRaw(*--sp);
                     var array = (SurtrArray)entities[(SurtrRef)(*(sp - 1))]!;
-                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)array.IndexOf(needle, comparer);
+                    *(sp - 1) = SurtrValue.TagMaskInt | (uint)array.IndexOf(needle, _comparer);
                     goto Dispatch;
                 }
 
@@ -2255,7 +2228,7 @@ namespace Surtr.VM
                 {
                     SurtrValue needle = SurtrValue.FromRaw(*--sp);
                     var array = (SurtrArray)entities[(SurtrRef)(*(sp - 1))]!;
-                    *(sp - 1) = SurtrValue.TagMaskBool | (array.IndexOf(needle, comparer) >= 0 ? 1UL : 0UL);
+                    *(sp - 1) = SurtrValue.TagMaskBool | (array.IndexOf(needle, _comparer) >= 0 ? 1UL : 0UL);
                     goto Dispatch;
                 }
                 #endregion
@@ -2263,7 +2236,7 @@ namespace Surtr.VM
                 #region Tuple Operations
                 case OpCode.TupPack:
                 {
-                    var tupleType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
+                    var tupleType = chunk.TypeTable[(ip[0] | (ip[1] << 8))].Reference;
                     int arity = ip[2];
                     ip += 3;
                     current.IP = ip;
@@ -2337,13 +2310,13 @@ namespace Surtr.VM
                 #region Dictionary Operations
                 case OpCode.DictNew:
                 {
-                    var dictionaryType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
+                    var dictionaryType = chunk.TypeTable[(ip[0] | (ip[1] << 8))].Reference;
                     ip += 2;
                     current.IP = ip;
                     _sp = sp;
 
                     SurtrRef reference = context.EntityRegistry.Register(
-                        new SurtrDictionary(dictionaryType, comparer, 0), out entities);
+                        new SurtrDictionary(dictionaryType, _comparer, 0), out entities);
 
                     *sp++ = SurtrValue.TagMaskReference | (uint)reference;
                     goto Safepoint;
@@ -2351,13 +2324,13 @@ namespace Surtr.VM
 
                 case OpCode.DictPack:
                 {
-                    var dictionaryType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
+                    var dictionaryType = chunk.TypeTable[(ip[0] | (ip[1] << 8))].Reference;
                     int count = (ip[2] | (ip[3] << 8));
                     ip += 4;
                     current.IP = ip;
                     _sp = sp;
 
-                    var dictionary = new SurtrDictionary(dictionaryType, comparer, count);
+                    var dictionary = new SurtrDictionary(dictionaryType, _comparer, count);
                     SurtrRef reference = context.EntityRegistry.Register(dictionary, out entities);
 
                     sp -= count * 2;
@@ -2468,7 +2441,7 @@ namespace Surtr.VM
 
                 case OpCode.DictKeys:
                 {
-                    var arrayType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
+                    var arrayType = chunk.TypeTable[(ip[0] | (ip[1] << 8))].Reference;
                     ip += 2;
                     current.IP = ip;
                     _sp = sp;
@@ -2485,7 +2458,7 @@ namespace Surtr.VM
 
                 case OpCode.DictValues:
                 {
-                    var arrayType = typeTable[(ip[0] | (ip[1] << 8))].Reference;
+                    var arrayType = chunk.TypeTable[(ip[0] | (ip[1] << 8))].Reference;
                     ip += 2;
                     current.IP = ip;
                     _sp = sp;
@@ -2517,46 +2490,21 @@ namespace Surtr.VM
 
                 #region Object Operations
                 case OpCode.ObjNew:
-                {
-                    var declared = typeTable[(ip[0] | (ip[1] << 8))].ResolvedClass!;
-                    ip += 2;
-                    current.IP = ip;
-                    _sp = sp;
-
-                    // Defense in depth: the binder rejects constructing an abstract class in source,
-                    // but raw bytecode (or a frontend without that check) could still ask ObjNew to
-                    // allocate one. An abstract class has no concrete layout to build, so reject it
-                    // here too rather than hand back a half-made instance.
-                    if (declared.IsAbstract)
-                        throw AbstractInstantiation(declared.Name);
-
-                    SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared), out entities);
-
-                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Safepoint;
-                }
-
                 case OpCode.ObjNewX:
                 {
-                    var declared = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedClass!;
-                    ip += 4;
-                    current.IP = ip;
-                    _sp = sp;
-
-                    if (declared.IsAbstract)
-                        throw AbstractInstantiation(declared.Name);
-
-                    SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared), out entities);
-
-                    *sp++ = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Safepoint;
+                    HState s = HandleObjectOp(new HState { ip = ip, sp = sp }, ref entities, ref current, chunk, ref context);
+                    ip = s.ip;
+                    sp = s.sp;
+                    if (s.Flow == 1)
+                        goto Safepoint;
+                    goto Dispatch;
                 }
                 #endregion
 
                 #region Field Operations
                 case OpCode.FieldGet:
                 {
-                    var field = fieldTable[(ip[0] | (ip[1] << 8))];
+                    var field = chunk.FieldTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
 
                     if (field is SurtrNativeFieldInfo nativeField)
@@ -2570,11 +2518,11 @@ namespace Surtr.VM
                         _sp = sp;
 
                         _ = nativeField.Getter
-                            .Invoke(new SurtrCallArguments(runtime, sp - 1, 1));
+                            .Invoke(new SurtrCallArguments(_runtime, sp - 1, 1));
 
                         entities = context.EntityRegistry.Entities;
                         if (context.EntityRegistry.GcPending)
-                            runtime.CollectAtSafepoint();
+                            _runtime.CollectAtSafepoint();
 
                         goto Dispatch;
                     }
@@ -2587,7 +2535,7 @@ namespace Surtr.VM
 
                 case OpCode.FieldSet:
                 {
-                    var field = fieldTable[(ip[0] | (ip[1] << 8))];
+                    var field = chunk.FieldTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
 
                     if (field is SurtrNativeFieldInfo nativeField)
@@ -2597,14 +2545,14 @@ namespace Surtr.VM
                         _sp = sp;
 
                         nativeField.Setter
-                            .Invoke(new SurtrCallArguments(runtime, sp - 2, 2));
+                            .Invoke(new SurtrCallArguments(_runtime, sp - 2, 2));
 
                         sp -= 2;
                         _sp = sp;
 
                         entities = context.EntityRegistry.Entities;
                         if (context.EntityRegistry.GcPending)
-                            runtime.CollectAtSafepoint();
+                            _runtime.CollectAtSafepoint();
 
                         goto Dispatch;
                     }
@@ -2618,7 +2566,7 @@ namespace Surtr.VM
 
                 case OpCode.StaticFieldGet:
                 {
-                    var field = fieldTable[(ip[0] | (ip[1] << 8))];
+                    var field = chunk.FieldTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
 
                     if (field is SurtrNativeFieldInfo nativeField)
@@ -2630,13 +2578,13 @@ namespace Surtr.VM
                         _sp = sp;
 
                         _ = nativeField.Getter
-                            .Invoke(new SurtrCallArguments(runtime, sp, 0, 1));
+                            .Invoke(new SurtrCallArguments(_runtime, sp, 0, 1));
                         sp += 1;
                         _sp = sp;
 
                         entities = context.EntityRegistry.Entities;
                         if (context.EntityRegistry.GcPending)
-                            runtime.CollectAtSafepoint();
+                            _runtime.CollectAtSafepoint();
 
                         goto Dispatch;
                     }
@@ -2649,7 +2597,7 @@ namespace Surtr.VM
 
                 case OpCode.StaticFieldGetX:
                 {
-                    var field = fieldTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    var field = chunk.FieldTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     ip += 4;
 
                     if (field is SurtrNativeFieldInfo nativeField)
@@ -2658,13 +2606,13 @@ namespace Surtr.VM
                         _sp = sp;
 
                         _ = nativeField.Getter
-                            .Invoke(new SurtrCallArguments(runtime, sp, 0, 1));
+                            .Invoke(new SurtrCallArguments(_runtime, sp, 0, 1));
                         sp += 1;
                         _sp = sp;
 
                         entities = context.EntityRegistry.Entities;
                         if (context.EntityRegistry.GcPending)
-                            runtime.CollectAtSafepoint();
+                            _runtime.CollectAtSafepoint();
 
                         goto Dispatch;
                     }
@@ -2675,7 +2623,7 @@ namespace Surtr.VM
 
                 case OpCode.StaticFieldSet:
                 {
-                    var field = fieldTable[(ip[0] | (ip[1] << 8))];
+                    var field = chunk.FieldTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
 
                     if (field is SurtrNativeFieldInfo nativeField)
@@ -2684,14 +2632,14 @@ namespace Surtr.VM
                         _sp = sp;
 
                         nativeField.Setter
-                            .Invoke(new SurtrCallArguments(runtime, sp - 1, 1));
+                            .Invoke(new SurtrCallArguments(_runtime, sp - 1, 1));
 
                         sp -= 1;
                         _sp = sp;
 
                         entities = context.EntityRegistry.Entities;
                         if (context.EntityRegistry.GcPending)
-                            runtime.CollectAtSafepoint();
+                            _runtime.CollectAtSafepoint();
 
                         goto Dispatch;
                     }
@@ -2702,7 +2650,7 @@ namespace Surtr.VM
 
                 case OpCode.StaticFieldSetX:
                 {
-                    var field = fieldTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    var field = chunk.FieldTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     ip += 4;
 
                     if (field is SurtrNativeFieldInfo nativeField)
@@ -2711,14 +2659,14 @@ namespace Surtr.VM
                         _sp = sp;
 
                         nativeField.Setter
-                            .Invoke(new SurtrCallArguments(runtime, sp - 1, 1));
+                            .Invoke(new SurtrCallArguments(_runtime, sp - 1, 1));
 
                         sp -= 1;
                         _sp = sp;
 
                         entities = context.EntityRegistry.Entities;
                         if (context.EntityRegistry.GcPending)
-                            runtime.CollectAtSafepoint();
+                            _runtime.CollectAtSafepoint();
 
                         goto Dispatch;
                     }
@@ -2731,7 +2679,7 @@ namespace Surtr.VM
                 #region Closure Operations
                 case OpCode.NewClosure:
                 {
-                    var target = methodTable[(ip[0] | (ip[1] << 8))];
+                    var target = chunk.MethodTable[(ip[0] | (ip[1] << 8))];
                     int captureCount = ip[2];
                     ip += 3;
                     current.IP = ip;
@@ -2751,7 +2699,7 @@ namespace Surtr.VM
 
                 case OpCode.NewClosureX:
                 {
-                    var target = methodTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    var target = chunk.MethodTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     int captureCount = ip[4];
                     ip += 5;
                     current.IP = ip;
@@ -2771,7 +2719,7 @@ namespace Surtr.VM
 
                 case OpCode.NewFunction:
                 {
-                    var target = methodTable[(ip[0] | (ip[1] << 8))];
+                    var target = chunk.MethodTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
                     current.IP = ip;
                     _sp = sp;
@@ -2779,19 +2727,19 @@ namespace Surtr.VM
                     // The one shared closure for the method: nothing to allocate on an evaluation,
                     // and registering it (on first use) may grow the entity table, hence the
                     // safepoint below rather than a plain dispatch.
-                    var function = runtime.GetOrCreateFunctionValue(target);
+                    var function = _runtime.GetOrCreateFunctionValue(target);
                     *sp++ = SurtrValue.CreateReference(function.GetSurtrReference()).Raw;
                     goto Safepoint;
                 }
 
                 case OpCode.NewFunctionX:
                 {
-                    var target = methodTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    var target = chunk.MethodTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     ip += 4;
                     current.IP = ip;
                     _sp = sp;
 
-                    var function = runtime.GetOrCreateFunctionValue(target);
+                    var function = _runtime.GetOrCreateFunctionValue(target);
                     *sp++ = SurtrValue.CreateReference(function.GetSurtrReference()).Raw;
                     goto Safepoint;
                 }
@@ -3192,7 +3140,7 @@ namespace Surtr.VM
 
                 case OpCode.JPInstanceOf:
                 {
-                    var target = typeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
+                    var target = chunk.TypeTable[(ip[0] | (ip[1] << 8))].ResolvedType!;
                     short offset = (short)(ip[2] | (ip[3] << 8));
                     ip += 4;
 
@@ -3212,7 +3160,7 @@ namespace Surtr.VM
 
                 case OpCode.JPInstanceOfX:
                 {
-                    var target = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
+                    var target = chunk.TypeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedType!;
                     int offset = (ip[4] | (ip[5] << 8) | (ip[6] << 16) | (ip[7] << 24));
                     ip += 8;
 
@@ -3291,40 +3239,40 @@ namespace Surtr.VM
 
                 #region Call Operations
                 case OpCode.CallLocalModule:
-                    pendingMethod = methodTable[(ip[0] | (ip[1] << 8))];
+                    _pendingMethod = chunk.MethodTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
-                    pendingArguments = *ip++;
-                    pendingResults = *ip++;
-                    pendingClosure = null;
+                    _pendingArguments = *ip++;
+                    _pendingResults = *ip++;
+                    _pendingClosure = null;
                     goto InvokeResolved;
 
                 case OpCode.CallLocalModuleX:
-                    pendingMethod = methodTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    _pendingMethod = chunk.MethodTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     ip += 4;
-                    pendingArguments = *ip++;
-                    pendingResults = *ip++;
-                    pendingClosure = null;
+                    _pendingArguments = *ip++;
+                    _pendingResults = *ip++;
+                    _pendingClosure = null;
                     goto InvokeResolved;
 
                 case OpCode.CallModule:
                 {
-                    var target = moduleTable[(ip[0] | (ip[1] << 8))];
-                    pendingMethod = target.Chunk.MethodTable[(ip[2] | (ip[3] << 8))];
+                    var target = chunk.ModuleTable[(ip[0] | (ip[1] << 8))];
+                    _pendingMethod = target.Chunk.MethodTable[(ip[2] | (ip[3] << 8))];
                     ip += 4;
-                    pendingArguments = *ip++;
-                    pendingResults = *ip++;
-                    pendingClosure = null;
+                    _pendingArguments = *ip++;
+                    _pendingResults = *ip++;
+                    _pendingClosure = null;
                     goto InvokeResolved;
                 }
 
                 case OpCode.CallModuleX:
                 {
-                    var target = moduleTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
-                    pendingMethod = target.Chunk.MethodTable[(ip[4] | (ip[5] << 8) | (ip[6] << 16) | (ip[7] << 24))];
+                    var target = chunk.ModuleTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    _pendingMethod = target.Chunk.MethodTable[(ip[4] | (ip[5] << 8) | (ip[6] << 16) | (ip[7] << 24))];
                     ip += 8;
-                    pendingArguments = *ip++;
-                    pendingResults = *ip++;
-                    pendingClosure = null;
+                    _pendingArguments = *ip++;
+                    _pendingResults = *ip++;
+                    _pendingClosure = null;
                     goto InvokeResolved;
                 }
                 #endregion
@@ -3332,59 +3280,59 @@ namespace Surtr.VM
                 #region Method Operations
                 case OpCode.InvokeVirtual:
                 {
-                    var declared = methodTable[(ip[0] | (ip[1] << 8))];
+                    var declared = chunk.MethodTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
-                    pendingArguments = *ip++;
-                    pendingResults = *ip++;
+                    _pendingArguments = *ip++;
+                    _pendingResults = *ip++;
 
                     // The receiver is argument 0, which is what makes the frame base one subtraction
                     // regardless of whether a call has a receiver at all.
-                    var receiver = (SurtrObject)entities[(SurtrRef)(*(sp - pendingArguments))]!;
-                    pendingMethod = receiver.Class.VirtualMethods[declared.VTableSlot];
-                    pendingClosure = null;
+                    var receiver = (SurtrObject)entities[(SurtrRef)(*(sp - _pendingArguments))]!;
+                    _pendingMethod = receiver.Class.VirtualMethods[declared.VTableSlot];
+                    _pendingClosure = null;
                     goto InvokeResolved;
                 }
 
                 case OpCode.InvokeSpecial:
-                    pendingMethod = methodTable[(ip[0] | (ip[1] << 8))];
+                    _pendingMethod = chunk.MethodTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
-                    pendingArguments = *ip++;
-                    pendingResults = *ip++;
-                    pendingClosure = null;
+                    _pendingArguments = *ip++;
+                    _pendingResults = *ip++;
+                    _pendingClosure = null;
                     goto InvokeResolved;
 
                 case OpCode.InvokeStatic:
-                    pendingMethod = methodTable[(ip[0] | (ip[1] << 8))];
+                    _pendingMethod = chunk.MethodTable[(ip[0] | (ip[1] << 8))];
                     ip += 2;
-                    pendingArguments = *ip++;
-                    pendingResults = *ip++;
-                    pendingClosure = null;
+                    _pendingArguments = *ip++;
+                    _pendingResults = *ip++;
+                    _pendingClosure = null;
                     goto InvokeResolved;
 
                 case OpCode.InvokeStaticX:
-                    pendingMethod = methodTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
+                    _pendingMethod = chunk.MethodTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))];
                     ip += 4;
-                    pendingArguments = *ip++;
-                    pendingResults = *ip++;
-                    pendingClosure = null;
+                    _pendingArguments = *ip++;
+                    _pendingResults = *ip++;
+                    _pendingClosure = null;
                     goto InvokeResolved;
 
                 case OpCode.InvokeInterface:
                 {
                     int declaredIndex = ip[0] | (ip[1] << 8);
-                    var declared = methodTable[declaredIndex];
+                    var declared = chunk.MethodTable[declaredIndex];
                     ip += 2;
-                    pendingArguments = *ip++;
-                    pendingResults = *ip++;
+                    _pendingArguments = *ip++;
+                    _pendingResults = *ip++;
 
-                    var receiverClass = ((SurtrObject)entities[(SurtrRef)(*(sp - pendingArguments))]!).Class;
+                    var receiverClass = ((SurtrObject)entities[(SurtrRef)(*(sp - _pendingArguments))]!).Class;
 
                     // Monomorphic cache, keyed like the virtual one. The hit path collapses the
                     // whole open-addressed probe and the two extra indirections into one array load
                     // and one reference compare; the miss runs the probe and records its result.
                     var interfaceCache = chunk.InterfaceCallCache;
                     if (interfaceCache is null)
-                        interfaceCache = chunk.InterfaceCallCache = new SurtrVirtualCallSite[methodTable.Length];
+                        interfaceCache = chunk.InterfaceCallCache = new SurtrVirtualCallSite[chunk.MethodTable.Length];
 
                     ref var interfaceSlot = ref interfaceCache[declaredIndex];
                     if (interfaceSlot.Expected != receiverClass)
@@ -3418,22 +3366,22 @@ namespace Surtr.VM
                         int vtableSlot = receiverClass.InterfaceMethodSlots[
                             receiverClass.InterfaceSlotOffsets[contractIndex] + declared.VTableSlot];
 
-                        pendingMethod = receiverClass.VirtualMethods[vtableSlot];
-                        interfaceSlot = new SurtrVirtualCallSite { Expected = receiverClass, Method = pendingMethod };
+                        _pendingMethod = receiverClass.VirtualMethods[vtableSlot];
+                        interfaceSlot = new SurtrVirtualCallSite { Expected = receiverClass, Method = _pendingMethod };
                     }
                     else
                     {
-                        pendingMethod = interfaceSlot.Method!;
+                        _pendingMethod = interfaceSlot.Method!;
                     }
 
-                    pendingClosure = null;
+                    _pendingClosure = null;
                     goto InvokeResolved;
                 }
 
                 case OpCode.InvokeClosure:
                 {
                     int argumentCount = *ip++;
-                    pendingResults = *ip++;
+                    _pendingResults = *ip++;
 
                     SurtrRawValue* target = sp - argumentCount - 1;
                     var invoked = (SurtrClosure)entities[(SurtrRef)(*target)]!;
@@ -3449,9 +3397,9 @@ namespace Surtr.VM
 
                     sp--;
 
-                    pendingMethod = invoked.Method;
-                    pendingClosure = invoked;
-                    pendingArguments = argumentCount;
+                    _pendingMethod = invoked.Method;
+                    _pendingClosure = invoked;
+                    _pendingArguments = argumentCount;
                     goto InvokeResolved;
                 }
                 #endregion
@@ -3517,7 +3465,7 @@ namespace Surtr.VM
                             // its suspension ending, so the value flows in through the very field
                             // a `send` would have used.
                             delegator.Resumed = ended.Result;
-                            pendingGenerator = delegator;
+                            _pendingGenerator = delegator;
                             goto EnterGeneratorFrame;
                         }
                     }
@@ -3525,7 +3473,7 @@ namespace Surtr.VM
                     if (depth == entryDepth)
                     {
                         _sp = sp;
-                        if (budgeted) _stepsRemaining = steps;
+                        if (steps != long.MaxValue) _stepsRemaining = steps;
                         return SurtrValue.Null;
                     }
 
@@ -3572,7 +3520,7 @@ namespace Surtr.VM
                         else
                         {
                             delegator.Resumed = ended.Result;
-                            pendingGenerator = delegator;
+                            _pendingGenerator = delegator;
                             goto EnterGeneratorFrame;
                         }
                     }
@@ -3580,7 +3528,7 @@ namespace Surtr.VM
                     if (depth == entryDepth)
                     {
                         _sp = sp;
-                        if (budgeted) _stepsRemaining = steps;
+                        if (steps != long.MaxValue) _stepsRemaining = steps;
                         return SurtrValue.FromRaw(result);
                     }
 
@@ -3635,7 +3583,7 @@ namespace Surtr.VM
                         // stack through CallForResults rather than through this single-value
                         // return - hence the sentinel instead of one slot.
                         _sp = sp;
-                        if (budgeted) _stepsRemaining = steps;
+                        if (steps != long.MaxValue) _stepsRemaining = steps;
                         return SurtrValue.Null;
                     }
 
@@ -3646,67 +3594,26 @@ namespace Surtr.VM
 
                 #region Nullable Primitive Operations
                 case OpCode.PushAbsent:
-                {
-                    // The immediate says which primitive is missing. Nothing on this path reads it
-                    // back - the compiler knows the declared type statically - but a native
-                    // function handed the value, or a diagnostic printing it, can.
-                    *sp++ = SurtrValue.TagMaskAbsent | *ip++;
-                    goto Dispatch;
-                }
-
                 case OpCode.IsAbsent:
-                    *(sp - 1) = SurtrValue.TagMaskBool | (((*(sp - 1)) & SurtrValue.TagMask) == SurtrValue.TagMaskAbsent ? 1UL : 0UL);
-                    goto Dispatch;
-
                 case OpCode.IsPresent:
-                    *(sp - 1) = SurtrValue.TagMaskBool | (((*(sp - 1)) & SurtrValue.TagMask) == SurtrValue.TagMaskAbsent ? 0UL : 1UL);
-                    goto Dispatch;
-
                 case OpCode.JPA:
-                {
-                    short offset = (short)(ip[0] | (ip[1] << 8));
-                    ip += 2;
-                    sp--;
-                    if ((*sp & SurtrValue.TagMask) == SurtrValue.TagMaskAbsent)
-                        ip += offset;
-                    goto Branched;
-                }
-
                 case OpCode.JPAX:
-                {
-                    int offset = ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24);
-                    ip += 4;
-                    sp--;
-                    if ((*sp & SurtrValue.TagMask) == SurtrValue.TagMaskAbsent)
-                        ip += offset;
-                    goto Branched;
-                }
-
                 case OpCode.JPNA:
-                {
-                    short offset = (short)(ip[0] | (ip[1] << 8));
-                    ip += 2;
-                    sp--;
-                    if ((*sp & SurtrValue.TagMask) != SurtrValue.TagMaskAbsent)
-                        ip += offset;
-                    goto Branched;
-                }
-
                 case OpCode.JPNAX:
                 {
-                    int offset = ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24);
-                    ip += 4;
-                    sp--;
-                    if ((*sp & SurtrValue.TagMask) != SurtrValue.TagMaskAbsent)
-                        ip += offset;
-                    goto Branched;
+                    HState s = HandleNullableOp(new HState { ip = ip, sp = sp });
+                    ip = s.ip;
+                    sp = s.sp;
+                    if (s.Flow == 1)
+                        goto Branched;
+                    goto Dispatch;
                 }
                 #endregion
 
                 #region Value Class Operations
                 case OpCode.BoxAs:
                 {
-                    var declared = typeTable[(ip[0] | (ip[1] << 8))].ResolvedClass!;
+                    var declared = chunk.TypeTable[(ip[0] | (ip[1] << 8))].ResolvedClass!;
                     ip += 2;
                     current.IP = ip;
                     _sp = sp;
@@ -3720,7 +3627,7 @@ namespace Surtr.VM
 
                 case OpCode.BoxAsX:
                 {
-                    var declared = typeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedClass!;
+                    var declared = chunk.TypeTable[(ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24))].ResolvedClass!;
                     ip += 4;
                     current.IP = ip;
                     _sp = sp;
@@ -3785,7 +3692,7 @@ namespace Surtr.VM
 
                 case OpCode.BoxValue:
                 {
-                    var declared = typeTable[(ip[0] | (ip[1] << 8))].ResolvedClass!;
+                    var declared = chunk.TypeTable[(ip[0] | (ip[1] << 8))].ResolvedClass!;
                     int slotCount = ip[2];
                     ip += 3;
                     current.IP = ip;
@@ -3821,7 +3728,7 @@ namespace Surtr.VM
                 {
                     int slotCount = ip[2];
                     var fields = ((SurtrInstance)entities[(SurtrRef)(*--sp)]!).Fields;
-                    int slot = fieldTable[(ip[0] | (ip[1] << 8))].SlotIndex;
+                    int slot = chunk.FieldTable[(ip[0] | (ip[1] << 8))].SlotIndex;
                     ip += 3;
 
                     // The receiver is gone; its block takes its place. No allocation, so no
@@ -3838,7 +3745,7 @@ namespace Surtr.VM
                     sp -= slotCount;
                     var instance = (SurtrInstance)entities[(SurtrRef)(*(sp - 1))]!;
                     var fields = instance.Fields;
-                    int slot = fieldTable[(ip[0] | (ip[1] << 8))].SlotIndex;
+                    int slot = chunk.FieldTable[(ip[0] | (ip[1] << 8))].SlotIndex;
                     ip += 3;
 
                     for (int i = 0; i < slotCount; i++)
@@ -3851,7 +3758,7 @@ namespace Surtr.VM
                 case OpCode.LoadValueStatic:
                 {
                     int slotCount = ip[2];
-                    SurtrRawValue* source = fieldTable[(ip[0] | (ip[1] << 8))].StaticAddress;
+                    SurtrRawValue* source = chunk.FieldTable[(ip[0] | (ip[1] << 8))].StaticAddress;
                     ip += 3;
 
                     for (int i = 0; i < slotCount; i++)
@@ -3864,7 +3771,7 @@ namespace Surtr.VM
                 {
                     int slotCount = ip[2];
                     sp -= slotCount;
-                    SurtrRawValue* destination = fieldTable[(ip[0] | (ip[1] << 8))].StaticAddress;
+                    SurtrRawValue* destination = chunk.FieldTable[(ip[0] | (ip[1] << 8))].StaticAddress;
                     ip += 3;
 
                     for (int i = 0; i < slotCount; i++)
@@ -3876,42 +3783,15 @@ namespace Surtr.VM
 
                 #region Range Operations
                 case OpCode.RangeNew:
-                {
-                    // A range is an inline value (§2.9): its block is the two bounds already on
-                    // the stack plus the inclusive flag its operator baked in. Nothing is
-                    // allocated and nothing registered - three raw slots, none a reference.
-                    *sp++ = SurtrValue.TagMaskBool;
-                    goto Dispatch;
-                }
-
                 case OpCode.RangeNewInclusive:
-                {
-                    *sp++ = SurtrValue.TagMaskBool | 1UL;
-                    goto Dispatch;
-                }
-
                 case OpCode.RangePack:
-                {
-                    current.IP = ip;
-                    _sp = sp;
-
-                    uint flag = (uint)*--sp;
-                    uint hi = (uint)*--sp;
-
-                    var range = new SurtrRange((int)*(sp - 1), (int)hi, (flag & 1UL) != 0UL);
-                    SurtrRef reference = context.EntityRegistry.Register(range, out entities);
-
-                    *(sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
-                    goto Safepoint;
-                }
-
                 case OpCode.RangeUnpack:
                 {
-                    var range = (SurtrRange)entities[(SurtrRef)(*--sp)]!;
-
-                    *sp++ = SurtrValue.TagMaskInt | (uint)range.Start;
-                    *sp++ = SurtrValue.TagMaskInt | (uint)range.End;
-                    *sp++ = range.IsInclusive ? SurtrValue.TagMaskBool | 1UL : SurtrValue.TagMaskBool;
+                    HState s = HandleRangeOp(new HState { ip = ip, sp = sp }, ref entities, ref current, ref context);
+                    ip = s.ip;
+                    sp = s.sp;
+                    if (s.Flow == 1)
+                        goto Safepoint;
                     goto Dispatch;
                 }
                 #endregion
@@ -3919,8 +3799,8 @@ namespace Surtr.VM
                 #region Generator Operations
                 case OpCode.GenNew:
                 {
-                    var body = (SurtrBytecodeMethodInfo)methodTable[(ip[0] | (ip[1] << 8))];
-                    var declared = typeTable[(ip[2] | (ip[3] << 8))].Reference;
+                    var body = (SurtrBytecodeMethodInfo)chunk.MethodTable[(ip[0] | (ip[1] << 8))];
+                    var declared = chunk.TypeTable[(ip[2] | (ip[3] << 8))].Reference;
                     int argsCount = ip[4];
                     ip += 5;
                     current.IP = ip;
@@ -3994,7 +3874,7 @@ namespace Surtr.VM
                     // the root generator reachable from the data stack for the whole resume,
                     // whatever the chain does underneath.
                     current.IP = ip;
-                    pendingGenerator = resumed;
+                    _pendingGenerator = resumed;
                     goto EnterGeneratorFrame;
                 }
 
@@ -4062,7 +3942,7 @@ namespace Surtr.VM
                     // same slot - which is why a delegated element is indistinguishable from one
                     // the outer yielded itself. No IP to publish: the frame that had one is gone,
                     // and the frames still below it kept theirs.
-                    pendingGenerator = inner;
+                    _pendingGenerator = inner;
                     goto EnterGeneratorFrame;
                 }
 
@@ -4137,7 +4017,7 @@ namespace Surtr.VM
 
                     if (depth == entryDepth)
                     {
-                        if (budgeted) _stepsRemaining = steps;
+                        if (steps != long.MaxValue) _stepsRemaining = steps;
                         return SurtrValue.Null;
                     }
 
@@ -4453,7 +4333,7 @@ namespace Surtr.VM
             if (context.EntityRegistry.GcPending)
             {
                 _sp = sp;
-                runtime.CollectAtSafepoint();
+                _runtime.CollectAtSafepoint();
             }
             goto Dispatch;
 
@@ -4471,7 +4351,7 @@ namespace Surtr.VM
         // alternative is three copies of a frame setup that has to stay in step.
         EnterGeneratorFrame:
             {
-                var entering = pendingGenerator;
+                var entering = _pendingGenerator;
 
                 int resumeDepth = _frameCount;
                 if (resumeDepth == _frames.Length)
@@ -4540,6 +4420,17 @@ namespace Surtr.VM
             }
 
         InvokeResolved:
+            // The operands arrive in the _pending* fields (written by the call opcodes before the
+            // jump), but they are copied back into locals the moment the shared sequence starts: a
+            // native EntryPoint.Invoke below may re-enter Run() and overwrite the fields, and the
+            // shared sequence must keep working with the values the call site meant. The fields
+            // only carry state across the goto; these locals have short live ranges and cost the
+            // dispatch loop nothing.
+            var pendingMethod = _pendingMethod;
+            var pendingClosure = _pendingClosure;
+            int pendingArguments = _pendingArguments;
+            int pendingResults = _pendingResults;
+
             if (pendingMethod.ImplKind == SurtrMethodImplKind.Native)
             {
                 SurtrRawValue* nativeArgumentBase = sp - pendingArguments;
@@ -4551,7 +4442,7 @@ namespace Surtr.VM
                 // the stack pointer simply moves to their end. The encoded retCount stays a gate -
                 // zero discards whatever was written; non-zero trusts the callee's own count.
                 var nativeArguments = new SurtrCallArguments(
-                    runtime,
+                    _runtime,
                     nativeArgumentBase,
                     pendingArguments,
                     (int)(_stackLimit - nativeArgumentBase));
@@ -4573,7 +4464,7 @@ namespace Surtr.VM
                 // may have allocated enough to arm the flag, and the machine state is already
                 // published above, so the sweep can run here with a consistent stack.
                 if (context.EntityRegistry.GcPending)
-                    runtime.CollectAtSafepoint();
+                    _runtime.CollectAtSafepoint();
 
                 goto Dispatch;
             }
@@ -4660,6 +4551,204 @@ namespace Surtr.VM
         /// booleans and characters read correctly from a zeroed slot too, but their <em>tag</em>
         /// would be wrong - which a native function or a box would notice - so those are filled in.
         /// </remarks>
+        /// <summary>The interpreter state a cold helper carries in and out by value, so ip and sp never
+        /// get a memory home from crossing a call boundary.</summary>
+        private struct HState
+        {
+            public byte* ip;
+            public SurtrRawValue* sp;
+            public byte Flow;
+        }
+
+        /// <summary>Nullables. Flow: 0 = Dispatch, 1 = Branched.</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static HState HandleNullableOp(HState s)
+        {
+            switch ((OpCode)(*(s.ip - 1)))
+            {
+                case OpCode.PushAbsent:
+                    *s.sp++ = SurtrValue.TagMaskAbsent | *s.ip++;
+                    return s;
+                case OpCode.IsAbsent:
+                    *(s.sp - 1) = SurtrValue.TagMaskBool | (((*(s.sp - 1)) & SurtrValue.TagMask) == SurtrValue.TagMaskAbsent ? 1UL : 0UL);
+                    return s;
+                case OpCode.IsPresent:
+                    *(s.sp - 1) = SurtrValue.TagMaskBool | (((*(s.sp - 1)) & SurtrValue.TagMask) == SurtrValue.TagMaskAbsent ? 0UL : 1UL);
+                    return s;
+                case OpCode.JPA:
+                {
+                    short offset = (short)(s.ip[0] | (s.ip[1] << 8));
+                    s.ip += 2;
+                    s.sp--;
+                    if ((*s.sp & SurtrValue.TagMask) == SurtrValue.TagMaskAbsent)
+                        s.ip += offset;
+                    s.Flow = 1;
+                    return s;
+                }
+                case OpCode.JPAX:
+                {
+                    int offset = s.ip[0] | (s.ip[1] << 8) | (s.ip[2] << 16) | (s.ip[3] << 24);
+                    s.ip += 4;
+                    s.sp--;
+                    if ((*s.sp & SurtrValue.TagMask) == SurtrValue.TagMaskAbsent)
+                        s.ip += offset;
+                    s.Flow = 1;
+                    return s;
+                }
+                case OpCode.JPNA:
+                {
+                    short offset = (short)(s.ip[0] | (s.ip[1] << 8));
+                    s.ip += 2;
+                    s.sp--;
+                    if ((*s.sp & SurtrValue.TagMask) != SurtrValue.TagMaskAbsent)
+                        s.ip += offset;
+                    s.Flow = 1;
+                    return s;
+                }
+                case OpCode.JPNAX:
+                {
+                    int offset = s.ip[0] | (s.ip[1] << 8) | (s.ip[2] << 16) | (s.ip[3] << 24);
+                    s.ip += 4;
+                    s.sp--;
+                    if ((*s.sp & SurtrValue.TagMask) != SurtrValue.TagMaskAbsent)
+                        s.ip += offset;
+                    s.Flow = 1;
+                    return s;
+                }
+            }
+            return s;
+        }
+
+        /// <summary>Ranges. Flow: 0 = Dispatch, 1 = Safepoint.</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private HState HandleRangeOp(HState s, ref SurtrRuntimeEntity?[] entities, ref SurtrCallFrame current, ref SurtrContext context)
+        {
+            switch ((OpCode)(*(s.ip - 1)))
+            {
+                case OpCode.RangeNew:
+                    *s.sp++ = SurtrValue.TagMaskBool;
+                    return s;
+                case OpCode.RangeNewInclusive:
+                    *s.sp++ = SurtrValue.TagMaskBool | 1UL;
+                    return s;
+                case OpCode.RangePack:
+                {
+                    current.IP = s.ip;
+                    _sp = s.sp;
+
+                    uint flag = (uint)*--s.sp;
+                    uint hi = (uint)*--s.sp;
+
+                    var range = new SurtrRange((int)*(s.sp - 1), (int)hi, (flag & 1UL) != 0UL);
+                    SurtrRef reference = context.EntityRegistry.Register(range, out entities);
+
+                    *(s.sp - 1) = SurtrValue.TagMaskReference | (uint)reference;
+                    s.Flow = 1;
+                    return s;
+                }
+                case OpCode.RangeUnpack:
+                {
+                    var range = (SurtrRange)entities[(SurtrRef)(*--s.sp)]!;
+
+                    *s.sp++ = SurtrValue.TagMaskInt | (uint)range.Start;
+                    *s.sp++ = SurtrValue.TagMaskInt | (uint)range.End;
+                    *s.sp++ = range.IsInclusive ? SurtrValue.TagMaskBool | 1UL : SurtrValue.TagMaskBool;
+                    return s;
+                }
+            }
+            return s;
+        }
+
+        /// <summary>Module loads, always resume at Dispatch.</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private HState HandleModuleOp(HState s, ref SurtrRuntimeEntity?[] entities, ref SurtrCallFrame current, SurtrChunk chunk, ref SurtrContext context)
+        {
+            switch ((OpCode)(*(s.ip - 1)))
+            {
+                case OpCode.LoadModule:
+                {
+                    var target = chunk.ModuleTable[(s.ip[0] | (s.ip[1] << 8))]!;
+                    s.ip += 2;
+                    current.IP = s.ip;
+                    _sp = s.sp;
+
+                    var moduleValue = _runtime.GetOrCreateModuleValue(target);
+                    entities = context.EntityRegistry.Entities;
+                    *s.sp++ = SurtrValue.TagMaskReference | (uint)moduleValue.GetSurtrReference();
+                    return s;
+                }
+                case OpCode.LoadModuleX:
+                {
+                    var target = chunk.ModuleTable[(s.ip[0] | (s.ip[1] << 8) | (s.ip[2] << 16) | (s.ip[3] << 24))]!;
+                    s.ip += 4;
+                    current.IP = s.ip;
+                    _sp = s.sp;
+
+                    var moduleValue = _runtime.GetOrCreateModuleValue(target);
+                    entities = context.EntityRegistry.Entities;
+                    *s.sp++ = SurtrValue.TagMaskReference | (uint)moduleValue.GetSurtrReference();
+                    return s;
+                }
+                case OpCode.LoadCurrentModule:
+                {
+                    current.IP = s.ip;
+                    _sp = s.sp;
+
+                    var moduleValue = _runtime.GetOrCreateModuleValue(chunk.OwningModule!);
+                    entities = context.EntityRegistry.Entities;
+                    *s.sp++ = SurtrValue.TagMaskReference | (uint)moduleValue.GetSurtrReference();
+                    return s;
+                }
+            }
+            return s;
+        }
+
+        /// <summary>Object construction. Flow: 0 = Dispatch, 1 = Safepoint.</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private HState HandleObjectOp(HState s, ref SurtrRuntimeEntity?[] entities, ref SurtrCallFrame current, SurtrChunk chunk, ref SurtrContext context)
+        {
+            switch ((OpCode)(*(s.ip - 1)))
+            {
+                case OpCode.ObjNew:
+                {
+                    var declared = chunk.TypeTable[(s.ip[0] | (s.ip[1] << 8))].ResolvedClass!;
+                    s.ip += 2;
+                    current.IP = s.ip;
+                    _sp = s.sp;
+
+                    // Defense in depth: the binder rejects constructing an abstract class in source,
+                    // but raw bytecode (or a frontend without that check) could still ask ObjNew to
+                    // allocate one. An abstract class has no concrete layout to build, so reject it
+                    // here too rather than hand back a half-made instance.
+                    if (declared.IsAbstract)
+                        throw AbstractInstantiation(declared.Name);
+
+                    SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared), out entities);
+
+                    *s.sp++ = SurtrValue.TagMaskReference | (uint)reference;
+                    s.Flow = 1;
+                    return s;
+                }
+                case OpCode.ObjNewX:
+                {
+                    var declared = chunk.TypeTable[(s.ip[0] | (s.ip[1] << 8) | (s.ip[2] << 16) | (s.ip[3] << 24))].ResolvedClass!;
+                    s.ip += 4;
+                    current.IP = s.ip;
+                    _sp = s.sp;
+
+                    if (declared.IsAbstract)
+                        throw AbstractInstantiation(declared.Name);
+
+                    SurtrRef reference = context.EntityRegistry.Register(new SurtrInstance(declared), out entities);
+
+                    *s.sp++ = SurtrValue.TagMaskReference | (uint)reference;
+                    s.Flow = 1;
+                    return s;
+                }
+            }
+            return s;
+        }
+
         private static SurtrRawValue ZeroOf(SurtrValueTypeCode elementType) => elementType switch
         {
             SurtrValueTypeCode.Integer => SurtrValue.TagMaskInt,
