@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Runtime;
@@ -207,7 +207,7 @@ namespace Surtr.Tests.VM
             for (int i = 0; i < 300; i++)
                 builder.Constant(SurtrValue.CreateInt(i).Raw);
 
-            builder.Op(OpCode.LdcX).I32(299).Op(OpCode.ReturnValue);
+            builder.Op(OpCode.Wide).Op(OpCode.Ldc).I32(299).Op(OpCode.ReturnValue);
 
             Assert.Equal(299, Run(builder).AsInt);
         }

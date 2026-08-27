@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode.Emit;
 using Surtr.Compiler.CodeGen;
@@ -93,6 +93,9 @@ namespace Surtr.Tests.Compiler.CodeGen
 
         private static string Text(SurtrRuntime runtime, string name)
             => runtime.Resolve<SurtrString>(Call(runtime, name))!.Text;
+
+        private static System.Collections.Generic.IEnumerable<string> Lines(string disassembly)
+            => disassembly.Split(new[] { '\n' }).Select(line => line.Trim());
 
         private static int Count(string disassembly, string mnemonic)
             => disassembly
@@ -442,6 +445,180 @@ namespace Surtr.Tests.Compiler.CodeGen
                     + "  for (e in m) { m.remove(2); t = t + e[1]; } return t; }");
 
             Assert.ThrowsAny<Exception>(() => Call(runtime, "run"));
+        }
+
+        #endregion
+
+        #region The counted while
+
+        // `while (i < n) { ...; i += 1; }` takes the same ForRangeNext step a `for i in 0..n`
+        // does. The risk is the same one the range walk had - the test moves from the top of the
+        // body to a guard plus a bottom step - plus one that is new here: the increment is a
+        // statement the program wrote, so anything that can skip it (a `continue`) or that can
+        // change what the step reads (an assignment to the counter or the limit) has to keep
+        // behaving exactly as the unfused loop did.
+
+        [Fact]
+        public void ACountedWhileStepsWithForRangeNext()
+        {
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0; var i = 0; while (i < n) { t = t + i; i += 1; } return t; }");
+
+            Assert.Equal(1, Count(code, "ForRangeNextLT"));
+            Assert.Equal(0, Count(code, "IncLocal"));
+
+            // One guard above the loop, not one test per iteration.
+            Assert.Equal(1, Count(code, "JPGE"));
+        }
+
+        [Fact]
+        public void AConstantLimitIsHoistedIntoItsOwnSlot()
+        {
+            string code = Disassemble(
+                "fun run(): int { var t = 0; var i = 0; while (i < 10) { t = t + i; i += 1; } return t; }");
+
+            Assert.Equal(1, Count(code, "ForRangeNextLT"));
+
+            // The limit reaches a slot once, above the loop, instead of being pushed per iteration.
+            Assert.Equal(1, Lines(code).Count(line => line.EndsWith("PushI8 10", StringComparison.Ordinal)));
+        }
+
+        [Fact]
+        public void AnInclusiveLimitUsesTheInclusiveStep()
+        {
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0; var i = 0; while (i <= n) { t = t + i; i += 1; } return t; }");
+
+            Assert.Equal(1, Count(code, "ForRangeNextLE"));
+        }
+
+        [Fact]
+        public void ACountedWhileCountsWhatTheWrittenLoopCounts()
+        {
+            var runtime = Run(
+                "fun run(n: int): int { var t = 0; var i = 0; while (i < n) { t = t + i; i += 1; } return t; }\n"
+                    + "fun upTo(n: int): int { var t = 0; var i = 0; while (i <= n) { t = t + i; i += 1; } return t; }");
+
+            Assert.Equal(0, Int(runtime, "run", SurtrValue.CreateInt(0)));
+            Assert.Equal(0, Int(runtime, "run", SurtrValue.CreateInt(-3)));
+            Assert.Equal(0, Int(runtime, "run", SurtrValue.CreateInt(1)));
+            Assert.Equal(45, Int(runtime, "run", SurtrValue.CreateInt(10)));
+            Assert.Equal(55, Int(runtime, "upTo", SurtrValue.CreateInt(10)));
+            Assert.Equal(0, Int(runtime, "upTo", SurtrValue.CreateInt(0)));
+        }
+
+        [Fact]
+        public void BreakLeavesACountedWhileAtOnce()
+        {
+            var runtime = Run(
+                "fun run(n: int): int { var t = 0; var i = 0;\n"
+                    + "  while (i < n) { if (i == 3) { break; } t = t + i; i += 1; } return t; }");
+
+            Assert.Equal(3, Int(runtime, "run", SurtrValue.CreateInt(100)));
+        }
+
+        [Fact]
+        public void AContinueRefusesTheFusionRatherThanSkippingTheIncrement()
+        {
+            // The written loop re-tests without incrementing, so this counts 1..9 skipping 5 and
+            // must not turn into a step that increments on the way round.
+            string source =
+                "fun run(): int { var t = 0; var i = 0;\n"
+                    + "  while (i < 10) { i += 1; if (i == 5) { continue; } t = t + i; } return t; }";
+
+            Assert.Equal(0, Count(Disassemble(source), "ForRangeNextLT"));
+            Assert.Equal(50, Int(Run(source), "run"));
+        }
+
+        [Fact]
+        public void AContinueInsideANestedLoopAlsoRefusesTheFusion()
+        {
+            // A labelled continue can name the outer loop from inside the inner one, so the scan
+            // descends rather than trying to work out which loop each continue belongs to.
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0; var i = 0;\n"
+                    + "  while (i < n) { for (x in 0..2) { if (x == 1) { continue; } t = t + 1; } i += 1; }\n"
+                    + "  return t; }");
+
+            Assert.Equal(1, Count(code, "ForRangeNextLT"));
+        }
+
+        [Fact]
+        public void TheStepSeesABodyThatMovesTheCounter()
+        {
+            // The step increments the slot, so a body that also wrote to it is seen exactly as the
+            // written loop saw it: the two writes compose.
+            var runtime = Run(
+                "fun run(): int { var t = 0; var i = 0;\n"
+                    + "  while (i < 10) { t = t + 1; i = i + 2; i += 1; } return t; }");
+
+            Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void TheStepSeesABodyThatMovesTheLimit()
+        {
+            // Both slots are re-read every step, so shrinking the limit inside the body ends the
+            // loop where the written form ended it.
+            var runtime = Run(
+                "fun run(): int { var t = 0; var i = 0; var n = 10;\n"
+                    + "  while (i < n) { t = t + 1; if (t == 3) { n = 4; } i += 1; } return t; }");
+
+            Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnIncrementThatIsNotLastRefusesTheFusion()
+        {
+            // Anything after the increment would run between it and the test, which the fused step
+            // has no room for.
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0; var i = 0; while (i < n) { i += 1; t = t + i; } return t; }");
+
+            Assert.Equal(0, Count(code, "ForRangeNextLT"));
+        }
+
+        [Fact]
+        public void AStepOtherThanOneRefusesTheFusion()
+        {
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0; var i = 0; while (i < n) { t = t + i; i += 2; } return t; }");
+
+            Assert.Equal(0, Count(code, "ForRangeNextLT"));
+        }
+
+        [Fact]
+        public void ACountingDownWhileRefusesTheFusion()
+        {
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0; var i = n; while (i > 0) { t = t + i; i += -1; } return t; }");
+
+            Assert.Equal(0, Count(code, "ForRangeNextLT"));
+            Assert.Equal(0, Count(code, "ForRangeNextLE"));
+        }
+
+        [Fact]
+        public void ACountedWhileInsideATryStillLeavesThroughTheHandler()
+        {
+            var runtime = Run(
+                "fun run(): int { var t = 0;\n"
+                    + "  try { var i = 0; while (i < 10) { t = t + 1; if (t == 3) { throw Exception(\"x\"); } i += 1; } }\n"
+                    + "  catch (e: Exception) { t = t + 100; }\n"
+                    + "  return t; }");
+
+            Assert.Equal(103, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ACountedWhileThatAlwaysReturnsEmitsNoStep()
+        {
+            // The body cannot fall out, so nothing reaches the step - and emitting one there would
+            // put an instruction after the last reachable point of the loop.
+            var runtime = Run(
+                "fun run(n: int): int { var i = 0; while (i < n) { return 7; } return 0; }");
+
+            Assert.Equal(7, Int(runtime, "run", SurtrValue.CreateInt(3)));
+            Assert.Equal(0, Int(runtime, "run", SurtrValue.CreateInt(0)));
         }
 
         #endregion

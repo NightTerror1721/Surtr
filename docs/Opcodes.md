@@ -1,4 +1,4 @@
-# The Surtr instruction set
+﻿# The Surtr instruction set
 
 Every opcode the virtual machine executes, by family, with its numeric value, byte layout and
 stack effect.
@@ -8,16 +8,20 @@ documentation on each member; this file is that content laid out for reading, pl
 only make sense across the whole set. `docs/VM-Plan.md` has the *why* behind the interpreter's
 shape, and `docs/Module-Format.md` describes the file these bytes live in.
 
-**240 opcodes are defined, numbered contiguously from `0x00` (`Nop`) through `0xEF`
-(`GenResumed`), family by family. Above them, `0xF0` through `0xFE` are free and `0xFF` is `Ext`,
-a prefix rather than an instruction: it opens a second 256-value space, documented in §8.**
+**203 opcodes are defined, from `0x00` (`Nop`) through `0xEF` (`GenResumed`), family by family,
+with 39 retired holes. `0xF0` is `Wide` and `0xFF` is `Ext` - both prefixes rather than
+instructions; `0xF1` through `0xFE` are free.**
+`Wide` (§9) is the widened form of every instruction that carries one index or one offset: it
+replaced the thirty-nine `*X` twins that used to spell each of those as a value of its own, which
+is where the holes came from and why the count fell from 240. `Ext` opens a second 256-value
+space, documented in §8.
 The set has been renumbered into that shape once, deliberately: seven instructions with no
 producer (`Dup2`, `Swap`, `Swap2`, `Pow`, `FPow`, `ArrNIn`, `DictNIn`) plus the long-retired
 host-globals opcodes had left holes nothing could ever fill, so rather than grow around them the
 whole set was laid out again - same names, same semantics, new numbers. Every opcode byte in an
 image written before that reset means something different now, which is why
 `SurtrModuleImage.FormatVersion` was bumped to 10 and a reader refuses anything older instead of
-misreading it. There is no upgrade path; recompile. The version has moved on since - it is **13**
+misreading it. There is no upgrade path; recompile. The version has moved on since - it is **14**
 now - for reasons that are about how a module is framed rather than about opcode values, except
 for the last bump, which opened the extension prefix (§8).
 
@@ -46,7 +50,7 @@ These run through the whole set, so an unfamiliar opcode is usually readable fro
 | `F` prefix | Float operands. Untagged opcodes cover `int`, `bool` and `char`, which share one representation. |
 | `R` prefix | Reference **identity**, not value equality. |
 | `Str` prefix | String operands compared by their **text**. |
-| `X` suffix | Widens an immediate to 4 bytes, for a pool or a jump distance that outgrew the 2-byte form. |
+| `X` suffix | Retired for widening — that is the `Wide` prefix (§9). It survives on `ArrNewX`, where it marks a different addressing mode rather than a wider immediate, and in the extended space (§8), which widens its own offsets this way. |
 | `S` suffix | Narrows an immediate to 1 byte, for the common small-index case. |
 | `C` suffix | Moves an operand off the stack and into the instruction as a constant — `TupGetC`. |
 | trailing digit | A dedicated opcode for that fixed index, carrying no immediate at all. |
@@ -83,7 +87,8 @@ welded the two together - a member inserted in the middle renumbered everything 
 silently.
 
 **A new opcode takes a free value at the end and is filed with its family.** The free values are
-`0xF0` through `0xFF`, all after the last assigned one, so filing a new instruction with its
+`0xF1` through `0xFE`, plus the 39 slots the `*X` twins vacated - which stay **retired**, because
+an image written before version 14 has their old encodings in it, so filing a new instruction with its
 family means writing its members in family order while its *number* comes from the tail. When the
 tail itself was a pile of holes left by retired instructions, that policy could not hold - which
 is why the set carries a second rule:
@@ -240,7 +245,6 @@ Everything that materialises a value out of nothing: the inline literal forms, w
 | `0x14` | `Ldc9` | `opcode(1)` · 1 byte | `... -> ..., value` | Loads constant 9. |
 | `0x15` | `LdcS` | `opcode(1) constIdx(1)` · 2 bytes | `... -> ..., value` | Loads a constant using a 1-byte index, for the first 256 pool entries. |
 | `0x16` | `Ldc` | `opcode(1) constIdx(2)` · 3 bytes | `... -> ..., value` | Loads the constant at `constIdx` from the chunk's constant pool. |
-| `0x17` | `LdcX` | `opcode(1) constIdx(4)` · 5 bytes | `... -> ..., value` | Loads a constant using a 4-byte index, for pools larger than 65536 entries. |
 
 
 ## Local Variables
@@ -279,9 +283,7 @@ A **native field** (a `SurtrNativeFieldInfo`, declared by the host bridge, not b
 | `0x29` | `FieldGet` | `opcode(1) fieldIdx(2)` · 3 bytes | `..., obj -> ..., value` | Reads an instance field. The field table entry carries the slot index, so the read is a direct offset into the instance rather than a name lookup. A null receiver hits the CLR null check and surfaces as `NullReferenceException`. |
 | `0x2A` | `FieldSet` | `opcode(1) fieldIdx(2)` · 3 bytes | `..., obj, value -> ...` | Writes an instance field. The compiler must reject this against a read-only field outside a constructor. |
 | `0x2B` | `StaticFieldGet` | `opcode(1) fieldIdx(2)` · 3 bytes | `... -> ..., value` | Reads a static field, or a module-level variable. No receiver, which is why this cannot be folded into `FieldGet` - doing so would put a static/instance test on one of the hottest instructions in the set. Module-level variables are the same thing: Surtr has no true globals, so a module variable is a static of its module and reaches its storage the same way. The field table entry carries the address of the slot itself, resolved when the declaring type was linked, so this is one indirect load. |
-| `0x2C` | `StaticFieldGetX` | `opcode(1) fieldIdx(4)` · 5 bytes | `... -> ..., value` | Reads a static field using a 4-byte field index. |
 | `0x2D` | `StaticFieldSet` | `opcode(1) fieldIdx(2)` · 3 bytes | `..., value -> ...` | Writes a static field, or a module-level variable. The compiler must reject this against a read-only field outside its static initializer. |
-| `0x2E` | `StaticFieldSetX` | `opcode(1) fieldIdx(4)` · 5 bytes | `..., value -> ...` | Writes a static field using a 4-byte field index. |
 
 
 ## Upvalue Operations
@@ -419,7 +421,6 @@ Turning a primitive into a collectable reference and back. The `Box*` family car
 | `0x6E` | `BoxBool` | `opcode(1)` · 1 byte | `..., a -> ..., ref` | Boxes a boolean into a heap object. |
 | `0x6F` | `BoxChar` | `opcode(1)` · 1 byte | `..., a -> ..., ref` | Boxes a character into a heap object. |
 | `0x70` | `BoxAs` | `opcode(1) typeIdx(2)` · 3 bytes | `..., a -> ..., ref` | Boxes the value on top of the stack as an instance of a named class. What a `value class` boxes through. The `Box*` family carries no type index because a boxed primitive takes the class the unboxed primitive already had; a value class is erased to the field it wraps, so where it has to become a reference the class it should present as is exactly the thing the value no longer says. Unboxing is still `Unbox`: the box's own value carries its tag. |
-| `0x71` | `BoxAsX` | `opcode(1) typeIdx(4)` · 5 bytes | `..., a -> ..., ref` | Boxes as a named class, with a 4-byte type index. |
 | `0x72` | `Unbox` | `opcode(1)` · 1 byte | `..., ref -> ..., value` | Unwraps a boxed value back to its inline representation. Recovers whichever primitive was boxed - the tag on the boxed value says which, so no per-type opcode is needed on the way back. |
 | `0x73` | `BoxDynamic` | `opcode(1)` · 1 byte | `..., a -> ..., ref` | Boxes whatever primitive is on top of the stack, chosen by its own tag rather than the compiler's. A no-op when the subject is already a reference (including `null`). Exists for a generic type parameter's own erased slot: a value crossing one through a body compiled once for every substitution of `T` may already be boxed or may still be a built-in's own raw storage, and nothing at the call site can tell which - only the value's own tag can. `Unbox` already reads that tag on the way back out; this is its mirror on the way in. |
 | `0x74` | `UnboxDynamic` | `opcode(1)` · 1 byte | `..., a -> ..., value` | The mirror of `BoxDynamic`: unboxes only a boxed primitive, leaving everything else (a raw primitive, or a reference that is not a box at all - an ordinary object, array, string) untouched. Exists for the write side of the same erased slot `BoxDynamic` reads from: a value statically typed by a bare generic parameter arrives already boxed, but the collection's own native storage it is written into was never boxed to begin with and must not become the one element that is. |
@@ -512,13 +513,9 @@ One question asked three ways, because what the call site wants done on a mismat
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
 | `0x97` | `InstanceOf` | `opcode(1) typeIdx(2)` · 3 bytes | `..., a -> ..., bool` | Tests whether the top value is an instance of the type at `typeIdx`. The type is an immediate, not a stack operand. Resolves through the class's ancestor chain for classes and its interface table for interfaces. |
-| `0x98` | `InstanceOfX` | `opcode(1) typeIdx(4)` · 5 bytes | `..., a -> ..., bool` | Tests instance-of using a 4-byte type index. |
 | `0x99` | `Cast` | `opcode(1) typeIdx(2)` · 3 bytes | `..., a -> ..., a` | Casts the top value to the type at `typeIdx`. The type is an immediate, not a stack operand. This is a checked reference cast: the value is unchanged on success; a failure traps as `InvalidCastException`. The non-throwing form is `CastOrNull`. |
-| `0x9A` | `CastX` | `opcode(1) typeIdx(4)` · 5 bytes | `..., a -> ..., a` | Casts using a 4-byte type index. |
 | `0x9B` | `CastOrNull` | `opcode(1) typeIdx(2)` · 3 bytes | `..., a -> ..., a \| null` | Keeps the top value if it is an instance of the type at `typeIdx`, and replaces it with null otherwise. What `as?` lowers to. `Cast` traps on a mismatch and `InstanceOf` discards the value to answer about it, so a non-throwing cast written from those two costs a spill to a local, two type tests and a branch. This costs one type test. A null subject stays null, which is the same answer either way, and matching resolves through the ancestor chain for a class and the interface table for a contract, exactly as `Cast` does. |
-| `0x9C` | `CastOrNullX` | `opcode(1) typeIdx(4)` · 5 bytes | `..., a -> ..., a \| null` | Casts or yields null, with a 4-byte type index. |
 | `0x9D` | `LoadType` | `opcode(1) typeIdx(2)` · 3 bytes | `... -> ..., type` | Pushes the `Type` value for the compile-time-known type at `typeIdx`. What the static form of `typeof` lowers to - `typeof(SomeClass)` or `typeof(ISomeInterface)`, neither of which reads any value off the stack. The type is an immediate, resolved once at module load through `typeTable[typeIdx]` exactly as `InstanceOf` resolves its own. Allocates only the first time a given type is asked for on this runtime - the runtime caches one `Type` object per class or interface, so a repeated `typeof` on the same type is a cache hit, not a fresh entity every call. |
-| `0x9E` | `LoadTypeX` | `opcode(1) typeIdx(4)` · 5 bytes | `... -> ..., type` | Loads the compile-time-known type's `Type` value, with a 4-byte type index. |
 | `0x9F` | `GetTypeOfValue` | `opcode(1)` · 1 byte | `..., ref -> ..., type` | Reads the class of the value on top of the stack and pushes its `Type`. What the instance form of `typeof` lowers to when the operand's static type cannot say the answer by itself - reads `.Class` off the reference exactly as `InstanceOf`'s reference half does. The subject is never checked for null, matching `FieldGet` and the native `Type.of` this replaces. A primitive operand never reaches this at all - the compiler lowers `typeof` straight to `LoadType` against that type instead, skipping both the box and this read. |
 
 
@@ -529,7 +526,6 @@ What `moduleof(ModulePath)` lowers to - always the static form, since `moduleof`
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
 | `0xA0` | `LoadModule` | `opcode(1) moduleIdx(2)` · 3 bytes | `... -> ..., module` | Pushes the `Module` value for another module, named by its slot in the module table. The target must already be loaded and linked. Allocates only the first time a given module is asked for on this runtime - the runtime caches one `Module` object per `SurtrModule`, the same as `LoadType` does for `Type`. |
-| `0xA1` | `LoadModuleX` | `opcode(1) moduleIdx(4)` · 5 bytes | `... -> ..., module` | Loads another module's `Module` value, with a 4-byte module index. |
 | `0xA2` | `LoadCurrentModule` | `opcode(1)` · 1 byte | `... -> ..., module` | Pushes the `Module` value for the module this frame's chunk belongs to - what `moduleof` lowers to when the path names the same module emitting it. |
 
 
@@ -540,7 +536,6 @@ Allocation only. The instance is sized from the class's slot count and zeroed; a
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
 | `0xA3` | `ObjNew` | `opcode(1) typeIdx(2)` · 3 bytes | `... -> ..., obj` | Allocates an uninitialised instance of the class at `typeIdx`. Allocation only. The instance is sized from the class's instance slot count and zeroed; a constructor still has to be invoked separately, normally with `InvokeSpecial`. Instantiating an abstract class must be rejected. |
-| `0xA4` | `ObjNewX` | `opcode(1) typeIdx(4)` · 5 bytes | `... -> ..., obj` | Allocates an instance using a 4-byte type index. |
 
 
 ## Control Flow Operations
@@ -550,53 +545,29 @@ Every branch offset is signed and relative to the instruction *following* the br
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
 | `0xA5` | `JP` | `opcode(1) relativeOffset(2)` · 3 bytes | `... -> ...` | Branches unconditionally. |
-| `0xA6` | `JPX` | `opcode(1) relativeOffset(4)` · 5 bytes | `... -> ...` | Branches unconditionally, with a 4-byte offset. |
 | `0xA7` | `JPZ` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., cond -> ...` | Branches if the popped condition is false. The offset is signed and relative to the instruction following this one, so a negative value branches backwards - the shape of every loop. |
-| `0xA8` | `JPZX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., cond -> ...` | Branches if the popped condition is false, with a 4-byte offset. |
 | `0xA9` | `JPNZ` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., cond -> ...` | Branches if the popped condition is true. |
-| `0xAA` | `JPNZX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., cond -> ...` | Branches if the popped condition is true, with a 4-byte offset. |
 | `0xAB` | `JPN` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., value -> ...` | Branches if the popped value is the null reference. |
-| `0xAC` | `JPNX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., value -> ...` | Branches if the popped value is null, with a 4-byte offset. |
 | `0xAD` | `JPNN` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., value -> ...` | Branches if the popped value is a non-null reference. |
-| `0xAE` | `JPNNX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., value -> ...` | Branches if the popped value is non-null, with a 4-byte offset. |
 | `0xAF` | `JPA` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a -> ...` | Pops a value and branches if it is an absent primitive. What `??` and `?.` lower to over a nullable primitive. |
-| `0xB0` | `JPAX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a -> ...` | Pops a value and branches if it is an absent primitive, with a 4-byte offset. |
 | `0xB1` | `JPNA` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a -> ...` | Pops a value and branches if it is a present primitive. |
-| `0xB2` | `JPNAX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a -> ...` | Pops a value and branches if it is a present primitive, with a 4-byte offset. |
 | `0xB3` | `JPEQ` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the two popped integers are equal. Fuses a comparison and a branch, so the boolean never reaches the stack. This is why the whole compare-and-branch family exists alongside the plain comparisons. |
-| `0xB4` | `JPEQX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches if the two popped integers are equal, with a 4-byte offset. |
 | `0xB5` | `JPNE` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the two popped integers differ. |
-| `0xB6` | `JPNEX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches if the two popped integers differ, with a 4-byte offset. |
 | `0xB7` | `JPGT` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the deeper popped integer is greater than the top one. Taken when `a > b`. |
-| `0xB8` | `JPGTX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches on integer greater-than, with a 4-byte offset. |
 | `0xB9` | `JPGE` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the deeper popped integer is greater than or equal to the top one. |
-| `0xBA` | `JPGEX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches on integer greater-or-equal, with a 4-byte offset. |
 | `0xBB` | `JPLT` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the deeper popped integer is less than the top one. |
-| `0xBC` | `JPLTX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches on integer less-than, with a 4-byte offset. |
 | `0xBD` | `JPLE` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the deeper popped integer is less than or equal to the top one. |
-| `0xBE` | `JPLEX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches on integer less-or-equal, with a 4-byte offset. |
 | `0xBF` | `JPFEQ` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the two popped floats are equal. Never taken when either operand is NaN. |
-| `0xC0` | `JPFEQX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches if the two popped floats are equal, with a 4-byte offset. |
 | `0xC1` | `JPFNE` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the two popped floats differ. Always taken when either operand is NaN. |
-| `0xC2` | `JPFNEX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches if the two popped floats differ, with a 4-byte offset. |
 | `0xC3` | `JPFGT` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the deeper popped float is greater than the top one. Never taken when either operand is NaN. |
-| `0xC4` | `JPFGTX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches on float greater-than, with a 4-byte offset. |
 | `0xC5` | `JPFGE` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the deeper popped float is greater than or equal to the top one. Never taken when either operand is NaN. |
-| `0xC6` | `JPFGEX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches on float greater-or-equal, with a 4-byte offset. |
 | `0xC7` | `JPFLT` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the deeper popped float is less than the top one. Never taken when either operand is NaN. |
-| `0xC8` | `JPFLTX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches on float less-than, with a 4-byte offset. |
 | `0xC9` | `JPFLE` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the deeper popped float is less than or equal to the top one. Never taken when either operand is NaN. |
-| `0xCA` | `JPFLEX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches on float less-or-equal, with a 4-byte offset. |
 | `0xCB` | `JPREQ` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the two popped references are identical. |
-| `0xCC` | `JPREQX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches if the two popped references are identical, with a 4-byte offset. |
 | `0xCD` | `JPRNE` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the two popped references are not identical. |
-| `0xCE` | `JPRNEX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches if the two popped references are not identical, with a 4-byte offset. |
 | `0xCF` | `JPStrEQ` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the two popped strings hold the same text. |
-| `0xD0` | `JPStrEQX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches if the two popped strings hold the same text, with a 4-byte offset. |
 | `0xD1` | `JPStrNE` | `opcode(1) relativeOffset(2)` · 3 bytes | `..., a, b -> ...` | Branches if the two popped strings hold different text. |
-| `0xD2` | `JPStrNEX` | `opcode(1) relativeOffset(4)` · 5 bytes | `..., a, b -> ...` | Branches if the two popped strings hold different text, with a 4-byte offset. |
 | `0xD3` | `JPInstanceOf` | `opcode(1) typeIdx(2) relativeOffset(2)` · 5 bytes | `..., value -> ...` | Branches if the popped value is an instance of the type at `typeIdx`. Carries two immediates, so this is the widest of the 2-byte-offset branches. Fuses `InstanceOf` with a branch, which is the shape a type switch compiles to. |
-| `0xD4` | `JPInstanceOfX` | `opcode(1) typeIdx(4) relativeOffset(4)` · 9 bytes | `..., value -> ...` | Branches on instance-of, with 4-byte type index and offset. |
 | `0xD5` | `Switch` | `opcode(1) low(4) count(4) defaultOffset(4) offsets(4 * count)` · 13 + 4n bytes | `..., value -> ...` | Branches through a jump table indexed by a contiguous range of integers. The popped value selects `offsets[value - low]`; anything outside `[low, low + count)` takes `defaultOffset`. One bounds check and one indexed load, whatever the number of cases - which is the whole reason a `switch` is not just a chain of `JPEQ`. Every offset here is relative to this instruction's own opcode byte, unlike the ordinary branches, which are relative to the instruction that follows them. A variable-length instruction has no fixed "next" address to measure from at emit time. The same applies to `SwitchLookup`. |
 | `0xD6` | `SwitchLookup` | `opcode(1) count(4) defaultOffset(4) (key(4) offset(4)) * count` · 9 + 8n bytes | `..., value -> ...` | Branches by searching a sorted table of integer keys. The counterpart to `Switch` for sparse cases, where a dense table would be mostly padding. Keys must be sorted ascending; the interpreter binary-searches them, so lookup is logarithmic rather than the linear scan a chain of comparisons costs. Offsets are measured from this instruction's opcode byte. |
 
@@ -608,17 +579,13 @@ Every form shares one calling convention: `argsCount` counts every incoming slot
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
 | `0xD7` | `CallLocalModule` | `opcode(1) functionIdx(2) argsCount(1) retCount(1)` · 5 bytes | `..., a1, ..., aN -> ..., result?` | Calls a module-level function declared in the current module. Pops exactly `argsCount` values, deepest being the first parameter, and pushes `retCount` results. Skipping the module table is what makes this the cheap case for intra-module calls. |
-| `0xD8` | `CallLocalModuleX` | `opcode(1) functionIdx(4) argsCount(1) retCount(1)` · 7 bytes | `..., a1, ..., aN -> ..., result?` | Calls a function in the current module, with a 4-byte function index. |
 | `0xD9` | `CallModule` | `opcode(1) moduleIdx(2) functionIdx(2) argsCount(1) retCount(1)` · 7 bytes | `..., a1, ..., aN -> ..., result?` | Calls a module-level function in another module. The target module must already be loaded and linked. |
-| `0xDA` | `CallModuleX` | `opcode(1) moduleIdx(4) functionIdx(4) argsCount(1) retCount(1)` · 11 bytes | `..., a1, ..., aN -> ..., result?` | Calls a function in another module, with 4-byte module and function indices. The longest instruction in the set. |
 | `0xDB` | `InvokeVirtual` | `opcode(1) methodIdx(2) argsCount(1) retCount(1)` · 5 bytes | `..., obj, a1, ..., aN -> ..., result?` | Invokes an instance method through the receiver's virtual method table. The method table entry supplies a vtable slot, so dispatch is one load plus an indirect call - the receiver's runtime class decides which override runs. A null receiver hits the CLR null check and surfaces as `NullReferenceException`. |
 | `0xDC` | `InvokeSpecial` | `opcode(1) methodIdx(2) argsCount(1) retCount(1)` · 5 bytes | `..., obj, a1, ..., aN -> ..., result?` | Invokes an instance method without virtual dispatch. Binds exactly the method named in the table, ignoring any override. This is how constructors and explicit base calls are issued. |
 | `0xDD` | `InvokeStatic` | `opcode(1) methodIdx(2) argsCount(1) retCount(1)` · 5 bytes | `..., a1, ..., aN -> ..., result?` | Invokes a static method. No receiver is popped. It carries no type index: the method entry already knows its declaring class, and static initializers run when their module is loaded rather than on first touch, so there is nothing for the interpreter to trigger here. |
-| `0xDE` | `InvokeStaticX` | `opcode(1) methodIdx(4) argsCount(1) retCount(1)` · 7 bytes | `..., a1, ..., aN -> ..., result?` | Invokes a static method, with a 4-byte method index. |
 | `0xDF` | `InvokeInterface` | `opcode(1) methodIdx(2) argsCount(1) retCount(1)` · 5 bytes | `..., obj, a1, ..., aN -> ..., result?` | Invokes a method through an interface contract. Resolves through the receiver class's interface dispatch table, which maps an interface slot to a vtable slot - one extra indirection over `InvokeVirtual`. |
 | `0xE0` | `InvokeClosure` | `opcode(1) argsCount(1) retCount(1)` · 3 bytes | `..., closure, a1, ..., aN -> ..., result?` | Calls a closure taken from the stack. The only call form with no index immediate - the target comes from the stack, so it is resolved entirely at run time. A null closure hits the CLR null check and surfaces as `NullReferenceException`. |
 | `0xE1` | `NewClosure` | `opcode(1) functionIdx(2) upvaluesCount(1)` · 4 bytes | `..., u1, ..., uN -> ..., closure` | Captures upvalues and builds a closure over the function at `functionIdx`. Pops exactly `upvaluesCount` values, deepest becoming upvalue 0, which is the numbering `UpValueGet` uses. Caps captures at 255. |
-| `0xE2` | `NewClosureX` | `opcode(1) functionIdx(4) upvaluesCount(1)` · 6 bytes | `..., u1, ..., uN -> ..., closure` | Builds a closure using a 4-byte function index. |
 
 
 ## Function Operations
@@ -628,7 +595,6 @@ The zero-capture half of the closure family. A lambda that captures nothing has 
 | Value | Opcode | Encoding | Stack | What it does |
 |---|---|---|---|---|
 | `0xE3` | `NewFunction` | `opcode(1) functionIdx(2)` · 3 bytes | `... -> ..., ref` | Builds the canonical zero-capture function value for the method at `functionIdx`. The value is the one shared `SurtrClosure` for that method within this runtime - created, cached and rooted the first time any site asks - so nothing is allocated on the heap for an evaluation. It is the same type a capturing closure over the same signature has, which is what lets a lambda that captures nothing coexist with one that does under one type. The compiler emits this only when the lambda is stateless. |
-| `0xE4` | `NewFunctionX` | `opcode(1) functionIdx(4)` · 5 bytes | `... -> ..., ref` | Builds a canonical function value using a 4-byte function index. |
 
 
 ## Return Operations
@@ -764,3 +730,41 @@ rather than unchecked instructions, and why the validation policy in §5 is unto
 
 `docs/Plan-Opcodes-Extendidos.md` carries the cost model, the catalogue of what is planned here and
 the measurement protocol behind all of it.
+
+## 9. The `Wide` prefix
+
+`0xF0` is a prefix, not an instruction. The byte after it is an ordinary opcode, and that
+instruction's **single index or offset immediate** is read as four bytes instead of two. Nothing
+else about the encoding changes: an argument count stays one byte, a slot index stays one byte,
+and the stack effect is the prefixed instruction's own.
+
+```
+JPGE  +offset(2)                  ->   0xB9 lo hi
+Wide JPGE  +offset(4)             ->   0xF0 0xB9 b0 b1 b2 b3
+
+InvokeStatic  m(2) args(1) ret(1) ->   0xDD lo hi args ret
+Wide InvokeStatic  m(4) …         ->   0xF0 0xDD b0 b1 b2 b3 args ret
+```
+
+**It replaced thirty-nine `*X` twins.** Every widened form used to be a value of its own —
+`JPGEX`, `LdcX`, `InvokeStaticX`, `CastX` and thirty-five more — which spent 39 of the 256 primary
+values, and 7 KB of `Run()`, on instructions that across the whole 50-workload benchmark suite
+executed **zero times** (`docs/Informe-Opcodes-Layout.md` §6). One prefix does all of it for the
+price of one extra dispatch, measured at 0.44–0.65 ns, paid only by the instruction that needs it.
+Their values are **retired**, not reissued: an image written before `FormatVersion` 14 has the old
+encodings in it, and the version is what refuses such an image rather than misreading it.
+
+**Only the emitter's own relaxation writes one**, in exactly two situations, and a compiler never
+names one directly:
+
+- **An offset that no longer reaches.** `SurtrJumpWidth.Auto` starts every branch short and widens
+  what cannot reach, to a fixed point. A method body past 32 KB of bytecode is what it takes.
+- **An index past 65 535.** A module with more than that many constants, types, fields, methods or
+  modules. `SurtrCodeEmitter`'s grouped helpers pick the width; a tier-two method named `…X` still
+  exists and still means "the wide form", it just encodes as the prefix now.
+
+**`ArrNewX` is deliberately not one of these** and keeps its own value. It is a different
+addressing mode — the array's length moves from the stack into the instruction — not a widened
+`ArrNew`, which is why the `X` suffix on it means something else and why the prefix does not cover
+it. The `*ForNextX` twins in the extended space (§8) are likewise untouched: they live behind
+`Ext`, in their own value space, and are widened offsets of *extended* opcodes.

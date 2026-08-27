@@ -28,13 +28,12 @@ namespace Surtr.Tests.Bytecode
             (OpCode.PushI32, 0x08), (OpCode.PushChar, 0x09), (OpCode.PushAbsent, 0x0A), (OpCode.Ldc0, 0x0B),
             (OpCode.Ldc1, 0x0C), (OpCode.Ldc2, 0x0D), (OpCode.Ldc3, 0x0E), (OpCode.Ldc4, 0x0F),
             (OpCode.Ldc5, 0x10), (OpCode.Ldc6, 0x11), (OpCode.Ldc7, 0x12), (OpCode.Ldc8, 0x13),
-            (OpCode.Ldc9, 0x14), (OpCode.LdcS, 0x15), (OpCode.Ldc, 0x16), (OpCode.LdcX, 0x17),
-            (OpCode.Ldl0, 0x18), (OpCode.Ldl1, 0x19), (OpCode.Ldl2, 0x1A), (OpCode.Ldl3, 0x1B),
+            (OpCode.Ldc9, 0x14), (OpCode.LdcS, 0x15), (OpCode.Ldc, 0x16), (OpCode.Ldl0, 0x18), (OpCode.Ldl1, 0x19), (OpCode.Ldl2, 0x1A), (OpCode.Ldl3, 0x1B),
             (OpCode.Ldl4, 0x1C), (OpCode.Ldl5, 0x1D), (OpCode.LdlS, 0x1E), (OpCode.Ldl, 0x1F),
             (OpCode.Stl0, 0x20), (OpCode.Stl1, 0x21), (OpCode.Stl2, 0x22), (OpCode.Stl3, 0x23),
             (OpCode.Stl4, 0x24), (OpCode.Stl5, 0x25), (OpCode.StlS, 0x26), (OpCode.Stl, 0x27),
             (OpCode.IncLocal, 0x28), (OpCode.FieldGet, 0x29), (OpCode.FieldSet, 0x2A), (OpCode.StaticFieldGet, 0x2B),
-            (OpCode.StaticFieldGetX, 0x2C), (OpCode.StaticFieldSet, 0x2D), (OpCode.StaticFieldSetX, 0x2E), (OpCode.UpValueGet, 0x2F),
+            (OpCode.StaticFieldSet, 0x2D), (OpCode.UpValueGet, 0x2F),
             (OpCode.LoadValueLocal, 0x30), (OpCode.StoreValueLocal, 0x31), (OpCode.LoadLocalField, 0x32), (OpCode.StoreLocalField, 0x33),
             (OpCode.LoadValueField, 0x34), (OpCode.StoreValueField, 0x35), (OpCode.LoadValueStatic, 0x36), (OpCode.StoreValueStatic, 0x37),
             (OpCode.BoxValue, 0x38), (OpCode.UnboxValue, 0x39), (OpCode.RangePack, 0x3A), (OpCode.RangeUnpack, 0x3B),
@@ -51,7 +50,7 @@ namespace Surtr.Tests.Bytecode
             (OpCode.IsAbsent, 0x64), (OpCode.IsPresent, 0x65), (OpCode.I2F, 0x66), (OpCode.F2I, 0x67),
             (OpCode.I2C, 0x68), (OpCode.C2I, 0x69), (OpCode.I2B, 0x6A), (OpCode.B2I, 0x6B),
             (OpCode.BoxInt, 0x6C), (OpCode.BoxFloat, 0x6D), (OpCode.BoxBool, 0x6E), (OpCode.BoxChar, 0x6F),
-            (OpCode.BoxAs, 0x70), (OpCode.BoxAsX, 0x71), (OpCode.Unbox, 0x72), (OpCode.BoxDynamic, 0x73),
+            (OpCode.BoxAs, 0x70), (OpCode.Unbox, 0x72), (OpCode.BoxDynamic, 0x73),
             (OpCode.UnboxDynamic, 0x74), (OpCode.RangeNew, 0x75), (OpCode.RangeNewInclusive, 0x76), (OpCode.StrLen, 0x77),
             (OpCode.StrGet, 0x78), (OpCode.StrCat, 0x79), (OpCode.StrHash, 0x7A), (OpCode.ArrNew, 0x7B),
             (OpCode.ArrNewX, 0x7C), (OpCode.ArrPack, 0x7D), (OpCode.ArrLen, 0x7E), (OpCode.ArrGet, 0x7F),
@@ -61,29 +60,29 @@ namespace Surtr.Tests.Bytecode
             (OpCode.TupGetC, 0x8C), (OpCode.DictNew, 0x8D), (OpCode.DictPack, 0x8E), (OpCode.DictLen, 0x8F),
             (OpCode.DictGet, 0x90), (OpCode.DictSet, 0x91), (OpCode.DictDel, 0x92), (OpCode.DictClear, 0x93),
             (OpCode.DictKeys, 0x94), (OpCode.DictValues, 0x95), (OpCode.DictIn, 0x96), (OpCode.InstanceOf, 0x97),
-            (OpCode.InstanceOfX, 0x98), (OpCode.Cast, 0x99), (OpCode.CastX, 0x9A), (OpCode.CastOrNull, 0x9B),
-            (OpCode.CastOrNullX, 0x9C), (OpCode.LoadType, 0x9D), (OpCode.LoadTypeX, 0x9E), (OpCode.GetTypeOfValue, 0x9F),
-            (OpCode.LoadModule, 0xA0), (OpCode.LoadModuleX, 0xA1), (OpCode.LoadCurrentModule, 0xA2), (OpCode.ObjNew, 0xA3),
-            (OpCode.ObjNewX, 0xA4), (OpCode.JP, 0xA5), (OpCode.JPX, 0xA6), (OpCode.JPZ, 0xA7),
-            (OpCode.JPZX, 0xA8), (OpCode.JPNZ, 0xA9), (OpCode.JPNZX, 0xAA), (OpCode.JPN, 0xAB),
-            (OpCode.JPNX, 0xAC), (OpCode.JPNN, 0xAD), (OpCode.JPNNX, 0xAE), (OpCode.JPA, 0xAF),
-            (OpCode.JPAX, 0xB0), (OpCode.JPNA, 0xB1), (OpCode.JPNAX, 0xB2), (OpCode.JPEQ, 0xB3),
-            (OpCode.JPEQX, 0xB4), (OpCode.JPNE, 0xB5), (OpCode.JPNEX, 0xB6), (OpCode.JPGT, 0xB7),
-            (OpCode.JPGTX, 0xB8), (OpCode.JPGE, 0xB9), (OpCode.JPGEX, 0xBA), (OpCode.JPLT, 0xBB),
-            (OpCode.JPLTX, 0xBC), (OpCode.JPLE, 0xBD), (OpCode.JPLEX, 0xBE), (OpCode.JPFEQ, 0xBF),
-            (OpCode.JPFEQX, 0xC0), (OpCode.JPFNE, 0xC1), (OpCode.JPFNEX, 0xC2), (OpCode.JPFGT, 0xC3),
-            (OpCode.JPFGTX, 0xC4), (OpCode.JPFGE, 0xC5), (OpCode.JPFGEX, 0xC6), (OpCode.JPFLT, 0xC7),
-            (OpCode.JPFLTX, 0xC8), (OpCode.JPFLE, 0xC9), (OpCode.JPFLEX, 0xCA), (OpCode.JPREQ, 0xCB),
-            (OpCode.JPREQX, 0xCC), (OpCode.JPRNE, 0xCD), (OpCode.JPRNEX, 0xCE), (OpCode.JPStrEQ, 0xCF),
-            (OpCode.JPStrEQX, 0xD0), (OpCode.JPStrNE, 0xD1), (OpCode.JPStrNEX, 0xD2), (OpCode.JPInstanceOf, 0xD3),
-            (OpCode.JPInstanceOfX, 0xD4), (OpCode.Switch, 0xD5), (OpCode.SwitchLookup, 0xD6), (OpCode.CallLocalModule, 0xD7),
-            (OpCode.CallLocalModuleX, 0xD8), (OpCode.CallModule, 0xD9), (OpCode.CallModuleX, 0xDA), (OpCode.InvokeVirtual, 0xDB),
-            (OpCode.InvokeSpecial, 0xDC), (OpCode.InvokeStatic, 0xDD), (OpCode.InvokeStaticX, 0xDE), (OpCode.InvokeInterface, 0xDF),
-            (OpCode.InvokeClosure, 0xE0), (OpCode.NewClosure, 0xE1), (OpCode.NewClosureX, 0xE2), (OpCode.NewFunction, 0xE3),
-            (OpCode.NewFunctionX, 0xE4), (OpCode.ReturnVoid, 0xE5), (OpCode.ReturnValue, 0xE6), (OpCode.ReturnValues, 0xE7),
+            (OpCode.Cast, 0x99), (OpCode.CastOrNull, 0x9B),
+            (OpCode.LoadType, 0x9D), (OpCode.GetTypeOfValue, 0x9F),
+            (OpCode.LoadModule, 0xA0), (OpCode.LoadCurrentModule, 0xA2), (OpCode.ObjNew, 0xA3),
+            (OpCode.JP, 0xA5), (OpCode.JPZ, 0xA7),
+            (OpCode.JPNZ, 0xA9), (OpCode.JPN, 0xAB),
+            (OpCode.JPNN, 0xAD), (OpCode.JPA, 0xAF),
+            (OpCode.JPNA, 0xB1), (OpCode.JPEQ, 0xB3),
+            (OpCode.JPNE, 0xB5), (OpCode.JPGT, 0xB7),
+            (OpCode.JPGE, 0xB9), (OpCode.JPLT, 0xBB),
+            (OpCode.JPLE, 0xBD), (OpCode.JPFEQ, 0xBF),
+            (OpCode.JPFNE, 0xC1), (OpCode.JPFGT, 0xC3),
+            (OpCode.JPFGE, 0xC5), (OpCode.JPFLT, 0xC7),
+            (OpCode.JPFLE, 0xC9), (OpCode.JPREQ, 0xCB),
+            (OpCode.JPRNE, 0xCD), (OpCode.JPStrEQ, 0xCF),
+            (OpCode.JPStrNE, 0xD1), (OpCode.JPInstanceOf, 0xD3),
+            (OpCode.Switch, 0xD5), (OpCode.SwitchLookup, 0xD6), (OpCode.CallLocalModule, 0xD7),
+            (OpCode.CallModule, 0xD9), (OpCode.InvokeVirtual, 0xDB),
+            (OpCode.InvokeSpecial, 0xDC), (OpCode.InvokeStatic, 0xDD), (OpCode.InvokeInterface, 0xDF),
+            (OpCode.InvokeClosure, 0xE0), (OpCode.NewClosure, 0xE1), (OpCode.NewFunction, 0xE3),
+            (OpCode.ReturnVoid, 0xE5), (OpCode.ReturnValue, 0xE6), (OpCode.ReturnValues, 0xE7),
             (OpCode.Throw, 0xE8), (OpCode.GenNew, 0xE9), (OpCode.GenIterate, 0xEA), (OpCode.GenResume, 0xEB),
             (OpCode.GenCurrent, 0xEC), (OpCode.Yield, 0xED), (OpCode.GenDelegate, 0xEE), (OpCode.GenResumed, 0xEF),
-            (OpCode.Ext, 0xFF)
+            (OpCode.Wide, 0xF0), (OpCode.Ext, 0xFF)
         };
 
         /// <summary>Every extended opcode and the value it is defined to have.</summary>
@@ -131,7 +130,20 @@ namespace Surtr.Tests.Bytecode
         /// A retired opcode's old byte value, never reused - reusing one would make an old module
         /// silently execute a different instruction. See the note at the top of <c>OpCode.cs</c>.
         /// </summary>
-        private static readonly byte[] RetiredValues = { };
+        /// <remarks>
+        /// All thirty-nine are the <c>*X</c> twins the <see cref="OpCode.Wide"/> prefix replaced:
+        /// a widened instruction is now the prefix plus the ordinary opcode, so each of these
+        /// values went back to the pool rather than staying a name of its own. Their old encodings
+        /// cannot be re-issued, which is what the image format version guards.
+        /// </remarks>
+        private static readonly byte[] RetiredValues =
+        {
+            0x17, 0x2C, 0x2E, 0x71, 0x98, 0x9A, 0x9C, 0x9E,
+            0xA1, 0xA4, 0xA6, 0xA8, 0xAA, 0xAC, 0xAE, 0xB0,
+            0xB2, 0xB4, 0xB6, 0xB8, 0xBA, 0xBC, 0xBE, 0xC0,
+            0xC2, 0xC4, 0xC6, 0xC8, 0xCA, 0xCC, 0xCE, 0xD0,
+            0xD2, 0xD4, 0xD8, 0xDA, 0xDE, 0xE2, 0xE4
+        };
 
         /// <summary>
         /// The values run from zero with no gap except at a retired opcode's old slot, which is

@@ -80,6 +80,9 @@ namespace Surtr.Bytecode.Emit
 
             Track(argumentCount, resultSlots < 0 ? resultCount : resultSlots);
 
+            if (indexWidth == 4)
+                _code.Add((byte)OpCode.Wide);
+
             _code.Add((byte)op);
             for (int i = 0; i < indexWidth; i++)
                 _code.Add((byte)(methodIndex >> (8 * i)));
@@ -214,9 +217,9 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Emits <see cref="OpCode.Ldc9"/>.</summary>
         public SurtrCodeEmitter Ldc9() => Simple(OpCode.Ldc9, 0, 1);
 
-        /// <summary>Emits <see cref="OpCode.LdcX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.Ldc"/>.</summary>
         public SurtrCodeEmitter LdcX(SurtrConstantToken constant)
-            => WithI32(OpCode.LdcX, ConstantIndex(constant), 0, 1);
+            => WideWithI32(OpCode.Ldc, ConstantIndex(constant), 0, 1);
 
         /// <summary>Emits <see cref="OpCode.LdcS"/>.</summary>
         public SurtrCodeEmitter LdcS(SurtrConstantToken constant)
@@ -401,9 +404,9 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter InstanceOf(SurtrTypeToken type)
             => WithU16(OpCode.InstanceOf, TypeIndex(type), 1, 1, "typeIdx");
 
-        /// <summary>Emits <see cref="OpCode.InstanceOfX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.InstanceOf"/>.</summary>
         public SurtrCodeEmitter InstanceOfX(SurtrTypeToken type)
-            => WithI32(OpCode.InstanceOfX, TypeIndex(type), 1, 1);
+            => WideWithI32(OpCode.InstanceOf, TypeIndex(type), 1, 1);
 
         #endregion
 
@@ -459,9 +462,9 @@ namespace Surtr.Bytecode.Emit
         /// <param name="type">The class the box should present as.</param>
         public SurtrCodeEmitter BoxAs(SurtrTypeToken type) => WithU16(OpCode.BoxAs, TypeIndex(type), 1, 1, nameof(type));
 
-        /// <summary>Emits <see cref="OpCode.BoxAsX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.BoxAs"/>.</summary>
         /// <param name="type">The class the box should present as.</param>
-        public SurtrCodeEmitter BoxAsX(SurtrTypeToken type) => WithI32(OpCode.BoxAsX, TypeIndex(type), 1, 1);
+        public SurtrCodeEmitter BoxAsX(SurtrTypeToken type) => WideWithI32(OpCode.BoxAs, TypeIndex(type), 1, 1);
 
         /// <summary>Emits <see cref="OpCode.RangeNew"/>: the exclusive <c>lo..hi</c> form, laid out as its three-slot block.</summary>
         public SurtrCodeEmitter RangeNew() => Simple(OpCode.RangeNew, 2, 3);
@@ -497,25 +500,25 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter Cast(SurtrTypeToken type)
             => WithU16(OpCode.Cast, TypeIndex(type), 1, 1, "typeIdx");
 
-        /// <summary>Emits <see cref="OpCode.CastX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.Cast"/>.</summary>
         public SurtrCodeEmitter CastX(SurtrTypeToken type)
-            => WithI32(OpCode.CastX, TypeIndex(type), 1, 1);
+            => WideWithI32(OpCode.Cast, TypeIndex(type), 1, 1);
 
         /// <summary>Emits <see cref="OpCode.CastOrNull"/>: the <c>as?</c> form, which yields null rather than trapping.</summary>
         public SurtrCodeEmitter CastOrNull(SurtrTypeToken type)
             => WithU16(OpCode.CastOrNull, TypeIndex(type), 1, 1, "typeIdx");
 
-        /// <summary>Emits <see cref="OpCode.CastOrNullX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.CastOrNull"/>.</summary>
         public SurtrCodeEmitter CastOrNullX(SurtrTypeToken type)
-            => WithI32(OpCode.CastOrNullX, TypeIndex(type), 1, 1);
+            => WideWithI32(OpCode.CastOrNull, TypeIndex(type), 1, 1);
 
         /// <summary>Emits <see cref="OpCode.LoadType"/>.</summary>
         public SurtrCodeEmitter LoadType(SurtrTypeToken type)
             => WithU16(OpCode.LoadType, TypeIndex(type), 0, 1, "typeIdx");
 
-        /// <summary>Emits <see cref="OpCode.LoadTypeX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.LoadType"/>.</summary>
         public SurtrCodeEmitter LoadTypeX(SurtrTypeToken type)
-            => WithI32(OpCode.LoadTypeX, TypeIndex(type), 0, 1);
+            => WideWithI32(OpCode.LoadType, TypeIndex(type), 0, 1);
 
         /// <summary>Emits <see cref="OpCode.GetTypeOfValue"/>.</summary>
         public SurtrCodeEmitter GetTypeOfValue() => Simple(OpCode.GetTypeOfValue, 1, 1);
@@ -524,9 +527,9 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter LoadModule(SurtrModuleToken module)
             => WithU16(OpCode.LoadModule, ModuleIndex(module), 0, 1, "moduleIdx");
 
-        /// <summary>Emits <see cref="OpCode.LoadModuleX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.LoadModule"/>.</summary>
         public SurtrCodeEmitter LoadModuleX(SurtrModuleToken module)
-            => WithI32(OpCode.LoadModuleX, ModuleIndex(module), 0, 1);
+            => WideWithI32(OpCode.LoadModule, ModuleIndex(module), 0, 1);
 
         /// <summary>Emits <see cref="OpCode.LoadCurrentModule"/>.</summary>
         public SurtrCodeEmitter LoadCurrentModule() => Simple(OpCode.LoadCurrentModule, 0, 1);
@@ -568,7 +571,7 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter ArrNew(SurtrTypeToken arrayType)
             => WithU16(OpCode.ArrNew, TypeIndex(arrayType), 1, 1, "typeIdx");
 
-        /// <summary>Emits <see cref="OpCode.ArrNewX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.ArrNew"/>.</summary>
         /// <param name="arrayType">The whole parameterised array type, not its element type.</param>
         /// <param name="size">The statically known length, taken from the instruction rather than the stack.</param>
         public SurtrCodeEmitter ArrNewX(SurtrTypeToken arrayType, int size)
@@ -689,9 +692,9 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter ObjNew(SurtrTypeToken type)
             => WithU16(OpCode.ObjNew, TypeIndex(type), 0, 1, "typeIdx");
 
-        /// <summary>Emits <see cref="OpCode.ObjNewX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.ObjNew"/>.</summary>
         public SurtrCodeEmitter ObjNewX(SurtrTypeToken type)
-            => WithI32(OpCode.ObjNewX, TypeIndex(type), 0, 1);
+            => WideWithI32(OpCode.ObjNew, TypeIndex(type), 0, 1);
 
         #endregion
 
@@ -709,17 +712,17 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter StaticFieldGet(SurtrFieldToken field)
             => WithU16(OpCode.StaticFieldGet, FieldIndex(field), 0, 1, "fieldIdx");
 
-        /// <summary>Emits <see cref="OpCode.StaticFieldGetX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.StaticFieldGet"/>.</summary>
         public SurtrCodeEmitter StaticFieldGetX(SurtrFieldToken field)
-            => WithI32(OpCode.StaticFieldGetX, FieldIndex(field), 0, 1);
+            => WideWithI32(OpCode.StaticFieldGet, FieldIndex(field), 0, 1);
 
         /// <summary>Emits <see cref="OpCode.StaticFieldSet"/>.</summary>
         public SurtrCodeEmitter StaticFieldSet(SurtrFieldToken field)
             => WithU16(OpCode.StaticFieldSet, FieldIndex(field), 1, 0, "fieldIdx");
 
-        /// <summary>Emits <see cref="OpCode.StaticFieldSetX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.StaticFieldSet"/>.</summary>
         public SurtrCodeEmitter StaticFieldSetX(SurtrFieldToken field)
-            => WithI32(OpCode.StaticFieldSetX, FieldIndex(field), 1, 0);
+            => WideWithI32(OpCode.StaticFieldSet, FieldIndex(field), 1, 0);
 
         #endregion
 
@@ -745,7 +748,7 @@ namespace Surtr.Bytecode.Emit
             return this;
         }
 
-        /// <summary>Emits <see cref="OpCode.NewClosureX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.NewClosure"/>.</summary>
         /// <param name="function">The closure's body, an entry in the method access table.</param>
         /// <param name="upValueCount">How many captures to pop, at most 255.</param>
         public SurtrCodeEmitter NewClosureX(SurtrMethodToken function, int upValueCount)
@@ -753,11 +756,12 @@ namespace Surtr.Bytecode.Emit
             ThrowIfFinished();
 
             int index = MethodIndex(function);
-            CheckRange(upValueCount, 0, byte.MaxValue, OpCode.NewClosureX, "upvaluesCount");
+            CheckRange(upValueCount, 0, byte.MaxValue, OpCode.NewClosure, "upvaluesCount");
 
             Track(upValueCount, 1);
 
-            _code.Add((byte)OpCode.NewClosureX);
+            _code.Add((byte)OpCode.Wide);
+            _code.Add((byte)OpCode.NewClosure);
             AppendI32(_code, index);
             _code.Add((byte)upValueCount);
             return this;
@@ -780,18 +784,19 @@ namespace Surtr.Bytecode.Emit
             return this;
         }
 
-        /// <summary>Emits <see cref="OpCode.NewFunctionX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.NewFunction"/>.</summary>
         /// <param name="function">The lambda's body, an entry in the method access table.</param>
         public SurtrCodeEmitter NewFunctionX(SurtrMethodToken function)
         {
             ThrowIfFinished();
 
             int index = MethodIndex(function);
-            CheckRange(index, 0, int.MaxValue, OpCode.NewFunctionX, "functionIdx");
+            CheckRange(index, 0, int.MaxValue, OpCode.NewFunction, "functionIdx");
 
             Track(0, 1);
 
-            _code.Add((byte)OpCode.NewFunctionX);
+            _code.Add((byte)OpCode.Wide);
+            _code.Add((byte)OpCode.NewFunction);
             AppendI32(_code, index);
             return this;
         }
@@ -809,152 +814,152 @@ namespace Surtr.Bytecode.Emit
         #region Control Flow Operations
 
         /// <summary>Emits <see cref="OpCode.JPZ"/>.</summary>
-        public SurtrCodeEmitter JPZ(SurtrLabel target) => Branch(OpCode.JPZ, OpCode.JPZX, target, 1, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPZ(SurtrLabel target) => Branch(OpCode.JPZ, target, 1, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPNZ"/>.</summary>
-        public SurtrCodeEmitter JPNZ(SurtrLabel target) => Branch(OpCode.JPNZ, OpCode.JPNZX, target, 1, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPNZ(SurtrLabel target) => Branch(OpCode.JPNZ, target, 1, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPN"/>.</summary>
-        public SurtrCodeEmitter JPN(SurtrLabel target) => Branch(OpCode.JPN, OpCode.JPNX, target, 1, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPN(SurtrLabel target) => Branch(OpCode.JPN, target, 1, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPNN"/>.</summary>
-        public SurtrCodeEmitter JPNN(SurtrLabel target) => Branch(OpCode.JPNN, OpCode.JPNNX, target, 1, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPNN(SurtrLabel target) => Branch(OpCode.JPNN, target, 1, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPA"/>: branches when a nullable primitive holds nothing.</summary>
         /// <remarks>
         /// The width defaults to auto so relaxation can widen a too-far target to
-        /// <see cref="OpCode.JPAX"/>; pass a width to pin the encoding.
+        /// <see cref="OpCode.Wide"/> + <see cref="OpCode.JPA"/>; pass a width to pin the encoding.
         /// </remarks>
         public SurtrCodeEmitter JPA(SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
-            => Branch(OpCode.JPA, OpCode.JPAX, target, 1, width, false);
+            => Branch(OpCode.JPA, target, 1, width, false);
 
         /// <summary>Emits <see cref="OpCode.JPNA"/>: branches when a nullable primitive holds a value.</summary>
         /// <remarks>
         /// The width defaults to auto so relaxation can widen a too-far target to
-        /// <see cref="OpCode.JPNAX"/>; pass a width to pin the encoding.
+        /// <see cref="OpCode.Wide"/> + <see cref="OpCode.JPNA"/>; pass a width to pin the encoding.
         /// </remarks>
         public SurtrCodeEmitter JPNA(SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
-            => Branch(OpCode.JPNA, OpCode.JPNAX, target, 1, width, false);
+            => Branch(OpCode.JPNA, target, 1, width, false);
 
         /// <summary>Emits <see cref="OpCode.JP"/>.</summary>
-        public SurtrCodeEmitter JP(SurtrLabel target) => Branch(OpCode.JP, OpCode.JPX, target, 0, SurtrJumpWidth.Short, true);
+        public SurtrCodeEmitter JP(SurtrLabel target) => Branch(OpCode.JP, target, 0, SurtrJumpWidth.Short, true);
 
-        /// <summary>Emits <see cref="OpCode.JPZX"/>.</summary>
-        public SurtrCodeEmitter JPZX(SurtrLabel target) => Branch(OpCode.JPZ, OpCode.JPZX, target, 1, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPZ"/>.</summary>
+        public SurtrCodeEmitter JPZX(SurtrLabel target) => Branch(OpCode.JPZ, target, 1, SurtrJumpWidth.Wide, false);
 
-        /// <summary>Emits <see cref="OpCode.JPNZX"/>.</summary>
-        public SurtrCodeEmitter JPNZX(SurtrLabel target) => Branch(OpCode.JPNZ, OpCode.JPNZX, target, 1, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPNZ"/>.</summary>
+        public SurtrCodeEmitter JPNZX(SurtrLabel target) => Branch(OpCode.JPNZ, target, 1, SurtrJumpWidth.Wide, false);
 
-        /// <summary>Emits <see cref="OpCode.JPNX"/>.</summary>
-        public SurtrCodeEmitter JPNX(SurtrLabel target) => Branch(OpCode.JPN, OpCode.JPNX, target, 1, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPN"/>.</summary>
+        public SurtrCodeEmitter JPNX(SurtrLabel target) => Branch(OpCode.JPN, target, 1, SurtrJumpWidth.Wide, false);
 
-        /// <summary>Emits <see cref="OpCode.JPNNX"/>.</summary>
-        public SurtrCodeEmitter JPNNX(SurtrLabel target) => Branch(OpCode.JPNN, OpCode.JPNNX, target, 1, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPNN"/>.</summary>
+        public SurtrCodeEmitter JPNNX(SurtrLabel target) => Branch(OpCode.JPNN, target, 1, SurtrJumpWidth.Wide, false);
 
-        /// <summary>Emits <see cref="OpCode.JPX"/>.</summary>
-        public SurtrCodeEmitter JPX(SurtrLabel target) => Branch(OpCode.JP, OpCode.JPX, target, 0, SurtrJumpWidth.Wide, true);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JP"/>.</summary>
+        public SurtrCodeEmitter JPX(SurtrLabel target) => Branch(OpCode.JP, target, 0, SurtrJumpWidth.Wide, true);
 
         /// <summary>Emits <see cref="OpCode.JPEQ"/>.</summary>
-        public SurtrCodeEmitter JPEQ(SurtrLabel target) => Branch(OpCode.JPEQ, OpCode.JPEQX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPEQ(SurtrLabel target) => Branch(OpCode.JPEQ, target, 2, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPFEQ"/>.</summary>
-        public SurtrCodeEmitter JPFEQ(SurtrLabel target) => Branch(OpCode.JPFEQ, OpCode.JPFEQX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPFEQ(SurtrLabel target) => Branch(OpCode.JPFEQ, target, 2, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPREQ"/>.</summary>
-        public SurtrCodeEmitter JPREQ(SurtrLabel target) => Branch(OpCode.JPREQ, OpCode.JPREQX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPREQ(SurtrLabel target) => Branch(OpCode.JPREQ, target, 2, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPStrEQ"/>.</summary>
-        public SurtrCodeEmitter JPStrEQ(SurtrLabel target) => Branch(OpCode.JPStrEQ, OpCode.JPStrEQX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPStrEQ(SurtrLabel target) => Branch(OpCode.JPStrEQ, target, 2, SurtrJumpWidth.Short, false);
 
-        /// <summary>Emits <see cref="OpCode.JPEQX"/>.</summary>
-        public SurtrCodeEmitter JPEQX(SurtrLabel target) => Branch(OpCode.JPEQ, OpCode.JPEQX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPEQ"/>.</summary>
+        public SurtrCodeEmitter JPEQX(SurtrLabel target) => Branch(OpCode.JPEQ, target, 2, SurtrJumpWidth.Wide, false);
 
-        /// <summary>Emits <see cref="OpCode.JPFEQX"/>.</summary>
-        public SurtrCodeEmitter JPFEQX(SurtrLabel target) => Branch(OpCode.JPFEQ, OpCode.JPFEQX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPFEQ"/>.</summary>
+        public SurtrCodeEmitter JPFEQX(SurtrLabel target) => Branch(OpCode.JPFEQ, target, 2, SurtrJumpWidth.Wide, false);
 
-        /// <summary>Emits <see cref="OpCode.JPREQX"/>.</summary>
-        public SurtrCodeEmitter JPREQX(SurtrLabel target) => Branch(OpCode.JPREQ, OpCode.JPREQX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPREQ"/>.</summary>
+        public SurtrCodeEmitter JPREQX(SurtrLabel target) => Branch(OpCode.JPREQ, target, 2, SurtrJumpWidth.Wide, false);
 
-        /// <summary>Emits <see cref="OpCode.JPStrEQX"/>.</summary>
-        public SurtrCodeEmitter JPStrEQX(SurtrLabel target) => Branch(OpCode.JPStrEQ, OpCode.JPStrEQX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPStrEQ"/>.</summary>
+        public SurtrCodeEmitter JPStrEQX(SurtrLabel target) => Branch(OpCode.JPStrEQ, target, 2, SurtrJumpWidth.Wide, false);
 
         /// <summary>Emits <see cref="OpCode.JPNE"/>.</summary>
-        public SurtrCodeEmitter JPNE(SurtrLabel target) => Branch(OpCode.JPNE, OpCode.JPNEX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPNE(SurtrLabel target) => Branch(OpCode.JPNE, target, 2, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPFNE"/>.</summary>
-        public SurtrCodeEmitter JPFNE(SurtrLabel target) => Branch(OpCode.JPFNE, OpCode.JPFNEX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPFNE(SurtrLabel target) => Branch(OpCode.JPFNE, target, 2, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPRNE"/>.</summary>
-        public SurtrCodeEmitter JPRNE(SurtrLabel target) => Branch(OpCode.JPRNE, OpCode.JPRNEX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPRNE(SurtrLabel target) => Branch(OpCode.JPRNE, target, 2, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPStrNE"/>.</summary>
-        public SurtrCodeEmitter JPStrNE(SurtrLabel target) => Branch(OpCode.JPStrNE, OpCode.JPStrNEX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPStrNE(SurtrLabel target) => Branch(OpCode.JPStrNE, target, 2, SurtrJumpWidth.Short, false);
 
-        /// <summary>Emits <see cref="OpCode.JPNEX"/>.</summary>
-        public SurtrCodeEmitter JPNEX(SurtrLabel target) => Branch(OpCode.JPNE, OpCode.JPNEX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPNE"/>.</summary>
+        public SurtrCodeEmitter JPNEX(SurtrLabel target) => Branch(OpCode.JPNE, target, 2, SurtrJumpWidth.Wide, false);
 
-        /// <summary>Emits <see cref="OpCode.JPFNEX"/>.</summary>
-        public SurtrCodeEmitter JPFNEX(SurtrLabel target) => Branch(OpCode.JPFNE, OpCode.JPFNEX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPFNE"/>.</summary>
+        public SurtrCodeEmitter JPFNEX(SurtrLabel target) => Branch(OpCode.JPFNE, target, 2, SurtrJumpWidth.Wide, false);
 
-        /// <summary>Emits <see cref="OpCode.JPRNEX"/>.</summary>
-        public SurtrCodeEmitter JPRNEX(SurtrLabel target) => Branch(OpCode.JPRNE, OpCode.JPRNEX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPRNE"/>.</summary>
+        public SurtrCodeEmitter JPRNEX(SurtrLabel target) => Branch(OpCode.JPRNE, target, 2, SurtrJumpWidth.Wide, false);
 
-        /// <summary>Emits <see cref="OpCode.JPStrNEX"/>.</summary>
-        public SurtrCodeEmitter JPStrNEX(SurtrLabel target) => Branch(OpCode.JPStrNE, OpCode.JPStrNEX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPStrNE"/>.</summary>
+        public SurtrCodeEmitter JPStrNEX(SurtrLabel target) => Branch(OpCode.JPStrNE, target, 2, SurtrJumpWidth.Wide, false);
 
         /// <summary>Emits <see cref="OpCode.JPGT"/>.</summary>
-        public SurtrCodeEmitter JPGT(SurtrLabel target) => Branch(OpCode.JPGT, OpCode.JPGTX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPGT(SurtrLabel target) => Branch(OpCode.JPGT, target, 2, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPFGT"/>.</summary>
-        public SurtrCodeEmitter JPFGT(SurtrLabel target) => Branch(OpCode.JPFGT, OpCode.JPFGTX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPFGT(SurtrLabel target) => Branch(OpCode.JPFGT, target, 2, SurtrJumpWidth.Short, false);
 
-        /// <summary>Emits <see cref="OpCode.JPGTX"/>.</summary>
-        public SurtrCodeEmitter JPGTX(SurtrLabel target) => Branch(OpCode.JPGT, OpCode.JPGTX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPGT"/>.</summary>
+        public SurtrCodeEmitter JPGTX(SurtrLabel target) => Branch(OpCode.JPGT, target, 2, SurtrJumpWidth.Wide, false);
 
-        /// <summary>Emits <see cref="OpCode.JPFGTX"/>.</summary>
-        public SurtrCodeEmitter JPFGTX(SurtrLabel target) => Branch(OpCode.JPFGT, OpCode.JPFGTX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPFGT"/>.</summary>
+        public SurtrCodeEmitter JPFGTX(SurtrLabel target) => Branch(OpCode.JPFGT, target, 2, SurtrJumpWidth.Wide, false);
 
         /// <summary>Emits <see cref="OpCode.JPGE"/>.</summary>
-        public SurtrCodeEmitter JPGE(SurtrLabel target) => Branch(OpCode.JPGE, OpCode.JPGEX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPGE(SurtrLabel target) => Branch(OpCode.JPGE, target, 2, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPFGE"/>.</summary>
-        public SurtrCodeEmitter JPFGE(SurtrLabel target) => Branch(OpCode.JPFGE, OpCode.JPFGEX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPFGE(SurtrLabel target) => Branch(OpCode.JPFGE, target, 2, SurtrJumpWidth.Short, false);
 
-        /// <summary>Emits <see cref="OpCode.JPGEX"/>.</summary>
-        public SurtrCodeEmitter JPGEX(SurtrLabel target) => Branch(OpCode.JPGE, OpCode.JPGEX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPGE"/>.</summary>
+        public SurtrCodeEmitter JPGEX(SurtrLabel target) => Branch(OpCode.JPGE, target, 2, SurtrJumpWidth.Wide, false);
 
-        /// <summary>Emits <see cref="OpCode.JPFGEX"/>.</summary>
-        public SurtrCodeEmitter JPFGEX(SurtrLabel target) => Branch(OpCode.JPFGE, OpCode.JPFGEX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPFGE"/>.</summary>
+        public SurtrCodeEmitter JPFGEX(SurtrLabel target) => Branch(OpCode.JPFGE, target, 2, SurtrJumpWidth.Wide, false);
 
         /// <summary>Emits <see cref="OpCode.JPLT"/>.</summary>
-        public SurtrCodeEmitter JPLT(SurtrLabel target) => Branch(OpCode.JPLT, OpCode.JPLTX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPLT(SurtrLabel target) => Branch(OpCode.JPLT, target, 2, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPFLT"/>.</summary>
-        public SurtrCodeEmitter JPFLT(SurtrLabel target) => Branch(OpCode.JPFLT, OpCode.JPFLTX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPFLT(SurtrLabel target) => Branch(OpCode.JPFLT, target, 2, SurtrJumpWidth.Short, false);
 
-        /// <summary>Emits <see cref="OpCode.JPLTX"/>.</summary>
-        public SurtrCodeEmitter JPLTX(SurtrLabel target) => Branch(OpCode.JPLT, OpCode.JPLTX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPLT"/>.</summary>
+        public SurtrCodeEmitter JPLTX(SurtrLabel target) => Branch(OpCode.JPLT, target, 2, SurtrJumpWidth.Wide, false);
 
-        /// <summary>Emits <see cref="OpCode.JPFLTX"/>.</summary>
-        public SurtrCodeEmitter JPFLTX(SurtrLabel target) => Branch(OpCode.JPFLT, OpCode.JPFLTX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPFLT"/>.</summary>
+        public SurtrCodeEmitter JPFLTX(SurtrLabel target) => Branch(OpCode.JPFLT, target, 2, SurtrJumpWidth.Wide, false);
 
         /// <summary>Emits <see cref="OpCode.JPLE"/>.</summary>
-        public SurtrCodeEmitter JPLE(SurtrLabel target) => Branch(OpCode.JPLE, OpCode.JPLEX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPLE(SurtrLabel target) => Branch(OpCode.JPLE, target, 2, SurtrJumpWidth.Short, false);
 
         /// <summary>Emits <see cref="OpCode.JPFLE"/>.</summary>
-        public SurtrCodeEmitter JPFLE(SurtrLabel target) => Branch(OpCode.JPFLE, OpCode.JPFLEX, target, 2, SurtrJumpWidth.Short, false);
+        public SurtrCodeEmitter JPFLE(SurtrLabel target) => Branch(OpCode.JPFLE, target, 2, SurtrJumpWidth.Short, false);
 
-        /// <summary>Emits <see cref="OpCode.JPLEX"/>.</summary>
-        public SurtrCodeEmitter JPLEX(SurtrLabel target) => Branch(OpCode.JPLE, OpCode.JPLEX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPLE"/>.</summary>
+        public SurtrCodeEmitter JPLEX(SurtrLabel target) => Branch(OpCode.JPLE, target, 2, SurtrJumpWidth.Wide, false);
 
-        /// <summary>Emits <see cref="OpCode.JPFLEX"/>.</summary>
-        public SurtrCodeEmitter JPFLEX(SurtrLabel target) => Branch(OpCode.JPFLE, OpCode.JPFLEX, target, 2, SurtrJumpWidth.Wide, false);
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPFLE"/>.</summary>
+        public SurtrCodeEmitter JPFLEX(SurtrLabel target) => Branch(OpCode.JPFLE, target, 2, SurtrJumpWidth.Wide, false);
 
         /// <summary>Emits <see cref="OpCode.JPInstanceOf"/>.</summary>
         public SurtrCodeEmitter JPInstanceOf(SurtrTypeToken type, SurtrLabel target)
             => BranchInstanceOf(type, target, SurtrJumpWidth.Short);
 
-        /// <summary>Emits <see cref="OpCode.JPInstanceOfX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.JPInstanceOf"/>.</summary>
         public SurtrCodeEmitter JPInstanceOfX(SurtrTypeToken type, SurtrLabel target)
             => BranchInstanceOf(type, target, SurtrJumpWidth.Wide);
 
@@ -1030,9 +1035,9 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter CallLocalModule(SurtrMethodToken function, int argumentCount, int resultCount, int resultSlots = -1)
             => WithCall(OpCode.CallLocalModule, MethodIndex(function), 2, argumentCount, resultCount, resultSlots);
 
-        /// <summary>Emits <see cref="OpCode.CallLocalModuleX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.CallLocalModule"/>.</summary>
         public SurtrCodeEmitter CallLocalModuleX(SurtrMethodToken function, int argumentCount, int resultCount, int resultSlots = -1)
-            => WithCall(OpCode.CallLocalModuleX, MethodIndex(function), 4, argumentCount, resultCount, resultSlots);
+            => WithCall(OpCode.CallLocalModule, MethodIndex(function), 4, argumentCount, resultCount, resultSlots);
 
         /// <summary>Emits <see cref="OpCode.CallModule"/>.</summary>
         public SurtrCodeEmitter CallModule(SurtrExternalMethodToken target, int argumentCount, int resultCount, int resultSlots = -1)
@@ -1058,7 +1063,7 @@ namespace Surtr.Bytecode.Emit
             return this;
         }
 
-        /// <summary>Emits <see cref="OpCode.CallModuleX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.CallModule"/>.</summary>
         public SurtrCodeEmitter CallModuleX(SurtrExternalMethodToken target, int argumentCount, int resultCount, int resultSlots = -1)
         {
             ThrowIfFinished();
@@ -1066,11 +1071,12 @@ namespace Surtr.Bytecode.Emit
             if (!target.IsValid)
                 throw new ArgumentException("External method token was not obtained from a module builder.", nameof(target));
 
-            CheckArgumentCounts(OpCode.CallModuleX, argumentCount, resultCount);
+            CheckArgumentCounts(OpCode.CallModule, argumentCount, resultCount);
 
             Track(argumentCount, resultSlots < 0 ? resultCount : resultSlots);
 
-            _code.Add((byte)OpCode.CallModuleX);
+            _code.Add((byte)OpCode.Wide);
+            _code.Add((byte)OpCode.CallModule);
             AppendI32(_code, target.ModuleIndex);
             AppendI32(_code, target.FunctionIndex);
             _code.Add((byte)argumentCount);
@@ -1098,9 +1104,9 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter InvokeStatic(SurtrMethodToken method, int argumentCount, int resultCount, int resultSlots = -1)
             => WithCall(OpCode.InvokeStatic, MethodIndex(method), 2, argumentCount, resultCount, resultSlots);
 
-        /// <summary>Emits <see cref="OpCode.InvokeStaticX"/>.</summary>
+        /// <summary>Emits <see cref="OpCode.Wide"/> + <see cref="OpCode.InvokeStatic"/>.</summary>
         public SurtrCodeEmitter InvokeStaticX(SurtrMethodToken method, int argumentCount, int resultCount, int resultSlots = -1)
-            => WithCall(OpCode.InvokeStaticX, MethodIndex(method), 4, argumentCount, resultCount, resultSlots);
+            => WithCall(OpCode.InvokeStatic, MethodIndex(method), 4, argumentCount, resultCount, resultSlots);
 
         /// <summary>Emits <see cref="OpCode.InvokeInterface"/>.</summary>
         public SurtrCodeEmitter InvokeInterface(SurtrMethodToken method, int argumentCount, int resultCount, int resultSlots = -1)

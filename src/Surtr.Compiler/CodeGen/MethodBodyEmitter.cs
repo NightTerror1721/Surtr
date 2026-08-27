@@ -384,6 +384,9 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitWhile(BoundWhileStatement loop)
         {
+            if (TryEmitCountedWhile(loop))
+                return;
+
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
@@ -404,6 +407,220 @@ namespace Surtr.Compiler.CodeGen
                 Code.Jump(top);
 
             Code.MarkLabel(end);
+        }
+
+        /// <summary>
+        /// Emits <c>while (i &lt; n) { ...; i += 1; }</c> as one fused step per iteration, or
+        /// answers <see langword="false"/> and leaves the loop to the ordinary path.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The counted <c>while</c> is the hottest loop shape the language has, and until this it
+        /// was the one counted loop that did <em>not</em> fuse: <c>for i in 0..n</c> lowers to
+        /// <c>ForRangeNext</c> (see <see cref="EmitForInRange"/>) while the hand-written form
+        /// stayed four dispatches per iteration - the increment, the jump back, the two loads and
+        /// the test. Those four are why <c>IncLocal</c>, <c>JP</c>, <c>JPGE</c> and <c>Ldl</c> are
+        /// all in the interpreter's top ten (docs/Informe-Opcodes-Layout.md §4.8). The same
+        /// superinstruction covers both shapes, so this needs no new opcode.
+        /// </para>
+        /// <para>
+        /// The rewrite is the one <see cref="EmitForInRange"/> already makes: the test moves from
+        /// the top of the body to a guard above the loop plus a step at the bottom that tests for
+        /// itself. It is sound because the fused step performs the increment and the comparison in
+        /// the same order the written loop does - the increment last in the body, the test before
+        /// the next iteration - and it re-reads both slots each time, so a body that assigns to
+        /// either is seen exactly as before.
+        /// </para>
+        /// <para>
+        /// <c>continue</c> is what it cannot keep. In a <c>while</c> it re-tests <em>without</em>
+        /// incrementing, and the fused step is reached by falling out of the body, so any
+        /// <c>continue</c> at all - including a labelled one from inside a nested loop - refuses
+        /// the fusion rather than trying to distinguish which loop it names.
+        /// </para>
+        /// </remarks>
+
+        private bool TryEmitCountedWhile(BoundWhileStatement loop)
+        {
+            if (loop.Condition is not BoundBinaryExpression
+                {
+                    Operator: BinaryOperator.Less or BinaryOperator.LessEqual
+                } test)
+            {
+                return false;
+            }
+
+            if (!IsPlainInt(test.Left) || loop.Body is not BoundBlockStatement { Statements.Count: > 0 } block)
+                return false;
+
+            if (test.Left is not BoundLocalExpression counter)
+                return false;
+
+            // A parameter is a slot like any other, but the counter has to be the same *symbol*
+            // the increment writes, and only a local can be matched by reference here.
+
+            // The increment has to be the body's last statement: anything after it would run
+            // between the increment and the test, which the fused step has no room for.
+            if (block.Statements[block.Statements.Count - 1] is not BoundExpressionStatement
+                {
+                    Expression: BoundAssignmentExpression
+                    {
+                        Target: BoundLocalExpression target,
+                        Value: BoundBinaryExpression
+                        {
+                            Operator: BinaryOperator.Add,
+                            Left: BoundLocalExpression addend,
+                        } sum
+                    }
+                })
+            {
+                return false;
+            }
+
+            if (!ReferenceEquals(target.Local, counter.Local) || !ReferenceEquals(addend.Local, counter.Local))
+                return false;
+
+            // An integer literal arrives as a `long` and is narrowed at emit, so the step of one
+            // this looks for is a `long` too.
+            if (sum.Right is not BoundLiteralExpression { Value: long step1 } || step1 != 1L)
+                return false;
+
+            // The limit is re-read every iteration, so only a form whose re-reading is free may
+            // stand in for it: a slot the step can address, or a constant hoisted into one. An
+            // arbitrary expression is refused rather than hoisted - the written loop evaluates it
+            // per iteration, and a fused step could not.
+            SurtrLocal limit;
+            var variable = Slot(counter.Local);
+
+            if (!IsPlainInt(test.Right))
+            {
+                return false;
+            }
+            else if (test.Right is BoundLocalExpression limitLocal)
+            {
+                limit = Slot(limitLocal.Local);
+            }
+            else if (test.Right is BoundParameterExpression limitParameter)
+            {
+                limit = ParameterSlot(limitParameter.Parameter);
+            }
+            else if (test.Right is BoundLiteralExpression { Value: long constant }
+                     && constant >= int.MinValue && constant <= int.MaxValue)
+            {
+                limit = _method.DeclareLocal("$limit");
+                Code.LoadInt((int)constant);
+                EmitStoreLocal(limit);
+            }
+            else
+            {
+                return false;
+            }
+
+            if (!FitsInSlotByte(variable, limit))
+                return false;
+
+            for (int i = 0; i < block.Statements.Count - 1; i++)
+            {
+                if (ContainsContinue(block.Statements[i]))
+                    return false;
+            }
+
+            bool limitIsInclusive = test.Operator == BinaryOperator.LessEqual;
+
+            var top = Code.NewLabel();
+            var step = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            EmitLoadLocal(variable);
+            EmitLoadLocal(limit);
+            Code.JumpIfCompare(
+                limitIsInclusive ? SurtrComparison.Greater : SurtrComparison.GreaterOrEqual,
+                SurtrValueTypeCode.Integer,
+                end);
+
+            Code.MarkLabel(top);
+
+            // `step` is the continue target for form's sake - nothing reaches it, since a body
+            // carrying a `continue` was refused above.
+            PushLoop(step, end);
+
+            for (int i = 0; i < block.Statements.Count - 1; i++)
+                Statement(block.Statements[i]);
+
+            PopTargets();
+
+            Code.MarkLabel(step);
+
+            if (Code.IsReachable)
+                Code.ForRangeNext(variable.Index, limit.Index, limitIsInclusive, top);
+
+            Code.MarkLabel(end);
+            return true;
+        }
+
+        /// <summary>Whether an expression is an <c>int</c> that is neither nullable nor erased, so a slot holds it raw.</summary>
+        private static bool IsPlainInt(BoundExpression expression)
+            => expression.Type is { IsNullable: false } type && type.SpecialType == SpecialType.Int;
+
+        /// <summary>
+        /// Whether a statement carries a <c>continue</c> anywhere beneath it, nested loops
+        /// included. Deliberately conservative: a labelled <c>continue</c> inside a nested loop can
+        /// name the outer one, so descending into nested loops is what makes the answer safe.
+        /// </summary>
+        private static bool ContainsContinue(BoundStatement statement)
+        {
+            switch (statement)
+            {
+                case BoundBreakStatement jump:
+                    return jump.IsContinue;
+
+                case BoundBlockStatement block:
+                    foreach (var child in block.Statements)
+                    {
+                        if (ContainsContinue(child)) return true;
+                    }
+
+                    return false;
+
+                case BoundIfStatement conditional:
+                    return ContainsContinue(conditional.Then)
+                        || (conditional.Else is not null && ContainsContinue(conditional.Else));
+
+                case BoundWhileStatement loop:
+                    return ContainsContinue(loop.Body);
+
+                case BoundForStatement loop:
+                    return (loop.Initializer is not null && ContainsContinue(loop.Initializer))
+                        || ContainsContinue(loop.Body);
+
+                case BoundForInStatement loop:
+                    return ContainsContinue(loop.Body);
+
+                case BoundLabeledStatement labeled:
+                    return ContainsContinue(labeled.Statement);
+
+                case BoundSwitchStatement selection:
+                    foreach (var section in selection.Sections)
+                    {
+                        foreach (var child in section.Statements)
+                        {
+                            if (ContainsContinue(child)) return true;
+                        }
+                    }
+
+                    return false;
+
+                case BoundTryStatement guarded:
+                    if (ContainsContinue(guarded.Body)) return true;
+                    foreach (var handler in guarded.Catches)
+                    {
+                        if (ContainsContinue(handler.Body)) return true;
+                    }
+
+                    return guarded.Finally is not null && ContainsContinue(guarded.Finally);
+
+                default:
+                    return false;
+            }
         }
 
         private void EmitFor(BoundForStatement loop)

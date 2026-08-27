@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using System;
@@ -165,8 +165,17 @@ namespace Surtr.Bytecode.Image
         /// it again</b>: an instruction the reader does not know is a build that is too old, and
         /// this version already says so.
         /// </para>
+        /// <para>
+        /// Version 14 retires the thirty-nine <c>*X</c> twins in favour of the
+        /// <see cref="OpCode.Wide"/> prefix, and this is the bump such a change exists for: the
+        /// retired values are unassigned now, so a version 13 image's <c>JPGEX</c> would decode as
+        /// nothing at all, while a version 13 reader meeting a <c>Wide</c> would read the opcode
+        /// after it as an instruction of its own and take the rest of the method with it. Both
+        /// directions are silent misreads, which is exactly what a refusal at the boundary is for.
+        /// The framing itself is unchanged, as it was at 13.
+        /// </para>
         /// </remarks>
-        internal const ushort FormatVersion = 13;
+        internal const ushort FormatVersion = 14;
 
         private readonly byte[] _bytes;
         private readonly string _path;

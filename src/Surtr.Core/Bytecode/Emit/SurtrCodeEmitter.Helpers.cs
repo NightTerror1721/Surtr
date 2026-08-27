@@ -351,8 +351,7 @@ namespace Surtr.Bytecode.Emit
             SurtrLabel target,
             SurtrJumpWidth width = SurtrJumpWidth.Auto)
         {
-            var (shortOp, wideOp) = ComparisonBranchOpCodes(comparison, operandType);
-            return Branch(shortOp, wideOp, target, 2, width, false);
+            return Branch(ComparisonBranchOpCode(comparison, operandType), target, 2, width, false);
         }
 
         private static OpCode ComparisonOpCode(SurtrComparison comparison, SurtrValueTypeCode operandType)
@@ -421,18 +420,18 @@ namespace Surtr.Bytecode.Emit
             };
         }
 
-        private static (OpCode Short, OpCode Wide) ComparisonBranchOpCodes(SurtrComparison comparison, SurtrValueTypeCode operandType)
+        private static OpCode ComparisonBranchOpCode(SurtrComparison comparison, SurtrValueTypeCode operandType)
         {
             if (operandType == SurtrValueTypeCode.Float)
             {
                 return comparison switch
                 {
-                    SurtrComparison.Equal => (OpCode.JPFEQ, OpCode.JPFEQX),
-                    SurtrComparison.NotEqual => (OpCode.JPFNE, OpCode.JPFNEX),
-                    SurtrComparison.Greater => (OpCode.JPFGT, OpCode.JPFGTX),
-                    SurtrComparison.GreaterOrEqual => (OpCode.JPFGE, OpCode.JPFGEX),
-                    SurtrComparison.Less => (OpCode.JPFLT, OpCode.JPFLTX),
-                    SurtrComparison.LessOrEqual => (OpCode.JPFLE, OpCode.JPFLEX),
+                    SurtrComparison.Equal => OpCode.JPFEQ,
+                    SurtrComparison.NotEqual => OpCode.JPFNE,
+                    SurtrComparison.Greater => OpCode.JPFGT,
+                    SurtrComparison.GreaterOrEqual => OpCode.JPFGE,
+                    SurtrComparison.Less => OpCode.JPFLT,
+                    SurtrComparison.LessOrEqual => OpCode.JPFLE,
                     _ => throw UnknownComparison(comparison),
                 };
             }
@@ -441,8 +440,8 @@ namespace Surtr.Bytecode.Emit
             {
                 return comparison switch
                 {
-                    SurtrComparison.Equal => (OpCode.JPStrEQ, OpCode.JPStrEQX),
-                    SurtrComparison.NotEqual => (OpCode.JPStrNE, OpCode.JPStrNEX),
+                    SurtrComparison.Equal => OpCode.JPStrEQ,
+                    SurtrComparison.NotEqual => OpCode.JPStrNE,
                     _ => throw NoOrdering(comparison, operandType),
                 };
             }
@@ -451,8 +450,8 @@ namespace Surtr.Bytecode.Emit
             {
                 return comparison switch
                 {
-                    SurtrComparison.Equal => (OpCode.JPREQ, OpCode.JPREQX),
-                    SurtrComparison.NotEqual => (OpCode.JPRNE, OpCode.JPRNEX),
+                    SurtrComparison.Equal => OpCode.JPREQ,
+                    SurtrComparison.NotEqual => OpCode.JPRNE,
                     _ => throw NoOrdering(comparison, operandType),
                 };
             }
@@ -462,12 +461,12 @@ namespace Surtr.Bytecode.Emit
 
             return comparison switch
             {
-                SurtrComparison.Equal => (OpCode.JPEQ, OpCode.JPEQX),
-                SurtrComparison.NotEqual => (OpCode.JPNE, OpCode.JPNEX),
-                SurtrComparison.Greater => (OpCode.JPGT, OpCode.JPGTX),
-                SurtrComparison.GreaterOrEqual => (OpCode.JPGE, OpCode.JPGEX),
-                SurtrComparison.Less => (OpCode.JPLT, OpCode.JPLTX),
-                SurtrComparison.LessOrEqual => (OpCode.JPLE, OpCode.JPLEX),
+                SurtrComparison.Equal => OpCode.JPEQ,
+                SurtrComparison.NotEqual => OpCode.JPNE,
+                SurtrComparison.Greater => OpCode.JPGT,
+                SurtrComparison.GreaterOrEqual => OpCode.JPGE,
+                SurtrComparison.Less => OpCode.JPLT,
+                SurtrComparison.LessOrEqual => OpCode.JPLE,
                 _ => throw UnknownComparison(comparison),
             };
         }
@@ -546,23 +545,23 @@ namespace Surtr.Bytecode.Emit
 
         /// <summary>Branches unconditionally.</summary>
         public SurtrCodeEmitter Jump(SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
-            => Branch(OpCode.JP, OpCode.JPX, target, 0, width, true);
+            => Branch(OpCode.JP, target, 0, width, true);
 
         /// <summary>Pops a condition and branches when it is false.</summary>
         public SurtrCodeEmitter JumpIfFalse(SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
-            => Branch(OpCode.JPZ, OpCode.JPZX, target, 1, width, false);
+            => Branch(OpCode.JPZ, target, 1, width, false);
 
         /// <summary>Pops a condition and branches when it is true.</summary>
         public SurtrCodeEmitter JumpIfTrue(SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
-            => Branch(OpCode.JPNZ, OpCode.JPNZX, target, 1, width, false);
+            => Branch(OpCode.JPNZ, target, 1, width, false);
 
         /// <summary>Pops a value and branches when it is the null reference.</summary>
         public SurtrCodeEmitter JumpIfNull(SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
-            => Branch(OpCode.JPN, OpCode.JPNX, target, 1, width, false);
+            => Branch(OpCode.JPN, target, 1, width, false);
 
         /// <summary>Pops a value and branches when it is a non-null reference.</summary>
         public SurtrCodeEmitter JumpIfNotNull(SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
-            => Branch(OpCode.JPNN, OpCode.JPNNX, target, 1, width, false);
+            => Branch(OpCode.JPNN, target, 1, width, false);
 
         /// <summary>Pops a value and branches when it is an instance of <paramref name="type"/>.</summary>
         public SurtrCodeEmitter JumpIfInstanceOf(SurtrTypeToken type, SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)

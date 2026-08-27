@@ -83,9 +83,6 @@ namespace Surtr.Bytecode.Emit
             /// <summary>The opcode as currently emitted.</summary>
             public OpCode Current;
 
-            /// <summary>The form to rewrite into when the short offset does not reach.</summary>
-            public OpCode Wide;
-
             /// <summary>Width of the type index preceding the offset, or 0 when there is none.</summary>
             public int TypeOperandWidth;
 
@@ -445,12 +442,29 @@ namespace Surtr.Bytecode.Emit
             return this;
         }
 
-        /// <summary>An opcode followed by one 4-byte index.</summary>
+        /// <summary>An opcode followed by one 4-byte immediate.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private SurtrCodeEmitter WithI32(OpCode op, int value, int pop, int push)
         {
             ThrowIfFinished();
             Track(pop, push);
+            _code.Add((byte)op);
+            AppendI32(_code, value);
+            return this;
+        }
+
+        /// <summary>The <see cref="OpCode.Wide"/> prefix, an opcode, and one 4-byte index.</summary>
+        /// <remarks>
+        /// The widened form of an index-carrying instruction is the prefix plus the ordinary
+        /// opcode, not an opcode of its own: 39 <c>*X</c> values went back to the pool that way.
+        /// See <see cref="OpCode.Wide"/>.
+        /// </remarks>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private SurtrCodeEmitter WideWithI32(OpCode op, int value, int pop, int push)
+        {
+            ThrowIfFinished();
+            Track(pop, push);
+            _code.Add((byte)OpCode.Wide);
             _code.Add((byte)op);
             AppendI32(_code, value);
             return this;
@@ -477,7 +491,7 @@ namespace Surtr.Bytecode.Emit
         /// Emits a branch whose offset is measured from the byte after it, in whichever width
         /// <paramref name="width"/> asks for.
         /// </summary>
-        private SurtrCodeEmitter Branch(OpCode shortOp, OpCode wideOp, SurtrLabel label, int pop, SurtrJumpWidth width, bool endsFlow)
+        private SurtrCodeEmitter Branch(OpCode op, SurtrLabel label, int pop, SurtrJumpWidth width, bool endsFlow)
         {
             ThrowIfFinished();
 
@@ -490,7 +504,13 @@ namespace Surtr.Bytecode.Emit
             bool wide = width == SurtrJumpWidth.Wide;
             int start = _code.Count;
 
-            _code.Add((byte)(wide ? wideOp : shortOp));
+            // The wide form is the same opcode behind the Wide prefix, not a value of its own -
+            // see OpCode.Wide. That makes the instruction two bytes of header instead of one,
+            // which is the only thing the offset position and the relaxation have to know.
+            if (wide)
+                _code.Add((byte)OpCode.Wide);
+
+            _code.Add((byte)op);
 
             var patch = new JumpPatch
             {
@@ -498,8 +518,7 @@ namespace Surtr.Bytecode.Emit
                 OperandPosition = _code.Count,
                 Width = wide ? 4 : 2,
                 Label = id,
-                Current = wide ? wideOp : shortOp,
-                Wide = wideOp,
+                Current = op,
                 TypeOperandWidth = 0,
                 RelativeToInstruction = false,
                 Pinned = width != SurtrJumpWidth.Auto,
@@ -569,7 +588,6 @@ namespace Surtr.Bytecode.Emit
                 Width = wide ? 4 : 2,
                 Label = id,
                 Current = OpCode.Ext,
-                Wide = OpCode.Ext,
                 TypeOperandWidth = 0,
                 RelativeToInstruction = false,
                 IsExtended = true,
@@ -605,7 +623,10 @@ namespace Surtr.Bytecode.Emit
             bool wide = width == SurtrJumpWidth.Wide || typeIndex > ushort.MaxValue;
             int start = _code.Count;
 
-            _code.Add((byte)(wide ? OpCode.JPInstanceOfX : OpCode.JPInstanceOf));
+            if (wide)
+                _code.Add((byte)OpCode.Wide);
+
+            _code.Add((byte)OpCode.JPInstanceOf);
 
             if (wide)
                 AppendI32(_code, typeIndex);
@@ -621,8 +642,7 @@ namespace Surtr.Bytecode.Emit
                 OperandPosition = _code.Count,
                 Width = wide ? 4 : 2,
                 Label = id,
-                Current = wide ? OpCode.JPInstanceOfX : OpCode.JPInstanceOf,
-                Wide = OpCode.JPInstanceOfX,
+                Current = OpCode.JPInstanceOf,
                 TypeOperandWidth = wide ? 4 : 2,
                 RelativeToInstruction = false,
                 Pinned = width != SurtrJumpWidth.Auto,
@@ -655,7 +675,6 @@ namespace Surtr.Bytecode.Emit
                 Width = 4,
                 Label = id,
                 Current = OpCode.Nop,
-                Wide = OpCode.Nop,
                 TypeOperandWidth = 0,
                 RelativeToInstruction = true,
                 Pinned = true,
@@ -804,7 +823,10 @@ namespace Surtr.Bytecode.Emit
                     }
                     else
                     {
-                        rewritten.Add((byte)patch.Wide);
+                        // The wide form is the prefix plus the same opcode: two header bytes where
+                        // there was one, which is the whole of what widening rewrites.
+                        rewritten.Add((byte)OpCode.Wide);
+                        rewritten.Add((byte)patch.Current);
 
                         if (patch.TypeOperandWidth == 2)
                         {
@@ -839,14 +861,15 @@ namespace Surtr.Bytecode.Emit
                 if (patch.Widening)
                 {
                     patch.Widening = false;
-                    patch.Current = patch.Wide;
                     patch.CurrentSub = patch.WideSub;
                     patch.Width = 4;
 
                     if (patch.TypeOperandWidth == 2)
                         patch.TypeOperandWidth = 4;
 
-                    patch.OperandPosition = patch.InstructionStart + 1 + patch.TypeOperandWidth;
+                    // Two header bytes either way now: Ext plus a sub-opcode, or Wide plus the
+                    // opcode this branch already was.
+                    patch.OperandPosition = patch.InstructionStart + 2 + patch.TypeOperandWidth;
                 }
                 else
                 {

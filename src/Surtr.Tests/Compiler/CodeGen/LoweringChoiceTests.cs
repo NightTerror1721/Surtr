@@ -428,11 +428,18 @@ namespace Surtr.Tests.Compiler.CodeGen
 
         #region Counted loops
 
+        /// <remarks>
+        /// The increment is deliberately not the loop's last statement. Where it is, the whole
+        /// loop takes the fused counted step instead and there is no <c>IncLocal</c> left to see -
+        /// which <c>LoopFusionTests</c> covers. What this pins is the narrower choice: an
+        /// increment written as a statement updates its slot in place rather than going out to the
+        /// operand stack and back.
+        /// </remarks>
         [Fact]
         public void AnIncrementInStatementPositionUpdatesTheLocalInPlace()
         {
             string code = Disassemble(
-                "fun run(): int { var i: int = 0; while (i < 10) { i = i + 1; } return i; }");
+                "fun run(): int { var i: int = 0; var t = 0; while (i < 10) { i = i + 1; t = t + i; } return t; }");
 
             Assert.Equal(1, Count(code, "IncLocal"));
         }

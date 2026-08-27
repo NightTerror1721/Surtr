@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Runtime;
@@ -55,7 +55,7 @@ namespace Surtr.Tests.VM
 
             builder
                 .Op(OpCode.PushI32).I32(100)
-                .Op(OpCode.NewClosureX).I32(methodIndex).U8(1)
+                .Op(OpCode.Wide).Op(OpCode.NewClosure).I32(methodIndex).U8(1)
                 .Op(OpCode.PushI32).I32(1)
                 .Op(OpCode.InvokeClosure).U8(1).U8(1)
                 .Op(OpCode.ReturnValue);
@@ -153,7 +153,7 @@ namespace Surtr.Tests.VM
             int methodIndex = builder.AddMethod(target);
 
             builder
-                .Op(OpCode.NewFunctionX).I32(methodIndex)
+                .Op(OpCode.Wide).Op(OpCode.NewFunction).I32(methodIndex)
                 .Op(OpCode.InvokeClosure).U8(0).U8(1)
                 .Op(OpCode.ReturnValue);
 

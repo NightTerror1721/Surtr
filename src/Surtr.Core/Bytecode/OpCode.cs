@@ -247,12 +247,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         Ldc = 0x16,
 
-        /// <summary>Loads a constant using a 4-byte index, for pools larger than 65536 entries.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) constIdx(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>... -&gt; ..., value</c>
-        /// </remarks>
-        LdcX = 0x17,
         #endregion
 
         #region Local Variables
@@ -417,13 +411,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         StaticFieldGet = 0x2B,
 
-        /// <summary>Reads a static field using a 4-byte field index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) fieldIdx(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>... -&gt; ..., value</c>
-        /// </remarks>
-        StaticFieldGetX = 0x2C,
-
         /// <summary>Writes a static field, or a module-level variable.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) fieldIdx(2)</c> - 3 bytes.<br/>
@@ -433,12 +420,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         StaticFieldSet = 0x2D,
 
-        /// <summary>Writes a static field using a 4-byte field index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) fieldIdx(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., value -&gt; ...</c>
-        /// </remarks>
-        StaticFieldSetX = 0x2E,
         #endregion
 
         #region Upvalue Operations
@@ -1030,13 +1011,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         BoxAs = 0x70,
 
-        /// <summary>Boxes as a named class, with a 4-byte type index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) typeIdx(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a -&gt; ..., ref</c>
-        /// </remarks>
-        BoxAsX = 0x71,
-
         /// <summary>Unwraps a boxed value back to its inline representation.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
@@ -1415,13 +1389,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         InstanceOf = 0x97,
 
-        /// <summary>Tests instance-of using a 4-byte type index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) typeIdx(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a -&gt; ..., bool</c>
-        /// </remarks>
-        InstanceOfX = 0x98,
-
         /// <summary>Casts the top value to the type at <c>typeIdx</c>.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) typeIdx(2)</c> - 3 bytes.<br/>
@@ -1431,13 +1398,6 @@ namespace Surtr.Bytecode
         /// non-throwing form is <see cref="CastOrNull"/>.
         /// </remarks>
         Cast = 0x99,
-
-        /// <summary>Casts using a 4-byte type index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) typeIdx(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a -&gt; ..., a</c>
-        /// </remarks>
-        CastX = 0x9A,
 
         /// <summary>Keeps the top value if it is an instance of the type at <c>typeIdx</c>, and replaces it with null otherwise.</summary>
         /// <remarks>
@@ -1452,13 +1412,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         CastOrNull = 0x9B,
 
-        /// <summary>Casts or yields null, with a 4-byte type index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) typeIdx(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a -&gt; ..., a | null</c>
-        /// </remarks>
-        CastOrNullX = 0x9C,
-
         /// <summary>Pushes the <c>Type</c> value for the compile-time-known type at <c>typeIdx</c>.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) typeIdx(2)</c> - 3 bytes.<br/>
@@ -1472,13 +1425,6 @@ namespace Surtr.Bytecode
         /// entity every call.
         /// </remarks>
         LoadType = 0x9D,
-
-        /// <summary>Loads the compile-time-known type's <c>Type</c> value, with a 4-byte type index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) typeIdx(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>... -&gt; ..., type</c>
-        /// </remarks>
-        LoadTypeX = 0x9E,
 
         /// <summary>Reads the class of the value on top of the stack and pushes its <c>Type</c>.</summary>
         /// <remarks>
@@ -1512,13 +1458,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         LoadModule = 0xA0,
 
-        /// <summary>Loads another module's <c>Module</c> value, with a 4-byte module index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) moduleIdx(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>... -&gt; ..., module</c>
-        /// </remarks>
-        LoadModuleX = 0xA1,
-
         /// <summary>Pushes the <c>Module</c> value for the module this frame's chunk belongs to.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1)</c> - 1 byte.<br/>
@@ -1543,12 +1482,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         ObjNew = 0xA3,
 
-        /// <summary>Allocates an instance using a 4-byte type index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) typeIdx(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>... -&gt; ..., obj</c>
-        /// </remarks>
-        ObjNewX = 0xA4,
         #endregion
 
         #region Control Flow Operations
@@ -1560,13 +1493,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         JP = 0xA5,
 
-        /// <summary>Branches unconditionally, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>... -&gt; ...</c>
-        /// </remarks>
-        JPX = 0xA6,
-
         /// <summary>Branches if the popped condition is false.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
@@ -1576,26 +1502,12 @@ namespace Surtr.Bytecode
         /// </remarks>
         JPZ = 0xA7,
 
-        /// <summary>Branches if the popped condition is false, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., cond -&gt; ...</c>
-        /// </remarks>
-        JPZX = 0xA8,
-
         /// <summary>Branches if the popped condition is true.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
         /// Stack: <c>..., cond -&gt; ...</c>
         /// </remarks>
         JPNZ = 0xA9,
-
-        /// <summary>Branches if the popped condition is true, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., cond -&gt; ...</c>
-        /// </remarks>
-        JPNZX = 0xAA,
 
         /// <summary>Branches if the popped value is the null reference.</summary>
         /// <remarks>
@@ -1604,26 +1516,12 @@ namespace Surtr.Bytecode
         /// </remarks>
         JPN = 0xAB,
 
-        /// <summary>Branches if the popped value is null, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., value -&gt; ...</c>
-        /// </remarks>
-        JPNX = 0xAC,
-
         /// <summary>Branches if the popped value is a non-null reference.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
         /// Stack: <c>..., value -&gt; ...</c>
         /// </remarks>
         JPNN = 0xAD,
-
-        /// <summary>Branches if the popped value is non-null, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., value -&gt; ...</c>
-        /// </remarks>
-        JPNNX = 0xAE,
 
         /// <summary>Pops a value and branches if it is an absent primitive.</summary>
         /// <remarks>
@@ -1633,26 +1531,12 @@ namespace Surtr.Bytecode
         /// </remarks>
         JPA = 0xAF,
 
-        /// <summary>Pops a value and branches if it is an absent primitive, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a -&gt; ...</c>
-        /// </remarks>
-        JPAX = 0xB0,
-
         /// <summary>Pops a value and branches if it is a present primitive.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
         /// Stack: <c>..., a -&gt; ...</c>
         /// </remarks>
         JPNA = 0xB1,
-
-        /// <summary>Pops a value and branches if it is a present primitive, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a -&gt; ...</c>
-        /// </remarks>
-        JPNAX = 0xB2,
 
         /// <summary>Branches if the two popped integers are equal.</summary>
         /// <remarks>
@@ -1663,26 +1547,12 @@ namespace Surtr.Bytecode
         /// </remarks>
         JPEQ = 0xB3,
 
-        /// <summary>Branches if the two popped integers are equal, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPEQX = 0xB4,
-
         /// <summary>Branches if the two popped integers differ.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
         /// Stack: <c>..., a, b -&gt; ...</c>
         /// </remarks>
         JPNE = 0xB5,
-
-        /// <summary>Branches if the two popped integers differ, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPNEX = 0xB6,
 
         /// <summary>Branches if the deeper popped integer is greater than the top one.</summary>
         /// <remarks>
@@ -1692,26 +1562,12 @@ namespace Surtr.Bytecode
         /// </remarks>
         JPGT = 0xB7,
 
-        /// <summary>Branches on integer greater-than, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPGTX = 0xB8,
-
         /// <summary>Branches if the deeper popped integer is greater than or equal to the top one.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
         /// Stack: <c>..., a, b -&gt; ...</c>
         /// </remarks>
         JPGE = 0xB9,
-
-        /// <summary>Branches on integer greater-or-equal, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPGEX = 0xBA,
 
         /// <summary>Branches if the deeper popped integer is less than the top one.</summary>
         /// <remarks>
@@ -1720,26 +1576,12 @@ namespace Surtr.Bytecode
         /// </remarks>
         JPLT = 0xBB,
 
-        /// <summary>Branches on integer less-than, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPLTX = 0xBC,
-
         /// <summary>Branches if the deeper popped integer is less than or equal to the top one.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
         /// Stack: <c>..., a, b -&gt; ...</c>
         /// </remarks>
         JPLE = 0xBD,
-
-        /// <summary>Branches on integer less-or-equal, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPLEX = 0xBE,
 
         /// <summary>Branches if the two popped floats are equal.</summary>
         /// <remarks>
@@ -1749,13 +1591,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         JPFEQ = 0xBF,
 
-        /// <summary>Branches if the two popped floats are equal, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPFEQX = 0xC0,
-
         /// <summary>Branches if the two popped floats differ.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
@@ -1763,13 +1598,6 @@ namespace Surtr.Bytecode
         /// Notes: always taken when either operand is NaN.
         /// </remarks>
         JPFNE = 0xC1,
-
-        /// <summary>Branches if the two popped floats differ, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPFNEX = 0xC2,
 
         /// <summary>Branches if the deeper popped float is greater than the top one.</summary>
         /// <remarks>
@@ -1779,13 +1607,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         JPFGT = 0xC3,
 
-        /// <summary>Branches on float greater-than, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPFGTX = 0xC4,
-
         /// <summary>Branches if the deeper popped float is greater than or equal to the top one.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
@@ -1793,13 +1614,6 @@ namespace Surtr.Bytecode
         /// Notes: never taken when either operand is NaN.
         /// </remarks>
         JPFGE = 0xC5,
-
-        /// <summary>Branches on float greater-or-equal, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPFGEX = 0xC6,
 
         /// <summary>Branches if the deeper popped float is less than the top one.</summary>
         /// <remarks>
@@ -1809,13 +1623,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         JPFLT = 0xC7,
 
-        /// <summary>Branches on float less-than, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPFLTX = 0xC8,
-
         /// <summary>Branches if the deeper popped float is less than or equal to the top one.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
@@ -1824,26 +1631,12 @@ namespace Surtr.Bytecode
         /// </remarks>
         JPFLE = 0xC9,
 
-        /// <summary>Branches on float less-or-equal, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPFLEX = 0xCA,
-
         /// <summary>Branches if the two popped references are identical.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
         /// Stack: <c>..., a, b -&gt; ...</c>
         /// </remarks>
         JPREQ = 0xCB,
-
-        /// <summary>Branches if the two popped references are identical, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPREQX = 0xCC,
 
         /// <summary>Branches if the two popped references are not identical.</summary>
         /// <remarks>
@@ -1852,13 +1645,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         JPRNE = 0xCD,
 
-        /// <summary>Branches if the two popped references are not identical, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPRNEX = 0xCE,
-
         /// <summary>Branches if the two popped strings hold the same text.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
@@ -1866,26 +1652,12 @@ namespace Surtr.Bytecode
         /// </remarks>
         JPStrEQ = 0xCF,
 
-        /// <summary>Branches if the two popped strings hold the same text, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPStrEQX = 0xD0,
-
         /// <summary>Branches if the two popped strings hold different text.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) relativeOffset(2)</c> - 3 bytes.<br/>
         /// Stack: <c>..., a, b -&gt; ...</c>
         /// </remarks>
         JPStrNE = 0xD1,
-
-        /// <summary>Branches if the two popped strings hold different text, with a 4-byte offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) relativeOffset(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>..., a, b -&gt; ...</c>
-        /// </remarks>
-        JPStrNEX = 0xD2,
 
         /// <summary>Branches if the popped value is an instance of the type at <c>typeIdx</c>.</summary>
         /// <remarks>
@@ -1895,13 +1667,6 @@ namespace Surtr.Bytecode
         /// Fuses <see cref="InstanceOf"/> with a branch, which is the shape a type switch compiles to.
         /// </remarks>
         JPInstanceOf = 0xD3,
-
-        /// <summary>Branches on instance-of, with 4-byte type index and offset.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) typeIdx(4) relativeOffset(4)</c> - 9 bytes.<br/>
-        /// Stack: <c>..., value -&gt; ...</c>
-        /// </remarks>
-        JPInstanceOfX = 0xD4,
 
         /// <summary>Branches through a jump table indexed by a contiguous range of integers.</summary>
         /// <remarks>
@@ -1944,13 +1709,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         CallLocalModule = 0xD7,
 
-        /// <summary>Calls a function in the current module, with a 4-byte function index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) functionIdx(4) argsCount(1) retCount(1)</c> - 7 bytes.<br/>
-        /// Stack: <c>..., a1, ..., aN -&gt; ..., result?</c>
-        /// </remarks>
-        CallLocalModuleX = 0xD8,
-
         /// <summary>Calls a module-level function in another module.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) moduleIdx(2) functionIdx(2) argsCount(1) retCount(1)</c> - 7 bytes.<br/>
@@ -1958,14 +1716,6 @@ namespace Surtr.Bytecode
         /// Notes: the target module must already be loaded and linked.
         /// </remarks>
         CallModule = 0xD9,
-
-        /// <summary>Calls a function in another module, with 4-byte module and function indices.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) moduleIdx(4) functionIdx(4) argsCount(1) retCount(1)</c> - 11 bytes.<br/>
-        /// Stack: <c>..., a1, ..., aN -&gt; ..., result?</c><br/>
-        /// Notes: the longest instruction in the set.
-        /// </remarks>
-        CallModuleX = 0xDA,
 
         /// <summary>Invokes an instance method through the receiver's virtual method table.</summary>
         /// <remarks>
@@ -1996,13 +1746,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         InvokeStatic = 0xDD,
 
-        /// <summary>Invokes a static method, with a 4-byte method index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) methodIdx(4) argsCount(1) retCount(1)</c> - 7 bytes.<br/>
-        /// Stack: <c>..., a1, ..., aN -&gt; ..., result?</c>
-        /// </remarks>
-        InvokeStaticX = 0xDE,
-
         /// <summary>Invokes a method through an interface contract.</summary>
         /// <remarks>
         /// Encoding: <c>opcode(1) methodIdx(2) argsCount(1) retCount(1)</c> - 5 bytes.<br/>
@@ -2030,12 +1773,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         NewClosure = 0xE1,
 
-        /// <summary>Builds a closure using a 4-byte function index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) functionIdx(4) upvaluesCount(1)</c> - 6 bytes.<br/>
-        /// Stack: <c>..., u1, ..., uN -&gt; ..., closure</c>
-        /// </remarks>
-        NewClosureX = 0xE2,
         #endregion
 
         #region Function Operations
@@ -2056,12 +1793,6 @@ namespace Surtr.Bytecode
         /// </remarks>
         NewFunction = 0xE3,
 
-        /// <summary>Builds a canonical function value using a 4-byte function index.</summary>
-        /// <remarks>
-        /// Encoding: <c>opcode(1) functionIdx(4)</c> - 5 bytes.<br/>
-        /// Stack: <c>... -&gt; ..., ref</c>
-        /// </remarks>
-        NewFunctionX = 0xE4,
         #endregion
 
         #region Return Operations
@@ -2226,6 +1957,23 @@ namespace Surtr.Bytecode
         #endregion
 
         #region Extension
+
+        /// <summary>Prefix: reads the next instruction's index or offset as four bytes.</summary>
+        /// <remarks>
+        /// Encoding: <c>opcode(1) opcode(1) ...</c> - the prefixed instruction's own encoding
+        /// follows, with its single index or offset immediate four bytes wide instead of two.<br/>
+        /// Stack: whatever the prefixed instruction does.<br/>
+        /// Notes: a prefix, not an instruction - it never appears alone and has no stack effect of
+        /// its own. It replaces the thirty-nine <c>*X</c> twins that used to spell each widened
+        /// form as its own value, which cost 39 of the 256 primary values and 7 KB of
+        /// <c>Run()</c> for instructions that never executed once across the whole benchmark suite
+        /// (docs/Informe-Opcodes-Layout.md §6). Only the emitter's own relaxation writes one: an
+        /// offset that a method body past 32 KB pushes out of a signed 16-bit range, or an index
+        /// into a module with more than 65 535 constants, types, fields, methods or modules.
+        /// <see cref="ArrNewX"/> is deliberately not one of the forms this covers - it is a
+        /// different addressing mode, not a widened <see cref="ArrNew"/>.
+        /// </remarks>
+        Wide = 0xF0,
 
         /// <summary>Prefix: the next byte is a <see cref="SurtrExtOpCode"/>.</summary>
         /// <remarks>

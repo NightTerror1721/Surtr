@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Bytecode.Emit;
@@ -536,7 +536,8 @@ namespace Surtr.Tests.Bytecode.Emit
             var module = builder.Build();
             runtime.LoadModule(module);
 
-            Assert.Equal(OpCode.JPX, (OpCode)module.Chunk.Code[far.Built!.CodeOffset]);
+            Assert.Equal(OpCode.Wide, (OpCode)module.Chunk.Code[far.Built!.CodeOffset]);
+            Assert.Equal(OpCode.JP, (OpCode)module.Chunk.Code[far.Built!.CodeOffset + 1]);
             Assert.Equal(7, runtime.Invoke(far.Built!).AsInt);
         }
 
@@ -593,7 +594,8 @@ namespace Surtr.Tests.Bytecode.Emit
             var module = builder.Build();
             runtime.LoadModule(module);
 
-            Assert.Equal(OpCode.JPAX, (OpCode)module.Chunk.Code[far.Built!.CodeOffset + 2]);
+            Assert.Equal(OpCode.Wide, (OpCode)module.Chunk.Code[far.Built!.CodeOffset + 2]);
+            Assert.Equal(OpCode.JPA, (OpCode)module.Chunk.Code[far.Built!.CodeOffset + 3]);
             Assert.Equal(7, runtime.Invoke(far.Built!).AsInt);
         }
 

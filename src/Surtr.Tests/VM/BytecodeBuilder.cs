@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Runtime.Classes;
@@ -113,6 +113,7 @@ namespace Surtr.Tests.VM
         /// <summary>The <c>X</c>-suffixed, 4-byte-offset form of <see cref="JumpShort"/>.</summary>
         public BytecodeBuilder JumpWide(OpCode op, int label)
         {
+            Op(OpCode.Wide);
             Op(op);
             int position = _code.Count;
             I32(0);
@@ -134,10 +135,11 @@ namespace Surtr.Tests.VM
             return this;
         }
 
-        /// <summary>The <c>X</c>-suffixed, 4-byte form of <see cref="JumpShortInstanceOf"/>.</summary>
+        /// <summary>The 4-byte form of <see cref="JumpShortInstanceOf"/>, behind <see cref="OpCode.Wide"/>.</summary>
         public BytecodeBuilder JumpWideInstanceOf(int typeIndex, int label)
         {
-            Op(OpCode.JPInstanceOfX);
+            Op(OpCode.Wide);
+            Op(OpCode.JPInstanceOf);
             I32(typeIndex);
             int position = _code.Count;
             I32(0);

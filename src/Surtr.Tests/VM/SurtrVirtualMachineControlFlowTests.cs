@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Runtime;
@@ -105,7 +105,7 @@ namespace Surtr.Tests.VM
             int taken = builder.NewLabel();
             builder
                 .Op(OpCode.PushI32).I32(0)
-                .JumpWide(OpCode.JPZX, taken)
+                .JumpWide(OpCode.JPZ, taken)
                 .Op(OpCode.PushI32).I32(0).Op(OpCode.ReturnValue)
                 .MarkLabel(taken)
                 .Op(OpCode.PushI32).I32(1).Op(OpCode.ReturnValue);
@@ -119,7 +119,7 @@ namespace Surtr.Tests.VM
             var builder = new BytecodeBuilder();
             int target = builder.NewLabel();
             builder
-                .JumpWide(OpCode.JPX, target)
+                .JumpWide(OpCode.JP, target)
                 .Op(OpCode.PushI32).I32(0).Op(OpCode.ReturnValue)
                 .MarkLabel(target)
                 .Op(OpCode.PushI32).I32(9).Op(OpCode.ReturnValue);
@@ -153,7 +153,7 @@ namespace Surtr.Tests.VM
             int taken = builder.NewLabel();
             builder
                 .Op(OpCode.PushI32).I32(5).Op(OpCode.PushI32).I32(5)
-                .JumpWide(OpCode.JPEQX, taken)
+                .JumpWide(OpCode.JPEQ, taken)
                 .Op(OpCode.PushI32).I32(0).Op(OpCode.ReturnValue)
                 .MarkLabel(taken)
                 .Op(OpCode.PushI32).I32(1).Op(OpCode.ReturnValue);
@@ -286,7 +286,7 @@ namespace Surtr.Tests.VM
             int taken = builder.NewLabel();
             builder
                 .Op(OpCode.PushI32).I32(6).Op(OpCode.PushI32).I32(5)
-                .JumpWide(OpCode.JPGTX, taken)
+                .JumpWide(OpCode.JPGT, taken)
                 .Op(OpCode.PushI32).I32(0).Op(OpCode.ReturnValue)
                 .MarkLabel(taken)
                 .Op(OpCode.PushI32).I32(1).Op(OpCode.ReturnValue);

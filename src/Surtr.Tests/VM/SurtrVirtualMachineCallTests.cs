@@ -72,8 +72,8 @@ namespace Surtr.Tests.VM
         }
 
         [Theory]
-        [InlineData(OpCode.CallLocalModuleX)]
-        [InlineData(OpCode.InvokeStaticX)]
+        [InlineData(OpCode.CallLocalModule)]
+        [InlineData(OpCode.InvokeStatic)]
         public void FourByteMethodTableCall_InvokesTheTargetMethod(OpCode op)
         {
             using var runtime = new SurtrRuntime();
@@ -83,7 +83,7 @@ namespace Surtr.Tests.VM
             var builder = new BytecodeBuilder();
             int methodIndex = builder.AddMethod(callee);
 
-            builder.Op(op).I32(methodIndex).U8(0).U8(1).Op(OpCode.ReturnValue);
+            builder.Op(OpCode.Wide).Op(op).I32(methodIndex).U8(0).U8(1).Op(OpCode.ReturnValue);
 
             var caller = builder.Build(callerModule, localCount: 0, maxStackSize: 4);
             Assert.Equal(88, runtime.Invoke(caller).AsInt);
@@ -152,7 +152,7 @@ namespace Surtr.Tests.VM
             var builder = new BytecodeBuilder();
             int moduleIndex = builder.AddModule(calleeModule);
 
-            builder.Op(OpCode.CallModuleX).I32(moduleIndex).I32(0).U8(0).U8(1).Op(OpCode.ReturnValue);
+            builder.Op(OpCode.Wide).Op(OpCode.CallModule).I32(moduleIndex).I32(0).U8(0).U8(1).Op(OpCode.ReturnValue);
 
             var caller = builder.Build(callerModule, localCount: 0, maxStackSize: 4);
             Assert.Equal(66, runtime.Invoke(caller).AsInt);
