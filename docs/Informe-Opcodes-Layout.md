@@ -134,11 +134,14 @@ calor (simulación exacta, sumando los tamaños medidos en el orden nuevo):
 La lectura correcta de esta tabla no es "ahorramos 1 KB de L1i" — 3,6 KB caben de sobra en una L1i
 de 32 K. Es **la cuenta de páginas** (6 → 1 para el 90 % del calor, que es presión de iTLB y del
 prefetcher) y **la densidad del caché de µops**, que se indexa por ventanas de código y penaliza
-exactamente esto: 2,5 KB útiles esparcidos por 29 KB. Es también la explicación más plausible de la
-bimodalidad de ±20-45 % documentada en `docs/Informe-Volatilidad-Run.md` §1: con el código caliente
-tan disperso, el estado en que cae un proceso depende de alineaciones que cambian al mover
-cualquier cosa. **Compactar el camino caliente no sólo debería ser más rápido: debería ser menos
-volátil**, y eso es tan valioso como la media.
+exactamente esto: 2,5 KB útiles esparcidos por 29 KB.
+
+> **Corregido tras medir (§7.5).** Este informe conjeturaba aquí que la dispersión era también la
+> explicación de la bimodalidad de ±20-45 % de `docs/Informe-Volatilidad-Run.md` §1, y que
+> compactar el camino caliente la reduciría. **No lo hace.** El A/B contra `ceabd65` marca los
+> mismos trece casos como bimodales en los dos lados. La conjetura no se sostiene y queda retirada:
+> la bimodalidad vive en el predictor del salto indirecto y en la dirección absoluta que el ASLR
+> re-tira por proceso, no en cuánto ocupa el camino caliente.
 
 ### 3.1 El defecto que ninguna reordenación de `case` arregla
 
@@ -459,10 +462,17 @@ sea un `int` en una ranura direccionable con un byte.
 ```
 antes:  top: Ldl i · PushI8 10 · JPGE end · <cuerpo> · IncLocal i · JP top     9 despachos/iter
 ahora:       Ldl i · Ldl lim · JPGE end                                        (una vez)
-        top: <cuerpo> · ForRangeNextLT i lim -> top                            5 despachos/iter
+        top: <cuerpo> · Ext ForRangeNextLT i lim -> top                        5 despachos/iter
 ```
 
-El overhead del bucle pasa de **5 despachos a 1**. Cubierto por catorce tests nuevos en
+El overhead del bucle pasa de cinco instrucciones a **una** — pero de cinco despachos a **dos**,
+no a uno: `ForRangeNext` vive tras el prefijo `Ext`, y el prefijo es un despacho propio. Medido en
+el recuento de calor de §8: las 750 000 iteraciones que la suite fusiona pierden `IncLocal`, `JP`,
+`JPGE` y dos cargas de local (−3 750 000 despachos) y ganan `Ext` mas `ForRangeNextLT`
+(+1 500 000). Es la mejor razon que hay para plegar el espacio extendido en el primario (§7.6):
+ese segundo despacho desapareceria de cada paso de cada bucle del lenguaje.
+
+Cubierto por catorce tests nuevos en
 `LoopFusionTests`: cada salida, el cuerpo que mueve el contador, el que mueve el limite, el `try`
 alrededor, y las cinco formas que la rechazan.
 
@@ -491,40 +501,200 @@ y ambas son etiquetas de este metodo. Sacarlos a un helper `NoInlining` con codi
 paso mas, y §5.2 ya midio lo que valdria en layout: **una linea de caché**. Lo que este paso si dio
 es el espacio de opcodes y el formato: 39 valores y una convencion de sufijo que ya no miente.
 
-### 7.5 Estado final
+### 7.5 Estado final, y que midio
 
-| | base (`ceabd65`) | ahora |
+| | base (`ceabd65`) | ahora (`a65c9c0`) |
 |---|---|---|
 | opcodes primarios | 240 | **203** |
 | `Run()` nativo | 39 983 B | 41 170 B |
 | dilucion del top-32 | 11,5x | **2,2x** |
-| paginas del top-32 | 6 | **2** |
+| paginas de 4 K del top-32 | 6 | **2** |
 | lineas de I-cache del top-32 | 57 | **40** |
 | camino lento en cuerpos calientes | 649 B | **309 B** |
-| overhead del `while` contado | 5 despachos/iter | **1** |
+| despachos primarios de la suite | 296 477 444 | **293 477 444** (−1,01 %) |
 | tests | 3 089 | **3 103** |
 | checksums del bench | 50/50 | **50/50** |
 
-`Run()` crecio 1,2 KB: el sub-switch del prefijo anade su propia tabla de saltos y algunos saltos
-se alargaron al separarse los destinos. Es el intercambio que §3 predice — el tamano total del
-metodo no es la magnitud que importa, la dispersion del camino caliente si.
+**Rendimiento: neutral.** `scripts/ab-suite.ps1 -RefA ceabd65 -RefB a65c9c0 -Runs 7`, 14
+lanzamientos intercalados sobre los 50 casos, metrica primaria el minimo por proceso (el estado
+rapido):
 
-**Nada de esto es todavia un resultado de rendimiento.** Cada uno de los cuatro pasos voltea el
-estado de layout que `docs/Informe-Volatilidad-Run.md` documenta, asi que la medida de velocidad
-tiene que venir de `scripts/ab-suite.ps1` con varios procesos por lado, contra `ceabd65`.
+```
+mediana del delta: 0 %     mejoran >5 %: 0     empeoran >5 %: 0
+```
+
+El único caso que asomó la cabeza — `generics` a +5,3 % — se re-midio solo, con 11 lanzamientos por
+lado y un control de C# de 0 %, y dio **+0,1 %**: era ruido. Los extremos reales del resto van de
+−3,3 % (`arrayFill`) a +2,4 % (`vec2Class`), dentro de la banda que el propio protocolo considera
+indistinguible.
+
+**Por que neutral, y por que era previsible.** Este informe ya decia (§3) que la magnitud en juego
+no era la L1i: 3,6 KB de camino caliente caben de sobra en 32 KB con cualquier disposicion. Lo que
+la compactacion ataca es la cuenta de paginas y la densidad del caché de µops, y una suite de
+microbenchmarks — un bucle apretado repetido un millon de veces, con todo residente desde la
+segunda iteracion — es justo el perfil que **no** ejerce ninguna de las dos. La dispersion se paga
+cuando el conjunto de trabajo recorre muchas familias de opcodes, que no es lo que mide esta suite.
+
+Lo que si movio la aguja de forma medible es lo contable: **−3 000 000 de despachos (−1,01 %)**,
+39 valores de opcode liberados, seis cuerpos calientes a la mitad de tamaño y la dilucion del
+camino caliente de 11,5x a 2,2x. Y lo que importa tanto como eso: **nada regresiono**. Cambiar el
+juego de 240 a 203 opcodes, reordenar el switch entero y meter un prefijo nuevo salio a coste cero.
 
 ### 7.6 Lo que sigue abierto
 
-- **Medir.** `ab-suite.ps1` contra `ceabd65`, y re-medir el calor por opcode: la fusion del `while`
-  cambia el reparto (`IncLocal`, `JP`, `JPGE` y `PushI32` pierden peso; `ForRangeNextLT` lo gana),
-  asi que la tabla de §8 y los niveles de la reordenacion querran recalcularse sobre la nueva foto.
-- **Plegar el espacio extendido en el primario.** Con 39 valores libres cabe, y quita el peaje del
-  prefijo (0,44–0,65 ns) de cada paso de bucle fusionado — que ahora es el camino de mas bucles que
-  antes, precisamente por 7.3. Es el siguiente bump de formato natural.
+- **Plegar el espacio extendido en el primario.** Es ahora la unica de las cuatro que tiene un
+  numero de rendimiento esperado y no medido: cada paso de bucle fusionado paga hoy **dos**
+  despachos, el prefijo `Ext` y el sub-opcode (§7.3), y plegarlo se lleva uno de los dos de todos
+  los bucles del lenguaje — no solo de los `while`. Con 39 valores libres cabe de sobra. Es el
+  siguiente bump de formato natural.
+- **Medir donde la dispersion si se paga.** La suite no ejerce ni el iTLB ni el caché de µops. Un
+  workload que recorra muchas familias, o el objetivo real (Mono/IL2CPP dentro de Unity, sin el
+  JIT de .NET), son los sitios donde el trabajo de §7.1 y §7.2 deberia aparecer. Hasta que se mida
+  ahi, lo honesto es decir que la compactacion salio neutral.
 - **Sacar los cuerpos anchos a un helper.** Vale ~8,8 KB de `Run()` y una linea de caché (§5.2).
 - **Renombrar `ArrNewX`.** Es el unico `X` primario que queda y significa otra cosa (§4.1).
 
-## 8. Tabla: los 241 cuerpos primarios por calor
+## 8. Calor recontado tras los cambios
+
+Mismo método que `docs/Informe-Opcodes-Eliminables.md`: un contador por opcode en la etiqueta
+`Dispatch`, mas dos contadores nuevos para los sub-opcodes tras `Ext` y tras `Wide`, sobre un
+worktree desechable y la suite completa con checksums verificados.
+
+**294 327 446 despachos** contando el sub-opcode de un prefijo aparte. Sobre lo que contaba el
+instrumento anterior — solo despachos primarios — son **293 477 444 contra 296 477 444, −1,01 %**.
+
+Todo el delta es la fusion del `while`, y cuadra exacto:
+
+| opcode | antes | ahora | delta |
+|---|---|---|---|
+| `LdlS` | 8 609 672 | 7 709 672 | −900 000 |
+| `JP` | 14 849 417 | 14 099 417 | −750 000 |
+| `JPGE` | 14 174 747 | 13 424 747 | −750 000 |
+| `IncLocal` | 13 342 584 | 12 592 584 | −750 000 |
+| `Ldl2` / `Ldl1` / `Ldl0` | | | −600 000 |
+| `Ext` | 100 002 | 850 002 | **+750 000** |
+| `ext:ForRangeNextLT` | — | 750 000 | **+750 000** |
+
+750 000 iteraciones tomaron el paso fusionado: −3 750 000 despachos por lo que dejan de emitir,
++1 500 000 por lo que emiten. Son pocas para esta suite — sus bucles contados son en su mayoria
+`for i in 0..n`, que ya fusionaba — asi que el −1 % es el suelo de lo que la fusion vale, no el
+techo: en codigo escrito con el idioma `while` el reparto es otro.
+
+**`Wide`: cero despachos.** El prefijo no se ejecuta ni una vez en toda la suite, que es
+exactamente lo que decia el analisis y lo que hace que los 39 valores liberados no le cuesten nada
+a nadie.
+
+El reparto apenas se movio: **33 opcodes cubren el 90 %** del calor (antes 32), **70 el 99 %**
+(antes 68), y **103 de los 203 primarios** se ejecutan. Los niveles de la reordenacion de §7.2
+siguen bien puestos.
+
+| # | Opcode | Valor | Exec | Delta | % | Acum % |
+|---|---|---|---|---|---|---|
+| 1 | `Ldl2` | 0x1A | 22 529 971 | −300000 | 7.65 | 7.7 |
+| 2 | `Ldl1` | 0x19 | 22 432 932 | −150000 | 7.62 | 15.3 |
+| 3 | `Ldl0` | 0x18 | 21 269 474 | −150000 | 7.23 | 22.5 |
+| 4 | `Add` | 0x3C | 15 230 054 | = | 5.17 | 27.7 |
+| 5 | `JP` | 0xA5 | 14 099 417 | −750000 | 4.79 | 32.5 |
+| 6 | `JPGE` | 0xB9 | 13 424 747 | −750000 | 4.56 | 37.0 |
+| 7 | `PushI8` | 0x06 | 13 039 140 | = | 4.43 | 41.5 |
+| 8 | `Mod` | 0x44 | 12 985 000 | = | 4.41 | 45.9 |
+| 9 | `IncLocal` | 0x28 | 12 592 584 | −750000 | 4.28 | 50.1 |
+| 10 | `PushI32` | 0x08 | 10 605 000 | = | 3.60 | 53.8 |
+| 11 | `Ldl3` | 0x1B | 10 255 088 | = | 3.48 | 57.2 |
+| 12 | `Stl1` | 0x21 | 8 201 253 | = | 2.79 | 60.0 |
+| 13 | `LdlS` | 0x1E | 7 709 672 | −900000 | 2.62 | 62.6 |
+| 14 | `LoadLocalField` | 0x32 | 7 300 000 | = | 2.48 | 65.1 |
+| 15 | `FMul` | 0x41 | 7 000 000 | = | 2.38 | 67.5 |
+| 16 | `FieldGet` | 0x29 | 5 925 002 | = | 2.01 | 69.5 |
+| 17 | `FAdd` | 0x3D | 5 900 000 | = | 2.00 | 71.5 |
+| 18 | `ReturnValue` | 0xE6 | 5 237 641 | = | 1.78 | 73.3 |
+| 19 | `InvokeSpecial` | 0xDC | 5 108 074 | = | 1.74 | 75.0 |
+| 20 | `LoadValueLocal` | 0x30 | 4 800 002 | = | 1.63 | 76.7 |
+| 21 | `StoreValueLocal` | 0x31 | 4 500 002 | = | 1.53 | 78.2 |
+| 22 | `Ldl4` | 0x1C | 4 395 257 | = | 1.49 | 79.7 |
+| 23 | `Stl3` | 0x23 | 4 338 026 | = | 1.47 | 81.2 |
+| 24 | `Stl2` | 0x22 | 4 250 049 | = | 1.44 | 82.6 |
+| 25 | `FieldSet` | 0x2A | 3 550 012 | = | 1.21 | 83.8 |
+| 26 | `Ldc7` | 0x12 | 3 000 004 | = | 1.02 | 84.8 |
+| 27 | `StlS` | 0x26 | 2 838 851 | = | 0.96 | 85.8 |
+| 28 | `Ldl5` | 0x1D | 2 390 030 | = | 0.81 | 86.6 |
+| 29 | `JPZ` | 0xA7 | 2 360 006 | = | 0.80 | 87.4 |
+| 30 | `ArrGet` | 0x7F | 2 152 600 | = | 0.73 | 88.1 |
+| 31 | `LdcS` | 0x15 | 2 009 214 | = | 0.68 | 88.8 |
+| 32 | `Stl4` | 0x24 | 1 975 031 | = | 0.67 | 89.5 |
+| 33 | `Dup` | 0x01 | 1 608 008 | = | 0.55 | 90.0 |
+| 34 | `Stl5` | 0x25 | 1 600 021 | = | 0.54 | 90.6 |
+| 35 | `Mul` | 0x40 | 1 590 000 | = | 0.54 | 91.1 |
+| 36 | `ReturnValues` | 0xE7 | 1 500 000 | = | 0.51 | 91.6 |
+| 37 | `InvokeClosure` | 0xE0 | 1 468 768 | = | 0.50 | 92.1 |
+| 38 | `CallLocalModule` | 0xD7 | 1 350 055 | = | 0.46 | 92.6 |
+| 39 | `ObjNew` | 0xA3 | 1 308 011 | = | 0.44 | 93.0 |
+| 40 | `ReturnVoid` | 0xE5 | 1 300 016 | = | 0.44 | 93.5 |
+| 41 | `LoadValueField` | 0x34 | 1 200 000 | = | 0.41 | 93.9 |
+| 42 | `Ldc6` | 0x11 | 1 000 000 | = | 0.34 | 94.2 |
+| 43 | `UpValueGet` | 0x2F | 900 000 | = | 0.31 | 94.5 |
+| 44 | `I2F` | 0x66 | 900 000 | = | 0.31 | 94.8 |
+| 45 | `ArrSet` | 0x80 | 900 000 | = | 0.31 | 95.1 |
+| 46 | `Ext` | 0xFF | 850 002 | +750000 | 0.29 | 95.4 |
+| 47 | `StaticFieldGet` | 0x2B | 800 000 | = | 0.27 | 95.7 |
+| 48 | `EQ` | 0x50 | 800 000 | = | 0.27 | 96.0 |
+| 49 | `ext:ForRangeNextLT` | 0x0B | 750 000 | nuevo | 0.25 | 96.2 |
+| 50 | `Sub` | 0x3E | 737 584 | = | 0.25 | 96.5 |
+| 51 | `UnboxDynamic` | 0x74 | 650 000 | = | 0.22 | 96.7 |
+| 52 | `JPLE` | 0xBD | 640 010 | = | 0.22 | 96.9 |
+| 53 | `StrLen` | 0x77 | 600 001 | = | 0.20 | 97.1 |
+| 54 | `JPNE` | 0xB5 | 600 000 | = | 0.20 | 97.3 |
+| 55 | `InvokeVirtual` | 0xDB | 400 004 | = | 0.14 | 97.5 |
+| 56 | `InvokeInterface` | 0xDF | 400 003 | = | 0.14 | 97.6 |
+| 57 | `PushI16` | 0x07 | 380 257 | = | 0.13 | 97.7 |
+| 58 | `DictGet` | 0x90 | 360 000 | = | 0.12 | 97.8 |
+| 59 | `BoxInt` | 0x6C | 350 000 | = | 0.12 | 98.0 |
+| 60 | `NewFunction` | 0xE3 | 300 004 | = | 0.10 | 98.1 |
+| 61 | `StoreValueField` | 0x35 | 300 002 | = | 0.10 | 98.2 |
+| 62 | `Div` | 0x42 | 300 000 | = | 0.10 | 98.3 |
+| 63 | `Inv` | 0x4F | 300 000 | = | 0.10 | 98.4 |
+| 64 | `GE` | 0x53 | 300 000 | = | 0.10 | 98.5 |
+| 65 | `IsPresent` | 0x65 | 300 000 | = | 0.10 | 98.6 |
+| 66 | `CastOrNull` | 0x9B | 300 000 | = | 0.10 | 98.7 |
+| 67 | `JPN` | 0xAB | 300 000 | = | 0.10 | 98.8 |
+| 68 | `JPStrNE` | 0xD1 | 300 000 | = | 0.10 | 98.9 |
+| 69 | `JPInstanceOf` | 0xD3 | 300 000 | = | 0.10 | 99.0 |
+| 70 | `Switch` | 0xD5 | 300 000 | = | 0.10 | 99.1 |
+| 71 | `CallModule` | 0xD9 | 300 000 | = | 0.10 | 99.2 |
+| 72 | `Pop` | 0x02 | 276 022 | = | 0.09 | 99.3 |
+| 73 | `LT` | 0x54 | 276 022 | = | 0.09 | 99.4 |
+| 74 | `LE` | 0x55 | 268 768 | = | 0.09 | 99.5 |
+| 75 | `ArrPush` | 0x81 | 215 320 | = | 0.07 | 99.5 |
+| 76 | `Yield` | 0xED | 200 000 | = | 0.07 | 99.6 |
+| 77 | `GenResume` | 0xEB | 150 003 | = | 0.05 | 99.7 |
+| 78 | `GenCurrent` | 0xEC | 150 000 | = | 0.05 | 99.7 |
+| 79 | `ArrLen` | 0x7E | 115 005 | = | 0.04 | 99.8 |
+| 80 | `DictSet` | 0x91 | 110 064 | = | 0.04 | 99.8 |
+| 81 | `StrCat` | 0x79 | 101 264 | = | 0.03 | 99.8 |
+| 82 | `Ldc5` | 0x10 | 100 001 | = | 0.03 | 99.9 |
+| 83 | `PushAbsent` | 0x0A | 100 000 | = | 0.03 | 99.9 |
+| 84 | `JPLT` | 0xBB | 50 001 | = | 0.02 | 99.9 |
+| 85 | `ext:ArrForNext` | 0x01 | 50 001 | nuevo | 0.02 | 99.9 |
+| 86 | `ext:DictForNext` | 0x07 | 50 001 | nuevo | 0.02 | 99.9 |
+| 87 | `PushTrue` | 0x04 | 50 000 | = | 0.02 | 100.0 |
+| 88 | `GenResumed` | 0xEF | 50 000 | = | 0.02 | 100.0 |
+| 89 | `DictDel` | 0x92 | 30 000 | = | 0.01 | 100.0 |
+| 90 | `DictIn` | 0x96 | 30 000 | = | 0.01 | 100.0 |
+| 91 | `Throw` | 0xE8 | 8 000 | = | 0.00 | 100.0 |
+| 92 | `Ldc8` | 0x13 | 64 | = | 0.00 | 100.0 |
+| 93 | `ArrPack` | 0x7D | 8 | = | 0.00 | 100.0 |
+| 94 | `GenNew` | 0xE9 | 6 | = | 0.00 | 100.0 |
+| 95 | `DictPack` | 0x8E | 4 | = | 0.00 | 100.0 |
+| 96 | `StaticFieldSet` | 0x2D | 3 | = | 0.00 | 100.0 |
+| 97 | `GenIterate` | 0xEA | 3 | = | 0.00 | 100.0 |
+| 98 | `GenDelegate` | 0xEE | 2 | = | 0.00 | 100.0 |
+| 99 | `PushFalse` | 0x05 | 1 | = | 0.00 | 100.0 |
+| 100 | `Ldc9` | 0x14 | 1 | = | 0.00 | 100.0 |
+| 101 | `ArrNew` | 0x7B | 1 | = | 0.00 | 100.0 |
+| 102 | `DictKeys` | 0x94 | 1 | = | 0.00 | 100.0 |
+| 103 | `NewClosure` | 0xE1 | 1 | = | 0.00 | 100.0 |
+
+## 9. Tabla: los 241 cuerpos primarios por calor, antes de los cambios
 
 > **Foto de `ceabd65`, antes de los cambios de §7.** Los 39 gemelos anchos que aparecen aqui ya no
 > existen como opcodes (§7.4) y las direcciones nativas son las de entonces. Se conserva porque es
