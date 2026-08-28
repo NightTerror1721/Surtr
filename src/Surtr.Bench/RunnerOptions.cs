@@ -104,6 +104,15 @@ namespace Surtr.Bench
         /// <summary>Above this spread the median is not yet worth quoting; <c>--strict</c> turns it into a failure.</summary>
         public const double SpreadWarningThreshold = 0.10;
 
+        /// <summary>
+        /// The MoonSharp circuit breaker: if one untimed probe call already costs this many times
+        /// Surtr's already-measured median, the full warmup+iterations run is skipped and the probe
+        /// itself stands in as a floor - a case can cost thousands of times what Surtr costs
+        /// (arrayFill measured ~7000x), and paying warmup+iterations at that ratio is what turned a
+        /// 40-case suite into a multi-hour run.
+        /// </summary>
+        public const double MoonSharpExtremeRatio = 1000.0;
+
         /// <summary>Whether the Surtr side runs. Only the baseline mode and the other engines' only-modes suppress it.</summary>
         public bool RunSurtr => !LuaOnly && !LuajitOnly && !BaselineOnly;
 

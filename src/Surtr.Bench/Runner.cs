@@ -149,9 +149,35 @@ namespace Surtr.Bench
                         }
 
                         var engineMs = new Measurement[engines.Count];
+                        var engineExtreme = new bool[engines.Count];
                         for (int i = 0; i < engines.Count; i++)
                         {
                             IBenchEngine engine = engines[i];
+
+                            // The MoonSharp circuit breaker: Surtr always measures first (index 0),
+                            // so by the time the loop reaches MoonSharp there is already a real
+                            // reference to gauge against. One untimed-warmup probe call answers
+                            // whether the full warmup+iterations run is worth paying for at all -
+                            // arrayFill alone measured MoonSharp at ~7000x Surtr, and a case that
+                            // extreme is what turned a 40-case suite into a multi-hour run.
+                            if (moon != null && ReferenceEquals(engine, moon) && i > 0 && engineMs[0].Median > 0)
+                            {
+                                double referenceMs = engineMs[0].Median;
+                                var probe = Stopwatch.StartNew();
+                                engine.Call(workload, size);
+                                probe.Stop();
+                                double probeMs = probe.Elapsed.TotalMilliseconds;
+
+                                if (probeMs >= referenceMs * RunnerOptions.MoonSharpExtremeRatio)
+                                {
+                                    engineMs[i] = new Measurement(
+                                        probeMs, probeMs, probeMs, probeMs, probeMs, probeMs, probeMs,
+                                        engine.SampleMemory());
+                                    engineExtreme[i] = true;
+                                    continue;
+                                }
+                            }
+
                             engineMs[i] = Measure(
                                 () => engine.Call(workload, size),
                                 _options.Iterations,
@@ -168,7 +194,7 @@ namespace Surtr.Bench
                             memoryRuns: _options.MemoryRuns,
                             gcInclusive: _options.GcInclusive);
 
-                        accumulator.Add(engineMs, baselineMs);
+                        accumulator.Add(engineMs, baselineMs, engineExtreme);
                     }
                 }
 
@@ -192,8 +218,8 @@ namespace Surtr.Bench
                     if (_options.Strict && (!accumulator.Ok || spreadWarn))
                         strictViolation = true;
 
-                    PrintRow(workload, accumulator.Size, engineMs, baselineMs, accumulator.Ok, spreadWarn, engines, _options.Percentiles);
-                    rows.Add(new CsvRow(workload.Name, accumulator.Size, workload.Measures, engineMs, baselineMs, accumulator.Ok));
+                    PrintRow(workload, accumulator.Size, engineMs, baselineMs, accumulator.Ok, spreadWarn, engines, _options.Percentiles, accumulator.Extreme);
+                    rows.Add(new CsvRow(workload.Name, accumulator.Size, workload.Measures, engineMs, baselineMs, accumulator.Ok, workload.DiagnosticOnly, accumulator.Extreme));
                 }
 
                 PrintSummary(rows, engines);
@@ -477,6 +503,15 @@ namespace Surtr.Bench
                     engineMax[e] = max;
                 }
 
+                // Extreme if the breaker tripped in any of the N child processes - the label is
+                // meant to warn a reader off the number, so one process catching it is enough.
+                var extreme = new bool[engineNames.Count];
+                foreach (ChildSample sample in samples)
+                {
+                    for (int e = 0; e < engineNames.Count && e < sample.Extreme.Length; e++)
+                        extreme[e] |= sample.Extreme[e];
+                }
+
                 double baselineMin = double.MaxValue;
                 foreach (ChildSample sample in samples)
                     if (sample.CsharpMs < baselineMin)
@@ -506,14 +541,25 @@ namespace Surtr.Bench
                     Pad(workload.Name, 15),
                     Pad(size.ToString(CultureInfo.InvariantCulture), 9),
                 };
-                foreach (Measurement measurement in engineMs)
-                    cells.Add(Pad(FormatMs(measurement.Median), 11));
+                for (int e = 0; e < engineMs.Length; e++)
+                {
+                    string cell = extreme[e] ? FormatMs(engineMs[e].Median) + "!!" : FormatMs(engineMs[e].Median);
+                    cells.Add(Pad(cell, 11));
+                }
                 cells.Add(Pad(FormatMs(baseline.Median), 11));
                 for (int i = 1; i < engineNames.Count; i++)
                 {
-                    string ratio = engineMs[0].Median > 0 && engineMs[i].Median > 0
-                        ? FormatRatio(engineMs[i].Median / engineMs[0].Median)
-                        : "  —  ";
+                    string ratio;
+                    if (extreme[i])
+                    {
+                        ratio = engineMs[0].Median > 0 ? ">=" + FormatRatio(RunnerOptions.MoonSharpExtremeRatio) : "  —  ";
+                    }
+                    else
+                    {
+                        ratio = engineMs[0].Median > 0 && engineMs[i].Median > 0
+                            ? FormatRatio(engineMs[i].Median / engineMs[0].Median)
+                            : "  —  ";
+                    }
                     cells.Add(Pad(ratio, 10));
                 }
                 string overBaseline = engineMs[0].Median > 0 && baseline.Median > 0
@@ -526,10 +572,13 @@ namespace Surtr.Bench
                 cells.Add(Pad(FormatBytes(baseline.Memory.AllocatedBytes), 9));
                 cells.Add(Pad(FormatPercent(stateSpread), 8));
                 cells.Add(Pad(bimodal ? "bimodal" : "single", 8));
-                cells.Add(ok ? "ok" : "FAIL");
+                bool anyExtreme = Array.Exists(extreme, e => e);
+                cells.Add((ok ? "ok" : "FAIL")
+                    + (workload.DiagnosticOnly ? " (diag)" : "")
+                    + (anyExtreme ? " EXTREMO-LENTO" : ""));
                 Console.WriteLine(string.Join("  ", cells));
 
-                rows.Add((new CsvRow(workload.Name, size, workload.Measures, engineMs, baseline, ok), stateSpread));
+                rows.Add((new CsvRow(workload.Name, size, workload.Measures, engineMs, baseline, ok, workload.DiagnosticOnly, extreme), stateSpread));
                 allOk = allOk && ok;
             }
 
@@ -647,11 +696,22 @@ namespace Surtr.Bench
                     || !double.TryParse(dataFields[csharpIndex], NumberStyles.Float, CultureInfo.InvariantCulture, out double csharpMs))
                     return null;
 
+                var extreme = new bool[engineNames.Count];
+                if (column.TryGetValue("extreme_engines", out int extremeIndex))
+                {
+                    var extremeNames = new HashSet<string>(
+                        dataFields[extremeIndex].Split(';', StringSplitOptions.RemoveEmptyEntries),
+                        StringComparer.Ordinal);
+                    for (int e = 0; e < engineNames.Count; e++)
+                        extreme[e] = extremeNames.Contains(engineNames[e]);
+                }
+
                 return new ChildSample(
                     engineMs,
                     csharpMs,
                     ReadMemory(column, dataFields, "surtr_alloc_bytes", "surtr_alloc_objects", "surtr_kept_objects", "surtr_heap_bytes"),
-                    ReadMemory(column, dataFields, "csharp_alloc_bytes", null, null, null));
+                    ReadMemory(column, dataFields, "csharp_alloc_bytes", null, null, null),
+                    extreme);
             }
             catch (Exception)
             {
@@ -749,12 +809,16 @@ namespace Surtr.Bench
             public readonly MemorySample SurtrMemory;
             public readonly MemorySample CsharpMemory;
 
-            public ChildSample(double[] engineMs, double csharpMs, MemorySample surtrMemory, MemorySample csharpMemory)
+            /// <summary>Which engine indices the MoonSharp circuit breaker capped inside the child. Same length and order as <see cref="EngineMs"/>.</summary>
+            public readonly bool[] Extreme;
+
+            public ChildSample(double[] engineMs, double csharpMs, MemorySample surtrMemory, MemorySample csharpMemory, bool[] extreme)
             {
                 EngineMs = engineMs;
                 CsharpMs = csharpMs;
                 SurtrMemory = surtrMemory;
                 CsharpMemory = csharpMemory;
+                Extreme = extreme;
             }
         }
 
@@ -768,6 +832,11 @@ namespace Surtr.Bench
                 int count = 0;
                 foreach (CsvRow row in rows)
                 {
+                    if (row.DiagnosticOnly)
+                        continue;
+                    if (row.IsExtreme(i))
+                        continue;
+
                     double referenceMs = row.EngineMeasurements[0].Median;
                     double otherMs = row.EngineMeasurements[i].Median;
                     if (referenceMs > 0 && otherMs > 0)
@@ -817,7 +886,7 @@ namespace Surtr.Bench
                 line.Append(",csharp_ms");
                 line.Append(",surtr_alloc_bytes,surtr_alloc_objects,surtr_kept_objects,surtr_heap_bytes");
                 line.Append(",csharp_alloc_bytes");
-                line.Append(",state_spread_pct,processes,ok");
+                line.Append(",state_spread_pct,processes,ok,diagnostic_only,extreme_engines");
                 writer.WriteLine(line);
             }
 
@@ -845,6 +914,8 @@ namespace Surtr.Bench
                 line.Append(',').Append((stateSpread * 100.0).ToString("F1", CultureInfo.InvariantCulture));
                 line.Append(',').Append(processes.ToString(CultureInfo.InvariantCulture));
                 line.Append(',').Append(row.Ok ? "ok" : "FAIL");
+                line.Append(',').Append(row.DiagnosticOnly ? "1" : "0");
+                line.Append(',').Append(ExtremeEnginesField(row.Extreme, engineNames));
                 writer.WriteLine(line);
             }
         }
@@ -1170,7 +1241,8 @@ namespace Surtr.Bench
             bool ok,
             bool spreadWarn,
             IReadOnlyList<IBenchEngine> engines,
-            bool percentiles)
+            bool percentiles,
+            bool[]? extreme = null)
         {
             var cells = new List<string>
             {
@@ -1178,17 +1250,34 @@ namespace Surtr.Bench
                 Pad(size.ToString(CultureInfo.InvariantCulture), 9),
             };
 
-            foreach (Measurement measurement in engineMs)
-                cells.Add(Pad(FormatMs(measurement.Median), 11));
+            for (int i = 0; i < engineMs.Length; i++)
+            {
+                // A capped engine's figure is a floor from one probe call, not a real median - the
+                // "!!" marks it so nobody reads it as an ordinary measurement.
+                string cell = extreme != null && i < extreme.Length && extreme[i]
+                    ? FormatMs(engineMs[i].Median) + "!!"
+                    : FormatMs(engineMs[i].Median);
+                cells.Add(Pad(cell, 11));
+            }
             cells.Add(Pad(FormatMs(baselineMs.Median), 11));
 
             // One ratio per engine after the first: how much slower that engine is than the
             // reference (Surtr, which is always first in the list).
             for (int i = 1; i < engines.Count; i++)
             {
-                string ratio = engineMs[0].Median > 0 && engineMs[i].Median > 0
-                    ? FormatRatio(engineMs[i].Median / engineMs[0].Median)
-                    : "  —  ";
+                string ratio;
+                if (extreme != null && i < extreme.Length && extreme[i])
+                {
+                    ratio = engineMs[0].Median > 0
+                        ? ">=" + FormatRatio(RunnerOptions.MoonSharpExtremeRatio)
+                        : "  —  ";
+                }
+                else
+                {
+                    ratio = engineMs[0].Median > 0 && engineMs[i].Median > 0
+                        ? FormatRatio(engineMs[i].Median / engineMs[0].Median)
+                        : "  —  ";
+                }
                 cells.Add(Pad(ratio, 10));
             }
 
@@ -1213,7 +1302,10 @@ namespace Surtr.Bench
                 cells.Add(Pad(FormatMs(engineMs[0].P99), 7));
             }
 
-            cells.Add(ok ? (spreadWarn ? "ok!" : "ok") : "FAIL");
+            bool anyExtreme = extreme != null && Array.Exists(extreme, e => e);
+            cells.Add((ok ? (spreadWarn ? "ok!" : "ok") : "FAIL")
+                + (workload.DiagnosticOnly ? " (diag)" : "")
+                + (anyExtreme ? " EXTREMO-LENTO" : ""));
 
             Console.WriteLine(string.Join("  ", cells));
         }
@@ -1227,6 +1319,17 @@ namespace Surtr.Bench
                 int count = 0;
                 foreach (var row in rows)
                 {
+                    // A diagnostic-only case (e.g. vec2Class) runs and is reported like any other,
+                    // but it exists to document an avoidable idiom's cost, not to rank engines - so
+                    // it stays out of the one number meant to summarise the whole suite.
+                    if (row.DiagnosticOnly)
+                        continue;
+
+                    // A capped engine's figure is a floor from one probe call, not a real median -
+                    // averaging it in would let one extreme outlier dominate the geometric mean.
+                    if (row.IsExtreme(i))
+                        continue;
+
                     double referenceMs = row.EngineMeasurements[0].Median;
                     double otherMs = row.EngineMeasurements[i].Median;
                     if (referenceMs > 0 && otherMs > 0)
@@ -1257,6 +1360,10 @@ namespace Surtr.Bench
 
         private void AppendCsv(string path, List<CsvRow> rows, IReadOnlyList<IBenchEngine> engines)
         {
+            var engineNames = new List<string>(engines.Count);
+            foreach (IBenchEngine engine in engines)
+                engineNames.Add(engine.Name);
+
             bool appendHeader = !File.Exists(path) || new FileInfo(path).Length == 0;
             var line = new StringBuilder();
             using (var writer = new StreamWriter(path, append: true))
@@ -1286,7 +1393,7 @@ namespace Surtr.Bench
                     line.Append(",lua_alloc_bytes,luajit_heap_bytes,csharp_alloc_bytes");
                     line.Append(",spread_pct");
                     line.Append(",surtr_p90_ms,surtr_p99_ms,csharp_p90_ms,csharp_p99_ms");
-                    line.Append(",ok");
+                    line.Append(",ok,diagnostic_only,extreme_engines");
                     writer.WriteLine(line);
                 }
 
@@ -1349,6 +1456,8 @@ namespace Surtr.Bench
                     }
 
                     line.Append(',').Append(row.Ok ? "ok" : "FAIL");
+                    line.Append(',').Append(row.DiagnosticOnly ? "1" : "0");
+                    line.Append(',').Append(ExtremeEnginesField(row.Extreme, engineNames));
                     writer.WriteLine(line);
                 }
             }
@@ -1435,6 +1544,21 @@ namespace Surtr.Bench
         private static string Number(long value)
             => value == MemorySample.Unavailable ? "" : value.ToString(CultureInfo.InvariantCulture);
 
+        /// <summary>The engines the MoonSharp circuit breaker capped for this row, semicolon-joined (a CSV field needs no quoting for that separator). Empty when none did.</summary>
+        private static string ExtremeEnginesField(bool[]? extreme, IReadOnlyList<string> engineNames)
+        {
+            if (extreme == null)
+                return "";
+
+            var names = new List<string>();
+            for (int i = 0; i < extreme.Length && i < engineNames.Count; i++)
+            {
+                if (extreme[i])
+                    names.Add(engineNames[i]);
+            }
+            return string.Join(";", names);
+        }
+
         private readonly struct CsvRow
         {
             public readonly string Name;
@@ -1443,8 +1567,12 @@ namespace Surtr.Bench
             public readonly Measurement[] EngineMeasurements;
             public readonly Measurement Baseline;
             public readonly bool Ok;
+            public readonly bool DiagnosticOnly;
 
-            public CsvRow(string name, long size, string measures, Measurement[] engineMeasurements, Measurement baseline, bool ok)
+            /// <summary>Which engine indices the MoonSharp circuit breaker capped, indexed the same as <see cref="EngineMeasurements"/>. Null means none did.</summary>
+            public readonly bool[]? Extreme;
+
+            public CsvRow(string name, long size, string measures, Measurement[] engineMeasurements, Measurement baseline, bool ok, bool diagnosticOnly, bool[]? extreme = null)
             {
                 Name = name;
                 Size = size;
@@ -1452,7 +1580,11 @@ namespace Surtr.Bench
                 EngineMeasurements = engineMeasurements;
                 Baseline = baseline;
                 Ok = ok;
+                DiagnosticOnly = diagnosticOnly;
+                Extreme = extreme;
             }
+
+            public bool IsExtreme(int engineIndex) => Extreme != null && engineIndex < Extreme.Length && Extreme[engineIndex];
         }
 
         /// <summary>One workload's measurements across all rounds, reduced to a single row.</summary>
@@ -1460,13 +1592,27 @@ namespace Surtr.Bench
         {
             public long Size;
             public bool Ok;
+
+            /// <summary>
+            /// Which engine indices tripped the MoonSharp circuit breaker on at least one round -
+            /// null until the first round that trips it, then OR'd across every later round so a
+            /// case that is only sometimes extreme still gets the label.
+            /// </summary>
+            public bool[]? Extreme;
+
             private readonly List<Measurement[]> _engineRounds = new();
             private readonly List<Measurement> _baselineRounds = new();
 
-            public void Add(Measurement[] engine, Measurement baseline)
+            public void Add(Measurement[] engine, Measurement baseline, bool[]? extreme = null)
             {
                 _engineRounds.Add(engine);
                 _baselineRounds.Add(baseline);
+                if (extreme != null)
+                {
+                    Extreme ??= new bool[extreme.Length];
+                    for (int i = 0; i < extreme.Length; i++)
+                        Extreme[i] |= extreme[i];
+                }
             }
 
             /// <summary>

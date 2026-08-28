@@ -109,6 +109,12 @@ namespace Surtr.Bench
             runtime.DefineNativeBody(ModulePath + ".hostSin", SurtrNativeEntryPoint.FromFunctionPointer(&HostSin));
             runtime.DefineNativeBody(ModulePath + ".hostCos", SurtrNativeEntryPoint.FromFunctionPointer(&HostCos));
             runtime.DefineNativeBody(ModulePath + ".hostSqrt", SurtrNativeEntryPoint.FromFunctionPointer(&HostSqrt));
+
+            // A class-level native's link name is <modulePath>:<ClassName>.<memberName>
+            // (ModuleEmitter.LinkName / DescriptorEmitter.EmitMethodName) - no owning-type
+            // qualifier the way a module-level native's does, since the class already supplies one.
+            runtime.DefineNativeBody(ModulePath + ":NativeMath.square", SurtrNativeEntryPoint.FromFunctionPointer(&NativeSquare));
+            runtime.DefineNativeBody(ModulePath + ":NativeMath.cube", SurtrNativeEntryPoint.FromFunctionPointer(&NativeCube));
         }
 
         // The in-place native convention: read every input before the first write, then answer
@@ -125,6 +131,20 @@ namespace Surtr.Bench
 
         private static int HostSqrt(SurtrCallArguments arguments)
             => arguments.Return(SurtrValue.CreateFloat(Math.Sqrt(arguments.GetFloat(0))));
+
+        // NativeMath.square is an *instance* native method, so argument 0 is the receiver and the
+        // real parameter starts at 1; NativeMath.cube is static, so it has no receiver at all.
+        private static int NativeSquare(SurtrCallArguments arguments)
+        {
+            int x = arguments.GetInt(1);
+            return arguments.Return(SurtrValue.CreateInt(x * x));
+        }
+
+        private static int NativeCube(SurtrCallArguments arguments)
+        {
+            int x = arguments.GetInt(0);
+            return arguments.Return(SurtrValue.CreateInt(x * x * x));
+        }
 
         private SurtrDriver(SurtrRuntime runtime, SurtrCompilation compilation, string modulePath, string name)
         {

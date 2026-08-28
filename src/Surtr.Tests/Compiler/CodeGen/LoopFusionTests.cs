@@ -588,6 +588,30 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         [Fact]
+        public void APostIncrementStepAlsoFuses()
+        {
+            // `i++` binds to a `BoundUnaryExpression`, not the `BoundAssignmentExpression` that
+            // `i = i + 1` / `i += 1` produce (`BodyBinder.BindUnary`), so this is a distinct shape
+            // the fusion has to recognise on its own rather than getting for free.
+            var runtime = Run(
+                "fun run(n: int): int { var t = 0; var i = 0; while (i < n) { t = t + i; i++; } return t; }");
+
+            Assert.Equal(1, Count(Disassemble(
+                "fun run(n: int): int { var t = 0; var i = 0; while (i < n) { t = t + i; i++; } return t; }"),
+                "ForRangeNextLT"));
+            Assert.Equal(45, Int(runtime, "run", SurtrValue.CreateInt(10)));
+        }
+
+        [Fact]
+        public void APreIncrementStepAlsoFuses()
+        {
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0; var i = 0; while (i < n) { t = t + i; ++i; } return t; }");
+
+            Assert.Equal(1, Count(code, "ForRangeNextLT"));
+        }
+
+        [Fact]
         public void ACountingDownWhileRefusesTheFusion()
         {
             string code = Disassemble(
@@ -616,6 +640,199 @@ namespace Surtr.Tests.Compiler.CodeGen
             // put an instruction after the last reachable point of the loop.
             var runtime = Run(
                 "fun run(n: int): int { var i = 0; while (i < n) { return 7; } return 0; }");
+
+            Assert.Equal(7, Int(runtime, "run", SurtrValue.CreateInt(3)));
+            Assert.Equal(0, Int(runtime, "run", SurtrValue.CreateInt(0)));
+        }
+
+        #endregion
+
+        #region The counted for
+
+        // `for (init; i < n; i += 1) { ... }` takes the same ForRangeNext step the counted `while`
+        // does. The increment lives in the loop's own `step` clause rather than as the body's last
+        // statement, so there is no last-statement peeling here - but the risk of landing a `break`,
+        // a `continue` or an early `return` in the wrong place is exactly the same one the counted
+        // `while` tests cover, so this mirrors that region rather than inventing new coverage.
+
+        [Fact]
+        public void ACountedForStepsWithForRangeNext()
+        {
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0; for (var i = 0; i < n; i = i + 1) { t = t + i; } return t; }");
+
+            Assert.Equal(1, Count(code, "ForRangeNextLT"));
+            Assert.Equal(0, Count(code, "IncLocal"));
+            Assert.Equal(1, Count(code, "JPGE"));
+        }
+
+        [Fact]
+        public void ACountedForAcceptsACompoundAssignmentStep()
+        {
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0; for (var i = 0; i < n; i += 1) { t = t + i; } return t; }");
+
+            Assert.Equal(1, Count(code, "ForRangeNextLT"));
+        }
+
+        [Fact]
+        public void AnInclusiveForLimitUsesTheInclusiveStep()
+        {
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0; for (var i = 0; i <= n; i = i + 1) { t = t + i; } return t; }");
+
+            Assert.Equal(1, Count(code, "ForRangeNextLE"));
+        }
+
+        [Fact]
+        public void ACountedForCountsWhatTheWrittenLoopCounts()
+        {
+            var runtime = Run(
+                "fun run(n: int): int { var t = 0; for (var i = 0; i < n; i = i + 1) { t = t + i; } return t; }\n"
+                    + "fun upTo(n: int): int { var t = 0; for (var i = 0; i <= n; i = i + 1) { t = t + i; } return t; }");
+
+            Assert.Equal(0, Int(runtime, "run", SurtrValue.CreateInt(0)));
+            Assert.Equal(0, Int(runtime, "run", SurtrValue.CreateInt(-3)));
+            Assert.Equal(0, Int(runtime, "run", SurtrValue.CreateInt(1)));
+            Assert.Equal(45, Int(runtime, "run", SurtrValue.CreateInt(10)));
+            Assert.Equal(55, Int(runtime, "upTo", SurtrValue.CreateInt(10)));
+            Assert.Equal(0, Int(runtime, "upTo", SurtrValue.CreateInt(0)));
+        }
+
+        [Fact]
+        public void BreakLeavesACountedForAtOnce()
+        {
+            var runtime = Run(
+                "fun run(n: int): int { var t = 0;\n"
+                    + "  for (var i = 0; i < n; i = i + 1) { if (i == 3) { break; } t = t + i; } return t; }");
+
+            Assert.Equal(3, Int(runtime, "run", SurtrValue.CreateInt(100)));
+        }
+
+        [Fact]
+        public void AContinueInACountedForRefusesTheFusionButStillBehaves()
+        {
+            // Unlike the counted `while`, a `for`'s `continue` runs the step before re-testing
+            // either way - fused or not - so this is a safety-margin check, not a semantics one:
+            // the fusion still refuses to fire, and the unfused path still counts correctly.
+            string source =
+                "fun run(): int { var t = 0;\n"
+                    + "  for (var i = 0; i < 10; i = i + 1) { if (i == 5) { continue; } t = t + i; } return t; }";
+
+            Assert.Equal(0, Count(Disassemble(source), "ForRangeNextLT"));
+            Assert.Equal(40, Int(Run(source), "run"));
+        }
+
+        [Fact]
+        public void AContinueInsideANestedForAlsoRefusesTheOuterFusion()
+        {
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0;\n"
+                    + "  for (var i = 0; i < n; i = i + 1) { for (x in 0..2) { if (x == 1) { continue; } t = t + 1; } }\n"
+                    + "  return t; }");
+
+            Assert.Equal(1, Count(code, "ForRangeNextLT"));
+        }
+
+        [Fact]
+        public void TheForStepSeesABodyThatMovesTheCounter()
+        {
+            var runtime = Run(
+                "fun run(): int { var t = 0;\n"
+                    + "  for (var i = 0; i < 10; i = i + 1) { t = t + 1; i = i + 2; } return t; }");
+
+            Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void TheForStepSeesABodyThatMovesTheLimit()
+        {
+            var runtime = Run(
+                "fun run(): int { var t = 0; var n = 10;\n"
+                    + "  for (var i = 0; i < n; i = i + 1) { t = t + 1; if (t == 3) { n = 4; } } return t; }");
+
+            Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void AForStepOtherThanOneRefusesTheFusion()
+        {
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0; for (var i = 0; i < n; i += 2) { t = t + i; } return t; }");
+
+            Assert.Equal(0, Count(code, "ForRangeNextLT"));
+        }
+
+        [Fact]
+        public void AForWithAPostIncrementStepAlsoFuses()
+        {
+            // The single most idiomatic C-family loop shape - `for (...; i < n; i++)` - has to
+            // reach the fusion too, not just its `i += 1` cousin.
+            var runtime = Run(
+                "fun run(n: int): int { var t = 0; for (var i = 0; i < n; i++) { t = t + i; } return t; }");
+
+            Assert.Equal(1, Count(Disassemble(
+                "fun run(n: int): int { var t = 0; for (var i = 0; i < n; i++) { t = t + i; } return t; }"),
+                "ForRangeNextLT"));
+            Assert.Equal(45, Int(runtime, "run", SurtrValue.CreateInt(10)));
+        }
+
+        [Fact]
+        public void AForWithAPreIncrementStepAlsoFuses()
+        {
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0; for (var i = 0; i < n; ++i) { t = t + i; } return t; }");
+
+            Assert.Equal(1, Count(code, "ForRangeNextLT"));
+        }
+
+        [Fact]
+        public void ACountingDownForRefusesTheFusion()
+        {
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0; for (var i = n; i > 0; i += -1) { t = t + i; } return t; }");
+
+            Assert.Equal(0, Count(code, "ForRangeNextLT"));
+            Assert.Equal(0, Count(code, "ForRangeNextLE"));
+        }
+
+        [Fact]
+        public void AForWithNoStepClauseRefusesTheFusion()
+        {
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0; for (var i = 0; i < n;) { t = t + i; i = i + 1; } return t; }");
+
+            Assert.Equal(0, Count(code, "ForRangeNextLT"));
+        }
+
+        [Fact]
+        public void AForWithNoConditionRefusesTheFusion()
+        {
+            string code = Disassemble(
+                "fun run(n: int): int { var t = 0;\n"
+                    + "  for (var i = 0; ; i = i + 1) { if (i >= n) { break; } t = t + i; } return t; }");
+
+            Assert.Equal(0, Count(code, "ForRangeNextLT"));
+            Assert.Equal(0, Count(code, "ForRangeNextLE"));
+        }
+
+        [Fact]
+        public void ACountedForInsideATryStillLeavesThroughTheHandler()
+        {
+            var runtime = Run(
+                "fun run(): int { var t = 0;\n"
+                    + "  try { for (var i = 0; i < 10; i = i + 1) { t = t + 1; if (t == 3) { throw Exception(\"x\"); } } }\n"
+                    + "  catch (e: Exception) { t = t + 100; }\n"
+                    + "  return t; }");
+
+            Assert.Equal(103, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ACountedForThatAlwaysReturnsEmitsNoStep()
+        {
+            var runtime = Run(
+                "fun run(n: int): int { for (var i = 0; i < n; i = i + 1) { return 7; } return 0; }");
 
             Assert.Equal(7, Int(runtime, "run", SurtrValue.CreateInt(3)));
             Assert.Equal(0, Int(runtime, "run", SurtrValue.CreateInt(0)));

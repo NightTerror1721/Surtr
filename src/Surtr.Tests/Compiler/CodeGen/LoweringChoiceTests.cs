@@ -470,10 +470,19 @@ namespace Surtr.Tests.Compiler.CodeGen
         /// Prefix and postfix differ only in which value they leave behind, and a discarded one
         /// leaves neither — so a `for` step and a bare `i++;` are the same instruction.
         /// </summary>
+        /// <remarks>
+        /// The condition is deliberately `!=` rather than `&lt;`: a `&lt;`/`&lt;=` counted loop
+        /// whose step is exactly this shape now qualifies for the whole-loop
+        /// <c>ForRangeNext</c> fusion (<c>MethodBodyEmitter.TryEmitCountedFor</c>/
+        /// <c>TryEmitCountedWhile</c>, which recognise `i++`/`++i` as well as `i += 1`), which
+        /// would fold the increment into that instruction instead of leaving it as its own
+        /// `IncLocal` - a real improvement, but not what this test isolates. `!=` keeps the
+        /// increment's own lowering choice the only thing in play.
+        /// </remarks>
         [Theory]
-        [InlineData("for (var i: int = 0; i < 10; i++) { }")]
-        [InlineData("for (var i: int = 0; i < 10; ++i) { }")]
-        [InlineData("var i: int = 0; while (i < 10) { i++; }")]
+        [InlineData("for (var i: int = 0; i != 10; i++) { }")]
+        [InlineData("for (var i: int = 0; i != 10; ++i) { }")]
+        [InlineData("var i: int = 0; while (i != 10) { i++; }")]
         public void ADiscardedIncrementIsOneInstruction(string body)
         {
             string code = Disassemble("fun run(): int { " + body + " return 0; }");

@@ -441,90 +441,28 @@ namespace Surtr.Compiler.CodeGen
 
         private bool TryEmitCountedWhile(BoundWhileStatement loop)
         {
-            if (loop.Condition is not BoundBinaryExpression
-                {
-                    Operator: BinaryOperator.Less or BinaryOperator.LessEqual
-                } test)
+            if (!TryResolveCountedGuard(loop.Condition, out LocalSymbol counter, out SurtrLocal variable,
+                    out SurtrLocal limit, out bool limitIsInclusive))
             {
                 return false;
             }
 
-            if (!IsPlainInt(test.Left) || loop.Body is not BoundBlockStatement { Statements.Count: > 0 } block)
+            if (loop.Body is not BoundBlockStatement { Statements.Count: > 0 } block)
                 return false;
-
-            if (test.Left is not BoundLocalExpression counter)
-                return false;
-
-            // A parameter is a slot like any other, but the counter has to be the same *symbol*
-            // the increment writes, and only a local can be matched by reference here.
 
             // The increment has to be the body's last statement: anything after it would run
             // between the increment and the test, which the fused step has no room for.
-            if (block.Statements[block.Statements.Count - 1] is not BoundExpressionStatement
-                {
-                    Expression: BoundAssignmentExpression
-                    {
-                        Target: BoundLocalExpression target,
-                        Value: BoundBinaryExpression
-                        {
-                            Operator: BinaryOperator.Add,
-                            Left: BoundLocalExpression addend,
-                        } sum
-                    }
-                })
+            if (block.Statements[block.Statements.Count - 1] is not BoundExpressionStatement lastStatement
+                || !IsUnitIncrementOf(lastStatement.Expression, counter))
             {
                 return false;
             }
-
-            if (!ReferenceEquals(target.Local, counter.Local) || !ReferenceEquals(addend.Local, counter.Local))
-                return false;
-
-            // An integer literal arrives as a `long` and is narrowed at emit, so the step of one
-            // this looks for is a `long` too.
-            if (sum.Right is not BoundLiteralExpression { Value: long step1 } || step1 != 1L)
-                return false;
-
-            // The limit is re-read every iteration, so only a form whose re-reading is free may
-            // stand in for it: a slot the step can address, or a constant hoisted into one. An
-            // arbitrary expression is refused rather than hoisted - the written loop evaluates it
-            // per iteration, and a fused step could not.
-            SurtrLocal limit;
-            var variable = Slot(counter.Local);
-
-            if (!IsPlainInt(test.Right))
-            {
-                return false;
-            }
-            else if (test.Right is BoundLocalExpression limitLocal)
-            {
-                limit = Slot(limitLocal.Local);
-            }
-            else if (test.Right is BoundParameterExpression limitParameter)
-            {
-                limit = ParameterSlot(limitParameter.Parameter);
-            }
-            else if (test.Right is BoundLiteralExpression { Value: long constant }
-                     && constant >= int.MinValue && constant <= int.MaxValue)
-            {
-                limit = _method.DeclareLocal("$limit");
-                Code.LoadInt((int)constant);
-                EmitStoreLocal(limit);
-            }
-            else
-            {
-                return false;
-            }
-
-            if (!FitsInSlotByte(variable, limit))
-                return false;
 
             for (int i = 0; i < block.Statements.Count - 1; i++)
             {
                 if (ContainsContinue(block.Statements[i]))
                     return false;
             }
-
-            bool limitIsInclusive = test.Operator == BinaryOperator.LessEqual;
 
             var top = Code.NewLabel();
             var step = Code.NewLabel();
@@ -554,6 +492,170 @@ namespace Surtr.Compiler.CodeGen
                 Code.ForRangeNext(variable.Index, limit.Index, limitIsInclusive, top);
 
             Code.MarkLabel(end);
+            return true;
+        }
+
+        /// <summary>
+        /// Emits <c>for (init; i &lt; n; i += 1) { ... }</c> as the same fused step
+        /// <see cref="TryEmitCountedWhile"/> gives the hand-written <c>while</c>, or answers
+        /// <see langword="false"/> and leaves the loop to the ordinary path.
+        /// </summary>
+        /// <remarks>
+        /// <c>for</c>'s increment is a syntactically separate <see cref="BoundForStatement.Step"/>,
+        /// never part of the body, so unlike the <c>while</c> fusion this needs no last-statement
+        /// peeling - every body statement is real. That also means a <c>continue</c> here would
+        /// land exactly on <c>step</c>, right where the fused instruction sits, and run the
+        /// increment-then-test the same way falling out of the body does - which is correct
+        /// <c>for</c> semantics. This still refuses <c>continue</c> to keep the same safety margin
+        /// the <c>while</c> fusion keeps, since nothing has exercised the jump-into-fusion case yet.
+        /// </remarks>
+        private bool TryEmitCountedFor(BoundForStatement loop)
+        {
+            if (!TryResolveCountedGuard(loop.Condition, out LocalSymbol counter, out SurtrLocal variable,
+                    out SurtrLocal limit, out bool limitIsInclusive))
+            {
+                return false;
+            }
+
+            if (loop.Step is null || !IsUnitIncrementOf(loop.Step, counter))
+                return false;
+
+            if (loop.Body is not BoundBlockStatement block)
+                return false;
+
+            if (ContainsContinue(block))
+                return false;
+
+            var top = Code.NewLabel();
+            var step = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            EmitLoadLocal(variable);
+            EmitLoadLocal(limit);
+            Code.JumpIfCompare(
+                limitIsInclusive ? SurtrComparison.Greater : SurtrComparison.GreaterOrEqual,
+                SurtrValueTypeCode.Integer,
+                end);
+
+            Code.MarkLabel(top);
+
+            PushLoop(step, end);
+            Statement(block);
+            PopTargets();
+
+            Code.MarkLabel(step);
+
+            if (Code.IsReachable)
+                Code.ForRangeNext(variable.Index, limit.Index, limitIsInclusive, top);
+
+            Code.MarkLabel(end);
+            return true;
+        }
+
+        /// <summary>
+        /// Whether <paramref name="expression"/> advances <paramref name="counter"/> by exactly one,
+        /// in either shape the surface syntax can produce: <c>i = i + 1</c> / <c>i += 1</c> (a
+        /// <see cref="BoundAssignmentExpression"/> the binder already expanded), or <c>i++</c> /
+        /// <c>++i</c> (a <see cref="BoundUnaryExpression"/> - <c>i++</c> does <em>not</em> lower to
+        /// an assignment, since <c>BodyBinder.BindUnary</c> keeps a plain int/float/char increment
+        /// as its own unary node so the expression's value can differ between the prefix and
+        /// postfix form. Both shapes end up as one <c>IncLocal</c> either way; this is only about
+        /// recognising the shape so the counted-loop fusions can fire on the idiom most C-family
+        /// programmers reach for first.
+        /// </summary>
+        private static bool IsUnitIncrementOf(BoundExpression expression, LocalSymbol counter)
+        {
+            if (expression is BoundUnaryExpression
+                {
+                    Operator: UnaryOperator.PostIncrement or UnaryOperator.PreIncrement,
+                    Operand: BoundLocalExpression unaryOperand,
+                })
+            {
+                return ReferenceEquals(unaryOperand.Local, counter);
+            }
+
+            if (expression is BoundAssignmentExpression
+                {
+                    Target: BoundLocalExpression target,
+                    Value: BoundBinaryExpression
+                    {
+                        Operator: BinaryOperator.Add,
+                        Left: BoundLocalExpression addend,
+                        Right: BoundLiteralExpression { Value: long step1 },
+                    },
+                }
+                && step1 == 1L)
+            {
+                return ReferenceEquals(target.Local, counter) && ReferenceEquals(addend.Local, counter);
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The guard the counted <c>while</c> and counted <c>for</c> fusions share: a condition of
+        /// the shape <c>local &lt; limit</c> / <c>local &lt;= limit</c>, whose left side is a plain
+        /// (non-nullable, non-erased) <c>int</c> local. Each caller still validates its own
+        /// increment - the two loops keep it in a different place - and still emits the guard
+        /// itself, since only the caller knows what to do once it has the resolved slots.
+        /// </summary>
+        private bool TryResolveCountedGuard(
+            BoundExpression? condition,
+            out LocalSymbol counter,
+            out SurtrLocal variable,
+            out SurtrLocal limit,
+            out bool limitIsInclusive)
+        {
+            counter = null!;
+            variable = default;
+            limit = default;
+            limitIsInclusive = false;
+
+            if (condition is not BoundBinaryExpression
+                {
+                    Operator: BinaryOperator.Less or BinaryOperator.LessEqual
+                } test)
+            {
+                return false;
+            }
+
+            if (!IsPlainInt(test.Left) || test.Left is not BoundLocalExpression counterExpr)
+                return false;
+
+            if (!IsPlainInt(test.Right))
+                return false;
+
+            variable = Slot(counterExpr.Local);
+
+            // The limit is re-read every iteration, so only a form whose re-reading is free may
+            // stand in for it: a slot the step can address, or a constant hoisted into one. An
+            // arbitrary expression is refused rather than hoisted - the written loop evaluates it
+            // per iteration, and a fused step could not.
+            if (test.Right is BoundLocalExpression limitLocal)
+            {
+                limit = Slot(limitLocal.Local);
+            }
+            else if (test.Right is BoundParameterExpression limitParameter)
+            {
+                limit = ParameterSlot(limitParameter.Parameter);
+            }
+            else if (test.Right is BoundLiteralExpression { Value: long constant }
+                     && constant >= int.MinValue && constant <= int.MaxValue)
+            {
+                limit = _method.DeclareLocal("$limit");
+                Code.LoadInt((int)constant);
+                EmitStoreLocal(limit);
+            }
+            else
+            {
+                return false;
+            }
+
+            if (!FitsInSlotByte(variable, limit))
+                return false;
+
+            counter = counterExpr.Local;
+            limitIsInclusive = test.Operator == BinaryOperator.LessEqual;
             return true;
         }
 
@@ -627,6 +729,9 @@ namespace Surtr.Compiler.CodeGen
         {
             if (loop.Initializer is not null)
                 Statement(loop.Initializer);
+
+            if (TryEmitCountedFor(loop))
+                return;
 
             var top = Code.NewLabel();
             var step = Code.NewLabel();
