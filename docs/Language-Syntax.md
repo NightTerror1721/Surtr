@@ -1733,7 +1733,7 @@ positions. That's a rejection of a generic name as the *idiomatic type-syntax sp
 gives `array`, `dict` and `tuple` a generic name anyway, but only so they can be called as
 constructors; nothing about how a type is written changes.
 
-**A tuple element is read by position, and the position has to be a compile-time constant:**
+**A tuple element is read by position:**
 
 ```
 let point: (int, string) = (3, "origin");
@@ -1743,19 +1743,46 @@ let name = point[1];        // string
 let bad = point[2];         // error: a (int, string) has 2 elements
 ```
 
-The constant requirement is not a restriction on the syntax; it is the type rule showing through.
-A tuple holds a **different type at each position**, so `point[i]` for a running `i` has no type the
-compiler could give the expression — which is also exactly why `tuple` declares no generic
-parameter and no `get(index)` where `array` declares both (§13.4). Anything §7 already calls a
-compile-time constant works, `const` bindings included:
+A constant index is the type rule showing through. A tuple holds a **different type at each
+position**, so a constant index is the one the compiler can give a type — which is also exactly why
+`tuple` declares no generic parameter and no `get(index)` where `array` declares both (§13.4).
+Anything §7 already calls a compile-time constant works, `const` bindings included:
 
 ```
 const Name = 1;
 let name = point[Name];     // string, decided here rather than at run time
 ```
 
-An index past the end is a compile error for the same reason a missing element type would be, so
-there is no runtime bounds check to pay for: the arity is in the type.
+An index past the end is a compile error for the same reason a missing element type would be, so the
+constant form pays no runtime bounds check: the arity is in the type.
+
+A **running** index — one that is not a compile-time constant — still binds, because the element has
+no static type to give the expression: the read lowers to the dynamic `TupGet`, comes back as the
+boxed form an erased slot holds, typed `unknown` (§5.10), and the range check the constant form does
+statically is `TupGet`'s own trap:
+
+```
+let i = pick(0, 1);         // not a constant — nothing here is foldable
+let raw = point[i];         // unknown: the element type varies per position
+let got = raw as string;    // cast at the point of use (§5.10)
+```
+
+**An element may also be named, and the name reads by position.** The name is written the dict's
+colon way, `name: type` — `(x: int, y: string)` — and is pure sugar for the position: it never
+joins the tuple's signature, so a named tuple and its unnamed twin (`(x: int, y: string)` and
+`(int, string)`) are the same tuple type and convert as identity. The compiler erases `point.x` down
+to the same constant read `point[0]` is:
+
+```
+let point: (x: int, y: string) = (3, "origin");
+let x = point.x;                // int — exactly point[0]
+let name = point.y;             // string — exactly point[1]
+let y: (int, string) = point;   // same type: names are not part of the signature
+```
+
+A name that matches none of the positions falls through to the tuple class's own member surface
+(§13.4), so `point.length` still reads the arity. A closure type's parameters cannot be named — the
+arrow form is positional (§5.3).
 
 This is also how a dictionary's `for-in` is read, since §4.2 makes one yield `(K, V)` pairs:
 
@@ -1853,9 +1880,11 @@ the same thing, not a second mechanism. `(T1,T2)(pair: (T1,T2))` — a tuple bui
 of the same tuple type* — is the one constructor in this whole section that folds to nothing at all:
 tuples are immutable and `(T1,T2)` names one interned type, so "the same type on both sides" is
 reference identity, not mere convertibility, and the argument already *is* the value this
-construction would build. Passing a tuple that would need widening (say, `(int,int)` into
-`(float,float)`) is a different, non-identical type, and has no constructor to reach it — write the
-individual elements instead.
+construction would build. A named spelling of the same shape (`(x: int, y: int)`) is that same type
+too (§5.5) — the identity fold is skipped because the two objects differ, but every element converts
+as identity, so the construction is a block copy either way. Passing a tuple that would need widening
+(say, `(int,int)` into `(float,float)`) is a different, non-identical type, and has no constructor to
+reach it — write the individual elements instead.
 
 ### 5.3.2 Constructing a primitive, `string` or `range`
 

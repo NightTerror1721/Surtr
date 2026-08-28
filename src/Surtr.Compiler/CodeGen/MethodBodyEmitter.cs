@@ -5846,7 +5846,16 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
+            // TupGet pops [tupleRef, index], so a dynamic tuple index has to have its target
+            // packed into the reference <em>before</em> the index lands on top of it — PackTuple
+            // consumes the block's slots from the top of the stack, and the index would sit
+            // there. The constant-index path above never reaches here, so a tuple that needs
+            // packing is exactly the one whose index did not fold.
+            bool packTupleTarget = target.TypeKind == TypeSymbolKind.Tuple;
+
             Expression(index.Target);
+            if (packTupleTarget)
+                BoxIfTuple(index.Target.Type);
             Expression(index.Index);
             // A key of an inline type reaches the collection packed, mirroring the write side.
             BoxIfMultiSlot(index.Index.Type);

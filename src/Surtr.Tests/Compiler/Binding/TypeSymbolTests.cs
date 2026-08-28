@@ -68,6 +68,35 @@ namespace Surtr.Tests.Compiler.Binding
             Assert.NotSame(first, reordered);
         }
 
+        /// <summary>§5.3: names never join a tuple's signature, so a named tuple is a distinct object interned by its (types, names) pair.</summary>
+        [Fact]
+        public void ATupleWithElementNamesIsInternedByNameAndShape()
+        {
+            var factory = new TypeSymbolFactory();
+
+            var unnamed = factory.Tuple(new TypeSymbol[] { factory.Int, factory.String });
+            var named = factory.Tuple(new TypeSymbol[] { factory.Int, factory.String }, new string?[] { "x", "y" });
+            var same = factory.Tuple(new TypeSymbol[] { factory.Int, factory.String }, new string?[] { "x", "y" });
+            var renamed = factory.Tuple(new TypeSymbol[] { factory.Int, factory.String }, new string?[] { "a", "b" });
+            var reordered = factory.Tuple(new TypeSymbol[] { factory.String, factory.Int }, new string?[] { "x", "y" });
+
+            Assert.Same(named, same);
+            Assert.NotSame(unnamed, named);
+            Assert.NotSame(named, renamed);
+            Assert.NotSame(named, reordered);
+        }
+
+        /// <summary>§5.3: a position written without a name is <see langword="null"/>, and a tuple whose names are all null is the unnamed one.</summary>
+        [Fact]
+        public void AAllNullElementNamesCollapseToTheUnnamedTuple()
+        {
+            var factory = new TypeSymbolFactory();
+
+            Assert.Same(
+                factory.Tuple(new TypeSymbol[] { factory.Int }, new string?[] { null }),
+                factory.Tuple(new TypeSymbol[] { factory.Int }));
+        }
+
         [Fact]
         public void AClosureTypeIsInternedByItsWholeShape()
         {
@@ -394,6 +423,12 @@ namespace Surtr.Tests.Compiler.Binding
             Assert.Equal("int[]", factory.Array(factory.Int).ToDisplayString());
             Assert.Equal("{int: string}", factory.Dictionary(factory.Int, factory.String).ToDisplayString());
             Assert.Equal("(int, float)", factory.Tuple(new TypeSymbol[] { factory.Int, factory.Float }).ToDisplayString());
+            Assert.Equal(
+                "(x: int, y: string)",
+                factory.Tuple(new TypeSymbol[] { factory.Int, factory.String }, new string?[] { "x", "y" }).ToDisplayString());
+            Assert.Equal(
+                "(x: int, string)",
+                factory.Tuple(new TypeSymbol[] { factory.Int, factory.String }, new string?[] { "x", null }).ToDisplayString());
             Assert.Equal(
                 "(int, int) -> float",
                 factory.Closure(new TypeSymbol[] { factory.Int, factory.Int }, factory.Float).ToDisplayString());

@@ -181,6 +181,33 @@ namespace Surtr.Tests.Compiler.Syntax
             Assert.Equal(2, closure.ParameterTypes.Count);
         }
 
+        /// <summary>§5.3: a tuple element name is written <c>name: type</c>, the dict's colon, not the C# spelling.</summary>
+        [Fact]
+        public void ATupleElementNameIsWrittenNameColonType()
+        {
+            AliasDeclarationSyntax alias = ParseSingle<AliasDeclarationSyntax>("alias Pair = (x: int, y: string);");
+
+            TupleTypeSyntax tuple = Assert.IsType<TupleTypeSyntax>(alias.Target);
+            Assert.Equal(new string?[] { "x", "y" }, tuple.ElementNames);
+            Assert.Equal(2, tuple.ElementTypes.Count);
+        }
+
+        [Fact]
+        public void ATupleElementWithoutANameStaysNull()
+        {
+            AliasDeclarationSyntax alias = ParseSingle<AliasDeclarationSyntax>("alias Pair = (x: int, string);");
+
+            TupleTypeSyntax tuple = Assert.IsType<TupleTypeSyntax>(alias.Target);
+            Assert.Equal(new string?[] { "x", null }, tuple.ElementNames);
+        }
+
+        /// <summary>A closure's parameters are positional; the arrow form has nowhere for a name to land.</summary>
+        [Fact]
+        public void ANamedClosureParameterIsRefused()
+        {
+            AssertRejected("alias F = (x: int) -> int;", SurtrDiagnosticCode.UnexpectedToken);
+        }
+
         // ---- §3 members ----------------------------------------------------------------------
 
         /// <summary>§3.2: the introducer keyword is the whole disambiguation rule.</summary>

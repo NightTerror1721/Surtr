@@ -141,14 +141,31 @@ namespace Surtr.Compiler.Binding.Symbols
             => WithNullableSuffix("{" + KeyType.ToDisplayString() + ": " + ValueType.ToDisplayString() + "}");
     }
 
-    /// <summary>A tuple type, written <c>(A, B)</c> (§5.5).</summary>
+    /// <summary>A tuple type, written <c>(A, B)</c> (§5.3).</summary>
+    /// <remarks>
+    /// An element may carry a name, written <c>(x: A, y: B)</c>. Names are pure sugar for the
+    /// positions (§5.3): they do not take part in the type's signature, so <c>(x: int)</c> and
+    /// <c>(int)</c> convert as identity even though they intern as separate objects (the
+    /// interning key is the element types, the names ride along), and the compiler erases a
+    /// name-written access down to a constant <c>TupGetC</c>.
+    /// </remarks>
     public sealed class TupleTypeSymbol : TypeSymbol
     {
-        internal TupleTypeSymbol(IReadOnlyList<TypeSymbol> elementTypes, bool isNullable = false) : base(isNullable)
-            => ElementTypes = elementTypes;
+        internal TupleTypeSymbol(IReadOnlyList<TypeSymbol> elementTypes, bool isNullable = false, IReadOnlyList<string?>? elementNames = null) : base(isNullable)
+        {
+            ElementTypes = elementTypes;
+            ElementNames = elementNames;
+        }
 
         /// <summary>The element types, in order.</summary>
         public IReadOnlyList<TypeSymbol> ElementTypes { get; }
+
+        /// <summary>
+        /// The element names, <see langword="null"/> for a position without one. <see langword="null"/>
+        /// as a whole means no position is named. Names never appear in the signature: two tuples with
+        /// the same element types are the same tuple type regardless of their names (§5.3).
+        /// </summary>
+        public IReadOnlyList<string?>? ElementNames { get; }
 
         private string? _name;
 
@@ -182,11 +199,11 @@ namespace Surtr.Compiler.Binding.Symbols
             var substituted = TypeSubstitution.SubstituteAll(ElementTypes, substitution);
             return substituted is null
                 ? this
-                : substitution.Factory.Tuple(substituted).WithNullability(IsNullable);
+                : substitution.Factory.Tuple(substituted, ElementNames).WithNullability(IsNullable);
         }
 
         /// <inheritdoc/>
-        private protected override TypeSymbol CreateDual() => new TupleTypeSymbol(ElementTypes, !IsNullable);
+        private protected override TypeSymbol CreateDual() => new TupleTypeSymbol(ElementTypes, !IsNullable, ElementNames);
 
         /// <inheritdoc/>
         public override string ToDisplayString()
@@ -196,6 +213,10 @@ namespace Surtr.Compiler.Binding.Symbols
             {
                 if (i > 0)
                     builder.Append(", ");
+
+                if (ElementNames is { } names && i < names.Count && names[i] is { } name)
+                    builder.Append(name).Append(": ");
+
                 builder.Append(ElementTypes[i].ToDisplayString());
             }
 

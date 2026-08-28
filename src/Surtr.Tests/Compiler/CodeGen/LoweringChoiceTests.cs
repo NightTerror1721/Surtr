@@ -269,6 +269,35 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(1, Count(code, "LoadLocalField"));
         }
 
+        /// <summary>
+        /// An index that does not fold — a running <c>i</c> — has no constant to fold into the
+        /// instruction, so the block packs once and the dynamic <c>TupGet</c> reads the element off
+        /// the boxed form (§5.3).
+        /// </summary>
+        [Fact]
+        public void ARunningTupleIndexPacksOnceAndReadsThroughTupGet()
+        {
+            string code = Disassemble(
+                "fun run(t: (int, string), i: int): string { return t[i] as string; }");
+
+            Assert.Equal(1, Count(code, "TupGet"));
+            Assert.Equal(0, Count(code, "TupGetC"));
+            Assert.Equal(1, Count(code, "TupPack"));
+        }
+
+        /// <summary>A name-written access erases down to the same constant index read an <c>[i]</c> does.</summary>
+        [Fact]
+        public void ANamedTupleElementReadsTheFrameRangeLikeAnIndex()
+        {
+            string code = Disassemble(
+                "fun run(): string { let p: (x: int, y: string) = (3, \"origin\"); return p.y; }");
+
+            Assert.Equal(0, Count(code, "TupGetC"));
+            Assert.Equal(0, Count(code, "TupGet"));
+            Assert.Equal(0, Count(code, "TupPack"));
+            Assert.Equal(1, Count(code, "LoadLocalField"));
+        }
+
         #endregion
 
         #region Safe casts

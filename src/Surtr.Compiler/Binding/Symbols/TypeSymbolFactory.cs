@@ -33,6 +33,9 @@ namespace Surtr.Compiler.Binding.Symbols
         private readonly Dictionary<IReadOnlyList<TypeSymbol>, TupleTypeSymbol> _tuples =
             new Dictionary<IReadOnlyList<TypeSymbol>, TupleTypeSymbol>(TypeListComparer.Instance);
 
+        private readonly Dictionary<(IReadOnlyList<TypeSymbol> Types, IReadOnlyList<string?> Names), TupleTypeSymbol> _namedTuples =
+            new Dictionary<(IReadOnlyList<TypeSymbol> Types, IReadOnlyList<string?> Names), TupleTypeSymbol>(NamedTupleComparer.Instance);
+
         private readonly Dictionary<TypeSymbol, Dictionary<IReadOnlyList<TypeSymbol>, ClosureTypeSymbol>> _closures =
             new Dictionary<TypeSymbol, Dictionary<IReadOnlyList<TypeSymbol>, ClosureTypeSymbol>>();
 
@@ -144,6 +147,29 @@ namespace Surtr.Compiler.Binding.Symbols
             return tuple;
         }
 
+        /// <summary>
+        /// The tuple type with the given element types and element names (§5.3). Names are sugar for
+        /// the positions and never join the signature, so a tuple written with names and one written
+        /// without — same arity, same element types — are the same tuple type for conversion while
+        /// still interning as separate objects (the name-driven access a member read erases down to
+        /// needs the names, the conversion does not).
+        /// </summary>
+        public TupleTypeSymbol Tuple(IReadOnlyList<TypeSymbol> elementTypes, IReadOnlyList<string?>? elementNames)
+        {
+            if (elementNames is null || !HasAnyName(elementNames))
+                return Tuple(elementTypes);
+
+            var types = Copy(elementTypes);
+            var names = CopyNames(elementNames, types.Length);
+            var key = (types, names);
+            if (_namedTuples.TryGetValue(key, out var named))
+                return named;
+
+            named = new TupleTypeSymbol(types, elementNames: names);
+            _namedTuples.Add(key, named);
+            return named;
+        }
+
         /// <summary>The closure type with the given parameter types and return type.</summary>
         public ClosureTypeSymbol Closure(IReadOnlyList<TypeSymbol> parameterTypes, TypeSymbol returnType)
         {
@@ -210,6 +236,71 @@ namespace Surtr.Compiler.Binding.Symbols
                 copy[i] = types[i];
 
             return copy;
+        }
+
+        private static bool HasAnyName(IReadOnlyList<string?> names)
+        {
+            for (int i = 0; i < names.Count; i++)
+            {
+                if (names[i] is not null)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static string?[] CopyNames(IReadOnlyList<string?> names, int length)
+        {
+            var copy = new string?[length];
+            for (int i = 0; i < length; i++)
+                copy[i] = i < names.Count ? names[i] : null;
+
+            return copy;
+        }
+    }
+
+    /// <summary>
+    /// Compares the (element types, element names) key a named tuple is interned under. Types are
+    /// compared by reference identity exactly as <see cref="TypeListComparer"/> does; names compare
+    /// ordinally, with <see langword="null"/> meaning "this position has no name".
+    /// </summary>
+    internal sealed class NamedTupleComparer : IEqualityComparer<(IReadOnlyList<TypeSymbol> Types, IReadOnlyList<string?> Names)>
+    {
+        internal static readonly NamedTupleComparer Instance = new NamedTupleComparer();
+
+        private NamedTupleComparer()
+        {
+        }
+
+        public bool Equals((IReadOnlyList<TypeSymbol> Types, IReadOnlyList<string?> Names) x, (IReadOnlyList<TypeSymbol> Types, IReadOnlyList<string?> Names) y)
+        {
+            if (!TypeListComparer.Instance.Equals(x.Types, y.Types))
+                return false;
+
+            var a = x.Names;
+            var b = y.Names;
+            if (a.Count != b.Count)
+                return false;
+
+            for (int i = 0; i < a.Count; i++)
+            {
+                if (!string.Equals(a[i], b[i], StringComparison.Ordinal))
+                    return false;
+            }
+
+            return true;
+        }
+
+        public int GetHashCode((IReadOnlyList<TypeSymbol> Types, IReadOnlyList<string?> Names) obj)
+        {
+            var hash = new HashCode();
+            for (int i = 0; i < obj.Types.Count; i++)
+                hash.Add(obj.Types[i]);
+
+            for (int i = 0; i < obj.Names.Count; i++)
+                hash.Add(obj.Names[i], StringComparer.Ordinal);
+
+            return hash.ToHashCode();
         }
     }
 }

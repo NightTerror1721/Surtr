@@ -245,8 +245,10 @@ namespace Surtr.Compiler.Diagnostics
         ConstEvaluationFailed = 3034,
 
         /// <summary>
-        /// A tuple indexed by something other than a constant inside its arity (§5.5). A tuple's
-        /// element type varies per index, so the index is part of the type rather than a value.
+        /// A tuple indexed by a constant outside its arity (§5.3). A running index needs no
+        /// constant check — its element reads as <c>unknown</c> and the range is verified by
+        /// <c>TupGet</c> at run time — but a constant that names no position has no element type
+        /// to give the expression.
         /// </summary>
         InvalidTupleIndex = 3035,
 

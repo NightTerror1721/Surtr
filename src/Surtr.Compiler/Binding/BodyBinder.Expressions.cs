@@ -761,6 +761,27 @@ namespace Surtr.Compiler.Binding
                 ? new BoundConditionalReceiver(syntax.Target, lookupType)
                 : receiver;
 
+            // §5.3: a tuple element may carry a name, `(x: int, y: int)` — sugar that reads exactly
+            // the way an index would, so a name-written access erases down to the same constant
+            // TupGetC. Tried ahead of the ordinary member surface so a name never collides with
+            // `tuple`'s own members; a name that matches none falls through to that surface.
+            if (lookupType is TupleTypeSymbol tuple && tuple.ElementNames is { } names)
+            {
+                for (int i = 0; i < names.Count; i++)
+                {
+                    if (names[i] is { } name && name == syntax.Name)
+                    {
+                        return Guard(
+                            new BoundIndexExpression(
+                                syntax,
+                                accessed,
+                                new BoundLiteralExpression(syntax, _factory.Int, (long)i),
+                                tuple.ElementTypes[i]),
+                            syntax);
+                    }
+                }
+            }
+
             if (_lookup.FindField(lookupType, syntax.Name) is FieldSymbol field)
             {
                 RequireAccessible(field, field.Accessibility, field.Name, syntax);
@@ -4431,9 +4452,9 @@ namespace Surtr.Compiler.Binding
         /// instruction can spell itself.
         /// </para>
         /// <para>
-        /// A range check is part of the same answer rather than an extra rule. The arity is in the
-        /// type, so an index past the end names no element and there is nothing to give the
-        /// expression as a type.
+        /// An index that does <em>not</em> fold still binds, typed <c>unknown</c> (§5.10): the read
+        /// lowers to the dynamic <c>TupGet</c>, and the runtime index check that the folded form does
+        /// statically is <c>TupGet</c>'s own trap.
         /// </para>
         /// </remarks>
         private BoundExpression BindTupleIndex(
@@ -4444,10 +4465,12 @@ namespace Surtr.Compiler.Binding
         {
             if (!TryFoldOrdinal(syntax.Index, index, out long ordinal))
             {
-                return Error(
-                    syntax,
-                    SurtrDiagnosticCode.InvalidTupleIndex,
-                    $"'{tuple.ToDisplayString()}' holds a different type at each position, so it can only be indexed by a constant.");
+                // A running index has no element to type: the element type varies per position, so
+                // nothing static can name it. The read still lowers to TupGet — the element comes
+                // back as the boxed form the erased slot holds, typed `unknown` for the binder and
+                // cast at the point of use (§5.10). The range check the constant form does statically
+                // is what TupGet's own runtime trap does here.
+                return new BoundIndexExpression(syntax, target, index, _factory.Unknown);
             }
 
             if (ordinal < 0 || ordinal >= tuple.ElementTypes.Count)

@@ -500,6 +500,26 @@ namespace Surtr.Tests.Compiler.Binding
             Assert.False(conversions.IsAssignable(wider, specific));
         }
 
+        /// <summary>§5.3: names never join the signature, so a named tuple and its unnamed twin are the same type — identity, not a reference conversion that would box.</summary>
+        [Fact]
+        public void ANamedTupleAndItsUnnamedTwinAreTheSameType()
+        {
+            var conversions = Setup(out var factory);
+
+            var unnamed = factory.Tuple(new TypeSymbol[] { factory.Int, factory.String });
+            var named = factory.Tuple(new TypeSymbol[] { factory.Int, factory.String }, new string?[] { "x", "y" });
+            var renamed = factory.Tuple(new TypeSymbol[] { factory.Int, factory.String }, new string?[] { "a", "b" });
+
+            Assert.True(conversions.Classify(unnamed, named).IsIdentity);
+            Assert.True(conversions.Classify(named, unnamed).IsIdentity);
+            Assert.True(conversions.Classify(named, renamed).IsIdentity);
+            Assert.True(conversions.IsAssignable(named, unnamed));
+
+            // Different element types keep widening as ordinary tuples.
+            var widened = factory.Tuple(new TypeSymbol[] { factory.Float, factory.String }, new string?[] { "x", "y" });
+            Assert.False(conversions.IsAssignable(named, widened));
+        }
+
         /// <summary>A generator only yields, so it widens exactly like a covariant construction.</summary>
         [Fact]
         public void GeneratorsWidenWithWhatTheyYield()

@@ -426,7 +426,7 @@ Each is a decision about where code *runs*, not about what a program means:
 | `<=>` and the relational operators on `string` | a call to native `string.compareTo` |
 | string `switch` | `StrHash` + `SwitchOn` + an equality confirm per hash |
 | a `+` spine or an interpolation over strings | one counted `StrCat`, so one allocation rather than n − 1 |
-| a tuple element read | `TupGetC`, the index as an immediate — §5.3 already made it a constant |
+| a tuple element read | `TupGetC`, the index as an immediate for a constant index; a running index reads `unknown` (§5.10) via `TupGet` |
 | a discarded `i++`, `i -= k` or a `for` step over an `int` local | `IncLocal`, one dispatch that never touches the operand stack |
 | `dict` member calls: `m.clear()`, `m.containsKey(k)`, `m.remove(k)`, `m.keys()`, `m.values()`, and the `m.length` read | the `DictClear` / `DictIn` / `DictDel` / `DictKeys` / `DictValues` / `DictLen` opcodes, skipping the native dispatch |
 | an integer or `char` `switch` | `SwitchOn`, which picks a jump table or a key table |
@@ -1233,11 +1233,14 @@ And the two contradictions, both settled in favour of the language rather than t
   a guarantee. Writing to one now names itself and says to write `var`.
 * **Tuple element access is written down** (§5.3): `t[0]`, by a compile-time constant, `const`
   bindings included — which is one thing the implementation did *not* do until now, since a `const`
-  binds as a read rather than a literal. The constant is the type rule showing through rather than a
-  restriction on the syntax: a tuple holds a different type per position, so `t[i]` for a running
-  `i` has no type to give the expression, which is the same fact that leaves `tuple` without a
-  generic parameter or a `get(index)`. An index past the end is a compile error, so there is no
-  bounds check to pay for.
+  binds as a read rather than a literal. A constant index is the type rule showing through rather than
+  a restriction on the syntax: a tuple holds a different type per position, so only a constant has an
+  element type to give the expression — the same fact that leaves `tuple` without a generic parameter
+  or a `get(index)`. An index past the end is a compile error, so the constant form pays no bounds
+  check. A running index still binds, typed `unknown` (§5.10), and lowers to the dynamic `TupGet`,
+  whose trap does the range check at run time. Element names (`(x: int, y: string)`) are sugar for
+  the positions: they never join the signature, so a named tuple and its unnamed twin are the same
+  type, and a name-written access erases to the same constant `TupGetC` an `[i]` does.
 
 One more thing turned up while checking the above and is closed too: **a closure held in a member
 could not be called through it.** `f()` on a local worked and `First.Make()` did not — a call whose
