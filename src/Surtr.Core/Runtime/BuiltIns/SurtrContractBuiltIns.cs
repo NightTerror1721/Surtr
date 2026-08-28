@@ -154,6 +154,20 @@ namespace Surtr.Runtime.BuiltIns
         }
 
         /// <summary>
+        /// Records that <c>bytes</c> satisfies <c>IComparable&lt;bytes&gt;</c> and
+        /// <c>IEquatable&lt;bytes&gt;</c>. The members already exist - <c>compareTo</c>/<c>equals</c>
+        /// back the explicit content comparison - so all that happens here is the declaration, the
+        /// same way <see cref="DeclareStringContracts"/> records string's. Note the difference from
+        /// every other composite: the bodies compare <em>contents</em>, not identity, because the
+        /// members themselves are declared in <see cref="SurtrBytesBuiltIn"/>, not through
+        /// <see cref="DeclareIdentityEquatable"/>.
+        /// </summary>
+        internal static void DeclareBytesContracts(SurtrBuiltInTypeBuilder builder)
+        {
+            builder.Implements(ComparableOf(SurtrClassReference.Bytes), EquatableOf(SurtrClassReference.Bytes));
+        }
+
+        /// <summary>
         /// Declares <c>array : IEquatable&lt;array&lt;T&gt;&gt;</c> â€” an array equals another array
         /// by identity, like every composite, never by contents.
         /// </summary>

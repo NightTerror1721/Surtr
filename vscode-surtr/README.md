@@ -9,7 +9,7 @@ Syntax highlighting, hover, go-to-definition and diagnostics for the
 - **Full syntax highlighting** for the surface language described in
   `docs/Language-Syntax.md` (from the repository root):
   - reserved words, modifiers and contextual keywords
-  - built-in type names (`int`, `float`, `bool`, `char`, `string`, `void`, `range`, `unknown`)
+  - built-in type names (`int`, `float`, `bool`, `char`, `string`, `bytes`, `void`, `range`, `unknown`)
   - string interpolation (`"Hello, $name!"`, `"${expr}"`) with `\$` escapes
   - char/string/numeric literals (hex, binary, `_` digit separators)
   - `///` doc comments with `@tag` highlighting

@@ -72,6 +72,11 @@ namespace Surtr.Runtime.BuiltIns
         /// <summary>The <c>string</c> class, behind every <see cref="SurtrString"/>.</summary>
         public static readonly SurtrClass String;
 
+        /// <summary>
+        /// The <c>bytes</c> class, behind every <see cref="SurtrBytes"/>: a mutable binary buffer.
+        /// </summary>
+        public static readonly SurtrClass Bytes;
+
         /// <summary>The <c>array</c> class, behind every <see cref="SurtrArray"/> whatever its element type.</summary>
         public static readonly SurtrClass Array;
 
@@ -447,6 +452,7 @@ namespace Surtr.Runtime.BuiltIns
             Boolean = Declare("bool", SurtrValueTypeCode.Boolean, SurtrClassReference.Boolean);
             Character = Declare("char", SurtrValueTypeCode.Character, SurtrClassReference.Character);
             String = Declare("string", SurtrValueTypeCode.String, SurtrClassReference.String);
+            Bytes = Declare("bytes", SurtrValueTypeCode.Bytes, SurtrClassReference.Bytes);
             Array = Declare("array", SurtrValueTypeCode.Array, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolArray.ToString()));
             Tuple = Declare("tuple", SurtrValueTypeCode.Tuple, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolTuple.ToString()));
             Dictionary = Declare("dict", SurtrValueTypeCode.Dictionary, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolDictionary.ToString()));
@@ -505,6 +511,7 @@ namespace Surtr.Runtime.BuiltIns
             ByTypeCode[(int)SurtrValueTypeCode.Boolean] = Boolean;
             ByTypeCode[(int)SurtrValueTypeCode.Character] = Character;
             ByTypeCode[(int)SurtrValueTypeCode.String] = String;
+            ByTypeCode[(int)SurtrValueTypeCode.Bytes] = Bytes;
             ByTypeCode[(int)SurtrValueTypeCode.Array] = Array;
             ByTypeCode[(int)SurtrValueTypeCode.Tuple] = Tuple;
             ByTypeCode[(int)SurtrValueTypeCode.Dictionary] = Dictionary;
@@ -533,6 +540,7 @@ namespace Surtr.Runtime.BuiltIns
             SurtrPrimitiveBuiltIns.DeclareBoolean(BuilderFor(Boolean, handles));
             SurtrPrimitiveBuiltIns.DeclareCharacter(BuilderFor(Character, handles));
             SurtrStringBuiltIn.Declare(BuilderFor(String, handles));
+            SurtrBytesBuiltIn.Declare(BuilderFor(Bytes, handles));
             SurtrCompositeBuiltIns.DeclareArray(BuilderFor(Array, handles));
             SurtrCompositeBuiltIns.DeclareTuple(BuilderFor(Tuple, handles));
             SurtrCompositeBuiltIns.DeclareDictionary(BuilderFor(Dictionary, handles));
@@ -609,6 +617,7 @@ namespace Surtr.Runtime.BuiltIns
             SurtrContractBuiltIns.DeclareBooleanContracts(BuilderFor(Boolean, handles));
             SurtrContractBuiltIns.DeclareCharacterContracts(BuilderFor(Character, handles));
             SurtrContractBuiltIns.DeclareStringContracts(BuilderFor(String, handles));
+            SurtrContractBuiltIns.DeclareBytesContracts(BuilderFor(Bytes, handles));
             SurtrContractBuiltIns.DeclareArrayContracts(BuilderFor(Array, handles));
             SurtrContractBuiltIns.DeclareDictionaryContracts(BuilderFor(Dictionary, handles));
             SurtrContractBuiltIns.DeclareRangeContracts(BuilderFor(Range, handles));

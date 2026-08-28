@@ -1,0 +1,34 @@
+import surtr.io.Enums;
+
+public abstract class Stream : IDisposable
+{
+    public abstract canRead: bool { get }
+    public abstract canWrite: bool { get }
+    public abstract canSeek: bool { get }
+
+    public abstract fun read(buffer: bytes, offset: int, count: int): int;
+    public abstract fun write(buffer: bytes, offset: int, count: int): int;
+
+    public abstract fun readByte(): int;
+    public abstract fun writeByte(value: int): bool;
+
+    public abstract fun seek(offset: int, origin: SeekOrigin): int;
+
+    public abstract fun flush(): void;
+
+    public abstract fun dispose(): void;
+
+
+    // Convenience methods //
+
+    public inline fun read(buffer: bytes): int => read(buffer, 0, buffer.length);
+    public inline fun write(buffer: bytes): int => write(buffer, 0, buffer.length);
+
+    public inline fun read(buffer: int[], offset: int, count: int): int => read(bytes(buffer), offset, count);
+    public inline fun write(buffer: int[], offset: int, count: int): int => write(bytes(buffer), offset, count);
+
+    public inline fun read(buffer: int[]): int => read(bytes(buffer), 0, buffer.length);
+    public inline fun write(buffer: int[]): int => write(bytes(buffer), 0, buffer.length);
+
+    public inline fun close(): void => dispose();
+}

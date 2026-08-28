@@ -708,7 +708,7 @@ namespace Surtr.LanguageServer.Workspace
         }
 
         private static bool IsBuiltinName(string name)
-            => name is "int" or "float" or "bool" or "char" or "string" or "void" or "range" or "unknown";
+            => name is "int" or "float" or "bool" or "char" or "string" or "bytes" or "void" or "range" or "unknown";
 
         // ------------------------------------------------------------------------------------
         // Encoding

@@ -68,6 +68,106 @@ namespace Surtr.Tests.LanguageServer
         }
 
         [Fact]
+        public void ABytesMemberCompletesWithNoImportAtAll()
+        {
+            const string source =
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let b: bytes = bytes();\n" +
+                "        let n: int = b.length;\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Count == 0 || diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int dotEnd = source.IndexOf("b.length", StringComparison.Ordinal) + "b.".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, path, source, dotEnd);
+
+            Assert.Contains(completion.Items, item => item.Label == "length");
+            Assert.Contains(completion.Items, item => item.Label == "get");
+            Assert.Contains(completion.Items, item => item.Label == "set");
+            Assert.Contains(completion.Items, item => item.Label == "push");
+            Assert.Contains(completion.Items, item => item.Label == "copy");
+            Assert.Contains(completion.Items, item => item.Label == "copyFrom");
+            Assert.Contains(completion.Items, item => item.Label == "copyTo");
+            Assert.Contains(completion.Items, item => item.Label == "slice");
+        }
+
+        [Fact]
+        public void TheBytesTypeNameCompletesFromTheGlobalScope()
+        {
+            const string source =
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        \n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int insideBody = source.IndexOf("        \n", StringComparison.Ordinal) + "        ".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, path, source, insideBody);
+            Assert.Contains(completion.Items, item => item.Label == "bytes");
+        }
+
+        [Fact]
+        public void HoverOnBytesShowsTheBuiltInLabel()
+        {
+            const string source =
+                "public class Holder {\n" +
+                "    public let data: bytes;\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            int offset = source.IndexOf("bytes;", StringComparison.Ordinal);
+
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, offset);
+
+            Assert.NotNull(hit);
+            Assert.Contains("built-in bytes", hit!.Markdown);
+        }
+
+        [Fact]
+        public void SemanticTokensLeaveTheBytesBuiltInToTheGrammar()
+        {
+            const string source =
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let b: bytes = bytes();\n" +
+                "        b[0] = 1;\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+            var result = SemanticTokensProvider.Compute(workspace.Snapshot, path, source);
+            var tokens = DecodeSemanticTokens(result, source);
+
+            // A builtin type name is left to the textmate grammar, exactly like `int`/`string`:
+            // the semantic pass never overrides it with a "type" token.
+            Assert.DoesNotContain(tokens, t => t.Text == "bytes");
+        }
+
+        [Fact]
         public void AWildcardImportedTypeAppearsInCompletionAndResolvesToItsDeclaration()
         {
             const string coreSource = "public class Entity {\n    public fun greet(): string { return \"hi\"; }\n}\n";
@@ -1788,6 +1888,85 @@ public class Holder {
             Assert.Contains("Red", labels);
             Assert.Contains("Green", labels);
             Assert.Contains("Blue", labels);
+        }
+
+        /// <summary>
+        /// A module-level <c>const</c> read is folded by the binder straight into a literal (§7.1),
+        /// so the bound tree has no field node for it and hover used to answer nothing. The
+        /// name-based fallback must resolve the use to the constant's declaration.
+        /// </summary>
+        [Fact]
+        public void HoverAndDefinitionOnAModuleLevelConstReachItsDeclaration()
+        {
+            const string source =
+                "const ANSWER: int = 42;\n" +
+                "public class Holder {\n" +
+                "    public fun run(): int {\n" +
+                "        return ANSWER + 1;\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Holder.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Holder.surtr");
+
+            int useOffset = source.IndexOf("ANSWER + 1", StringComparison.Ordinal);
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, useOffset);
+
+            Assert.NotNull(hit);
+            Assert.Contains("const ANSWER", hit!.Markdown);
+            Assert.Contains("constant", hit.Markdown);
+
+            Assert.True(hit.HasDefinition,
+                "Expected the const use to resolve to its declaration.");
+            Assert.Equal(Path.GetFullPath(path), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
+
+            int declOffset = source.IndexOf("ANSWER: int", StringComparison.Ordinal);
+            Assert.Equal(declOffset, hit.DefinitionStart);
+            Assert.Equal("ANSWER".Length, hit.DefinitionLength);
+        }
+
+        /// <summary>
+        /// A class-level <c>const</c> read (<c>Box.SIZE</c>) folds to a literal the same way a
+        /// module-level one does, so the bound tree has no field node; the receiver names the type
+        /// that holds the constant and the fallback must resolve it.
+        /// </summary>
+        [Fact]
+        public void HoverAndDefinitionOnAClassLevelConstReachItsDeclaration()
+        {
+            const string source =
+                "public class Box {\n" +
+                "    public const SIZE: int = 4;\n" +
+                "}\n" +
+                "public class Holder {\n" +
+                "    public fun run(): int {\n" +
+                "        return Box.SIZE;\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Box.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Box.surtr");
+
+            int useOffset = source.IndexOf("Box.SIZE", StringComparison.Ordinal) + "Box.".Length;
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, useOffset);
+
+            Assert.NotNull(hit);
+            Assert.Contains("const SIZE", hit!.Markdown);
+
+            Assert.True(hit.HasDefinition,
+                "Expected the const use to resolve to its declaration.");
+            Assert.Equal(Path.GetFullPath(path), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
+
+            int declOffset = source.IndexOf("SIZE: int", StringComparison.Ordinal);
+            Assert.Equal(declOffset, hit.DefinitionStart);
+            Assert.Equal("SIZE".Length, hit.DefinitionLength);
         }
 
         #endregion

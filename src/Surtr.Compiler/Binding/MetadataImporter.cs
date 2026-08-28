@@ -253,6 +253,7 @@ namespace Surtr.Compiler.Binding
                 case SurtrValueTypeCode.Boolean: return _factory.Bool;
                 case SurtrValueTypeCode.Character: return _factory.Char;
                 case SurtrValueTypeCode.String: return _factory.String;
+                case SurtrValueTypeCode.Bytes: return _factory.Bytes;
                 case SurtrValueTypeCode.Range: return _factory.Range;
                 case SurtrValueTypeCode.Void: return _factory.Void;
 
@@ -448,6 +449,7 @@ namespace Surtr.Compiler.Binding
                     case SurtrClassReference.SymbolBoolean: wellKnown = _factory.Bool; return true;
                     case SurtrClassReference.SymbolCharacter: wellKnown = _factory.Char; return true;
                     case SurtrClassReference.SymbolString: wellKnown = _factory.String; return true;
+                    case SurtrClassReference.SymbolBytes: wellKnown = _factory.Bytes; return true;
                     case SurtrClassReference.SymbolRange: wellKnown = _factory.Range; return true;
                     case SurtrClassReference.SymbolErased: wellKnown = _factory.Unknown; return true;
                     case SurtrClassReference.SymbolVoid: wellKnown = _factory.Void; return true;

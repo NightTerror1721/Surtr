@@ -4330,6 +4330,43 @@ var runtime = Run(
         }
 
         /// <summary>
+        /// Regression: an abstract property's bodyless accessors were mistaken for the
+        /// auto-generated form, so the emitter synthesised a backing field for a member that must
+        /// not implement anything. An abstract property is signature-only — no storage, no
+        /// accessor bodies (§3.3, §3.4).
+        /// </summary>
+        [Fact]
+        public void AnAbstractPropertyGetsNoBackingField()
+        {
+            var emitter = Build(
+                "abstract class Shape {\n"
+                    + "  public abstract name: string { get; set; }\n"
+                    + "}\n");
+
+            var shape = Assert.Single(emitter.Modules).FindClass("Shape");
+            Assert.False(shape!.TryGetField("$backing$name", out _));
+        }
+
+        /// <summary>
+        /// The abstract property's accessors are declared signature-only, and a concrete subclass
+        /// satisfies them with real bodies — the same bargain as an abstract method (§3.3, §3.4).
+        /// </summary>
+        [Fact]
+        public void AnAbstractPropertyIsSatisfiedByAConcreteSubclass()
+        {
+            var runtime = Run(
+                "abstract class Shape {\n"
+                    + "  public abstract name: string { get; set; }\n"
+                    + "}\n"
+                    + "class Square : Shape {\n"
+                    + "  public override name: string { get => \"sq\"; set { } }\n"
+                    + "}\n"
+                    + "fun run(): string { let s: Shape = Square(); return s.name; }");
+
+            Assert.Equal("sq", Text(runtime, "run"));
+        }
+
+        /// <summary>
         /// An abstract class implementing an interface but never even redeclaring the member
         /// abstract leaves no vtable slot at all — a load-time crash with no diagnostic before this
         /// fix, since the compiler treated "abstract" as a blanket exemption.

@@ -1809,6 +1809,75 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
+        public void AnAbstractMethodCannotHaveABody()
+        {
+            // §3.3: an abstract member is signature-only. A written body would be an
+            // implementation it cannot carry, and the emitter would silently drop it.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "abstract class Shape\n"
+                + "{\n"
+                + "    public abstract fun area(): float { return 1.0; }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.AbstractMemberWithBody);
+        }
+
+        [Fact]
+        public void AnAbstractPropertyCannotHaveAnAccessorWithABody()
+        {
+            // The property-level `abstract` reaches both accessors, so the getter's written body
+            // is exactly the implementation an abstract member must not carry (§3.3, §3.4).
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "abstract class Shape\n"
+                + "{\n"
+                + "    public abstract name: string { get { return \"shape\"; } }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.AbstractMemberWithBody);
+        }
+
+        [Fact]
+        public void AnAbstractAccessorWithABodyIsReportedEvenWhenItsSiblingIsConcrete()
+        {
+            // The dispatch is the accessor's own, not the property's, so `abstract get` with a
+            // body is caught even though the setter is a legal concrete one.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "abstract class Shape\n"
+                + "{\n"
+                + "    public name: string { abstract get { return \"shape\"; } set { } }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.AbstractMemberWithBody);
+        }
+
+        [Fact]
+        public void AnAbstractPropertyWrittenWithAnArrowBodyIsReported()
+        {
+            // The short `=>` form desugars to a getter with a body, so the same ban lands on it.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "abstract class Shape\n"
+                + "{\n"
+                + "    public abstract name: string => \"shape\";\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.AbstractMemberWithBody);
+        }
+
+        [Fact]
+        public void AnInterfacePropertyCannotHaveAnAccessorWithABody()
+        {
+            // §2.3: an interface declares no default implementations. The accessor's abstractness
+            // is forced, so the written body is reported like an interface method's would be.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface INamed\n"
+                + "{\n"
+                + "    name: string { get { return \"x\"; } }\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
+        }
+
+        [Fact]
         public void APropertyLevelSealedOverrideActuallySealsItsAccessors()
         {
             // Regression: WireAccessors used to drop `sealed` on the floor entirely - a property's

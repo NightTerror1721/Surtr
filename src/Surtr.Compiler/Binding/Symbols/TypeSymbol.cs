@@ -77,6 +77,12 @@ namespace Surtr.Compiler.Binding.Symbols
         Range,
 
         /// <summary>
+        /// The built-in <c>bytes</c>: a mutable array of bytes, which takes no parameters — a byte
+        /// is always a byte.
+        /// </summary>
+        Bytes,
+
+        /// <summary>
         /// <c>void</c>, legal only as a return type. Not a type anything can be declared of.
         /// </summary>
         Void,

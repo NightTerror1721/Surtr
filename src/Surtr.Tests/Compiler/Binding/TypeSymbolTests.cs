@@ -170,6 +170,7 @@ namespace Surtr.Tests.Compiler.Binding
 
             // string is a reference despite being a built-in, and so is an erased slot.
             Assert.True(factory.String.IsReferenceType);
+            Assert.True(factory.Bytes.IsReferenceType);
             Assert.True(factory.Range.IsReferenceType);
             Assert.True(factory.Unknown.IsReferenceType);
             Assert.True(factory.Array(factory.Int).IsReferenceType);

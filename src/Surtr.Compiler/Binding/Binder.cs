@@ -237,6 +237,7 @@ namespace Surtr.Compiler.Binding
             _globalScope.TryDeclare("bool", _factory.Bool);
             _globalScope.TryDeclare("char", _factory.Char);
             _globalScope.TryDeclare("string", _factory.String);
+            _globalScope.TryDeclare("bytes", _factory.Bytes);
             _globalScope.TryDeclare("range", _factory.Range);
             _globalScope.TryDeclare("void", _factory.Void);
             _globalScope.TryDeclare("unknown", _factory.Unknown);
@@ -1985,6 +1986,17 @@ namespace Surtr.Compiler.Binding
                         {
                             Report(SurtrDiagnosticCode.InvalidInterfaceMember, binding, method.Span,
                                 $"An interface declares no default implementations, so '{method.Name}' cannot have a body.");
+                            continue;
+                        }
+
+                        // §3.3: an abstract member is signature-only, and a written body would be an
+                        // implementation it cannot carry — one the emitter would silently drop, since
+                        // an abstract member is declared with no body slot. Rejected here, the same
+                        // way the interface's body ban above is.
+                        if (!isInterface && method.Dispatch == DispatchModifier.Abstract && method.Body is not null)
+                        {
+                            Report(SurtrDiagnosticCode.AbstractMemberWithBody, binding, method.Body.Span,
+                                $"'{method.Name}' is abstract, so it cannot have a body.");
                             continue;
                         }
 
@@ -4521,7 +4533,23 @@ namespace Surtr.Compiler.Binding
                     IsNative = isNative,
                 };
 
-                RecordBody(bound, getter.Body, scope, module, containingType, sourceName);
+                // §3.3: an abstract accessor is signature-only, and a written body would be an
+                // implementation it cannot carry — one the emitter would silently drop. An
+                // accessor's dispatch is its own when it wrote one, otherwise the property's;
+                // an interface's accessors are abstract by force of §2.3, and there the body
+                // ban is the same one the interface's method check reports.
+                if (bound.Dispatch == MethodDispatch.Abstract && getter.Body is not null)
+                {
+                    ReportAt(sourceName, getter.Body.Span,
+                        isInterface ? SurtrDiagnosticCode.InvalidInterfaceMember : SurtrDiagnosticCode.AbstractMemberWithBody,
+                        isInterface
+                            ? $"An interface declares no default implementations, so '{property.Name}' cannot have a 'get' accessor with a body."
+                            : $"'{property.Name}' is abstract, so its 'get' accessor cannot have a body.");
+                }
+                else
+                {
+                    RecordBody(bound, getter.Body, scope, module, containingType, sourceName);
+                }
                 property.Getter = bound;
             }
 
@@ -4543,7 +4571,20 @@ namespace Surtr.Compiler.Binding
                 };
 
                 bound.Parameters = new[] { new ParameterSymbol("value", property.Type, 0, bound) };
-                RecordBody(bound, setter.Body, scope, module, containingType, sourceName);
+
+                // §3.3: the setter twin of the getter's abstract-body check above.
+                if (bound.Dispatch == MethodDispatch.Abstract && setter.Body is not null)
+                {
+                    ReportAt(sourceName, setter.Body.Span,
+                        isInterface ? SurtrDiagnosticCode.InvalidInterfaceMember : SurtrDiagnosticCode.AbstractMemberWithBody,
+                        isInterface
+                            ? $"An interface declares no default implementations, so '{property.Name}' cannot have a 'set' accessor with a body."
+                            : $"'{property.Name}' is abstract, so its 'set' accessor cannot have a body.");
+                }
+                else
+                {
+                    RecordBody(bound, setter.Body, scope, module, containingType, sourceName);
+                }
                 property.Setter = bound;
             }
         }

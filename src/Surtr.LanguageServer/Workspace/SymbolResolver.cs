@@ -1077,6 +1077,74 @@ namespace Surtr.LanguageServer.Workspace
                 }
             }
 
+            // A module-level member the bound tree never names: a `const` read is folded straight
+            // to a literal by the binder (§7.1), so no BoundFieldExpression exists for it and the
+            // bound walk above has nothing to claim. Resolve the name against the module's own
+            // fields — a const, or a let/var whose read some other pass missed — so hover and
+            // go-to-definition still answer for it.
+            foreach (var field in module.Fields)
+            {
+                if (field.Name != name)
+                    continue;
+
+                var (fieldFile, fieldStart, fieldLength) = FindSymbolDeclaration(field, snapshot);
+                return new Hit
+                {
+                    Markdown = HoverFormatter.FormatSymbol(field),
+                    AnchorStart = anchor.Span.Start.Position,
+                    AnchorLength = anchor.Span.Length,
+                    DefinitionFile = fieldFile,
+                    DefinitionStart = fieldStart,
+                    DefinitionLength = fieldLength,
+                };
+            }
+
+            // A class-level `const` read (`Box.SIZE`) folds the same way, and the receiver names
+            // the type that holds the constant — resolve `Type.CONST` when the tokens right before
+            // the anchor spell exactly that shape.
+            if (QualifiedConstOf(snapshot, module, tokens, anchor, name) is Hit qualified)
+                return qualified;
+
+            return null;
+        }
+
+        /// <summary>
+        /// Resolves <c>Type.CONST</c> — the written receiver immediately before the hovered name —
+        /// to a constant field of that type, when the bound tree already failed (a const read
+        /// folds to a literal and leaves no field node for the walk to claim). Returns
+        /// <see langword="null"/> for anything that is not a bare <c>Type.CONST</c>.
+        /// </summary>
+        private static Hit? QualifiedConstOf(CompilationSnapshot snapshot, ModuleSymbol module, List<Token> tokens, Token anchor, string name)
+        {
+            int index = tokens.FindIndex(t => t.Span.Equals(anchor.Span));
+            if (index < 2
+                || tokens[index - 1].Type != TokenType.Dot
+                || tokens[index - 2].Type != TokenType.Identifier)
+            {
+                return null;
+            }
+
+            string receiver = tokens[index - 2].Lexeme.ToString();
+            foreach (var type in module.FindTypes(receiver))
+            {
+                foreach (var member in type.Definition.Members)
+                {
+                    if (member is not FieldSymbol field || !field.IsConst || field.Name != name)
+                        continue;
+
+                    var (file, start, length) = FindSymbolDeclaration(field, snapshot);
+                    return new Hit
+                    {
+                        Markdown = HoverFormatter.FormatSymbol(field),
+                        AnchorStart = anchor.Span.Start.Position,
+                        AnchorLength = anchor.Span.Length,
+                        DefinitionFile = file,
+                        DefinitionStart = start,
+                        DefinitionLength = length,
+                    };
+                }
+            }
+
             return null;
         }
 

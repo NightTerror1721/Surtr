@@ -43,6 +43,9 @@ namespace Surtr.Interop
                 case SurtrValueTypeCode.String:
                     return SurtrValue.CreateReference(runtime.InternString((string)value).GetSurtrReference());
 
+                case SurtrValueTypeCode.Bytes:
+                    return SurtrValue.CreateReference(runtime.NewBytes((byte[])value).GetSurtrReference());
+
                 case SurtrValueTypeCode.Native:
                 {
                     // An enum is its int from the migration (§2.7): marshaling a CLR enum is pure
@@ -87,6 +90,9 @@ namespace Surtr.Interop
                 var code = descriptor.TypeCode;
                 if (code == SurtrValueTypeCode.String)
                     return runtime.Resolve<SurtrString>(value)?.Text;
+
+                if (code == SurtrValueTypeCode.Bytes)
+                    return runtime.Resolve<SurtrBytes>(value)?.ToArray();
 
                 // A proxy unwraps to its target; an adopted SurtrNativeObject is the host object
                 // itself, and digging for a target would reach null or the wrong thing.

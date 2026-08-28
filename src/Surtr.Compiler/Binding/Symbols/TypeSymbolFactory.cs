@@ -55,6 +55,7 @@ namespace Surtr.Compiler.Binding.Symbols
             Bool = Special("bool", SpecialType.Bool);
             Char = Special("char", SpecialType.Char);
             String = Special("string", SpecialType.String);
+            Bytes = Special("bytes", SpecialType.Bytes);
             Range = Special("range", SpecialType.Range);
             Void = Special("void", SpecialType.Void);
             Unknown = Special("unknown", SpecialType.Unknown);
@@ -80,6 +81,9 @@ namespace Surtr.Compiler.Binding.Symbols
 
         /// <summary>The built-in <c>string</c>.</summary>
         public NamedTypeSymbol String { get; }
+
+        /// <summary>The built-in <c>bytes</c>: a mutable binary buffer.</summary>
+        public NamedTypeSymbol Bytes { get; }
 
         /// <summary>The built-in <c>range</c>.</summary>
         public NamedTypeSymbol Range { get; }

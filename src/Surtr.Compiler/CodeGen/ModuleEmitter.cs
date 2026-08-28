@@ -732,10 +732,13 @@ namespace Surtr.Compiler.CodeGen
             // Either accessor being bare is enough: §3.4 lets `{ get; set { ... } }` mix them, and
             // the bare half still needs somewhere to read from. A native accessor is excluded here
             // even though it is bare too - it has a body, the host's, so it never needs a backing
-            // field and must not contribute to `auto`.
+            // field and must not contribute to `auto`. An abstract accessor is excluded the same
+            // way: its bodylessness is the point, it declares an obligation a subclass must supply,
+            // and synthesizing a field for it would turn a signature-only member into one that
+            // implements something.
             bool auto =
-                (property.Getter is not null && !getterIsNative && !_binder.Bodies.ContainsKey(property.Getter))
-                || (property.Setter is not null && !setterIsNative && !_binder.Bodies.ContainsKey(property.Setter));
+                (property.Getter is not null && !getterIsNative && property.Getter.Dispatch != MethodDispatch.Abstract && !_binder.Bodies.ContainsKey(property.Getter))
+                || (property.Setter is not null && !setterIsNative && property.Setter.Dispatch != MethodDispatch.Abstract && !_binder.Bodies.ContainsKey(property.Setter));
 
             if (auto)
             {
@@ -755,16 +758,52 @@ namespace Surtr.Compiler.CodeGen
             // `override`, and `SurtrTypeLinker` rejects an override with no base entry to replace.
             if (property.Getter is MethodSymbol getter && !getterIsNative)
             {
-                var builder = declared.DefineGetter(Dispatch(getter), OverridesABaseMethod(getter));
-                context.Declare(getter, builder);
-                emission.Methods.Add((getter, builder));
+                if (getter.Dispatch == MethodDispatch.Abstract)
+                {
+                    // An abstract accessor is the property's twin of `DeclareMethod`'s abstract
+                    // branch: signature-only, no bytecode body, no body slot. It is bound (so
+                    // references to it resolve) but never added to `emission.Methods`, and the
+                    // property's metadata names it through `BindGetter`.
+                    var (names, constraints) = GenericParameterTable(getter);
+                    var abstractGetter = @class.DefineAbstractMethod(
+                        getter.Name,
+                        _descriptors.Emit(getter.ReturnType),
+                        Array.Empty<SurtrParameterInfo>(),
+                        Visibility(getter.Accessibility),
+                        names,
+                        constraints);
+                    declared.BindGetter(abstractGetter);
+                    context.Bind(getter, abstractGetter);
+                }
+                else
+                {
+                    var builder = declared.DefineGetter(Dispatch(getter), OverridesABaseMethod(getter));
+                    context.Declare(getter, builder);
+                    emission.Methods.Add((getter, builder));
+                }
             }
 
             if (property.Setter is MethodSymbol setter && !setterIsNative)
             {
-                var builder = declared.DefineSetter(Dispatch(setter), OverridesABaseMethod(setter));
-                context.Declare(setter, builder);
-                emission.Methods.Add((setter, builder));
+                if (setter.Dispatch == MethodDispatch.Abstract)
+                {
+                    var (names, constraints) = GenericParameterTable(setter);
+                    var abstractSetter = @class.DefineAbstractMethod(
+                        setter.Name,
+                        _descriptors.Emit(setter.ReturnType),
+                        Parameters(context, setter),
+                        Visibility(setter.Accessibility),
+                        names,
+                        constraints);
+                    declared.BindSetter(abstractSetter);
+                    context.Bind(setter, abstractSetter);
+                }
+                else
+                {
+                    var builder = declared.DefineSetter(Dispatch(setter), OverridesABaseMethod(setter));
+                    context.Declare(setter, builder);
+                    emission.Methods.Add((setter, builder));
+                }
             }
         }
 

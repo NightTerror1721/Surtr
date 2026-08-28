@@ -85,6 +85,7 @@ The encoding is a JVM/CLR-style descriptor rather than a dotted C#-style full na
 ```
 I F B C S                 integer, float, boolean, character, string
 R                         range of ints (both bounds int, so not parameterised)
+X                         bytes — a mutable array of bytes (unparameterised)
 A<elem>                   array            AI            -> int[]
 D<key><value>             dictionary       DIS           -> {int: string}
 T(<elem>...)              tuple            T(IF)         -> (int, float)
@@ -430,7 +431,7 @@ The VM opcode suites in `src/Surtr.Tests/VM` predate the emitter and still use t
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **Surtr** (11292 symbols, 45430 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **Surtr** (11432 symbols, 46043 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 

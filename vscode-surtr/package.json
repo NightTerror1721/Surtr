@@ -2,7 +2,7 @@
   "name": "surtr-language",
   "displayName": "Surtr Language",
   "description": "Language support for the Surtr embedded scripting language: syntax highlighting, hover, go-to-definition and diagnostics",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "publisher": "surtr-lang",
   "license": "MIT",
   "engines": {

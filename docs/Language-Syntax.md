@@ -57,6 +57,7 @@ surface syntax just gives each descriptor symbol a spelling:
 | `bool` | `B` | literals `true` / `false` |
 | `char` | `C` | |
 | `string` | `S` | |
+| `bytes` | `X` | a mutable array of bytes — the binary buffer. Unparameterised, since a byte is always a byte; a reference type whose storage is a CLR `byte[]`. Values cross the surface as `int` (0–255), since there is no one-byte primitive. `==`/`!=` are identity, like an array; content comparison is explicit through `equals`/`compareTo` (which also satisfy `IEquatable<bytes>`/`IComparable<bytes>`) |
 | `void` | `V` | **return position only** — `void` is deliberately not a type per `CLAUDE.md`, so a field, local or parameter can never be declared `void` |
 | `range` | `R` | a half-open or closed interval of `int`s (§5.4); unparameterised, since both bounds are always `int`. An **inline value** like a tuple (§2.9): three slots - start, end, inclusive - travelling flat through locals, arguments and returns, packing only when it crosses into one-reference storage. Equality is structural: same bounds and same form, same value, whatever identity its packed form would carry |
 | `unknown` | `E` | holds any value; must be cast before use (§5.10) |
@@ -1989,6 +1990,21 @@ not part of this: `RangeNew` has room for exactly two operands and `SurtrRange` 
 bounds, so a step needs either a changed or an additional opcode, a VM change, and a
 `SurtrRange` field this section deliberately leaves alone.
 
+**`bytes` is the binary buffer, and its constructors are the four shapes a buffer can start from**
+— each folding onto a native static factory on the class (§13), none needing a VM change:
+
+```
+let empty = bytes();                 // an empty buffer
+let roomy = bytes(1024);             // an empty buffer with capacity reserved
+let raw   = bytes([72, 105]);        // "Hi" as bytes — values checked into [0, 255]
+let win   = bytes(raw, 0, 2);        // a slice of an int[] — offset then length
+let text  = bytes("Hola");           // UTF-8 bytes of the text
+```
+
+There is no one-byte literal and no `byte` primitive — the language deals in `int` at the surface,
+so a read answers 0–255 and every write validates its range rather than silently truncating.
+Constructing from a `string` is UTF-8, the encoding that round-trips through `decodeUTF8()`.
+
 ### 5.3.3 The array/dict shapes a single value can't cover
 
 §5.3.1 covers `array<T>`/`dict<K,V>`'s empty, capacity and (for array) tuple-cast constructors. Four
@@ -3409,6 +3425,28 @@ Two members are worth naming because their shape was a decision rather than a tr
   language knows what every argument is, so converting at the call site with `.toString()` is one
   visible call instead of a type walk hidden inside `format`. An index with no argument behind it
   is an error, not an empty string.
+
+**`bytes`** is the binary buffer — a mutable array of bytes (§1.1) that reads and writes through
+`int`. Its verbs mirror the array's so the two feel alike, and add the buffer's read side:
+
+- **Reading/writing:** `length`/`capacity`/`isEmpty`, `get(index)`, `set(index, value)`,
+  `push(value)`, `pop()`, `insert(index, value)`, `removeAt(index)`, `truncate(length)`,
+  `reserve(capacity)`, `clear()`, `reverse()`, `indexOf(value)`, `lastIndexOf(value)`,
+  `contains(value)`. It also declares `operator[]`, so `buffer[i]` reads and `buffer[i] = v`
+  writes the same way an array's indexer does (§5.6).
+- **The buffer's own:** `slice(start, length)` returns a copy of a window; `concat(other)` returns
+  a new buffer of both; `copy()` an independent snapshot; `copyFrom(source)` (and
+  `copyFrom(source, sourceOffset, count)`) replaces this buffer's contents with another's (or a
+  bounded slice of it), which is how a reusable buffer is reset; `copyTo(target)` (and
+  `copyTo(target, targetOffset)`) writes this buffer's bytes into another at an offset, growing
+  it to fit. `equals(other)`/`compareTo(other)` compare *contents* (the `==`/`!=` operators stay
+  identity, like an array's, because a mutable buffer must not change meaning under you) and
+  satisfy `IEquatable<bytes>`/`IComparable<bytes>`; `toString()` is uppercase hex;
+  `decodeUTF8()` decodes the bytes as UTF-8 text.
+- **Factories:** `empty()`, `withCapacity(n)`, `from(int[])`, `from(int[], offset, length)`,
+  `fromUTF8(text)`, `repeat(value, count)` — and the `bytes(...)` constructor spellings of §5.3.2
+  that fold onto the first five. A host hands a CLR `byte[]` in through the interop layer, which
+  maps it to `bytes` rather than to `int[]`.
 
 ### 13.5 Reflection: `Type`, `Member` and `Module`
 

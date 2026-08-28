@@ -3936,6 +3936,12 @@ namespace Surtr.Compiler.Binding
                         new BoundLiteralExpression(syntax, _factory.Int, 0L),
                         _factory.Range);
 
+                // `bytes()` constructs an empty buffer. There is no bytes literal to fold, so this
+                // is a real call to the native empty() factory - not allocation-free like its
+                // neighbours, but the only meaning a parameterless construction could have.
+                case SpecialType.Bytes:
+                    return TryBindNativeSugarCall(syntax, null, _factory.Bytes, "empty", System.Array.Empty<BoundExpression>());
+
                 default:
                     return null;
             }
@@ -3963,6 +3969,7 @@ namespace Surtr.Compiler.Binding
                 case SpecialType.Bool: result = BindBoolCreation(syntax, written); return true;
                 case SpecialType.Char: result = BindCharCreation(syntax, written); return true;
                 case SpecialType.String: result = BindStringCreation(syntax, written); return true;
+                case SpecialType.Bytes: result = BindBytesCreation(syntax, written); return true;
                 case SpecialType.Range: result = BindRangeCreation(syntax, written); return true;
                 default:
                     result = null!;
@@ -4124,6 +4131,53 @@ namespace Surtr.Compiler.Binding
                 syntax,
                 SurtrDiagnosticCode.NoBuiltInConstructorMatch,
                 "'string' takes no arguments, one 'int'/'float'/'bool'/'char'/'range'/'char[]' argument, a ('char', 'int' count) pair, or a ('char[]', 'int' offset, 'int' length) slice.");
+        }
+
+        private BoundExpression BindBytesCreation(SyntaxNode syntax, IReadOnlyList<ArgumentSyntax> written)
+        {
+            if (written.Count == 1 && written[0].Name is null)
+            {
+                var argument = BindExpression(written[0].Value);
+
+                // bytes(int) reserves capacity, the same reading `bytes()` has with room to grow —
+                // a one-byte value is written as bytes.from([v]) instead.
+                if (!argument.Type.IsNullable && argument.Type.SpecialType == SpecialType.Int
+                    && TryBindNativeSugarCall(syntax, null, _factory.Bytes, "withCapacity", new[] { argument }) is BoundExpression reserved)
+                {
+                    return reserved;
+                }
+
+                if (argument.Type.NonNullable is ArrayTypeSymbol intArray && intArray.ElementType.NonNullable.SpecialType == SpecialType.Int
+                    && TryBindNativeSugarCall(syntax, null, _factory.Bytes, "from", new[] { argument }) is BoundExpression fromArray)
+                {
+                    return fromArray;
+                }
+
+                if (argument.Type.NonNullable.SpecialType == SpecialType.String
+                    && TryBindNativeSugarCall(syntax, null, _factory.Bytes, "fromUTF8", new[] { argument }) is BoundExpression fromText)
+                {
+                    return fromText;
+                }
+            }
+            else if (written.Count == 3 && written[0].Name is null && written[1].Name is null && written[2].Name is null)
+            {
+                var array = BindExpression(written[0].Value);
+                var offset = BindExpression(written[1].Value);
+                var length = BindExpression(written[2].Value);
+
+                if (array.Type.NonNullable is ArrayTypeSymbol intSliceArray && intSliceArray.ElementType.NonNullable.SpecialType == SpecialType.Int
+                    && !offset.Type.IsNullable && offset.Type.SpecialType == SpecialType.Int
+                    && !length.Type.IsNullable && length.Type.SpecialType == SpecialType.Int
+                    && TryBindNativeSugarCall(syntax, null, _factory.Bytes, "from", new[] { array, offset, length }) is BoundExpression sliced)
+                {
+                    return sliced;
+                }
+            }
+
+            return Error(
+                syntax,
+                SurtrDiagnosticCode.NoBuiltInConstructorMatch,
+                "'bytes' takes no arguments, one 'int' capacity / 'int[]' / 'string' argument, or an ('int[]', 'int' offset, 'int' length) slice.");
         }
 
         private BoundExpression BindRangeCreation(SyntaxNode syntax, IReadOnlyList<ArgumentSyntax> written)

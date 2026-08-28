@@ -6494,6 +6494,7 @@ namespace Surtr.Compiler.CodeGen
                 SurtrValueTypeCode.Float => SurtrBuiltIns.Float,
                 SurtrValueTypeCode.Boolean => SurtrBuiltIns.Boolean,
                 SurtrValueTypeCode.Character => SurtrBuiltIns.Character,
+                SurtrValueTypeCode.Bytes => SurtrBuiltIns.Bytes,
                 _ => throw Unsupported($"interpolating a '{part.Type.ToDisplayString()}'"),
             };
 
@@ -6986,6 +6987,7 @@ namespace Surtr.Compiler.CodeGen
                 case SpecialType.Bool: return SurtrValueTypeCode.Boolean;
                 case SpecialType.Char: return SurtrValueTypeCode.Character;
                 case SpecialType.String: return SurtrValueTypeCode.String;
+                case SpecialType.Bytes: return SurtrValueTypeCode.Bytes;
                 case SpecialType.Range: return SurtrValueTypeCode.Range;
                 case SpecialType.Void: return SurtrValueTypeCode.Void;
                 case SpecialType.Unknown: return SurtrValueTypeCode.Erased;

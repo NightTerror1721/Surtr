@@ -221,6 +221,25 @@ namespace Surtr.Runtime
         }
 
         /// <summary>
+        /// Allocates a bytes buffer that takes ownership of <paramref name="data"/>.
+        /// </summary>
+        /// <remarks>
+        /// The public door a host crosses when it wants to hand a CLR <c>byte[]</c> into a Surtr
+        /// script: the buffer keeps the array as its backing storage, copy-free, exactly like
+        /// <see cref="NewString"/> wraps its text. A script-native body that builds a buffer from
+        /// scratch uses the internal value-shaped helpers instead.
+        /// </remarks>
+        public SurtrBytes NewBytes(byte[] data)
+        {
+            if (data is null)
+                throw new ArgumentNullException(nameof(data));
+
+            var value = new SurtrBytes(data);
+            _context.EntityRegistry.Register(value);
+            return value;
+        }
+
+        /// <summary>
         /// Returns the one shared string object for <paramref name="text"/>, creating it the first
         /// time.
         /// </summary>
@@ -677,6 +696,21 @@ namespace Surtr.Runtime
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal SurtrValue NewStringValue(string text)
             => SurtrValue.CreateReference(_context.EntityRegistry.Register(new SurtrString(text)));
+
+        /// <summary>Allocates an empty bytes buffer with room for <paramref name="capacity"/> bytes.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal SurtrValue NewBytesValue(int capacity)
+            => SurtrValue.CreateReference(_context.EntityRegistry.Register(new SurtrBytes(capacity)));
+
+        /// <summary>Allocates a bytes buffer that takes ownership of <paramref name="data"/> and returns a value naming it.</summary>
+        /// <remarks>
+        /// Takes ownership rather than copying, so a host handing a <c>byte[]</c> across the
+        /// boundary pays no copy. The buffer keeps whatever capacity <paramref name="data"/> has,
+        /// so its <c>capacity</c> property may read larger than its <c>length</c>.
+        /// </remarks>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal SurtrValue NewBytesValue(byte[] data)
+            => SurtrValue.CreateReference(_context.EntityRegistry.Register(new SurtrBytes(data)));
         #endregion
 
         #region Type Handles

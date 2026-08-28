@@ -41,6 +41,7 @@ namespace Surtr.Runtime.Classes
     ///             | 'N' fullname ';' descriptor{arity} host-defined native type
     ///             | 'Y' descriptor                     generator yielding T
     ///             | 'R'                                range of ints
+    ///             | 'X'                                bytes
     ///             | 'E'                                erased generic type parameter
     ///             | 'G' digit                          the declaring type's n-th generic parameter
     ///             | 'H' digit                          the declaring method's n-th generic parameter
@@ -125,6 +126,15 @@ namespace Surtr.Runtime.Classes
         /// nothing for the nesting grammar to carry.
         /// </remarks>
         public const char SymbolRange = 'R';
+
+        /// <summary>
+        /// Descriptor symbol for <see cref="SurtrValueTypeCode.Bytes"/>.
+        /// </summary>
+        /// <remarks>
+        /// A bare symbol like <see cref="SymbolRange"/>'s, for the same reason: a byte is always a
+        /// byte, so there is nothing for the nesting grammar to carry.
+        /// </remarks>
+        public const char SymbolBytes = 'X';
 
         /// <summary>Descriptor symbol for <see cref="SurtrValueTypeCode.Object"/>, followed by a full name and <see cref="NameTerminator"/>.</summary>
         public const char SymbolObject = 'O';
@@ -369,6 +379,9 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>A reference to the built-in range type.</summary>
         public static SurtrClassReference Range { get; } = new(SymbolRange.ToString());
+
+        /// <summary>A reference to the built-in bytes type.</summary>
+        public static SurtrClassReference Bytes { get; } = new(SymbolBytes.ToString());
 
         /// <summary>A reference to an erased generic type parameter.</summary>
         public static SurtrClassReference Erased { get; } = new(SymbolErased.ToString());
@@ -880,6 +893,7 @@ namespace Surtr.Runtime.Classes
                 case SymbolCharacter:
                 case SymbolString:
                 case SymbolRange:
+                case SymbolBytes:
                 case SymbolErased:
                 case SymbolVoid:
                     return index + 1;
@@ -1072,6 +1086,7 @@ namespace Surtr.Runtime.Classes
             SymbolObject => SurtrValueTypeCode.Object,
             SymbolNative => SurtrValueTypeCode.Native,
             SymbolRange => SurtrValueTypeCode.Range,
+            SymbolBytes => SurtrValueTypeCode.Bytes,
             SymbolErased => SurtrValueTypeCode.Erased,
             SymbolVoid => SurtrValueTypeCode.Void,
             // A generic parameter is an erased slot that remembers which parameter it was: the
@@ -1109,6 +1124,7 @@ namespace Surtr.Runtime.Classes
                 case SymbolCharacter: builder.Append("char"); return index + 1;
                 case SymbolString: builder.Append("string"); return index + 1;
                 case SymbolRange: builder.Append("range"); return index + 1;
+                case SymbolBytes: builder.Append("bytes"); return index + 1;
                 // `unknown` rather than a bare '?', which now means nullable and would read as
                 // two different things in the same sentence.
                 case SymbolErased: builder.Append("unknown"); return index + 1;

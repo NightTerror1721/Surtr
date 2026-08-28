@@ -243,6 +243,7 @@ namespace Surtr.Compiler.CodeGen
                 // Reference built-ins: `?` adds nothing, since a reference is its payload and null
                 // is already one of the values it can hold.
                 case SpecialType.String: builder.Append(SurtrClassReference.SymbolString); return;
+                case SpecialType.Bytes: builder.Append(SurtrClassReference.SymbolBytes); return;
                 case SpecialType.Range: builder.Append(SurtrClassReference.SymbolRange); return;
                 case SpecialType.Void: builder.Append(SurtrClassReference.SymbolVoid); return;
 

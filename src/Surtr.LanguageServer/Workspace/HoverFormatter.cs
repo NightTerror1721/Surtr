@@ -122,6 +122,9 @@ namespace Surtr.LanguageServer.Workspace
                 case "string":
                     kind = "built-in string";
                     break;
+                case "bytes":
+                    kind = "built-in bytes: a mutable binary buffer";
+                    break;
                 case "range":
                     kind = "built-in range";
                     break;
@@ -352,12 +355,15 @@ namespace Surtr.LanguageServer.Workspace
         private static string FormatField(FieldSymbol field)
         {
             var builder = new StringBuilder();
-            builder.Append(Fence(BindingKeyword(field.IsReadOnly) + field.Name + ": " + field.Type.ToDisplayString()));
+            string keyword = field.IsConst ? "const " : BindingKeyword(field.IsReadOnly);
+            builder.Append(Fence(keyword + field.Name + ": " + field.Type.ToDisplayString()));
 
             var modifiers = new List<string>();
             if (field.IsStatic)
                 modifiers.Add("static");
-            if (field.IsReadOnly)
+            if (field.IsConst)
+                modifiers.Add("const");
+            else if (field.IsReadOnly)
                 modifiers.Add("readonly");
             if (field.IsNative)
                 modifiers.Add("native");
@@ -370,6 +376,10 @@ namespace Surtr.LanguageServer.Workspace
             {
                 builder.Append(Break).Append("enum case = " + enumValue);
                 builder.Append(Break).Append("case of `" + (field.ContainingSymbol?.Name ?? "enum") + "`");
+            }
+            else if (field.IsConst)
+            {
+                builder.Append(Break).Append(ContainingLabel(field.ContainingSymbol, "constant", "constant"));
             }
             else
             {

@@ -679,6 +679,15 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         ReservedEnumMember = 3091,
 
+        /// <summary>
+        /// An <c>abstract</c> method, or an <c>abstract</c> property accessor, was given a body
+        /// (§3.3, §3.4). An abstract member is signature-only — it declares the obligation a
+        /// subclass must supply, so anything it implements here is a contradiction the emitter
+        /// would otherwise silently drop (an abstract member is declared with no body slot).
+        /// It must be written without a body.
+        /// </summary>
+        AbstractMemberWithBody = 3092,
+
         #endregion
 
         #region Code generation — 4xxx

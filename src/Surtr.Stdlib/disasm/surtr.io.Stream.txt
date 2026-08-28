@@ -1,0 +1,112 @@
+module surtr.io.Stream
+  constants: 0   types: 0   fields: 0   methods: 12   modules: 0
+
+  method table:
+    #0  surtr.io.Stream:Stream.read(bytes) -> int
+    #1  surtr.io.Stream:Stream.write(bytes) -> int
+    #2  surtr.io.Stream:Stream.read(int[], int, int) -> int
+    #3  surtr.io.Stream:Stream.write(int[], int, int) -> int
+    #4  surtr.io.Stream:Stream.read(int[]) -> int
+    #5  surtr.io.Stream:Stream.write(int[]) -> int
+    #6  surtr.io.Stream:Stream.close() -> void
+    #7  bytes.get_length() -> int
+    #8  surtr.io.Stream:Stream.read(bytes, int, int) -> int
+    #9  surtr.io.Stream:Stream.write(bytes, int, int) -> int
+    #10  bytes.from(int[]) -> bytes
+    #11  surtr.io.Stream:Stream.dispose() -> void
+
+abstract class Stream : surtr:IDisposable  [public]
+
+  [public] property canRead: bool { get; }
+    get:
+      ; abstract
+
+  [public] property canSeek: bool { get; }
+    get:
+      ; abstract
+
+  [public] property canWrite: bool { get; }
+    get:
+      ; abstract
+
+  [public] close(): void
+    ; entry 6, locals 1, stack 1, code 0060..0067
+      0060  Ldl0
+      0061  InvokeVirtual 11 (dispose) args=1 ret=0
+      0066  ReturnVoid
+
+  [public] abstract dispose(): void
+
+  [public] abstract flush(): void
+
+  [public] abstract read(buffer: bytes, offset: int, count: int): int
+
+  [public] read(buffer: bytes): int
+    ; entry 0, locals 2, stack 4, code 0000..0010
+      0000  Ldl0
+      0001  Ldl1
+      0002  PushI8 0
+      0004  Ldl1
+      0005  InvokeSpecial 7 (get_length) args=1 ret=1
+      000A  InvokeVirtual 8 (read) args=4 ret=1
+      000F  ReturnValue
+
+  [public] read(buffer: int[], offset: int, count: int): int
+    ; entry 2, locals 4, stack 4, code 0020..002F
+      0020  Ldl0
+      0021  Ldl1
+      0022  InvokeStatic 10 (from) args=1 ret=1
+      0027  Ldl2
+      0028  Ldl3
+      0029  InvokeVirtual 8 (read) args=4 ret=1
+      002E  ReturnValue
+
+  [public] read(buffer: int[]): int
+    ; entry 4, locals 2, stack 4, code 003E..004F
+      003E  Ldl0
+      003F  Ldl1
+      0040  InvokeStatic 10 (from) args=1 ret=1
+      0045  PushI8 0
+      0047  Ldl1
+      0048  ArrLen
+      0049  InvokeVirtual 8 (read) args=4 ret=1
+      004E  ReturnValue
+
+  [public] abstract readByte(): int
+
+  [public] abstract seek(offset: int, origin: surtr.io.Enums:SeekOrigin): int
+
+  [public] abstract write(buffer: bytes, offset: int, count: int): int
+
+  [public] write(buffer: bytes): int
+    ; entry 1, locals 2, stack 4, code 0010..0020
+      0010  Ldl0
+      0011  Ldl1
+      0012  PushI8 0
+      0014  Ldl1
+      0015  InvokeSpecial 7 (get_length) args=1 ret=1
+      001A  InvokeVirtual 9 (write) args=4 ret=1
+      001F  ReturnValue
+
+  [public] write(buffer: int[], offset: int, count: int): int
+    ; entry 3, locals 4, stack 4, code 002F..003E
+      002F  Ldl0
+      0030  Ldl1
+      0031  InvokeStatic 10 (from) args=1 ret=1
+      0036  Ldl2
+      0037  Ldl3
+      0038  InvokeVirtual 9 (write) args=4 ret=1
+      003D  ReturnValue
+
+  [public] write(buffer: int[]): int
+    ; entry 5, locals 2, stack 4, code 004F..0060
+      004F  Ldl0
+      0050  Ldl1
+      0051  InvokeStatic 10 (from) args=1 ret=1
+      0056  PushI8 0
+      0058  Ldl1
+      0059  ArrLen
+      005A  InvokeVirtual 9 (write) args=4 ret=1
+      005F  ReturnValue
+
+  [public] abstract writeByte(value: int): bool

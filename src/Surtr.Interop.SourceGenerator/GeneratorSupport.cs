@@ -131,6 +131,11 @@ namespace Surtr.Interop.SourceGenerator
                 return "N" + (attribute is null ? enumType.Name : FullNameOf(enumType, attribute)) + ";";
             }
 
+            // A byte[] is the built-in bytes buffer, not an int[] — the same special case the
+            // reflection-side type mapper makes, checked before the generic array rule.
+            if (type is IArrayTypeSymbol { ElementType: { SpecialType: SpecialType.System_Byte } })
+                return "X";
+
             if (type is IArrayTypeSymbol array)
                 return "A" + MapType(array.ElementType);
 
@@ -218,6 +223,7 @@ namespace Surtr.Interop.SourceGenerator
                 case 'C':
                 case 'S':
                 case 'R':
+                case 'X':
                 case 'E':
                 case 'V':
                     return index + 1;
