@@ -486,6 +486,38 @@ namespace Surtr.Compiler.Syntax.Ast
         }
     }
 
+    /// <summary>
+    /// A collection instantiation written as a literal over a named type — <c>List&lt;int&gt;[1, 2, 3]</c>,
+    /// <c>List&lt;int&gt;(32)[1, 2, 3]</c> or <c>Map&lt;string, int&gt;{ "x": 10 }</c> — or the ambiguous
+    /// shape an index shares with it (<c>arr[0]</c>), which the binder resolves to a builder or an index
+    /// by what the <see cref="Construction"/> resolves to.
+    /// </summary>
+    /// <remarks>
+    /// The parser produces this node for every <c>[ ... ]</c>/<c>{ ... }</c> that follows an identifier, a
+    /// generic name or a call. The binder decides: a construction whose callee resolves to a type with an
+    /// <c>each</c> constructor is a collection literal (built via <c>$fill$...</c>), a callee that resolves
+    /// to a value is an index (<c>(Type(args))[i]</c> re-encodes the explicit-index form), and a type without
+    /// an <c>each</c> constructor is an error pointing back at the parentheses form.
+    /// </remarks>
+    public sealed class CollectionInstantiationExpressionSyntax : ExpressionSyntax
+    {
+        /// <summary>The identifier, generic name or call the literal is written over.</summary>
+        public ExpressionSyntax Construction { get; }
+
+        /// <summary>The literal body — an <see cref="ArrayLiteralExpressionSyntax"/> or a <see cref="DictLiteralExpressionSyntax"/>.</summary>
+        public ExpressionSyntax Body { get; }
+
+        /// <summary>Initializes a collection instantiation.</summary>
+        /// <param name="span">The source the whole expression covers.</param>
+        /// <param name="construction">The identifier, generic name or call.</param>
+        /// <param name="body">The literal body.</param>
+        public CollectionInstantiationExpressionSyntax(SourceSpan span, ExpressionSyntax construction, ExpressionSyntax body) : base(span)
+        {
+            Construction = construction;
+            Body = body;
+        }
+    }
+
     /// <summary>One arm of a switch expression: <c>1, 2 -&gt; "x"</c> or <c>else -&gt; "y"</c>.</summary>
     public sealed class SwitchExpressionArmSyntax : SyntaxNode
     {

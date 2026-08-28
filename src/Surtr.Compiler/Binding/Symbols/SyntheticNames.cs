@@ -48,6 +48,9 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>The category of a generator's hidden body method.</summary>
         public const string GeneratorCategory = "generator";
 
+        /// <summary>The category of a collection builder's per-element fill method (§5.x).</summary>
+        public const string FillCategory = "fill";
+
         /// <summary>
         /// The name of the receiver parameter an extension property's accessor synthesises (§15.1).
         /// An extension method's receiver is always written out by the user (§15's own explicit-
@@ -97,6 +100,16 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <param name="context">The generator's declared name.</param>
         /// <param name="index">Its position among that name's overloads, from zero.</param>
         public static string GeneratorBody(string context, int index) => Build(GeneratorCategory, context, index);
+
+        /// <summary>
+        /// The name of a collection builder's fill method: the sibling method a constructor's
+        /// <c>each</c> clause compiles to (§5.x). A real instance method of the class — the literal
+        /// lowering calls it once per element — so it needs a name nothing in source can spell, and
+        /// one that cannot collide with a second builder's fill in an overload set.
+        /// </summary>
+        /// <param name="context">The containing type's name.</param>
+        /// <param name="index">Its position among that type's <c>each</c> constructors, from zero.</param>
+        public static string FillMethod(string context, int index) => Build(FillCategory, context, index);
 
         /// <summary>Whether a name was produced by this class rather than written in source.</summary>
         public static bool IsSynthetic(string name) => name.Length > 0 && name[0] == Marker;

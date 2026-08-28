@@ -165,6 +165,20 @@ namespace Surtr.Compiler.Binding.Symbols
             internal set => Definition._interfaces = value;
         }
 
+        /// <summary>
+        /// The default concrete class a collection literal target-typed to this interface builds,
+        /// written as <c>interface IList&lt;T&gt; default List&lt;T&gt;</c>. Null for a class, enum,
+        /// value class, singleton, or an interface without a declared default. Only meaningful on an
+        /// interface's definition.
+        /// </summary>
+        public NamedTypeSymbol? DefaultBuilder
+        {
+            get => Definition._defaultBuilder;
+            internal set => Definition._defaultBuilder = value;
+        }
+
+        private NamedTypeSymbol? _defaultBuilder;
+
         private readonly HashSet<string> _bridgeKeys = new(StringComparer.Ordinal);
 
         /// <summary>

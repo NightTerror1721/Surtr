@@ -1,6 +1,6 @@
 import surtr.collections.Collection;
 
-public interface IQueue<T> : ICollection<T>
+public interface IQueue<T> default Queue<T> : ICollection<T>
 {
     isEmpty: bool { get; }
 
@@ -26,6 +26,15 @@ public class Queue<T> : IQueue<T>
         this._front = null;
         this._back = null;
         this._count = 0;
+    }
+
+    // §5.x: the collection-builder form — `Queue<int>[1, 2, 3]` fills through this $fill$ method.
+    public constructor() : this()
+    {
+    }
+    each (item: T)
+    {
+        enqueue(item);
     }
 
     public inline length: int => _count;

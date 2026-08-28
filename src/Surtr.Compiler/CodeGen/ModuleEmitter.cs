@@ -194,7 +194,41 @@ namespace Surtr.Compiler.CodeGen
                 exception is SurtrEmitException emit ? emit.Span : default);
         }
 
-        /// <summary>The file a member was written in, falling back to the module's first.</summary>
+        /// <summary>
+        /// Whether a class declares a plain (non-<c>each</c>) constructor with the same parameter
+        /// signature as <paramref name="method"/> — the sign that the <c>each</c> constructor is
+        /// only a fill declaration and must not be emitted as a second method of one shape (§5.x).
+        /// </summary>
+        private static bool HasPlainConstructorWithSignature(MethodSymbol method, NamedTypeSymbol type)
+        {
+            foreach (var member in type.Members)
+            {
+                if (member is not MethodSymbol { Role: MethodRole.Constructor, IsCollectionBuilder: false } plain
+                    || plain.Parameters.Count != method.Parameters.Count)
+                {
+                    continue;
+                }
+
+                bool same = true;
+                for (int i = 0; i < plain.Parameters.Count; i++)
+                {
+                    if (!ReferenceEquals(plain.Parameters[i].Type.NonNullable, method.Parameters[i].Type.NonNullable))
+                    {
+                        same = false;
+                        break;
+                    }
+                }
+
+                if (same)
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The files a module's members were written in, by member.
+        /// </summary>
         private string FileOf(MethodSymbol? member)
         {
             if (member is not null && _binder.BodyFiles.TryGetValue(member, out string? file))
@@ -325,6 +359,13 @@ namespace Surtr.Compiler.CodeGen
                         : declaringClass.DefineNestedInterface(declaredName, Visibility(symbol));
 
                     Parameterise(contract.Interface, symbol);
+
+                    // §5.x: the interface's default builder class travels by its definition's
+                    // reference; the importing side constructs it with the interface's own type
+                    // parameters so a target-typed literal can substitute the use-site arguments.
+                    if (symbol.DefaultBuilder is { } defaultBuilder)
+                        contract.Interface.DefaultBuilder = module.TypeHandle(_descriptors.Emit(defaultBuilder.Definition));
+
                     context.Declare(symbol, contract);
                     emission = new TypeEmission(symbol, null, contract);
                     break;
@@ -814,7 +855,24 @@ namespace Surtr.Compiler.CodeGen
 
             if (method.Role == MethodRole.Constructor)
             {
+                // §5.x: an `each` constructor whose signature a plain constructor already takes is
+                // not emitted — the method table cannot hold two constructors of one shape, and the
+                // literal lowering calls the plain one plus the fill. Only the fill survives.
+                if (method.IsCollectionBuilder && HasPlainConstructorWithSignature(method, emission.Symbol))
+                    return;
+
                 var constructor = @class.DefineConstructor(parameters, Visibility(method.Accessibility));
+
+                // §5.x: a builder constructor's `each` parameters travel by type, so a module that
+                // imports the class later can still bind a target-typed literal against them.
+                if (method.EachParameters is not null)
+                {
+                    var eachParameters = new SurtrTypeHandle[method.EachParameters.Count];
+                    for (int i = 0; i < eachParameters.Length; i++)
+                        eachParameters[i] = context.Module.TypeHandle(_descriptors.Emit(method.EachParameters[i].Type));
+
+                    constructor.EachParameters = eachParameters;
+                }
 
                 foreach (var use in method.Attributes)
                 {

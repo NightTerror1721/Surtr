@@ -135,6 +135,11 @@ hecha exige `(Tipo(args))[i]`. El acceso a miembro (`obj.campo[0]`) conserva el 
   son alcanzables por una llamada normal; si el tipo solo declara constructores `each`, una
   llamada normal es error. (`constructor(n)` y `constructor(n) each` coexisten sin ambigüedad:
   la llamada normal solo ve el primero, el literal solo el segundo.)
+- **Mismo slot de runtime**: la tabla de métodos no admite dos constructores de una forma
+  (`ctor(int)` y `ctor(int)` con `each` colisionarían). Cuando un constructor plano tiene la
+  misma firma que el `each`, el literal llama al **plano** en runtime (el `each` solo aporta el
+  `$fill$`) y el `each` no se emite como método. El `each` solo se emite si es el único
+  constructor de su firma.
 
 ### 3.4 Alcance del bloque `each`
 
@@ -456,6 +461,10 @@ Casos para el nodo y la sintaxis en `SymbolResolver`, `SemanticTokensProvider`,
 5. El default exige que la clase declare **al menos un constructor `each`**
    (`InterfaceDefaultNoEach`); y cada interfaz admite **un solo** default (una declaración →
    un default, imposible duplicar).
+6. **Reuso del constructor plano en runtime**: cuando un constructor plano tiene la misma firma
+   que el `each`, el literal llama al plano y el `each` no se emite como método (la tabla de
+   métodos no admite dos `ctor(...)` de una forma). Descubierto al compilar la stdlib
+   (`List<T>`: `constructor(int)` plano + `constructor(int) each`).
 
 **Pendiente:**
 6. `@NoAlloc`: el builder aloca → reportado, igual que un array literal (implícito en 4.11;

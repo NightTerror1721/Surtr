@@ -205,6 +205,21 @@ namespace Surtr.Compiler.Binding
                     return;
                 }
 
+                case BoundCollectionBuildExpression build:
+                {
+                    Report(build.Span, $"building a '{build.Type.ToDisplayString()}' allocates");
+                    foreach (var argument in build.ConstructorArguments)
+                        Expression(argument);
+
+                    foreach (var fillArgs in build.FillArguments)
+                    {
+                        foreach (var argument in fillArgs)
+                            Expression(argument);
+                    }
+
+                    return;
+                }
+
                 case BoundCollectionCreationExpression collection:
                 {
                     Report(collection.Span, $"building a '{collection.Type.ToDisplayString()}' allocates");

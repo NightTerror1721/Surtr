@@ -1208,6 +1208,17 @@ namespace Surtr.LanguageServer.Workspace
                     }
                     break;
 
+                case BoundCollectionBuildExpression build:
+                    foreach (var argument in build.ConstructorArguments)
+                        yield return argument;
+
+                    foreach (var fillArgs in build.FillArguments)
+                    {
+                        foreach (var argument in fillArgs)
+                            yield return argument;
+                    }
+                    break;
+
                 case BoundInterpolatedStringExpression interpolated:
                     foreach (var part in interpolated.Parts)
                         yield return part;

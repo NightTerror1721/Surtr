@@ -51,6 +51,13 @@ namespace Surtr.Runtime.Classes
         /// <summary>The interfaces this one declares that it extends, by unresolved handle.</summary>
         internal SurtrTypeHandle[] DeclaredExtendedInterfaces = Array.Empty<SurtrTypeHandle>();
 
+        /// <summary>
+        /// The default builder class a collection literal target-typed to this interface builds
+        /// (§5.x), or <see langword="null"/> when the interface declares none — a built-in contract
+        /// (<c>IIterable</c>, <c>IIterator</c>, ...) never carries one.
+        /// </summary>
+        public SurtrTypeHandle? DefaultBuilder;
+
         /// <summary>Creates interface metadata with no members yet.</summary>
         public SurtrInterface(
             string name,

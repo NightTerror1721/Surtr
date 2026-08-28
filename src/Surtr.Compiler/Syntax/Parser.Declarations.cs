@@ -402,6 +402,16 @@ namespace Surtr.Compiler.Syntax
             string name = reader.ExpectIdentifier("a type name");
             IReadOnlyList<TypeParameterSyntax> typeParameters = ParseTypeParameterList();
 
+            // §2.x: `interface IList<T> default List<T> : ...` — the interface's default builder
+            // class, written between the name and the `:` list. Only meaningful on an interface;
+            // any other kind seeing `default` here fails on the `{` below.
+            TypeSyntax? defaultBuilder = null;
+            if (kind == TypeDeclarationKind.Interface && reader.Check(TokenType.KeywordDefault))
+            {
+                reader.Advance();
+                defaultBuilder = ParseType();
+            }
+
             // §2.2: the `:` list mixes the base class and interfaces, and only metadata can say
             // which a name resolves to, so the parser keeps them together.
             List<TypeSyntax> baseTypes = new List<TypeSyntax>();
@@ -429,7 +439,7 @@ namespace Surtr.Compiler.Syntax
             reader.Expect(TokenType.RightBrace, "'}' to close the type body");
 
             return new TypeDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, kind, name,
-                typeParameters, baseTypes, cases, members, modifiers.IsAbstract, modifiers.IsSealed, modifiers.IsStatic,
+                typeParameters, defaultBuilder, baseTypes, cases, members, modifiers.IsAbstract, modifiers.IsSealed, modifiers.IsStatic,
                 isAttribute, attributeTargets, isCompileTimeOnlyAttribute);
         }
 
@@ -836,13 +846,33 @@ namespace Surtr.Compiler.Syntax
                 // expression statement, since nothing here returns a value.
                 body = ParseArrowBody(returnsVoid: true);
             }
+            else if (CheckContextual("each"))
+            {
+                // `constructor() each (item: T) { ... }` — the each clause follows with no init body
+                // written; the constructor's own phase is empty. The block is synthesized so a
+                // constructor always has a body, exactly as an empty `{ }` would read.
+                body = new BlockStatementSyntax(SpanFrom(reader.CurrentLocation), Array.Empty<StatementSyntax>());
+            }
             else
             {
                 body = ParseBlock();
             }
 
+            // An `each` clause (§5.x): `constructor(...) { ... } each (item: T) { ... }` — a
+            // sibling block holding the per-element fill phase of a collection builder. Contextual
+            // (`each` is an identifier everywhere else), and unambiguous here: a declaration after a
+            // constructor body starts with an introducer or a `name:` property, never `name (...)`.
+            IReadOnlyList<ParameterSyntax>? eachParameters = null;
+            BlockStatementSyntax? eachBody = null;
+            if (CheckContextual("each"))
+            {
+                reader.Advance();
+                eachParameters = ParseParameterList();
+                eachBody = ParseBlock();
+            }
+
             return new ConstructorDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility,
-                parameters, chainArguments, chainsToThis, body);
+                parameters, chainArguments, chainsToThis, body, eachParameters, eachBody);
         }
 
         /// <summary>

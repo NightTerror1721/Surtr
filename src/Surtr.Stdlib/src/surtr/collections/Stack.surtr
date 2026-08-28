@@ -1,6 +1,6 @@
 import surtr.collections.Collection;
 
-public interface IStack<T> : ICollection<T>
+public interface IStack<T> default Stack<T> : ICollection<T>
 {
     isEmpty: bool { get; }
 
@@ -16,6 +16,15 @@ public class Stack<T> : IStack<T>
     public constructor()
     {
         this._items = [];
+    }
+
+    // §5.x: the collection-builder form — `Stack<int>[1, 2, 3]` fills through this $fill$ method.
+    public constructor() : this()
+    {
+    }
+    each (item: T)
+    {
+        push(item);
     }
 
     public inline length: int => _items.length;

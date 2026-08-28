@@ -1,12 +1,12 @@
 import surtr.collections.Collection;
 
-public interface IReadOnlyList<T> : IReadOnlyCollection<T>
+public interface IReadOnlyList<T> default List<T> : IReadOnlyCollection<T>
 {
     fun get(index: int): T;
     fun indexOf(item: T): int;
 }
 
-public interface IList<T> : IReadOnlyList<T>, ICollection<T>
+public interface IList<T> default List<T> : IReadOnlyList<T>, ICollection<T>
 {
     fun set(index: int, value: T): void;
     fun insert(index: int, item: T): void;
@@ -27,6 +27,18 @@ public class List<T> : IList<T>
         this._capacity = initialCapacity;
         this._items = array<T>(_capacity);
         this._length = 0;
+    }
+
+    // §5.x: the collection-builder form — `List<int>[1, 2, 3]` builds the empty list through this
+    // constructor, then fills it one element per call to the $fill$ method below.
+    public constructor(capacity: int = DefaultCapacity) : this(capacity)
+    {
+    }
+    each (item: T)
+    {
+        if (_length == _capacity) ensureCapacity(_length + 1);
+        _items[_length] = item;
+        _length++;
     }
 
     public inline length: int => _length;
@@ -215,6 +227,15 @@ public class LinkedList<T> : IList<T>
         this._head = null;
         this._tail = null;
         this._length = 0;
+    }
+
+    // §5.x: the collection-builder form — `LinkedList<int>[1, 2, 3]` fills through this $fill$ method.
+    public constructor() : this()
+    {
+    }
+    each (item: T)
+    {
+        add(item);
     }
 
     public length: int => _length;

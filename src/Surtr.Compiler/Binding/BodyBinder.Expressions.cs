@@ -48,6 +48,7 @@ namespace Surtr.Compiler.Binding
                 case LambdaExpressionSyntax lambda: return BindLambda(lambda, expected);
                 case ArrayLiteralExpressionSyntax array: return BindArrayLiteral(array, expected);
                 case DictLiteralExpressionSyntax dictionary: return BindDictLiteral(dictionary, expected);
+                case CollectionInstantiationExpressionSyntax instantiation: return BindCollectionInstantiation(instantiation, expected);
                 case TupleLiteralExpressionSyntax tuple: return BindTupleLiteral(tuple, expected);
                 case SwitchExpressionSyntax @switch: return BindSwitchExpression(@switch, expected);
                 case ThrowExpressionSyntax @throw: return BindThrowExpression(@throw);
@@ -1512,10 +1513,12 @@ namespace Surtr.Compiler.Binding
         private BoundExpression BindAssignment(AssignmentExpressionSyntax syntax)
         {
             // §5.6's write form. Taken before the target is bound, because binding it would bind the
-            // *read* operator — a call, which is not something to assign to.
+            // *read* operator — a call, which is not something to assign to. A target that parsed as
+            // the ambiguous collection-instantiation shape (`b[1]` — an identifier followed by a
+            // bracket) is an index too when its construction is a value, so both spellings reach here.
             if (syntax.Operator == AssignmentOperator.Assign
-                && syntax.Target is IndexExpressionSyntax indexed
-                && BindIndexedWrite(syntax, indexed) is BoundExpression write)
+                && AsIndexTarget(syntax.Target) is { } indexedTarget
+                && BindIndexedWrite(syntax, indexedTarget) is BoundExpression write)
             {
                 return write;
             }
@@ -4325,10 +4328,31 @@ namespace Surtr.Compiler.Binding
             BindArguments(written, out var arguments, out var infos);
 
             var constructors = new List<MethodSymbol>();
+            bool hasEachConstructors = false;
             foreach (var member in _lookup.MembersOf(type))
             {
-                if (member is MethodSymbol method && method.Role == MethodRole.Constructor)
-                    constructors.Add(method);
+                if (member is not MethodSymbol method || method.Role != MethodRole.Constructor)
+                    continue;
+
+                // §5.x: a plain construction never reaches an `each` constructor — those exist only
+                // to be built through a collection literal. A class that declares only `each`
+                // constructors is therefore not plain-constructible at all, reported below.
+                if (method.IsCollectionBuilder)
+                {
+                    hasEachConstructors = true;
+                    continue;
+                }
+
+                constructors.Add(method);
+            }
+
+            if (constructors.Count == 0 && hasEachConstructors)
+            {
+                Report(
+                    SurtrDiagnosticCode.UnresolvedCall,
+                    syntax.Span,
+                    $"'{type.Name}' declares only 'each' constructors, which only a collection literal ('[ ... ]' or '{{ ... }}') can reach.");
+                return false;
             }
 
             if (constructors.Count == 0)
@@ -4771,6 +4795,17 @@ namespace Surtr.Compiler.Binding
 
         private BoundExpression BindArrayLiteral(ArrayLiteralExpressionSyntax syntax, TypeSymbol? expected)
         {
+            // §5.x: a named target that is itself a collection builder, or an interface with a
+            // declared default, builds through its `each` constructor. An array, a dict, an
+            // `IIterable` (which stays an array, status quo) and everything else keep the existing
+            // inference below — a concrete class without an `each` still binds as an array and
+            // fails the conversion, exactly as it did before this feature.
+            if (expected?.NonNullable is NamedTypeSymbol expectedType
+                && TryResolveBuilderType(expectedType, arity: 1, out var arrayBuilder))
+            {
+                return BindCollectionBuild(syntax, arrayBuilder, Array.Empty<ArgumentSyntax>(), syntax);
+            }
+
             var element = (expected?.NonNullable as ArrayTypeSymbol)?.ElementType;
 
             var elements = new BoundExpression[syntax.Elements.Count];
@@ -4806,6 +4841,15 @@ namespace Surtr.Compiler.Binding
 
         private BoundExpression BindDictLiteral(DictLiteralExpressionSyntax syntax, TypeSymbol? expected)
         {
+            // The dict side of §5.x: a named target with a two-parameter `each` (key, value) — or an
+            // interface whose declared default has one — builds through it. Everything else keeps
+            // the existing dict path.
+            if (expected?.NonNullable is NamedTypeSymbol expectedType
+                && TryResolveBuilderType(expectedType, arity: 2, out var dictBuilder))
+            {
+                return BindCollectionBuild(syntax, dictBuilder, Array.Empty<ArgumentSyntax>(), syntax);
+            }
+
             var target = expected?.NonNullable as DictionaryTypeSymbol;
 
             var entries = new BoundDictEntry[syntax.Entries.Count];
@@ -4841,6 +4885,316 @@ namespace Surtr.Compiler.Binding
             }
 
             return new BoundDictLiteralExpression(syntax, _factory.Dictionary(key, value), entries);
+        }
+
+        /// <summary>
+        /// Binds a <see cref="CollectionInstantiationExpressionSyntax"/> — the ambiguous shape a
+        /// <c>[ ... ]</c>/<c>{ ... }</c> over an identifier, a generic name or a call forms (§5.x).
+        /// The binder decides by what the construction resolves to: a type with a matching
+        /// <c>each</c> constructor is a collection literal, a value or a function call is an index,
+        /// and a type without an <c>each</c> constructor is an error.
+        /// </summary>
+        private BoundExpression BindCollectionInstantiation(CollectionInstantiationExpressionSyntax syntax, TypeSymbol? expected)
+        {
+            switch (syntax.Construction)
+            {
+                // `List<int>[1, 2, 3]` / `Map<string, int>{ ... }` — a generic name that names a type.
+                case GenericNameExpressionSyntax genericName when TryBindGenericName(genericName, out var genericType):
+                    return BindCollectionBuild(syntax, genericType, Array.Empty<ArgumentSyntax>(), syntax.Body);
+
+                // `List<int>(32)[1, 2, 3]` — a construction call over a type; the call's arguments
+                // are the constructor's. `makeList<int>(5)[0]` — a call over a function; the body
+                // is an index (reached through the default arm below).
+                case CallExpressionSyntax call when TryResolveConstructionFromCall(call, out var callType):
+                    return BindCollectionBuild(syntax, callType, call.Arguments, syntax.Body);
+
+                // `IntList[1, 2, 3]` — a bare identifier naming a (non-generic) type.
+                case IdentifierExpressionSyntax identifier when TryBindAsType(identifier, out var bareType):
+                    return BindCollectionBuild(syntax, bareType, Array.Empty<ArgumentSyntax>(), syntax.Body);
+
+                default:
+                    return ReinterpretAsIndex(syntax);
+            }
+        }
+
+        /// <summary>
+        /// Whether a call's callee names a type — <c>List&lt;int&gt;(32)</c>, <c>IntList(32)</c> — and
+        /// which type. A callee that resolves to a function or method (<c>makeList(5)</c>) returns
+        /// <see langword="false"/>, so the call stays an index.
+        /// </summary>
+        private bool TryResolveConstructionFromCall(CallExpressionSyntax call, out NamedTypeSymbol type)
+        {
+            type = null!;
+
+            if (call.TypeArguments.Count > 0)
+            {
+                if (!TryBindAsGenericDefinition(call.Callee, out var definitions))
+                    return false;
+
+                foreach (var definition in definitions)
+                {
+                    if (definition.Arity != call.TypeArguments.Count)
+                        continue;
+
+                    var arguments = new TypeSymbol[call.TypeArguments.Count];
+                    for (int i = 0; i < arguments.Length; i++)
+                    {
+                        arguments[i] = _resolver.Resolve(call.TypeArguments[i], _typeScope, _sourceName);
+                        if (arguments[i].IsError)
+                            return false;
+                    }
+
+                    type = definition.Construct(arguments);
+                    return true;
+                }
+
+                return false;
+            }
+
+            // No written type arguments: a non-generic construction, `IntList(32)`. A generic name
+            // without arguments is not a type, so this fails and the call is read as a function call.
+            return TryBindAsType(call.Callee, out type) && type.Arity == 0;
+        }
+
+        /// <summary>
+        /// Whether a target is (or re-reads as) an index: an <see cref="IndexExpressionSyntax"/> as
+        /// written, or the ambiguous collection-instantiation shape (<c>b[1]</c>) whose construction
+        /// is a value and whose body is a single element. The write form of <c>[]</c> needs this
+        /// before the target is bound, since binding would pick up the read operator instead.
+        /// </summary>
+        private static IndexExpressionSyntax? AsIndexTarget(ExpressionSyntax target)
+        {
+            if (target is IndexExpressionSyntax index)
+                return index;
+
+            if (target is CollectionInstantiationExpressionSyntax instantiation
+                && instantiation.Body is ArrayLiteralExpressionSyntax array
+                && array.Elements.Count == 1)
+            {
+                return new IndexExpressionSyntax(instantiation.Span, instantiation.Construction, array.Elements[0]);
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Re-reads a collection-instantiation node as an index: the body must be a single-element
+        /// <c>[ e ]</c> array literal, and the construction (a value, or a call to a function or
+        /// method) is the indexed target — <c>arr[0]</c>, <c>makeList&lt;int&gt;(5)[0]</c>.
+        /// </summary>
+        private BoundExpression ReinterpretAsIndex(CollectionInstantiationExpressionSyntax syntax)
+        {
+            if (syntax.Body is ArrayLiteralExpressionSyntax array && array.Elements.Count == 1)
+            {
+                var index = new IndexExpressionSyntax(syntax.Span, syntax.Construction, array.Elements[0]);
+                return BindIndex(index);
+            }
+
+            return Error(
+                syntax,
+                SurtrDiagnosticCode.CollectionLiteralOnValue,
+                syntax.Body is DictLiteralExpressionSyntax
+                    ? "'{ ... }' after a value or a function call is a collection literal, and only a type can be built that way."
+                    : "'[ a, b ]' after a value or a function call is not an index; write a single '[e]' to index, or a type before it to build a collection.");
+        }
+
+        /// <summary>
+        /// Resolves what a <c>[ ... ]</c>/<c>{ ... }</c> literal target-typed to <paramref name="named"/>
+        /// builds (§5.x): the concrete class itself when it declares an <c>each</c> constructor of the
+        /// matching arity, or an interface's declared default builder. Returns <see langword="false"/>
+        /// — and the caller falls through to the ordinary array/dict inference — for anything else, so
+        /// <c>object</c>, <c>IIterable</c> and a concrete class without an <c>each</c> keep their
+        /// existing behavior.
+        /// </summary>
+        private bool TryResolveBuilderType(NamedTypeSymbol named, int arity, out NamedTypeSymbol builder)
+        {
+            builder = null!;
+
+            if (named.TypeKind == TypeSymbolKind.Class && HasEachOfArity(named, arity))
+            {
+                builder = named;
+                return true;
+            }
+
+            if (named.TypeKind == TypeSymbolKind.Interface && named.DefaultBuilder is { } defaultBuilder)
+            {
+                builder = named.IsConstructed
+                    ? (NamedTypeSymbol)defaultBuilder.Substitute(named.SubstitutionFromArguments(_factory))
+                    : defaultBuilder;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool HasEachOfArity(NamedTypeSymbol type, int arity)
+        {
+            foreach (var member in _lookup.MembersOf(type))
+            {
+                if (member is MethodSymbol { Role: MethodRole.Constructor, IsCollectionBuilder: true } constructor
+                    && constructor.EachArity == arity)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Binds a collection literal against a concrete builder type (§5.x): resolves the matching
+        /// <c>each</c> constructor over the written arguments, converts every element/entry against
+        /// the substituted <c>each</c> parameter types, and produces a
+        /// <see cref="BoundCollectionBuildExpression"/> the emitter lowers to
+        /// <c>ObjNew</c> + constructor + one <c>$fill$</c> call per element.
+        /// </summary>
+        private BoundExpression BindCollectionBuild(
+            SyntaxNode syntax,
+            NamedTypeSymbol type,
+            IReadOnlyList<ArgumentSyntax> writtenArgs,
+            ExpressionSyntax body)
+        {
+            bool isArray = body is ArrayLiteralExpressionSyntax;
+            int arity = isArray ? 1 : 2;
+
+            var candidates = new List<MethodSymbol>();
+            foreach (var member in _lookup.MembersOf(type))
+            {
+                if (member is MethodSymbol { Role: MethodRole.Constructor, IsCollectionBuilder: true } candidate
+                    && candidate.EachArity == arity)
+                {
+                    candidates.Add(candidate);
+                }
+            }
+
+            if (candidates.Count == 0)
+            {
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.BuilderArityMismatch,
+                    isArray
+                        ? $"'{type.ToDisplayString()}' has no 'each (item: ...)' constructor, so it cannot be built from a '[ ... ]' literal."
+                        : $"'{type.ToDisplayString()}' has no 'each (key: ..., value: ...)' constructor, so it cannot be built from a '{{ ... }}' literal.");
+            }
+
+            var reachable = Accessible(candidates, type.Name, syntax);
+            if (reachable.Count == 0)
+                return Error(syntax);
+
+            BindArguments(writtenArgs, out var arguments, out var infos);
+            var result = _overloads.Resolve(reachable, infos);
+            if (!result.IsResolved)
+            {
+                return Error(
+                    syntax,
+                    SurtrDiagnosticCode.UnresolvedCall,
+                    $"No 'each' constructor of '{type.ToDisplayString()}' takes these arguments.");
+            }
+
+            var constructor = result.Method!;
+            if (constructor.FillMethod is null)
+                return Error(syntax);
+
+            // §5.x: the each-constructor's parameters are the literal's constructor arguments, but
+            // the runtime method table cannot hold two constructors of one shape — so when a plain
+            // constructor with the same signature exists, the literal calls that one and the each
+            // clause contributes only its fill. The each-constructor is then not emitted at all.
+            var runtimeConstructor = RuntimeConstructor(constructor, type);
+
+            var ordered = OrderArguments(syntax, writtenArgs, runtimeConstructor, BindDeferredLambdas(writtenArgs, arguments, runtimeConstructor));
+
+            var substitution = type.SubstitutionFromArguments(_factory);
+            var eachTypes = new TypeSymbol[constructor.EachArity];
+            var eachOriginals = new TypeSymbol[constructor.EachArity];
+            for (int i = 0; i < eachTypes.Length; i++)
+            {
+                eachOriginals[i] = constructor.EachParameters![i].Type;
+                eachTypes[i] = eachOriginals[i].Substitute(substitution);
+            }
+
+            var fills = new List<IReadOnlyList<BoundExpression>>();
+            if (body is ArrayLiteralExpressionSyntax arrayLiteral)
+            {
+                for (int i = 0; i < arrayLiteral.Elements.Count; i++)
+                {
+                    var elementSyntax = arrayLiteral.Elements[i];
+                    fills.Add(new[] { ConvertIntoErasedEach(syntax, BindExpression(elementSyntax, eachTypes[0]), eachOriginals[0], eachTypes[0], elementSyntax.Span) });
+                }
+            }
+            else if (body is DictLiteralExpressionSyntax dictLiteral)
+            {
+                for (int i = 0; i < dictLiteral.Entries.Count; i++)
+                {
+                    var entry = dictLiteral.Entries[i];
+                    fills.Add(new[]
+                    {
+                        ConvertIntoErasedEach(syntax, BindExpression(entry.Key, eachTypes[0]), eachOriginals[0], eachTypes[0], entry.Key.Span),
+                        ConvertIntoErasedEach(syntax, BindExpression(entry.Value, eachTypes[1]), eachOriginals[1], eachTypes[1], entry.Value.Span),
+                    });
+                }
+            }
+
+            return new BoundCollectionBuildExpression(syntax, type, runtimeConstructor, constructor.FillMethod, ordered, fills);
+        }
+
+        /// <summary>
+        /// The constructor a collection literal actually calls at run time: the <c>each</c>
+        /// constructor itself when it is the only one, or a plain constructor with the same
+        /// signature when one exists (§5.x). The runtime method table cannot hold two constructors
+        /// of one shape, so an <c>each</c> constructor whose signature a plain one already takes is
+        /// never emitted — the literal calls the plain one and the <c>each</c> clause contributes
+        /// only its <c>$fill$</c>.
+        /// </summary>
+        private MethodSymbol RuntimeConstructor(MethodSymbol eachConstructor, NamedTypeSymbol type)
+        {
+            foreach (var member in _lookup.MembersOf(type))
+            {
+                if (member is MethodSymbol { Role: MethodRole.Constructor, IsCollectionBuilder: false } plain
+                    && plain.Parameters.Count == eachConstructor.Parameters.Count)
+                {
+                    bool same = true;
+                    for (int i = 0; i < plain.Parameters.Count; i++)
+                    {
+                        if (!ReferenceEquals(plain.Parameters[i].Type.NonNullable, eachConstructor.Parameters[i].Type.NonNullable))
+                        {
+                            same = false;
+                            break;
+                        }
+                    }
+
+                    if (same)
+                        return plain;
+                }
+            }
+
+            return eachConstructor;
+        }
+
+        /// <summary>
+        /// Converts one literal element/entry value for a builder's <c>each</c> parameter: the
+        /// conversion against the substituted concrete type, plus the box a generic class's erased
+        /// <c>$fill$</c> slot still requires when the <c>each</c> parameter is a type parameter of
+        /// the containing type (§1.11) — the same composition <see cref="ConvertIntoErased"/> makes
+        /// for an ordinary argument.
+        /// </summary>
+        private BoundExpression ConvertIntoErasedEach(
+            SyntaxNode syntax,
+            BoundExpression expression,
+            TypeSymbol originalEach,
+            TypeSymbol concreteEach,
+            SourceSpan span)
+        {
+            var converted = Convert(expression, concreteEach, span);
+            if (converted is BoundErrorExpression)
+                return converted;
+
+            if (originalEach.NonNullable is TypeParameterSymbol parameter && !parameter.IsMethodTypeParameter)
+            {
+                return new BoundConversionExpression(
+                    syntax, converted, _factory.Unknown, Conversion.Of(ConversionKind.ImplicitErasure), isExplicit: false);
+            }
+
+            return converted;
         }
 
         private BoundExpression BindTupleLiteral(TupleLiteralExpressionSyntax syntax, TypeSymbol? expected)

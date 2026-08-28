@@ -1,6 +1,6 @@
 import surtr.collections.Collection;
 
-public interface IReadOnlySet<T> : IReadOnlyCollection<T>
+public interface IReadOnlySet<T> default Set<T> : IReadOnlyCollection<T>
 {
     isEmpty: bool { get; }
 
@@ -13,7 +13,7 @@ public interface IReadOnlySet<T> : IReadOnlyCollection<T>
     fun equals(other: IReadOnlySet<T>): bool;
 }
 
-public interface ISet<T> : IReadOnlySet<T>, ICollection<T>
+public interface ISet<T> default Set<T> : IReadOnlySet<T>, ICollection<T>
 {
     isEmpty: bool { get; }
 
@@ -225,6 +225,13 @@ public class Set<T> : ReadOnlySet<T>, ISet<T>
     public constructor(collection: IIterable<T>) : super(collection) {}
 
     public constructor(items: T...) : super(items) {}
+
+    // §5.x: the collection-builder form — `Set<int>[1, 2, 3]` fills through this $fill$ method.
+    public constructor() : super() { }
+    each (item: T)
+    {
+        _dict[item] = true;
+    }
 
     public static inline fun of(): Set<T> => Set<T>();
     public static inline fun of(item: T): Set<T> => Set<T>(item);

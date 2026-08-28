@@ -183,8 +183,16 @@ namespace Surtr.Bytecode.Image
         /// prevent. Nothing was added for bytes themselves: a <c>bytes</c> is a plain reference
         /// type whose members are native methods, so no flag or opcode was needed.
         /// </para>
+        /// <para>
+        /// Version 16 adds the collection-builder metadata (§5.x): every <c>Method</c> entry now
+        /// carries an <c>each</c> parameter count and types (zero for a non-builder), written after
+        /// the ordinary parameters, and every <c>Interface</c> entry carries a default-builder
+        /// marker and class handle, written after the extended interfaces. A version 15 reader
+        /// would read the each count as the generic-parameter count and the builder marker as the
+        /// first generic-parameter name, so it is refused.
+        /// </para>
         /// </remarks>
-        internal const ushort FormatVersion = 15;
+        internal const ushort FormatVersion = 16;
 
         private readonly byte[] _bytes;
         private readonly string _path;

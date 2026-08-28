@@ -1,0 +1,12 @@
+// §13.x: the mutable buffer contract. `Buffer<T>` is the abstract surface a script imports and
+// builds against; the concrete implementation lives in the host (`bytes`, the built-in class).
+public abstract class Buffer<T>
+{
+    public length: int { get; }
+
+    public abstract fun clear(): void;
+    public abstract fun get(index: int): T;
+    public abstract fun pop(): T;
+    public abstract fun push(value: T): void;
+    public abstract fun set(index: int, value: T): void;
+}

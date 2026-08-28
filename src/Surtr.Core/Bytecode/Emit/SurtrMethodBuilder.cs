@@ -500,8 +500,16 @@ namespace Surtr.Bytecode.Emit
             for (int i = 0; i < _attributes.Count; i++)
                 _built.AddAttribute(_attributes[i]);
 
+            _built.EachParameters = EachParameters;
+
             return _built;
         }
+
+        /// <summary>
+        /// The types of a collection builder's <c>each</c> clause parameters (§5.x), copied onto the
+        /// built metadata. Empty for a non-builder. Only meaningful on a constructor.
+        /// </summary>
+        public SurtrTypeHandle[] EachParameters = Array.Empty<SurtrTypeHandle>();
 
         /// <summary>
         /// Translates the pending regions into the handler table, with offsets moved into the

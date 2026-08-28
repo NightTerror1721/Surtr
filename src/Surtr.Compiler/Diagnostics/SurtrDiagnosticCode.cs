@@ -688,6 +688,67 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         AbstractMemberWithBody = 3092,
 
+        /// <summary>
+        /// An <c>each</c> clause (§5.x) was written where no constructor can carry it: after a
+        /// member that is not a constructor, or on a value class/singleton constructor.
+        /// </summary>
+        EachOutsideConstructor = 3093,
+
+        /// <summary>
+        /// An <c>each</c> clause's parameter list breaks §5.x's shape: it is not exactly one
+        /// parameter (the <c>[ ... ]</c> literal form) or two (the <c>{ ... }</c> form), or a
+        /// parameter carries a default, a varargs mark, or no type.
+        /// </summary>
+        EachArityInvalid = 3094,
+
+        /// <summary>
+        /// An interface's <c>default</c> clause names something that is not a class (§5.x). A
+        /// default builder must be a concrete class with an <c>each</c> constructor — an interface
+        /// has nothing to fill and a value class/singleton cannot declare one.
+        /// </summary>
+        InterfaceDefaultNotClass = 3095,
+
+        /// <summary>
+        /// An interface's <c>default</c> class does not implement the interface (§5.x). A
+        /// target-typed literal resolving to it would build a value that cannot convert to the
+        /// declared type.
+        /// </summary>
+        InterfaceDefaultNotImplemented = 3096,
+
+        /// <summary>
+        /// An interface's <c>default</c> was written with a different number of type arguments
+        /// than the interface declares parameters (§5.x). Substituting the interface's arguments at
+        /// a use site needs one argument per parameter.
+        /// </summary>
+        InterfaceDefaultArity = 3097,
+
+        /// <summary>
+        /// An interface's <c>default</c> class declares no <c>each</c> constructor (§5.x), so it
+        /// cannot fill a single literal element; the default is useless.
+        /// </summary>
+        InterfaceDefaultNoEach = 3098,
+
+        /// <summary>
+        /// A collection literal written over a type whose <c>each</c> constructors do not match the
+        /// written shape (§5.x): <c>[ ... ]</c> needs an <c>each</c> of one parameter, <c>{ ... }</c>
+        /// one of two, and none does.
+        /// </summary>
+        BuilderArityMismatch = 3099,
+
+        /// <summary>
+        /// A <c>[ a, b ]</c>/<c>{ ... }</c> body was written over a call that resolves to a
+        /// function or value (§5.x): the body of a collection literal belongs to a type, and a
+        /// value cannot be indexed with a list or a dictionary.
+        /// </summary>
+        CollectionLiteralOnValue = 3100,
+
+        /// <summary>
+        /// A <c>[ ... ]</c> after a type construction with arguments is never an index (§5.x): the
+        /// bare form is always the collection literal body. Indexing a freshly constructed value
+        /// requires parentheses — <c>(Type(args))[i]</c>.
+        /// </summary>
+        CannotIndexConstruction = 3101,
+
         #endregion
 
         #region Code generation — 4xxx

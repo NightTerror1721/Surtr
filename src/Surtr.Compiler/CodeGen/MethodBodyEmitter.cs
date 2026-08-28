@@ -2254,6 +2254,10 @@ namespace Surtr.Compiler.CodeGen
                     EmitObjectCreation(creation);
                     return;
 
+                case BoundCollectionBuildExpression build:
+                    EmitCollectionBuild(build);
+                    return;
+
                 case BoundFieldExpression field:
                     EmitFieldRead(field);
                     return;
@@ -4519,6 +4523,36 @@ namespace Surtr.Compiler.CodeGen
                 Expression(argument);
 
             EmitResolvedCall(creation.Constructor, virtualCall: false, discardResult: true);
+        }
+
+        /// <summary>
+        /// Lowers a collection literal built over an <c>each</c> constructor (§5.x):
+        /// <c>ObjNew</c>, then the constructor (which allocates the empty object), then one
+        /// <c>$fill$</c> call per element/entry. The <c>dup</c> idiom keeps exactly one copy on the
+        /// stack as the expression's value, the same way <see cref="EmitObjectCreation"/> keeps one
+        /// past the constructor call. The fill is direct (private, non-virtual): no dispatch per
+        /// element, and the box conversions were already inserted at bind time.
+        /// </summary>
+        private void EmitCollectionBuild(BoundCollectionBuildExpression build)
+        {
+            var type = (NamedTypeSymbol)build.Type.NonNullable;
+
+            Code.NewObject(Descriptors.Emit(type));
+            Code.Dup();
+
+            foreach (var argument in build.ConstructorArguments)
+                Expression(argument);
+
+            EmitResolvedCall(build.Constructor, virtualCall: false, discardResult: true);
+
+            foreach (var fillArgs in build.FillArguments)
+            {
+                Code.Dup();
+                foreach (var argument in fillArgs)
+                    Expression(argument);
+
+                EmitResolvedCall(build.FillMethod, virtualCall: false, discardResult: true);
+            }
         }
 
         /// <summary>

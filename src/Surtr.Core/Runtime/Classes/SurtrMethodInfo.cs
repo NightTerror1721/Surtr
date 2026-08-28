@@ -216,6 +216,20 @@ namespace Surtr.Runtime.Classes
         private readonly string[][] _genericConstraints;
         private SurtrClassReference _signature;
         private string? _signatureKey;
+        private SurtrTypeHandle[] _eachParameters = Array.Empty<SurtrTypeHandle>();
+
+        /// <summary>
+        /// The types of a collection builder's <c>each</c> clause parameters (§5.x) — one for a
+        /// <c>[ ... ]</c> builder, two for a <c>{ ... }</c> builder, empty for any other method.
+        /// Only meaningful on a constructor; a front end importing the method uses it to rebuild
+        /// the constructor's each parameters so a target-typed literal can still bind against it.
+        /// </summary>
+        public SurtrTypeHandle[] EachParameters
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _eachParameters;
+            set => _eachParameters = value ?? Array.Empty<SurtrTypeHandle>();
+        }
 
         /// <summary>
         /// This method's index in its declaring class's virtual method table, or

@@ -1173,6 +1173,7 @@ namespace Surtr.Compiler.Binding
                 CheckBaseConstructorIsReachable(binding);
                 CheckMembersImplemented(binding);
                 CheckTypeParameterPositions(binding);
+                CheckInterfaceDefault(binding);
             }
 
             // Last, because a bound like `<T : IComparable<T>>` names a type whose own hierarchy is
@@ -1798,6 +1799,86 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
+        /// Validates an interface's declared default builder — <c>interface IList&lt;T&gt; default List&lt;T&gt;</c>
+        /// (§5.x) — and, when valid, records it on the interface so a target-typed collection literal
+        /// can resolve it. Runs after every member is bound, because one of the checks ("the default
+        /// declares an <c>each</c> constructor") needs the default class's constructors, and nothing
+        /// says a class declared after its interface is bound before it.
+        /// </summary>
+        private void CheckInterfaceDefault(TypeBinding binding)
+        {
+            var syntax = binding.Syntax;
+            if (syntax.Kind != TypeDeclarationKind.Interface || syntax.DefaultBuilder is null)
+                return;
+
+            EnterContext(binding.Module, binding.Symbol);
+            var symbol = binding.Symbol;
+            var resolved = _resolver.Resolve(syntax.DefaultBuilder, binding.Scope, binding.SourceName);
+
+            if (resolved.IsError)
+                return;
+
+            if (resolved.NonNullable is not NamedTypeSymbol { TypeKind: TypeSymbolKind.Class } builder)
+            {
+                Report(SurtrDiagnosticCode.InterfaceDefaultNotClass, binding, syntax.DefaultBuilder.Span,
+                    $"'{symbol.Name}' names '{resolved.ToDisplayString()}' as its default builder, which is not a class.");
+                return;
+            }
+
+            // The default must implement the interface it serves — otherwise the target-typed
+            // literal would build a value that cannot convert to the declared type.
+            if (!Implements(symbol, builder))
+            {
+                Report(SurtrDiagnosticCode.InterfaceDefaultNotImplemented, binding, syntax.DefaultBuilder.Span,
+                    $"'{builder.Name}' does not implement '{symbol.Name}', so it cannot be its default builder.");
+                return;
+            }
+
+            // Written with the interface's own type parameters, the default's arguments line up one
+            // per parameter — substituting the interface's arguments at a use site then lands on the
+            // class. A bare name (no type arguments) is an error rather than a guess.
+            if (resolved.NonNullable is NamedTypeSymbol constructed && constructed.TypeArguments.Count != symbol.TypeParameters.Count)
+            {
+                Report(SurtrDiagnosticCode.InterfaceDefaultArity, binding, syntax.DefaultBuilder.Span,
+                    $"'{symbol.Name}' declares {symbol.TypeParameters.Count} type parameter(s), but its default was written with {constructed.TypeArguments.Count} argument(s).");
+                return;
+            }
+
+            // A default that cannot be built by literal is useless: without an `each` constructor it
+            // can never fill a single element. Checked here, after the class's own members exist.
+            bool hasEach = false;
+            foreach (var member in builder.Members)
+            {
+                if (member is MethodSymbol { Role: MethodRole.Constructor, IsCollectionBuilder: true })
+                {
+                    hasEach = true;
+                    break;
+                }
+            }
+
+            if (!hasEach)
+            {
+                Report(SurtrDiagnosticCode.InterfaceDefaultNoEach, binding, syntax.DefaultBuilder.Span,
+                    $"'{builder.Name}' declares no 'each' constructor, so it cannot be the default builder of '{symbol.Name}'.");
+                return;
+            }
+
+            symbol.DefaultBuilder = builder;
+        }
+
+        /// <summary>Whether <paramref name="implementation"/> implements <paramref name="contract"/> — the declared interface itself or anything above it.</summary>
+        private bool Implements(NamedTypeSymbol contract, NamedTypeSymbol implementation)
+        {
+            foreach (var implemented in AllInterfacesOf(implementation))
+            {
+                if (ReferenceEquals(implemented.Definition, contract.Definition))
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Every interface <paramref name="type"/> owes an answer to, transitively: the ones it
         /// names, its base chain's, and each interface's own extensions — substituted the way the
         /// construction reads them.
@@ -1846,6 +1927,7 @@ namespace Surtr.Compiler.Binding
             var signatures = new SignatureSet(_factory, _diagnostics);
             var names = new HashSet<string>(StringComparer.Ordinal);
             int letFields = 0;
+            int eachConstructors = 0;
 
             // §2.4: every enum declares `public let value: int` as its first instance field. The
             // compiler owns the field and fills it when it builds each case (§2.2); the name is
@@ -2025,9 +2107,19 @@ namespace Surtr.Compiler.Binding
                             continue;
                         }
 
-                        var bound = BindConstructor(constructor, symbol, binding);
+                        var bound = BindConstructor(constructor, symbol, binding, eachConstructors);
                         signatures.Add(bound, binding.SourceName, constructor.Span);
                         members.Add(bound);
+
+                        // A builder constructor's each clause compiles to a $fill$ member of its own:
+                        // a real method that travels in the image, so it joins the member list here.
+                        if (bound.FillMethod is not null)
+                        {
+                            signatures.Add(bound.FillMethod, binding.SourceName, constructor.Span);
+                            members.Add(bound.FillMethod);
+                        }
+
+                        eachConstructors += bound.IsCollectionBuilder ? 1 : 0;
                         continue;
                     }
 
@@ -4814,7 +4906,8 @@ namespace Surtr.Compiler.Binding
         private MethodSymbol BindConstructor(
             ConstructorDeclarationSyntax syntax,
             NamedTypeSymbol owner,
-            TypeBinding binding)
+            TypeBinding binding,
+            int eachIndex)
         {
             var method = new MethodSymbol(MemberNames.Constructor, owner, _factory.Void)
             {
@@ -4835,12 +4928,83 @@ namespace Surtr.Compiler.Binding
             RecordBody(method, syntax.Body, binding.Scope, binding.Module, owner, binding.SourceName);
             RecordAttributes(method, syntax.Attributes, binding.Scope, binding.SourceName);
 
+            // §5.x: an `each` clause turns the constructor into a collection builder — the clause's
+            // parameters are what one literal element/entry fills, and its body compiles to the
+            // private $fill$ instance method the literal lowering calls once per element.
+            if (syntax.EachParameters is not null)
+            {
+                if (owner.TypeKind is TypeSymbolKind.ValueClass or TypeSymbolKind.Singleton)
+                {
+                    Report(SurtrDiagnosticCode.EachOutsideConstructor, binding, syntax.Span,
+                        $"An 'each' clause is only valid on an ordinary class constructor, and '{owner.Name}' is a {(owner.TypeKind == TypeSymbolKind.ValueClass ? "value class" : "singleton")}.");
+                }
+                else if (BindEachParameters(syntax, method, binding) is { } eachParameters)
+                {
+                    method.EachParameters = eachParameters;
+                    var fill = new MethodSymbol(SyntheticNames.FillMethod(owner.Name, eachIndex), owner, _factory.Void)
+                    {
+                        Role = MethodRole.Normal,
+                        Accessibility = Accessibility.Private,
+                        Dispatch = MethodDispatch.Direct,
+                    };
+
+                    // The fill's own parameters: the same name and type as the clause's, but owned by
+                    // the fill method — the emitter matches a parameter read to the method being
+                    // emitted, so a parameter whose symbol names the constructor would read as
+                    // "belongs to another method".
+                    var fillParameters = new ParameterSymbol[eachParameters.Count];
+                    for (int i = 0; i < fillParameters.Length; i++)
+                        fillParameters[i] = new ParameterSymbol(eachParameters[i].Name, eachParameters[i].Type, i, fill);
+
+                    fill.Parameters = fillParameters;
+                    RecordBody(fill, syntax.EachBody, binding.Scope, binding.Module, owner, binding.SourceName);
+                    method.FillMethod = fill;
+                }
+            }
+
             // Bound in a pass of its own, after every signature exists: a chain names a constructor
             // of this class or of its base, and overload resolution needs both complete.
             if (syntax.ChainArguments is not null)
                 _chains.Add(new ChainBinding(method, syntax, binding.Scope, binding.Module, owner, binding.SourceName));
 
             return method;
+        }
+
+        /// <summary>
+        /// Binds the parameters of an <c>each</c> clause (§5.x): exactly one (the <c>[ ... ]</c>
+        /// literal form) or two (the <c>{ ... }</c> form), each typed, without defaults or varargs.
+        /// Returns <see langword="null"/> after reporting when the clause cannot be a builder.
+        /// </summary>
+        private IReadOnlyList<ParameterSymbol>? BindEachParameters(
+            ConstructorDeclarationSyntax syntax,
+            MethodSymbol owner,
+            TypeBinding binding)
+        {
+            var written = syntax.EachParameters!;
+
+            if (written.Count is not (1 or 2))
+            {
+                Report(SurtrDiagnosticCode.EachArityInvalid, binding, syntax.Span,
+                    $"An 'each' clause takes exactly 1 parameter (for '[ ... ]' literals) or 2 (for '{{ ... }}' literals), not {written.Count}.");
+                return null;
+            }
+
+            var parameters = new ParameterSymbol[written.Count];
+            for (int i = 0; i < written.Count; i++)
+            {
+                var syntaxParameter = written[i];
+                if (syntaxParameter.Type is null || syntaxParameter.DefaultValue is not null || syntaxParameter.IsVarargs)
+                {
+                    Report(SurtrDiagnosticCode.EachArityInvalid, binding, syntaxParameter.Span,
+                        "An 'each' parameter must carry its type and cannot have a default value or be varargs.");
+                    return null;
+                }
+
+                parameters[i] = new ParameterSymbol(
+                    syntaxParameter.Name, _resolver.Resolve(syntaxParameter.Type, binding.Scope, binding.SourceName), i, owner);
+            }
+
+            return parameters;
         }
 
         private MethodSymbol BindOperator(OperatorDeclarationSyntax syntax, NamedTypeSymbol owner, TypeBinding binding)

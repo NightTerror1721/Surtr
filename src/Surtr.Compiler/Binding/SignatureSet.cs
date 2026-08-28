@@ -72,10 +72,22 @@ namespace Surtr.Compiler.Binding
             for (int i = first; i < method.Parameters.Count; i++)
                 parameters[i - first] = Erase(method.Parameters[i].Type);
 
+            // §5.x: a constructor's `each` clause is part of its identity — `constructor(int)` and
+            // `constructor(int) each (item: T)` are two overloads — so the each parameters (erased)
+            // join the key exactly as the ordinary ones do. Nothing else has an each clause.
+            TypeSymbol[]? each = null;
+            if (method.Role == MethodRole.Constructor && method.EachParameters is not null)
+            {
+                each = new TypeSymbol[method.EachParameters.Count];
+                for (int i = 0; i < each.Length; i++)
+                    each[i] = Erase(method.EachParameters[i].Type);
+            }
+
             var signature = new Signature(
                 method.Name,
                 parameters,
-                method.IsConversion ? Erase(method.ReturnType) : null);
+                method.IsConversion ? Erase(method.ReturnType) : null,
+                each);
 
             if (_seen.ContainsKey(signature))
             {
@@ -226,11 +238,12 @@ namespace Surtr.Compiler.Binding
 
         private readonly struct Signature
         {
-            internal Signature(string name, TypeSymbol[] parameters, TypeSymbol? conversionTarget)
+            internal Signature(string name, TypeSymbol[] parameters, TypeSymbol? conversionTarget, TypeSymbol[]? eachParameters)
             {
                 Name = name;
                 Parameters = parameters;
                 ConversionTarget = conversionTarget;
+                EachParameters = eachParameters;
             }
 
             internal string Name { get; }
@@ -238,6 +251,9 @@ namespace Surtr.Compiler.Binding
             internal TypeSymbol[] Parameters { get; }
 
             internal TypeSymbol? ConversionTarget { get; }
+
+            /// <summary>The erased each-clause parameters of a constructor, or <see langword="null"/>.</summary>
+            internal TypeSymbol[]? EachParameters { get; }
         }
 
         private sealed class SignatureComparer : IEqualityComparer<Signature>
@@ -248,7 +264,8 @@ namespace Surtr.Compiler.Binding
             {
                 if (!string.Equals(x.Name, y.Name, StringComparison.Ordinal)
                     || x.Parameters.Length != y.Parameters.Length
-                    || !ReferenceEquals(x.ConversionTarget, y.ConversionTarget))
+                    || !ReferenceEquals(x.ConversionTarget, y.ConversionTarget)
+                    || !SameEach(x.EachParameters, y.EachParameters))
                 {
                     return false;
                 }
@@ -273,7 +290,30 @@ namespace Surtr.Compiler.Binding
                 if (obj.ConversionTarget is not null)
                     hash.Add(obj.ConversionTarget);
 
+                if (obj.EachParameters is not null)
+                {
+                    for (int i = 0; i < obj.EachParameters.Length; i++)
+                        hash.Add(obj.EachParameters[i]);
+                }
+
                 return hash.ToHashCode();
+            }
+
+            private static bool SameEach(TypeSymbol[]? x, TypeSymbol[]? y)
+            {
+                if (ReferenceEquals(x, y))
+                    return true;
+
+                if (x is null || y is null || x.Length != y.Length)
+                    return false;
+
+                for (int i = 0; i < x.Length; i++)
+                {
+                    if (!ReferenceEquals(x[i], y[i]))
+                        return false;
+                }
+
+                return true;
             }
         }
     }
