@@ -68,6 +68,18 @@ namespace Surtr.VM
         /// </summary>
         internal SurtrClosure? Closure;
 
+        /// <summary>
+        /// The generator this frame is running, or <see langword="null"/> for an ordinary call.
+        /// <c>Yield</c> copies the frame into it.
+        /// </summary>
+        /// <remarks>
+        /// Never set at the same time as <see cref="Closure"/>, which is why the two share one
+        /// entry in the machine's root buffer: a generator is declared as a member, so its body
+        /// captures nothing and has no closure to reach through. A generator lambda would break
+        /// that, which is exactly why phase 1 does not have one.
+        /// </remarks>
+        internal SurtrGenerator? Generator;
+
         /// <summary>How many slots this frame's locals occupy, arguments included.</summary>
         internal int LocalCount;
 

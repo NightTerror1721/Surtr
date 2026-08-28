@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Bytecode.Emit;
@@ -536,7 +536,8 @@ namespace Surtr.Tests.Bytecode.Emit
             var module = builder.Build();
             runtime.LoadModule(module);
 
-            Assert.Equal(OpCode.JPX, (OpCode)module.Chunk.Code[far.Built!.CodeOffset]);
+            Assert.Equal(OpCode.Wide, (OpCode)module.Chunk.Code[far.Built!.CodeOffset]);
+            Assert.Equal(OpCode.JP, (OpCode)module.Chunk.Code[far.Built!.CodeOffset + 1]);
             Assert.Equal(7, runtime.Invoke(far.Built!).AsInt);
         }
 
@@ -570,6 +571,47 @@ namespace Surtr.Tests.Bytecode.Emit
             var module = builder.Build();
 
             Assert.Equal(OpCode.JP, (OpCode)module.Chunk.Code[near.Built!.CodeOffset]);
+        }
+
+        [Fact]
+        public void AnAutoAbsentBranchTooFarForTwoBytes_WidensToJPAXAndStillLands()
+        {
+            using var runtime = new SurtrRuntime();
+
+            var builder = new SurtrModuleBuilder("test");
+            var far = builder.DefineFunction("far", SurtrClassReference.Integer);
+
+            // An absent int always takes the branch, so reaching the end at all is the proof that
+            // the widened form both encoded and landed.
+            var end = far.Code.NewLabel();
+            far.Code.PushAbsent(SurtrValueTypeCode.Integer).JPA(end);
+
+            for (int i = 0; i < 40000; i++)
+                far.Code.Nop();
+
+            far.Code.MarkLabel(end).LoadInt(7).ReturnValue();
+
+            var module = builder.Build();
+            runtime.LoadModule(module);
+
+            Assert.Equal(OpCode.Wide, (OpCode)module.Chunk.Code[far.Built!.CodeOffset + 2]);
+            Assert.Equal(OpCode.JPA, (OpCode)module.Chunk.Code[far.Built!.CodeOffset + 3]);
+            Assert.Equal(7, runtime.Invoke(far.Built!).AsInt);
+        }
+
+        [Fact]
+        public void AShortAbsentBranch_KeepsTheTwoByteForm()
+        {
+            var builder = new SurtrModuleBuilder("test");
+            var near = builder.DefineFunction("near", SurtrClassReference.Integer);
+
+            var end = near.Code.NewLabel();
+            near.Code.PushAbsent(SurtrValueTypeCode.Integer).JPNA(end)
+                .Nop().MarkLabel(end).LoadInt(1).ReturnValue();
+
+            var module = builder.Build();
+
+            Assert.Equal(OpCode.JPNA, (OpCode)module.Chunk.Code[near.Built!.CodeOffset + 2]);
         }
 
         #endregion

@@ -43,7 +43,10 @@ desactualizado en ese punto.
 
 ---
 
-## Parte 1 — Hallazgo: `InvalidOperationException` está declarada dos veces
+## Parte 1 — Hallazgo: `InvalidOperationException` está declarada dos veces — **resuelto**
+
+*Lo que sigue es el hallazgo tal como se escribió; la recomendación final de esta sección es la
+que se ejecutó, y el loader ya no lleva la compensación.*
 
 `SurtrBuiltIns.cs` ya declara `InvalidOperationException` como built-in (línea 157/281/335,
 trap-mapped, siempre en scope, sin necesidad de import — igual que `IndexOutOfRangeException` que

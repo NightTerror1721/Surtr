@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -8,7 +8,7 @@ namespace Surtr.Stdlib.Native
 {
     /// <summary>
     /// The C# bodies behind <c>surtr.math.Math</c>'s <c>native fun</c> declarations
-    /// (<c>src/surtr/math/Math.surtr</c>) — the sixteen trig/float operations that need the CLR's
+    /// (<c>src/surtr/math/Math.surtr</c>) â€” the sixteen trig/float operations that need the CLR's
     /// <see cref="Math"/>, nothing else. Everything else <c>Math.surtr</c> exposes (<c>abs</c>,
     /// <c>min</c>, <c>max</c>, <c>clamp</c>, <c>sign</c>, the <c>pi</c>/<c>tau</c>/<c>epsilon</c>
     /// constants, ...) is ordinary <c>const fun</c>/<c>const</c> Surtr and needs no C# counterpart.
@@ -28,53 +28,53 @@ namespace Surtr.Stdlib.Native
         // A module-level native has no receiver, so its first declared parameter is argument 0.
         // Internal: SurtrStdlib.RegisterNativeBodies publishes these under the link names
         // `surtr.math.Math`'s `native fun` declarations travel as.
-        internal static SurtrValue MathSin(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Sin(arguments.GetValueUnchecked(0).AsFloat));
+        internal static int MathSin(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Sin(arguments.GetValueUnchecked(0).AsFloat)));
 
-        internal static SurtrValue MathCos(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Cos(arguments.GetValueUnchecked(0).AsFloat));
+        internal static int MathCos(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Cos(arguments.GetValueUnchecked(0).AsFloat)));
 
-        internal static SurtrValue MathTan(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Tan(arguments.GetValueUnchecked(0).AsFloat));
+        internal static int MathTan(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Tan(arguments.GetValueUnchecked(0).AsFloat)));
 
-        internal static SurtrValue MathAsin(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Asin(arguments.GetValueUnchecked(0).AsFloat));
+        internal static int MathAsin(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Asin(arguments.GetValueUnchecked(0).AsFloat)));
 
-        internal static SurtrValue MathAcos(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Acos(arguments.GetValueUnchecked(0).AsFloat));
+        internal static int MathAcos(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Acos(arguments.GetValueUnchecked(0).AsFloat)));
 
-        internal static SurtrValue MathAtan(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Atan(arguments.GetValueUnchecked(0).AsFloat));
+        internal static int MathAtan(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Atan(arguments.GetValueUnchecked(0).AsFloat)));
 
-        internal static SurtrValue MathAtan2(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Atan2(arguments.GetValueUnchecked(0).AsFloat, arguments.GetValueUnchecked(1).AsFloat));
+        internal static int MathAtan2(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Atan2(arguments.GetValueUnchecked(0).AsFloat, arguments.GetValueUnchecked(1).AsFloat)));
 
-        internal static SurtrValue MathSqrt(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Sqrt(arguments.GetValueUnchecked(0).AsFloat));
+        internal static int MathSqrt(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Sqrt(arguments.GetValueUnchecked(0).AsFloat)));
 
-        internal static SurtrValue MathPow(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Pow(arguments.GetValueUnchecked(0).AsFloat, arguments.GetValueUnchecked(1).AsFloat));
+        internal static int MathPow(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Pow(arguments.GetValueUnchecked(0).AsFloat, arguments.GetValueUnchecked(1).AsFloat)));
 
-        internal static SurtrValue MathExp(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Exp(arguments.GetValueUnchecked(0).AsFloat));
+        internal static int MathExp(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Exp(arguments.GetValueUnchecked(0).AsFloat)));
 
-        internal static SurtrValue MathLog(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Log(arguments.GetValueUnchecked(0).AsFloat));
+        internal static int MathLog(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Log(arguments.GetValueUnchecked(0).AsFloat)));
 
-        internal static SurtrValue MathLog10(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Log10(arguments.GetValueUnchecked(0).AsFloat));
+        internal static int MathLog10(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Log10(arguments.GetValueUnchecked(0).AsFloat)));
 
-        internal static SurtrValue MathFloor(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Floor(arguments.GetValueUnchecked(0).AsFloat));
+        internal static int MathFloor(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Floor(arguments.GetValueUnchecked(0).AsFloat)));
 
-        internal static SurtrValue MathCeil(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Ceiling(arguments.GetValueUnchecked(0).AsFloat));
+        internal static int MathCeil(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Ceiling(arguments.GetValueUnchecked(0).AsFloat)));
 
-        internal static SurtrValue MathRound(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Round(arguments.GetValueUnchecked(0).AsFloat, MidpointRounding.AwayFromZero));
+        internal static int MathRound(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Round(arguments.GetValueUnchecked(0).AsFloat, MidpointRounding.AwayFromZero)));
 
-        internal static SurtrValue MathHypot(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Sqrt(arguments.GetValueUnchecked(0).AsFloat * arguments.GetValueUnchecked(0).AsFloat
-                + arguments.GetValueUnchecked(1).AsFloat * arguments.GetValueUnchecked(1).AsFloat));
+        internal static int MathHypot(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Sqrt(arguments.GetValueUnchecked(0).AsFloat * arguments.GetValueUnchecked(0).AsFloat
+                + arguments.GetValueUnchecked(1).AsFloat * arguments.GetValueUnchecked(1).AsFloat)));
     }
 }

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -267,6 +267,7 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordOverride:
                 case TokenType.KeywordInline:
                 case TokenType.KeywordForceInline:
+                case TokenType.KeywordNoInline:
                 case TokenType.KeywordNative:
                 case TokenType.KeywordClass:
                 case TokenType.KeywordInterface:
@@ -276,6 +277,7 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordConstructor:
                 case TokenType.KeywordOperator:
                 case TokenType.KeywordFun:
+                case TokenType.KeywordGenerator:
                 case TokenType.KeywordImport:
                 case TokenType.At:
                 case TokenType.DocComment:
@@ -296,8 +298,10 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordFor:
                 case TokenType.KeywordSwitch:
                 case TokenType.KeywordTry:
+                case TokenType.KeywordUsing:
                 case TokenType.KeywordThrow:
                 case TokenType.KeywordReturn:
+                case TokenType.KeywordYield:
                 case TokenType.KeywordBreak:
                 case TokenType.KeywordContinue:
                 case TokenType.KeywordLet:

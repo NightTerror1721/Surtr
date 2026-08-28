@@ -75,7 +75,7 @@ namespace Surtr.Runtime.Classes
             get => _setter;
         }
 
-        private static SurtrValue ThrowReadOnly(SurtrCallArguments arguments)
+        private static int ThrowReadOnly(SurtrCallArguments arguments)
             => throw new InvalidOperationException("A read-only native field cannot be written to.");
 
         // Entry points hold at most a delegate the CLR already tracks; no Surtr entity to trace.

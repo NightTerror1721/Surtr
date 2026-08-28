@@ -246,9 +246,9 @@ namespace Surtr.Tests.Bytecode.Image
             var builder = new SurtrModuleBuilder("cards");
 
             var suit = builder.DefineEnum("Suit");
-            suit.DefineEnumCase("Hearts");
-            suit.DefineEnumCase("Spades");
-            suit.DefineEnumCase("Clubs");
+            suit.DefineEnumCase("Hearts", 0);
+            suit.DefineEnumCase("Spades", 1);
+            suit.DefineEnumCase("Clubs", 4);
 
             var image = SurtrModuleImage.FromModule(builder.Build());
 
@@ -265,6 +265,12 @@ namespace Surtr.Tests.Bytecode.Image
             Assert.Equal(0, cases[0].Ordinal);
             Assert.Equal("Clubs", cases[2].Name);
             Assert.Equal(2, cases[2].Ordinal);
+
+            // The value travels explicitly (§2.4): it is the key an exhaustive switch dispatches
+            // on, so the round trip must preserve it, not re-derive it from position.
+            Assert.Equal(0, cases[0].Value);
+            Assert.Equal(1, cases[1].Value);
+            Assert.Equal(4, cases[2].Value);
         }
 
         [Fact]
@@ -289,6 +295,62 @@ namespace Surtr.Tests.Bytecode.Image
             Assert.True(module.TryGetInterface("IShape", out var rebuiltShape));
             Assert.True(module.TryGetClass("Square", out var rebuiltSquare));
             Assert.True(rebuiltSquare.Implements(rebuiltShape));
+        }
+
+        /// <summary>
+        /// The declaration-site <c>out</c>/<c>in</c> annotation (§6) rides next to the parameter
+        /// names it annotates, so a module read back from an image answers subtype questions the
+        /// same way its source would have.
+        /// </summary>
+        [Fact]
+        public void GenericVarianceSurvivesTheRoundTrip()
+        {
+            var builder = new SurtrModuleBuilder("coll");
+
+            var cell = builder.DefineClass("Cell");
+            cell.Class.SetGenericParameters("T", "U");
+            // The constraint table rides with the parameter list - one entry per parameter, even
+            // an empty one - so an unbounded declaration still declares its (empty) bounds.
+            cell.Class.SetGenericConstraints(Array.Empty<string>(), Array.Empty<string>());
+            cell.Class.SetGenericVariance(SurtrGenericVariance.Invariant, SurtrGenericVariance.Covariant);
+
+            var image = SurtrModuleImage.FromModule(builder.Build());
+
+            using var runtime = new SurtrRuntime();
+            var module = runtime.LoadModule(image);
+
+            Assert.True(module.TryGetClass("Cell", out var rebuiltCell));
+            var variance = rebuiltCell.GenericVariance.ToArray();
+            Assert.Equal(2, variance.Length);
+            Assert.Equal(SurtrGenericVariance.Invariant, variance[0]);
+            Assert.Equal(SurtrGenericVariance.Covariant, variance[1]);
+        }
+
+        [Fact]
+        public void GenericVarianceSurvivesTheRoundTripOnInterfaces()
+        {
+            var builder = new SurtrModuleBuilder("coll");
+
+            var iterable = builder.DefineInterface("IIterable");
+            iterable.Interface.SetGenericParameters("T");
+            iterable.Interface.SetGenericConstraints(Array.Empty<string>());
+            iterable.Interface.SetGenericVariance(SurtrGenericVariance.Covariant);
+
+            var comparer = builder.DefineInterface("IComparer");
+            comparer.Interface.SetGenericParameters("T");
+            comparer.Interface.SetGenericConstraints(Array.Empty<string>());
+            comparer.Interface.SetGenericVariance(SurtrGenericVariance.Contravariant);
+
+            var image = SurtrModuleImage.FromModule(builder.Build());
+
+            using var runtime = new SurtrRuntime();
+            var module = runtime.LoadModule(image);
+
+            Assert.True(module.TryGetInterface("IIterable", out var rebuiltIterable));
+            Assert.Equal(SurtrGenericVariance.Covariant, Assert.Single(rebuiltIterable.GenericVariance.ToArray()));
+
+            Assert.True(module.TryGetInterface("IComparer", out var rebuiltComparer));
+            Assert.Equal(SurtrGenericVariance.Contravariant, Assert.Single(rebuiltComparer.GenericVariance.ToArray()));
         }
 
         [Fact]

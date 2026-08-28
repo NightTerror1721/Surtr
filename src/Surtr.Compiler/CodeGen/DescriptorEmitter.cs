@@ -129,6 +129,11 @@ namespace Surtr.Compiler.CodeGen
                     Append(builder, ((ArrayTypeSymbol)type).ElementType);
                     return;
 
+                case TypeSymbolKind.Generator:
+                    builder.Append(SurtrClassReference.SymbolGenerator);
+                    Append(builder, ((GeneratorTypeSymbol)type).ElementType);
+                    return;
+
                 case TypeSymbolKind.Dictionary:
                 {
                     var dictionary = (DictionaryTypeSymbol)type;
@@ -199,9 +204,19 @@ namespace Surtr.Compiler.CodeGen
 
                 case TypeSymbolKind.ValueClass:
                 {
+                    // A multi-field value class is a value type in its own right: it names its
+                    // class like any other, and the flattened width travels through the linked
+                    // metadata rather than through the descriptor.
+                    var named = (NamedTypeSymbol)type;
+                    if (ValueTypeLayout.IsMultiField(named))
+                    {
+                        AppendNamed(builder, named, SurtrClassReference.SymbolObject);
+                        return;
+                    }
+
                     // Erased to the field it wraps, and nullability rides along: `EntityId?` over an
                     // `int` field is exactly `int?`.
-                    var underlying = UnwrapValueClass((NamedTypeSymbol)type);
+                    var underlying = UnwrapValueClass(named);
                     Append(builder, underlying.WithNullability(underlying.IsNullable || type.IsNullable));
                     return;
                 }

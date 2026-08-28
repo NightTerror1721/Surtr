@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 namespace Surtr.Compiler.Syntax
 {
@@ -146,6 +146,16 @@ namespace Surtr.Compiler.Syntax
         /// <summary><c>fun</c> - introduces a method or a module-level function (§3.2, §2.5).</summary>
         KeywordFun,
 
+        /// <summary>
+        /// <c>generator</c> - introduces a generator, standing where <c>fun</c> would (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// An introducer of its own rather than a modifier on <c>fun</c>, following
+        /// <c>constructor</c> and <c>operator</c>: §3.2 settles what a member is by the keyword that
+        /// opens it, and a generator is a different kind of member, not a decorated method.
+        /// </remarks>
+        KeywordGenerator,
+
         /// <summary><c>if</c> (§4.1).</summary>
         KeywordIf,
 
@@ -157,6 +167,13 @@ namespace Surtr.Compiler.Syntax
 
         /// <summary><c>inline</c> - a hint the compiler may decline, unlike <see cref="KeywordForceInline"/> (§3.6).</summary>
         KeywordInline,
+
+        /// <summary>
+        /// <c>noinline</c> - the opposite of <see cref="KeywordInline"/>: every fold of the
+        /// declaration's invocations is off — splice by hint or heuristic, accessor lowering, and
+        /// call-site const folding (§3.6).
+        /// </summary>
+        KeywordNoInline,
 
         /// <summary><c>interface</c> (§2.3).</summary>
         KeywordInterface,
@@ -221,6 +238,9 @@ namespace Surtr.Compiler.Syntax
         /// <summary><c>try</c> (§8).</summary>
         KeywordTry,
 
+        /// <summary><c>using</c> - a scoped resource, disposed on every way out (§9.2).</summary>
+        KeywordUsing,
+
         /// <summary><c>var</c> - a mutable binding (§1).</summary>
         KeywordVar,
 
@@ -229,6 +249,9 @@ namespace Surtr.Compiler.Syntax
 
         /// <summary><c>while</c> (§4.2).</summary>
         KeywordWhile,
+
+        /// <summary><c>yield</c> - hands one element out of a generator and suspends it (§3.7).</summary>
+        KeywordYield,
 
         /// <summary><c>export</c> - marks an import as re-exposed by its module (§2.1's re-export).</summary>
         KeywordExport,

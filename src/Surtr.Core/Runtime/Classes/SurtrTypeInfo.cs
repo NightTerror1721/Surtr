@@ -19,6 +19,7 @@ namespace Surtr.Runtime.Classes
         private readonly SurtrClassReference _selfReference;
         private string[] _genericParameters = [];
         private string[][] _genericConstraints = [];
+        private SurtrGenericVariance[] _genericVariance = [];
 
         private protected SurtrTypeInfo(
             string name,
@@ -138,6 +139,60 @@ namespace Surtr.Runtime.Classes
             }
 
             _genericConstraints = constraints;
+        }
+
+        /// <summary>
+        /// The declaration-site variance of each generic parameter, in the same order
+        /// <see cref="SetGenericParameters"/> declared them. Empty means every parameter is
+        /// invariant, which is what an unannotated declaration is.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// One byte per parameter, riding next to <see cref="GenericParameters"/> and
+        /// <see cref="GenericConstraints"/>: names let a member signature mention a parameter,
+        /// bounds say what every construction promises, and variance says which constructions are
+        /// substitutable for which. Nothing on an execution path reads it - subtyping between
+        /// constructions is answered at compile time, and by then a slot is a reference whatever
+        /// the parameter was - so this exists for the compiler's <c>MetadataImporter</c>, for
+        /// tooling, and for host interop, exactly like the constraint table beside it.
+        /// </para>
+        /// </remarks>
+        public ReadOnlySpan<SurtrGenericVariance> GenericVariance
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _genericVariance;
+        }
+
+        /// <summary>
+        /// Declares this type's generic parameter variances, one per parameter in the same order
+        /// <see cref="SetGenericParameters"/> declared them.
+        /// </summary>
+        /// <exception cref="InvalidOperationException">The type is already built.</exception>
+        /// <exception cref="ArgumentException">
+        /// The list's length does not match the parameter count, or an entry is not a defined
+        /// variance.
+        /// </exception>
+        public void SetGenericVariance(params SurtrGenericVariance[] variance)
+        {
+            ThrowIfBuilt();
+
+            if (variance is null)
+                throw new ArgumentNullException(nameof(variance));
+
+            if (variance.Length != _genericParameters.Length)
+                throw new ArgumentException(
+                    $"'{Name}' declares {_genericParameters.Length} generic parameter(s), but {variance.Length} variance value(s) were supplied.",
+                    nameof(variance));
+
+            for (int i = 0; i < variance.Length; i++)
+            {
+                if (variance[i] is not (SurtrGenericVariance.Invariant or SurtrGenericVariance.Covariant or SurtrGenericVariance.Contravariant))
+                    throw new ArgumentException(
+                        $"Variance {i} of '{Name}' is {(byte)variance[i]}, which is not a defined variance.",
+                        nameof(variance));
+            }
+
+            _genericVariance = variance;
         }
 
         /// <summary>The descriptor other metadata uses to refer to this type.</summary>

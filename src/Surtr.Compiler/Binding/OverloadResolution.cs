@@ -177,6 +177,32 @@ namespace Surtr.Compiler.Binding
                     tied.Add(candidate.Method);
             }
 
+            // §11: when nothing about the arguments separates the candidates, an @Obsolete mark
+            // does. A tie that would have been reported — or lost to whichever obsolete candidate
+            // happened to be first — goes to the one that is not being retired instead, and only
+            // when every applicable candidate carries the mark does the call resolve to it and
+            // warn at its site.
+            if (tied.Count > 0 && BuiltInAttributes.IsObsolete(best.Method))
+            {
+                for (int i = 0; i < tied.Count; i++)
+                {
+                    if (BuiltInAttributes.IsObsolete(tied[i]))
+                        continue;
+
+                    for (int j = 0; j < applicable.Count; j++)
+                    {
+                        if (ReferenceEquals(applicable[j].Method, tied[i]))
+                        {
+                            best = applicable[j];
+                            break;
+                        }
+                    }
+
+                    tied.Clear();
+                    break;
+                }
+            }
+
             if (tied.Count > 0)
             {
                 tied.Insert(0, best.Method);

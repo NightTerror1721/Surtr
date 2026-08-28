@@ -48,11 +48,17 @@ namespace Surtr.Runtime
         private long _pendingInstructionBudget;
         private bool _disposed;
 
-        // Native enum case instances awaiting their static slot, keyed by declaring class. Filled by
+        // Native enum case values awaiting their static slot, keyed by declaring class. Filled by
         // DefineNativeEnumCase (before linking, when AddEnumCase is legal) and drained by
         // FinishNativeClass (after linking, when the case fields' static addresses exist).
-        private readonly Dictionary<SurtrClass, Dictionary<string, SurtrNativeObject>> _nativeEnumCases =
-            new Dictionary<SurtrClass, Dictionary<string, SurtrNativeObject>>();
+        private readonly Dictionary<SurtrClass, Dictionary<string, long>> _nativeEnumValues =
+            new Dictionary<SurtrClass, Dictionary<string, long>>();
+
+        // Host objects adopted as entities in their own right (RegisterHost), keyed by the CLR
+        // instance itself: the entry dies with the key, which is what bounds the root each one
+        // holds to the lifetime of the object it was made for.
+        private readonly ConditionalWeakTable<object, SurtrNativeObject> _adoptedNatives =
+            new ConditionalWeakTable<object, SurtrNativeObject>();
 
         /// <summary>Creates and initializes a runtime with the default heap capacity.</summary>
         public SurtrRuntime() : this(DefaultEntityCapacity) { }
@@ -538,7 +544,89 @@ namespace Surtr.Runtime
         /// </summary>
         public SurtrRef RegisterNative(SurtrNativeObject nativeObject)
             => _context.EntityRegistry.Register(nativeObject);
+
+        /// <summary>
+        /// The host object <paramref name="value"/> carries, as a Surtr value: an instance of a
+        /// host class deriving from <see cref="SurtrNativeObject"/> is adopted as the entity
+        /// itself, and anything else is wrapped in a <see cref="SurtrNativeProxy"/>.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A class the bridge registers as a native type is normally a plain CLR object the
+        /// runtime cannot touch directly, so every crossing wraps it in a proxy whose target it
+        /// is. A host class deriving from <see cref="SurtrNativeObject"/> needs none of that: the
+        /// object already <em>is</em> a Surtr entity, so wrapping would bury it inside a second,
+        /// shell entity and reading it back through the proxy's target would reach null or the
+        /// wrong object. This is the one crossing point both shapes share.
+        /// </para>
+        /// <para>
+        /// Adoption is cached and rooted: one CLR instance answers the same reference for every
+        /// crossing of every call, the way an enum's case objects do. The root is what keeps the
+        /// registry from sweeping the entity while the host still holds the CLR object and could
+        /// hand it back; the cache entry dies with that object, and with it the last strong
+        /// reference to the entity. Host-authored facade types are a bounded set, so the pin is
+        /// bounded too. An opaque value keeps today's behavior - wrapped fresh each time,
+        /// collectable like any proxy.
+        /// </para>
+        /// </remarks>
+        public SurtrValue RegisterHost(object? value)
+        {
+            if (value is null)
+                return SurtrValue.Null;
+
+            if (value is SurtrNativeObject native)
+            {
+                if (_adoptedNatives.TryGetValue(value, out var adopted))
+                    return ValueOf(adopted);
+
+                _context.EntityRegistry.Register(native);
+                AddRoot(native);
+                _adoptedNatives.Add(value, native);
+                return ValueOf(native);
+            }
+
+            return ValueOf(WrapNative(value));
+        }
+
+        /// <summary>
+        /// The CLR object behind <paramref name="value"/>: the wrapped target of a proxy, or the
+        /// adopted <see cref="SurtrNativeObject"/> itself when the reference names one directly.
+        /// </summary>
+        public object? HostValueOf(SurtrValue value)
+        {
+            var entity = Resolve<SurtrNativeObject>(value);
+            if (entity is null)
+                return null;
+
+            return entity is SurtrNativeProxy proxy ? proxy.Target : entity;
+        }
         #endregion
+
+        /// <summary>
+        /// Runs <paramref name="generator"/> until its next <c>yield</c> or its end.
+        /// </summary>
+        /// <remarks>
+        /// Internal because it is one half of an operation: the value produced is left on the
+        /// generator for <c>current</c> to read, so a host driving one by hand would have to keep
+        /// the two in step itself. The built-in <c>moveNext</c> is the supported way in, and a
+        /// compiled loop does not come through here at all - it lowers to <c>GenResume</c>.
+        /// </remarks>
+        /// <returns><see langword="true"/> if the body yielded; <see langword="false"/> if it finished.</returns>
+        internal bool ResumeGenerator(SurtrGenerator generator)
+            => VirtualMachine.ResumeGenerator(generator);
+
+        /// <summary>Resumes <paramref name="generator"/> with a value its <c>yield</c> evaluates to.</summary>
+        /// <remarks>Internal for the same reason as <see cref="ResumeGenerator"/>: the built-in <c>send</c> is the way in.</remarks>
+        internal bool SendToGenerator(SurtrGenerator generator, SurtrValue value)
+            => VirtualMachine.SendToGenerator(generator, value);
+
+        /// <summary>Raises <paramref name="exception"/> inside <paramref name="generator"/> where it is suspended.</summary>
+        internal bool RaiseInGenerator(SurtrGenerator generator, SurtrRef exception)
+            => VirtualMachine.RaiseInGenerator(generator, exception);
+
+        /// <summary>Ends <paramref name="generator"/>, running whatever <c>finally</c> blocks it has pending.</summary>
+        internal void DisposeGenerator(SurtrGenerator generator)
+            => VirtualMachine.DisposeGenerator(generator);
 
         #region Value Access
         /// <summary>The value naming <paramref name="entity"/>, or null if it is not registered.</summary>
@@ -1218,6 +1306,110 @@ namespace Surtr.Runtime
         }
 
         /// <summary>
+        /// Declares a native <b>value</b> class: the Surtr-side face of a host struct, laid out as
+        /// a run of contiguous slots rather than as a heap object behind a reference.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The difference from <see cref="DefineNativeClass"/> is where the data lives. A native
+        /// class is a <see cref="SurtrNativeObject"/> wrapping a CLR instance, and every member
+        /// access crosses into host code to reach a field of it. A native value class is the other
+        /// way round: <b>Surtr owns the storage</b>. Its fields are real slots declared with
+        /// <see cref="DefineValueField"/>, so reading one is a slot read that never calls the host
+        /// at all, and the CLR struct is rebuilt from those slots only when a native member
+        /// actually needs one. That is what makes a host struct free to pass around - the point of
+        /// mapping <c>Vector3</c> this way rather than boxing it into a proxy.
+        /// </para>
+        /// <para>
+        /// The class is <see cref="SurtrValueTypeCode.Object"/> rather than
+        /// <see cref="SurtrValueTypeCode.Native"/>, and deliberately: the type code describes the
+        /// <em>boxed</em> form, and boxing an inline block produces an ordinary
+        /// <see cref="SurtrInstance"/> holding those same slots - not a proxy around a CLR object
+        /// that the block was never backed by. This is exactly the shape a compiled
+        /// <c>value class</c> has, which is the point: nothing downstream - the linker's layout,
+        /// the collector's reference-slot walk, the boxing opcodes - needs to know the declaration
+        /// came from a host rather than from Surtr source.
+        /// </para>
+        /// <para>
+        /// A value type has no identity to inherit through, so there is no base class parameter;
+        /// <see cref="SurtrTypeLinker"/> refuses one outright. Returned still under construction:
+        /// add its fields, hang its native methods on it, and finish it with
+        /// <see cref="FinishNativeClass"/>, which is what computes the flattened width.
+        /// </para>
+        /// </remarks>
+        /// <param name="fullName">The name its descriptor carries, for example <c>UnityEngine:Vector3</c>.</param>
+        /// <param name="typeArguments">The descriptors of a closed generic construction, if any.</param>
+        /// <exception cref="InvalidOperationException">A native class with that full name is already declared.</exception>
+        public SurtrClass DefineNativeValueClass(string fullName, SurtrClassReference[]? typeArguments = null)
+        {
+            if (_context.NativeClasses.ContainsKey(fullName))
+                throw new InvalidOperationException($"A native class named '{fullName}' is already declared.");
+
+            var reference = typeArguments is null || typeArguments.Length == 0
+                ? SurtrClassReference.Native(fullName)
+                : SurtrClassReference.ConstructedNative(fullName, typeArguments);
+            SurtrClassReference.TrySplitFullName(fullName, out _, out string typePath);
+
+            var declared = new SurtrClass(
+                typePath,
+                SurtrValueTypeCode.Object,
+                reference,
+                baseType: null,
+                isAbstract: false,
+                SurtrVisibility.Public,
+                declaringType: null)
+            {
+                IsValueType = true,
+            };
+
+            _context.NativeClasses.Add(fullName, declared);
+
+            TypeHandle(reference);
+            return declared;
+        }
+
+        /// <summary>
+        /// Declares one storage field of a native value class - a real slot in its inline block,
+        /// not an accessor pair into host code.
+        /// </summary>
+        /// <remarks>
+        /// The counterpart to <see cref="DefineNativeField"/>, and the opposite trade. A native
+        /// field owns no slot and reads through entry points, which is right when the CLR object
+        /// is the storage; a value field <em>is</em> the storage, so reading it costs one slot
+        /// access and no transition. Fields are read-only from Surtr because an inline value is
+        /// immutable (a copy has no identity to write back through), and they claim their slots in
+        /// declaration order - which is the order the marshaler has to rebuild the CLR struct in.
+        /// </remarks>
+        /// <param name="valueClass">A class declared by <see cref="DefineNativeValueClass"/>.</param>
+        /// <param name="name">The field's Surtr name.</param>
+        /// <param name="fieldType">The field's declared type.</param>
+        /// <param name="visibility">How widely the field is visible.</param>
+        /// <exception cref="ArgumentException"><paramref name="valueClass"/> is not a value class.</exception>
+        public SurtrFieldInfo DefineValueField(
+            SurtrClass valueClass,
+            string name,
+            SurtrClassReference fieldType,
+            SurtrVisibility visibility = SurtrVisibility.Public)
+        {
+            if (valueClass is null)
+                throw new ArgumentNullException(nameof(valueClass));
+
+            if (!valueClass.IsValueType)
+                throw new ArgumentException($"'{valueClass.Name}' is not a value class, so it has no inline block to place a field in.", nameof(valueClass));
+
+            var field = new SurtrFieldInfo(
+                name,
+                TypeHandle(fieldType),
+                isStatic: false,
+                isReadOnly: true,
+                visibility,
+                TypeHandle(valueClass.SelfReference));
+
+            valueClass.AddField(field);
+            return field;
+        }
+
+        /// <summary>
         /// Declares a native enum: the Surtr-side face of a host enum, as a sealed class with a
         /// fixed set of named static instances.
         /// </summary>
@@ -1250,7 +1442,12 @@ namespace Surtr.Runtime
                 SurtrVisibility.Public,
                 declaringType: null,
                 isSealed: true,
-                isEnum: true);
+                isEnum: true)
+            {
+                // An enum is a value class whose first field is the synthetic `value` (§2.4); the
+                // linker reads this flag to lay it out as one flattened slot.
+                IsValueType = true,
+            };
 
             _context.NativeClasses.Add(fullName, declared);
             TypeHandle(reference);
@@ -1258,19 +1455,17 @@ namespace Surtr.Runtime
         }
 
         /// <summary>
-        /// Declares one case of a native enum, backed by a cached instance.
+        /// Declares one case of a native enum, backed by a static field holding its value.
         /// </summary>
         /// <remarks>
-        /// <para>
-        /// The ordinal follows declaration order, the same rule a source enum's cases follow. The
-        /// supplied <paramref name="instance"/> must be a registered <see cref="SurtrNativeObject"/>
-        /// wrapping the host enum value; its reference is written into the case's static field when
-        /// <see cref="FinishNativeClass"/> links the enum.
-        /// </para>
+        /// An enum is a value class from the migration (§2.4), so a case is its <c>value</c>: the
+        /// static field is created here and the value is written into it when
+        /// <see cref="FinishNativeClass"/> links the enum. No proxy, no cache — the value is an
+        /// int, which is what every operation on the enum already reads.
         /// </remarks>
         /// <exception cref="ArgumentException"><paramref name="enumClass"/> is not an enum.</exception>
         /// <exception cref="InvalidOperationException">The enum is already built.</exception>
-        public SurtrEnumCaseInfo DefineNativeEnumCase(SurtrClass enumClass, string name, SurtrNativeObject instance)
+        public SurtrEnumCaseInfo DefineNativeEnumCase(SurtrClass enumClass, string name, long value)
         {
             if (enumClass is null)
                 throw new ArgumentNullException(nameof(enumClass));
@@ -1278,20 +1473,17 @@ namespace Surtr.Runtime
             if (!enumClass.IsEnum)
                 throw new ArgumentException($"'{enumClass.Name}' is not an enum and cannot declare enum cases.", nameof(enumClass));
 
-            if (instance is null)
-                throw new ArgumentNullException(nameof(instance));
-
             var selfHandle = TypeHandle(enumClass.SelfReference);
             var field = new SurtrFieldInfo(name, selfHandle, isStatic: true, isReadOnly: true, SurtrVisibility.Public, selfHandle);
-            var caseInfo = enumClass.AddEnumCase(field);
+            var caseInfo = enumClass.AddEnumCase(field, checked((int)value));
 
-            if (!_nativeEnumCases.TryGetValue(enumClass, out var cases))
+            if (!_nativeEnumValues.TryGetValue(enumClass, out var cases))
             {
-                cases = new Dictionary<string, SurtrNativeObject>(StringComparer.Ordinal);
-                _nativeEnumCases.Add(enumClass, cases);
+                cases = new Dictionary<string, long>(StringComparer.Ordinal);
+                _nativeEnumValues.Add(enumClass, cases);
             }
 
-            cases[name] = instance;
+            cases[name] = value;
             return caseInfo;
         }
 
@@ -1337,25 +1529,26 @@ namespace Surtr.Runtime
         {
             RetryHostHandles();
             SurtrTypeLinker.LinkClass(nativeClass, ref _context.NextInterfaceId);
-            SealNativeEnumCases(nativeClass);
+            SealNativeEnumValues(nativeClass);
         }
 
         /// <summary>
-        /// Writes each pending native enum case's cached instance into its static field, now that
-        /// linking has laid the static storage out and resolved every field address.
+        /// Writes each pending native enum case's value into its static field, now that linking has
+        /// laid the static storage out and resolved every field address. An enum case is the value
+        /// itself from the migration (§2.4), so the write is one int.
         /// </summary>
-        private void SealNativeEnumCases(SurtrClass enumClass)
+        private void SealNativeEnumValues(SurtrClass enumClass)
         {
-            if (!_nativeEnumCases.TryGetValue(enumClass, out var cases))
+            if (!_nativeEnumValues.TryGetValue(enumClass, out var cases))
                 return;
 
             foreach (var pair in cases)
             {
                 if (enumClass.TryGetField(pair.Key, out var field))
-                    *field.StaticAddress = SurtrValue.CreateReference(pair.Value.GetSurtrReference()).Raw;
+                    *field.StaticAddress = SurtrValue.CreateInt(checked((int)pair.Value)).Raw;
             }
 
-            _nativeEnumCases.Remove(enumClass);
+            _nativeEnumValues.Remove(enumClass);
         }
 
         /// <summary>Looks up a host-declared native class by its full name.</summary>
@@ -1410,19 +1603,282 @@ namespace Surtr.Runtime
         /// </remarks>
         /// <exception cref="VM.SurtrExecutionException">The call trapped, or raised an exception nothing caught.</exception>
         public SurtrValue Invoke(SurtrMethodInfo method, params SurtrValue[] arguments)
-            => VirtualMachine.Call(method, arguments ?? Array.Empty<SurtrValue>());
+            => Invoke(method, (ReadOnlySpan<SurtrValue>)(arguments ?? Array.Empty<SurtrValue>()));
 
         /// <summary>Calls a Surtr method with arguments the caller already has in a span.</summary>
+        /// <remarks>
+        /// This is the boundary where the two representations meet. The callee's frame counts
+        /// slots - a parameter whose type stores inline claims its whole width - while the host
+        /// speaks one <see cref="SurtrValue"/> per argument; and the same in reverse for the
+        /// result. Both directions translate here: inline arguments arrive as the boxed form the
+        /// host holds and are flattened into their blocks before the call, and an inline result
+        /// comes back boxed rather than leaving the data stack dirty.
+        /// </remarks>
         public SurtrValue Invoke(SurtrMethodInfo method, ReadOnlySpan<SurtrValue> arguments)
-            => VirtualMachine.Call(method, arguments);
+        {
+            bool nativeAnswer = method.ImplKind == SurtrMethodImplKind.Native;
+            bool inlineResult = ResultSlotCount(method) > 1;
+
+            // A bytecode method with an ordinary one-slot answer keeps the shortest path: the
+            // interpreter hands back its return value directly. Everything else - natives, whose
+            // answers now land on the data stack by convention, and inline blocks - goes through
+            // the slot-copying boundary below.
+            if (!nativeAnswer
+                && !inlineResult
+                && !HasInlineParameters(method))
+            {
+                return VirtualMachine.Call(method, arguments);
+            }
+
+            int slotCount = Math.Max(ResultSlotCount(method), nativeAnswer ? 1 : 0);
+            Span<SurtrRawValue> results = slotCount switch
+            {
+                <= 0 => stackalloc SurtrRawValue[1],
+                <= 32 => stackalloc SurtrRawValue[slotCount],
+                _ => new SurtrRawValue[slotCount],
+            };
+
+            VirtualMachine.CallForResults(
+                method,
+                HasInlineParameters(method) ? FlattenArguments(method, arguments) : arguments,
+                results);
+
+            if (slotCount <= 1)
+                return slotCount == 0 ? SurtrValue.Null : SurtrValue.FromRaw(results[0]);
+
+            // A value-class result boxes into an ordinary instance of its own class; a tuple
+            // result re-packs into the SurtrTuple the host can resolve. Either way the caller
+            // gets one value back, exactly as it would have before values stored inline.
+            if (method.ReturnType.ResolvedType is SurtrClass { IsValueType: true } valueClass)
+            {
+                var instance = NewInstance(valueClass);
+                for (int i = 0; i < slotCount; i++)
+                    instance[i] = SurtrValue.FromRaw(results[i]);
+
+                return SurtrValue.CreateReference(instance.GetSurtrReference());
+            }
+
+            var elements = new SurtrValue[slotCount];
+            for (int i = 0; i < slotCount; i++)
+                elements[i] = SurtrValue.FromRaw(results[i]);
+
+            var tuple = new SurtrTuple(method.ReturnType.Reference, elements);
+            _context.EntityRegistry.Register(tuple);
+            return SurtrValue.CreateReference(tuple.GetSurtrReference());
+        }
 
         /// <summary>Calls a closure and returns its result.</summary>
         public SurtrValue InvokeClosure(SurtrClosure closure, params SurtrValue[] arguments)
-            => VirtualMachine.CallClosure(closure, arguments ?? Array.Empty<SurtrValue>());
+            => InvokeClosure(closure, (ReadOnlySpan<SurtrValue>)(arguments ?? Array.Empty<SurtrValue>()));
 
-        /// <summary>Calls a closure with arguments the caller already has in a span.</summary>
+        /// <summary>
+        /// Calls a closure and returns its result - the same representation boundary
+        /// <see cref="Invoke(SurtrMethodInfo, ReadOnlySpan{SurtrValue})"/> implements.
+        /// </summary>
         public SurtrValue InvokeClosure(SurtrClosure closure, ReadOnlySpan<SurtrValue> arguments)
-            => VirtualMachine.CallClosure(closure, arguments);
+        {
+            int slotCount = closure.TargetMethod.ResultSlotCount;
+            Span<SurtrRawValue> results = slotCount switch
+            {
+                <= 0 => stackalloc SurtrRawValue[1],
+                <= 32 => stackalloc SurtrRawValue[slotCount],
+                _ => new SurtrRawValue[slotCount],
+            };
+
+            VirtualMachine.CallClosureForResults(closure, arguments, results);
+
+            if (slotCount <= 1)
+                return slotCount == 0 ? SurtrValue.Null : SurtrValue.FromRaw(results[0]);
+
+            var elements = new SurtrValue[slotCount];
+            for (int i = 0; i < slotCount; i++)
+                elements[i] = SurtrValue.FromRaw(results[i]);
+
+            if (closure.TargetMethod.ReturnType.Reference.TypeCode == SurtrValueTypeCode.Tuple)
+            {
+                var tuple = new SurtrTuple(closure.TargetMethod.ReturnType.Reference, elements);
+                _context.EntityRegistry.Register(tuple);
+                return SurtrValue.CreateReference(tuple.GetSurtrReference());
+            }
+
+            if (closure.TargetMethod.ReturnType.ResolvedType is SurtrClass { IsValueType: true } valueClass)
+            {
+                var instance = NewInstance(valueClass);
+                for (int i = 0; i < slotCount; i++)
+                    instance[i] = elements[i];
+
+                return SurtrValue.CreateReference(instance.GetSurtrReference());
+            }
+
+            throw new InvalidOperationException(
+                $"A closure returning '{closure.TargetMethod.ReturnType.Reference.Descriptor}' cannot answer {slotCount} slots.");
+        }
+
+        /// <summary>
+        /// Calls a method and copies every slot of its result into <paramref name="results"/>.
+        /// </summary>
+        /// <remarks>
+        /// The multi-slot shape of <see cref="Invoke(SurtrMethodInfo, ReadOnlySpan{SurtrValue})"/>:
+        /// a method whose declared return type occupies more than one slot answers through here,
+        /// one slot per element, deepest field first - the same order the callee's
+        /// <c>ReturnValues</c> writes them. A single-value or void method works too, answering one
+        /// or zero slots, so a host written against this overload never needs the other form.
+        /// </remarks>
+        /// <returns>
+        /// <see langword="false"/> only when the method's result does not fit
+        /// <paramref name="results"/>; the call still ran.
+        /// </returns>
+        /// <exception cref="VM.SurtrExecutionException">The call trapped, or raised an exception nothing caught.</exception>
+        public bool TryInvoke(SurtrMethodInfo method, ReadOnlySpan<SurtrValue> arguments, Span<SurtrValue> results)
+        {
+            int slotCount = ResultSlotCount(method);
+            if (slotCount == 0)
+            {
+                VirtualMachine.Call(method, arguments);
+                return true;
+            }
+
+            if (results.Length < slotCount)
+                return false;
+
+            Span<SurtrRawValue> raw = slotCount <= 32 ? stackalloc SurtrRawValue[slotCount] : new SurtrRawValue[slotCount];
+            VirtualMachine.CallForResults(method, arguments, raw);
+
+            for (int i = 0; i < slotCount; i++)
+                results[i] = SurtrValue.FromRaw(raw[i]);
+
+            return true;
+        }
+
+        /// <summary>
+        /// How many data-stack slots one call to <paramref name="method"/> leaves behind: zero for
+        /// void, the flattened width of an inline return (a value type or a tuple), one for
+        /// everything else.
+        /// </summary>
+        private static int ResultSlotCount(SurtrMethodInfo method) => method.ResultSlotCount;
+
+        /// <summary>
+        /// Whether any declared parameter stores inline - which is what makes the host's one
+        /// <c>SurtrValue</c>-per-argument shape need translating before a call.
+        /// </summary>
+        private static bool HasInlineParameters(SurtrMethodInfo method)
+        {
+            foreach (var parameter in method.Parameters)
+            {
+                if (parameter.IsVarargs)
+                    continue;
+
+                var reference = parameter.ParameterType.Reference;
+                if (reference.TypeCode == SurtrValueTypeCode.Tuple && SlotWidthOf(reference) > 0)
+                    return true;
+
+                if (parameter.ParameterType.ResolvedType is SurtrClass { IsValueType: true } value
+                    && value.FlattenedSlotWidth > 1)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Translates the host's boxed argument values into the slot layout the callee's frame
+        /// counts: every inline parameter's packed value is flattened into its consecutive slots.
+        /// The receiver of an instance method is never translated - it is an ordinary object.
+        /// </summary>
+        private SurtrValue[] FlattenArguments(SurtrMethodInfo method, ReadOnlySpan<SurtrValue> arguments)
+        {
+            bool hasReceiver = !method.IsStatic && method.DeclaringType is not null;
+            var flat = new List<SurtrValue>(arguments.Length + 4);
+
+            for (int i = 0; i < arguments.Length; i++)
+            {
+                int parameterIndex = hasReceiver ? i - 1 : i;
+
+                if (parameterIndex < 0 || parameterIndex >= method.Parameters.Length)
+                {
+                    flat.Add(arguments[i]);
+                    continue;
+                }
+
+                var parameter = method.Parameters[parameterIndex];
+                if (parameter.IsVarargs || !TryFlattenInline(parameter.ParameterType, arguments[i], flat))
+                    flat.Add(arguments[i]);
+            }
+
+            return flat.ToArray();
+        }
+
+        /// <summary>
+        /// Flattens one boxed inline value into its slots, answering whether it did. Anything not
+        /// storing inline - or not actually holding the boxed form - passes through untouched.
+        /// </summary>
+        private bool TryFlattenInline(SurtrTypeHandle type, SurtrValue value, List<SurtrValue> flat)
+        {
+            var reference = type.Reference;
+
+            if (reference.TypeCode == SurtrValueTypeCode.Tuple && Resolve<SurtrTuple>(value) is SurtrTuple tuple)
+            {
+                var elements = reference.GetTupleElementTypes();
+                for (int i = 0; i < elements.Length && i < tuple.Length; i++)
+                {
+                    if (!TryFlattenReference(elements[i], tuple[i], flat))
+                        flat.Add(tuple[i]);
+                }
+
+                return true;
+            }
+
+            if (type.ResolvedType is SurtrClass { IsValueType: true, FlattenedSlotWidth: > 1 } valueClass
+                && Resolve<SurtrInstance>(value) is SurtrInstance instance)
+            {
+                for (int i = 0; i < valueClass.FlattenedSlotWidth && i < instance.SlotCount; i++)
+                    flat.Add(instance[i]);
+
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>The element form of <see cref="TryFlattenInline"/>, driven by a bare descriptor.</summary>
+        private bool TryFlattenReference(SurtrClassReference reference, SurtrValue value, List<SurtrValue> flat)
+        {
+            if (reference.TypeCode == SurtrValueTypeCode.Tuple && Resolve<SurtrTuple>(value) is SurtrTuple nested)
+            {
+                var elements = reference.GetTupleElementTypes();
+                for (int i = 0; i < elements.Length && i < nested.Length; i++)
+                {
+                    if (!TryFlattenReference(elements[i], nested[i], flat))
+                        flat.Add(nested[i]);
+                }
+
+                return true;
+            }
+
+            // A class-typed element only widens the block when its linked layout says so; without
+            // a resolved handle there is nothing to consult, and one slot is the safe answer.
+            return false;
+        }
+
+        /// <summary>The flattened width of a tuple descriptor: the sum of its elements' own widths.</summary>
+        private static int SlotWidthOf(SurtrClassReference reference)
+        {
+            const int maxSlots = 254;
+            int total = 0;
+
+            foreach (var element in reference.GetTupleElementTypes())
+            {
+                total += element.TypeCode == SurtrValueTypeCode.Tuple ? SlotWidthOf(element) : 1;
+
+                if (total > maxSlots)
+                    throw new InvalidOperationException(
+                        $"The tuple '{reference.Descriptor}' flattens to more than {maxSlots} slots.");
+            }
+
+            return total;
+        }
 
         /// <summary>
         /// Discards whatever a failed call left on the interpreter's stacks.

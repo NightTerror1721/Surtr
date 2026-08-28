@@ -50,6 +50,26 @@ namespace Surtr.Compiler.Syntax.Ast
 
         /// <summary><c>forceinline</c> — mandatory; an impossible case is a compile error.</summary>
         ForceInline,
+
+        /// <summary>
+        /// <c>noinline</c> — every fold of the declaration's invocations is off: no splice by hint
+        /// or heuristic, no accessor lowering at the access site, no call-site const folding. The
+        /// declaration is what runs, as a real call, wherever it is used.
+        /// </summary>
+        NoInline,
+    }
+
+    /// <summary>The declaration-site variance written on a generic type parameter (§6).</summary>
+    public enum VarianceModifier
+    {
+        /// <summary>Nothing was written: the parameter is invariant, which is the default.</summary>
+        None,
+
+        /// <summary><c>out</c> — the parameter only appears in output positions.</summary>
+        Covariant,
+
+        /// <summary><c>in</c> — the parameter only appears in input positions.</summary>
+        Contravariant,
     }
 
     /// <summary>Which kind of type a <see cref="TypeDeclarationSyntax"/> declares.</summary>
@@ -159,16 +179,21 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>The type parameter's name.</summary>
         public string Name { get; }
 
+        /// <summary>The variance written before it, or <see cref="VarianceModifier.None"/>.</summary>
+        public VarianceModifier Variance { get; }
+
         /// <summary>Its constraints, combined with <c>&amp;</c>. Empty when unconstrained.</summary>
         public IReadOnlyList<TypeSyntax> Constraints { get; }
 
         /// <summary>Initializes a type parameter.</summary>
         /// <param name="span">The source the parameter covers.</param>
         /// <param name="name">Its name.</param>
+        /// <param name="variance">The variance written against it, if any.</param>
         /// <param name="constraints">Its constraints, or an empty list.</param>
-        public TypeParameterSyntax(SourceSpan span, string name, IReadOnlyList<TypeSyntax> constraints) : base(span)
+        public TypeParameterSyntax(SourceSpan span, string name, VarianceModifier variance, IReadOnlyList<TypeSyntax> constraints) : base(span)
         {
             Name = name;
+            Variance = variance;
             Constraints = constraints;
         }
     }
@@ -457,6 +482,12 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>The constructor arguments, empty when written bare.</summary>
         public IReadOnlyList<ArgumentSyntax> Arguments { get; }
 
+        /// <summary>
+        /// The explicit <c>= n</c> value written on the case, or <see langword="null"/> when the
+        /// case takes the implied progression (§2.4).
+        /// </summary>
+        public long? ExplicitValue { get; }
+
         /// <summary>The <c>///</c> doc comment lines preceding this case.</summary>
         public IReadOnlyList<string> DocComment { get; }
 
@@ -465,12 +496,14 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="name">The case's name.</param>
         /// <param name="arguments">The constructor arguments.</param>
         /// <param name="docComment">Doc comment lines preceding it.</param>
-        public EnumCaseSyntax(SourceSpan span, string name, IReadOnlyList<ArgumentSyntax> arguments, IReadOnlyList<string> docComment)
+        /// <param name="explicitValue">The written <c>= n</c> value, or <see langword="null"/>.</param>
+        public EnumCaseSyntax(SourceSpan span, string name, IReadOnlyList<ArgumentSyntax> arguments, IReadOnlyList<string> docComment, long? explicitValue = null)
             : base(span)
         {
             Name = name;
             Arguments = arguments;
             DocComment = docComment;
+            ExplicitValue = explicitValue;
         }
     }
 
@@ -686,6 +719,18 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <summary>True when declared <c>native</c> — the body lives on the host side (§10).</summary>
         public bool IsNative { get; }
 
+        /// <summary>
+        /// True when introduced by <c>generator</c> rather than <c>fun</c> (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// A flag on the method node rather than a node of its own, because everything a parser has
+        /// to read is identical - name, type parameters, parameters, return type, block body - and
+        /// what changes is what the <em>return type means</em>: for a generator it declares the
+        /// element, and the member's view type is <c>generator&lt;T&gt;</c>. A separate node would
+        /// duplicate the whole shape to carry one bit.
+        /// </remarks>
+        public bool IsGenerator { get; }
+
         /// <summary>Initializes a method declaration.</summary>
         /// <param name="span">The source the declaration covers.</param>
         /// <param name="attributes">Attributes attached to it.</param>
@@ -702,9 +747,11 @@ namespace Surtr.Compiler.Syntax.Ast
         /// <param name="inline">Its inlining request.</param>
         /// <param name="isConst">True when declared <c>const</c>.</param>
         /// <param name="isNative">True when declared <c>native</c>.</param>
+        /// <param name="isGenerator">True when introduced by <c>generator</c> rather than <c>fun</c>.</param>
         public MethodDeclarationSyntax(SourceSpan span, IReadOnlyList<AttributeSyntax> attributes, IReadOnlyList<string> docComment, Visibility visibility,
             string name, IReadOnlyList<TypeParameterSyntax> typeParameters, IReadOnlyList<ParameterSyntax> parameters, TypeSyntax? returnType,
-            BlockStatementSyntax? body, bool isStatic, DispatchModifier dispatch, bool isSealed, InlineModifier inline, bool isConst, bool isNative)
+            BlockStatementSyntax? body, bool isStatic, DispatchModifier dispatch, bool isSealed, InlineModifier inline, bool isConst, bool isNative,
+            bool isGenerator = false)
             : base(span, attributes, docComment, visibility)
         {
             Name = name;
@@ -718,6 +765,7 @@ namespace Surtr.Compiler.Syntax.Ast
             Inline = inline;
             IsConst = isConst;
             IsNative = isNative;
+            IsGenerator = isGenerator;
         }
     }
 

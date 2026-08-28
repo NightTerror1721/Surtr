@@ -1,4 +1,4 @@
-# The Surtr VM: decisions, gaps and remaining work
+﻿# The Surtr VM: decisions, gaps and remaining work
 
 Companion to `src/Surtr.Core/VM/`. The *why* behind each choice lives in the XML docs and
 comments next to the code; this file is the map — what was decided, what the surrounding
@@ -145,7 +145,10 @@ receiver nullness, the concrete type behind a reference, per-push stack room.
 
 Trapped, each from a `NoInlining` cold helper: division by zero and `int.MinValue / -1`, negative
 integer exponents, array/string/tuple index out of range, popping an empty array, `DictGet` on a
-missing key, a failed `Cast`, stack and call-depth overflow, an invalid opcode byte.
+missing key, a failed `Cast`, stack and call-depth overflow, an invalid opcode byte, and five
+generator states that would otherwise corrupt or silently mislead — walking one already started,
+resuming or delegating to one already running, sending to one that has not started, and a body that
+answers a `dispose()` with another element.
 
 **Each trap names the library class it surfaces as**, on the exception it raises, so a Surtr
 `catch` clause can name what the runtime raises rather than only what Surtr code threw. The pairing
@@ -283,12 +286,20 @@ the other's block. A context now starts its numbering at `SurtrBuiltIns.Reserved
 This section still depends on `SurtrMethodInfo.DeclaringType` naming the declaring *interface* for
 an interface method. The compiler must honour that.
 
-### 3.2 Array element access pays two bounds checks
+### 3.2 Array element access pays two bounds checks - closed
 
-The explicit trap check, plus the CLR's own on the managed buffer, which the JIT cannot elide
-because it compares against `Items.Length` rather than `Count`. Removing the second needs
+**Closed, and not the way this section expected.** It was written when `SurtrArray` held a managed
+`SurtrValue[]`: the explicit trap check plus the CLR's own on the buffer, the second uneliminable
+because the JIT compares against `Items.Length` rather than `Count`. The fix looked like it needed
 `Unsafe.Add`, which netstandard2.1 does not carry without a NuGet package a Unity host would also
-have to ship. Revisit if the target framework moves.
+have to ship.
+
+`SurtrArray.Items` is an unmanaged `SurtrRawValue*` today (`SurtrArray.cs:50`), so there is no CLR
+bounds check to elide: `ArrGet` pays the explicit trap and nothing else, which is the comment
+sitting next to it in the interpreter. The remaining redundancy is different in kind and belongs to
+the compiler rather than the framework - a `for-in` guard that already proved the index in range,
+followed by an `ArrGet` that checks it again - and it is closed by fusing the two into one loop
+instruction rather than by removing a check. See `docs/Plan-Opcodes-Extendidos.md` §5 group A.
 
 ### 3.3 A module belongs to one runtime — closed twice over
 
@@ -493,12 +504,13 @@ in what was built — the exception is §4.14, which is §3.3's problem reached 
 > differently from how they were first written down, and each is noted in place: §4.1 turned out to
 > be largely built already; §4.6 got real generic parameters on the built-ins rather than an
 > erased placeholder; §4.7's budget is charged on control transfers rather than per instruction;
-> and §4.15's attributes are real classes rather than name/value pairs. **The closing sentence below
-> is itself stale and should not be trusted** — most of §4.8's unstruck bullets are done too
-> (inline/forceinline, operator overload resolution, alias erasure, the generic-interface bridge,
-> and now both devirtualisation bullets), this list was just never updated to say so as each landed.
-> `docs/Compiler-Plan.md` §10.2 is the authoritative, currently-maintained list of what the compiler
-> still owes — check there rather than trusting §4.8's strikethrough state.
+> and §4.15's attributes are real classes rather than name/value pairs. **§4.8 is done too, every
+> item of it** — audited bullet by bullet against the code and marked up in place, after spending
+> long enough half-marked that two other documents had copied the wrong state out of it. A fifth
+> thing landed differently and is noted there: `inline`/`forceinline` splices the callee's *bound
+> body* rather than its bytecode, which is why the handler remapping that entry was written around
+> never had to happen. `docs/Compiler-Plan.md` §10.2 is the authoritative, currently-maintained list
+> of what the compiler still owes; §4.8 is now a record of obligations met rather than outstanding.
 
 ### 4.1 Member tables keyed by signature — mostly already built
 
@@ -663,36 +675,68 @@ the first one that ran away.
 
 None of these need runtime work; all of them are things the runtime assumes and will not check.
 
-* **Box a primitive into an erased slot, and `Cast` reading one back out** (§1.11).
-* **Emit `finally` on every exit path**, plus a catch-all that runs it and re-raises (§1.8).
+**All of them are now met.** This list was written when none of them were, and for a long while it
+was updated only sporadically — each item landed in the compiler and nothing came back here to say
+so, which is why the section spent longer claiming to be outstanding work than it spent being any.
+Audited item by item against the code in August 2026; the state below is that audit's result. The
+list stays because it is what the runtime is *entitled to assume*: anything here that stops holding
+is a miscompile, not a missing feature. `docs/Compiler-Plan.md` §7 reproduces the same list from the
+compiler's side and §10.2 is the currently-maintained record of what the front end still owes.
+
+* ~~**Box a primitive into an erased slot, and `Cast` reading one back out** (§1.11).~~ **Done** —
+  `BoxIfStillErased`/`UnboxIfStillErased` in `CodeGen/MethodBodyEmitter.cs`, applied at every
+  boundary an erased slot has: arguments, returns, array and dictionary elements, dictionary keys.
+  With the one exception the runtime's own design forces, recorded in `Compiler-Plan.md` §7 — a
+  built-in collection stores a primitive raw, so what `IIterator.current` hands back is not a box
+  and must not be cast.
+* ~~**Emit `finally` on every exit path**, plus a catch-all that runs it and re-raises (§1.8).~~
+  **Done** — `MethodBodyEmitter`'s `_finallies` stack: every exit walks it from the current depth
+  outwards and re-emits each block, which is what keeps `Leave`/`EndFinally` out of the instruction
+  set. A `break`/`continue` records the depth it must unwind to alongside its jump target, so a
+  loop exit crossing a `try` runs the same blocks a `return` would.
 * ~~**Reject cross-initializer dependencies** (§1.12, §3.4).~~ **Done** —
   `Binding/InitializerOrder.cs`, and `docs/Compiler-Plan.md` §10.1g for the shape it took.
-* **Honour `SurtrMethodInfo.DeclaringType` naming the declaring interface** for interface methods
-  (§3.1).
+* ~~**Honour `SurtrMethodInfo.DeclaringType` naming the declaring interface** for interface methods
+  (§3.1).~~ **Done** — `EmitContext.IsInterfaceMethod` is what the emitter asks before choosing
+  `CallInterface` over `Invoke`, so a call through a contract names the contract's own entry rather
+  than the implementing class's.
+* ~~**Inline at the bytecode level** for `inline`/`forceinline` (`Language-Syntax.md` §3.6).~~
+  **Done, and at a different level than this entry expected** — `MethodBodyEmitter.TryInline`
+  splices the callee's **bound body**, not its emitted bytecode, with `CodeGen/InlineCost.cs`
+  deciding when an undeclared method is cheap enough to splice anyway. Doing it before emission is
+  what makes the handler-remapping problem this entry worried about disappear: a `try` inside a
+  spliced body is re-emitted in the caller, so it registers its own `SurtrExceptionHandler` in the
+  caller's table at caller offsets and there is nothing to remap. The emitter computing
+  `LocalCount` and `MaxStackSize` rather than accepting them is still what makes the merged frame
+  safe. Arguments land in real slots first (evaluated once whatever the body does with them), a
+  `return` inside the splice becomes a jump to the splice's exit, and a cycle guard plus a depth
+  cap stop a body that reaches itself from expanding forever.
+* ~~**Erase type aliases to their target descriptor** (`Language-Syntax.md` §2.7).~~ **Done** —
+  nothing reaches the runtime, which is the point. The other half is that two signatures differing
+  only by an alias collide, and `Binding/SignatureSet.cs` says so; it needs no rule of its own,
+  since §2.7 already resolves an alias to its target before the key is built.
+* ~~**Resolve operator overloads at the use site** (`Language-Syntax.md` §5.6), including the forms
+  derived from a single declaration.~~ **Done** — `OperatorNames` maps each token to its `op_`
+  symbol and `BodyBinder` resolves against it: compound assignment from each arithmetic and bitwise
+  operator, `!=` from `==` by negating the same lookup, all four relational operators from `<=>`,
+  and both the prefix and postfix form of `++`/`--` from one declaration, expanded into an
+  assignment back to the operand. `operator as` is an explicit conversion only, so it never enters
+  overload resolution.
 * ~~**Devirtualise calls on a `sealed` type**~~ **Done** — `Language-Syntax.md` §2.2 justifies the
   modifier partly on this, and §3.6 makes it the ideal case for inlining. `BodyBinder.Expressions.cs`
   marks a call on a sealed-typed receiver non-virtual, which feeds `TryInline`/`ShouldInlineByCost`
   and `EmitResolvedCall`'s opcode choice directly.
-* **Inline at the bytecode level** for `inline`/`forceinline` (`Language-Syntax.md` §3.6),
-  remapping the callee's `SurtrExceptionHandler` ranges into the caller's chunk-absolute table.
-  The emitter computing `LocalCount` and `MaxStackSize` (rather than accepting them) is what makes
-  a merged frame safe here.
-* **Erase type aliases to their target descriptor** (`Language-Syntax.md` §2.7). Nothing reaches
-  the runtime, which is the point — but it does mean two signatures differing only by an alias
-  collide, and the compiler has to say so.
-* **Resolve operator overloads at the use site** (`Language-Syntax.md` §5.6), including the forms
-  derived from a single declaration: compound assignment from each arithmetic and bitwise operator,
-  `!=` from `==`, all four relational operators from `<=>`, and both the prefix and postfix form of
-  `++`/`--` from one declaration, expanded into an assignment back to the operand. `operator as` is
-  an explicit conversion only, so it never enters overload resolution.
 * ~~**Devirtualise below a `sealed override`**~~ **Done** (`Language-Syntax.md` §3.3), which closes
   a branch of the hierarchy the same way a `sealed` class closes the whole of one. Extended to
   method calls, property/accessor reads and writes, and the auto-property field-load fast path
   alike, since a `sealed override` accessor is exactly as closed as a `sealed override` method.
-* **Lower `<=>` on built-in types** (`Language-Syntax.md` §5.7). It is a surface operator, not a
-  new instruction — but "to the comparison opcodes that already exist" holds only for the numeric
-  ones. `string` has `StrEQ`/`StrNE` and no ordering opcode at all, so `<=>` and all four
-  relational operators over strings lower to a call to the existing native `string.compareTo`.
+* ~~**Lower `<=>` on built-in types** (`Language-Syntax.md` §5.7).~~ **Done** — it is a surface
+  operator, not a new instruction, but "to the comparison opcodes that already exist" held only for
+  the numeric ones. `string` has `StrEQ`/`StrNE` and no ordering opcode at all, so
+  `MethodBodyEmitter.EmitStringOrdering` lowers `<=>` and all four relational operators over strings
+  to a call to the native `string.compareTo`, comparing its result against zero for the four
+  relational forms and returning it as-is for `<=>` itself. `LoweringChoiceTests` pins that a string
+  ordering does not fuse into a branch the way a numeric comparison does.
 * ~~**Lower `as?` to `InstanceOf` plus a branch**~~ (`Language-Syntax.md` §5.7). **Closed with the
   third cast opcode this entry was reluctant to add.** The reluctance was misplaced: the failure
   answer for a reference target is null, which occupies the same slot the subject already does, so
@@ -700,14 +744,20 @@ None of these need runtime work; all of them are things the runtime assumes and 
   local, two type tests, a branch and a join. A *primitive* target still gets the old lowering,
   and for a reason that is not about cost — the success path unboxes and the failure path has no
   unboxed value to give, so the two arms genuinely differ.
-* **Reject instantiating an `abstract` class.** `ObjNew` resolves its type index and allocates with
-  no `IsAbstract` test — consistent with §1.9, but nothing else checks it either.
-* **Emit a bridge into a generic interface's erased slot.** `SurtrMethodInfo.SignatureKey()` writes
-  `G<n>` as `E`, so an implementation is bound to a contract slot by the erased parameter list —
-  which is what lets a class implement `IComparable<T>` at all. A class that also wants a
-  `compareTo(other: Vec2)` its own callers can bind directly therefore needs two members: the
-  typed one, and a bridge occupying the erased slot that casts and forwards. Exactly javac's
-  obligation, for exactly its reason.
+* ~~**Reject instantiating an `abstract` class.**~~ **Done** — `ObjNew` still resolves its type
+  index and allocates with no `IsAbstract` test, consistent with §1.9, so this stays entirely the
+  compiler's: `BodyBinder.BindObjectCreation` refuses one with `NotSupportedOnType` before a
+  constructor is even resolved. An interface is `IsAbstract` too, so `IFoo()` is refused by the same
+  test, and `MetadataImporter` carries the flag across a module boundary so an imported abstract
+  class is refused as readily as a declared one.
+* ~~**Emit a bridge into a generic interface's erased slot.**~~ **Done** —
+  `SurtrMethodInfo.SignatureKey()` writes `G<n>` as `E`, so an implementation is bound to a contract
+  slot by the erased parameter list, which is what lets a class implement `IComparable<T>` at all. A
+  class that also wants a `compareTo(other: Vec2)` its own callers can bind directly therefore needs
+  two members: the typed one, and a bridge occupying the erased slot that casts and forwards.
+  Exactly javac's obligation, for exactly its reason. `ModuleEmitter.EmitBridges` does it, keyed on
+  the erased slot and deduplicated through `HasBridgeKey`/`AddBridgeKey` so a subclass does not
+  re-bridge a slot an ancestor already filled.
 
 ### 4.9 `unknown` is the erased slot with a surface name
 
@@ -737,39 +787,58 @@ to `Sar` and **`Shr` was unreachable from Surtr entirely**. The mapping is now `
 Worth noting while here: `Shl`'s XML doc still says over-wide shift counts "still need a defined
 behaviour", but §1.9 settled that — they mask to `& 31`. The comment is stale, not the behaviour.
 
-### 4.11 Value classes are the one feature that reaches into the object model
+### 4.11 Resolved: value types are inline multi-slot blocks, and the tuple is one of them
 
-`Language-Syntax.md` §2.9 adds `value class`: a single-field wrapper that is a distinct type to the
-compiler and erased to its field at runtime. Everything else in §4 either adds metadata or asks the
-compiler to do more work; this one changes what an instance *is* in some positions and not others,
-which makes it the most invasive of the language additions.
+~~`Language-Syntax.md` §2.9 adds `value class`: a single-field wrapper that is a distinct type to
+the compiler and erased to its field at runtime. Everything else in §4 either adds metadata or asks
+the compiler to do more work; this one changes what an instance *is* in some positions and not
+others, which makes it the most invasive of the language additions. The open design question is
+whether the boxed form can reuse `SurtrBoxed` or needs a sibling.~~ **Stale — built, and
+generalised well past what this section asked for.** `docs/Plan-TiposDeValor.md` is the plan it was
+built to; what landed:
 
-* **Where the static type is known, there is no object.** A `value class EntityId` wrapping an
-  `int` passes as an `int`: no `SurtrInstance`, no entity id, no allocation.
-* **Where it flows into a slot that holds a reference** — an erased generic parameter (§1.11), an
-  `unknown`, or a variable typed as an interface it implements — it must box into a real object
-  with a real `SurtrClass`. That is the same requirement §1.11 already places on primitives, so the
-  machinery exists; what is new is that the *same declared type* is sometimes a bare value and
-  sometimes an object, and the compiler has to know which at every site.
-* Consequently a value class needs a real `SurtrClass` built for it regardless, used only by the
-  boxed form.
+* **A value is `n` contiguous slots, not one.** The single-field case still erases to the field it
+  wraps and occupies one slot exactly as this section described, and every path it already used is
+  untouched. A `value class` with two or more fields flattens to a run of slots — a nested value
+  type's own slots folded into the run — and travels as that run through locals, parameters,
+  returns, instance fields and statics. The linker computes the width (`FlattenedSlotWidth`) and
+  the nested reference-slot map; the cap is 254 slots, because a call carries `argsCount` in one
+  byte and the receiver takes one of them.
+* **The stack needed nothing.** It is untyped 8-byte slots and the collector tests each slot's tag,
+  so a multi-slot value is traced correctly with no change to `CollectGarbage`, no change to the
+  frame protocol, and no change to any existing opcode.
+* **Ten opcodes, all additive** (`0xEA`–`0xF3`, `docs/Opcodes.md`): block copies between the stack
+  and a local range, an instance's field block, or a static's storage, plus `BoxValue`/`UnboxValue`.
+  Reading *one* slot of a value keeps using `Ldl`/`FieldGet`/`StaticFieldGet` at the summed
+  absolute index, so there are no per-field forms.
+* **Multi-slot return is one opcode too.** `ReturnValues` (`0xE9`) pops `n` slots and writes them
+  at the frame base. The call encoding did not change: `retCount` is still the 0/1 gate for
+  *whether* the caller wants the result, and the width rides the callee's `ResultSlotCount`.
+* **The boxed form is an ordinary instance, not `SurtrBoxed`.** The question this section left open
+  is answered by not needing an answer: `BoxValue` allocates a normal `SurtrInstance` of the value
+  class's own `SurtrClass`, whose field slots receive the `n` stack slots verbatim. Field access,
+  virtual dispatch and the collector's reference-slot walk therefore already handle a boxed value,
+  and the comparer question this section raised does not arise — a boxed value is not a
+  `SurtrBoxed` and never compares against one.
+* **The tuple became a value type.** `(int, float)` is two slots inline; `SurtrTuple` is retained
+  as the boxed form for exactly the boundaries that need an object — array and dictionary elements,
+  dictionary keys, erasure slots, and the host boundary, where `SurtrRuntime.Invoke`/`InvokeClosure`
+  flatten arguments on the way in and re-pack results on the way out. Destructuring
+  (`Language-Syntax.md` §4.5) binds a tuple apart with no object anywhere.
+* **The host boundary kept one signature.** A native body is still one
+  `int SurtrNativeFunction(SurtrCallArguments)`; results are written in place over the argument
+  block and the body answers how many slots it wrote, so a multi-slot result needs no second
+  entry-point shape. See `Runtime-Model.md` §5.5.
+* **The format moved once.** `SurtrModuleImage.FormatVersion` is **8**: one `bool` per class
+  (`isValueType`). Widths are recomputed by the linker rather than written, so a nested layout
+  cannot disagree with its own declaration.
 
-The open design question is whether the boxed form can reuse `SurtrBoxed` (which today holds one
-primitive `SurtrValue` and takes its class from the unboxed primitive) or needs a sibling that
-carries the value class's own class instead. `SurtrBoxed` looks close to sufficient, and settling
-that is the first step of implementing the feature.
-
-Two facts move that question further than they look like they do. `SurtrBoxed`'s constructor
-already **takes the class as a parameter** rather than deriving it, so the object side needs
-nothing new — but the **`Box*` opcodes carry no type index**: `BoxInt` and its siblings encode as a
-bare `opcode(1)`, so bytecode has no way to say *which* class to box into. A value class therefore
-needs a boxing opcode that takes a type index, or a different construction path, and that — not the
-object layout — is the first decision.
-
-The second is that `SurtrValueComparer` compares boxes **by content**, so a boxed `EntityId(7)` and
-a boxed `int` 7 would compare equal and hash alike. `Language-Syntax.md` §2.9 makes them distinct
-types, so the comparer has to compare a box's class too, the moment a box can hold something that
-is not a primitive.
+What is deliberately **not** built, and each is independent of the rest: a CLR-struct marshaler in
+`Surtr.Interop`, nullable value types (`VT?`), stride-N array storage (which would rewrite the
+whole `Arr*`/`Dict*` space for a gain nothing has yet asked for), generic value types (which
+contradict one-layout-per-declaration), and a `for-in` that avoids boxing a statically-value-typed
+receiver. Two smaller gaps are refused with a diagnostic rather than mis-compiled: capturing an
+inline multi-slot value in a lambda, and a nested pattern inside a destructuring.
 
 ### 4.12 Parameter metadata stops at name and type
 
@@ -867,12 +936,20 @@ on a `switch`, and two ordinary cases have nothing to lower onto:
   hash-flooding resistance, which an embedded language running its host's own scripts was never
   buying anything with, for compiled bytecode that means the same thing in every process — which
   is the entire point of compiling it.
-* **`switch` over an enum.** Cases are instances (§2.4), so the keys are references. A dense table
+* **`switch` over an enum.** Cases are instances (§2.4), so the keys are references. ~~A dense table
   needs an ordinal, which is the metadata §4.13 asks for; with it, this is `FieldGet` plus an
-  ordinary `Switch`.
+  ordinary `Switch`.~~ **Landed as a compare chain instead, deliberately, and the sentence above is
+  why it had to.** §4.13's ordinal exists, but it lives on `SurtrEnumCaseInfo` — it is *metadata
+  about the case*, not a field on the case's instance — so there is no `FieldGet` to emit and the
+  lowering this bullet predicted has nothing to load from. `MethodBodyEmitter.EmitDispatch` matches
+  an enum subject by reference compare, which for a set of singletons is the cheapest test there
+  is; making the dense table reachable would mean giving every enum instance an ordinal field to
+  read back, which is a slot per case to save a chain over a case count that is small by
+  construction. Worth revisiting only with a measured enum switch wide enough to hurt.
 
-Neither is a new instruction. Both are lowerings that need one thing from the other side, and the
-enum one is why §4.13's case list is not optional.
+Neither is a new instruction. Both are lowerings that needed one thing from the other side; the
+string one got it (`StrHash`), and the enum one found the thing it needed was the wrong shape.
+§4.13's case list is not optional regardless — exhaustiveness checking is what consumes it.
 
 ### 4.17 `typeof` and a per-runtime `Type` cache
 
@@ -952,7 +1029,11 @@ covered by `src/Surtr.Tests`. What landed, in the order it landed:
 3. **§4.3, §4.4 and §4.11 — the value-representation trio.** The absent-primitive tag with the
    float boundary moved to match, `range` as a first-class built-in, and a boxing pair that names
    the class it presents as, with `SurtrValueComparer` comparing a box's class so a boxed value
-   class is not equal to a boxed primitive with the same bits.
+   class is not equal to a boxed primitive with the same bits. §4.11 was later taken much further
+   than it asked for, under `docs/Plan-TiposDeValor.md`: a `value class` is now any number of
+   fields flattened into a run of slots, the tuple is a value type on the same mechanism,
+   `ReturnValues` returns a block, and none of it changed the frame protocol or an existing
+   opcode. §4.11's own text has the whole account.
 4. **§4.14 and §3.3 — binding by name at load.** A per-module native import table, resolved against
    the host's globals when the module loads, so a missing name fails there rather than at the
    instruction that would have reached it, and a compiled module stops depending on one host's
@@ -971,16 +1052,35 @@ Two things surfaced only once this was running, and both are fixed: the budget a
 by a Surtr catch-all, which handed a spinning program an unlimited run; and the built-in module was
 not reachable from a runtime's module table, so nothing could extend `Exception`.
 
-**Phase 4b — what §4 did not close.** §4.8 is untouched and still entirely owed: every item on it is
-the compiler's. §4.16 is now closed on the runtime's side — `StrHash` exists and the hash behind it
-is deterministic — so both halves of it are lowerings the compiler owes, the enum one needing only
-the ordinal that already exists.
+**Phase 4b — closed.** ~~§4.8 is untouched and still entirely owed: every item on it is the
+compiler's.~~ **Both parts of this are now done, and the sentence above was wrong for longer than
+it was right.** §4.8 is met item by item — audited against the code and marked up in place, along
+with the note at the head of §4 that had already stopped trusting it. §4.16 is closed on both
+sides: `StrHash` exists and the hash behind it is deterministic, so a string `switch` lowers to
+hash-then-`SwitchLookup`-then-`StrEQ`; the enum half landed as a reference-compare chain rather
+than the dense table this plan predicted, for the reason recorded in §4.16 — the ordinal is
+metadata about the case, not a field on its instance, so there is nothing to `FieldGet`.
 
-**Phase 5 — measure, then optimise.** Not before. §3.5 is **done**: the dictionary's per-key
-interface call is gone for `{int: V}`, measured at a third off both dict workloads. Remaining
-candidates: §3.1, §3.2, and an inline cache on `InvokeVirtual` if profiling shows monomorphic call
-sites dominating. All local changes; none disturbs the frame protocol. §4.5 raises the priority of
-§3.1, since `for-in`'s general path goes through interface dispatch.
+**Phase 5 — measure, then optimise.** Not before. Two of the three candidates are now settled by
+measurement rather than argument:
+
+- **§3.5 is done**: the dictionary's per-key interface call is gone for `{int: V}`, measured at a
+  third off both dict workloads. **§3.1 is done** (closed in place: the open-addressed
+  `interfaceId → index` table plus the monomorphic call-site cache on `InvokeInterface`).
+- **The inline cache on `InvokeVirtual` was tried and rejected** (August 2026). A/B against the
+  same build with a monomorphic cache twin of the interface one, three runs per variant on the most
+  favourable site there is — `virtualCalls`, monomorphic receiver by construction — does not
+  separate the distributions (6.5 ms base vs 6.7 ms cached; ±4 % run-to-run spread). Resolution is
+  two dependent loads (`Class.VirtualMethods[slot]`); the cache trades one for a compare plus a
+  load and adds a null test and its own array indexing, where the interface cache had an
+  open-addressed probe to skip and this has nothing. The ceiling on any resolution improvement is
+  the `virtualCalls − methodCalls` delta (~6 ns/call), and that ceiling is set by the frame
+  protocol behind it, not by resolution. Recorded in `benchmark_report.md` §8.
+- **§3.2 is closed** - the premise it rested on, a managed element buffer, stopped being true when
+  `SurtrArray.Items` became an unmanaged pointer; what is left of it is a compiler-side fusion.
+
+None of what landed disturbs the frame protocol. §4.5 raised the priority of §3.1, since `for-in`'s
+general path goes through interface dispatch — which is why §3.1 went first, back when it was open.
 
 **Phase 6 — diagnostics.** Frames already carry enough for a stack trace (method, chunk, saved
 `IP`), and the handler search already walks them. `SurtrThrownException` does not yet include one.

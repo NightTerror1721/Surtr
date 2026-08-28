@@ -8,6 +8,7 @@ module surtr.math.Angle
 sealed class Angle  [public]
   [private] readonly field _radians: float
 
+  @surtr:Pure
   [public] property radians: float { get; }
     get:
       ; entry 1, locals 1, stack 1, code 0001..0003

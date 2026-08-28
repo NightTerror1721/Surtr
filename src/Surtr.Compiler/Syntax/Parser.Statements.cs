@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Diagnostics;
 using System;
@@ -80,6 +80,9 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordTry:
                     return ParseTry();
 
+                case TokenType.KeywordUsing:
+                    return ParseUsing();
+
                 case TokenType.KeywordThrow:
                     reader.Advance();
                     ExpressionSyntax thrown = ParseExpression();
@@ -126,6 +129,12 @@ namespace Surtr.Compiler.Syntax
             {
                 isMutable = reader.CurrentType == TokenType.KeywordVar;
                 reader.Advance();
+
+                // `let (a, b) = value;` - a destructuring declaration (§4.5). A `const` one is
+                // deliberately not recognised: a tuple cannot fold, so the ordinary path's
+                // "expects a variable name" is the honest refusal.
+                if (reader.CurrentType == TokenType.LeftParen)
+                    return ParseTupleDeclaration(start, isMutable);
             }
 
             string name = reader.ExpectIdentifier("a variable name");
@@ -134,6 +143,27 @@ namespace Surtr.Compiler.Syntax
 
             reader.Expect(TokenType.Semicolon, "';' after the declaration");
             return new LocalDeclarationStatementSyntax(SpanFrom(start), name, type, initializer, isMutable, isConst);
+        }
+
+        /// <summary>Parses the name list of <c>let (a, b) = value;</c> (§4.5).</summary>
+        private StatementSyntax ParseTupleDeclaration(SourceLocation start, bool isMutable)
+        {
+            reader.Expect(TokenType.LeftParen, "'('");
+
+            var names = new List<string>();
+            while (true)
+            {
+                names.Add(reader.ExpectIdentifier("a name to bind"));
+                if (!reader.Match(TokenType.Comma))
+                    break;
+            }
+
+            reader.Expect(TokenType.RightParen, "')' after the names");
+            reader.Expect(TokenType.Assign, "'=' - a destructuring declaration has nothing to declare without one");
+            ExpressionSyntax initializer = ParseExpression();
+            reader.Expect(TokenType.Semicolon, "';' after the declaration");
+
+            return new TupleDeclarationStatementSyntax(SpanFrom(start), names, initializer, isMutable);
         }
 
         /// <summary>Parses <c>if</c> and <c>const if</c>, with the dangling <c>else</c> bound to the nearest one (§4.1).</summary>
@@ -358,6 +388,54 @@ namespace Surtr.Compiler.Syntax
             }
 
             return new TryStatementSyntax(SpanFrom(start), body, catches, finallyBlock);
+        }
+
+        /// <summary>Parses <c>using</c> and its resources (§9.2).</summary>
+        /// <remarks>
+        /// Each resource is an ordinary <see cref="LocalDeclarationStatementSyntax"/>, which is not
+        /// a shortcut: a resource <em>is</em> a local declaration that happens to be closed on the
+        /// way out, so reusing the node means it binds, infers its type, takes part in flow analysis
+        /// and gets its frame slot through exactly the paths a written <c>let</c> already uses.
+        /// <c>var</c> is refused because a resource that can be reassigned would leave the close
+        /// pointed at something other than what was opened.
+        /// </remarks>
+        private StatementSyntax ParseUsing()
+        {
+            SourceLocation start = reader.CurrentLocation;
+            reader.Expect(TokenType.KeywordUsing, "'using'");
+            reader.Expect(TokenType.LeftParen, "'(' after 'using'");
+
+            List<LocalDeclarationStatementSyntax> resources = new List<LocalDeclarationStatementSyntax>();
+
+            do
+            {
+                SourceLocation resourceStart = reader.CurrentLocation;
+
+                if (reader.Check(TokenType.KeywordVar))
+                {
+                    throw reader.Error(
+                        SurtrDiagnosticCode.InvalidUsingResource,
+                        "A 'using' resource is declared with 'let': it must name the same object at the end of the block that it named at the start.",
+                        resourceStart);
+                }
+
+                reader.Expect(TokenType.KeywordLet, "'let' before a 'using' resource");
+
+                string name = reader.ExpectIdentifier("the resource's name");
+                TypeSyntax? type = reader.Match(TokenType.Colon) ? ParseType() : null;
+
+                reader.Expect(TokenType.Assign, "'=' and the resource to open");
+                ExpressionSyntax initializer = ParseExpression();
+
+                resources.Add(new LocalDeclarationStatementSyntax(
+                    SpanFrom(resourceStart), name, type, initializer, isMutable: false, isConst: false));
+            }
+            while (reader.Match(TokenType.Comma));
+
+            reader.Expect(TokenType.RightParen, "')' after the 'using' resources");
+
+            BlockStatementSyntax body = ParseBlock();
+            return new UsingStatementSyntax(SpanFrom(start), resources, body);
         }
 
         /// <summary>Parses <c>break</c>/<c>continue</c>, with an optional loop label (§4.2).</summary>

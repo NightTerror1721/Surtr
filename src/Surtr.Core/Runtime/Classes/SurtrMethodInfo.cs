@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -73,7 +73,7 @@ namespace Surtr.Runtime.Classes
     /// Carries everything a call site needs to be checked against a member declared in another
     /// module: the name, so a named argument can find it; a default, so an omitted trailing
     /// argument can be filled in; and whether it is the varargs parameter, so a surplus of
-    /// arguments can be absorbed. Overload resolution (<c>Language-Syntax.md</c> §3.5) needs all
+    /// arguments can be absorbed. Overload resolution (<c>Language-Syntax.md</c> Â§3.5) needs all
     /// three, and none of them reaches the interpreter - a call arrives with its arguments already
     /// filled in and its varargs array already packed.
     /// </remarks>
@@ -145,7 +145,7 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>
         /// Checks a whole parameter list against the three shape rules in
-        /// <c>Language-Syntax.md</c> §3.5.
+        /// <c>Language-Syntax.md</c> Â§3.5.
         /// </summary>
         /// <remarks>
         /// Enforced where the member is declared rather than where it is called, because a call
@@ -211,6 +211,7 @@ namespace Surtr.Runtime.Classes
         private readonly bool _sealed;
         private readonly bool _extension;
         private readonly bool _bridge;
+        private readonly bool _isPure;
         private readonly string[] _genericParameters;
         private readonly string[][] _genericConstraints;
         private SurtrClassReference _signature;
@@ -238,7 +239,8 @@ namespace Surtr.Runtime.Classes
             string[]? genericParameters = null,
             string[][]? genericConstraints = null,
             bool isExtension = false,
-            bool isBridge = false)
+            bool isBridge = false,
+            bool isPure = false)
             : base(name, SurtrMemberKind.Method, isStatic, visibility, declaringType)
         {
             // Constructors are never inherited, so they can never be dispatched through a vtable.
@@ -255,7 +257,7 @@ namespace Surtr.Runtime.Classes
             // `sealed` says "nothing below may redefine this", which only means something about a
             // slot that already exists and is already reachable through a vtable. On a `virtual`
             // or `abstract` member it would contradict the modifier next to it, and on a direct
-            // one it would say nothing - so `Language-Syntax.md` §3.3 makes it legal only
+            // one it would say nothing - so `Language-Syntax.md` Â§3.3 makes it legal only
             // together with `override`, and that is checked here rather than left to the compiler.
             if (isSealed && !isOverride)
                 throw new ArgumentException(
@@ -276,6 +278,7 @@ namespace Surtr.Runtime.Classes
             _genericConstraints = genericConstraints ?? System.Array.Empty<string[]>();
             _extension = isExtension;
             _bridge = isBridge;
+            _isPure = isPure;
 
             if (_genericConstraints.Length != 0 && _genericConstraints.Length != _genericParameters.Length)
             {
@@ -337,7 +340,7 @@ namespace Surtr.Runtime.Classes
         }
 
         /// <summary>
-        /// Whether this method was declared in an <c>extension</c> block (§15) rather than written
+        /// Whether this method was declared in an <c>extension</c> block (Â§15) rather than written
         /// as a bare member of its module or class. The interpreter does not care - an extension
         /// method is an ordinary method whose receiver is its first parameter - but the image
         /// carries the mark so a module compiled later can recognise the imported members as
@@ -354,7 +357,7 @@ namespace Surtr.Runtime.Classes
         /// interface slot it fills and taking its erased parameters, that casts and forwards to the
         /// member a class actually wrote. Bridges occupy the vtable slots a generic interface's
         /// <c>compareTo(G0)</c>-shaped members need filled, so the loader treats one exactly like
-        /// any other virtual method — the flag exists for the compiler's
+        /// any other virtual method â€” the flag exists for the compiler's
         /// <c>MetadataImporter</c>, which must not surface the bridge as a member source can call:
         /// it has no written signature of its own, and two visible <c>equals</c> overloads would
         /// make every call site ambiguous. It travels in the image for the same reason
@@ -364,6 +367,21 @@ namespace Surtr.Runtime.Classes
         {
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _bridge;
+        }
+
+        /// <summary>
+        /// Whether the method promises referential transparency — the built-in side of <c>@Pure</c>.
+        /// </summary>
+        /// <remarks>
+        /// A native built-in declared pure (a string read, a collection read, a conversion) carries
+        /// the mark here so the compiler's <c>@Pure</c> machinery recognises it without a whitelist:
+        /// the purity lives beside the implementation that has to keep it, exactly where a
+        /// source-declared <c>@Pure</c> lives beside its body.
+        /// </remarks>
+        public bool IsPure
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => _isPure;
         }
 
         /// <summary>Whether calls to this method go through the vtable rather than being bound directly.</summary>
@@ -435,6 +453,130 @@ namespace Surtr.Runtime.Classes
         }
 
         /// <summary>
+        /// How many stack slots a call site must leave for this method's arguments, receiver
+        /// included: the sum of every argument's flattened width.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// One slot per argument for everything that is not an inline value, which is why this
+        /// used to be a bare <c>ParameterCount + 1</c>. That answer was only ever right because
+        /// nothing but a compiled method could carry a value type, and a compiled one overrides
+        /// this with the width its emitter computed. A <b>native</b> method never did, so a host
+        /// declaring one that takes a multi-field <c>value class</c> got a count short by the
+        /// difference and every call site emitted against it was mis-sized.
+        /// </para>
+        /// <para>
+        /// Derived rather than stored, and deliberately not cached: it reads
+        /// <see cref="SurtrTypeHandle.ResolvedType"/>, so the answer only becomes final once the
+        /// module's handles are resolved, and a value cached before that would freeze the
+        /// unresolved fallback forever. Nothing on the execution path reads it - the interpreter
+        /// takes <c>argsCount</c> from the instruction - so this is emit-time work only.
+        /// </para>
+        /// <para>
+        /// The receiver follows the same rule the compiler applies in <c>ModuleEmitter</c>: an
+        /// instance method on a multi-field value class receives its block unboxed, so the
+        /// receiver is that block's width rather than one reference.
+        /// </para>
+        /// <para>
+        /// A <b>native constructor</b> has no receiver at all: its entry point is an instance
+        /// factory, reading its parameters from slot 0 and answering the new object over that same
+        /// slot. The convention is recognisable from metadata alone - a constructor whose return
+        /// names its own class rather than <c>V</c> - and every compiled constructor stays on the
+        /// old shape (<c>ObjNew</c> allocates, the body runs against the new instance as receiver,
+        /// the return is <c>V</c>).
+        /// </para>
+        /// </remarks>
+        public virtual int ArgumentSlotCount
+        {
+            get
+            {
+                int slots = DeclaringType is not null && !IsStatic && !IsInstanceFactoryConstructor
+                    ? SlotWidthOf(DeclaringType)
+                    : 0;
+
+                for (int i = 0; i < _parameters.Length; i++)
+                {
+                    // A varargs parameter is one slot whatever its element type: the caller packs
+                    // the surplus into an array and an array is a reference.
+                    slots += _parameters[i].IsVarargs ? 1 : SlotWidthOf(_parameters[i].ParameterType);
+                }
+
+                return slots;
+            }
+        }
+
+        /// <summary>
+        /// Whether this constructor creates its own instance instead of running against one
+        /// <c>ObjNew</c> allocated: the native-construction convention, recognisable by its return
+        /// naming the class it builds.
+        /// </summary>
+        public bool IsInstanceFactoryConstructor
+            => _role == SurtrMethodRole.Constructor && _returnType.Reference.TypeCode != SurtrValueTypeCode.Void;
+
+        /// <summary>
+        /// How many contiguous slots a value of <paramref name="handle"/>'s type occupies.
+        /// </summary>
+        /// <remarks>
+        /// A tuple answers from its descriptor alone; a range is its own fixed three-slot block;
+        /// a value class needs its linked layout, so an unresolved handle falls back to one slot
+        /// rather than guessing. Everything else - every other primitive and every reference - is
+        /// one slot by definition.
+        /// </remarks>
+        private static int SlotWidthOf(SurtrTypeHandle handle)
+        {
+            var reference = handle.Reference;
+
+            if (reference.TypeCode == SurtrValueTypeCode.Tuple)
+                return Math.Max(reference.GetTupleFlattenedSlotWidth(), 1);
+
+            if (reference.TypeCode == SurtrValueTypeCode.Range)
+                return 3;
+
+            if (handle.ResolvedType is SurtrClass { IsValueType: true } valueClass
+                && valueClass.FlattenedSlotWidth > 1)
+            {
+                return valueClass.FlattenedSlotWidth;
+            }
+
+            return 1;
+        }
+
+        /// <summary>
+        /// How many operand-stack slots one call to this method leaves behind: zero for void, the
+        /// flattened width of an inline return - a tuple, by its own descriptor; a value type, by
+        /// its linked layout - and one for everything else.
+        /// </summary>
+        /// <remarks>
+        /// Not the call opcode's <c>retCount</c> immediate: that stays the frame protocol's 0/1
+        /// gate (D6). The block's width rides the callee's declared type, which is what both the
+        /// caller's stack accounting and the host boundary read.
+        /// </remarks>
+           public virtual int ResultSlotCount
+        {
+            get
+            {
+                var reference = _returnType.Reference;
+
+                if (reference.TypeCode.IsVoid)
+                    return 0;
+
+                if (reference.TypeCode == SurtrValueTypeCode.Tuple)
+                    return Math.Max(reference.GetTupleFlattenedSlotWidth(), 1);
+
+                if (reference.TypeCode == SurtrValueTypeCode.Range)
+                    return 3;
+
+                if (_returnType.ResolvedType is SurtrClass { IsValueType: true } valueClass
+                    && valueClass.FlattenedSlotWidth > 1)
+                {
+                    return valueClass.FlattenedSlotWidth;
+                }
+
+                return 1;
+            }
+        }
+
+        /// <summary>
         /// How many arguments a call site must supply: the leading run of parameters that have
         /// neither a default nor the varargs mark.
         /// </summary>
@@ -494,7 +636,7 @@ namespace Surtr.Runtime.Classes
         /// including the return would break that.
         /// </para>
         /// <para>
-        /// It is also why <c>Language-Syntax.md</c> §3.5 can say two members differing only in
+        /// It is also why <c>Language-Syntax.md</c> Â§3.5 can say two members differing only in
         /// return type are an error rather than an overload: they produce the same key here.
         /// One method rather than two private copies, because the linker and the declaration-time
         /// duplicate check have to agree exactly or an illegal overload pair slips through.
@@ -513,28 +655,28 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>
         /// Adds <paramref name="method"/> to an overload group, rejecting one that repeats a
-        /// signature already in it — except a <c>Direct</c> member and a virtual/abstract one
+        /// signature already in it â€” except a <c>Direct</c> member and a virtual/abstract one
         /// sharing a signature, which is exactly the shape an interface bridge takes when it lets
-        /// <c>override</c> stay optional (§3.3).
+        /// <c>override</c> stay optional (Â§3.3).
         /// </summary>
         /// <remarks>
         /// <para>
         /// Shared by class, interface and module declaration so all three enforce
-        /// <c>Language-Syntax.md</c> §3.5's first rule identically. Declaration-time code, run once
+        /// <c>Language-Syntax.md</c> Â§3.5's first rule identically. Declaration-time code, run once
         /// per member, so a linear scan over a group that is almost always one entry long is the
         /// right shape.
         /// </para>
         /// <para>
         /// A <c>Direct</c> member and a virtual/abstract one never collide in a real table:
         /// <c>SurtrTypeLinker.BuildMethodTables</c> sorts purely on <see cref="IsVirtualDispatch"/>,
-        /// so one lands in <c>DirectMethods</c> and the other becomes (or occupies) a vtable slot —
+        /// so one lands in <c>DirectMethods</c> and the other becomes (or occupies) a vtable slot â€”
         /// the only place a shared key could silently overwrite something, <c>PlaceInVTable</c>,
         /// never even looks at a <c>Direct</c> method. This is precisely how a class satisfies an
         /// interface without <c>override</c>: the member itself keeps its own signature and
         /// <c>Direct</c> dispatch, and the compiler declares a synthetic bridge under the identical
         /// name and parameters to occupy the interface's slot. Two members sharing a signature and
-        /// *the same* dispatch kind are still rejected — that pair really would collide, and is what
-        /// §3.5's rule 1 forbids. Source-level authoring never reaches this ambiguity in the other
+        /// *the same* dispatch kind are still rejected â€” that pair really would collide, and is what
+        /// Â§3.5's rule 1 forbids. Source-level authoring never reaches this ambiguity in the other
         /// direction either: <c>SignatureSet</c> already rejects two written members sharing a
         /// signature regardless of dispatch, before a bridge is ever synthesized.
         /// </para>

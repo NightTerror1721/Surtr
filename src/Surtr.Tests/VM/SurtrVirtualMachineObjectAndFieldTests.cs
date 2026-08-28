@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Runtime;
@@ -55,7 +55,7 @@ namespace Surtr.Tests.VM
             var builder = new BytecodeBuilder();
             int typeIndex = builder.AddType(VmMetadataHelpers.HandleFor(module, type));
 
-            builder.Op(OpCode.ObjNewX).I32(typeIndex).Op(OpCode.IsNotNull).Op(OpCode.ReturnValue);
+            builder.Op(OpCode.Wide).Op(OpCode.ObjNew).I32(typeIndex).Op(OpCode.IsNotNull).Op(OpCode.ReturnValue);
 
             Assert.True(Run(runtime, module, builder).AsBool);
         }
@@ -88,7 +88,7 @@ namespace Surtr.Tests.VM
 
             var builder = new BytecodeBuilder();
             int typeIndex = builder.AddType(VmMetadataHelpers.HandleFor(module, type));
-            builder.Op(OpCode.ObjNewX).I32(typeIndex).Op(OpCode.ReturnValue);
+            builder.Op(OpCode.Wide).Op(OpCode.ObjNew).I32(typeIndex).Op(OpCode.ReturnValue);
 
             Assert.Throws<SurtrExecutionException>(() => Run(runtime, module, builder));
         }
@@ -185,8 +185,8 @@ namespace Surtr.Tests.VM
             int fieldIndex = builder.AddField(total);
 
             builder
-                .Op(OpCode.PushI32).I32(13).Op(OpCode.StaticFieldSetX).I32(fieldIndex)
-                .Op(OpCode.StaticFieldGetX).I32(fieldIndex)
+                .Op(OpCode.PushI32).I32(13).Op(OpCode.Wide).Op(OpCode.StaticFieldSet).I32(fieldIndex)
+                .Op(OpCode.Wide).Op(OpCode.StaticFieldGet).I32(fieldIndex)
                 .Op(OpCode.ReturnValue);
 
             Assert.Equal(13, Run(runtime, module, builder).AsInt);

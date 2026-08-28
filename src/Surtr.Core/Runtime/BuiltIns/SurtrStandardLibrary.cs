@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -42,8 +42,8 @@ namespace Surtr.Runtime.BuiltIns
         {
             builder.Field("_message", SurtrClassReference.String);
 
-            builder.Property("message", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionMessage));
-            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionToString));
+            builder.Property("message", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionMessage), isPure: true);
+            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionToString), isPure: true);
 
             builder.Constructor(
                 SurtrNativeEntryPoint.FromFunctionPointer(&ExceptionConstruct),
@@ -67,17 +67,17 @@ namespace Surtr.Runtime.BuiltIns
                 builder.Params(("message", SurtrClassReference.String)));
         }
 
-        private static SurtrValue ExceptionConstruct(SurtrCallArguments arguments)
+        private static int ExceptionConstruct(SurtrCallArguments arguments)
         {
             // arguments[0] is the receiver, as it is for every instance member.
             arguments.GetUnchecked<SurtrInstance>(0)[MessageSlot] = arguments.GetValueUnchecked(1);
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
-        private static SurtrValue ExceptionMessage(SurtrCallArguments arguments)
-            => arguments.GetUnchecked<SurtrInstance>(0)[MessageSlot];
+        private static int ExceptionMessage(SurtrCallArguments arguments)
+            => arguments.Return(arguments.GetUnchecked<SurtrInstance>(0)[MessageSlot]);
 
-        private static SurtrValue ExceptionToString(SurtrCallArguments arguments)
+        private static int ExceptionToString(SurtrCallArguments arguments)
         {
             var self = arguments.GetUnchecked<SurtrInstance>(0);
             var message = arguments.Runtime.Resolve<SurtrString>(self[MessageSlot]);
@@ -86,13 +86,13 @@ namespace Surtr.Runtime.BuiltIns
                 ? self.Class.Name
                 : self.Class.Name + ": " + message.Value;
 
-            return SurtrValue.CreateReference(arguments.Runtime.NewString(text).GetSurtrReference());
+            return arguments.Return(SurtrValue.CreateReference(arguments.Runtime.NewString(text).GetSurtrReference()));
         }
         #endregion
 
         #region Core interfaces
         /// <summary>
-        /// Declares the four interfaces the language leans on, into the built-in module.
+        /// Declares the five interfaces the language leans on, into the built-in module.
         /// </summary>
         /// <remarks>
         /// <para>
@@ -103,25 +103,51 @@ namespace Surtr.Runtime.BuiltIns
         /// cases exist so the common path costs nothing.
         /// </para>
         /// <para>
-        /// Each takes a generic parameter, and the members name it with the same descriptor form
-        /// the collections use. Erased at run time, like every other generic.
+        /// Each takes a generic parameter - except <c>IDisposable</c>, which has nothing to
+        /// parameterise - and the members name it with the same descriptor form the collections
+        /// use. Erased at run time, like every other generic.
         /// </para>
         /// </remarks>
         internal static void DeclareCoreInterfaces(SurtrModule module, SurtrTypeHandleTable handles)
         {
             SurtrClassReference element = SurtrClassReference.GenericParameter(0);
 
+            // Declared before IIterator because IIterator extends it, and an extended contract has
+            // to exist before the handle naming it can resolve.
+            var disposable = DeclareInterface(module, handles, "IDisposable");
+            AddAbstractMethod(disposable, handles, "dispose", SurtrClassReference.Void);
+
             var iterator = DeclareInterface(module, handles, "IIterator", "T");
+            iterator.SetGenericVariance(SurtrGenericVariance.Covariant);
+
+            // A cursor is disposable, which is C#'s decision about `IEnumerator<T>` and taken for
+            // C#'s reason: deterministic close of a lazy sequence is a consequence of the cursor
+            // being disposable, not a mechanism beside it. It is also what lets a `for-in` know
+            // statically that it has something to close, with no run-time question per loop - and
+            // what stops a generator travelling as an `IIterable<T>` from escaping the close, since
+            // `iterate()` is declared to hand back this contract rather than a concrete class.
+            // See docs/Plan-Disposicion.md §3.2.
+            iterator.SetDeclaredExtendedInterfaces(new[] { handles.GetOrAdd(disposable.SelfReference) });
+
             AddAbstractMethod(iterator, handles, "moveNext", SurtrClassReference.Boolean);
             AddAbstractProperty(iterator, handles, "current", element);
 
             var iterable = DeclareInterface(module, handles, "IIterable", "T");
+
+            // Both cursors only produce their element - moveNext answers whether there is one,
+            // current and iterate hand them out - so `out T` is exactly the promise each keeps,
+            // and a collection of Circle iterates as a collection of Shape.
+            iterable.SetGenericVariance(SurtrGenericVariance.Covariant);
             AddAbstractMethod(iterable, handles, "iterate", iterator.SelfReference);
 
+            // compareTo and equals consume their element and produce nothing of it, so `in T`
+            // says what they are: a comparer of Shape compares Circles just as well.
             var comparable = DeclareInterface(module, handles, "IComparable", "T");
+            comparable.SetGenericVariance(SurtrGenericVariance.Contravariant);
             AddAbstractMethod(comparable, handles, "compareTo", SurtrClassReference.Integer, ("other", element));
 
             var equatable = DeclareInterface(module, handles, "IEquatable", "T");
+            equatable.SetGenericVariance(SurtrGenericVariance.Contravariant);
             AddAbstractMethod(equatable, handles, "equals", SurtrClassReference.Boolean, ("other", element));
         }
 
@@ -152,7 +178,7 @@ namespace Surtr.Runtime.BuiltIns
         }
 
         /// <summary>
-        /// The descriptor naming one of the core contracts for a concrete argument — the form a
+        /// The descriptor naming one of the core contracts for a concrete argument â€” the form a
         /// built-in declares when it satisfies the contract for its own type
         /// (<c>Osurtr:IEquatable`1;I</c> for <c>int</c>, <c>Osurtr:IEquatable`1;DG0G1</c> for a
         /// dict), as opposed to <see cref="ContractReference(string, int)"/>'s open form.

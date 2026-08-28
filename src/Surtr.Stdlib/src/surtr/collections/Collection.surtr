@@ -31,19 +31,19 @@ private value class ReadOnlyCollection<T> : IReadOnlyCollection<T>
         this._col = collection;
     }
 
-    public override length: int { get { return this._col.length; } }
+    public length: int { get { return this._col.length; } }
 
-    public override fun contains(item: T): bool
+    public fun contains(item: T): bool
     {
         return _col.contains(item);
     }
 
-    public override fun copyTo(array: T[], arrayIndex: int): void
+    public fun copyTo(array: T[], arrayIndex: int): void
     {
         _col.copyTo(array, arrayIndex);
     }
 
-    public override fun iterate(): IIterator<T>
+    public fun iterate(): IIterator<T>
     {
         return _col.iterate();
     }

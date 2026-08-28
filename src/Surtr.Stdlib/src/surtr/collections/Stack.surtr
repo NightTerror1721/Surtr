@@ -1,6 +1,6 @@
 import surtr.collections.Collection;
 
-public interface IStack<T>
+public interface IStack<T> : ICollection<T>
 {
     isEmpty: bool { get; }
 
@@ -9,7 +9,7 @@ public interface IStack<T>
     fun peek(): T;
 }
 
-public class Stack<T> : IStack<T>, ICollection<T>
+public class Stack<T> : IStack<T>
 {
     private let _items: T[];
 
@@ -18,20 +18,22 @@ public class Stack<T> : IStack<T>, ICollection<T>
         this._items = [];
     }
 
-    public override inline length: int => _items.length;
-    public override inline isReadOnly: bool => false;
-    public override inline isEmpty: bool => _items.length == 0;
+    public inline length: int => _items.length;
+    public inline isReadOnly: bool => false;
+    public inline isEmpty: bool => _items.length == 0;
 
-    public override fun push(item: T): void => _items.push(item);
+    public inline top: T => _items[_items.length - 1];
 
-    public override fun pop(): T
+    public fun push(item: T): void => _items.push(item);
+
+    public fun pop(): T
     {
         if (isEmpty)
             throw InvalidOperationException("Stack is empty.");
         return _items.pop();
     }
 
-    public override fun peek(): T
+    public fun peek(): T
     {
         if (isEmpty)
             throw InvalidOperationException("Stack is empty.");
@@ -39,19 +41,19 @@ public class Stack<T> : IStack<T>, ICollection<T>
         return _items.get(_items.length - 1);
     }
 
-    public override inline fun add(item: T): void => push(item);
-    public override inline fun remove(item: T): bool { throw InvalidOperationException("Stack does not support removing arbitrary items."); }
-    public override inline fun clear(): void => _items.clear();
+    public inline fun add(item: T): void => push(item);
+    public inline fun remove(item: T): bool { throw InvalidOperationException("Stack does not support removing arbitrary items."); }
+    public inline fun clear(): void => _items.clear();
 
-    public override fun contains(item: T): bool => _items.contains(item);
+    public fun contains(item: T): bool => _items.contains(item);
 
-    public override fun copyTo(array: T[], arrayIndex: int): void
+    public fun copyTo(array: T[], arrayIndex: int): void
     {
         for (i in 0.._items.length - 1)
             array[arrayIndex + i] = _items[i];
     }
 
-    public override inline fun iterate(): IIterator<T> => Iterator<T>(_items, _items.length);
+    public inline fun iterate(): IIterator<T> => Iterator<T>(_items, _items.length);
 
     private sealed class Iterator<T> : IIterator<T>
     {
@@ -66,7 +68,7 @@ public class Stack<T> : IStack<T>, ICollection<T>
             _index = index;
         }
 
-        public override current: T
+        public current: T
         {
             get
             {
@@ -75,7 +77,10 @@ public class Stack<T> : IStack<T>, ICollection<T>
             }
         }
 
-        public override fun moveNext(): bool
+        // Nothing held that outlives this cursor, so the contract slot is filled and empty.
+        public fun dispose(): void { }
+
+        public fun moveNext(): bool
         {
             if (_index + 1 < _length)
             {

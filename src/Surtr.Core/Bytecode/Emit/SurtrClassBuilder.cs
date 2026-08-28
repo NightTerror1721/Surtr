@@ -285,6 +285,13 @@ namespace Surtr.Bytecode.Emit
         }
 
         /// <summary>Declares a constructor whose body is a host function.</summary>
+        /// <remarks>
+        /// The constructor crosses the wire as an <em>instance factory</em>: no receiver, its
+        /// parameters from slot 0, and the newly created instance written over that same slot -
+        /// which is why its declared return names this class rather than <c>V</c>. A native class's
+        /// instance is the object its host constructor creates; there is nothing for
+        /// <c>ObjNew</c> to allocate and no receiver to run against.
+        /// </remarks>
         public SurtrNativeMethodInfo DefineNativeConstructor(
             SurtrNativeEntryPoint entryPoint,
             SurtrParameterInfo[]? parameters = null,
@@ -294,7 +301,7 @@ namespace Surtr.Bytecode.Emit
         {
             var method = new SurtrNativeMethodInfo(
                 name, SurtrMethodDispatch.Direct, SurtrMethodRole.Constructor, false,
-                _module.TypeHandle(SurtrClassReference.Void),
+                _selfHandle,
                 parameters ?? Array.Empty<SurtrParameterInfo>(),
                 false, visibility, _selfHandle, entryPoint, false, linkName);
 
@@ -303,6 +310,11 @@ namespace Surtr.Bytecode.Emit
         }
 
         /// <summary>Declares a constructor whose body the loading runtime will supply, by name.</summary>
+        /// <remarks>
+        /// Instance-factory wire shape, like <see cref="DefineNativeConstructor(SurtrNativeEntryPoint, SurtrParameterInfo[], SurtrVisibility, string, string?)"/>:
+        /// the return names this class, and the loading runtime publishes a body that answers the
+        /// new instance over slot 0.
+        /// </remarks>
         public SurtrNativeMethodInfo DeclareNativeConstructor(
             string linkName,
             SurtrParameterInfo[]? parameters = null,
@@ -311,7 +323,7 @@ namespace Surtr.Bytecode.Emit
         {
             var method = new SurtrNativeMethodInfo(
                 name, SurtrMethodDispatch.Direct, SurtrMethodRole.Constructor, false,
-                _module.TypeHandle(SurtrClassReference.Void),
+                _selfHandle,
                 parameters ?? Array.Empty<SurtrParameterInfo>(),
                 false, visibility, _selfHandle, linkName);
 
@@ -353,6 +365,7 @@ namespace Surtr.Bytecode.Emit
         public SurtrClassBuilder DefineNestedEnum(string name, SurtrVisibility visibility = SurtrVisibility.Public)
         {
             var nested = new SurtrClassBuilder(_module, this, name, null, false, visibility, isSealed: true, isEnum: true);
+            nested.Class.IsValueType = true;
             _class.AddNestedClass(nested.Class);
             _nestedClasses.Add(nested);
             return nested;
@@ -360,16 +373,17 @@ namespace Surtr.Bytecode.Emit
 
         /// <summary>
         /// Declares the next case of this enum: a static, read-only field of the enum's own type,
-        /// holding an instance the static initializer constructs.
+        /// holding a value the static initializer constructs.
         /// </summary>
         /// <remarks>
-        /// The ordinal follows the order the cases are declared in, which is what an exhaustive
-        /// switch over the enum indexes on.
+        /// The ordinal follows the order the cases are declared in; the value is the case's
+        /// <c>= n</c> (or implied progression), the key an exhaustive switch over the enum
+        /// dispatches on.
         /// </remarks>
-        public SurtrEnumCaseInfo DefineEnumCase(string name, SurtrVisibility visibility = SurtrVisibility.Public)
+        public SurtrEnumCaseInfo DefineEnumCase(string name, int value, SurtrVisibility visibility = SurtrVisibility.Public)
         {
             var field = new SurtrFieldInfo(name, _selfHandle, true, true, visibility, _selfHandle);
-            return _class.AddEnumCase(field);
+            return _class.AddEnumCase(field, value);
         }
 
         /// <summary>Declares an interface nested inside this class.</summary>

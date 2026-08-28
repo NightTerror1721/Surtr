@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode.Image;
 using Surtr.Runtime;
@@ -13,22 +13,19 @@ using System.Reflection;
 namespace Surtr.Stdlib
 {
     /// <summary>
-    /// Which category of the Surtr-written stdlib to load — one flag per top-level directory
+    /// Which category of the Surtr-written stdlib to load â€” one flag per top-level directory
     /// under <c>Surtr.Stdlib/src/surtr/</c> (<c>collections/</c>, <c>core/</c>, <c>math/</c>,
     /// <c>text/</c>), so a sandboxed host can load only what it means to expose rather than
     /// everything <c>Surtr.Stdlib.Tool</c> compiled.
     /// </summary>
     /// <remarks>
-    /// Coarse-grained by design, but no longer assumed independent: <c>surtr.collections.Stack</c>
-    /// throws <c>InvalidOperationException</c>, which — unlike <c>IndexOutOfRangeException</c> and
-    /// the rest of <c>Language-Syntax.md</c> §13.3's VM-trap-mapped set — is declared in the Surtr-
-    /// written <c>surtr.core.Exception</c> module rather than built into the runtime, so
-    /// <c>Collections</c> now has a real, one-way dependency on <c>Core</c>. <see cref="SurtrStdlib"/>'s
-    /// selective <c>LoadInto</c> overload expands for it (<c>ExpandDependencies</c>) rather than
-    /// leaving a selection that a host would reasonably expect to work fail at load time — the
-    /// fixed-point retry loop this used to lean on to catch a missing category still runs
-    /// underneath, but only as the backstop for an edge this enum has not been told about, not as
-    /// the answer to one it has.
+    /// Coarse-grained by design, and independent: every exception the collections throw is one of
+    /// the trap-mapped classes the built-in <c>surtr</c> module declares (implicitly in scope in
+    /// every file), so no category reaches into another. A module importing a sibling inside its
+    /// own category (<c>List</c> imports <c>Collection</c>) loads under either flag; the
+    /// fixed-point retry loop underneath <see cref="SurtrStdlib.LoadInto(SurtrRuntime,
+    /// IReadOnlyList{SurtrModuleImage})"/> remains as the backstop for a cross-category import
+    /// this enum has not been told about.
     /// </remarks>
     [Flags]
     public enum StdlibModules
@@ -36,19 +33,22 @@ namespace Surtr.Stdlib
         /// <summary>Nothing selected.</summary>
         None = 0,
 
-        /// <summary><c>surtr/core/</c> — <c>Contracts</c>, <c>Exception</c>.</summary>
+        /// <summary><c>surtr/core/</c> — <c>Exception</c>.</summary>
         Core = 1 << 0,
 
-        /// <summary><c>surtr/math/</c> — <c>Math</c>, <c>Angle</c>.</summary>
+        /// <summary><c>surtr/math/</c> â€” <c>Math</c>, <c>Angle</c>.</summary>
         Math = 1 << 1,
 
-        /// <summary><c>surtr/collections/</c> — <c>Collection</c>, <c>List</c>.</summary>
+        /// <summary>
+        /// <c>surtr/collections/</c> â€” <c>Collection</c>, <c>List</c>, <c>Queue</c>,
+        /// <c>Sequence</c>, <c>Set</c>, <c>Stack</c>.
+        /// </summary>
         Collections = 1 << 2,
 
-        /// <summary><c>surtr/text/</c> — <c>StringBuilder</c>.</summary>
+        /// <summary><c>surtr/text/</c> â€” <c>StringBuilder</c>.</summary>
         Text = 1 << 3,
 
-        /// <summary>Every category — equivalent to the unfiltered <c>LoadInto</c> overloads.</summary>
+        /// <summary>Every category â€” equivalent to the unfiltered <c>LoadInto</c> overloads.</summary>
         All = Core | Math | Collections | Text,
     }
 
@@ -58,38 +58,38 @@ namespace Surtr.Stdlib
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <c>Surtr.Core</c> has no knowledge of any of this — its built-in module carries only the
+    /// <c>Surtr.Core</c> has no knowledge of any of this â€” its built-in module carries only the
     /// primitives, collections and core interfaces that make up the language's own type system
     /// (<c>Runtime/BuiltIns/SurtrBuiltIns.cs</c>). The standard library, <c>Math</c> included, is
     /// entirely this project's concern: optional, modular, and reached only by calling into here
     /// after constructing a <see cref="SurtrRuntime"/>. Nothing about that split needs
-    /// <c>InternalsVisibleTo</c> or any other assembly-boundary special-casing — every
+    /// <c>InternalsVisibleTo</c> or any other assembly-boundary special-casing â€” every
     /// <c>Surtr.Core</c> type this loader and <see cref="SurtrMathNative"/> touch
     /// (<c>SurtrRuntime</c>, <c>SurtrModuleImage</c>, <c>SurtrNativeEntryPoint</c>,
     /// <c>SurtrCallArguments</c>, <c>SurtrValue</c>) is already public, so <c>Surtr.Stdlib</c>
     /// consumes <c>Surtr.Core</c> the same way any other host would.
     /// </para>
     /// <para>
-    /// The library is split across two languages on one rule (<c>Language-Syntax.md</c> §13.1):
+    /// The library is split across two languages on one rule (<c>Language-Syntax.md</c> Â§13.1):
     /// "native if it needs <c>unsafe</c>, a raw pointer or a VM service; Surtr otherwise". The
-    /// native half lives in <see cref="Surtr.Stdlib.Native"/> — today just <c>Math</c>'s sixteen
-    /// trig/float operations (<see cref="SurtrMathNative"/>) — compiled straight into this
-    /// assembly. The Surtr half is compiled to <c>.surtrc</c> images by <c>Surtr.Stdlib.Tool</c> —
-    /// <c>surtr.math.Math</c>, <c>surtr.core.Exception</c>, and so on — and reaches a runtime
+    /// native half lives in <see cref="Surtr.Stdlib.Native"/> â€” today just <c>Math</c>'s sixteen
+    /// trig/float operations (<see cref="SurtrMathNative"/>) â€” compiled straight into this
+    /// assembly. The Surtr half is compiled to <c>.surtrc</c> images by <c>Surtr.Stdlib.Tool</c> â€”
+    /// <c>surtr.math.Math</c>, <c>surtr.core.Exception</c>, and so on â€” and reaches a runtime
     /// through here.
     /// </para>
     /// <para>
     /// A <c>native fun</c>/<c>native let</c>/<c>native var</c> travels in its image as a
-    /// <c>SurtrNativeMethodInfo.LinkName</c> and nothing else (§10): the address can only come
+    /// <c>SurtrNativeMethodInfo.LinkName</c> and nothing else (Â§10): the address can only come
     /// from the process doing the loading, so this publishes the bodies first, under the link
     /// names the images were compiled with, and then loads. A link name this does not publish
-    /// fails the load exactly where an unregistered one does —
+    /// fails the load exactly where an unregistered one does â€”
     /// <see cref="SurtrRuntime.LoadModule(SurtrModuleImage)"/> is the one place a <c>native</c>
     /// declaration binds to a host body.
     /// </para>
     /// <para>
     /// Modules load in the order given, retrying what does not yet resolve until nothing more can
-    /// be made to — the same fixed-point pass <c>Surtr.Run</c>'s module set uses, because an image
+    /// be made to â€” the same fixed-point pass <c>Surtr.Run</c>'s module set uses, because an image
     /// carries no dependency list until it is instantiated. The stdlib build output is sorted, and
     /// today a module references at most a sibling in the same category, so order rarely matters;
     /// the retry is what keeps it true as the modules grow into each other.
@@ -97,10 +97,10 @@ namespace Surtr.Stdlib
     /// <para>
     /// The <c>.surtrc</c> images travel <em>inside this assembly</em>, embedded as resources by the
     /// <c>BuildStdlibImages</c> MSBuild target (<c>Surtr.Stdlib.csproj</c>) under the logical name
-    /// scheme <see cref="EmbeddedResourcePrefix"/> reads back — so <see cref="LoadAll(SurtrRuntime)"/>
+    /// scheme <see cref="EmbeddedResourcePrefix"/> reads back â€” so <see cref="LoadAll(SurtrRuntime)"/>
     /// and its <see cref="StdlibModules"/> overload work from nothing but a runtime, no file path or
     /// asset system required. That makes a Unity drop-in exactly "copy <c>Surtr.Core.dll</c> and
-    /// <c>Surtr.Stdlib.dll</c> into <c>Assets/Plugins</c>" — <c>Assembly.GetManifestResourceStream</c>
+    /// <c>Surtr.Stdlib.dll</c> into <c>Assets/Plugins</c>" â€” <c>Assembly.GetManifestResourceStream</c>
     /// is a plain reflection read with nothing IL2CPP treats specially, unlike codegen-driven
     /// reflection. The <see cref="SurtrModuleImage"/>/<c>byte[]</c> overloads below still exist for a
     /// host that wants to source images another way (a fresh build, a different subset, its own
@@ -110,8 +110,8 @@ namespace Surtr.Stdlib
     public static class SurtrStdlib
     {
         /// <summary>
-        /// The manifest resource name every embedded stdlib image starts with — <c>Surtr.Stdlib.
-        /// Images.surtr.math.Math.surtrc</c> for <c>surtr.math.Math</c> — followed by
+        /// The manifest resource name every embedded stdlib image starts with â€” <c>Surtr.Stdlib.
+        /// Images.surtr.math.Math.surtrc</c> for <c>surtr.math.Math</c> â€” followed by
         /// <see cref="SurtrModuleImage.FileExtension"/>. Fixed independently of <c>RootNamespace</c>
         /// or where <c>build/</c> lives on disk: <c>Surtr.Stdlib.csproj</c>'s
         /// <c>&lt;LogicalName&gt;</c> metadata sets it explicitly, so this string and that MSBuild
@@ -221,7 +221,7 @@ namespace Surtr.Stdlib
 
         /// <summary>
         /// <see cref="LoadInto(SurtrRuntime, IReadOnlyList{SurtrModuleImage})"/> over raw image bytes
-        /// — the shape embedded resources arrive in.
+        /// â€” the shape embedded resources arrive in.
         /// </summary>
         public static void LoadInto(SurtrRuntime runtime, IEnumerable<byte[]> images)
         {
@@ -237,7 +237,7 @@ namespace Surtr.Stdlib
         /// </summary>
         /// <remarks>
         /// Filters by each image's own <see cref="SurtrModuleImage.Path"/> rather than asking the
-        /// caller to pre-sort them — a host handing this every stdlib image it has (embedded,
+        /// caller to pre-sort them â€” a host handing this every stdlib image it has (embedded,
         /// loaded from disk, however it got them) can select a sandboxed subset with nothing more
         /// than the flag it wants.
         /// </remarks>
@@ -248,8 +248,6 @@ namespace Surtr.Stdlib
         {
             if (images is null)
                 throw new ArgumentNullException(nameof(images));
-
-            selection = ExpandDependencies(selection);
 
             if (selection == StdlibModules.All)
             {
@@ -268,25 +266,8 @@ namespace Surtr.Stdlib
         }
 
         /// <summary>
-        /// Widens a selection to whatever other categories it now genuinely needs — today just
-        /// <c>Core</c> whenever <c>Collections</c> is picked, since <c>surtr.collections.Stack</c>
-        /// throws <c>InvalidOperationException</c> from <c>surtr.core.Exception</c>, a Surtr-written
-        /// class rather than a runtime built-in. One real edge, encoded directly rather than through
-        /// a general dependency resolver — <see cref="SurtrModuleImage"/> carries no reference list
-        /// to walk before a module is instantiated, and building one for a single edge is more
-        /// machinery than the problem has earned.
-        /// </summary>
-        private static StdlibModules ExpandDependencies(StdlibModules selection)
-        {
-            if ((selection & StdlibModules.Collections) != 0)
-                selection |= StdlibModules.Core;
-
-            return selection;
-        }
-
-        /// <summary>
         /// <see cref="LoadInto(SurtrRuntime, IReadOnlyList{SurtrModuleImage}, StdlibModules)"/> over
-        /// raw image bytes — the shape embedded resources arrive in.
+        /// raw image bytes â€” the shape embedded resources arrive in.
         /// </summary>
         public static void LoadInto(SurtrRuntime runtime, IEnumerable<byte[]> images, StdlibModules selection)
         {
@@ -331,17 +312,17 @@ namespace Surtr.Stdlib
         /// <remarks>
         /// <para>
         /// One entry per module-level <c>native fun</c> currently declared in the Surtr-written
-        /// stdlib — today all sixteen of them <c>surtr.math.Math</c>'s trig/float operations,
+        /// stdlib â€” today all sixteen of them <c>surtr.math.Math</c>'s trig/float operations,
         /// bodied by <see cref="SurtrMathNative"/> in this same assembly. A module-level native's
-        /// link name is its <em>module path plus member name</em> (§10) — <c>surtr.math.Math.sin</c>,
-        /// not <c>sin</c> — so two modules declaring a same-named native never bind against the same
+        /// link name is its <em>module path plus member name</em> (Â§10) â€” <c>surtr.math.Math.sin</c>,
+        /// not <c>sin</c> â€” so two modules declaring a same-named native never bind against the same
         /// body. A link name that grows a body elsewhere and stops needing one here is harmless to
         /// keep; one that stops being published here while its declaration still exists fails the
         /// load, which is the point.
         /// </para>
         /// <para>
         /// Internal rather than private so a test can call it directly against a throwaway runtime
-        /// and compare what it registers against <c>Surtr.Stdlib/build/native-link-names.txt</c> —
+        /// and compare what it registers against <c>Surtr.Stdlib/build/native-link-names.txt</c> â€”
         /// the flat list <c>Surtr.Stdlib.Tool</c> writes alongside the images themselves, of every
         /// native link name it actually compiled. That comparison is the drift detector: a
         /// <c>native fun</c> added to the stdlib source without a matching entry added here shows

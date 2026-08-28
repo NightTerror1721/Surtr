@@ -25,6 +25,7 @@ namespace Surtr.Compiler.Binding.Symbols
     public sealed class TypeSymbolFactory
     {
         private readonly Dictionary<TypeSymbol, ArrayTypeSymbol> _arrays = new Dictionary<TypeSymbol, ArrayTypeSymbol>();
+        private readonly Dictionary<TypeSymbol, GeneratorTypeSymbol> _generators = new Dictionary<TypeSymbol, GeneratorTypeSymbol>();
 
         private readonly Dictionary<TypeSymbol, Dictionary<TypeSymbol, DictionaryTypeSymbol>> _dictionaries =
             new Dictionary<TypeSymbol, Dictionary<TypeSymbol, DictionaryTypeSymbol>>();
@@ -101,6 +102,17 @@ namespace Surtr.Compiler.Binding.Symbols
             array = new ArrayTypeSymbol(elementType);
             _arrays.Add(elementType, array);
             return array;
+        }
+
+        /// <summary>The generator type yielding the given element type.</summary>
+        public GeneratorTypeSymbol Generator(TypeSymbol elementType)
+        {
+            if (_generators.TryGetValue(elementType, out var generator))
+                return generator;
+
+            generator = new GeneratorTypeSymbol(elementType);
+            _generators.Add(elementType, generator);
+            return generator;
         }
 
         /// <summary>The dictionary type with the given key and value types.</summary>

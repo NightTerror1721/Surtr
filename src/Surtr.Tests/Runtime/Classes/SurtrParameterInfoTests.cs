@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime;
 using Surtr.Runtime.Classes;
@@ -9,7 +9,7 @@ namespace Surtr.Tests.Runtime.Classes
 {
     /// <summary>
     /// Covers the parameter-shape metadata overload resolution reads across a module boundary:
-    /// defaults, varargs, and the three rules in <c>Language-Syntax.md</c> §3.5 that make a
+    /// defaults, varargs, and the three rules in <c>Language-Syntax.md</c> Â§3.5 that make a
     /// parameter list safe to walk once.
     /// </summary>
     public class SurtrParameterInfoTests
@@ -21,7 +21,7 @@ namespace Surtr.Tests.Runtime.Classes
         private static SurtrTypeHandle HandleFor(SurtrModule module, SurtrClassReference reference)
             => module.TypeHandles.GetOrAdd(reference);
 
-        private static SurtrValue StubBody(SurtrCallArguments arguments) => SurtrValue.Null;
+        private static int StubBody(SurtrCallArguments arguments) => arguments.Return(SurtrValue.Null);
 
         private static SurtrNativeEntryPoint Stub() => SurtrNativeEntryPoint.FromDelegate(StubBody);
 
@@ -139,7 +139,7 @@ namespace Surtr.Tests.Runtime.Classes
 
         #endregion
 
-        #region §3.5's shape rules are enforced where the member is declared
+        #region Â§3.5's shape rules are enforced where the member is declared
 
         [Fact]
         public void RequiredAfterDefaulted_IsRejected()

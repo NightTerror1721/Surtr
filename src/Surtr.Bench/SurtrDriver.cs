@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Binding;
 using Surtr.Compiler.CodeGen;
@@ -52,6 +52,14 @@ namespace Surtr.Bench
             var project = new SurtrProject(SourceRoot);
             project.AddSourceFile(SourceRoot + "/bench/Bench.surtr", moduleSource);
 
+            // A second module, so a cross-module call is measurable at all. CallModule does two
+            // dependent loads where CallLocalModule does one - the module table, then that
+            // module's own method table - and until there was a case that exercised it, the
+            // question of what that costs had no answer. Deliberately trivial and marked
+            // forceinline-proof by being in another module: the delta against methodCalls is the
+            // frame protocol plus the extra resolution, nothing else.
+            project.AddSourceFile(SourceRoot + "/bench/Other.surtr", Workloads.OtherModuleSource);
+
             var compilation = SurtrCompilation.Create(project);
             var binder = compilation.Bind();
             binder.BindBodies();
@@ -101,19 +109,42 @@ namespace Surtr.Bench
             runtime.DefineNativeBody(ModulePath + ".hostSin", SurtrNativeEntryPoint.FromFunctionPointer(&HostSin));
             runtime.DefineNativeBody(ModulePath + ".hostCos", SurtrNativeEntryPoint.FromFunctionPointer(&HostCos));
             runtime.DefineNativeBody(ModulePath + ".hostSqrt", SurtrNativeEntryPoint.FromFunctionPointer(&HostSqrt));
+
+            // A class-level native's link name is <modulePath>:<ClassName>.<memberName>
+            // (ModuleEmitter.LinkName / DescriptorEmitter.EmitMethodName) - no owning-type
+            // qualifier the way a module-level native's does, since the class already supplies one.
+            runtime.DefineNativeBody(ModulePath + ":NativeMath.square", SurtrNativeEntryPoint.FromFunctionPointer(&NativeSquare));
+            runtime.DefineNativeBody(ModulePath + ":NativeMath.cube", SurtrNativeEntryPoint.FromFunctionPointer(&NativeCube));
         }
 
-        private static SurtrValue HostAdd(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetInt(0) + 1);
+        // The in-place native convention: read every input before the first write, then answer
+        // how many slots were written. Each of these reads argument zero and returns one slot, so
+        // the aliasing rule is satisfied by the argument being consumed inside the Return call.
+        private static int HostAdd(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetInt(0) + 1));
 
-        private static SurtrValue HostSin(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Sin(arguments.GetFloat(0)));
+        private static int HostSin(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Sin(arguments.GetFloat(0))));
 
-        private static SurtrValue HostCos(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Cos(arguments.GetFloat(0)));
+        private static int HostCos(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Cos(arguments.GetFloat(0))));
 
-        private static SurtrValue HostSqrt(SurtrCallArguments arguments)
-            => SurtrValue.CreateFloat(Math.Sqrt(arguments.GetFloat(0)));
+        private static int HostSqrt(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateFloat(Math.Sqrt(arguments.GetFloat(0))));
+
+        // NativeMath.square is an *instance* native method, so argument 0 is the receiver and the
+        // real parameter starts at 1; NativeMath.cube is static, so it has no receiver at all.
+        private static int NativeSquare(SurtrCallArguments arguments)
+        {
+            int x = arguments.GetInt(1);
+            return arguments.Return(SurtrValue.CreateInt(x * x));
+        }
+
+        private static int NativeCube(SurtrCallArguments arguments)
+        {
+            int x = arguments.GetInt(0);
+            return arguments.Return(SurtrValue.CreateInt(x * x * x));
+        }
 
         private SurtrDriver(SurtrRuntime runtime, SurtrCompilation compilation, string modulePath, string name)
         {

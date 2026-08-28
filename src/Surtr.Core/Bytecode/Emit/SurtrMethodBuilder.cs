@@ -75,7 +75,9 @@ namespace Surtr.Bytecode.Emit
         private readonly bool _sealed;
         private bool _extension;
         private bool _bridge;
-        private readonly int _argumentSlots;
+        private int _argumentSlots;
+        private int _resultSlots = 1;
+        private int[] _parameterOffsets = Array.Empty<int>();
         private readonly List<string?> _localNames = new List<string?>();
         private readonly List<PendingHandler> _handlers = new List<PendingHandler>();
         private string[] _genericParameters = Array.Empty<string>();
@@ -119,6 +121,14 @@ namespace Surtr.Bytecode.Emit
             // A module-level function has no receiver even though nothing declares it static in
             // the language: a module is not an object, so there is nothing to be a receiver of.
             _argumentSlots = parameters.Length + (declaringClass is not null && !isStatic ? 1 : 0);
+
+            // Void answers nothing; a tuple return's width is its flattened descriptor; every
+            // other declared type starts at one slot until SetResultSlots says wider.
+            _resultSlots = returnType.TypeCode.IsVoid
+                ? 0
+                : returnType.TypeCode == SurtrValueTypeCode.Tuple
+                    ? returnType.GetTupleFlattenedSlotWidth()
+                    : 1;
 
             for (int i = 0; i < _argumentSlots; i++)
                 _localNames.Add(i == 0 && HasReceiver ? "this" : parameters[i - (HasReceiver ? 1 : 0)].Name);
@@ -230,6 +240,35 @@ namespace Surtr.Bytecode.Emit
         /// <remarks>This is the <c>argsCount</c> immediate every call opcode carries.</remarks>
         public int ArgumentSlotCount => _argumentSlots;
 
+        /// <summary>
+        /// How many operand-stack slots one call to this method leaves behind: zero for void, the
+        /// flattened width of an inline return, one for everything else.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Derived from the return descriptor by default, which answers tuples and every
+        /// single-slot type exactly. A multi-field value-class return needs the linked width,
+        /// which only the compiler knows at declaration time - it calls
+        /// <see cref="SetResultSlots"/> to say so.
+        /// </para>
+        /// <para>
+        /// Deliberately not the call opcode's <c>retCount</c> immediate: that stays the frame
+        /// protocol's 0/1 gate (D6), while the block's width rides the callee's declared type,
+        /// which both sides read from here.
+        /// </para>
+        /// </remarks>
+        public int ResultSlotCount => _resultSlots;
+
+        /// <summary>The compiled result width for a method whose return stores inline.</summary>
+        public SurtrMethodBuilder SetResultSlots(int slots)
+        {
+            if (slots < 0)
+                throw new ArgumentOutOfRangeException(nameof(slots), slots, "A result width cannot be negative.");
+
+            _resultSlots = slots;
+            return this;
+        }
+
         /// <summary>How many slots this method's frame needs, arguments included.</summary>
         public int LocalCount => _localNames.Count;
 
@@ -254,6 +293,72 @@ namespace Surtr.Bytecode.Emit
 
         internal void AssignToken(SurtrMethodToken token) => _token = token;
 
+        /// <summary>
+        /// Declares the slot width of the receiver and of every parameter, for a method whose
+        /// signature carries value types: a parameter whose type occupies more than one frame
+        /// slot claims that many consecutive slots, and every later parameter shifts up by it.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Optional - absent, every argument stays one slot wide, which is what every non-value
+        /// signature has always meant. The compiler calls this right after defining the method,
+        /// while it still knows the bound parameter types; <see cref="Build"/> bakes the total
+        /// into the metadata so call sites compiled against the built module count slots the
+        /// same way.
+        /// </para>
+        /// <para>
+        /// The local-name list is padded to the new slot total, so the next
+        /// <see cref="DeclareLocal"/> lands above every argument block regardless of how many
+        /// slots they consume.
+        /// </para>
+        /// </remarks>
+        public SurtrMethodBuilder SetArgumentLayout(int receiverWidth, int[] parameterWidths)
+        {
+            if (parameterWidths is null)
+                throw new ArgumentNullException(nameof(parameterWidths));
+
+            if (parameterWidths.Length != _parameters.Length)
+                throw new ArgumentException($"'{_name}' declares {_parameters.Length} parameters, not {parameterWidths.Length}.", nameof(parameterWidths));
+
+            bool hasReceiver = HasReceiver;
+            if (receiverWidth < 1 || (!hasReceiver && receiverWidth != 1))
+                throw new ArgumentException("A receiver occupies at least one slot.", nameof(receiverWidth));
+
+            _parameterOffsets = new int[_parameters.Length];
+            int slot = hasReceiver ? receiverWidth : 0;
+            for (int i = 0; i < parameterWidths.Length; i++)
+            {
+                if (parameterWidths[i] < 1)
+                    throw new ArgumentException("Every parameter occupies at least one slot.", nameof(parameterWidths));
+
+                _parameterOffsets[i] = slot;
+                slot += parameterWidths[i];
+            }
+
+            // Pad the name list past the old one-slot-per-argument layout, so local indices keep
+            // starting above the arguments. Names for the padded tail stay null - diagnostics do
+            // not need a name per slot of a value block.
+            while (_localNames.Count < slot)
+                _localNames.Add(null);
+
+            _argumentSlots = slot;
+            return this;
+        }
+
+        private void EnsureParameterOffsets()
+        {
+            if (_parameterOffsets.Length == _parameters.Length)
+                return;
+
+            _parameterOffsets = new int[_parameters.Length];
+            int slot = HasReceiver ? 1 : 0;
+            for (int i = 0; i < _parameters.Length; i++)
+            {
+                _parameterOffsets[i] = slot;
+                slot += 1;
+            }
+        }
+
         #region Frame
 
         /// <summary>The receiver slot, which is local 0 on an instance method.</summary>
@@ -269,13 +374,14 @@ namespace Surtr.Bytecode.Emit
             }
         }
 
-        /// <summary>The slot holding the parameter declared at <paramref name="index"/>.</summary>
+        /// <summary>The first slot holding the parameter declared at <paramref name="index"/>.</summary>
         public SurtrLocal Parameter(int index)
         {
             if ((uint)index >= (uint)_parameters.Length)
                 throw new ArgumentOutOfRangeException(nameof(index), index, $"'{_name}' declares {_parameters.Length} parameters.");
 
-            return new SurtrLocal(index + (HasReceiver ? 1 : 0));
+            EnsureParameterOffsets();
+            return new SurtrLocal(_parameterOffsets[index]);
         }
 
         /// <summary>Claims another frame slot, above the arguments and any local claimed before it.</summary>
@@ -284,6 +390,23 @@ namespace Surtr.Bytecode.Emit
         {
             _localNames.Add(name);
             return new SurtrLocal(_localNames.Count - 1);
+        }
+
+        /// <summary>
+        /// Claims <paramref name="width"/> consecutive frame slots for one multi-slot local, and
+        /// names its first slot. What a variable of a value type claims.
+        /// </summary>
+        public SurtrLocal DeclareLocals(string? name, int width)
+        {
+            if (width < 1)
+                throw new ArgumentOutOfRangeException(nameof(width), width, "A local occupies at least one slot.");
+
+            int baseIndex = _localNames.Count;
+            _localNames.Add(name);
+            for (int i = 1; i < width; i++)
+                _localNames.Add(null);
+
+            return new SurtrLocal(baseIndex);
         }
 
         /// <summary>The name a slot was declared with, or <see langword="null"/> if it has none.</summary>
@@ -371,7 +494,8 @@ namespace Surtr.Bytecode.Emit
                 _genericParameters,
                 _genericConstraints,
                 _extension,
-                _bridge);
+                _bridge,
+                _argumentSlots);
 
             for (int i = 0; i < _attributes.Count; i++)
                 _built.AddAttribute(_attributes[i]);

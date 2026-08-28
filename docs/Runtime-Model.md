@@ -290,7 +290,51 @@ are the same slot, and without that a class could never implement a generic inte
 the contract's slot by spelling alone. The other half of that bargain is Java's: a class wanting
 both `compareTo(Vec2)` and `IComparable<Vec2>` needs the compiler to emit a bridge.
 
-### 5.3 Parameters
+### 5.3 Slot widths: `ArgumentSlotCount` and `ResultSlotCount`
+
+A parameter is not necessarily a slot. A multi-field `value class` and a tuple travel as **`n`
+contiguous raw slots** everywhere the VM moves values, so a method's *arity* and its *stack
+footprint* are two different numbers, and the metadata carries both:
+
+* **`ArgumentSlotCount`** — how many stack slots a call site must leave for the arguments,
+  **receiver included**: the sum of every argument's flattened width, which comes to
+  `ParameterCount + 1` for an ordinary instance method and more as soon as a value type appears.
+  The receiver is in the count without exception: the frame base is `sp - argsCount` for every kind
+  of call, and that one subtraction is only correct if the receiver is counted. An instance method
+  **on** a multi-field value class receives its block unboxed, so the receiver contributes that
+  block's width rather than one reference — the same rule the compiler's `ApplyValueLayout`
+  applies, and the two have to agree or a call emitted against the metadata would not match the
+  frame the callee expects. A varargs parameter is one slot whatever its element type, since the
+  caller packs the surplus into an array. Metadata read back from an image falls through to this
+  derived form when the writer left the sentinel intact, so the count is derived rather than
+  trusted blindly.
+
+  The width is **computed on every read rather than cached**, because it consults
+  `SurtrTypeHandle.ResolvedType`: before its module's handles resolve there is no layout to read,
+  so an unresolved value class falls back to one slot, and a value cached at construction would
+  freeze that fallback forever. It costs nothing to derive it — **nothing on the execution path
+  reads it**, since the interpreter takes `argsCount` from the instruction; the only consumer is
+  the emitter, deciding what to write into a call site. That is also why this being wrong for
+  native methods went unnoticed for so long: a compiled method overrides the property with the
+  width its emitter computed, so only a *host-declared* native over a multi-field value class was
+  mis-sized, and nothing crashed at the point the mistake was made.
+* **`ResultSlotCount`** — how many operand-stack slots one call leaves behind: zero for `void`, the
+  flattened width for a tuple (from its descriptor) or a multi-field value class (from its linked
+  layout), and one for everything else.
+
+**`ResultSlotCount` is not the call opcode's `retCount` immediate**, and conflating the two is the
+one mistake this area invites. `retCount` stays the frame protocol's 0/1 gate — *does this call site
+want the result at all* — and is unchanged from before value types existed. The width of that one
+result rides the callee's declared type, and is what the caller's stack accounting and the host
+boundary read. The callee is what emits it, through `ReturnValues`.
+
+Where a block is **packed back into an object** is a short and deliberate list: elements of an array
+or a dictionary, dictionary keys, erasure slots (`G0`, `unknown`), and the host boundary
+(`SurtrRuntime.Invoke`/`InvokeClosure` flatten arguments on the way in and re-pack results on the
+way out). Everywhere else — locals, fields, statics, parameters, returns, the operand stack — the
+block stays a block and nothing allocates.
+
+### 5.4 Parameters
 
 `SurtrParameterInfo` carries everything a call site needs to be checked against a member declared in
 *another module*, where overload resolution works from metadata rather than a syntax tree:
@@ -307,13 +351,13 @@ once and stops at the first optional parameter, which is only sound if defaults 
 None of it reaches the interpreter: a call arrives with its arguments already filled in and its
 varargs array already packed.
 
-### 5.4 Native methods
+### 5.5 Native methods
 
 A native method's body is a host function reached through `SurtrNativeEntryPoint`, and every host
 function has one fixed shape:
 
 ```csharp
-delegate SurtrValue SurtrNativeFunction(SurtrCallArguments arguments);
+delegate int SurtrNativeFunction(SurtrCallArguments arguments);
 ```
 
 so the interpreter has exactly one function-pointer cast on its call path regardless of the
@@ -322,16 +366,29 @@ method's Surtr-level signature. The pointer is a **managed** `delegate*`, not
 reverse-P/Invoke stub and its GC transition, and sidesteps IL2CPP's `[MonoPInvokeCallback]`
 restriction. Never put an unmanaged address in one.
 
-`arguments[0]` is the receiver for an instance method — argument zero like any other. A method
-declared to return nothing still returns `SurtrValue.Null` down this one signature, and the caller
-discards it.
+`arguments[0]` is the receiver for an instance method — argument zero like any other.
+
+**The return is a slot count, and the results are written in place.** The body writes its results
+over the argument block it was handed, starting at slot 0, and answers how many slots it wrote —
+Lua's multiple-returns bargain. `arguments.Return(value)` is that whole protocol for the ordinary
+case: it writes slot 0 and answers 1. A function declared to return nothing writes nothing and
+answers 0. A result wider than one slot — a tuple, a multi-field `value class` — is simply several
+consecutive slots, exactly as it travels everywhere else, so **there is no second entry-point
+signature and no separate results pointer**: one shape still covers every native body, which is the
+property the whole call path was built on.
+
+The in-place convention has exactly one rule for a body to keep: **read every input before the
+first write.** Results alias the arguments, so a body that writes slot 0 and then reads argument 1
+has read whatever it just wrote when the two overlap. Reading first costs nothing and the built-ins
+all do it; the checked writers (`Return`, `WriteResult`) bound-check against the block's writable
+capacity, but they cannot tell a stale read from a fresh one.
 
 **A body can arrive late.** A method declared with only a `LinkName` is bound when its module is
 loaded, by whichever runtime is loading it, through `SurtrRuntime.DefineNativeBody`. That is what
 lets a module carrying native members travel in an image. Until it is bound it points at a body that
 *reports the mistake* rather than at null.
 
-### 5.5 Native fields and native enums (host bridge)
+### 5.6 Native fields and native enums (host bridge)
 
 Two host-facing runtime extensions mirror the native-method story for state and for enums.
 
@@ -649,7 +706,9 @@ call site.
 
 ## 15. What the compiler owes this model
 
-Things the runtime assumes and will not check:
+Things the runtime assumes and will not check. **The compiler meets all of them** — this is a list
+of standing obligations, not of outstanding work, so anything here that stops holding is a
+miscompile rather than a missing feature:
 
 * **Box a primitive flowing into an erased slot, and `Cast` reading one back out.**
 * **Emit `finally` on every exit path**, plus a catch-all that runs it and re-raises. There is no
@@ -688,13 +747,11 @@ an image carries no dependency list until it is instantiated.
 `All`) lets a sandboxed host load only some of it — `LoadInto(runtime, images, selection)`
 filters by each image's own module path (`surtr.math.Math`'s second segment, `math`, against
 `StdlibModules.Math`) before delegating to the unfiltered overload. Coarse-grained by design, and
-no longer assumed independent: `surtr.collections.Stack` throws `InvalidOperationException`, which
-is declared in the Surtr-written `surtr.core.Exception` module rather than built into the runtime
-(unlike `IndexOutOfRangeException` and the rest of `Language-Syntax.md` §13.3's VM-trap-mapped
-set), so `Collections` has a real, one-way dependency on `Core`. `ExpandDependencies` widens a
-selection for exactly that edge before filtering, rather than leaving a caller to discover the
-omission as a load failure; the fixed-point retry loop is still the backstop for any dependency
-this has not been told about.
+independent: every exception the collections throw is one of the trap-mapped classes the built-in
+`surtr` module declares (`InvalidOperationException` among them — §13.3's set stays built-in
+precisely so a same-named twin can never split catch-by-type in two), and those names are in scope
+in every file without an import, so no category reaches into another. The fixed-point retry loop
+remains as the backstop for any cross-category import a future module adds.
 
 **Drift detection**: `Surtr.Stdlib.Tool` also writes `native-link-names.txt` next to the
 images — the flat, sorted list of every native link name it actually compiled. A test in

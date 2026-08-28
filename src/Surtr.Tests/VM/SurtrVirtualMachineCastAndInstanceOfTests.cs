@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Runtime;
@@ -99,7 +99,7 @@ namespace Surtr.Tests.VM
 
             var builder = new BytecodeBuilder();
             int typeIndex = builder.AddType(VmMetadataHelpers.HandleFor(fixture.Module, fixture.A));
-            builder.LoadReference(instance).Op(OpCode.InstanceOfX).I32(typeIndex).Op(OpCode.ReturnValue);
+            builder.LoadReference(instance).Op(OpCode.Wide).Op(OpCode.InstanceOf).I32(typeIndex).Op(OpCode.ReturnValue);
 
             Assert.True(Run(runtime, fixture.Module, builder).AsBool);
         }
@@ -225,7 +225,7 @@ namespace Surtr.Tests.VM
 
             var builder = new BytecodeBuilder();
             int typeIndex = builder.AddType(VmMetadataHelpers.HandleFor(fixture.Module, fixture.C));
-            builder.LoadReference(instance).Op(OpCode.CastX).I32(typeIndex).Op(OpCode.ReturnValue);
+            builder.LoadReference(instance).Op(OpCode.Wide).Op(OpCode.Cast).I32(typeIndex).Op(OpCode.ReturnValue);
 
             Assert.Throws<SurtrExecutionException>(() => Run(runtime, fixture.Module, builder));
         }
@@ -286,7 +286,7 @@ namespace Surtr.Tests.VM
 
             var builder = new BytecodeBuilder();
             int typeIndex = builder.AddType(VmMetadataHelpers.HandleFor(fixture.Module, fixture.C));
-            builder.LoadReference(instance).Op(OpCode.CastOrNullX).I32(typeIndex).Op(OpCode.ReturnValue);
+            builder.LoadReference(instance).Op(OpCode.Wide).Op(OpCode.CastOrNull).I32(typeIndex).Op(OpCode.ReturnValue);
 
             Assert.True(Run(runtime, fixture.Module, builder).IsNullReference);
         }

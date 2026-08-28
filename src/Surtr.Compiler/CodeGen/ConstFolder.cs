@@ -57,6 +57,7 @@ namespace Surtr.Compiler.CodeGen
         private const string ModulePath = "surtr_const_eval";
 
         private readonly IReadOnlyDictionary<MethodSymbol, BoundStatement> _bodies;
+        private readonly Func<MethodSymbol, bool>? _isPureCandidate;
         private readonly DescriptorEmitter _descriptors = new DescriptorEmitter();
         private readonly Dictionary<MethodSymbol, string> _failures = new Dictionary<MethodSymbol, string>();
 
@@ -70,12 +71,20 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>Creates a folder over the bodies a compilation bound.</summary>
         /// <param name="bodies">Every bound body, from which the <c>const fun</c>s are taken.</param>
+        /// <param name="isPureCandidate">
+        /// Which additional methods — beyond the <c>const fun</c>s — may be folded. A
+        /// <c>@Pure</c> function whose body the compilation verified strictly pure is one; this
+        /// predicate is how the caller says so, keeping the folder itself ignorant of what made
+        /// the function foldable.
+        /// </param>
         /// <param name="instructionBudget">The per-evaluation ceiling; zero means no limit.</param>
         public ConstFolder(
             IReadOnlyDictionary<MethodSymbol, BoundStatement> bodies,
+            Func<MethodSymbol, bool>? isPureCandidate = null,
             long instructionBudget = DefaultInstructionBudget)
         {
             _bodies = bodies ?? throw new ArgumentNullException(nameof(bodies));
+            _isPureCandidate = isPureCandidate;
             InstructionBudget = instructionBudget;
         }
 
@@ -180,6 +189,14 @@ namespace Surtr.Compiler.CodeGen
             return _failures.TryGetValue(method, out failure!);
         }
 
+        /// <summary>
+        /// Whether a method is a candidate this folder could fold: a <c>const fun</c>, or one the
+        /// caller's predicate admitted. Used to decide when a <c>@Pure</c> call may be common-
+        /// subexpression-eliminated as well as folded.
+        /// </summary>
+        public bool CanFold(MethodSymbol method)
+            => method.IsConst || (_isPureCandidate?.Invoke(method) ?? false);
+
         #region Building the scratch module
         /// <summary>
         /// Emits every const-evaluable function into one module, and loads it.
@@ -208,7 +225,7 @@ namespace Surtr.Compiler.CodeGen
             var candidates = new List<MethodSymbol>();
             foreach (var pair in _bodies)
             {
-                if (pair.Key.IsConst && CanDeclare(pair.Key))
+                if ((pair.Key.IsConst || (_isPureCandidate?.Invoke(pair.Key) ?? false)) && CanDeclare(pair.Key))
                     candidates.Add(pair.Key);
             }
 
@@ -286,6 +303,12 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private bool CanDeclare(MethodSymbol method)
         {
+            if (method.TypeParameters.Count > 0)
+            {
+                _failures[method] = $"'{method.Name}' is generic, so it cannot be folded; the evaluator has no substituted body to run.";
+                return false;
+            }
+
             if (!method.IsStatic && method.ContainingType is not null)
             {
                 _failures[method] = $"'{method.Name}' needs a receiver, so it cannot be folded; a const fun is static.";

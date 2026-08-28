@@ -68,6 +68,7 @@ namespace Surtr.Tests.Compiler.Syntax
         [InlineData("let", TokenType.KeywordLet)]
         [InlineData("moduleof", TokenType.KeywordModuleOf)]
         [InlineData("native", TokenType.KeywordNative)]
+        [InlineData("noinline", TokenType.KeywordNoInline)]
         [InlineData("null", TokenType.KeywordNull)]
         [InlineData("operator", TokenType.KeywordOperator)]
         [InlineData("override", TokenType.KeywordOverride)]

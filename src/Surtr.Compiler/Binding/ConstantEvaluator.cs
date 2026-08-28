@@ -18,6 +18,13 @@ namespace Surtr.Compiler.Binding
     public delegate bool ConstCallFolder(string name, IReadOnlyList<object?> arguments, out object? value);
 
     /// <summary>
+    /// Folds an enum expression — a case read or a call on the synthesized API (§2.3quater) — when
+    /// the compiler has bound the enum. <c>null</c> arguments means a plain member read (a case);
+    /// a non-null array means a call, with the folded receiver as <paramref name="receiverValue"/>.
+    /// </summary>
+    public delegate bool EnumConstantFolder(string enumName, object? receiverValue, string member, object?[]? arguments, out object? value);
+
+    /// <summary>
     /// Folds an expression to a value at compile time, over syntax rather than over bound nodes.
     /// </summary>
     /// <remarks>
@@ -68,6 +75,15 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         public ConstCallFolder? CallFolder { get; set; }
 
+        /// <summary>What folds an enum case read or a call on an enum's synthesized API (§2.3quater).</summary>
+        /// <remarks>
+        /// Null until the binder has bound the enums, which is what this folder needs to resolve the
+        /// enum's cases. The evaluator itself stays type-less: it recognises the shape
+        /// (<c>Suit.Hearts</c>, <c>Suit.of(...)</c>, <c>Suit.Hearts.toString()</c>) and hands the
+        /// parts to this delegate, which knows the actual enums.
+        /// </remarks>
+        public EnumConstantFolder? EnumFolder { get; set; }
+
         /// <summary>The value of a named constant, folded on demand.</summary>
         public bool TryGetValue(string name, out object? value) => TryName(name, out value);
 
@@ -110,7 +126,10 @@ namespace Surtr.Compiler.Binding
                 }
 
                 case CallExpressionSyntax call:
-                    return TryCall(call, out value);
+                    return TryCall(call, out value) || TryEnumCall(call, out value);
+
+                case MemberAccessExpressionSyntax member:
+                    return TryEnumMember(member, out value, out _);
             }
 
             value = null;
@@ -146,6 +165,74 @@ namespace Surtr.Compiler.Binding
             }
 
             return CallFolder(callee.Name, arguments, out value);
+        }
+
+        /// <summary>
+        /// Folds a call whose callee is a member access on an enum — <c>Suit.of(2)</c>,
+        /// <c>Suit.Hearts.toString()</c>, <c>Suit.Hearts.equals(Suit.Hearts)</c> (§2.3quater).
+        /// </summary>
+        private bool TryEnumCall(CallExpressionSyntax call, out object? value)
+        {
+            value = null;
+
+            if (EnumFolder is null || call.Callee is not MemberAccessExpressionSyntax access)
+                return false;
+
+            object? receiverValue = null;
+            string enumName;
+
+            if (access.Target is IdentifierExpressionSyntax root)
+            {
+                // A static member: `Suit.of(...)`.
+                enumName = root.Name;
+            }
+            else if (access.Target is MemberAccessExpressionSyntax nested && TryEnumMember(nested, out receiverValue, out enumName))
+            {
+                // An instance member: `Suit.Hearts.toString()` — the receiver folds to the enum's value.
+            }
+            else
+            {
+                return false;
+            }
+
+            var arguments = new object?[call.Arguments.Count];
+            for (int i = 0; i < arguments.Length; i++)
+            {
+                if (call.Arguments[i].Name is not null || !TryEvaluate(call.Arguments[i].Value, out arguments[i]))
+                    return false;
+            }
+
+            return EnumFolder(enumName, receiverValue, access.Name, arguments, out value);
+        }
+
+        /// <summary>
+        /// Folds a plain member access that names an enum case — <c>Suit.Hearts</c> — or a
+        /// <c>.value</c> read on one. Reports the enum's name so an enclosing call can dispatch.
+        /// </summary>
+        private bool TryEnumMember(MemberAccessExpressionSyntax access, out object? value, out string enumName)
+        {
+            value = null;
+            enumName = string.Empty;
+
+            if (EnumFolder is null)
+                return false;
+
+            if (access.Target is IdentifierExpressionSyntax root)
+            {
+                enumName = root.Name;
+                return EnumFolder(enumName, null, access.Name, arguments: null, out value);
+            }
+
+            // `Suit.Hearts.value` or `Suit.of(1).value`: the inner expression folds to the enum's
+            // value, and `.value` is the value itself for a bare enum.
+            if (access.Name == "value" && TryEvaluate(access.Target, out object? receiverValue) && receiverValue is not null)
+            {
+                enumName = string.Empty;
+                value = receiverValue;
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>Folds an expression that has to be a <c>bool</c>, as a condition does.</summary>

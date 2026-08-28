@@ -35,6 +35,7 @@ namespace Surtr.Compiler.Binding
                 case UnaryExpressionSyntax unary: return BindUnary(unary);
                 case AssignmentExpressionSyntax assignment: return BindAssignment(assignment);
                 case ConditionalExpressionSyntax conditional: return BindConditional(conditional, expected);
+                case YieldExpressionSyntax yield: return BindYield(yield);
                 // The expected type reaches a call only to settle a generic construction's arguments
                 // (§6): `let b: Box<int> = Box();` has nothing else to infer them from.
                 case CallExpressionSyntax call: return BindCall(call, expected);
@@ -410,6 +411,8 @@ namespace Surtr.Compiler.Binding
         /// <param name="field">The field being read.</param>
         private BoundExpression ResolveField(SyntaxNode syntax, BoundExpression? receiver, FieldSymbol field)
         {
+            ReportIfObsolete(field, field.Name, syntax);
+
             if (field.IsConst && _constants.TryGetValue(field.Name, out object? value))
                 return new BoundLiteralExpression(syntax, field.Type, value);
 
@@ -425,7 +428,13 @@ namespace Surtr.Compiler.Binding
         /// call site.
         /// </summary>
         private BoundPropertyExpression ResolveProperty(SyntaxNode syntax, BoundExpression? receiver, PropertySymbol property)
-            => new(syntax, receiver, property, IsVirtualAccess(property.Getter, receiver), IsVirtualAccess(property.Setter, receiver));
+        {
+            // One warning per written access, covering both directions: a read resolves the getter
+            // and a write the setter, but what is being deprecated is the property itself.
+            ReportIfObsolete(property, property.Name, syntax);
+
+            return new(syntax, receiver, property, IsVirtualAccess(property.Getter, receiver), IsVirtualAccess(property.Setter, receiver));
+        }
 
         private static bool IsVirtualAccess(MethodSymbol? accessor, BoundExpression? receiver)
         {
@@ -454,6 +463,47 @@ namespace Surtr.Compiler.Binding
 
             return null;
         }
+
+        /// <summary>
+        /// Reports the use of a declaration marked <c>@Obsolete</c> (§11), unless this body belongs
+        /// to an obsolete declaration itself — an obsolete method calling another obsolete one is
+        /// migration work in progress, not a mistake to nag about.
+        /// </summary>
+        private void ReportIfObsolete(Symbol target, string used, SyntaxNode syntax)
+        {
+            if (!BuiltInAttributes.IsObsolete(target) || SuppressObsoleteWarnings())
+                return;
+
+            _diagnostics.ReportWarning(
+                SurtrDiagnosticCode.ObsoleteMemberUsed,
+                BuiltInAttributes.ObsoleteMessage(target, used),
+                _sourceName,
+                syntax.Span);
+        }
+
+        /// <summary>
+        /// Reports the use of an <c>@Obsolete</c> type where a body names it — an annotation, a
+        /// cast, a type argument — under the same quiet-inside-obsolete rule member uses get.
+        /// </summary>
+        private void ReportIfObsoleteType(NamedTypeSymbol type, SyntaxNode syntax)
+        {
+            if (!BuiltInAttributes.IsObsolete(type) || SuppressObsoleteWarnings())
+                return;
+
+            _diagnostics.ReportWarning(
+                SurtrDiagnosticCode.ObsoleteMemberUsed,
+                BuiltInAttributes.ObsoleteMessage(type, type.Name),
+                _sourceName,
+                syntax.Span);
+        }
+
+        /// <summary>
+        /// Whether this body belongs to an obsolete declaration, which is migration work rather
+        /// than a mistake worth nagging about — the same rule §11.1 gives member uses.
+        /// </summary>
+        private bool SuppressObsoleteWarnings()
+            => BuiltInAttributes.IsObsolete(_method)
+                || (_containingType is not null && BuiltInAttributes.IsObsolete(_containingType));
 
         /// <summary>
         /// Reports a member this body may not reach (§3.1), and carries on binding.
@@ -869,6 +919,18 @@ namespace Surtr.Compiler.Binding
                     : userEquality;
             }
 
+            // §11.1: next in line after a declared operator== comes the @Value opt-in - structural,
+            // field-by-field equality built right here rather than identity. A declared operator
+            // still wins (checked above); what the mark changes is exactly the fallback that would
+            // otherwise demand the same object.
+            if (syntax.Operator is BinaryOperator.Equal or BinaryOperator.NotEqual
+                && TryBindStructuralEquality(syntax, left, right) is BoundExpression structural)
+            {
+                return syntax.Operator == BinaryOperator.NotEqual
+                    ? new BoundUnaryExpression(syntax, UnaryOperator.Not, structural, _factory.Bool)
+                    : structural;
+            }
+
             var result = ResolveBinary(syntax, syntax.Operator, ref left, ref right);
             if (result is null)
             {
@@ -882,12 +944,148 @@ namespace Surtr.Compiler.Binding
                     $"'{syntax.Operator}' is not defined for '{left.Type.ToDisplayString()}' and '{right.Type.ToDisplayString()}'.");
             }
 
-            return new BoundBinaryExpression(syntax, syntax.Operator, left, right, result);
+            return TryCseBinary(syntax, syntax.Operator, left, right, result);
         }
 
         /// <summary>
-        /// Works out what a built-in binary operator produces, widening the operands if it needs to.
+        /// Builds the field-by-field comparison a <c>==</c> between two values of one
+        /// <c>@Value</c>-marked class means, or null when the mark does not apply here.
         /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Only an ordinary class opts in. A value class already compares by its field (§2.9), and
+        /// anything else has no instance state to walk. The mark is read off the class's own uses,
+        /// so a base class carrying it does not turn a silent subclass into a value.
+        /// </para>
+        /// <para>
+        /// The shape is <c>a == b ⇔ reference-same, or neither is null and every field pair is
+        /// equal</c>. The null tests keep a field load off a null receiver; the same-reference test
+        /// both short-circuits the common case and cuts a self-referencing field's walk at identity,
+        /// which §11.1 states as the rule for cycles. A class with no instance fields keeps plain
+        /// identity — there is nothing structural to compare, and silently calling two distinct
+        /// handles equal would surprise.
+        /// </para>
+        /// </remarks>
+        private BoundExpression? TryBindStructuralEquality(BinaryExpressionSyntax syntax, BoundExpression left, BoundExpression right)
+        {
+            if (left.Type.NonNullable is not NamedTypeSymbol type
+                || type.TypeKind != TypeSymbolKind.Class
+                || !ReferenceEquals(type, right.Type.NonNullable)
+                || !BuiltInAttributes.IsMarkedValue(type.Definition))
+            {
+                return null;
+            }
+
+            List<FieldSymbol> fields = EqualityFieldsOf(type);
+            if (fields.Count == 0)
+                return null;
+
+            return StructuralEquality(syntax, left, right, type, fields, new Stack<NamedTypeSymbol>());
+        }
+
+        private BoundExpression StructuralEquality(
+            SyntaxNode syntax,
+            BoundExpression left,
+            BoundExpression right,
+            NamedTypeSymbol type,
+            List<FieldSymbol> fields,
+            Stack<NamedTypeSymbol> expanding)
+        {
+            var same = ReferenceComparison(syntax, BinaryOperator.ReferenceEqual, left, right);
+            var guarded = LogicalChain(syntax, new[]
+            {
+                ReferenceComparison(syntax, BinaryOperator.ReferenceNotEqual, left, NullOf(syntax, left.Type)),
+                ReferenceComparison(syntax, BinaryOperator.ReferenceNotEqual, right, NullOf(syntax, right.Type)),
+            });
+
+            for (int i = 0; i < fields.Count; i++)
+            {
+                var fieldLeft = new BoundFieldExpression(syntax, left, fields[i]);
+                var fieldRight = new BoundFieldExpression(syntax, right, fields[i]);
+                guarded = new BoundBinaryExpression(
+                    syntax, BinaryOperator.LogicalAnd, guarded, FieldPairEquality(syntax, fieldLeft, fieldRight, expanding), _factory.Bool);
+            }
+
+            return new BoundBinaryExpression(syntax, BinaryOperator.LogicalOr, same, guarded, _factory.Bool);
+        }
+
+        /// <summary>One field pair: structural again for a <c>@Value</c>-typed field, plain <c>==</c> otherwise.</summary>
+        private BoundExpression FieldPairEquality(SyntaxNode syntax, BoundExpression fieldLeft, BoundExpression fieldRight, Stack<NamedTypeSymbol> expanding)
+        {
+            if (fieldLeft.Type.NonNullable is NamedTypeSymbol fieldType
+                && fieldType.TypeKind == TypeSymbolKind.Class
+                && BuiltInAttributes.IsMarkedValue(fieldType)
+                && !expanding.Contains(fieldType))
+            {
+                expanding.Push(fieldType);
+                var nested = StructuralEquality(
+                    syntax, fieldLeft, fieldRight, fieldType, EqualityFieldsOf(fieldType), expanding);
+                expanding.Pop();
+                return nested;
+            }
+
+            return new BoundBinaryExpression(syntax, BinaryOperator.Equal, fieldLeft, fieldRight, _factory.Bool);
+        }
+
+        /// <summary>The instance state equality compares: each class's own fields, base chain first.</summary>
+        /// <remarks>
+        /// Backing fields count, because an auto-property's storage is the value its reader sees;
+        /// consts are not slots at all (§7.1) and the compiler's other synthetics name nothing a
+        /// declaration's author wrote.
+        /// </remarks>
+        private static List<FieldSymbol> EqualityFieldsOf(NamedTypeSymbol type)
+        {
+            var fields = new List<FieldSymbol>();
+
+            void Collect(NamedTypeSymbol current)
+            {
+                foreach (Symbol member in current.Definition.Members)
+                {
+                    if (member is not FieldSymbol field || field.IsStatic || field.IsConst)
+                        continue;
+
+                    if (field.IsSynthetic && !IsABackingField(current, field))
+                        continue;
+
+                    fields.Add(field);
+                }
+
+                if (current.BaseType?.NonNullable is NamedTypeSymbol baseType && baseType.TypeKind == TypeSymbolKind.Class)
+                    Collect(baseType);
+            }
+
+            Collect(type);
+            return fields;
+        }
+
+        private static bool IsABackingField(NamedTypeSymbol type, FieldSymbol candidate)
+        {
+            foreach (Symbol member in type.Definition.Members)
+            {
+                if (member is PropertySymbol property && ReferenceEquals(property.BackingField, candidate))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private BoundExpression ReferenceComparison(SyntaxNode syntax, BinaryOperator @operator, BoundExpression left, BoundExpression right)
+            => new BoundBinaryExpression(syntax, @operator, left, right, _factory.Bool);
+
+        private static BoundExpression LogicalChain(SyntaxNode syntax, IReadOnlyList<BoundExpression> parts)
+        {
+            var chain = parts[0];
+            for (int i = 1; i < parts.Count; i++)
+                chain = new BoundBinaryExpression(syntax, BinaryOperator.LogicalAnd, chain, parts[i], chain.Type);
+
+            return chain;
+        }
+
+        /// <summary>A null literal typed as the given type's nullable form, for identity tests.</summary>
+        private static BoundExpression NullOf(SyntaxNode syntax, TypeSymbol ofType)
+            => new BoundLiteralExpression(syntax, ofType.Nullable, null);
+
+
         /// <remarks>
         /// The one interesting case is §5.7's: mixing an <c>int</c> with a <c>float</c> promotes the
         /// whole expression, so <c>7 / 2</c> truncates and <c>7 / 2.0</c> does not.
@@ -929,6 +1127,19 @@ namespace Surtr.Compiler.Binding
                         && @operator is BinaryOperator.BitAnd or BinaryOperator.BitOr or BinaryOperator.BitXor)
                     {
                         return _factory.Bool;
+                    }
+
+                    // §P14: combining the bits of one @Flags enum. Both sides have to be the same
+                    // enum - two different flag sets share no bit meanings, so a combination of
+                    // them would be a number belonging to neither - and the result is that enum,
+                    // which is what makes `let rw: Perm = Perm.Read | Perm.Write;` an ordinary
+                    // assignment rather than a cast. The shifts stay out: the bit a case occupies
+                    // is the compiler's to assign, so moving one produces a value no case names.
+                    if (@operator is BinaryOperator.BitAnd or BinaryOperator.BitOr or BinaryOperator.BitXor
+                        && ReferenceEquals(l, r)
+                        && l is NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum, IsFlagsEnum: true })
+                    {
+                        return l;
                     }
 
                     return null;
@@ -1174,6 +1385,13 @@ namespace Surtr.Compiler.Binding
                 case UnaryOperator.Complement:
                     if (type.SpecialType == SpecialType.Int)
                         return new BoundUnaryExpression(syntax, syntax.Operator, operand, _factory.Int);
+
+                    // §P14: `~perms` is every bit the value does not have, which is what makes
+                    // removing one writable as `perms & ~Perm.Write`. The result stays the enum -
+                    // the complement of a set of its bits is still a set of its bits.
+                    if (type is NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum, IsFlagsEnum: true })
+                        return new BoundUnaryExpression(syntax, syntax.Operator, operand, type);
+
                     break;
 
                 case UnaryOperator.PreIncrement:
@@ -1287,7 +1505,10 @@ namespace Surtr.Compiler.Binding
             }
 
             if (syntax.Operator == AssignmentOperator.Assign)
-                return new BoundAssignmentExpression(syntax, target, BindConverted(syntax.Value, target.Type));
+            {
+                var converted = BindConverted(syntax.Value, target.Type);
+                return RangeCheckWrite(syntax, target, converted);
+            }
 
             // A compound assignment is expanded here, so nothing downstream needs a second form of
             // assignment or a second table of operators.
@@ -1314,7 +1535,23 @@ namespace Surtr.Compiler.Binding
             }
 
             var combined = new BoundBinaryExpression(syntax, @operator, left, right, result);
-            return new BoundAssignmentExpression(syntax, target, Convert(combined, target.Type, syntax.Span));
+            return RangeCheckWrite(syntax, target, Convert(combined, target.Type, syntax.Span));
+        }
+
+        /// <summary>
+        /// Builds the write to <paramref name="target"/>, wrapping the value in a range guard when
+        /// the target is a <c>@Range</c>-marked member. Returns the assignment itself, whose value
+        /// is whatever the surrounding expression should yield.
+        /// </summary>
+        /// <remarks>
+        /// Every assignment to a ranged member goes through here, so a statement, a <c>for</c> loop's
+        /// initializer and a nested assignment are all guarded by the same lowering (§P4).
+        /// </remarks>
+        private BoundExpression RangeCheckWrite(SyntaxNode syntax, BoundExpression target, BoundExpression value)
+        {
+            Symbol? member = RangedMember(target);
+            var guarded = member is null ? value : RangeCheckValue(syntax, value, member, MemberType(member));
+            return new BoundAssignmentExpression(syntax, target, guarded);
         }
 
         /// <summary>
@@ -1493,6 +1730,14 @@ namespace Surtr.Compiler.Binding
 
             var owner = receiver?.Type.NonNullable ?? (TypeSymbol?)_containingType;
 
+            // §P14: `perms.contains(flag)` on a @Flags enum. A lowering rather than a member,
+            // because there is no instance to declare one on - the receiver is an int - and
+            // introducing one would need the boxing the mark exists to avoid. Tried before the
+            // member lookup below only because that lookup would find nothing anyway; a flags enum
+            // is refused any member of its own, so the name cannot be shadowed.
+            if (owner is not null && TryBindFlagsContains(syntax, receiver, owner, name) is BoundExpression contains)
+                return contains;
+
             if (owner is not null && _lookup.FindMethods(owner, name).Count > 0)
                 return BindMethodCall(syntax, receiver, owner, name, isVirtual, expected);
 
@@ -1522,10 +1767,63 @@ namespace Surtr.Compiler.Binding
                     return member;
             }
 
+            // §11.1: a @Value class that declares none of the value-members still answers
+            // `a.equals(b)` - synthesized here at the call site, structural equality - so a
+            // value-semantics class has the method a reader would reach for, not just the `==`
+            // operator. Tried only once every real member, extension and module function has
+            // failed, so a declaration of its own always wins.
+            if (TryBindValueEquals(syntax, owner, receiver, name, expected, out var synthetic))
+                return synthetic;
+
             return Error(
                 syntax,
                 SurtrDiagnosticCode.UnresolvedName,
                 $"'{name}' does not name a method in scope.");
+        }
+
+        /// <summary>
+        /// Synthesizes <c>a.equals(b)</c> for a <c>@Value</c> class that does not declare one:
+        /// the same structural, field-by-field comparison <c>==</c> already means for it.
+        /// </summary>
+        private bool TryBindValueEquals(
+            CallExpressionSyntax syntax,
+            TypeSymbol? owner,
+            BoundExpression? receiver,
+            string name,
+            TypeSymbol? expected,
+            out BoundExpression result)
+        {
+            result = Error(syntax);
+
+            if (receiver is null
+                || name != "equals"
+                || owner?.NonNullable is not NamedTypeSymbol type
+                || type.TypeKind != TypeSymbolKind.Class
+                || !BuiltInAttributes.IsMarkedValue(type.Definition)
+                || syntax.Arguments.Count != 1)
+            {
+                return false;
+            }
+
+            var argument = BindExpression(syntax.Arguments[0].Value);
+            if (argument.Type.IsError)
+                return true;
+
+            if (!_conversions.IsAssignable(argument.Type, receiver.Type)
+                && !_conversions.IsAssignable(receiver.Type, argument.Type))
+            {
+                return false;
+            }
+
+            result = StructuralEquality(
+                syntax,
+                receiver,
+                Convert(argument, receiver.Type, syntax.Arguments[0].Value.Span),
+                type,
+                EqualityFieldsOf(type),
+                new Stack<NamedTypeSymbol>());
+
+            return true;
         }
 
         private BoundExpression BindMethodCall(
@@ -1867,6 +2165,8 @@ namespace Surtr.Compiler.Binding
 
             var method = result.Method!;
 
+            ReportIfObsolete(method, name, syntax);
+
             // A synthetic leading entry standing for the receiver - `OrderArguments`/
             // `BindDeferredLambdas` read only `.Name` and `.Span` off a written argument, never
             // `.Value`, so this is never re-bound; the already-bound `receiver` below is what
@@ -1926,6 +2226,9 @@ namespace Surtr.Compiler.Binding
 
             var method = result.Method!;
 
+            // §11: a resolved call to something marked @Obsolete is the warning's whole point.
+            ReportIfObsolete(method, name, syntax);
+
             // A null receiver reaches this only through the type-name call path (§5.5's type-first
             // rule): a singleton supplies its instance as the receiver and so never arrives here,
             // and a module-level function is always static. An instance method on that path is an
@@ -1951,7 +2254,301 @@ namespace Surtr.Compiler.Binding
                 && !method.IsSealed
                 && !(receiver?.Type.NonNullable is NamedTypeSymbol { IsSealed: true });
 
-            return new BoundCallExpression(syntax, method.IsStatic ? null : receiver, method, ordered, virtualCall);
+            var call = new BoundCallExpression(syntax, method.IsStatic ? null : receiver, method, ordered, virtualCall);
+            return TryCseCallArguments(syntax, TryFoldPureCall(syntax, call));
+        }
+
+        /// <summary>
+        /// Folds a call to a verified-strict <c>@Pure</c> function whose arguments are all
+        /// compile-time constants, replacing the call with its result (§P3 fase 3).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The callee has to be a static, directly-dispatched <c>@Pure</c> function: a virtual call
+        /// could resolve to an override this compilation did not verify, and a receiver would let
+        /// the receiver's state reach the body. Only the functions
+        /// <see cref="Binder.PreparePureFolding"/> verified — a body that is pure by inspection —
+        /// are foldable, so replacing the call with a constant cannot change what the program
+        /// observes. Whatever cannot fold — a non-constant argument, a result the evaluator cannot
+        /// marshal, a callee with no entry point — falls through to the call unchanged.
+        /// </para>
+        /// </remarks>
+        private BoundExpression TryFoldPureCall(SyntaxNode syntax, BoundCallExpression call)
+        {
+            if (_pureFolder is null || !BuiltInAttributes.IsPure(call.Method) || call.IsVirtual || !call.Method.IsStatic)
+                return call;
+
+            if (call.Method.ReturnType.IsVoid || call.Method.ReturnType.IsNever)
+                return call;
+
+            var values = new object?[call.Arguments.Count];
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (Unwrap(call.Arguments[i]) is not BoundLiteralExpression literal)
+                    return call;
+
+                values[i] = literal.Value;
+            }
+
+            if (!_pureFolder.TryFold(call.Method, values, out object? result, out _))
+                return call;
+
+            // A null result is the absent tag, which only a nullable return type can carry; folding
+            // a null against a non-nullable declaration would build a literal the type forbids.
+            if (result is null && !call.Method.ReturnType.IsNullable)
+                return call;
+
+            return new BoundLiteralExpression(syntax, call.Method.ReturnType, result);
+        }
+
+        /// <summary>
+        /// Common-subexpression elimination for one expression (§P3 fase 3): when two sibling
+        /// expressions are the same call to a foldable <c>@Pure</c> function over pure arguments,
+        /// evaluate it once into a hidden temporary and read the temporary in both places.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Both shapes a duplicated pure call appears in are covered: the two operands of a binary
+        /// (<c>f(x) + f(x)</c>) and two arguments of another call (<c>g(f(x), f(x))</c>). The
+        /// lowering reuses <see cref="BoundSequenceExpression"/>: the first evaluation runs in the
+        /// statement, and both uses read the captured value.
+        /// </para>
+        /// <para>
+        /// Only a call to a foldable <c>@Pure</c> function (referentially transparent by the same
+        /// gate the folder applies) with side-effect-free arguments qualifies. A call whose argument
+        /// had effects must not lose one of its two evaluations, and a callee that is not proven
+        /// pure must not be assumed to return the same value twice.
+        /// </para>
+        /// </remarks>
+        /// <summary>
+        /// Binds <c>perms.contains(flag)</c> on a <c>@Flags</c> enum (§P14) to the test it means:
+        /// <c>(perms &amp; flag) == flag</c>.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A lowering rather than a declared member, and the representation is what forces that: a
+        /// <c>@Flags</c> value is one <c>int</c> with no instance behind it, so a member would have
+        /// nothing to run on — and giving it one would mean boxing at every call, which is the cost
+        /// the mark exists to avoid. The same reason the enum is refused members of its own is the
+        /// reason this one is built in.
+        /// </para>
+        /// <para>
+        /// The argument goes into a temporary because the test reads it twice and an argument is an
+        /// arbitrary expression: written out naively, <c>p.contains(next())</c> would call
+        /// <c>next()</c> twice, which no reader of the source would expect. The receiver is read
+        /// once as written and needs none.
+        /// </para>
+        /// <para>
+        /// Answers <see langword="null"/> — rather than reporting — for anything that is not this
+        /// exact shape, so an ordinary miss falls through to the ordinary "no method called
+        /// 'contains'" message instead of a special one.
+        /// </para>
+        /// </remarks>
+        private BoundExpression? TryBindFlagsContains(
+            CallExpressionSyntax syntax,
+            BoundExpression? receiver,
+            TypeSymbol owner,
+            string name)
+        {
+            if (receiver is null
+                || !string.Equals(name, FlagsContainsName, StringComparison.Ordinal)
+                || owner is not NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum, IsFlagsEnum: true })
+            {
+                return null;
+            }
+
+            if (syntax.Arguments.Count != 1 || syntax.Arguments[0].Name is not null)
+                return null;
+
+            var argument = BindExpression(syntax.Arguments[0].Value, owner);
+
+            if (argument.Type.IsError)
+                return Error(syntax);
+
+            if (!ReferenceEquals(argument.Type.NonNullable, owner))
+            {
+                Report(
+                    SurtrDiagnosticCode.CannotConvert,
+                    syntax.Span,
+                    $"'contains' on '{owner.ToDisplayString()}' tests one of its own flags; '{argument.Type.ToDisplayString()}' is not one.");
+
+                return Error(syntax);
+            }
+
+            var temporary = DeclareLocal(NextCseTempName(), owner, isReadOnly: true, syntax.Span);
+            var reuse = new BoundLocalExpression(syntax, temporary);
+
+            var masked = new BoundBinaryExpression(syntax, BinaryOperator.BitAnd, receiver, reuse, owner);
+
+            return new BoundSequenceExpression(
+                syntax,
+                new BoundBlockStatement(syntax, new BoundStatement[]
+                {
+                    new BoundLocalDeclarationStatement(syntax, temporary, argument),
+                }),
+                new BoundBinaryExpression(syntax, BinaryOperator.Equal, masked, reuse, _factory.Bool),
+                _factory.Bool);
+        }
+
+        /// <summary>The one member name a <c>@Flags</c> enum answers to, built in (§P14).</summary>
+        private const string FlagsContainsName = "contains";
+
+        private BoundExpression TryCseBinary(
+            SyntaxNode syntax,
+            BinaryOperator @operator,
+            BoundExpression left,
+            BoundExpression right,
+            TypeSymbol resultType)
+        {
+            if (!StructurallyEqual(left, right) || !IsFoldablePureCall(left, out _))
+                return new BoundBinaryExpression(syntax, @operator, left, right, resultType);
+
+            var temporary = DeclareLocal(NextCseTempName(), left.Type, isReadOnly: true, syntax.Span);
+            var reuse = new BoundLocalExpression(syntax, temporary);
+
+            return new BoundSequenceExpression(
+                syntax,
+                new BoundBlockStatement(syntax, new BoundStatement[]
+                {
+                    new BoundLocalDeclarationStatement(syntax, temporary, left),
+                }),
+                new BoundBinaryExpression(syntax, @operator, reuse, reuse, resultType),
+                resultType);
+        }
+
+        /// <summary>
+        /// Eliminates a duplicated <c>@Pure</c> call among a call's own arguments — the
+        /// <c>g(f(x), f(x))</c> shape — lifting the first evaluation into a temporary both copies
+        /// read.
+        /// </summary>
+        private BoundExpression TryCseCallArguments(SyntaxNode syntax, BoundExpression expression)
+        {
+            if (expression is not BoundCallExpression call)
+                return expression;
+
+            int duplicate = -1;
+            for (int i = 0; i < call.Arguments.Count; i++)
+            {
+                if (!IsFoldablePureCall(call.Arguments[i], out _))
+                    continue;
+
+                for (int j = i + 1; j < call.Arguments.Count; j++)
+                {
+                    if (StructurallyEqual(call.Arguments[i], call.Arguments[j]))
+                    {
+                        duplicate = i;
+                        break;
+                    }
+                }
+
+                if (duplicate >= 0)
+                    break;
+            }
+
+            if (duplicate < 0)
+                return call;
+
+            var temporary = DeclareLocal(NextCseTempName(), call.Arguments[duplicate].Type, isReadOnly: true, syntax.Span);
+            var reuse = new BoundLocalExpression(syntax, temporary);
+
+            var rewritten = new BoundExpression[call.Arguments.Count];
+            for (int i = 0; i < rewritten.Length; i++)
+                rewritten[i] = StructurallyEqual(call.Arguments[duplicate], call.Arguments[i])
+                    ? reuse
+                    : call.Arguments[i];
+
+            var rebuilt = new BoundCallExpression(syntax, call.Receiver, call.Method, rewritten, call.IsVirtual);
+
+            return new BoundSequenceExpression(
+                syntax,
+                new BoundBlockStatement(syntax, new BoundStatement[]
+                {
+                    new BoundLocalDeclarationStatement(syntax, temporary, call.Arguments[duplicate]),
+                }),
+                rebuilt,
+                rebuilt.Type);
+        }
+
+        /// <summary>
+        /// Whether an expression is a call to a foldable <c>@Pure</c> static function whose arguments
+        /// are all safe to evaluate once.
+        /// </summary>
+        private bool IsFoldablePureCall(BoundExpression expression, out BoundCallExpression call)
+        {
+            if (Unwrap(expression) is not BoundCallExpression unwrapped)
+            {
+                call = null!;
+                return false;
+            }
+
+            call = unwrapped;
+
+            if (_pureFolder is null || !call.Method.IsStatic || call.IsVirtual)
+                return false;
+
+            if (!_pureFolder.CanFold(call.Method))
+                return false;
+
+            foreach (var argument in call.Arguments)
+            {
+                if (!PureFoldVerifier.IsPureArgument(argument))
+                    return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Whether two bound expressions are built identically — the same symbols, literals and
+        /// operations in the same places. Used to recognise the duplicated pure call CSE removes.
+        /// A <see langword="null"/> receiver matches only a <see langword="null"/> receiver.
+        /// </summary>
+        private static bool StructurallyEqual(BoundExpression? left, BoundExpression? right)
+        {
+            if (ReferenceEquals(left, right))
+                return true;
+
+            switch (left, right)
+            {
+                case (BoundCallExpression l, BoundCallExpression r):
+                    if (!ReferenceEquals(l.Method, r.Method) || l.Arguments.Count != r.Arguments.Count)
+                        return false;
+
+                    for (int i = 0; i < l.Arguments.Count; i++)
+                    {
+                        if (!StructurallyEqual(l.Arguments[i], r.Arguments[i]))
+                            return false;
+                    }
+
+                    return true;
+
+                case (BoundLiteralExpression l, BoundLiteralExpression r):
+                    return ReferenceEquals(l.Type, r.Type) && Equals(l.Value, r.Value);
+
+                case (BoundLocalExpression l, BoundLocalExpression r):
+                    return ReferenceEquals(l.Local, r.Local);
+
+                case (BoundParameterExpression l, BoundParameterExpression r):
+                    return ReferenceEquals(l.Parameter, r.Parameter);
+
+                case (BoundConversionExpression l, BoundConversionExpression r):
+                    return StructurallyEqual(l.Operand, r.Operand);
+
+                case (BoundBinaryExpression l, BoundBinaryExpression r):
+                    return l.Operator == r.Operator
+                        && StructurallyEqual(l.Left, r.Left)
+                        && StructurallyEqual(l.Right, r.Right);
+
+                case (BoundUnaryExpression l, BoundUnaryExpression r):
+                    return l.Operator == r.Operator && StructurallyEqual(l.Operand, r.Operand);
+
+                case (BoundFieldExpression l, BoundFieldExpression r):
+                    return ReferenceEquals(l.Field, r.Field)
+                        && StructurallyEqual(l.Receiver, r.Receiver);
+
+                default:
+                    return false;
+            }
         }
 
         /// <summary>
@@ -2312,7 +2909,11 @@ namespace Surtr.Compiler.Binding
 
             var resolved = new TypeSymbol[syntax.TypeArguments.Count];
             for (int i = 0; i < resolved.Length; i++)
+            {
                 resolved[i] = _resolver.Resolve(syntax.TypeArguments[i], _typeScope, _sourceName);
+                if (resolved[i].NonNullable is NamedTypeSymbol writtenType)
+                    ReportIfObsoleteType(writtenType, syntax.TypeArguments[i]);
+            }
 
             return resolved;
         }
@@ -3234,6 +3835,15 @@ namespace Surtr.Compiler.Binding
             if (!TryResolveConstructor(syntax, written, type, out var constructor, out var arguments))
                 return Error(syntax);
 
+            // §11: constructing an obsolete class is a use of it. When both the type and the chosen
+            // constructor carry the mark, the constructor's reason is the more specific one to show.
+            Symbol? marked = constructor is not null && BuiltInAttributes.IsObsolete(constructor) ? constructor
+                : BuiltInAttributes.IsObsolete(type) ? type
+                : null;
+
+            if (marked is not null)
+                ReportIfObsolete(marked, type.Name, syntax);
+
             return new BoundObjectCreationExpression(syntax, type, constructor, arguments);
         }
 
@@ -3883,6 +4493,8 @@ namespace Surtr.Compiler.Binding
         {
             var operand = BindExpression(syntax.Operand);
             var target = _resolver.Resolve(syntax.TargetType, _typeScope, _sourceName);
+            if (target.NonNullable is NamedTypeSymbol castTarget)
+                ReportIfObsoleteType(castTarget, syntax.TargetType);
 
             if (operand.Type.IsError || target.IsError)
                 return Error(syntax);
@@ -3909,6 +4521,8 @@ namespace Surtr.Compiler.Binding
         {
             var operand = BindExpression(syntax.Operand);
             var tested = _resolver.Resolve(syntax.TargetType, _typeScope, _sourceName);
+            if (tested.NonNullable is NamedTypeSymbol testedType)
+                ReportIfObsoleteType(testedType, syntax.TargetType);
 
             return new BoundTypeTestExpression(syntax, operand, tested, _factory.Bool);
         }

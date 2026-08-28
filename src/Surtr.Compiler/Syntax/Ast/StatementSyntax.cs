@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System.Collections.Generic;
 
@@ -41,6 +41,35 @@ namespace Surtr.Compiler.Syntax.Ast
         public ExpressionStatementSyntax(SourceSpan span, ExpressionSyntax expression) : base(span)
         {
             Expression = expression;
+        }
+    }
+
+    /// <summary>
+    /// A destructuring declaration: <c>let (a, b) = value;</c> or <c>var (a, b) = value;</c> (§4.5).
+    /// Each name becomes one local, bound to the tuple element at its position.
+    /// </summary>
+    public sealed class TupleDeclarationStatementSyntax : StatementSyntax
+    {
+        /// <summary>The declared names, in element order.</summary>
+        public IReadOnlyList<string> Names { get; }
+
+        /// <summary>The value whose elements the names bind.</summary>
+        public ExpressionSyntax Initializer { get; }
+
+        /// <summary>True for <c>var</c>, false for <c>let</c>.</summary>
+        public bool IsMutable { get; }
+
+        /// <summary>Initializes a destructuring declaration.</summary>
+        /// <param name="span">The source the statement covers.</param>
+        /// <param name="names">The declared names, in element order.</param>
+        /// <param name="initializer">The value whose elements the names bind.</param>
+        /// <param name="isMutable">True for <c>var</c>.</param>
+        public TupleDeclarationStatementSyntax(SourceSpan span, IReadOnlyList<string> names, ExpressionSyntax initializer, bool isMutable)
+            : base(span)
+        {
+            Names = names;
+            Initializer = initializer;
+            IsMutable = isMutable;
         }
     }
 
@@ -294,6 +323,27 @@ namespace Surtr.Compiler.Syntax.Ast
             Body = body;
             Catches = catches;
             Finally = finallyBlock;
+        }
+    }
+
+    /// <summary>A <c>using</c> block and the resources it closes on the way out (§9.2).</summary>
+    public sealed class UsingStatementSyntax : StatementSyntax
+    {
+        /// <summary>The resources, in the order they are opened; they are closed in reverse.</summary>
+        public IReadOnlyList<LocalDeclarationStatementSyntax> Resources { get; }
+
+        /// <summary>The block the resources are live for.</summary>
+        public BlockStatementSyntax Body { get; }
+
+        /// <summary>Initializes a using statement.</summary>
+        /// <param name="span">The source the statement covers.</param>
+        /// <param name="resources">The resources, in the order they are opened.</param>
+        /// <param name="body">The block the resources are live for.</param>
+        public UsingStatementSyntax(SourceSpan span, IReadOnlyList<LocalDeclarationStatementSyntax> resources, BlockStatementSyntax body)
+            : base(span)
+        {
+            Resources = resources;
+            Body = body;
         }
     }
 

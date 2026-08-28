@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -190,8 +190,10 @@ namespace Surtr.Interop.SourceGenerator
 
         private static void EmitEnumRegistration(StringBuilder builder, INamedTypeSymbol type, AttributeData attribute, string name, string? module, string fullName, string indent)
         {
-            string enumType = type.ToDisplayString();
             var fields = type.GetMembers().OfType<IFieldSymbol>().Where(static f => f.HasConstantValue).ToList();
+
+            // A [Flags] CLR enum registers as a Surtr @Flags enum, so `| & ^` work on it.
+            bool isFlags = type.GetAttributes().Any(static a => a.AttributeClass?.Name is "FlagsAttribute" or "Flags");
 
             builder.AppendLine(indent + "internal static class SurtrGenerated_" + type.Name);
             builder.AppendLine(indent + "{");
@@ -203,8 +205,17 @@ namespace Surtr.Interop.SourceGenerator
             builder.AppendLine(indent + "            FullName = \"" + fullName + "\",");
             builder.AppendLine(indent + "            Name = \"" + name + "\",");
             builder.AppendLine(indent + "            Kind = NativeTypeKind.Enum,");
-            builder.AppendLine(indent + "            EnumCases = new string[] { " + string.Join(", ", fields.Select(f => "\"" + f.Name + "\"")) + " },");
-            builder.AppendLine(indent + "            EnumValues = new object[] { " + string.Join(", ", fields.Select(f => "(object)" + enumType + "." + f.Name)) + " },");
+            builder.AppendLine(indent + "            IsFlags = " + (isFlags ? "true" : "false") + ",");
+            builder.AppendLine(indent + "            EnumCases = new NativeEnumCaseDescriptor[]");
+            builder.AppendLine(indent + "            {");
+
+            foreach (var field in fields)
+            {
+                long value = Convert.ToInt64(field.ConstantValue, System.Globalization.CultureInfo.InvariantCulture);
+                builder.AppendLine(indent + "                new NativeEnumCaseDescriptor { Name = \"" + field.Name + "\", Value = " + value + "L },");
+            }
+
+            builder.AppendLine(indent + "            },");
             builder.AppendLine(indent + "        };");
             builder.AppendLine(indent + "        return SurtrBridge.Register(runtime, d);");
             builder.AppendLine(indent + "    }");
@@ -218,11 +229,42 @@ namespace Surtr.Interop.SourceGenerator
             var properties = new List<IPropertySymbol>();
             var comparisons = new List<IMethodSymbol>();
 
-            foreach (var constructor in type.InstanceConstructors.Where(static c => c.DeclaredAccessibility == Accessibility.Public && !c.IsStatic && !HasRefIn(c)))
-                methods.Add(constructor);
+            // A static factory marked [SurtrNativeConstructor] plays the constructor role for an
+            // inline value type, which cannot expose instance constructors at all - its value is
+            // its own result. Marked separately so the ordinary-method walk below skips them:
+            // registering the same method twice would collide in the class's member tables.
+            var factoryConstructors = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
+            if (InlineLayout.IsInline(type))
+            {
+                foreach (var candidate in type.GetMembers().OfType<IMethodSymbol>())
+                {
+                    if (candidate.MethodKind == MethodKind.Ordinary
+                        && candidate.IsStatic
+                        && candidate.DeclaredAccessibility == Accessibility.Public
+                        && candidate.Parameters.All(static p => p.RefKind == RefKind.None)
+                        && ReferenceEquals(candidate.ReturnType, type)
+                        && GeneratorSupport.FindAttribute(candidate, GeneratorSupport.NativeConstructorAttribute) is not null)
+                    {
+                        factoryConstructors.Add(candidate);
+                        methods.Add(candidate);
+                    }
+                }
+            }
+
+            // An inline value type has no instance constructors to expose: its value is its own
+            // result, and [SurtrNativeConstructor] factories above play that role. An ordinary
+            // native class keeps them - they cross the wire as instance factories, no receiver.
+            if (!InlineLayout.IsInline(type))
+            {
+                foreach (var constructor in type.InstanceConstructors.Where(static c => c.DeclaredAccessibility == Accessibility.Public && !c.IsStatic && !HasRefIn(c)))
+                    methods.Add(constructor);
+            }
 
             foreach (var method in type.GetMembers().OfType<IMethodSymbol>())
             {
+                if (factoryConstructors.Contains(method))
+                    continue;
+
                 if (IsCompareTo(method) && method.DeclaredAccessibility == Accessibility.Public)
                 {
                     comparisons.Add(method);
@@ -263,13 +305,26 @@ namespace Surtr.Interop.SourceGenerator
             var descriptors = new List<string>();
 
             foreach (var method in methods)
-                descriptors.Add(EmitMethod(builder, type, method, policy, indent));
+                descriptors.Add(EmitMethod(builder, type, method, policy, indent, asConstructor: method.MethodKind == MethodKind.Constructor || factoryConstructors.Contains(method)));
 
             foreach (var comparison in comparisons)
                 descriptors.Add(EmitComparison(builder, type, comparison, policy, indent));
 
+            bool inline = InlineLayout.IsInline(type);
+
             foreach (var field in fields)
+            {
+                // An inline type's instance fields are its storage, so they become real slots
+                // rather than accessor pairs - no shim is emitted for them at all. A static one is
+                // not part of any block and keeps the ordinary native-field shape.
+                if (inline && !field.IsStatic)
+                {
+                    descriptors.Add(EmitValueField(type, field, policy));
+                    continue;
+                }
+
                 descriptors.Add(EmitField(builder, type, field, policy, indent));
+            }
 
             foreach (var property in properties)
                 descriptors.Add(EmitProperty(builder, type, property, policy, indent));
@@ -287,16 +342,19 @@ namespace Surtr.Interop.SourceGenerator
             EmitRegistration(builder, type, policy, descriptors, indent);
         }
 
-        private static string EmitMethod(StringBuilder builder, INamedTypeSymbol type, IMethodSymbol method, int policy, string indent)
+        private static string EmitMethod(StringBuilder builder, INamedTypeSymbol type, IMethodSymbol method, int policy, string indent, bool asConstructor)
         {
             var attribute = GeneratorSupport.FindAttribute(method, GeneratorSupport.NativeMethodAttribute);
             int memberPolicy = GeneratorSupport.GetIntNamed(attribute, "NamingPolicy") ?? policy;
-            string name = method.MethodKind == MethodKind.Constructor
+            string name = asConstructor
                 ? "ctor"
                 : GeneratorSupport.GetStringNamed(attribute, "Name") ?? GeneratorSupport.Apply(method.Name, memberPolicy, isMember: true);
 
-            string shimName = "__SurtrInvoke_" + type.Name + "_" + (method.MethodKind == MethodKind.Constructor ? "ctor" : method.Name) + "_" + method.Parameters.Length;
-            EmitMethodShim(builder, type, method, shimName, indent);
+            // A real constructor's shim is named after the type; a factory keeps its own name so
+            // the two cannot collide when both exist on one inline type.
+            string shimName = "__SurtrInvoke_" + type.Name + "_"
+                + (method.MethodKind == MethodKind.Constructor ? "ctor" : method.Name) + "_" + method.Parameters.Length;
+            EmitMethodShim(builder, type, method, shimName, indent, asConstructor);
 
             var parameters = new List<string>();
             int argIndex = method.IsStatic ? 0 : 1;
@@ -321,10 +379,14 @@ namespace Surtr.Interop.SourceGenerator
             var descriptor = new StringBuilder();
             descriptor.Append("new NativeMethodDescriptor { Name = \"" + name + "\"");
             descriptor.Append(", IsStatic = " + (method.IsStatic ? "true" : "false"));
-            descriptor.Append(", IsConstructor = " + (method.MethodKind == MethodKind.Constructor ? "true" : "false"));
+            descriptor.Append(", IsConstructor = " + (asConstructor ? "true" : "false"));
             descriptor.Append(", IsVirtual = " + (method.IsVirtual ? "true" : "false"));
             descriptor.Append(", IsOverride = " + (method.IsOverride ? "true" : "false"));
-            descriptor.Append(", ReturnDescriptor = \"" + returnDescriptor + "\"");
+            descriptor.Append(", ReturnDescriptor = \"" + (asConstructor
+                ? // A constructor's result is the instance it creates: the return names the class,
+                  // which is what makes `ArgumentSlotCount` treat it as a receiverless factory.
+                  GeneratorSupport.MapType(type)
+                : returnDescriptor) + "\"");
             descriptor.Append(", Parameters = new NativeParameterDescriptor[] { " + string.Join(", ", parameters) + " }");
             descriptor.Append(", EntryPoint = SurtrNativeEntryPoint.FromFunctionPointer(&" + shimName + ")");
             descriptor.Append(" }");
@@ -332,25 +394,44 @@ namespace Surtr.Interop.SourceGenerator
             return descriptor.ToString();
         }
 
-        private static void EmitMethodShim(StringBuilder builder, INamedTypeSymbol type, IMethodSymbol method, string shimName, string indent)
+        private static void EmitMethodShim(StringBuilder builder, INamedTypeSymbol type, IMethodSymbol method, string shimName, string indent, bool asConstructor)
         {
             string typeName = type.ToDisplayString();
 
             builder.AppendLine(indent + GeneratedCodeAttribute);
-            builder.AppendLine(indent + "private static SurtrValue " + shimName + "(SurtrCallArguments args)");
+            builder.AppendLine(indent + "private static int " + shimName + "(SurtrCallArguments args)");
             builder.AppendLine(indent + "{");
 
+            // A constructor - real or factory - has no receiver on the wire: its parameters start
+            // at slot 0 and the new instance is written over that same slot.
+            bool wireStatic = method.IsStatic || asConstructor;
+            var receiverLayout = wireStatic ? null : InlineLayout.For(type);
+
             string targetExpr;
-            if (method.IsStatic)
+            if (wireStatic)
                 targetExpr = typeName;
+            else if (receiverLayout is not null)
+            {
+                // An inline receiver is the block in the argument slots, not a reference to
+                // resolve: it is rebuilt with an object initializer, which is typed and allocates
+                // nothing - the whole advantage of the generated path over the fallback.
+                builder.AppendLine(indent + "    var __target = " + ReadBlock(receiverLayout, 0) + ";");
+                targetExpr = "__target";
+            }
             else
             {
-                builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
+                // A host class deriving from SurtrNativeObject is its own entity: the reference
+                // resolves straight to it, and digging through a proxy's Target would reach null
+                // or the wrong object. Anything else sits behind a proxy to unwrap.
+                builder.AppendLine(indent + "    var __target = " + ToClrReceiver(type, 0) + ";");
                 targetExpr = "__target";
             }
 
             var arguments = new List<string>();
-            int argIndex = method.IsStatic ? 0 : 1;
+
+            // An argument is not necessarily a slot: a parameter typed as an inline struct occupies
+            // its whole block, so the walk advances by width rather than by one.
+            int argIndex = wireStatic ? 0 : receiverLayout?.Width ?? 1;
 
             foreach (var parameter in method.Parameters)
             {
@@ -364,24 +445,62 @@ namespace Surtr.Interop.SourceGenerator
                     continue;
                 }
 
-                string clr = ToClrExpression(parameter.Type, argIndex);
-                builder.AppendLine(indent + "    var " + parameter.Name + " = " + clr + ";");
+                var parameterLayout = InlineLayout.For(parameter.Type);
+
+                if (parameterLayout is not null)
+                {
+                    builder.AppendLine(indent + "    var " + parameter.Name + " = " + ReadBlock(parameterLayout, argIndex) + ";");
+                    arguments.Add(parameter.Name);
+                    argIndex += parameterLayout.Width;
+                    continue;
+                }
+
+                builder.AppendLine(indent + "    var " + parameter.Name + " = " + ToClrExpression(parameter.Type, argIndex) + ";");
                 arguments.Add(parameter.Name);
                 argIndex++;
             }
 
+            bool hasOut = method.Parameters.Any(static p => p.RefKind == RefKind.Out);
+            bool realConstructor = asConstructor && !method.IsStatic;
+
+            // A factory keeps its inline result layout - the struct it returns travels as its flat
+            // block, exactly what construction syntax expects to find. A real constructor's
+            // "result" is the wrapped reference written by the tail below, not a block.
+            var resultLayout = realConstructor ? null : InlineLayout.For(method.ReturnType);
+
+            if (!hasOut && resultLayout is not null)
+            {
+                // An inline result is written as its own flat block: the declared return is a value
+                // type, so `ResultSlotCount` is its width and the caller copies that many slots.
+                // Computed into a local first, because the results alias the arguments and every
+                // input has to be read before the first write.
+                builder.AppendLine(indent + "    var __result = " + targetExpr + "." + method.Name + "(" + string.Join(", ", arguments) + ");");
+                WriteBlock(builder, resultLayout, "__result", 0, indent);
+                builder.AppendLine(indent + "    return " + resultLayout.Width + ";");
+                builder.AppendLine(indent + "}");
+                builder.AppendLine();
+                return;
+            }
+
             string returnExpr;
-            if (method.MethodKind == MethodKind.Constructor)
-                returnExpr = "SurtrValue.CreateReference(args.Runtime.WrapNative(new " + typeName + "(" + string.Join(", ", arguments) + ")).GetSurtrReference())";
+            if (realConstructor)
+            {
+                // A host class deriving from SurtrNativeObject is registered as the entity itself:
+                // wrapping it would bury the object the class carries inside a shell proxy, and
+                // reading it back through Target would reach null or the wrong thing.
+                string construction = "new " + typeName + "(" + string.Join(", ", arguments) + ")";
+                returnExpr = DerivesFromNativeObject(type)
+                    ? "args.Runtime.RegisterHost(" + construction + ")"
+                    : "SurtrValue.CreateReference(args.Runtime.WrapNative(" + construction + ").GetSurtrReference())";
+            }
             else if (method.ReturnsVoid)
                 returnExpr = "SurtrValue.Null";
             else
                 returnExpr = ToSurtrExpression(method.ReturnType, targetExpr + "." + method.Name + "(" + string.Join(", ", arguments) + ")");
 
-            bool hasOut = method.Parameters.Any(static p => p.RefKind == RefKind.Out);
             if (!hasOut)
             {
-                builder.AppendLine(indent + "    return " + returnExpr + ";");
+                builder.AppendLine(indent + "    return args.Return(" + returnExpr + ");");
             }
             else
             {
@@ -390,6 +509,51 @@ namespace Surtr.Interop.SourceGenerator
 
             builder.AppendLine(indent + "}");
             builder.AppendLine();
+        }
+
+        /// <summary>
+        /// An expression rebuilding an inline struct from the <paramref name="offset"/>-th slot on.
+        /// </summary>
+        /// <remarks>
+        /// An object initializer over the public fields, so the whole read is one typed expression
+        /// with no boxing and no reflection. A nested inline field expands into its own initializer
+        /// at the right offset, which is what keeps a <c>Bounds</c> one flat run of six slots
+        /// rather than two references.
+        /// </remarks>
+        private static string ReadBlock(InlineLayout layout, int offset)
+        {
+            var parts = new List<string>(layout.Slots.Length);
+            int at = offset;
+
+            foreach (var slot in layout.Slots)
+            {
+                parts.Add(slot.Field.Name + " = " + (slot.Nested is null
+                    ? ToClrExpression(slot.Field.Type, at)
+                    : ReadBlock(slot.Nested, at)));
+
+                at += slot.Width;
+            }
+
+            return "new " + layout.Type.ToDisplayString() + " { " + string.Join(", ", parts) + " }";
+        }
+
+        /// <summary>
+        /// Writes an inline struct held in <paramref name="source"/> into the slots from
+        /// <paramref name="offset"/> on.
+        /// </summary>
+        private static void WriteBlock(StringBuilder builder, InlineLayout layout, string source, int offset, string indent)
+        {
+            int at = offset;
+
+            foreach (var slot in layout.Slots)
+            {
+                if (slot.Nested is null)
+                    builder.AppendLine(indent + "    args.WriteResult(" + at + ", " + ToSurtrExpression(slot.Field.Type, source + "." + slot.Field.Name) + ");");
+                else
+                    WriteBlock(builder, slot.Nested, source + "." + slot.Field.Name, at, indent);
+
+                at += slot.Width;
+            }
         }
 
         private static void EmitOutReturn(StringBuilder builder, IMethodSymbol method, string targetExpr, List<string> arguments, string indent)
@@ -404,7 +568,7 @@ namespace Surtr.Interop.SourceGenerator
 
             if (outParams.Count == 1 && method.ReturnsVoid)
             {
-                builder.AppendLine(indent + "    return " + ToSurtrExpression(outParams[0].Type, outParams[0].Name) + ";");
+                builder.AppendLine(indent + "    return args.Return(" + ToSurtrExpression(outParams[0].Type, outParams[0].Name) + ");");
                 return;
             }
 
@@ -414,9 +578,19 @@ namespace Surtr.Interop.SourceGenerator
             foreach (var p in outParams)
                 elements.Add(ToSurtrExpression(p.Type, p.Name));
 
-            var tupleDescriptor = BuildTupleDescriptor(method);
-            builder.AppendLine(indent + "    var __tuple = args.Runtime.NewTuple(SurtrClassReference.FromDescriptor(\"" + tupleDescriptor + "\"), new SurtrValue[] { " + string.Join(", ", elements) + " });");
-            builder.AppendLine(indent + "    return SurtrValue.CreateReference(__tuple.GetSurtrReference());");
+            // Written as a flat block of slots, not as a reference to a packed SurtrTuple. A tuple
+            // is a value type, so the method's `ResultSlotCount` is its flattened width and the
+            // caller copies that many slots back - a single reference in slot 0 would leave the
+            // rest of the block holding whatever the stack had there. Every conversion runs into a
+            // local first and the writes come after, because a result aliases the arguments and
+            // `WriteResult` cannot tell a stale read from a fresh one.
+            for (int i = 0; i < elements.Count; i++)
+                builder.AppendLine(indent + "    var __slot" + i + " = " + elements[i] + ";");
+
+            for (int i = 0; i < elements.Count; i++)
+                builder.AppendLine(indent + "    args.WriteResult(" + i + ", __slot" + i + ");");
+
+            builder.AppendLine(indent + "    return " + elements.Count + ";");
         }
 
         private static string EmitField(StringBuilder builder, INamedTypeSymbol type, IFieldSymbol field, int policy, string indent)
@@ -433,14 +607,14 @@ namespace Surtr.Interop.SourceGenerator
 
             // Getter shim.
             builder.AppendLine(indent + GeneratedCodeAttribute);
-            builder.AppendLine(indent + "private static SurtrValue " + getterShim + "(SurtrCallArguments args)");
+            builder.AppendLine(indent + "private static int " + getterShim + "(SurtrCallArguments args)");
             builder.AppendLine(indent + "{");
             string target = field.IsStatic
                 ? typeName
-                : "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!";
+                : ToClrReceiver(type, 0);
             if (!field.IsStatic)
                 builder.AppendLine(indent + "    var __target = " + target + ";");
-            builder.AppendLine(indent + "    return " + ToSurtrExpression(field.Type, (field.IsStatic ? typeName : "__target") + "." + field.Name) + ";");
+            builder.AppendLine(indent + "    return args.Return(" + ToSurtrExpression(field.Type, (field.IsStatic ? typeName : "__target") + "." + field.Name) + ");");
             builder.AppendLine(indent + "}");
             builder.AppendLine();
 
@@ -448,19 +622,34 @@ namespace Surtr.Interop.SourceGenerator
             if (!readOnly)
             {
                 builder.AppendLine(indent + GeneratedCodeAttribute);
-                builder.AppendLine(indent + "private static SurtrValue " + setterShim + "(SurtrCallArguments args)");
+                builder.AppendLine(indent + "private static int " + setterShim + "(SurtrCallArguments args)");
                 builder.AppendLine(indent + "{");
                 if (!field.IsStatic)
                     builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
                 int valueIndex = field.IsStatic ? 0 : 1;
                 builder.AppendLine(indent + "    var __value = " + ToClrExpression(field.Type, valueIndex) + ";");
                 builder.AppendLine(indent + "    " + (field.IsStatic ? typeName : "__target") + "." + field.Name + " = __value;");
-                builder.AppendLine(indent + "    return SurtrValue.Null;");
+                builder.AppendLine(indent + "    return 0;");
                 builder.AppendLine(indent + "}");
                 builder.AppendLine();
             }
 
             return "new NativeFieldDescriptor { Name = \"" + name + "\", IsStatic = " + (field.IsStatic ? "true" : "false") + ", ReadOnly = " + (readOnly ? "true" : "false") + ", TypeDescriptor = \"" + typeDescriptor + "\", Getter = SurtrNativeEntryPoint.FromFunctionPointer(&" + getterShim + "), Setter = " + (readOnly ? "default" : "SurtrNativeEntryPoint.FromFunctionPointer(&" + setterShim + ")") + " }";
+        }
+
+        /// <summary>
+        /// One storage field of an inline value type. No shim: the slot <em>is</em> the storage, so
+        /// reading it from Surtr never enters host code and there is nothing to dispatch to.
+        /// </summary>
+        private static string EmitValueField(INamedTypeSymbol type, IFieldSymbol field, int policy)
+        {
+            var attribute = GeneratorSupport.FindAttribute(field, GeneratorSupport.NativeFieldAttribute);
+            int memberPolicy = GeneratorSupport.GetIntNamed(attribute, "NamingPolicy") ?? policy;
+            string name = GeneratorSupport.GetStringNamed(attribute, "Name") ?? GeneratorSupport.Apply(field.Name, memberPolicy, isMember: true);
+            string typeDescriptor = GeneratorSupport.GetStringNamed(attribute, "TypeDescriptor") ?? GeneratorSupport.MapType(field.Type);
+
+            return "new NativeValueFieldDescriptor { Name = \"" + name + "\", TypeDescriptor = \"" + typeDescriptor
+                   + "\", Field = typeof(" + type.ToDisplayString() + ").GetField(\"" + field.Name + "\") }";
         }
 
         private static string EmitProperty(StringBuilder builder, INamedTypeSymbol type, IPropertySymbol property, int policy, string indent)
@@ -472,8 +661,13 @@ namespace Surtr.Interop.SourceGenerator
 
             string typeName = type.ToDisplayString();
             bool hasGetter = property.GetMethod is { DeclaredAccessibility: Accessibility.Public };
-            bool hasSetter = property.SetMethod is { DeclaredAccessibility: Accessibility.Public };
             bool isStatic = (property.GetMethod ?? property.SetMethod)?.IsStatic ?? false;
+
+            // A setter on an inline receiver would write to a copy that is discarded the moment the
+            // shim returns, so an inline value type has no writable instance member at all. A static
+            // property is not part of any block and keeps its setter.
+            bool hasSetter = property.SetMethod is { DeclaredAccessibility: Accessibility.Public }
+                             && (isStatic || !InlineLayout.IsInline(type));
 
             string getterShim = "__SurtrPropGet_" + type.Name + "_" + property.Name;
             string setterShim = "__SurtrPropSet_" + type.Name + "_" + property.Name;
@@ -481,12 +675,32 @@ namespace Surtr.Interop.SourceGenerator
             if (hasGetter)
             {
                 builder.AppendLine(indent + GeneratedCodeAttribute);
-                builder.AppendLine(indent + "private static SurtrValue " + getterShim + "(SurtrCallArguments args)");
+                builder.AppendLine(indent + "private static int " + getterShim + "(SurtrCallArguments args)");
                 builder.AppendLine(indent + "{");
-                string target = isStatic ? typeName : "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!";
+                var getterReceiver = isStatic ? null : InlineLayout.For(type);
+                string target = isStatic
+                    ? typeName
+                    : getterReceiver is not null
+                        ? ReadBlock(getterReceiver, 0)
+                        : ToClrReceiver(type, 0);
+
                 if (!isStatic)
                     builder.AppendLine(indent + "    var __target = " + target + ";");
-                builder.AppendLine(indent + "    return " + ToSurtrExpression(property.Type, (isStatic ? typeName : "__target") + "." + property.Name) + ";");
+
+                string source = (isStatic ? typeName : "__target") + "." + property.Name;
+                var getterResult = InlineLayout.For(property.Type);
+
+                if (getterResult is not null)
+                {
+                    builder.AppendLine(indent + "    var __result = " + source + ";");
+                    WriteBlock(builder, getterResult, "__result", 0, indent);
+                    builder.AppendLine(indent + "    return " + getterResult.Width + ";");
+                }
+                else
+                {
+                    builder.AppendLine(indent + "    return args.Return(" + ToSurtrExpression(property.Type, source) + ");");
+                }
+
                 builder.AppendLine(indent + "}");
                 builder.AppendLine();
             }
@@ -494,14 +708,14 @@ namespace Surtr.Interop.SourceGenerator
             if (hasSetter)
             {
                 builder.AppendLine(indent + GeneratedCodeAttribute);
-                builder.AppendLine(indent + "private static SurtrValue " + setterShim + "(SurtrCallArguments args)");
+                builder.AppendLine(indent + "private static int " + setterShim + "(SurtrCallArguments args)");
                 builder.AppendLine(indent + "{");
                 if (!isStatic)
                     builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
                 int valueIndex = isStatic ? 0 : 1;
                 builder.AppendLine(indent + "    var __value = " + ToClrExpression(property.Type, valueIndex) + ";");
                 builder.AppendLine(indent + "    " + (isStatic ? typeName : "__target") + "." + property.Name + " = __value;");
-                builder.AppendLine(indent + "    return SurtrValue.Null;");
+                builder.AppendLine(indent + "    return 0;");
                 builder.AppendLine(indent + "}");
                 builder.AppendLine();
             }
@@ -522,20 +736,43 @@ namespace Surtr.Interop.SourceGenerator
             string typeName = type.ToDisplayString();
 
             builder.AppendLine(indent + GeneratedCodeAttribute);
-            builder.AppendLine(indent + "private static SurtrValue " + shimName + "(SurtrCallArguments args)");
+            builder.AppendLine(indent + "private static int " + shimName + "(SurtrCallArguments args)");
             builder.AppendLine(indent + "{");
 
             var arguments = new List<string>();
             int argIndex = 0;
             foreach (var parameter in method.Parameters)
             {
+                // An operand typed as an inline struct is its whole block, so the walk advances by
+                // width. `a + b` over a three-slot value is six slots in, not two.
+                var operandLayout = InlineLayout.For(parameter.Type);
+                if (operandLayout is not null)
+                {
+                    builder.AppendLine(indent + "    var " + parameter.Name + " = " + ReadBlock(operandLayout, argIndex) + ";");
+                    arguments.Add(parameter.Name);
+                    argIndex += operandLayout.Width;
+                    continue;
+                }
+
                 builder.AppendLine(indent + "    var " + parameter.Name + " = " + ToClrExpression(parameter.Type, argIndex) + ";");
                 arguments.Add(parameter.Name);
                 argIndex++;
             }
 
             string call = OperatorExpression(method, arguments, typeName);
-            builder.AppendLine(indent + "    return " + (method.ReturnsVoid ? "SurtrValue.Null" : ToSurtrExpression(method.ReturnType, call)) + ";");
+            var operatorResultLayout = InlineLayout.For(method.ReturnType);
+
+            if (operatorResultLayout is not null)
+            {
+                builder.AppendLine(indent + "    var __result = " + call + ";");
+                WriteBlock(builder, operatorResultLayout, "__result", 0, indent);
+                builder.AppendLine(indent + "    return " + operatorResultLayout.Width + ";");
+            }
+            else
+            {
+                builder.AppendLine(indent + "    return args.Return(" + (method.ReturnsVoid ? "SurtrValue.Null" : ToSurtrExpression(method.ReturnType, call)) + ");");
+            }
+
             builder.AppendLine(indent + "}");
             builder.AppendLine();
 
@@ -570,11 +807,11 @@ namespace Surtr.Interop.SourceGenerator
             {
                 string shimName = "__SurtrIndexGet_" + type.Name;
                 builder.AppendLine(indent + GeneratedCodeAttribute);
-                builder.AppendLine(indent + "private static SurtrValue " + shimName + "(SurtrCallArguments args)");
+                builder.AppendLine(indent + "private static int " + shimName + "(SurtrCallArguments args)");
                 builder.AppendLine(indent + "{");
                 builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
                 builder.AppendLine(indent + "    var " + indexName + " = " + ToClrExpression(indexParameter.Type, 1) + ";");
-                builder.AppendLine(indent + "    return " + ToSurtrExpression(indexer.Type, "__target[" + indexName + "]") + ";");
+                builder.AppendLine(indent + "    return args.Return(" + ToSurtrExpression(indexer.Type, "__target[" + indexName + "]") + ");");
                 builder.AppendLine(indent + "}");
                 builder.AppendLine();
 
@@ -585,13 +822,13 @@ namespace Surtr.Interop.SourceGenerator
             {
                 string shimName = "__SurtrIndexSet_" + type.Name;
                 builder.AppendLine(indent + GeneratedCodeAttribute);
-                builder.AppendLine(indent + "private static SurtrValue " + shimName + "(SurtrCallArguments args)");
+                builder.AppendLine(indent + "private static int " + shimName + "(SurtrCallArguments args)");
                 builder.AppendLine(indent + "{");
                 builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
                 builder.AppendLine(indent + "    var " + indexName + " = " + ToClrExpression(indexParameter.Type, 1) + ";");
                 builder.AppendLine(indent + "    var __value = " + ToClrExpression(indexer.Type, 2) + ";");
                 builder.AppendLine(indent + "    __target[" + indexName + "] = __value;");
-                builder.AppendLine(indent + "    return SurtrValue.Null;");
+                builder.AppendLine(indent + "    return 0;");
                 builder.AppendLine(indent + "}");
                 builder.AppendLine();
 
@@ -610,7 +847,7 @@ namespace Surtr.Interop.SourceGenerator
             string parameterName = GeneratorSupport.Apply(parameter.Name, policy, isMember: true);
 
             builder.AppendLine(indent + GeneratedCodeAttribute);
-            builder.AppendLine(indent + "private static SurtrValue " + shimName + "(SurtrCallArguments args)");
+            builder.AppendLine(indent + "private static int " + shimName + "(SurtrCallArguments args)");
             builder.AppendLine(indent + "{");
             builder.AppendLine(indent + "    var __target = args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(0))!.TargetAs<" + typeName + ">()!;");
             builder.AppendLine(indent + "    var " + parameter.Name + " = " + ToClrExpression(parameter.Type, 1) + ";");
@@ -660,6 +897,14 @@ namespace Surtr.Interop.SourceGenerator
             builder.AppendLine(indent + "        Name = \"" + name + "\",");
             builder.AppendLine(indent + "        Kind = " + kind + ",");
 
+            // An inline struct's storage is Surtr's, so the descriptor says so and carries the CLR
+            // type the marshaler would need if anything ever fell back to reflection for it.
+            if (InlineLayout.IsInline(type))
+            {
+                builder.AppendLine(indent + "        IsInline = true,");
+                builder.AppendLine(indent + "        ClrType = typeof(" + type.ToDisplayString() + "),");
+            }
+
             if (type.Arity > 0)
                 builder.AppendLine(indent + "        TypeArguments = new string[] { " + string.Join(", ", type.TypeArguments.Select(static a => "\"" + GeneratorSupport.MapType(a) + "\"")) + " },");
 
@@ -699,17 +944,6 @@ namespace Surtr.Interop.SourceGenerator
             return "T(" + string.Join("", elements) + ")";
         }
 
-        private static string BuildTupleDescriptor(IMethodSymbol method)
-        {
-            var elements = new List<string>();
-            if (!method.ReturnsVoid)
-                elements.Add(GeneratorSupport.MapType(method.ReturnType));
-            foreach (var p in method.Parameters.Where(static p => p.RefKind == RefKind.Out))
-                elements.Add(GeneratorSupport.MapType(p.Type));
-
-            return "T(" + string.Join("", elements) + ")";
-        }
-
         private static string OutDeclaration(IParameterSymbol parameter)
             => parameter.Type.ToDisplayString() + " " + parameter.Name + ";";
 
@@ -731,7 +965,11 @@ namespace Surtr.Interop.SourceGenerator
                 case SpecialType.System_Boolean: return "args.GetBool(" + index + ")";
                 case SpecialType.System_Char: return "args.GetChar(" + index + ")";
                 case SpecialType.System_String: return "args.GetString(" + index + ").Text";
-                case SpecialType.System_Object: return "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(" + index + "))!.Target";
+                case SpecialType.System_Object:
+                    // The static type says nothing about which shape crossed, so the runtime
+                    // decides: a proxy unwraps to its target, an adopted native object is the
+                    // host object itself.
+                    return "args.Runtime.HostValueOf(args.GetValue(" + index + "))";
             }
 
             if (type.TypeKind == TypeKind.Enum)
@@ -740,8 +978,39 @@ namespace Surtr.Interop.SourceGenerator
             if (type.TypeKind == TypeKind.Delegate)
                 return "(" + type.ToDisplayString() + ")SurtrDelegateMarshal.ToClr(args.Runtime, args.GetValue(" + index + "), typeof(" + type.ToDisplayString() + "))";
 
+            if (DerivesFromNativeObject(type))
+                return "args.Runtime.Resolve<" + type.ToDisplayString() + ">(args.GetValue(" + index + "))!";
+
             return "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(" + index + "))!.TargetAs<" + type.ToDisplayString() + ">()!";
         }
+
+        /// <summary>
+        /// The expression reading the receiver of <paramref name="type"/> from slot
+        /// <paramref name="index"/>: the entity itself when the CLR class derives from
+        /// <see cref="Surtr.Runtime.Objects.SurtrNativeObject"/>, its proxy's target otherwise.
+        /// </summary>
+        private static string ToClrReceiver(INamedTypeSymbol type, int index)
+            => DerivesFromNativeObject(type)
+                ? "args.Runtime.Resolve<" + type.ToDisplayString() + ">(args.GetValue(" + index + "))!"
+                : "args.Runtime.Resolve<SurtrNativeObject>(args.GetValue(" + index + "))!.TargetAs<" + type.ToDisplayString() + ">()";
+
+        /// <summary>
+        /// Whether <paramref name="type"/>, or any base of it, is the runtime's
+        /// <c>SurtrNativeObject</c> - the mark of a host class that is already a Surtr entity and
+        /// so needs no proxy wrapped around it and none unwrapped off it.
+        /// </summary>
+        private static bool DerivesFromNativeObject(ITypeSymbol? type)
+        {
+            for (var walk = type; walk is not null; walk = walk.BaseType)
+            {
+                if (walk.ToDisplayString() == NativeObjectTypeName)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private const string NativeObjectTypeName = "Surtr.Runtime.Objects.SurtrNativeObject";
 
         private static string ToSurtrExpression(ITypeSymbol type, string expression)
         {
@@ -772,7 +1041,9 @@ namespace Surtr.Interop.SourceGenerator
                     return "SurtrValue.CreateReference(args.Runtime.InternString(" + expression + ").GetSurtrReference())";
 
                 case SpecialType.System_Object:
-                    return "SurtrValue.CreateReference(args.Runtime.WrapNative(" + expression + ").GetSurtrReference())";
+                    // The static type says nothing about which shape will cross, so the runtime
+                    // adopts what already is an entity and wraps everything else.
+                    return "args.Runtime.RegisterHost(" + expression + ")";
             }
 
             if (type.TypeKind == TypeKind.Enum)
@@ -780,6 +1051,9 @@ namespace Surtr.Interop.SourceGenerator
 
             if (type.TypeKind == TypeKind.Delegate)
                 return "SurtrDelegateMarshal.ToSurtr(args.Runtime, " + expression + ", SurtrClassReference.FromDescriptor(\"" + GeneratorSupport.MapType(type) + "\"))";
+
+            if (DerivesFromNativeObject(type))
+                return "args.Runtime.RegisterHost(" + expression + ")";
 
             return "SurtrValue.CreateReference(args.Runtime.WrapNative(" + expression + ").GetSurtrReference())";
         }
@@ -977,13 +1251,18 @@ namespace Surtr.Interop.SourceGenerator
 
         private sealed class SurtrSyntaxReceiver : ISyntaxReceiver
         {
-            internal readonly List<TypeDeclarationSyntax> Candidates = new();
+            internal readonly List<BaseTypeDeclarationSyntax> Candidates = new();
 
             public void OnVisitSyntaxNode(SyntaxNode syntaxNode)
             {
-                if (syntaxNode is TypeDeclarationSyntax { AttributeLists.Count: > 0 } type)
+                // `BaseTypeDeclarationSyntax` rather than `TypeDeclarationSyntax`: an enum is the
+                // one declaration that derives from the base but not the type kind, and an enum is
+                // exactly a `[SurtrNativeType]` registration target.
+                if (syntaxNode is BaseTypeDeclarationSyntax { AttributeLists.Count: > 0 } type)
                     Candidates.Add(type);
             }
         }
     }
 }
+
+

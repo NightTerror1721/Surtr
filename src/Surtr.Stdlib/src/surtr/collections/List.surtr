@@ -29,29 +29,29 @@ public class List<T> : IList<T>
         this._length = 0;
     }
 
-    public override inline length: int => _length;
-    public override inline isReadOnly: bool => false;
+    public inline length: int => _length;
+    public inline isReadOnly: bool => false;
 
-    public override fun get(index: int): T
+    public fun get(index: int): T
     {
         if (index < 0 || index >= _length) throw IndexOutOfRangeException("Index out of range");
         return _items[index];
     }
 
-    public override fun set(index: int, value: T): void
+    public fun set(index: int, value: T): void
     {
         if (index < 0 || index >= _length) throw IndexOutOfRangeException("Index out of range");
         _items[index] = value;
     }
 
-    public override fun add(item: T): void
+    public fun add(item: T): void
     {
         if (_length == _capacity) ensureCapacity(_length + 1);
         _items[_length] = item;
         _length++;
     }
 
-    public override fun insert(index: int, item: T): void
+    public fun insert(index: int, item: T): void
     {
         if (index < 0 || index > _length) throw IndexOutOfRangeException("Index out of range");
         if (_length == _capacity) ensureCapacity(_length + 1);
@@ -61,7 +61,7 @@ public class List<T> : IList<T>
         _length++;
     }
 
-    public override fun removeAt(index: int): bool
+    public fun removeAt(index: int): bool
     {
         if (index < 0 || index >= _length) throw IndexOutOfRangeException("Index out of range");
         for (var i = index; i < _length - 1; i++)
@@ -70,7 +70,7 @@ public class List<T> : IList<T>
         return true;
     }
 
-    public override fun remove(item: T): bool
+    public fun remove(item: T): bool
     {
         var index = this.indexOf(item);
         if (index >= 0)
@@ -81,12 +81,12 @@ public class List<T> : IList<T>
         return false;
     }
 
-    public override inline fun clear(): void
+    public inline fun clear(): void
     {
         _length = 0;
     }
 
-    public override fun indexOf(item: T): int
+    public fun indexOf(item: T): int
     {
         for (var i = 0; i < _length; i++)
         {
@@ -95,12 +95,12 @@ public class List<T> : IList<T>
         return -1;
     }
 
-    public override inline fun contains(item: T): bool
+    public inline fun contains(item: T): bool
     {
         return this.indexOf(item) >= 0;
     }
 
-    public override fun copyTo(array: T[], arrayIndex: int): void
+    public fun copyTo(array: T[], arrayIndex: int): void
     {
         if (arrayIndex < 0) throw IndexOutOfRangeException("Array index must be non-negative");
         if (array.length - arrayIndex < _length) throw ArgumentException("The number of elements in the source List is greater than the available space from arrayIndex to the end of the destination array.");
@@ -108,7 +108,7 @@ public class List<T> : IList<T>
             array[arrayIndex + i] = _items[i];
     }
 
-    public override inline fun iterate(): IIterator<T>
+    public inline fun iterate(): IIterator<T>
     {
         return Iterator<T>(_items, _length);
     }
@@ -140,7 +140,7 @@ public class List<T> : IList<T>
             this._index = index;
         }
 
-        public override current: T
+        public current: T
         {
             get
             {
@@ -149,7 +149,10 @@ public class List<T> : IList<T>
             }
         }
 
-        public override fun moveNext(): bool
+        // Nothing held that outlives this cursor, so the contract slot is filled and empty.
+        public fun dispose(): void { }
+
+        public fun moveNext(): bool
         {
             if (_index + 1 < _length)
             {
@@ -186,7 +189,10 @@ public class LinkedList<T> : IList<T>
             this._node = node;
         }
 
-        public override fun moveNext(): bool
+        // Nothing held that outlives this cursor, so the contract slot is filled and empty.
+        public fun dispose(): void { }
+
+        public fun moveNext(): bool
         {
             if (this._node === null) return false;
             this._current = this._node.value;
@@ -194,7 +200,7 @@ public class LinkedList<T> : IList<T>
             return true;
         }
 
-        public override current: T
+        public current: T
         {
             get { return this._current; }
         }
@@ -211,9 +217,9 @@ public class LinkedList<T> : IList<T>
         this._length = 0;
     }
 
-    public override length: int => _length;
+    public length: int => _length;
 
-    public override isReadOnly: bool => false;
+    public isReadOnly: bool => false;
 
     public front: T
     {
@@ -233,7 +239,7 @@ public class LinkedList<T> : IList<T>
         }
     }
 
-    public override fun add(value: T): void
+    public fun add(value: T): void
     {
         var newNode = Node<T>(value);
         if (_tail === null)
@@ -250,7 +256,7 @@ public class LinkedList<T> : IList<T>
         _length++;
     }
 
-    public override fun insert(index: int, value: T): void
+    public fun insert(index: int, value: T): void
     {
         if (index < 0 || index > this._length) throw IndexOutOfRangeException("Index out of range");
         var newNode = Node<T>(value);
@@ -280,7 +286,7 @@ public class LinkedList<T> : IList<T>
         _length++;
     }
 
-    public override fun get(index: int): T
+    public fun get(index: int): T
     {
         if (index < 0 || index >= this._length) throw IndexOutOfRangeException("Index out of range");
         var current = _head;
@@ -289,7 +295,7 @@ public class LinkedList<T> : IList<T>
         return current.value;
     }
 
-    public override fun set(index: int, value: T): void
+    public fun set(index: int, value: T): void
     {
         if (index < 0 || index >= this._length) throw IndexOutOfRangeException("Index out of range");
         var current = _head;
@@ -298,7 +304,7 @@ public class LinkedList<T> : IList<T>
         current.value = value;
     }
 
-    public override fun contains(item: T): bool
+    public fun contains(item: T): bool
     {
         var current = _head;
         while (current !== null)
@@ -309,7 +315,7 @@ public class LinkedList<T> : IList<T>
         return false;
     }
 
-    public override fun copyTo(array: T[], arrayIndex: int): void
+    public fun copyTo(array: T[], arrayIndex: int): void
     {
         var current = _head;
         var index = arrayIndex;
@@ -321,7 +327,7 @@ public class LinkedList<T> : IList<T>
         }
     }
 
-    public override fun indexOf(item: T): int
+    public fun indexOf(item: T): int
     {
         var current = _head;
         var index = 0;
@@ -334,12 +340,12 @@ public class LinkedList<T> : IList<T>
         return -1;
     }
 
-    public override fun iterate(): IIterator<T>
+    public fun iterate(): IIterator<T>
     {
         return Iterator<T>(this._head);
     }
 
-    public override fun removeAt(index: int): bool
+    public fun removeAt(index: int): bool
     {
         if (index < 0 || index >= this._length) throw IndexOutOfRangeException("Index out of range");
         var current = _head;
@@ -360,7 +366,7 @@ public class LinkedList<T> : IList<T>
         return true;
     }
 
-    public override fun remove(item: T): bool
+    public fun remove(item: T): bool
     {
         var current = _head;
         while (current !== null)
@@ -385,7 +391,7 @@ public class LinkedList<T> : IList<T>
         return false;
     }
 
-    public override fun clear(): void
+    public fun clear(): void
     {
         _head = null;
         _tail = null;
@@ -394,4 +400,40 @@ public class LinkedList<T> : IList<T>
 
     inline operator [](self: LinkedList<T>, index: int): T { return self.get(index); }
     inline operator [](self: LinkedList<T>, index: int, value: T): void { self.set(index, value); }
+}
+
+public class ReadOnlyList<T> : IReadOnlyList<T>
+{
+    private let _items: T[];
+
+    public constructor(items: T...)
+    {
+        _items = items;
+    }
+
+    public length: int => _items.length;
+
+    public inline fun get(index : int): T => _items[index];
+
+    public fun indexOf(item : T): int => _items.indexOf(item);
+
+    public fun contains(item : T): bool
+    {
+        for (value in _items)
+        {
+            if (value == item)
+                return true;
+        }
+        return false;
+    }
+
+    public fun copyTo(array : T[], arrayIndex : int): void
+    {
+        for (var i = 0; i < _items.length; i++)
+        {
+            array[arrayIndex + i] = _items[i];
+        }
+    }
+
+    public inline fun iterate(): IIterator<T> => _items.iterate();
 }

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -84,6 +84,18 @@ namespace Surtr.Runtime.BuiltIns
         /// <summary>The <c>closure</c> class, behind every <see cref="SurtrClosure"/> whatever its signature.</summary>
         public static readonly SurtrClass Closure;
 
+        /// <summary>
+        /// The <c>generator</c> class, behind every <see cref="SurtrGenerator"/> whatever it yields.
+        /// </summary>
+        /// <remarks>
+        /// The one built-in that satisfies <em>both</em> <c>IIterable&lt;T&gt;</c> and
+        /// <c>IIterator&lt;T&gt;</c>. A generator object is single-use, so a separate cursor would
+        /// be an allocation per loop that could only ever hand back the same position this object
+        /// already holds - <c>iterate()</c> returns the receiver instead. It is also the shape
+        /// JavaScript and Python settled on for the same reason.
+        /// </remarks>
+        public static readonly SurtrClass Generator;
+
         /// <summary>The <c>range</c> class, behind every <see cref="SurtrRange"/>.</summary>
         public static readonly SurtrClass Range;
 
@@ -99,7 +111,22 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass Iterator;
 
         /// <summary>
-        /// <c>IIterator&lt;T&gt;</c>: the two-member cursor <c>for-in</c> is defined against (§4.2).
+        /// <c>IDisposable</c>: the one-member contract for anything that must be released at a
+        /// point the collector cannot pick.
+        /// </summary>
+        /// <remarks>
+        /// Built-in rather than library, and for two reasons that are not taste. The emitter has to
+        /// name it - a <c>for-in</c> closes its cursor and a <c>using</c> closes its resource, and
+        /// resolving a stdlib name at emit time would be the first place the compiler depended on a
+        /// particular module being loaded. And <see cref="Generator"/> has to implement it, which
+        /// happens in this static constructor, before any stdlib module exists to declare it.
+        /// See <c>docs/Plan-Disposicion.md</c> §3.1.
+        /// </remarks>
+        public static readonly SurtrInterface IDisposable;
+
+        /// <summary>
+        /// <c>IIterator&lt;T&gt;</c>: the two-member cursor <c>for-in</c> is defined against (§4.2),
+        /// extending <see cref="IDisposable"/>.
         /// </summary>
         public static readonly SurtrInterface IIterator;
 
@@ -126,6 +153,14 @@ namespace Surtr.Runtime.BuiltIns
 
         /// <summary>Raised when an argument is outside what a member accepts.</summary>
         public static readonly SurtrClass ArgumentException;
+
+        /// <summary>
+        /// Raised when a value assigned to a <c>@Range</c>-marked member falls outside the declared
+        /// bounds in a build with checks on (§P4). Kept distinct from
+        /// <see cref="ArgumentException"/>: the argument is the right type and shape, its value is
+        /// simply outside the range the declaration promises.
+        /// </summary>
+        public static readonly SurtrClass ArgumentOutOfRangeException;
 
         /// <summary>
         /// Raised when text handed to a parsing constructor (<c>int(aString)</c>,
@@ -157,6 +192,26 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass InvalidOperationException;
 
         /// <summary>
+        /// Raised inside a generator's suspended body by <c>dispose()</c>, to unwind it.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The one class in the system that <b>no typed <c>catch</c> ever matches</b>. Only a
+        /// catch-all handler sees it, and the compiler emits a catch-all for exactly one construct:
+        /// a <c>finally</c>. So closing a generator runs its <c>finally</c> blocks and cannot be
+        /// swallowed by a <c>catch (e: Exception)</c> the body happens to contain.
+        /// </para>
+        /// <para>
+        /// Python reaches the same place by hanging <c>GeneratorExit</c> off <c>BaseException</c>,
+        /// outside what <c>except Exception</c> covers. Surtr has one exception root by design
+        /// (<c>Language-Syntax.md</c> §9), so the rule lives in <c>Catches</c> instead of in a
+        /// second hierarchy - one condition rather than a whole parallel tree. There is precedent
+        /// for something the handler search refuses to offer: the instruction budget.
+        /// </para>
+        /// </remarks>
+        public static readonly SurtrClass GeneratorExit;
+
+        /// <summary>
         /// The root every attribute class extends.
         /// </summary>
         /// <remarks>
@@ -166,6 +221,140 @@ namespace Surtr.Runtime.BuiltIns
         /// class has to be one of these.
         /// </remarks>
         public static readonly SurtrClass Attribute;
+
+        /// <summary>
+        /// The built-in <c>@Obsolete("reason")</c> attribute (§11): marks a declaration the language
+        /// is retiring. The compiler warns at every use; the instance stays readable through
+        /// reflection so hosts and tools can report on old APIs too.
+        /// </summary>
+        public static readonly SurtrClass Obsolete;
+
+        /// <summary>
+        /// The built-in <c>@NoDiscard("reason")</c> attribute (§11): marks a function whose result
+        /// should not be thrown away. The compiler warns when a call's value is dropped.
+        /// </summary>
+        public static readonly SurtrClass NoDiscard;
+
+        /// <summary>
+        /// The built-in <c>@Range(lo, hi)</c> attribute (§11): documents the range a numeric field
+        /// or property is meant to hold, for hosts that render it (an inspector's slider) and for
+        /// tools that validate it.
+        /// </summary>
+        /// <remarks>
+        /// Named <c>RangeAttribute</c> on the C# side only: <see cref="Range"/> already names the
+        /// value family behind the <c>range</c> primitive. The Surtr-visible class name is
+        /// <c>Range</c>, same as every other attribute here is named on its own side.
+        /// </remarks>
+        public static readonly SurtrClass RangeAttribute;
+
+        /// <summary>
+        /// The built-in <c>@Value</c> attribute (§11): opts a class into structural equality —
+        /// <c>==</c> compares field by field instead of asking for identity. Compile-time only: it
+        /// changes what the compiler emits and carries no data worth reading back.
+        /// </summary>
+        public static readonly SurtrClass Value;
+
+        /// <summary>
+        /// The built-in <c>@Export("name")</c> attribute (§11): marks what a module offers its
+        /// embedding host — a whole class, or one field/property — under an optional alias.
+        /// </summary>
+        public static readonly SurtrClass Export;
+
+        /// <summary>
+        /// The built-in <c>@Test("name")</c> attribute (§11): marks a parameterless method as a
+        /// test a harness can discover through reflection and run.
+        /// </summary>
+        public static readonly SurtrClass Test;
+
+        /// <summary>
+        /// The built-in <c>@TestSuite("name")</c> attribute (§11): names the class a group of
+        /// tests lives in.
+        /// </summary>
+        public static readonly SurtrClass TestSuite;
+
+        /// <summary>
+        /// The built-in <c>@TestIgnore("reason")</c> attribute (§11): the complement of
+        /// <see cref="Test"/> — the runner still discovers the method, reports it as skipped with
+        /// the reason written here, and does not run its body.
+        /// </summary>
+        public static readonly SurtrClass TestIgnore;
+
+        /// <summary>
+        /// The built-in <c>@TestBefore</c> attribute (§11): marks a method the runner calls before
+        /// each test in its scope — the tests of its own class, or every test in the module when it
+        /// is written at module level.
+        /// </summary>
+        public static readonly SurtrClass TestBefore;
+
+        /// <summary>
+        /// The built-in <c>@TestAfter</c> attribute (§11): the counterpart of
+        /// <see cref="TestBefore"/>, called after each test in its scope — including after a test
+        /// that failed, and after one whose <c>@TestBefore</c> threw, so a fixture that acquired
+        /// something always gets the chance to release it.
+        /// </summary>
+        public static readonly SurtrClass TestAfter;
+
+        /// <summary>
+        /// The built-in <c>@Benchmark</c> attribute (§11): marks a parameterless method a harness
+        /// discovers the way it discovers a <c>@Test</c>, but runs repeatedly and times.
+        /// </summary>
+        /// <remarks>
+        /// A benchmark is meant to be compiled <em>without</em> the <c>Debug</c> constant defined,
+        /// or its measurement includes the <c>@Range</c> checks that constant turns on. That is the
+        /// host's decision at build time, not something the mark can enforce, so it is recorded
+        /// here rather than checked anywhere.
+        /// </remarks>
+        public static readonly SurtrClass Benchmark;
+
+        /// <summary>
+        /// The built-in <c>@Throws("Name")</c> attribute (§11): documents one exception class a
+        /// function can raise. Repeatable — a function that can throw three things carries three
+        /// marks, each its own instance, since one <c>name</c> field holds one name.
+        /// </summary>
+        public static readonly SurtrClass Throws;
+
+        /// <summary>
+        /// The built-in <c>@NoAlloc</c> attribute (§11): promises a body puts nothing on the heap.
+        /// <see cref="Pure"/>'s sibling on the memory axis — a contract for tools first, and one
+        /// the compiler checks locally rather than proves.
+        /// </summary>
+        public static readonly SurtrClass NoAlloc;
+
+        /// <summary>
+        /// The built-in <c>@Flags</c> attribute (§11): marks an enum whose cases are single bits of
+        /// a set rather than alternatives, so they combine with <c>|</c>, <c>&amp;</c>, <c>^</c> and
+        /// <c>~</c>.
+        /// </summary>
+        /// <remarks>
+        /// The mark changes the enum's <em>representation</em>: an ordinary enum case is a static
+        /// instance and a variable of that type holds a reference, which cannot be combined at all —
+        /// two entity ids ANDed together name nothing. A marked enum's cases are the integers
+        /// <c>1 &lt;&lt; ordinal</c> instead, and a variable of it holds one int, exactly as a
+        /// one-field <c>value class</c> over an <c>int</c> does. That is what a combination is a
+        /// value of, and it is why a marked enum has to be plain: with no instance there is nothing
+        /// to declare a member on.
+        /// </remarks>
+        public static readonly SurtrClass Flags;
+
+        /// <summary>
+        /// The built-in <c>@Pure</c> attribute (§11): promises a function returns the same value
+        /// for the same arguments without observable side effects. A contract for tools first; an
+        /// optimizer input later.
+        /// </summary>
+        public static readonly SurtrClass Pure;
+
+        /// <summary>
+        /// The built-in <c>@MainThread</c> attribute (§11): declares a member may only run on the
+        /// embedding host's main thread (a Unity draw call, say). Documentary until a thread model
+        /// exists to lint against.
+        /// </summary>
+        public static readonly SurtrClass MainThread;
+
+        /// <summary>
+        /// The built-in <c>@ThreadSafe</c> attribute (§11): declares a member safe to call from
+        /// any thread.
+        /// </summary>
+        public static readonly SurtrClass ThreadSafe;
 
         /// <summary>
         /// A first-class handle to another class's metadata, behind every <see cref="SurtrTypeValue"/>.
@@ -262,6 +451,7 @@ namespace Surtr.Runtime.BuiltIns
             Tuple = Declare("tuple", SurtrValueTypeCode.Tuple, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolTuple.ToString()));
             Dictionary = Declare("dict", SurtrValueTypeCode.Dictionary, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolDictionary.ToString()));
             Closure = Declare("closure", SurtrValueTypeCode.Closure, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolClosure.ToString()));
+            Generator = Declare("generator", SurtrValueTypeCode.Generator, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolGenerator.ToString()));
             // Unlike its neighbours this one's SelfReference is a well-formed descriptor, because
             // a range has nothing to be parameterised by: R names the type completely.
             Range = Declare("range", SurtrValueTypeCode.Range, SurtrClassReference.Range);
@@ -271,6 +461,7 @@ namespace Surtr.Runtime.BuiltIns
             // to be a slot the linker lays out and the collector traces.
             Exception = DeclareObject("Exception");
             ArgumentException = DeclareObject("ArgumentException", Exception);
+            ArgumentOutOfRangeException = DeclareObject("ArgumentOutOfRangeException", ArgumentException);
             FormatException = DeclareObject("FormatException", Exception);
             IndexOutOfRangeException = DeclareObject("IndexOutOfRangeException", Exception);
             KeyNotFoundException = DeclareObject("KeyNotFoundException", Exception);
@@ -279,7 +470,25 @@ namespace Surtr.Runtime.BuiltIns
             InvalidCastException = DeclareObject("InvalidCastException", Exception);
             StackOverflowException = DeclareObject("StackOverflowException", Exception);
             InvalidOperationException = DeclareObject("InvalidOperationException", Exception);
+            GeneratorExit = DeclareObject("GeneratorExit", Exception);
             Attribute = DeclareObject("Attribute", isAbstract: true);
+            Obsolete = DeclareObject("Obsolete", Attribute);
+            NoDiscard = DeclareObject("NoDiscard", Attribute);
+            RangeAttribute = DeclareObject("Range", Attribute);
+            Value = DeclareObject("Value", Attribute);
+            Export = DeclareObject("Export", Attribute);
+            Test = DeclareObject("Test", Attribute);
+            TestSuite = DeclareObject("TestSuite", Attribute);
+            TestIgnore = DeclareObject("TestIgnore", Attribute);
+            TestBefore = DeclareObject("TestBefore", Attribute);
+            TestAfter = DeclareObject("TestAfter", Attribute);
+            Benchmark = DeclareObject("Benchmark", Attribute);
+            Throws = DeclareObject("Throws", Attribute);
+            NoAlloc = DeclareObject("NoAlloc", Attribute);
+            Flags = DeclareObject("Flags", Attribute);
+            Pure = DeclareObject("Pure", Attribute);
+            MainThread = DeclareObject("MainThread", Attribute);
+            ThreadSafe = DeclareObject("ThreadSafe", Attribute);
             Type = DeclareObject("Type");
             Member = DeclareObject("Member");
             ModuleType = DeclareObject("Module");
@@ -300,6 +509,7 @@ namespace Surtr.Runtime.BuiltIns
             ByTypeCode[(int)SurtrValueTypeCode.Tuple] = Tuple;
             ByTypeCode[(int)SurtrValueTypeCode.Dictionary] = Dictionary;
             ByTypeCode[(int)SurtrValueTypeCode.Closure] = Closure;
+            ByTypeCode[(int)SurtrValueTypeCode.Generator] = Generator;
             ByTypeCode[(int)SurtrValueTypeCode.Range] = Range;
             ByTypeCode[(int)SurtrValueTypeCode.Native] = NativeObject;
             ByTypeCode[(int)SurtrValueTypeCode.Erased] = Erased;
@@ -311,6 +521,12 @@ namespace Surtr.Runtime.BuiltIns
             // could not describe either, and neither has a member that would want one.
             Array.SetGenericParameters("T");
             Dictionary.SetGenericParameters("K", "V");
+
+            // Same reason as array's: `current` is declared against the element, so the class needs
+            // a parameter for G0 to name. Tuple and closure still declare none - each is
+            // parameterised by a list whose length varies per value - but a generator yields one
+            // type, so it takes exactly one.
+            Generator.SetGenericParameters("T");
 
             SurtrPrimitiveBuiltIns.DeclareInteger(BuilderFor(Integer, handles));
             SurtrPrimitiveBuiltIns.DeclareFloat(BuilderFor(Float, handles));
@@ -325,6 +541,7 @@ namespace Surtr.Runtime.BuiltIns
 
             SurtrStandardLibrary.DeclareException(BuilderFor(Exception, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(ArgumentException, handles));
+            SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(ArgumentOutOfRangeException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(FormatException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(IndexOutOfRangeException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(KeyNotFoundException, handles));
@@ -333,6 +550,22 @@ namespace Surtr.Runtime.BuiltIns
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(InvalidCastException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(StackOverflowException, handles));
             SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(InvalidOperationException, handles));
+            SurtrStandardLibrary.DeclareExceptionSubclass(BuilderFor(GeneratorExit, handles));
+
+            // The built-in attribute vocabulary (§11): declared above, right after their root,
+            // because SeedGlobalScope imports every type the module holds - these have to exist by
+            // then to be nameable as `@Obsolete` and friends. Each gets the fields its syntax
+            // carries; the argument checks at the use site read exactly this shape.
+            DeclareReasonAttribute(BuilderFor(Obsolete, handles));
+            DeclareReasonAttribute(BuilderFor(NoDiscard, handles));
+            DeclareRangeAttribute(BuilderFor(RangeAttribute, handles));
+            DeclareNamedAttribute(BuilderFor(Export, handles));
+            DeclareNamedAttribute(BuilderFor(Test, handles));
+            DeclareNamedAttribute(BuilderFor(TestSuite, handles));
+            DeclareReasonAttribute(BuilderFor(TestIgnore, handles));
+            DeclareNamedAttribute(BuilderFor(Throws, handles));
+            // Value, Pure, NoAlloc, Flags, MainThread, ThreadSafe, TestBefore, TestAfter and
+            // Benchmark carry nothing: their meaning is the mark.
             SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
 
             // After Attribute, since Type.attributes()/Member.attributes() both name it, and
@@ -346,6 +579,7 @@ namespace Surtr.Runtime.BuiltIns
             // Kept as fields because a compiler has to name them to lower `for-in` and `<=>`: those
             // lowerings are calls through a contract's own slots, and looking one up by a mangled
             // string at every emit site would put the arity convention in two places.
+            IDisposable = Contract("IDisposable", 0);
             IIterator = Contract("IIterator", 1);
             IIterable = Contract("IIterable", 1);
             IComparable = Contract("IComparable", 1);
@@ -360,6 +594,10 @@ namespace Surtr.Runtime.BuiltIns
             SurtrIteratorBuiltIns.DeclareIterable(BuilderFor(Tuple, handles), SurtrIteratorKind.Tuple);
             SurtrIteratorBuiltIns.DeclareIterable(BuilderFor(Dictionary, handles), SurtrIteratorKind.Dictionary);
             SurtrIteratorBuiltIns.DeclareIterable(BuilderFor(Range, handles), SurtrIteratorKind.Range);
+
+            // Declared here rather than beside the other composites because it names both contracts
+            // and has to follow them, and because it is the one built-in that is its own cursor.
+            SurtrGeneratorBuiltIns.Declare(BuilderFor(Generator, handles));
 
             // The comparability contracts, declared the same way and for the same reason: a
             // `max<T : IComparable<T>>` names a contract, so the value families have to be able to
@@ -479,6 +717,32 @@ namespace Surtr.Runtime.BuiltIns
 
             return new SurtrBuiltInTypeBuilder(declared, selfHandle, handles);
         }
+
+        /// <summary>
+        /// Gives a built-in attribute class its single <c>reason</c> field: the message the compiler
+        /// quotes in its warning and reflection hands back. Public, because reading it off a
+        /// reflected instance is the whole point of carrying it.
+        /// </summary>
+        private static void DeclareReasonAttribute(SurtrBuiltInTypeBuilder builder)
+            => builder.Field("reason", SurtrClassReference.String, visibility: SurtrVisibility.Public);
+
+        /// <summary>
+        /// Gives <see cref="Range"/> its two bounds. Floats rather than ints so one attribute shape
+        /// covers every numeric field an inspector would draw; integer arguments widen on the way
+        /// in exactly as §5's implicit conversions widen anywhere else.
+        /// </summary>
+        private static void DeclareRangeAttribute(SurtrBuiltInTypeBuilder builder)
+        {
+            builder.Field("lo", SurtrClassReference.Float, visibility: SurtrVisibility.Public);
+            builder.Field("hi", SurtrClassReference.Float, visibility: SurtrVisibility.Public);
+        }
+
+        /// <summary>
+        /// Gives an attribute class its single <c>name</c> field — the alias something is exposed
+        /// or reported under when the declaration's own name will not do.
+        /// </summary>
+        private static void DeclareNamedAttribute(SurtrBuiltInTypeBuilder builder)
+            => builder.Field("name", SurtrClassReference.String, visibility: SurtrVisibility.Public);
 
         /// <summary>
         /// The library class a CLR exception should surface as inside Surtr code, or

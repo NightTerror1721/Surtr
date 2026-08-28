@@ -22,8 +22,8 @@ namespace Surtr.Compiler.CodeGen
     /// <para>
     /// Two invariants hold throughout. <see cref="Expression"/> leaves exactly one value on the
     /// operand stack, unless the expression's type is <c>void</c>, in which case it leaves none;
-    /// <see cref="Statement"/> leaves the stack exactly as it found it. Everything else — how deep
-    /// the stack gets, how wide a branch has to be, how many frame slots the body needs — is the
+    /// <see cref="Statement"/> leaves the stack exactly as it found it. Everything else � how deep
+    /// the stack gets, how wide a branch has to be, how many frame slots the body needs � is the
     /// emitter's own job and is never computed here.
     /// </para>
     /// <para>
@@ -44,8 +44,8 @@ namespace Surtr.Compiler.CodeGen
     {
         /// <summary>Where a <c>break</c> and a <c>continue</c> inside one enclosing construct go.</summary>
         /// <remarks>
-        /// A <c>switch</c> pushes one of these too, because §4.3 makes <c>break</c> leave the switch
-        /// — but it is not a loop, so a <c>continue</c> inside it belongs to whatever loop encloses
+        /// A <c>switch</c> pushes one of these too, because �4.3 makes <c>break</c> leave the switch
+        /// � but it is not a loop, so a <c>continue</c> inside it belongs to whatever loop encloses
         /// the switch and has to look straight past this entry. That is what
         /// <see cref="IsLoop"/> is for.
         /// </remarks>
@@ -67,7 +67,7 @@ namespace Surtr.Compiler.CodeGen
             /// <summary>Whether a <c>continue</c> may target this, which only a loop may.</summary>
             public bool IsLoop { get; }
 
-            /// <summary>The name a labelled <c>break</c> may reach it by (§4.2).</summary>
+            /// <summary>The name a labelled <c>break</c> may reach it by (�4.2).</summary>
             public string? Label { get; }
 
             /// <summary>
@@ -77,7 +77,7 @@ namespace Surtr.Compiler.CodeGen
             public int FinallyDepth { get; }
         }
 
-        /// <summary>One <c>inline</c> call site being spliced (§3.6).</summary>
+        /// <summary>One <c>inline</c> call site being spliced (�3.6).</summary>
         private readonly struct InlineFrame
         {
             public InlineFrame(
@@ -117,7 +117,7 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>How deep <c>inline</c> may splice before it gives up.</summary>
         /// <remarks>
-        /// §3.6 makes inlining a request rather than a promise, so a ceiling is legal. Mutual
+        /// �3.6 makes inlining a request rather than a promise, so a ceiling is legal. Mutual
         /// recursion between two inline functions would otherwise expand forever, and the
         /// self-reference check alone does not catch it.
         /// </remarks>
@@ -135,7 +135,11 @@ namespace Surtr.Compiler.CodeGen
         private readonly Dictionary<ParameterSymbol, SurtrLocal> _splicedParameters = new Dictionary<ParameterSymbol, SurtrLocal>();
         private readonly List<JumpTargets> _jumps = new List<JumpTargets>();
         private readonly List<InlineFrame> _inlines = new List<InlineFrame>();
-        private readonly List<BoundStatement> _finallies = new List<BoundStatement>();
+        // Emitters rather than bound nodes, because two of the things that have to run on every
+        // way out of a block are not in the bound tree at all: closing a `for-in`'s cursor and
+        // closing a `yield from`'s. Both are decisions about representation, so they are made here -
+        // and a `return` out of such a loop still has to run them, which is what this stack is for.
+        private readonly List<Action> _finallies = new List<Action>();
 
         // Set by a labelled statement and consumed by the loop it labels, so `outer: for (...)` can
         // be reached by `break outer` without the loop node itself carrying the name.
@@ -301,7 +305,7 @@ namespace Surtr.Compiler.CodeGen
                     return;
 
                 // `i++;` and a `for` loop's step clause. Prefix and postfix differ only in which
-                // value they leave behind, and here neither leaves one — so the distinction the
+                // value they leave behind, and here neither leaves one � so the distinction the
                 // long form exists to make has nothing to make it about, and the update is one
                 // instruction.
                 case BoundUnaryExpression unary when IsIncrementOrDecrement(unary.Operator):
@@ -311,16 +315,37 @@ namespace Surtr.Compiler.CodeGen
                     break;
 
                 // `a?.f();` still has to skip the call when `a` is null, but neither path leaves a
-                // value — so the guard is emitted without one rather than pushed and popped.
+                // value � so the guard is emitted without one rather than pushed and popped.
                 case BoundNullConditionalExpression access:
                     EmitNullConditional(access, discardResult: true);
+                    return;
+
+                // `yield e;` and `yield from e;` in statement position, which is nearly every
+                // yield ever written. Not emitting the instruction that would push the resumed
+                // value is what makes the statement form cost exactly what it cost before yield
+                // became an expression.
+                case BoundYieldExpression yield:
+                    EmitYield(yield, wantsValue: false);
                     return;
             }
 
             Expression(expression);
 
             if (!expression.Type.IsVoid && !expression.Type.IsNever)
-                Code.Pop();
+            {
+                // A discarded value occupies its whole inline width: popping one slot of a
+                // two-slot block would strand the rest under whatever runs next.
+                if (TryMultiSlotWidth(expression.Type, out int width))
+                {
+                    var scratch = _method.DeclareLocals("$discard", width);
+                    _slotWidthsByIndex[scratch.Index] = width;
+                    Code.StoreValueLocal(scratch.Index, width);
+                }
+                else
+                {
+                    Code.Pop();
+                }
+            }
         }
 
         private void EmitLocalDeclaration(BoundLocalDeclarationStatement declaration)
@@ -331,7 +356,7 @@ namespace Surtr.Compiler.CodeGen
                 return;
 
             Expression(declaration.Initializer);
-            Code.StoreLocal(slot);
+            EmitStoreLocal(slot);
         }
 
         private void EmitIf(BoundIfStatement conditional)
@@ -359,6 +384,9 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitWhile(BoundWhileStatement loop)
         {
+            if (TryEmitCountedWhile(loop))
+                return;
+
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
@@ -381,10 +409,329 @@ namespace Surtr.Compiler.CodeGen
             Code.MarkLabel(end);
         }
 
+        /// <summary>
+        /// Emits <c>while (i &lt; n) { ...; i += 1; }</c> as one fused step per iteration, or
+        /// answers <see langword="false"/> and leaves the loop to the ordinary path.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The counted <c>while</c> is the hottest loop shape the language has, and until this it
+        /// was the one counted loop that did <em>not</em> fuse: <c>for i in 0..n</c> lowers to
+        /// <c>ForRangeNext</c> (see <see cref="EmitForInRange"/>) while the hand-written form
+        /// stayed four dispatches per iteration - the increment, the jump back, the two loads and
+        /// the test. Those four are why <c>IncLocal</c>, <c>JP</c>, <c>JPGE</c> and <c>Ldl</c> are
+        /// all in the interpreter's top ten (docs/Informe-Opcodes-Layout.md §4.8). The same
+        /// superinstruction covers both shapes, so this needs no new opcode.
+        /// </para>
+        /// <para>
+        /// The rewrite is the one <see cref="EmitForInRange"/> already makes: the test moves from
+        /// the top of the body to a guard above the loop plus a step at the bottom that tests for
+        /// itself. It is sound because the fused step performs the increment and the comparison in
+        /// the same order the written loop does - the increment last in the body, the test before
+        /// the next iteration - and it re-reads both slots each time, so a body that assigns to
+        /// either is seen exactly as before.
+        /// </para>
+        /// <para>
+        /// <c>continue</c> is what it cannot keep. In a <c>while</c> it re-tests <em>without</em>
+        /// incrementing, and the fused step is reached by falling out of the body, so any
+        /// <c>continue</c> at all - including a labelled one from inside a nested loop - refuses
+        /// the fusion rather than trying to distinguish which loop it names.
+        /// </para>
+        /// </remarks>
+
+        private bool TryEmitCountedWhile(BoundWhileStatement loop)
+        {
+            if (!TryResolveCountedGuard(loop.Condition, out LocalSymbol counter, out SurtrLocal variable,
+                    out SurtrLocal limit, out bool limitIsInclusive))
+            {
+                return false;
+            }
+
+            if (loop.Body is not BoundBlockStatement { Statements.Count: > 0 } block)
+                return false;
+
+            // The increment has to be the body's last statement: anything after it would run
+            // between the increment and the test, which the fused step has no room for.
+            if (block.Statements[block.Statements.Count - 1] is not BoundExpressionStatement lastStatement
+                || !IsUnitIncrementOf(lastStatement.Expression, counter))
+            {
+                return false;
+            }
+
+            for (int i = 0; i < block.Statements.Count - 1; i++)
+            {
+                if (ContainsContinue(block.Statements[i]))
+                    return false;
+            }
+
+            var top = Code.NewLabel();
+            var step = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            EmitLoadLocal(variable);
+            EmitLoadLocal(limit);
+            Code.JumpIfCompare(
+                limitIsInclusive ? SurtrComparison.Greater : SurtrComparison.GreaterOrEqual,
+                SurtrValueTypeCode.Integer,
+                end);
+
+            Code.MarkLabel(top);
+
+            // `step` is the continue target for form's sake - nothing reaches it, since a body
+            // carrying a `continue` was refused above.
+            PushLoop(step, end);
+
+            for (int i = 0; i < block.Statements.Count - 1; i++)
+                Statement(block.Statements[i]);
+
+            PopTargets();
+
+            Code.MarkLabel(step);
+
+            if (Code.IsReachable)
+                Code.ForRangeNext(variable.Index, limit.Index, limitIsInclusive, top);
+
+            Code.MarkLabel(end);
+            return true;
+        }
+
+        /// <summary>
+        /// Emits <c>for (init; i &lt; n; i += 1) { ... }</c> as the same fused step
+        /// <see cref="TryEmitCountedWhile"/> gives the hand-written <c>while</c>, or answers
+        /// <see langword="false"/> and leaves the loop to the ordinary path.
+        /// </summary>
+        /// <remarks>
+        /// <c>for</c>'s increment is a syntactically separate <see cref="BoundForStatement.Step"/>,
+        /// never part of the body, so unlike the <c>while</c> fusion this needs no last-statement
+        /// peeling - every body statement is real. That also means a <c>continue</c> here would
+        /// land exactly on <c>step</c>, right where the fused instruction sits, and run the
+        /// increment-then-test the same way falling out of the body does - which is correct
+        /// <c>for</c> semantics. This still refuses <c>continue</c> to keep the same safety margin
+        /// the <c>while</c> fusion keeps, since nothing has exercised the jump-into-fusion case yet.
+        /// </remarks>
+        private bool TryEmitCountedFor(BoundForStatement loop)
+        {
+            if (!TryResolveCountedGuard(loop.Condition, out LocalSymbol counter, out SurtrLocal variable,
+                    out SurtrLocal limit, out bool limitIsInclusive))
+            {
+                return false;
+            }
+
+            if (loop.Step is null || !IsUnitIncrementOf(loop.Step, counter))
+                return false;
+
+            if (loop.Body is not BoundBlockStatement block)
+                return false;
+
+            if (ContainsContinue(block))
+                return false;
+
+            var top = Code.NewLabel();
+            var step = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            EmitLoadLocal(variable);
+            EmitLoadLocal(limit);
+            Code.JumpIfCompare(
+                limitIsInclusive ? SurtrComparison.Greater : SurtrComparison.GreaterOrEqual,
+                SurtrValueTypeCode.Integer,
+                end);
+
+            Code.MarkLabel(top);
+
+            PushLoop(step, end);
+            Statement(block);
+            PopTargets();
+
+            Code.MarkLabel(step);
+
+            if (Code.IsReachable)
+                Code.ForRangeNext(variable.Index, limit.Index, limitIsInclusive, top);
+
+            Code.MarkLabel(end);
+            return true;
+        }
+
+        /// <summary>
+        /// Whether <paramref name="expression"/> advances <paramref name="counter"/> by exactly one,
+        /// in either shape the surface syntax can produce: <c>i = i + 1</c> / <c>i += 1</c> (a
+        /// <see cref="BoundAssignmentExpression"/> the binder already expanded), or <c>i++</c> /
+        /// <c>++i</c> (a <see cref="BoundUnaryExpression"/> - <c>i++</c> does <em>not</em> lower to
+        /// an assignment, since <c>BodyBinder.BindUnary</c> keeps a plain int/float/char increment
+        /// as its own unary node so the expression's value can differ between the prefix and
+        /// postfix form. Both shapes end up as one <c>IncLocal</c> either way; this is only about
+        /// recognising the shape so the counted-loop fusions can fire on the idiom most C-family
+        /// programmers reach for first.
+        /// </summary>
+        private static bool IsUnitIncrementOf(BoundExpression expression, LocalSymbol counter)
+        {
+            if (expression is BoundUnaryExpression
+                {
+                    Operator: UnaryOperator.PostIncrement or UnaryOperator.PreIncrement,
+                    Operand: BoundLocalExpression unaryOperand,
+                })
+            {
+                return ReferenceEquals(unaryOperand.Local, counter);
+            }
+
+            if (expression is BoundAssignmentExpression
+                {
+                    Target: BoundLocalExpression target,
+                    Value: BoundBinaryExpression
+                    {
+                        Operator: BinaryOperator.Add,
+                        Left: BoundLocalExpression addend,
+                        Right: BoundLiteralExpression { Value: long step1 },
+                    },
+                }
+                && step1 == 1L)
+            {
+                return ReferenceEquals(target.Local, counter) && ReferenceEquals(addend.Local, counter);
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The guard the counted <c>while</c> and counted <c>for</c> fusions share: a condition of
+        /// the shape <c>local &lt; limit</c> / <c>local &lt;= limit</c>, whose left side is a plain
+        /// (non-nullable, non-erased) <c>int</c> local. Each caller still validates its own
+        /// increment - the two loops keep it in a different place - and still emits the guard
+        /// itself, since only the caller knows what to do once it has the resolved slots.
+        /// </summary>
+        private bool TryResolveCountedGuard(
+            BoundExpression? condition,
+            out LocalSymbol counter,
+            out SurtrLocal variable,
+            out SurtrLocal limit,
+            out bool limitIsInclusive)
+        {
+            counter = null!;
+            variable = default;
+            limit = default;
+            limitIsInclusive = false;
+
+            if (condition is not BoundBinaryExpression
+                {
+                    Operator: BinaryOperator.Less or BinaryOperator.LessEqual
+                } test)
+            {
+                return false;
+            }
+
+            if (!IsPlainInt(test.Left) || test.Left is not BoundLocalExpression counterExpr)
+                return false;
+
+            if (!IsPlainInt(test.Right))
+                return false;
+
+            variable = Slot(counterExpr.Local);
+
+            // The limit is re-read every iteration, so only a form whose re-reading is free may
+            // stand in for it: a slot the step can address, or a constant hoisted into one. An
+            // arbitrary expression is refused rather than hoisted - the written loop evaluates it
+            // per iteration, and a fused step could not.
+            if (test.Right is BoundLocalExpression limitLocal)
+            {
+                limit = Slot(limitLocal.Local);
+            }
+            else if (test.Right is BoundParameterExpression limitParameter)
+            {
+                limit = ParameterSlot(limitParameter.Parameter);
+            }
+            else if (test.Right is BoundLiteralExpression { Value: long constant }
+                     && constant >= int.MinValue && constant <= int.MaxValue)
+            {
+                limit = _method.DeclareLocal("$limit");
+                Code.LoadInt((int)constant);
+                EmitStoreLocal(limit);
+            }
+            else
+            {
+                return false;
+            }
+
+            if (!FitsInSlotByte(variable, limit))
+                return false;
+
+            counter = counterExpr.Local;
+            limitIsInclusive = test.Operator == BinaryOperator.LessEqual;
+            return true;
+        }
+
+        /// <summary>Whether an expression is an <c>int</c> that is neither nullable nor erased, so a slot holds it raw.</summary>
+        private static bool IsPlainInt(BoundExpression expression)
+            => expression.Type is { IsNullable: false } type && type.SpecialType == SpecialType.Int;
+
+        /// <summary>
+        /// Whether a statement carries a <c>continue</c> anywhere beneath it, nested loops
+        /// included. Deliberately conservative: a labelled <c>continue</c> inside a nested loop can
+        /// name the outer one, so descending into nested loops is what makes the answer safe.
+        /// </summary>
+        private static bool ContainsContinue(BoundStatement statement)
+        {
+            switch (statement)
+            {
+                case BoundBreakStatement jump:
+                    return jump.IsContinue;
+
+                case BoundBlockStatement block:
+                    foreach (var child in block.Statements)
+                    {
+                        if (ContainsContinue(child)) return true;
+                    }
+
+                    return false;
+
+                case BoundIfStatement conditional:
+                    return ContainsContinue(conditional.Then)
+                        || (conditional.Else is not null && ContainsContinue(conditional.Else));
+
+                case BoundWhileStatement loop:
+                    return ContainsContinue(loop.Body);
+
+                case BoundForStatement loop:
+                    return (loop.Initializer is not null && ContainsContinue(loop.Initializer))
+                        || ContainsContinue(loop.Body);
+
+                case BoundForInStatement loop:
+                    return ContainsContinue(loop.Body);
+
+                case BoundLabeledStatement labeled:
+                    return ContainsContinue(labeled.Statement);
+
+                case BoundSwitchStatement selection:
+                    foreach (var section in selection.Sections)
+                    {
+                        foreach (var child in section.Statements)
+                        {
+                            if (ContainsContinue(child)) return true;
+                        }
+                    }
+
+                    return false;
+
+                case BoundTryStatement guarded:
+                    if (ContainsContinue(guarded.Body)) return true;
+                    foreach (var handler in guarded.Catches)
+                    {
+                        if (ContainsContinue(handler.Body)) return true;
+                    }
+
+                    return guarded.Finally is not null && ContainsContinue(guarded.Finally);
+
+                default:
+                    return false;
+            }
+        }
+
         private void EmitFor(BoundForStatement loop)
         {
             if (loop.Initializer is not null)
                 Statement(loop.Initializer);
+
+            if (TryEmitCountedFor(loop))
+                return;
 
             var top = Code.NewLabel();
             var step = Code.NewLabel();
@@ -422,16 +769,16 @@ namespace Surtr.Compiler.CodeGen
 
         /// <summary>
         /// Emits a condition as a branch to <paramref name="target"/>, taken when the condition is
-        /// false — jumping over an <c>if</c>'s body, or out of a <c>while</c>/<c>for</c>.
+        /// false � jumping over an <c>if</c>'s body, or out of a <c>while</c>/<c>for</c>.
         /// </summary>
         /// <remarks>
         /// Fuses a plain built-in comparison straight into the matching <c>JP&lt;cmp&gt;</c> opcode
-        /// (§Opcodes — the family that "fuses a comparison and a branch, so the boolean never
-        /// reaches the stack") instead of the naive `Compare` + `JumpIfFalse` pair. Anything else —
+        /// (�Opcodes � the family that "fuses a comparison and a branch, so the boolean never
+        /// reaches the stack") instead of the naive `Compare` + `JumpIfFalse` pair. Anything else �
         /// a compound condition (`&amp;&amp;`, `||`), a user operator's call (already a
         /// <see cref="BoundCallExpression"/> by the time it reaches here, per Fix 1/Fix 5), or a
         /// condition that already special-cases inside <see cref="EmitBinary"/> (an absence test, or
-        /// string ordering, which lowers to <c>compareTo</c>) — falls back to evaluating it as an
+        /// string ordering, which lowers to <c>compareTo</c>) � falls back to evaluating it as an
         /// ordinary boolean and testing the result, unchanged from before.
         /// </remarks>
         private void EmitConditionalJump(BoundExpression condition, SurtrLabel target)
@@ -537,7 +884,7 @@ namespace Surtr.Compiler.CodeGen
             }
 
             // TryEmitAbsenceTest intercepts exactly this shape before EmitBinary's ordinary path
-            // ever runs — a fused branch has to defer to it the same way.
+            // ever runs � a fused branch has to defer to it the same way.
             if (binary.Operator is BinaryOperator.Equal or BinaryOperator.NotEqual
                 && ((IsNullLiteral(binary.Right) && IsNullablePrimitive(binary.Left.Type))
                     || (IsNullLiteral(binary.Left) && IsNullablePrimitive(binary.Right.Type))))
@@ -547,17 +894,23 @@ namespace Surtr.Compiler.CodeGen
 
             operandType = TypeCodeOf(binary.Left.Type);
 
-            // String equality has a fused opcode (JPStrEQ/JPStrNE); string ordering does not — it
+            // String equality has a fused opcode (JPStrEQ/JPStrNE); string ordering does not � it
             // lowers to compareTo (EmitStringOrdering), so only equality fuses here.
             if (operandType == SurtrValueTypeCode.String && isOrdering)
                 return false;
 
             // Equality on a still-abstract type parameter needs the runtime's own value comparer
-            // (DynEQ/DynNE — see ComparisonOpCode), which has no fused branch form of its own. This
+            // (DynEQ/DynNE - see ComparisonOpCode), which has no fused branch form of its own. This
             // is already the rare, allocating-adjacent path a generic body without an equality
             // constraint takes, so falling back to the ordinary Compare-then-JumpIfFalse shape costs
             // one extra dispatch on a path that was never going to be fast.
             if (operandType == SurtrValueTypeCode.Erased)
+                return false;
+
+            // An inline-typed operand (a range, a multi-field value class, a tuple) compares
+            // structurally through EmitValueClassEquality - a per-family fused branch does not
+            // exist for it and would read the wrong slot count anyway.
+            if (SlotCountOfType(binary.Left.Type) > 1 || SlotCountOfType(binary.Right.Type) > 1)
                 return false;
 
             left = binary.Left;
@@ -580,8 +933,8 @@ namespace Surtr.Compiler.CodeGen
         /// Lowers a <c>for-in</c>, by index wherever that is possible.
         /// </summary>
         /// <remarks>
-        /// §4.2 defines <c>for-in</c> against <c>IIterable&lt;T&gt;</c>, and every built-in
-        /// collection really does satisfy it — but walking one by index allocates no cursor and
+        /// �4.2 defines <c>for-in</c> against <c>IIterable&lt;T&gt;</c>, and every built-in
+        /// collection really does satisfy it � but walking one by index allocates no cursor and
         /// costs two instructions per step, so the contract is what makes an <c>int[]</c> assignable
         /// to an <c>IIterable&lt;int&gt;</c> rather than what a loop over one goes through. That
         /// choice is left here rather than taken in the binder for exactly this reason.
@@ -609,6 +962,10 @@ namespace Surtr.Compiler.CodeGen
                 case TypeSymbolKind.Dictionary:
                     EmitForInDictionary(loop, (DictionaryTypeSymbol)sequence);
                     return;
+
+                case TypeSymbolKind.Generator:
+                    EmitForInGenerator(loop, (GeneratorTypeSymbol)sequence);
+                    return;
             }
 
             if (sequence.SpecialType == SpecialType.String)
@@ -632,69 +989,152 @@ namespace Surtr.Compiler.CodeGen
         /// Walks a range without ever building one.
         /// </summary>
         /// <remarks>
-        /// A range written inline in a loop header is the case <c>RangeNew</c>'s own documentation
-        /// says must not allocate: both bounds are already on the stack, so the loop reads them into
-        /// two slots and counts between them. A range that arrived some other way is walked from its
-        /// <c>start</c> for its <c>length</c> — which is the one reading that needs no branch on
-        /// whether the range was written <c>..</c> or <c>..=</c>, since <c>length</c> already knows.
+        /// <para>
+        /// A range written inline in a loop header is the case the old heap form's documentation
+        /// says must not allocate: both bounds are already on the stack, so the loop reads them
+        /// into two slots and counts between them.
+        /// </para>
+        /// <para>
+        /// A range that arrived some other way is walked from its own block: the variable starts
+        /// at slot 0, and the limit is derived from slot 1 under control of slot 2's flag - no
+        /// pack, no call, no length getter. The exclusive limit is <c>end - 1</c> except where
+        /// that subtraction would wrap (<c>end == int.MinValue</c>, which only an empty range can
+        /// carry), where the loop is laid out already finished instead. Either way one comparison
+        /// against <c>limit</c> ends the loop, so emptiness costs a single failed test.
+        /// </para>
         /// </remarks>
         private void EmitForInRange(BoundForInStatement loop)
         {
             var variable = Declare(loop.Variable);
             var limit = _method.DeclareLocal("$limit");
-            bool inclusive;
+
+            // Which comparison ends the loop: an inclusive limit is exited past (`>`), an
+            // exclusive one is exited at (`>=`). The inline header knows its form statically;
+            // the escaped branch folds the flag into the limit itself, so it always exits past.
+            bool limitIsInclusive;
 
             if (loop.Sequence is BoundBinaryExpression
                 {
                     Operator: BinaryOperator.Range or BinaryOperator.RangeInclusive
                 } bounds)
             {
-                inclusive = bounds.Operator == BinaryOperator.RangeInclusive;
+                limitIsInclusive = bounds.Operator == BinaryOperator.RangeInclusive;
                 Expression(bounds.Left);
-                Code.StoreLocal(variable);
+                EmitStoreLocal(variable);
                 Expression(bounds.Right);
-                Code.StoreLocal(limit);
+                EmitStoreLocal(limit);
             }
             else
             {
-                inclusive = false;
-                var range = _method.DeclareLocal("$range");
+                limitIsInclusive = true;
 
-                Expression(loop.Sequence);
-                Code.StoreLocal(range);
+                int baseSlot = EnsureLocalRange(loop.Sequence, RangeSlotWidth);
 
-                Code.LoadLocal(range);
-                Code.Call(RangeAccessor("start"));
-                Code.StoreLocal(variable);
+                Code.LoadLocalField(baseSlot, 0);
+                EmitStoreLocal(variable);
 
-                Code.LoadLocal(range);
-                Code.Call(RangeAccessor("start"));
-                Code.LoadLocal(range);
-                Code.Call(RangeAccessor("length"));
-                Code.Add(SurtrValueTypeCode.Integer);
-                Code.StoreLocal(limit);
+                var exclusive = Code.NewLabel();
+                var subtract = Code.NewLabel();
+                var finish = Code.NewLabel();
+
+                Code.LoadLocalField(baseSlot, 2);
+                Code.JumpIfFalse(exclusive);
+
+                // Inclusive: the bound is its own limit.
+                Code.LoadLocalField(baseSlot, 1);
+                EmitStoreLocal(limit);
+                Code.Jump(finish);
+
+                Code.MarkLabel(exclusive);
+                Code.LoadLocalField(baseSlot, 1);
+                Code.LoadInt(int.MinValue);
+                Code.JumpIfCompare(SurtrComparison.NotEqual, SurtrValueTypeCode.Integer, subtract);
+
+                // end == int.MinValue and exclusive: nothing can have been inside, so start the
+                // walk already past it rather than subtract one into a wrap.
+                Code.LoadInt(1);
+                EmitStoreLocal(variable);
+                Code.LoadInt(0);
+                EmitStoreLocal(limit);
+                Code.Jump(finish);
+
+                Code.MarkLabel(subtract);
+                Code.LoadLocalField(baseSlot, 1);
+                Code.LoadInt(1);
+                Code.Subtract(SurtrValueTypeCode.Integer);
+                EmitStoreLocal(limit);
+
+                Code.MarkLabel(finish);
             }
 
             var top = Code.NewLabel();
             var step = Code.NewLabel();
             var end = Code.NewLabel();
 
-            Code.MarkLabel(top);
-            Code.LoadLocal(variable);
-            Code.LoadLocal(limit);
-            Code.JumpIfCompare(
-                inclusive ? SurtrComparison.Greater : SurtrComparison.GreaterOrEqual,
-                SurtrValueTypeCode.Integer,
-                end);
+            // Fused when the two slots address in one byte, which is the encoding's only
+            // restriction and true of every ordinary method. Past that the classic sequence still
+            // emits, exactly as the grouped local helpers fall back from LdlS to Ldl.
+            bool fused = FitsInSlotByte(variable, limit);
+
+            if (fused)
+            {
+                // The guard runs once, above the loop, rather than at the top of every iteration:
+                // the step at the bottom does its own test. Unlike an indexed walk this cannot
+                // rotate its entry away entirely - the counter is the variable the program
+                // declared, so starting it one below its bound would wrap at int.MinValue - which
+                // is why the guard survives for the first iteration and only the step is fused.
+                EmitLoadLocal(variable);
+                EmitLoadLocal(limit);
+                Code.JumpIfCompare(
+                    limitIsInclusive ? SurtrComparison.Greater : SurtrComparison.GreaterOrEqual,
+                    SurtrValueTypeCode.Integer,
+                    end);
+
+                Code.MarkLabel(top);
+            }
+            else
+            {
+                Code.MarkLabel(top);
+                EmitLoadLocal(variable);
+                EmitLoadLocal(limit);
+                Code.JumpIfCompare(
+                    limitIsInclusive ? SurtrComparison.Greater : SurtrComparison.GreaterOrEqual,
+                    SurtrValueTypeCode.Integer,
+                    end);
+            }
 
             PushLoop(step, end);
             Statement(loop.Body);
             PopTargets();
 
             Code.MarkLabel(step);
-            Code.IncrementLocal(variable, 1);
-            Code.Jump(top);
+
+            if (fused)
+            {
+                Code.ForRangeNext(variable.Index, limit.Index, limitIsInclusive, top);
+            }
+            else
+            {
+                Code.IncrementLocal(variable, 1);
+                Code.Jump(top);
+            }
+
             Code.MarkLabel(end);
+        }
+
+        /// <summary>
+        /// Whether every one of these locals addresses in the single byte a fused loop step
+        /// encodes its slots in.
+        /// </summary>
+        private static bool FitsInSlotByte(params SurtrLocal[] locals)
+        {
+            for (int i = 0; i < locals.Length; i++)
+            {
+                if ((uint)locals[i].Index > byte.MaxValue)
+                    return false;
+            }
+
+            return true;
         }
 
         private SurtrMethodInfo RangeAccessor(string property)
@@ -709,33 +1149,88 @@ namespace Surtr.Compiler.CodeGen
             var variable = Declare(loop.Variable);
 
             Expression(loop.Sequence);
-            Code.StoreLocal(source);
-            Code.LoadInt(0);
-            Code.StoreLocal(index);
+
+            // A tuple sequence is a block now, but the walk indexes it dynamically - and the
+            // frame has no addressing mode for a dynamic offset into a local range. Packing once
+            // at loop entry buys the whole indexed walk on the boxed form, whose elements the
+            // collector already follows.
+            if (kind == SurtrIterationKind.Tuple
+                && loop.Sequence.Type.NonNullable is TupleTypeSymbol { ElementTypes.Count: > 0 } tuple)
+            {
+                Code.PackTuple(Descriptors.Emit(tuple), ValueTypeLayout.WidthOfType(tuple));
+            }
+
+            EmitStoreLocal(source);
 
             var top = Code.NewLabel();
             var step = Code.NewLabel();
             var end = Code.NewLabel();
 
-            Code.MarkLabel(top);
-            Code.LoadLocal(index);
-            Code.LoadLocal(source);
-            Length(kind);
-            Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
+            // The fused step writes exactly one slot, so a loop variable that stores inline still
+            // needs the unpack the written-out form performs and keeps the classic sequence. The
+            // slot-width restriction is the encoding's, and is the same one every fused step has.
+            bool fused = SlotCountOfType(loop.Variable.Type) == 1
+                && FitsInSlotByte(source, index, variable);
 
-            Code.LoadLocal(source);
-            Code.LoadLocal(index);
-            Element(kind);
-            Code.StoreLocal(variable);
+            if (fused)
+            {
+                // Rotated: the whole step lives at the bottom, and the loop is entered by jumping
+                // straight to it with the index one below its start. Safe here where it is not for
+                // a range, because this index is a compiler temporary that always begins at zero.
+                Code.LoadInt(-1);
+                EmitStoreLocal(index);
+                Code.Jump(step);
+                Code.MarkLabel(top);
+            }
+            else
+            {
+                Code.LoadInt(0);
+                EmitStoreLocal(index);
+
+                Code.MarkLabel(top);
+                EmitLoadLocal(index);
+                EmitLoadLocal(source);
+                Length(kind);
+                Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
+
+                EmitLoadLocal(source);
+                EmitLoadLocal(index);
+                Element(kind);
+                // An element read off a collection's own storage arrives as the boxed form when its
+                // type stores inline - the collection keeps one reference per element - so the
+                // walk's variable, which holds the value itself, unpacks it.
+                UnpackIfMultiSlot(loop.Variable.Type);
+                EmitStoreLocal(variable);
+            }
 
             PushLoop(step, end);
             Statement(loop.Body);
             PopTargets();
 
             Code.MarkLabel(step);
-            Code.IncrementLocal(index, 1);
-            Code.Jump(top);
+
+            if (fused)
+            {
+                ForNext(kind, source.Index, index.Index, variable.Index, top);
+            }
+            else
+            {
+                Code.IncrementLocal(index, 1);
+                Code.Jump(top);
+            }
+
             Code.MarkLabel(end);
+        }
+
+        /// <summary>The fused loop step for an indexed walk over <paramref name="kind"/>.</summary>
+        private void ForNext(SurtrIterationKind kind, int sourceSlot, int indexSlot, int variableSlot, SurtrLabel body)
+        {
+            switch (kind)
+            {
+                case SurtrIterationKind.Array: Code.ArrForNext(sourceSlot, indexSlot, variableSlot, body); return;
+                case SurtrIterationKind.String: Code.StrForNext(sourceSlot, indexSlot, variableSlot, body); return;
+                default: Code.TupForNext(sourceSlot, indexSlot, variableSlot, body); return;
+            }
         }
 
         private void Length(SurtrIterationKind kind)
@@ -764,7 +1259,7 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// The snapshot is what the built-in iterator does too, and for the same reason: a walk that
         /// read the live table would have to say what happens when the body inserts. Taking the keys
-        /// once makes that question have an answer — the loop sees the keys the dictionary had when
+        /// once makes that question have an answer � the loop sees the keys the dictionary had when
         /// it started.
         /// </remarks>
         private void EmitForInDictionary(BoundForInStatement loop, DictionaryTypeSymbol dictionary)
@@ -780,42 +1275,69 @@ namespace Surtr.Compiler.CodeGen
             var variable = Declare(loop.Variable);
 
             Expression(loop.Sequence);
-            Code.StoreLocal(source);
-            Code.LoadLocal(source);
+            EmitStoreLocal(source);
+            EmitLoadLocal(source);
             Code.DictionaryKeys(SurtrClassReference.Array(Descriptors.Emit(dictionary.KeyType)));
-            Code.StoreLocal(keys);
-            Code.LoadInt(0);
-            Code.StoreLocal(index);
-
+            EmitStoreLocal(keys);
             var top = Code.NewLabel();
             var step = Code.NewLabel();
             var end = Code.NewLabel();
 
+            // Seventeen dispatches of overhead per entry, written out - four to guard, four to read
+            // the key, four to look the value up, three to lay the pair down and two to step - and
+            // one instruction fused. It is the largest of the loop fusions and the key/value
+            // temporaries disappear with it, since the step writes the pair's two slots directly.
+            bool fused = FitsInSlotByte(keys, index, source, variable);
+
+            if (fused)
+            {
+                Code.LoadInt(-1);
+                EmitStoreLocal(index);
+                Code.Jump(step);
+                Code.MarkLabel(top);
+
+                PushLoop(step, end);
+                Statement(loop.Body);
+                PopTargets();
+
+                Code.MarkLabel(step);
+                Code.DictForNext(keys.Index, index.Index, source.Index, variable.Index, top);
+                Code.MarkLabel(end);
+                return;
+            }
+
+            Code.LoadInt(0);
+            EmitStoreLocal(index);
+
             Code.MarkLabel(top);
-            Code.LoadLocal(index);
-            Code.LoadLocal(keys);
+            EmitLoadLocal(index);
+            EmitLoadLocal(keys);
             Code.ArrLen();
             Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
 
-            // The key is read from the snapshot once and reused — for the value lookup and for the
-            // packed pair — instead of re-indexing the snapshot's array a second time. The pair is
+            // The key is read from the snapshot once and reused � for the value lookup and for the
+            // packed pair � instead of re-indexing the snapshot's array a second time. The pair is
             // still materialised per iteration, because the loop variable's own type is a tuple and
-            // the body reads it as one (§4.2 has no destructuring for-in); what is avoided is the
+            // the body reads it as one (�4.2 has no destructuring for-in); what is avoided is the
             // second array read, which carries a bounds check the first one already paid.
-            Code.LoadLocal(keys);
-            Code.LoadLocal(index);
+            EmitLoadLocal(keys);
+            EmitLoadLocal(index);
             Code.ArrGet();
-            Code.StoreLocal(key);
+            EmitStoreLocal(key);
 
-            Code.LoadLocal(source);
-            Code.LoadLocal(key);
+            EmitLoadLocal(source);
+            EmitLoadLocal(key);
             Code.DictGet();
-            Code.StoreLocal(value);
+            EmitStoreLocal(value);
 
-            Code.LoadLocal(key);
-            Code.LoadLocal(value);
-            Code.PackTuple(Descriptors.Emit(pair), 2);
-            Code.StoreLocal(variable);
+            EmitLoadLocal(key);
+            EmitLoadLocal(value);
+
+            // The pair is a value now: loading key then value lays out exactly the flattened
+            // block, so storing it into the loop variable's own range - wider than one slot,
+            // which is what makes this a block store rather than a pack - needs nothing else.
+            // No object per iteration any more.
+            EmitStoreLocal(variable);
 
             PushLoop(step, end);
             Statement(loop.Body);
@@ -828,7 +1350,7 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Walks anything that satisfies <c>IIterable&lt;T&gt;</c> through its cursor (§4.2).
+        /// Walks anything that satisfies <c>IIterable&lt;T&gt;</c> through its cursor (�4.2).
         /// </summary>
         /// <remarks>
         /// The general path, and the only one that allocates. Every call goes through the interface
@@ -842,6 +1364,75 @@ namespace Surtr.Compiler.CodeGen
         /// the receiver a real object whose class carries the implemented <c>IIterable&lt;T&gt;</c>.
         /// </para>
         /// </remarks>
+        /// <summary>
+        /// Walks a generator through its own opcodes rather than through <c>IIterable&lt;T&gt;</c>.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The same bargain §4.2 already makes for an array: the contract is what makes a
+        /// <c>generator&lt;int&gt;</c> assignable to an <c>IIterable&lt;int&gt;</c>, and this is what
+        /// a loop over one actually runs. Going through the contract would cost, per element, an
+        /// interface dispatch, a native call and a nested entry into the interpreter - which is
+        /// most of what generators exist to save over the hand-written iterators they replace.
+        /// </para>
+        /// <para>
+        /// <c>GenIterate</c> is emitted once, above the loop, and is the compiled copy of the check
+        /// <c>iterate()</c> makes: a generator object is single-use, so walking one that has already
+        /// started traps rather than quietly iterating nothing (§12.2).
+        /// </para>
+        /// </remarks>
+        private void EmitForInGenerator(BoundForInStatement loop, GeneratorTypeSymbol sequence)
+        {
+            var cursor = _method.DeclareLocal("$generator");
+            var variable = Declare(loop.Variable);
+
+            Expression(loop.Sequence);
+            Code.GenIterate();
+            EmitStoreLocal(cursor);
+
+            // Statically a generator, so the close is a direct call on its own class rather than a
+            // contract dispatch. It matters here more than anywhere: a generator is the one cursor
+            // that can have a `finally` of its own waiting to run.
+            var dispose = GeneratorMethod("dispose");
+            void Close()
+            {
+                EmitLoadLocal(cursor);
+                Code.Call(dispose);
+            }
+
+            var region = BeginCursorScope(Close);
+
+            var top = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.MarkLabel(top);
+            EmitLoadLocal(cursor);
+            Code.GenResume();
+            Code.JumpIfFalse(end);
+
+            EmitLoadLocal(cursor);
+            Code.GenCurrent();
+
+            // `Yield` wrote this slot from a body compiled against the declared element, so a
+            // primitive is raw unless the declaration erased it, in which case it is a box - the
+            // same two representations `Unerase` already resolves from the value's own tag. Nothing
+            // is boxed here: a generator whose whole point is to be cheaper than the iterator class
+            // it replaces cannot afford an allocation per element.
+            Unerase(loop.Variable.Type);
+
+            EmitStoreLocal(variable);
+
+            PushLoop(top, end);
+            Statement(loop.Body);
+            PopTargets();
+
+            if (Code.IsReachable)
+                Code.Jump(top);
+
+            Code.MarkLabel(end);
+            EndCursorScope(region, Close);
+        }
+
         private void EmitForInIterable(BoundForInStatement loop)
         {
             var iterate = ContractMethod(SurtrBuiltIns.IIterable, "iterate");
@@ -852,34 +1443,45 @@ namespace Surtr.Compiler.CodeGen
             var variable = Declare(loop.Variable);
 
             Expression(loop.Sequence);
-            BoxIfValueClass(loop.Sequence.Type);
+            BoxIfMultiSlot(loop.Sequence.Type);
             Code.CallInterface(iterate);
-            Code.StoreLocal(cursor);
+            EmitStoreLocal(cursor);
+
+            // The cursor is only known as an `IIterator<T>` here, so the close goes through the
+            // contract - which is exactly why `IIterator<T>` was made to extend `IDisposable`
+            // rather than the loop asking at run time whether this particular cursor can be closed.
+            var dispose = DisposeContractMethod();
+            void Close()
+            {
+                EmitLoadLocal(cursor);
+                Code.CallInterface(dispose);
+            }
+
+            var region = BeginCursorScope(Close);
 
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(cursor);
+            EmitLoadLocal(cursor);
             Code.CallInterface(moveNext);
             Code.JumpIfFalse(end);
 
-            Code.LoadLocal(cursor);
+            EmitLoadLocal(cursor);
             Code.CallInterface(current);
 
-            // `current` is typed by the contract's own parameter, so it reads back erased — but
+            // `current` is typed by the contract's own parameter, so it reads back erased - but
             // what it hands back is the collection's own storage, and a built-in collection stores
             // a primitive raw (an int pushed into an int[] is never boxed on the way in), while a
             // collection built from scratch inside a still-generic body stores primitives already
             // boxed (§1.11). The receiver reached through `CallInterface` is only known to satisfy
-            // the contract, not which of the two it is, so `BoxDynamic` normalizes either into a
-            // definite reference — a no-op where `current` already handed one back — and `Unerase`
-            // can then run unconditionally rather than only where the loop variable's own
-            // substituted type happens to be a reference.
-            Code.BoxDynamic();
+            // the contract, not which of the two it is - which is exactly the ambiguity `Unerase`
+            // resolves from the value's own tag. It used to be normalised away by boxing first;
+            // that was one allocation per element on every walk through a contract, for a question
+            // `UnboxDynamic` answers for free.
             Unerase(loop.Variable.Type);
 
-            Code.StoreLocal(variable);
+            EmitStoreLocal(variable);
 
             PushLoop(top, end);
             Statement(loop.Body);
@@ -889,7 +1491,14 @@ namespace Surtr.Compiler.CodeGen
                 Code.Jump(top);
 
             Code.MarkLabel(end);
+            EndCursorScope(region, Close);
         }
+
+        /// <summary>A method of the built-in <c>generator</c> class, by name.</summary>
+        private SurtrMethodInfo GeneratorMethod(string name)
+            => SurtrBuiltIns.Generator.TryGetMethods(name, out var overloads) && overloads.Length == 1
+                ? overloads[0]
+                : throw Unsupported("a for-in over a generator, because 'generator." + name + "' could not be found");
 
         private SurtrMethodInfo ContractMethod(SurtrInterface contract, string name)
             => contract.TryGetMethods(name, out var overloads) && overloads.Length == 1
@@ -905,21 +1514,21 @@ namespace Surtr.Compiler.CodeGen
         /// <see cref="SurtrCodeEmitter.SwitchOn"/>, which picks a jump table or a binary-searched
         /// key table for itself. A string subject hashes first, since
         /// <c>SurtrString.ComputeHash</c> depends only on the text and so gives the same answer in
-        /// the compiler as at run time — that is the whole reason <c>StrHash</c> exists.
+        /// the compiler as at run time � that is the whole reason <c>StrHash</c> exists.
         /// </para>
         /// <para>
-        /// Everything else is a chain of comparisons. That covers <c>bool</c>, <c>float</c> and an
-        /// enum, and for an enum it is also the <em>right</em> shape: a case is a singleton
-        /// instance, so matching one is a reference compare, and switching on an ordinal would need
-        /// a member the enum does not have.
+        /// Everything else is a chain of comparisons. That covers <c>bool</c>, <c>float</c> and —
+        /// until a case binds as a constant (§2.4) — an enum, whose labels are statics of the
+        /// enum's own value type. From the migration the subject is an int, so the chain compares
+        /// values; the dense table arrives when the labels fold to constants in Fase 2.
         /// </para>
         /// </remarks>
         private void EmitSwitchStatement(BoundSwitchStatement @switch)
         {
-            var subject = _method.DeclareLocal("$subject");
+            var subject = DeclareTemp("$subject", @switch.Subject.Type);
 
             Expression(@switch.Subject);
-            Code.StoreLocal(subject);
+            EmitStoreLocal(subject);
 
             var end = Code.NewLabel();
             var bodies = new SurtrLabel[@switch.Sections.Count];
@@ -937,7 +1546,7 @@ namespace Surtr.Compiler.CodeGen
 
             EmitDispatch(@switch.Subject.Type, subject, bodies, labels, fallback ?? end);
 
-            // A section runs to its own end: §4.3 makes fall-through explicit, so nothing here
+            // A section runs to its own end: �4.3 makes fall-through explicit, so nothing here
             // continues into the next one. `break` leaves the switch; `continue` looks past it to
             // whatever loop encloses it, which is what pushing this as a non-loop arranges.
             PushTargets(end, end, isLoop: false);
@@ -969,10 +1578,19 @@ namespace Surtr.Compiler.CodeGen
         {
             var family = TypeCodeOf(subjectType);
 
+            // An enum switches on its `value` slot, not on the whole value: a case-carrying enum's
+            // block has user fields that must stay out of the key (§2.4). For a bare enum the slot
+            // is the value, so the load is the same either way; only the block needs the sub-slot.
+            bool multiFieldEnum = subjectType.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum } enumType
+                && ValueTypeLayout.IsMultiField(enumType);
+
             if (family is SurtrValueTypeCode.Integer or SurtrValueTypeCode.Character
                 && TryCollectIntegerCases(arms, labels, out var cases))
             {
-                Code.LoadLocal(subject);
+                if (multiFieldEnum)
+                    EmitEnumValueOf(subject, subjectType);
+                else
+                    EmitLoadLocal(subject);
 
                 if (family == SurtrValueTypeCode.Character)
                     Code.Convert(SurtrValueTypeCode.Character, SurtrValueTypeCode.Integer);
@@ -988,13 +1606,44 @@ namespace Surtr.Compiler.CodeGen
             {
                 foreach (var label in labels[i])
                 {
-                    Code.LoadLocal(subject);
-                    Expression(label);
-                    Code.JumpIfCompare(SurtrComparison.Equal, family, arms[i]);
+                    if (multiFieldEnum)
+                    {
+                        // Both sides of the comparison reduce to the `value` slot.
+                        EmitEnumValueOf(subject, subjectType);
+                        var labelTemp = DeclareTemp("$label", label.Type);
+                        Expression(label);
+                        EmitStoreLocal(labelTemp);
+                        EmitEnumValueOf(labelTemp, label.Type);
+                        Code.JumpIfCompare(SurtrComparison.Equal, SurtrValueTypeCode.Integer, arms[i]);
+                    }
+                    else
+                    {
+                        EmitLoadLocal(subject);
+                        Expression(label);
+                        Code.JumpIfCompare(SurtrComparison.Equal, family, arms[i]);
+                    }
                 }
             }
 
             Code.Jump(fallback);
+        }
+
+        /// <summary>Pushes the first slot of an enum value in a local range - its synthetic <c>value</c> field.</summary>
+        /// <remarks>
+        /// <c>value</c> is always the enum's first instance field (§2.4), so its slot is the block's
+        /// base. A bare enum occupies exactly that one slot; the same read is the whole value.
+        /// </remarks>
+        private void EmitEnumValueOf(SurtrLocal local, TypeSymbol enumType)
+        {
+            if (enumType.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum } named
+                && ValueTypeLayout.TryGet(named, out _, out _))
+            {
+                Code.LoadLocalField(local.Index, 0);
+            }
+            else
+            {
+                EmitLoadLocal(local);
+            }
         }
 
         /// <summary>
@@ -1002,7 +1651,7 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         /// <remarks>
         /// A duplicate key would make <see cref="SurtrCodeEmitter.SwitchOn"/> throw, and the binder
-        /// does not reject one — so it is caught here and the chain takes over, which matches the
+        /// does not reject one � so it is caught here and the chain takes over, which matches the
         /// first arm exactly as the source reads.
         /// </remarks>
         private static bool TryCollectIntegerCases(
@@ -1017,11 +1666,16 @@ namespace Surtr.Compiler.CodeGen
             {
                 foreach (var label in labels[i])
                 {
-                    if (ConstantOf(label) is not object value)
+                    // An enum case's static read is a switch key too: its value is the constant
+                    // the case was bound with (§2.4). Folding it here rather than in ConstantOf
+                    // keeps the fold out of const-call arguments, where a case-carrying enum's
+                    // whole value — not its int — is what an argument is.
+                    object? value = ConstantOf(label) ?? EnumCaseKey(label);
+                    if (value is not object constant)
                         return false;
 
                     int key;
-                    switch (value)
+                    switch (constant)
                     {
                         case long integer when integer >= int.MinValue && integer <= int.MaxValue:
                             key = (int)integer;
@@ -1045,11 +1699,22 @@ namespace Surtr.Compiler.CodeGen
             return cases.Count > 0;
         }
 
+        /// <summary>The value of an enum case static, as the switch key it dispatches on (§2.4).</summary>
+        /// <remarks>
+        /// Imported enums carry no value (only their ordinal), so those stay on the comparison
+        /// chain — the same fallback a non-case label takes.
+        /// </remarks>
+        private static object? EnumCaseKey(BoundExpression expression)
+            => expression is BoundFieldExpression { Field: FieldSymbol { IsStatic: true, EnumValue: not null } @case }
+                && @case.Type.NonNullable.TypeKind == TypeSymbolKind.Enum
+                ? (long)@case.EnumValue!.Value
+                : null;
+
         /// <summary>
         /// Emits a string switch as a hash lookup with an equality confirmation.
         /// </summary>
         /// <remarks>
-        /// Two texts may hash alike, so a hash arm is not an answer — it is a shortlist. Each
+        /// Two texts may hash alike, so a hash arm is not an answer � it is a shortlist. Each
         /// distinct hash gets a block that compares the subject against every label sharing it and
         /// falls through to the default, which is what makes a collision cost one extra compare
         /// instead of being a miscompile.
@@ -1091,7 +1756,7 @@ namespace Surtr.Compiler.CodeGen
                 confirmations.Add((confirm, pair.Value));
             }
 
-            Code.LoadLocal(subject);
+            EmitLoadLocal(subject);
             Code.StrHash();
             Code.SwitchOn(cases, fallback);
 
@@ -1101,7 +1766,7 @@ namespace Surtr.Compiler.CodeGen
 
                 foreach (var (text, arm) in bucket)
                 {
-                    Code.LoadLocal(subject);
+                    EmitLoadLocal(subject);
                     Code.LoadString(text);
                     Code.JumpIfCompare(SurtrComparison.Equal, SurtrValueTypeCode.String, arm);
                 }
@@ -1118,7 +1783,7 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// <para>
         /// The instruction set has no <c>finally</c>, deliberately: the block is emitted on each
-        /// normal exit path — falling off the try, a <c>return</c>, a <c>break</c> leaving it — plus
+        /// normal exit path � falling off the try, a <c>return</c>, a <c>break</c> leaving it � plus
         /// once more behind a catch-all that runs it and re-raises. That is what javac does, and
         /// what keeps <c>Leave</c>/<c>EndFinally</c> out of the set.
         /// </para>
@@ -1153,7 +1818,7 @@ namespace Surtr.Compiler.CodeGen
                 Code.MarkHandler(handler);
                 _method.AddCatch(guarded, Descriptors.Emit(clause.Exception.Type.NonNullable), handler);
 
-                Code.StoreLocal(Declare(clause.Exception));
+                EmitStoreLocal(Declare(clause.Exception));
 
                 PushFinally(@try.Finally);
                 Statement(clause.Body);
@@ -1175,9 +1840,9 @@ namespace Surtr.Compiler.CodeGen
                 _method.AddCatchAll(fault, rethrow);
 
                 var raised = _method.DeclareLocal("$raised");
-                Code.StoreLocal(raised);
+                EmitStoreLocal(raised);
                 RunFinally(@try.Finally);
-                Code.LoadLocal(raised);
+                EmitLoadLocal(raised);
                 Code.Throw();
             }
 
@@ -1194,7 +1859,7 @@ namespace Surtr.Compiler.CodeGen
         private void PushFinally(BoundStatement? block)
         {
             if (block is not null)
-                _finallies.Add(block);
+                _finallies.Add(() => Statement(block));
         }
 
         private void PopFinally(BoundStatement? block)
@@ -1207,12 +1872,208 @@ namespace Surtr.Compiler.CodeGen
         private void UnwindTo(int depth)
         {
             for (int i = _finallies.Count - 1; i >= depth; i--)
-                Statement(_finallies[i]);
+                _finallies[i]();
+        }
+
+        /// <summary>
+        /// Opens a protected region whose exit closes a cursor, and registers the close as pending
+        /// so a <c>return</c> out of the loop runs it too.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The shape is C#'s <c>foreach</c>, and it is C#'s shape because the alternative does not
+        /// work: the region wraps the <em>whole</em> loop, break label included, so a <c>break</c>
+        /// leaves the loop while still inside the region and the close runs exactly once on the way
+        /// out. Making <c>break</c> run the close itself would close twice on that path.
+        /// </para>
+        /// <para>
+        /// A <c>return</c> is the case the region cannot cover, because it leaves the frame rather
+        /// than the region - hence the entry on the pending stack, which is the same mechanism a
+        /// written <c>finally</c> uses. And an exception is covered by the catch-all below, which
+        /// is the same catch-all a written <c>finally</c> compiles to.
+        /// </para>
+        /// <para>
+        /// Entering a protected region costs nothing at run time in this VM - handlers are a table
+        /// of ranges, with no opcode to enter one - so what a loop over a cursor pays for all of
+        /// this is one call on the way out. Per loop, never per element. See
+        /// <c>docs/Plan-Disposicion.md</c> §3.4.
+        /// </para>
+        /// </remarks>
+        private SurtrProtectedRegion BeginCursorScope(Action close)
+        {
+            var region = _method.BeginTry();
+            _finallies.Add(close);
+            return region;
+        }
+
+        /// <summary>Closes the region <see cref="BeginCursorScope"/> opened, on both exits.</summary>
+        private void EndCursorScope(SurtrProtectedRegion region, Action close)
+        {
+            _finallies.RemoveAt(_finallies.Count - 1);
+            _method.EndTry(region);
+
+            var done = Code.NewLabel();
+
+            if (Code.IsReachable)
+            {
+                close();
+                Code.Jump(done);
+            }
+
+            var handler = Code.NewLabel();
+            Code.MarkHandler(handler);
+            _method.AddCatchAll(region, handler);
+
+            var raised = _method.DeclareLocal("$raised");
+            EmitStoreLocal(raised);
+            close();
+            EmitLoadLocal(raised);
+            Code.Throw();
+
+            Code.MarkLabel(done);
+        }
+
+        /// <summary>The <c>IDisposable.dispose</c> every cursor answers, reached through the contract.</summary>
+        /// <remarks>
+        /// <c>IIterator&lt;T&gt;</c> extends <c>IDisposable</c> (<c>docs/Plan-Disposicion.md</c>
+        /// §3.2), so the slot exists on anything a <c>for-in</c> can walk by contract - which is
+        /// what lets this be one call site rather than a run-time question about whether the cursor
+        /// happens to be closeable.
+        /// </remarks>
+        private SurtrMethodInfo DisposeContractMethod() => ContractMethod(SurtrBuiltIns.IDisposable, "dispose");
+
+        /// <summary>
+        /// Emits a <c>yield</c>: one value, then a suspension (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// A single slot leaves the frame, so an element whose type is wider than one - a
+        /// multi-field <c>value class</c>, a tuple - is boxed on the way out, exactly as the
+        /// interface path's <c>current</c> would have to box it. One representation rather than two
+        /// that would have to agree; keeping it wide on the compiled path is a measurable
+        /// optimisation for later, not a correctness question.
+        /// </remarks>
+        private void EmitYield(BoundYieldExpression yield, bool wantsValue)
+        {
+            if (yield.IsDelegating)
+            {
+                EmitYieldFrom(yield, wantsValue);
+                return;
+            }
+
+            Expression(yield.Value);
+            BoxIfMultiSlot(yield.Value.Type);
+            Code.Yield();
+
+            // The value `send(v)` injected, read back only where the source asked for it. `Yield`
+            // keeps the stack effect it has always had, which is what let the whole coroutine
+            // surface be added for one new opcode rather than by changing what a byte already on
+            // disk means.
+            if (wantsValue)
+                Code.GenResumed();
+        }
+
+        /// <summary>
+        /// Emits a <c>yield from</c>: every element of a sequence, in order (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Two lowerings, picked by the operand's static type, and the split is the same one §4.2
+        /// makes for <c>for-in</c>. A <c>generator&lt;T&gt;</c> becomes a <b>link</b>: the
+        /// delegating generator suspends without a frame and every later resume walks straight to
+        /// the innermost one, so an N-deep chain costs one frame copy per element rather than N.
+        /// Anything else becomes the <b>loop</b> the delegation means - <c>for (x in it) yield x;</c>
+        /// written out - because an array or a user cursor has no frame to link to.
+        /// </para>
+        /// <para>
+        /// The loop is emitted here rather than lowered in the binder for the same reason
+        /// <c>for-in</c> is: which of the two applies is a fact about representation, and the binder
+        /// deals in types.
+        /// </para>
+        /// </remarks>
+        private void EmitYieldFrom(BoundYieldExpression yield, bool wantsValue)
+        {
+            var sequence = yield.Value.Type.NonNullable;
+
+            // The link hands the inner generator's own values straight to the consumer, so it is
+            // only available when they need no changing on the way. An `int` sequence delegated to
+            // by a `float` generator has to convert each element, which is the loop's job.
+            if (sequence.TypeKind == TypeSymbolKind.Generator
+                && yield.DelegatedConversion.Kind == ConversionKind.Identity)
+            {
+                Expression(yield.Value);
+                Code.GenDelegate();
+
+                // What the inner generator returned. It arrives through the same field a `send`
+                // uses, because to the delegating generator this is its own suspension ending -
+                // which is why one opcode reads both (PEP 380's rule, and §15.3's reasoning).
+                if (wantsValue)
+                    Code.GenResumed();
+
+                return;
+            }
+
+            // The general path. Deliberately built from the pieces a `for-in` over the same
+            // expression would emit, so a sequence that is delegated to and one that is looped over
+            // cannot disagree about what iterating it means.
+            var iterate = ContractMethod(SurtrBuiltIns.IIterable, "iterate");
+            var moveNext = ContractMethod(SurtrBuiltIns.IIterator, "moveNext");
+            var current = ContractMethod(SurtrBuiltIns.IIterator, MemberNames.Getter("current"));
+
+            var cursor = _method.DeclareLocal("$delegated");
+
+            Expression(yield.Value);
+            BoxIfMultiSlot(yield.Value.Type);
+            Code.CallInterface(iterate);
+            EmitStoreLocal(cursor);
+
+            // The delegated-to sequence is closed on the way out too, and the reason is the case
+            // that only exists for a generator: this loop can be abandoned mid-way, because the
+            // generator running it can itself be disposed. The link lowering above needs none of
+            // this - a linked generator is closed by walking the chain.
+            var dispose = DisposeContractMethod();
+            void Close()
+            {
+                EmitLoadLocal(cursor);
+                Code.CallInterface(dispose);
+            }
+
+            var region = BeginCursorScope(Close);
+
+            var top = Code.NewLabel();
+            var end = Code.NewLabel();
+
+            Code.MarkLabel(top);
+            EmitLoadLocal(cursor);
+            Code.CallInterface(moveNext);
+            Code.JumpIfFalse(end);
+
+            EmitLoadLocal(cursor);
+            Code.CallInterface(current);
+            Unerase(yield.DelegatedElementType!);
+
+            // Each element converts to the declaring generator's own element, by the conversion the
+            // binder already classified for exactly this loop.
+            if (yield.DelegatedConversion.Kind != ConversionKind.Identity)
+                EmitConversionTail(yield.DelegatedConversion, yield.DelegatedElementType!, _symbol.YieldType!);
+
+            BoxIfMultiSlot(_symbol.YieldType!);
+            Code.Yield();
+
+            Code.Jump(top);
+            Code.MarkLabel(end);
+            EndCursorScope(region, Close);
+
+            // The loop form evaluates to null, and deliberately so: what a `yield from` produces is
+            // the *generator's* return value, and an array or a user cursor has none. Reading the
+            // resumed field here would hand back whatever the last `send` injected into this
+            // generator, which is a different value entirely.
+            if (wantsValue)
+                Code.PushNull();
         }
 
         private void EmitReturn(BoundReturnStatement @return)
         {
-            // A spliced body's `return` leaves the splice, not the frame — §3.6 makes inlining
+            // A spliced body's `return` leaves the splice, not the frame � �3.6 makes inlining
             // invisible, and a real Ret here would end the caller.
             if (_inlines.Count > 0)
             {
@@ -1221,7 +2082,11 @@ namespace Surtr.Compiler.CodeGen
                 if (@return.Value is not null && frame.HasResult)
                 {
                     Expression(@return.Value);
-                    Code.StoreLocal(frame.Result);
+                    // An inlined multi-field value returned through its nullable form crosses as a
+                    // boxed reference, matching the callee's `E?` return slot.
+                    if (frame.Method.ReturnType.IsNullable && TryMultiSlotWidth(@return.Value.Type, out _))
+                        BoxIfMultiSlot(@return.Value.Type);
+                    EmitStoreLocal(frame.Result);
                 }
                 else if (@return.Value is not null)
                 {
@@ -1244,17 +2109,44 @@ namespace Surtr.Compiler.CodeGen
             // touches the returned local unable to change what was already returned.
             if (_finallies.Count > 0)
             {
-                var result = _method.DeclareLocal("$result");
+                var result = DeclareTemp("$result", @return.Value.Type);
                 Expression(@return.Value);
-                Code.StoreLocal(result);
+                EmitStoreLocal(result);
                 UnwindTo(0);
-                Code.LoadLocal(result);
-                Code.ReturnValue();
+                EmitLoadLocal(result);
+                EmitReturnValue(@return.Value.Type);
                 return;
             }
 
             Expression(@return.Value);
-            Code.ReturnValue();
+            EmitReturnValue(@return.Value.Type);
+        }
+
+        /// <summary>Leaves the computed value in the form the frame's declared return type demands.</summary>
+        private void EmitReturnValue(TypeSymbol valueType)
+        {
+            // A multi-field value class returned through its nullable form (`Vec2 -> Vec2?`) must
+            // box: the value is a block but the return type's single slot is a reference.
+            if (_symbol.ReturnType.IsNullable && TryMultiSlotWidth(valueType, out _))
+                BoxIfMultiSlot(valueType);
+
+            EmitReturnOf(_symbol.ReturnType);
+        }
+
+        /// <summary>Returns whatever is on top of the operand stack, in the form its width demands.</summary>
+        /// <remarks>
+        /// A multi-field value class returns as a contiguous block - one <c>ReturnValues</c> -
+        /// while everything else keeps the single-slot return. The caller needs no counterpart:
+        /// it knows the callee's declared type, so it knows how many slots came back.
+        /// </remarks>
+        private void EmitReturnOf(TypeSymbol returnType)
+        {
+            int width = SlotCountOfType(returnType);
+
+            if (width > 1)
+                Code.ReturnValues(width);
+            else
+                Code.ReturnValue();
         }
 
         private void EmitBreak(BoundBreakStatement jump)
@@ -1312,12 +2204,18 @@ namespace Surtr.Compiler.CodeGen
                     EmitLiteral(literal);
                     return;
 
+                case BoundYieldExpression yield:
+                    EmitYield(yield, wantsValue: true);
+                    return;
+
                 case BoundLocalExpression local:
-                    LoadSymbol(local.Local, () => Code.LoadLocal(Slot(local.Local)));
+                    LoadSymbol(local.Local, () => EmitLoadLocal(Slot(local.Local)));
+                    UnboxIfNullableBlock(local.Local.Type, local.Type);
                     return;
 
                 case BoundParameterExpression parameter:
-                    LoadSymbol(parameter.Parameter, () => Code.LoadLocal(ParameterSlot(parameter.Parameter)));
+                    LoadSymbol(parameter.Parameter, () => EmitLoadLocal(ParameterSlot(parameter.Parameter)));
+                    UnboxIfNullableBlock(parameter.Parameter.Type, parameter.Type);
                     return;
 
                 case BoundThisExpression:
@@ -1417,6 +2315,13 @@ namespace Surtr.Compiler.CodeGen
                     Code.Throw();
                     return;
 
+                case BoundSequenceExpression sequence:
+                    // A statement that runs for its effects (a temporary's declaration and a range
+                    // guard), then the value it captured — left on the stack like any expression's.
+                    Statement(sequence.Statement);
+                    Expression(sequence.Value);
+                    return;
+
                 case BoundNullConditionalExpression conditionalAccess:
                     EmitNullConditional(conditionalAccess, discardResult: false);
                     return;
@@ -1426,10 +2331,14 @@ namespace Surtr.Compiler.CodeGen
                     return;
 
                 case BoundConditionalReceiver:
-                    Code.LoadLocal(
+                    EmitLoadLocal(
                         _conditionalReceivers.Count > 0
                             ? _conditionalReceivers[_conditionalReceivers.Count - 1]
                             : throw Unsupported("a '?.' receiver outside the access it belongs to"));
+
+                    // The receiver of a `?.` on a nullable multi-field value was stored as a boxed
+                    // reference; the access expects the block, so unbox on the way in.
+                    UnboxIfNullableBlock(expression.Type);
 
                     return;
 
@@ -1445,9 +2354,9 @@ namespace Surtr.Compiler.CodeGen
         {
             switch (literal.Value)
             {
-                // §5.1: absence in a nullable primitive is its own tagged value, not a null reference.
+                // �5.1: absence in a nullable primitive is its own tagged value, not a null reference.
                 // A reference is its 32-bit payload, so a null one and a present `0` would be the
-                // same value — which is exactly what the absent tag exists to keep apart.
+                // same value � which is exactly what the absent tag exists to keep apart.
                 case null when IsNullablePrimitive(literal.Type):
                     Code.PushAbsent(TypeCodeOf(literal.Type));
                     return;
@@ -1524,7 +2433,7 @@ namespace Surtr.Compiler.CodeGen
             var from = conversion.Operand.Type;
             var to = conversion.Type;
 
-            // §4.8 hands `as?` to the compiler: test, then either keep the value or produce null.
+            // �4.8 hands `as?` to the compiler: test, then either keep the value or produce null.
             if (conversion.IsSafe)
             {
                 EmitSafeCast(conversion);
@@ -1533,7 +2442,7 @@ namespace Surtr.Compiler.CodeGen
 
             if (conversion.Conversion.Kind == ConversionKind.UserDefined)
             {
-                // §5.6's `operator as` is an ordinary static call whose one argument is the value.
+                // �5.6's `operator as` is an ordinary static call whose one argument is the value.
                 Expression(conversion.Operand);
                 EmitDirectCall(
                     conversion.Conversion.Method
@@ -1543,9 +2452,9 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
-            // `null` reaching a nullable primitive is the absent tag, not a null reference: §5.1 makes
+            // `null` reaching a nullable primitive is the absent tag, not a null reference: �5.1 makes
             // absence a value of its own precisely so it costs no allocation, and a null reference is
-            // its 32-bit payload — which would make an absent `int?` and a present `0` the same value.
+            // its 32-bit payload � which would make an absent `int?` and a present `0` the same value.
             if (conversion.Operand is BoundLiteralExpression { Value: null } && IsNullablePrimitive(to))
             {
                 Code.PushAbsent(TypeCodeOf(to));
@@ -1562,10 +2471,10 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// Split out of <see cref="EmitConversion"/> so a collection cast constructor's per-element
         /// loop (<see cref="EmitCollectionCreation"/>) can apply the same conversion to a value it
-        /// just read with <c>TupGetC</c>/<c>ArrGet</c> — there is no <see cref="BoundConversionExpression"/>
+        /// just read with <c>TupGetC</c>/<c>ArrGet</c> � there is no <see cref="BoundConversionExpression"/>
         /// node mid-loop for it to be the operand of, only the classified <see cref="Conversion"/>
         /// the binder already worked out. Every caller from that loop is restricted to
-        /// <see cref="Conversion.IsImplicit"/> (§5.6 makes a user-defined <c>operator as</c>
+        /// <see cref="Conversion.IsImplicit"/> (�5.6 makes a user-defined <c>operator as</c>
         /// explicit-only), so only the identity/nullable/reference/numeric/erasure branches below are
         /// ever reached from there.
         /// </remarks>
@@ -1575,17 +2484,23 @@ namespace Surtr.Compiler.CodeGen
             {
                 case ConversionKind.Identity:
                 case ConversionKind.ImplicitNullable:
-                    // Nothing to emit: a primitive widening into its own nullable form keeps the
-                    // same representation, and a reference is its payload either way.
+                    // A primitive widening into its own nullable form keeps the same representation
+                    // (the absent tag lives in the same slot), and a reference is its payload either
+                    // way. A multi-field value class, though, has no inline "absent" form: entering
+                    // its nullable type boxes the block into the reference its `T?` rides (present
+                    // = boxed instance, absent = null). §5.1 / value-types handoff.
+                    if (!BoxIfMultiSlot(from))
+                        return;
                     return;
 
                 case ConversionKind.ImplicitReference:
-                    // §6.3: a value class is erased to its field, so reaching a slot that holds a
-                    // reference — an interface it implements — is where it becomes a real object.
-                    // A primitive reaching a contract it satisfies is the same story: the
-                    // interface dispatch goes through the receiver's vtable, which only an object
-                    // has, so the raw int becomes its boxed form first.
-                    if (!BoxIfValueClass(from))
+                    // �6.3: a value class is erased to its field, so reaching a slot that holds a
+                    // reference � an interface it implements � is where it becomes a real object.
+                    // A tuple reaching one packs into its boxed form the same way. A primitive
+                    // reaching a contract it satisfies is the same story: the interface dispatch
+                    // goes through the receiver's vtable, which only an object has, so the raw
+                    // int becomes its boxed form first.
+                    if (!BoxIfMultiSlot(from))
                         Code.Box(TypeCodeOf(from));
 
                     return;
@@ -1596,9 +2511,10 @@ namespace Surtr.Compiler.CodeGen
                     return;
 
                 case ConversionKind.ImplicitErasure:
-                    // §1.11's first obligation: a value reaching a slot that only holds a reference
-                    // has to become one. Box emits nothing for a reference already.
-                    if (!BoxIfValueClass(from))
+                    // �1.11's first obligation: a value reaching a slot that only holds a reference
+                    // has to become one - packed, for an inline value; boxed, for everything else.
+                    // Box emits nothing for a reference already.
+                    if (!BoxIfMultiSlot(from))
                         Code.Box(TypeCodeOf(from));
 
                     return;
@@ -1612,7 +2528,13 @@ namespace Surtr.Compiler.CodeGen
                     // `T?` narrowing back to `T` names the same class, so there is nothing to check
                     // that the cast would not accept anyway.
                     if (ReferenceEquals(from.NonNullable, to.NonNullable))
+                    {
+                        // ...except when the nullable was a multi-field value class: it held a boxed
+                        // reference, and the target wants the block back, so the cast is an unbox.
+                        if (from.IsNullable && TryMultiSlotWidth(to, out _))
+                            UnpackIfMultiSlot(to);
                         return;
+                    }
 
                     Code.CastTo(Descriptors.Emit(to.NonNullable));
                     return;
@@ -1623,13 +2545,29 @@ namespace Surtr.Compiler.CodeGen
             }
         }
 
-        /// <summary>Reads a concrete type back out of an erased slot — §1.11's second obligation.</summary>
+        /// <summary>Reads a concrete type back out of an erased slot � �1.11's second obligation.</summary>
         private void Unerase(TypeSymbol target)
         {
             var bare = target.NonNullable;
 
             if (bare.SpecialType == SpecialType.Unknown || bare.TypeKind == TypeSymbolKind.TypeParameter)
                 return;
+
+            if (TryMultiSlotWidth(bare, out int unboxWidth))
+            {
+                if (bare is TupleTypeSymbol)
+                {
+                    // The value crossed the boundary as the boxed form the calling site packed;
+                    // there is no class to cast to - a tuple's shape lives in its descriptor -
+                    // so the unpack itself is the whole check.
+                    Code.TupUnpack(unboxWidth);
+                    return;
+                }
+
+                Code.CastTo(Descriptors.Emit(bare));
+                Code.UnboxValue(unboxWidth);
+                return;
+            }
 
             if (bare.TypeKind == TypeSymbolKind.ValueClass)
             {
@@ -1638,28 +2576,209 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
-            Code.CastTo(Descriptors.Emit(bare));
+            // A bare enum boxes as the int it is (Box(Integer)) on the way into an erased slot,
+            // so reading it back out is the primitive case — `UnboxDynamic` covers both the boxed
+            // and the raw representation, and allocates nothing. A case-carrying enum boxes as an
+            // instance of the enum class and took the multi-slot branch above.
+            if (bare.TypeKind == TypeSymbolKind.Enum)
+            {
+                Code.UnboxDynamic();
+                return;
+            }
 
+            // A primitive read back out of an erased slot arrives in one of two representations,
+            // and the reader cannot tell which. The compiler boxes a primitive on the way into an
+            // erased slot (§1.11), so most of them are boxes - but a built-in's own storage never
+            // was: an `int[]`'s elements are raw, and `IIterator<T>.current` over one hands the raw
+            // value straight back through a slot declared `G0`. `UnboxDynamic` reads the value's
+            // own tag and covers both, where `CastTo` + `Unbox` assumes a box and would misread the
+            // raw case. It also allocates nothing, which is why the `BoxDynamic` that used to
+            // normalise this away at each read site is gone: boxing a raw value only to unbox it
+            // cost one allocation per element on every walk through a contract.
             if (bare.IsPrimitive && !bare.IsVoid)
-                Code.Unbox();
+            {
+                Code.UnboxDynamic();
+                return;
+            }
+
+            Code.CastTo(Descriptors.Emit(bare));
+        }
+
+        /// <summary>
+        /// Boxes a tuple value as the <see cref="Surtr.Runtime.Objects.SurtrTuple"/> it presents as
+        /// wherever a slot holds one reference, and says whether it did.
+        /// </summary>
+        /// <remarks>
+        /// The boxed-form half of the tuple boundary (�5.5 as lowered): a block reaching an array
+        /// element, a dictionary key, an erased parameter or any other one-reference slot packs
+        /// into the ordinary tuple object, whose comparer and collector already work. The mirror
+        /// read side is <see cref="UnpackIfTuple"/>.
+        /// </remarks>
+        private bool BoxIfTuple(TypeSymbol type)
+        {
+            if (type.NonNullable is not TupleTypeSymbol tuple || tuple.ElementTypes.Count == 0)
+                return false;
+
+            Code.PackTuple(Descriptors.Emit(tuple), SlotCountOfType(tuple));
+            return true;
+        }
+
+        /// <summary>
+        /// Boxes a <c>range</c> as the object it presents as, and says whether it did - the
+        /// packed-form half of the range boundary, mirroring <see cref="BoxIfTuple"/>.
+        /// </summary>
+        /// <remarks>
+        /// A range is three raw slots inline (�2.9); a one-reference slot needs the registered
+        /// <c>SurtrRange</c> object, which is what every path that walks boxed values already
+        /// walks and what its own native members read.
+        /// </remarks>
+        private bool BoxIfRange(TypeSymbol type)
+        {
+            if (type.NonNullable.SpecialType != SpecialType.Range)
+                return false;
+
+            Code.RangePack();
+            return true;
+        }
+
+        /// <summary>
+        /// Boxes whatever this type stores inline - a tuple, a multi-field value class or a
+        /// range - before it crosses into a one-reference slot. Answers whether anything was emitted.
+        /// </summary>
+        private bool BoxIfMultiSlot(TypeSymbol type)
+            => BoxIfValueClass(type) || BoxIfTuple(type) || BoxIfRange(type);
+
+        /// <summary>The mirror of <see cref="BoxIfTuple"/>: turns a packed reference back into its block.</summary>
+        private bool UnpackIfTuple(TypeSymbol type)
+        {
+            if (type.NonNullable is not TupleTypeSymbol tuple || tuple.ElementTypes.Count == 0)
+                return false;
+
+            Code.TupUnpack(SlotCountOfType(tuple));
+            return true;
+        }
+
+        /// <summary>The mirror of <see cref="BoxIfRange"/>: a packed range becomes its block again.</summary>
+        private bool UnpackIfRange(TypeSymbol type)
+        {
+            if (type.NonNullable.SpecialType != SpecialType.Range)
+                return false;
+
+            Code.RangeUnpack();
+            return true;
+        }
+
+        /// <summary>
+        /// Unboxes whatever this type stores inline - the mirror of <see cref="BoxIfMultiSlot"/>
+        /// on the way back out of a one-reference slot.
+        /// </summary>
+        private bool UnpackIfMultiSlot(TypeSymbol type)
+        {
+            if (UnpackIfTuple(type) || UnpackIfRange(type))
+                return true;
+
+            if (type.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass or TypeSymbolKind.Enum } valueClass)
+            {
+                // A wrapper erased to an inline value unboxes as that value does. An enum never
+                // erases to a wrapped field, so this is value-class-only.
+                if (valueClass.TypeKind == TypeSymbolKind.ValueClass
+                    && valueClass.UnderlyingType is TypeSymbol erased
+                    && ValueTypeLayout.WidthOfType(erased.NonNullable) > 1)
+                {
+                    return UnpackIfMultiSlot(erased.NonNullable);
+                }
+
+                // A case-carrying value — value class or enum — arrives as a SurtrInstance
+                // (BoxValue) and unboxes over its whole width; a bare enum boxes as the int it is
+                // and needs no unpacking.
+                if (ValueTypeLayout.IsBlockValueClass(valueClass)
+                    && ValueTypeLayout.TryGet(valueClass, out var layout, out _))
+                {
+                    Code.UnboxValue(layout.Width);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>Whether a type is a multi-field value class (or enum with user fields) whose block is wider than one slot.</summary>
+        private static bool IsBlockValueClass(TypeSymbol type)
+            => type.NonNullable is NamedTypeSymbol named && ValueTypeLayout.IsBlockValueClass(named);
+
+        /// <summary>
+        /// Unboxes a value just loaded from a slot that stored a nullable multi-field value as a
+        /// boxed reference, when the expression's own type wants the block back (a null-check,
+        /// <c>!!</c> or <c>?.</c> narrowed it to the non-null form).
+        /// </summary>
+        private void UnboxIfNullableBlock(TypeSymbol storageType, TypeSymbol useType)
+        {
+            if (storageType.IsNullable && TryMultiSlotWidth(useType, out _))
+                UnpackIfMultiSlot(useType);
+        }
+
+        /// <summary>The single-type form used where only the expression's type is in hand (a <c>?.</c> receiver).</summary>
+        private void UnboxIfNullableBlock(TypeSymbol useType)
+        {
+            if (TryMultiSlotWidth(useType, out _))
+                UnpackIfMultiSlot(useType);
+        }
+
+        /// <summary>
+        /// Unboxes a call receiver that is a nullable multi-field value, so the block a value-class
+        /// instance dispatch expects is what the frame holds. A direct dispatch on a value class
+        /// never boxes the receiver, so a reference left here would underflow the call.
+        /// </summary>
+        private void UnboxNullableBlockReceiver(TypeSymbol receiverType)
+        {
+            if (receiverType.IsNullable && IsBlockValueClass(receiverType))
+                UnpackIfMultiSlot(receiverType.NonNullable);
         }
 
         /// <summary>
         /// Boxes a <c>value class</c> as the class it presents as, and says whether it did.
         /// </summary>
         /// <remarks>
-        /// The whole of §6.3 in one place. Where a value class's type is statically known it is the
-        /// field it wraps and nothing happens; where the slot holds a reference the box has to name
-        /// the real class, because the erased value is precisely the thing that no longer says what
-        /// it was.
+        /// The whole of the erased-value rule in one place. Where a value class's type is
+        /// statically known it is the field it wraps and nothing happens; where the slot holds a
+        /// reference the box has to name the real class, because the erased value is precisely the
+        /// thing that no longer says what it was. A one-field wrapper erased to an inline value - a
+        /// <c>Window</c> over a range, say - boxes exactly as the value it erases to, since its
+        /// slots ARE that value's slots.
         /// </remarks>
         private bool BoxIfValueClass(TypeSymbol type)
         {
-            if (type.NonNullable is not NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } valueClass)
+            if (type.NonNullable is not NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass or TypeSymbolKind.Enum } valueClass)
                 return false;
 
-            Code.BoxAs(_context.Module.Type(Descriptors.EmitBoxedForm(valueClass)));
-            return true;
+            if (valueClass.TypeKind == TypeSymbolKind.ValueClass
+                && valueClass.UnderlyingType is TypeSymbol erasedTo
+                && ValueTypeLayout.WidthOfType(erasedTo.NonNullable) > 1)
+            {
+                return BoxIfRange(erasedTo.NonNullable)
+                    || BoxIfTuple(erasedTo.NonNullable)
+                    || BoxIfValueClass(erasedTo.NonNullable);
+            }
+
+            // A case-carrying value — value class or enum — boxes as an instance of its own class,
+            // which is how a one-reference slot names it. A bare enum boxes as the int it is
+            // (Box(Integer), emitted by the caller when this says no), since its value IS an int.
+            if (ValueTypeLayout.IsBlockValueClass(valueClass))
+            {
+                if (!ValueTypeLayout.TryGet(valueClass, out var boxLayout, out var boxError))
+                    throw Unsupported(boxError!);
+
+                Code.BoxValue(_context.Module.Type(Descriptors.Emit(valueClass)), boxLayout.Width);
+                return true;
+            }
+
+            if (valueClass.TypeKind != TypeSymbolKind.Enum)
+            {
+                Code.BoxAs(Descriptors.EmitBoxedForm(valueClass));
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -1667,31 +2786,52 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         /// <remarks>
         /// <para>
-        /// §6.3: a direct dispatch calls the exact method body regardless of the receiver's runtime
-        /// type, so there is nothing for a box to be looked up on — the erased field reaches the
+        /// �6.3: a direct dispatch calls the exact method body regardless of the receiver's runtime
+        /// type, so there is nothing for a box to be looked up on � the erased field reaches the
         /// callee unboxed. A method whose own <see cref="MethodSymbol.Dispatch"/> is not
         /// <see cref="MethodDispatch.Direct"/> may still be reached that way (a devirtualised call
         /// on a sealed value class already goes through <c>CallSpecial</c>, which does not consult
-        /// the receiver's class either), so this boxes a little more than the strict minimum there —
-        /// safe, per §6.3, where boxing less would not be. What matters is that this is the exact
+        /// the receiver's class either), so this boxes a little more than the strict minimum there �
+        /// safe, per �6.3, where boxing less would not be. What matters is that this is the exact
         /// same test <see cref="LoadReceiver"/> makes to decide whether to unbox a value class
         /// receiver, so the two can never disagree about which convention a value class body was
         /// compiled against.
         /// </para>
         /// <para>
-        /// A scalar primitive reaching one of its own <c>Virtual</c> members (§13.2's
+        /// A scalar primitive reaching one of its own <c>Virtual</c> members (�13.2's
         /// <c>compareTo</c>/<c>equals</c>, the only ones a built-in ever declares that way) needs
         /// the identical treatment for the identical reason: <c>InvokeVirtual</c>/<c>InvokeInterface</c>
         /// resolve the receiver's class through the entity registry, which only a boxed value is in.
         /// <see cref="BoxIfValueClass"/> only recognises a <c>value class</c>, so the fallback boxes
         /// whatever is left with <see cref="Code"/>'s ordinary <c>Box</c>, which is already a no-op
         /// for a receiver that is a reference already (a built-in class, or a generic parameter that
-        /// was boxed on its way into its erased slot) — nothing here has to tell those cases apart
+        /// was boxed on its way into its erased slot) � nothing here has to tell those cases apart
         /// from a primitive's own.
         /// </para>
         /// </remarks>
         private void BoxReceiverForCall(MethodSymbol method, TypeSymbol receiverType)
         {
+            // A multi-field value class's box crosses the call as one reference slot while its
+            // callee frame claims the whole width - the two conventions cannot both hold (�6.3).
+            // Refused at the call site rather than emitted into a mis-sliced frame.
+            if (method.Dispatch != MethodDispatch.Direct
+                && receiverType.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } boxed
+                && ValueTypeLayout.WidthOfType(boxed) > 1)
+            {
+                throw Unsupported(
+                    "a non-Direct call whose receiver is a multi-field value class: that receiver convention does not exist yet");
+            }
+
+            // A range receiver crosses as its three-slot block for a direct call - that is the
+            // convention its own native members are built against - and packs only where the
+            // call must resolve through a registry-resolved receiver.
+            if (receiverType.NonNullable.SpecialType == SpecialType.Range)
+            {
+                if (method.Dispatch != MethodDispatch.Direct)
+                    Code.RangePack();
+                return;
+            }
+
             if (method.Dispatch != MethodDispatch.Direct && !BoxIfValueClass(receiverType))
                 Code.Box(TypeCodeOf(receiverType.NonNullable));
         }
@@ -1701,7 +2841,7 @@ namespace Surtr.Compiler.CodeGen
         /// primitive.
         /// </summary>
         /// <remarks>
-        /// <c>CastOrNull</c> exists because a reference target needs nothing else — the failure
+        /// <c>CastOrNull</c> exists because a reference target needs nothing else � the failure
         /// answer occupies the same slot as the subject, so the whole conversion is one type test.
         /// A primitive target still needs the branch: the success path unboxes and the failure path
         /// has no unboxed value to give, so the two arms differ by more than which value they
@@ -1726,12 +2866,12 @@ namespace Surtr.Compiler.CodeGen
             // materializes the bool - the "is an instance" arm is the jump target and the "is not"
             // arm is the fall-through, saving the intermediate boolean on the common (successful) path.
             Expression(conversion.Operand);
-            Code.StoreLocal(value);
-            Code.LoadLocal(value);
+            EmitStoreLocal(value);
+            EmitLoadLocal(value);
             Code.JumpIfInstanceOf(Descriptors.Emit(target), isInstance);
 
             // This branch is only reached for a primitive `target`, so the result type is always a
-            // nullable primitive - its "no value" is the absent tag (§5.1), never a null reference.
+            // nullable primitive - its "no value" is the absent tag (�5.1), never a null reference.
             // A caller testing the result with `??`/`== null` reads the *static* type to pick
             // JPA/IsAbsent over JumpIfNull/IsNull (EmitNullCoalesce, TryEmitAbsenceTest/Branch), so
             // pushing a null reference here would go unrecognised as absence and read back its
@@ -1740,7 +2880,7 @@ namespace Surtr.Compiler.CodeGen
             Code.Jump(end);
 
             Code.MarkLabel(isInstance);
-            Code.LoadLocal(value);
+            EmitLoadLocal(value);
             Code.Unbox();
 
             Code.MarkLabel(end);
@@ -1748,6 +2888,30 @@ namespace Surtr.Compiler.CodeGen
 
         private void EmitBinary(BoundBinaryExpression binary)
         {
+            // Before anything else, because an expression built entirely of literals has no
+            // operands to evaluate and no opcode to pick: it has an answer.
+            if (TryEmitFoldedConstant(binary))
+                return;
+
+            // §6.2: an enum is a value, so identity over one is refused outright — the same
+            // rejection the multi-slot walk below gives a value class, extended to the single-slot
+            // enum whose comparison would otherwise degrade to a reference compare. `==`/`!=`
+            // compare the value itself and are unaffected.
+            if (binary.Operator is BinaryOperator.ReferenceEqual or BinaryOperator.ReferenceNotEqual
+                && (binary.Left.Type.NonNullable.TypeKind == TypeSymbolKind.Enum
+                    || binary.Right.Type.NonNullable.TypeKind == TypeSymbolKind.Enum))
+            {
+                throw Unsupported("'===' over a value: a value has no identity to compare (use '==')");
+            }
+
+            if (binary.Operator is BinaryOperator.Equal or BinaryOperator.NotEqual
+                    or BinaryOperator.ReferenceEqual or BinaryOperator.ReferenceNotEqual
+                && (SlotCountOfType(binary.Left.Type) > 1 || SlotCountOfType(binary.Right.Type) > 1))
+            {
+                EmitValueClassEquality(binary);
+                return;
+            }
+
             switch (binary.Operator)
             {
                 case BinaryOperator.LogicalAnd:
@@ -1762,7 +2926,7 @@ namespace Surtr.Compiler.CodeGen
 
             // Absence is a *tag*, and only the tagged opcodes can see it. Left to the ordinary
             // comparison this becomes `PushAbsent` against EQ/NE, which are the integer opcodes and
-            // compare the 32-bit payload alone — while PushAbsent carries the missing primitive's
+            // compare the 32-bit payload alone � while PushAbsent carries the missing primitive's
             // type code in exactly that payload. An `int?` holding 1 then has the same payload as
             // absent-int (SurtrValueTypeCode.Integer == 1) and reads as null; a `char?` holding
             // '' would do the same. On the float side it fails the other way, since
@@ -1772,10 +2936,10 @@ namespace Surtr.Compiler.CodeGen
 
             // `x == null`/`x != null`/`x === null`/`x !== null` against a reference (a class, an
             // array, a string, ...) needs neither the null literal on the stack nor a two-operand
-            // comparison: a reference's nullness is its own tag (§5.1), which `IsNull`/`IsNotNull`
+            // comparison: a reference's nullness is its own tag (�5.1), which `IsNull`/`IsNotNull`
             // read off the one operand directly. Left to the general path below this would push
             // `PushNull` and run `REQ`/`RNE` - or, for a string, `StrEQ`/`StrNE`'s text comparison,
-            // which happens to be null-safe (§Opcodes) but still does more work than asking the tag.
+            // which happens to be null-safe (�Opcodes) but still does more work than asking the tag.
             if (TryGetNullCheckOperand(binary, out var nullCheckOperand, out bool checksForNull))
             {
                 Expression(nullCheckOperand);
@@ -1790,7 +2954,7 @@ namespace Surtr.Compiler.CodeGen
 
             var operands = TypeCodeOf(binary.Left.Type);
 
-            // §4.8 hands ordering on strings to the compiler: there is no opcode that orders one,
+            // �4.8 hands ordering on strings to the compiler: there is no opcode that orders one,
             // and `compareTo` is what the language says the operators mean.
             if (operands == SurtrValueTypeCode.String && IsOrdering(binary.Operator))
             {
@@ -1832,7 +2996,7 @@ namespace Surtr.Compiler.CodeGen
                 case BinaryOperator.ShiftLeft: Code.Shl(); return;
 
                 // `>>` keeps the sign and `>>>` fills with zeroes, which is Sar and Shr in that
-                // order — the opcodes are named after the machine operation, not after the token.
+                // order � the opcodes are named after the machine operation, not after the token.
                 case BinaryOperator.ShiftRight: Code.Sar(); return;
                 case BinaryOperator.UnsignedShiftRight: Code.Shr(); return;
 
@@ -1892,9 +3056,9 @@ namespace Surtr.Compiler.CodeGen
         /// <summary>Emits a whole <c>+</c> spine over strings as one counted concatenation.</summary>
         /// <remarks>
         /// The spine is walked in order, so operands are evaluated left to right exactly as the
-        /// pairwise emission did — flattening changes what is allocated, not when anything runs.
+        /// pairwise emission did � flattening changes what is allocated, not when anything runs.
         /// A part that is not a string is converted through its <c>toString</c> first, the same
-        /// conversion an interpolation applies: §5.7 lets anything be appended to a string, and
+        /// conversion an interpolation applies: �5.7 lets anything be appended to a string, and
         /// <c>StrCat</c> takes strings only.
         /// </remarks>
         private void EmitStringConcat(BoundBinaryExpression binary)
@@ -1921,8 +3085,8 @@ namespace Surtr.Compiler.CodeGen
 
         private void FlattenStringConcat(BoundExpression expression, List<BoundExpression> parts)
         {
-            // Only a string-typed `+` is a concatenation; anything else — a user-defined operator,
-            // an interpolation, a call returning a string — is one operand of this one.
+            // Only a string-typed `+` is a concatenation; anything else � a user-defined operator,
+            // an interpolation, a call returning a string � is one operand of this one.
             if (expression is BoundBinaryExpression { Operator: BinaryOperator.Add } nested &&
                 TypeCodeOf(nested.Type) == SurtrValueTypeCode.String)
             {
@@ -1964,13 +3128,13 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Emits a <c>?.</c> access: the receiver once, then the access only if it was not null (§5.1).
+        /// Emits a <c>?.</c> access: the receiver once, then the access only if it was not null (�5.1).
         /// </summary>
         /// <remarks>
         /// <para>
         /// The receiver goes into a slot rather than being duplicated on the stack, for two reasons.
-        /// It has to be readable at whatever depth the access reaches it — an argument list may sit
-        /// between them — and both paths have to leave the stack at the same depth, which the emitter
+        /// It has to be readable at whatever depth the access reaches it � an argument list may sit
+        /// between them � and both paths have to leave the stack at the same depth, which the emitter
         /// checks at the join. A <c>Dup</c>/<c>Pop</c> pair would have to be balanced by hand at every
         /// shape of access instead.
         /// </para>
@@ -1984,12 +3148,12 @@ namespace Surtr.Compiler.CodeGen
             var slot = _method.DeclareLocal("$safe$" + _conditionalReceivers.Count);
 
             Expression(access.Receiver);
-            Code.StoreLocal(slot);
+            EmitStoreLocal(slot);
 
             var whenNull = Code.NewLabel();
             var end = Code.NewLabel();
 
-            Code.LoadLocal(slot);
+            EmitLoadLocal(slot);
 
             if (IsNullablePrimitive(access.Receiver.Type))
                 Code.JPA(whenNull);
@@ -2019,7 +3183,7 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Emits <c>x!!</c>: the value, and a raise on the path where it turned out to be null (§5.1).
+        /// Emits <c>x!!</c>: the value, and a raise on the path where it turned out to be null (�5.1).
         /// </summary>
         /// <remarks>
         /// The operand stays on the stack and a duplicate is what the test consumes, so the value
@@ -2046,6 +3210,10 @@ namespace Surtr.Compiler.CodeGen
             Expression(assertion.Thrown);
             Code.Throw();
             Code.MarkLabel(ok);
+
+            // `!!` yields the non-null block: the operand was a boxed reference, so unbox it now
+            // that it is known present.
+            UnboxIfNullableBlock(assertion.Operand.Type, assertion.Type);
         }
 
         /// <summary>Pushes the "no value" of a type: the absent tag for a primitive, null otherwise.</summary>
@@ -2058,11 +3226,13 @@ namespace Surtr.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Whether a type's "no value" is the absent tag rather than a null reference (§5.1).
+        /// Whether a type's "no value" is the absent tag rather than a null reference (�5.1).
         /// </summary>
         private static bool IsNullablePrimitive(TypeSymbol type)
-            => type.IsNullable && type.NonNullable.SpecialType is SpecialType.Int or SpecialType.Float
-                or SpecialType.Bool or SpecialType.Char;
+            => type.IsNullable
+               && SlotCountOfType(type) == 1
+               && TypeCodeOf(type) is SurtrValueTypeCode.Integer or SurtrValueTypeCode.Float
+                   or SurtrValueTypeCode.Boolean or SurtrValueTypeCode.Character;
 
         /// <summary>
         /// Emits <c>x == null</c> / <c>x != null</c> on a nullable primitive as a tag test, and
@@ -2071,12 +3241,12 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// <para>
         /// This is the only correct way to ask the question. The comparison opcodes are chosen by
-        /// operand family, so a nullable primitive picks the primitive ones — <c>EQ</c>/<c>NE</c>
+        /// operand family, so a nullable primitive picks the primitive ones � <c>EQ</c>/<c>NE</c>
         /// for the integer family, which compare the low 32 bits because int, bool and char share
         /// a representation and differ only in their tag. Absence differs from a present value in
         /// nothing <em>but</em> its tag, so that comparison cannot see it, and the payload it does
         /// see is the type code <c>PushAbsent</c> put there: an <c>int?</c> holding
-        /// <c>SurtrValueTypeCode.Integer</c> — that is, 1 — compares equal to null.
+        /// <c>SurtrValueTypeCode.Integer</c> � that is, 1 � compares equal to null.
         /// </para>
         /// <para>
         /// <c>IsAbsent</c> and <c>IsPresent</c> test the tag, which is the whole reason they are in
@@ -2089,7 +3259,7 @@ namespace Surtr.Compiler.CodeGen
             if (binary.Operator is not (BinaryOperator.Equal or BinaryOperator.NotEqual))
                 return false;
 
-            // Either side may be the literal — `null == x` is as legal as `x == null`.
+            // Either side may be the literal � `null == x` is as legal as `x == null`.
             BoundExpression? value = null;
             if (IsNullLiteral(binary.Right) && IsNullablePrimitive(binary.Left.Type))
                 value = binary.Left;
@@ -2163,7 +3333,7 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         /// <remarks>
         /// A nullable primitive is deliberately excluded: its "no value" is the absent tag, not a
-        /// null reference (§5.1), so it takes <see cref="TryEmitAbsenceTest"/>/
+        /// null reference (�5.1), so it takes <see cref="TryEmitAbsenceTest"/>/
         /// <see cref="TryEmitAbsenceBranch"/> instead - the two are never both applicable to the
         /// same comparison, since one requires the non-literal operand to be nullable-primitive and
         /// the other requires it not to be.
@@ -2220,36 +3390,300 @@ namespace Surtr.Compiler.CodeGen
         /// Emits <c>&lt;=&gt;</c> over a primitive family, which has no opcode of its own.
         /// </summary>
         /// <remarks>
-        /// §5.7 makes it yield an <c>int</c> whose sign is the answer, so two comparisons and a
+        /// �5.7 makes it yield an <c>int</c> whose sign is the answer, so two comparisons and a
         /// subtraction give it exactly.
         /// </remarks>
         private void EmitThreeWayCompare(BoundBinaryExpression binary)
         {
             var operands = TypeCodeOf(binary.Left.Type);
 
-            var left = _method.DeclareLocal("$left");
-            var right = _method.DeclareLocal("$right");
+            var left = DeclareTemp("$left", binary.Left.Type);
+            var right = DeclareTemp("$right", binary.Right.Type);
 
             Expression(binary.Left);
-            Code.StoreLocal(left);
+            EmitStoreLocal(left);
             Expression(binary.Right);
-            Code.StoreLocal(right);
+            EmitStoreLocal(right);
 
-            Code.LoadLocal(left);
-            Code.LoadLocal(right);
+            EmitLoadLocal(left);
+            EmitLoadLocal(right);
             Code.Compare(SurtrComparison.Greater, operands);
             Code.Convert(SurtrValueTypeCode.Boolean, SurtrValueTypeCode.Integer);
 
-            Code.LoadLocal(left);
-            Code.LoadLocal(right);
+            EmitLoadLocal(left);
+            EmitLoadLocal(right);
             Code.Compare(SurtrComparison.Less, operands);
             Code.Convert(SurtrValueTypeCode.Boolean, SurtrValueTypeCode.Integer);
 
             Code.Subtract(SurtrValueTypeCode.Integer);
         }
 
+        /// <summary>
+        /// Emits <c>==</c>/<c>!=</c> over a multi-field value class: field-wise comparison in
+        /// declaration order, short-circuiting on the first slot that already decides.
+        /// </summary>
+        /// <remarks>
+        /// A value has no identity, so <c>===</c> over one is refused outright - there is nothing
+        /// for a reference comparison to compare. Each slot compares with its own family's opcode,
+        /// exactly as the fused branches choose per operand type; the failing path re-computes the
+        /// flipped answer rather than spilling the chain's partial results.
+        /// </remarks>
+        private void EmitValueClassEquality(BoundBinaryExpression binary)
+        {
+            if (binary.Operator is BinaryOperator.ReferenceEqual or BinaryOperator.ReferenceNotEqual)
+                throw Unsupported("'===' over a value: a value has no identity to compare (use '==')");
+
+            var valueType = SlotCountOfType(binary.Left.Type) > 1
+                ? binary.Left.Type.NonNullable
+                : binary.Right.Type.NonNullable;
+
+            // A one-field wrapper erased to an inline value compares as the value it erases to -
+            // its slots are that value's, and its field list has nothing of its own to walk.
+            while (valueType is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } wrapper
+                && wrapper.UnderlyingType is TypeSymbol erased
+                && ValueTypeLayout.WidthOfType(valueType) > 1)
+            {
+                valueType = erased.NonNullable;
+            }
+
+            // A range compares structurally before any class-shaped walk can look for instance
+            // fields it does not have.
+            if (valueType.SpecialType == SpecialType.Range)
+            {
+                EmitRangeEquality(binary);
+                return;
+            }
+
+            if (valueType is not NamedTypeSymbol named)
+            {
+                if (valueType is TupleTypeSymbol)
+                {
+                    EmitTupleEquality(binary, (TupleTypeSymbol)valueType);
+                    return;
+                }
+
+                throw Unsupported($"comparing values of '{binary.Left.Type.ToDisplayString()}'");
+            }
+
+            if (!ValueTypeLayout.TryGet(named, out var layout, out var layoutError))
+                throw Unsupported(layoutError!);
+
+            int leftBase = EnsureLocalRange(binary.Left, layout.Width);
+            int rightBase = EnsureLocalRange(binary.Right, layout.Width);
+
+            // The chain stores its verdict in a bool temp: every path reaches the join at depth
+            // zero over it, which is what the emitter's label-join check requires.
+            var verdict = _method.DeclareLocal("$eq");
+
+            var unequal = Code.NewLabel();
+            var done = Code.NewLabel();
+
+            for (int i = 0; i < layout.Fields.Length; i++)
+            {
+                int offset = layout.Offsets[i];
+                int width = layout.FieldWidths[i];
+                bool last = i == layout.Fields.Length - 1;
+
+                if (width > 1)
+                {
+                    Code.LoadValueLocal(leftBase + offset, width);
+                    Code.LoadValueLocal(rightBase + offset, width);
+                }
+                else
+                {
+                    Code.LoadLocalField(leftBase, offset);
+                    Code.LoadLocalField(rightBase, offset);
+                }
+
+                Code.Compare(SurtrComparison.Equal, TypeCodeOf(layout.Fields[i].Type));
+
+                if (!last)
+                {
+                    Code.JumpIfFalse(unequal);
+                }
+                else
+                {
+                    EmitStoreLocal(verdict);
+                    Code.Jump(done);
+                }
+            }
+
+            Code.MarkLabel(unequal);
+            Code.LoadInt(0);
+            Code.Convert(SurtrValueTypeCode.Integer, SurtrValueTypeCode.Boolean);
+            EmitStoreLocal(verdict);
+
+            Code.MarkLabel(done);
+            EmitLoadLocal(verdict);
+
+            if (binary.Operator is BinaryOperator.NotEqual)
+                Code.Inv();
+        }
+
+        /// <summary>
+        /// Structural equality between two tuples: slot by slot against each element's own family,
+        /// recursing through nested tuples and value classes exactly as the flattened layout lays
+        /// them out.
+        /// </summary>
+        /// <remarks>
+        /// Same verdict-temp shape the value-class walk uses, so every path reaches the join at
+        /// depth zero over one bool. An element that is itself inline compares recursively before
+        /// the chain may short-circuit - the nesting is flat storage, so the recursion is an
+        /// inlined walk over consecutive slots, never a call.
+        /// </remarks>
+        private void EmitTupleEquality(BoundBinaryExpression binary, TupleTypeSymbol tuple)
+        {
+            int width = ValueTypeLayout.WidthOfType(tuple);
+            int leftBase = EnsureLocalRange(binary.Left, width);
+            int rightBase = EnsureLocalRange(binary.Right, width);
+
+            var verdict = _method.DeclareLocal("$eq");
+
+            var unequal = Code.NewLabel();
+            var done = Code.NewLabel();
+
+            int offset = 0;
+            for (int i = 0; i < tuple.ElementTypes.Count; i++)
+            {
+                var elementType = tuple.ElementTypes[i];
+                bool last = i == tuple.ElementTypes.Count - 1;
+
+                // Leaves exactly one bool on the stack, whether it compared a single slot or
+                // walked a nested block's own elements.
+                EmitSlotCompare(leftBase + offset, rightBase + offset, elementType, unequal);
+
+                if (!last)
+                {
+                    Code.JumpIfFalse(unequal);
+                }
+                else
+                {
+                    EmitStoreLocal(verdict);
+                    Code.Jump(done);
+                }
+
+                offset += ValueTypeLayout.WidthOfType(elementType);
+            }
+
+            Code.MarkLabel(unequal);
+            Code.LoadInt(0);
+            Code.Convert(SurtrValueTypeCode.Integer, SurtrValueTypeCode.Boolean);
+            EmitStoreLocal(verdict);
+
+            Code.MarkLabel(done);
+            EmitLoadLocal(verdict);
+
+            if (binary.Operator is BinaryOperator.NotEqual)
+                Code.Inv();
+        }
+
+        /// <summary>
+        /// Emits one slot-or-block comparison, leaving its bool on the stack. Answers whether the
+        /// comparison was a nested structural walk (which manages its own branches internally and
+        /// still leaves exactly one bool).
+        /// </summary>
+        private bool EmitSlotCompare(int leftSlot, int rightSlot, TypeSymbol elementType, SurtrLabel unequal)
+        {
+            if (TryMultiSlotWidth(elementType, out int elementWidth))
+            {
+                if (elementType.NonNullable is TupleTypeSymbol nested)
+                {
+                    int offset = 0;
+                    for (int i = 0; i < nested.ElementTypes.Count; i++)
+                    {
+                        var inner = nested.ElementTypes[i];
+                        EmitSlotCompare(leftSlot + offset, rightSlot + offset, inner, unequal);
+                        Code.JumpIfFalse(unequal);
+                        offset += ValueTypeLayout.WidthOfType(inner);
+                    }
+
+                    Code.LoadInt(1);
+                    Code.Convert(SurtrValueTypeCode.Integer, SurtrValueTypeCode.Boolean);
+                    return true;
+                }
+
+                // A nested multi-field value class compares with the same per-field rule its own
+                // == would use: one Compare per field, all of them against their families.
+                if (elementType.NonNullable is NamedTypeSymbol valueClass && ValueTypeLayout.TryGet(valueClass, out var layout, out _))
+                {
+                    for (int i = 0; i < layout.Fields.Length; i++)
+                    {
+                        Code.LoadValueLocal(leftSlot + layout.Offsets[i], layout.FieldWidths[i]);
+                        Code.LoadValueLocal(rightSlot + layout.Offsets[i], layout.FieldWidths[i]);
+                        Code.Compare(SurtrComparison.Equal, TypeCodeOf(layout.Fields[i].Type));
+                        Code.JumpIfFalse(unequal);
+                    }
+
+                    Code.LoadInt(1);
+                    Code.Convert(SurtrValueTypeCode.Integer, SurtrValueTypeCode.Boolean);
+                    return true;
+                }
+            }
+
+            Code.LoadLocalField(leftSlot, 0);
+            Code.LoadLocalField(rightSlot, 0);
+            Code.Compare(SurtrComparison.Equal, TypeCodeOf(elementType));
+            return false;
+        }
+
+        /// <summary>
+        /// Structural equality between two ranges: bounds and flag, slot by slot - the same walk
+        /// the value-class comparison runs, over the three slots a range is.
+        /// </summary>
+        /// <remarks>
+        /// Two equal ranges compare equal whatever identity their packs would carry, which is the
+        /// point of the range being a value: <c>(0..3) == (0..3)</c> answers true, and
+        /// <c>0..3</c> against <c>0..=3</c> answers false on the flag alone.
+        /// </remarks>
+        private void EmitRangeEquality(BoundBinaryExpression binary)
+        {
+            int leftBase = EnsureLocalRange(binary.Left, RangeSlotWidth);
+            int rightBase = EnsureLocalRange(binary.Right, RangeSlotWidth);
+
+            var verdict = _method.DeclareLocal("$eq");
+
+            var unequal = Code.NewLabel();
+            var done = Code.NewLabel();
+
+            Code.LoadLocalField(leftBase, 0);
+            Code.LoadLocalField(rightBase, 0);
+            Code.Compare(SurtrComparison.Equal, SurtrValueTypeCode.Integer);
+            Code.JumpIfFalse(unequal);
+
+            Code.LoadLocalField(leftBase, 1);
+            Code.LoadLocalField(rightBase, 1);
+            Code.Compare(SurtrComparison.Equal, SurtrValueTypeCode.Integer);
+            Code.JumpIfFalse(unequal);
+
+            Code.LoadLocalField(leftBase, 2);
+            Code.LoadLocalField(rightBase, 2);
+            Code.Compare(SurtrComparison.Equal, SurtrValueTypeCode.Boolean);
+
+            EmitStoreLocal(verdict);
+            Code.Jump(done);
+
+            Code.MarkLabel(unequal);
+            Code.LoadInt(0);
+            Code.Convert(SurtrValueTypeCode.Integer, SurtrValueTypeCode.Boolean);
+            EmitStoreLocal(verdict);
+
+            Code.MarkLabel(done);
+            EmitLoadLocal(verdict);
+
+            if (binary.Operator is BinaryOperator.NotEqual)
+                Code.Inv();
+        }
+
+        /// <summary>How many slots one inline range occupies: start, end, inclusive.</summary>
+        private const int RangeSlotWidth = 3;
+
         private void EmitUnary(BoundUnaryExpression unary)
         {
+            // `-1` reaches here as Negate over a literal, so this is the fold that fires most
+            // often of all: one PushI8 instead of a push and a negation.
+            if (TryEmitFoldedConstant(unary))
+                return;
+
             switch (unary.Operator)
             {
                 case UnaryOperator.Negate:
@@ -2268,7 +3702,7 @@ namespace Surtr.Compiler.CodeGen
                     return;
 
                 case UnaryOperator.NullAssert:
-                    // §5.1 asserts rather than converts, and the assertion is what a cast to the
+                    // �5.1 asserts rather than converts, and the assertion is what a cast to the
                     // same class already performs.
                     Expression(unary.Operand);
                     return;
@@ -2290,7 +3724,7 @@ namespace Surtr.Compiler.CodeGen
         /// </summary>
         /// <remarks>
         /// Not expanded in the bound tree the way a compound assignment is, because the two forms
-        /// differ in which value they leave behind — a distinction that only exists at emit.
+        /// differ in which value they leave behind � a distinction that only exists at emit.
         /// </remarks>
         private void EmitIncrement(BoundUnaryExpression unary)
         {
@@ -2298,12 +3732,12 @@ namespace Surtr.Compiler.CodeGen
             bool isIncrement = unary.Operator is UnaryOperator.PreIncrement or UnaryOperator.PostIncrement;
 
             var family = TypeCodeOf(unary.Operand.Type);
-            var before = _method.DeclareLocal("$before");
+            var before = DeclareTemp("$before", unary.Operand.Type);
 
             Expression(unary.Operand);
-            Code.StoreLocal(before);
+            EmitStoreLocal(before);
 
-            Code.LoadLocal(before);
+            EmitLoadLocal(before);
 
             if (family == SurtrValueTypeCode.Float)
                 Code.LoadFloat(1.0);
@@ -2315,11 +3749,11 @@ namespace Surtr.Compiler.CodeGen
             else
                 Code.Subtract(family);
 
-            var after = _method.DeclareLocal("$after");
-            Code.StoreLocal(after);
+            var after = DeclareTemp("$after", unary.Operand.Type);
+            EmitStoreLocal(after);
 
-            Store(unary.Operand, () => Code.LoadLocal(after));
-            Code.LoadLocal(isPost ? before : after);
+            Store(unary.Operand, () => EmitLoadLocal(after));
+            EmitLoadLocal(isPost ? before : after);
         }
 
         /// <summary>
@@ -2341,20 +3775,20 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
-            var value = _method.DeclareLocal("$assigned");
+            var value = DeclareTemp("$assigned", assignment.Value.Type);
             Expression(assignment.Value);
-            Code.StoreLocal(value);
+            EmitStoreLocal(value);
 
-            Store(assignment.Target, () => Code.LoadLocal(value));
-            Code.LoadLocal(value);
+            Store(assignment.Target, () => EmitLoadLocal(value));
+            EmitLoadLocal(value);
         }
 
         /// <summary>
         /// Recognises <c>i = i + k</c> over an integer local and emits it as one instruction.
         /// </summary>
         /// <remarks>
-        /// §5.7's compound assignments arrive expanded — <c>i += 1</c> is already <c>i = i + 1</c>
-        /// in the bound tree — so this one shape covers both spellings, and covers the step of
+        /// �5.7's compound assignments arrive expanded � <c>i += 1</c> is already <c>i = i + 1</c>
+        /// in the bound tree � so this one shape covers both spellings, and covers the step of
         /// every hand-written counted loop with it. Only statement position qualifies: an
         /// assignment whose value something reads has to leave that value behind, and
         /// <c>IncLocal</c> leaves nothing.
@@ -2436,7 +3870,7 @@ namespace Surtr.Compiler.CodeGen
         /// <remarks>
         /// A callback rather than a value already on the stack, because the receiver and the index
         /// have to be evaluated <em>before</em> it for a field or an indexed write, and after it for
-        /// nothing — so the one order that works is the one each target dictates.
+        /// nothing � so the one order that works is the one each target dictates.
         /// </remarks>
         private void Store(BoundExpression target, Action value)
         {
@@ -2444,29 +3878,41 @@ namespace Surtr.Compiler.CodeGen
             {
                 case BoundLocalExpression local:
                     value();
-                    Code.StoreLocal(Slot(local.Local));
+                    EmitStoreLocal(Slot(local.Local));
                     return;
 
                 case BoundParameterExpression parameter:
                     value();
-                    Code.StoreLocal(ParameterSlot(parameter.Parameter));
+                    EmitStoreLocal(ParameterSlot(parameter.Parameter));
                     return;
 
-case BoundFieldExpression field:
+                case BoundFieldExpression field:
                 {
                     var info = Field(field.Field);
 
                     if (field.Field.IsStatic)
                     {
                         value();
-                        Code.StoreStaticField(info);
+
+                        // A static holding an inline value receives the whole block; the storage
+                        // underneath is the widened range the linker laid out.
+                        if (TryMultiSlotWidth(field.Field.Type, out int staticWidth))
+                            Code.StoreValueStatic(info, staticWidth);
+                        else
+                            Code.StoreStaticField(info);
+
                         return;
                     }
 
                     var receiver = field.Receiver ?? throw Unsupported($"a write to '{field.Field.Name}' with no receiver");
                     Expression(receiver);
                     value();
-                    Code.StoreField(info);
+
+                    if (TryMultiSlotWidth(field.Field.Type, out int width))
+                        Code.StoreValueField(info, width);
+                    else
+                        Code.StoreField(info);
+
                     return;
                 }
 
@@ -2489,6 +3935,15 @@ case BoundFieldExpression field:
                     }
 
                     value();
+
+                    // The mirror of what UnerasedCallResult does on a read: a setter declared
+                    // against a contract's own parameter (`IBox<T>.value`) takes an erased slot
+                    // however concrete the receiver's construction is, so the value has to become a
+                    // reference on the way in. The binder writes no conversion node here - it
+                    // checked the assignment against the property's *substituted* type, which is
+                    // already `int` - so this is the only place that can know.
+                    ErasedCallArgument(setter);
+
                     EmitResolvedCall(setter, virtualCall: property.IsVirtualSet, discardResult: true);
                     return;
                 }
@@ -2497,8 +3952,13 @@ case BoundFieldExpression field:
                 {
                     Expression(index.Target);
                     Expression(index.Index);
+                    // The key crosses into one-reference storage exactly as the value does:
+                    // a range or tuple key is stored packed.
+                    BoxIfMultiSlot(index.Index.Type);
                     value();
                     UnboxIfStillErased(index.Type);
+                    // One-reference storage keeps an inline value boxed.
+                    BoxIfMultiSlot(index.Type);
 
                     var owner = index.Target.Type.NonNullable;
                     if (owner.TypeKind == TypeSymbolKind.Array)
@@ -2530,6 +3990,13 @@ case BoundFieldExpression field:
             Code.MarkLabel(end);
         }
 
+        /// <summary>
+        /// Whether this type occupies more than one frame slot inline - a multi-field value class
+        /// or a non-empty tuple - and if so, its flattened width.
+        /// </summary>
+        private static bool TryMultiSlotWidth(TypeSymbol type, out int width)
+            => ValueTypeLayout.IsInlineType(type, out width) && width > 1;
+
         private void EmitFieldRead(BoundFieldExpression field)
         {
             var info = Field(field.Field);
@@ -2537,37 +4004,78 @@ case BoundFieldExpression field:
             if (field.Field.IsStatic)
             {
                 // An enum case is exactly this: a static, read-only field of the enum's own type
-                // holding the one instance its static initializer built.
-                Code.LoadStaticField(info);
+                // holding the value its static initializer built. A static whose declared type is
+                // an inline value reads its whole block instead, from the widened storage the
+                // linker gave it.
+                if (TryMultiSlotWidth(field.Field.Type, out int staticWidth))
+                    Code.LoadValueStatic(info, staticWidth);
+                else
+                    Code.LoadStaticField(info);
+
                 UnerasedFieldResult(field.Field);
                 return;
             }
 
             var receiver = field.Receiver ?? throw Unsupported($"a read of '{field.Field.Name}' with no receiver");
 
-            // A value class is its one field, so reading that field off one is the value itself —
-            // there is no instance to load from (§2.9). A field declared against the class's own
+            // An inline value class lives as a block of slots: reading a field of one reads
+            // the sub-slot at the field's flattened offset - directly out of the frame range when
+            // the receiver already has a home, spilled to a temp first when it does not.
+            if (receiver.Type.NonNullable is NamedTypeSymbol receiverValue && ValueTypeLayout.IsBlockValueClass(receiverValue))
+            {
+                if (!ValueTypeLayout.TryGet(receiverValue, out var layout, out var layoutError))
+                    throw Unsupported(layoutError!);
+
+                int fieldIndex = Array.IndexOf(layout.Fields, field.Field);
+                if (fieldIndex < 0)
+                    throw Unsupported($"a read of '{field.Field.Name}', which is not an instance field of '{receiverValue.Name}'");
+
+                int offset = layout.Offsets[fieldIndex];
+                int width = layout.FieldWidths[fieldIndex];
+                int baseSlot = EnsureLocalRange(receiver, layout.Width);
+
+                if (width > 1)
+                    Code.LoadValueLocal(baseSlot + offset, width);
+                else
+                    Code.LoadLocalField(baseSlot, offset);
+
+                UnerasedFieldResult(field.Field);
+                return;
+            }
+
+            // A value class is its one field, so reading that field off one is the value itself �
+            // there is no instance to load from (�2.9). A field declared against the class's own
             // type parameter is still an erased slot, so a value that reached it was boxed on the
-            // way in and has to come back out the same way any other erased field does.
-            if (receiver.Type.NonNullable.TypeKind == TypeSymbolKind.ValueClass)
+            // way in and has to come back out the same way any other erased field does. A bare
+            // enum is the same shape from the migration: its only field is `value`, so reading it
+            // off one is the value itself. (A case-carrying enum takes the block branch above.)
+            if (receiver.Type.NonNullable.TypeKind is TypeSymbolKind.ValueClass or TypeSymbolKind.Enum)
             {
                 Expression(receiver);
                 UnerasedFieldResult(field.Field);
                 return;
             }
 
+            // A field whose declared type is a multi-field value class holds the value inline:
+            // reading it moves the whole block out of the instance (or static storage) rather
+            // than lifting one slot through a boxed reference. Sub-slot reads of that block go
+            // back through the receiver branch above, which sums the absolute offset.
             Expression(receiver);
-            Code.LoadField(info);
+            if (TryMultiSlotWidth(field.Field.Type, out int fieldWidth))
+                Code.LoadValueField(info, fieldWidth);
+            else
+                Code.LoadField(info);
+
             UnerasedFieldResult(field.Field);
         }
 
         /// <summary>
         /// Reads a field declared against its own class's type parameter back out the same way
-        /// <see cref="UnerasedCallResult"/> does for a generic method's result (§1.11's second
+        /// <see cref="UnerasedCallResult"/> does for a generic method's result (�1.11's second
         /// obligation).
         /// </summary>
         /// <remarks>
-        /// A field typed <c>T</c> is a real erased slot — unlike an <c>array</c>/<c>dict</c> element,
+        /// A field typed <c>T</c> is a real erased slot � unlike an <c>array</c>/<c>dict</c> element,
         /// it has no dedicated opcode bypassing the erasure convention, so a value reaching it was
         /// boxed on the way in (<c>ConversionTarget</c>) and has to be cast-and-unboxed on the way
         /// back out, exactly as a written <c>as</c> does. <c>field.Type</c> already reads the
@@ -2585,7 +4093,7 @@ case BoundFieldExpression field:
         private void EmitPropertyRead(BoundPropertyExpression property)
         {
             // Every built-in collection's `length` is a native getter, but each has a dedicated
-            // opcode that reads the count in one dispatch with no frame — the same thing, matched by
+            // opcode that reads the count in one dispatch with no frame � the same thing, matched by
             // the getter's identity so a user `length` on another type is untouched. `ArrLen`/
             // `TupLen` are also what the `for-in` lowering over an array/tuple already reads the
             // count with; this is the same opcode reaching the same answer from a property read.
@@ -2615,10 +4123,27 @@ case BoundFieldExpression field:
 
             if (IsTupleLength(property.Property))
             {
-                Expression(property.Receiver!);
+                var receiver = property.Receiver ?? throw Unsupported($"a read of 'tuple.{property.Property.Name}' with no receiver");
+
+                // A tuple's arity is static at every well-typed site: fold it into the
+                // instruction instead of dispatching to the boxed form's own length.
+                if (receiver.Type.NonNullable is TupleTypeSymbol typed)
+                {
+                    Code.LoadInt(typed.ElementTypes.Count);
+                    return;
+                }
+
+                Expression(receiver);
                 Code.TupLen();
                 return;
             }
+
+            // A range is its own three-slot block, so reading `start`, `end` or `isInclusive` off
+            // one is a sub-slot read - the same lowering a multi-field value class field takes.
+            // No frame, no pack, no call; the other range members still reach their native bodies
+            // with the block as receiver.
+            if (!property.Property.IsStatic && TryRangeSlotRead(property))
+                return;
 
             if (TryInlineAutoAccessorGet(property.Property, property.Receiver, property.IsVirtualGet, discardResult: false))
                 return;
@@ -2637,6 +4162,15 @@ case BoundFieldExpression field:
             }
 
             EmitResolvedCall(getter, virtualCall: property.IsVirtualGet, discardResult: false);
+
+            // The same second obligation §1.11 puts on a generic method's result, and for exactly
+            // the same reason: a property declared against a contract's own parameter
+            // (`IIterator<T>.current`) is compiled once with an erased return, so the bridge hands
+            // back a box however concrete the receiver's construction is. `EmitCall` has always
+            // done this; a property read reaches the very same getter by a different route, and
+            // without it `cursor.current` on an `IIterator<int>` leaves a reference where an `int`
+            // is expected - which the interpreter then adds as its payload rather than trapping.
+            UnerasedCallResult(getter);
         }
 
         /// <summary>The name a built-in collection's <c>length</c> getter is emitted under.</summary>
@@ -2658,23 +4192,29 @@ case BoundFieldExpression field:
             => property.Getter is { } getter && IsTupleMember(getter, LengthGetterName);
 
         /// <summary>
-        /// Replaces a read of an auto-property by the field load that is its whole body (§3.4, §3.6).
+        /// Replaces a read of an auto-property by the field load that is its whole body (�3.4, �3.6).
         /// </summary>
         /// <remarks>
         /// An auto-accessor has no bound body for <see cref="TryInline"/> to splice, so the read is
         /// lowered here, in the shape <see cref="ModuleEmitter.EmitAutoAccessor"/> would have given
         /// the body: a static one is the backing field, an instance one is the field off the
-        /// receiver. Only an accessor proven non-virtual at this access can be replaced — a
+        /// receiver. Only an accessor proven non-virtual at this access can be replaced � a
         /// <c>Direct</c> one always qualifies, and a <c>virtual</c>/<c>override</c> one qualifies
         /// exactly where <see cref="BoundPropertyExpression.IsVirtualGet"/> already devirtualised it
-        /// (a sealed receiver, <c>super</c>, or a <c>sealed override</c>) — either way nothing below
+        /// (a sealed receiver, <c>super</c>, or a <c>sealed override</c>) � either way nothing below
         /// this access can change which body runs. A value class's receiver is the wrapped field,
-        /// not an instance to read a field from (§2.9).
+        /// not an instance to read a field from (�2.9).
         /// </remarks>
         private bool TryInlineAutoAccessorGet(PropertySymbol property, BoundExpression? receiver, bool isVirtualGet, bool discardResult)
         {
             var getter = property.Getter;
             if (getter is null || isVirtualGet || !IsAutoAccessor(property, getter))
+                return false;
+
+            // �3.6: `noinline` refuses the backing-field fold too � the access stays a call to the
+            // accessor the module really carries, which is what "no folding" has to mean when the
+            // body is one instruction.
+            if (getter.IsNoInline)
                 return false;
 
             if (property.IsStatic)
@@ -2696,7 +4236,7 @@ case BoundFieldExpression field:
         }
 
         /// <summary>
-        /// Replaces a write to an auto-property by the field store that is its whole body (§3.4, §3.6).
+        /// Replaces a write to an auto-property by the field store that is its whole body (�3.4, �3.6).
         /// </summary>
         /// <remarks>
         /// The inverse of <see cref="TryInlineAutoAccessorGet"/>: a static one stores the backing
@@ -2708,6 +4248,10 @@ case BoundFieldExpression field:
         {
             var setter = property.Setter;
             if (setter is null || isVirtualSet || !IsAutoAccessor(property, setter))
+                return false;
+
+            // �3.6: the write-side twin of the getter's `noinline` guard above.
+            if (setter.IsNoInline)
                 return false;
 
             if (property.IsStatic)
@@ -2733,15 +4277,15 @@ case BoundFieldExpression field:
                 && (_context.Bodies is null || !_context.Bodies.ContainsKey(accessor));
 
         /// <summary>
-        /// Splices an explicit getter at its read site (§3.6), by the hint written on the property or
+        /// Splices an explicit getter at its read site (�3.6), by the hint written on the property or
         /// by the cost heuristic, whichever lets it in.
         /// </summary>
         /// <remarks>
         /// A property read reaches the getter through <see cref="EmitPropertyRead"/>, not through
-        /// <see cref="EmitCall"/> — so without this the <c>inline</c> a property declares would never
+        /// <see cref="EmitCall"/> � so without this the <c>inline</c> a property declares would never
         /// be honoured. The getter is shaped as the zero-argument call it is, and the rest is the
-        /// ordinary splice. Only a getter proven non-virtual at this access can be replaced — see
-        /// <see cref="BoundPropertyExpression.IsVirtualGet"/> — exactly as the auto-accessor path
+        /// ordinary splice. Only a getter proven non-virtual at this access can be replaced � see
+        /// <see cref="BoundPropertyExpression.IsVirtualGet"/> � exactly as the auto-accessor path
         /// requires.
         /// </remarks>
         private bool TryInlinePropertyGetter(BoundPropertyExpression property)
@@ -2750,8 +4294,13 @@ case BoundFieldExpression field:
             if (getter is null)
                 return false;
 
-            // An extension property's getter (§15) takes its receiver as an ordinary declared
-            // parameter, not out-of-band the way `property.Receiver` is here — the synthetic
+            // �3.6: `noinline` on the accessor (or the property it inherits it from) keeps the read
+            // a real call � no splice by hint or heuristic.
+            if (getter.IsNoInline)
+                return false;
+
+            // An extension property's getter (�15) takes its receiver as an ordinary declared
+            // parameter, not out-of-band the way `property.Receiver` is here � the synthetic
             // zero-argument call below assumes the opposite (`Arguments` empty, receiver carried
             // separately), so splicing it in would bind that empty list against a getter that
             // actually declares one parameter. `EmitPropertyRead`'s general path already knows how
@@ -2792,13 +4341,13 @@ case BoundFieldExpression field:
         }
 
         /// <summary>
-        /// Splices an explicit setter at its write site (§3.6), by the hint written on the property
-        /// or by the cost heuristic, whichever lets it in — the write-side twin of
+        /// Splices an explicit setter at its write site (�3.6), by the hint written on the property
+        /// or by the cost heuristic, whichever lets it in � the write-side twin of
         /// <see cref="TryInlinePropertyGetter"/>.
         /// </summary>
         /// <remarks>
         /// A property write reaches the setter through <see cref="Store"/>, which does not always
-        /// have a <see cref="BoundExpression"/> for the value to hand <see cref="TryInline"/> — a
+        /// have a <see cref="BoundExpression"/> for the value to hand <see cref="TryInline"/> � a
         /// compound assignment or an increment/decrement has already lowered it into a plain local
         /// by the time <see cref="Store"/> runs, and only hands over an <c>Action</c> that emits
         /// whatever the value turned out to be. <see cref="TryInlineSetterBody"/> below is that same
@@ -2812,8 +4361,13 @@ case BoundFieldExpression field:
             if (setter is null)
                 return false;
 
+            // �3.6: `noinline` on the accessor (or the property it inherits it from) keeps the
+            // write a real call � no splice by hint or heuristic.
+            if (setter.IsNoInline)
+                return false;
+
             // Same reason as the matching guard in TryInlinePropertyGetter: an extension property's
-            // setter (§15) declares the receiver as an ordinary parameter ahead of `value`, which
+            // setter (�15) declares the receiver as an ordinary parameter ahead of `value`, which
             // TryInlineSetterBody's splice does not know to supply.
             if (setter.ExtensionTargetType is not null)
                 return false;
@@ -2852,7 +4406,7 @@ case BoundFieldExpression field:
         /// The actual splice for <see cref="TryInlinePropertySetter"/>, once the hint or the
         /// heuristic has already let the setter in. Mirrors <see cref="TryInline"/>'s guards and
         /// receiver handling, but feeds the setter's one parameter from <paramref name="value"/>
-        /// rather than a bound argument, and never carries a result — a setter always returns void,
+        /// rather than a bound argument, and never carries a result � a setter always returns void,
         /// so there is nothing here that plays <see cref="TryInline"/>'s tail-return or result-local
         /// role.
         /// </summary>
@@ -2878,15 +4432,15 @@ case BoundFieldExpression field:
             SurtrLocal? receiverSlot = null;
             if (receiver is not null)
             {
-                var slot = _method.DeclareLocal("$inlineThis");
+                var slot = _method.HasReceiver ? DeclareTemp("$inlineThis", _symbol.ContainingType!) : _method.DeclareLocal("$inlineThis");
                 Expression(receiver);
-                Code.StoreLocal(slot);
+                EmitStoreLocal(slot);
                 receiverSlot = slot;
             }
 
-            var valueSlot = _method.DeclareLocal("$inline$" + setter.Parameters[0].Name);
+            var valueSlot = DeclareTemp("$inline$" + setter.Parameters[0].Name, setter.Parameters[0].Type);
             value();
-            Code.StoreLocal(valueSlot);
+            EmitStoreLocal(valueSlot);
             _splicedParameters[setter.Parameters[0]] = valueSlot;
 
             var exit = Code.NewLabel();
@@ -2905,9 +4459,33 @@ case BoundFieldExpression field:
         {
             var type = (NamedTypeSymbol)creation.Type.NonNullable;
 
+            if (type.TypeKind == TypeSymbolKind.Enum)
+            {
+                EmitEnumCaseCreation(creation, type);
+                return;
+            }
+
             if (type.TypeKind == TypeSymbolKind.ValueClass)
             {
                 EmitValueClassCreation(creation, type);
+                return;
+            }
+
+            // An instance-factory constructor - every native class's - creates the object itself:
+            // no receiver crosses the wire, its parameters start at slot 0, and the new reference
+            // comes back over that same slot. There is nothing for ObjNew to allocate and no
+            // receiver to run a body against, so the call is flat and its result is the
+            // expression's value. The metadata-level convention is "a constructor whose return
+            // names its class rather than void", which at symbol level is Role plus a non-void
+            // return.
+            if (creation.Constructor is { } factory
+                && factory.Role == MethodRole.Constructor
+                && !factory.ReturnType.IsVoid)
+            {
+                foreach (var argument in creation.Arguments)
+                    Expression(argument);
+
+                EmitResolvedCall(factory, virtualCall: false, discardResult: false);
                 return;
             }
 
@@ -2944,7 +4522,75 @@ case BoundFieldExpression field:
         }
 
         /// <summary>
-        /// Builds a <c>value class</c>, which allocates nothing (§2.9).
+        /// Builds an enum case (§2.2): a value class whose first field is the synthetic
+        /// <c>value</c>, filled from the case's own value rather than from any constructor
+        /// parameter.
+        /// </summary>
+        /// <remarks>
+        /// A case whose enum carries nothing but <c>value</c> never reaches here — it bound as a
+        /// literal, so the static it fills is loaded straight out. A multi-field enum does: the
+        /// case's constructor assigns its own fields, and the value is the block's first slot, so
+        /// it is pushed before the constructor's assignments run. The block comes out in field
+        /// order, exactly as <see cref="EmitMultiValueClassCreation"/> assembles one.
+        /// </remarks>
+        private void EmitEnumCaseCreation(BoundObjectCreationExpression creation, NamedTypeSymbol type)
+        {
+            if (creation.EnumValue is not long enumValue)
+                throw Unsupported($"building a '{type.Name}', whose case value the emitter does not know");
+
+            if (!ValueTypeLayout.TryGet(type, out var layout, out var layoutError))
+                throw Unsupported(layoutError!);
+
+            // A single-field enum's case binds as a literal and never constructs; this defends
+            // the one place the two could still meet.
+            if (layout.Fields.Length == 1)
+            {
+                EmitLiteral(new BoundLiteralExpression(creation.Syntax, type, enumValue));
+                return;
+            }
+
+            if (creation.Constructor is not MethodSymbol constructor)
+                throw Unsupported($"building a '{type.Name}': it declares several fields, so a case needs a constructor that assigns each one");
+
+            var original = constructor.OriginalDefinition ?? constructor;
+
+            if (_context.Bodies is null
+                || !_context.Bodies.TryGetValue(original, out var body)
+                || !TryGetFieldAssignments(body, out var assignments))
+            {
+                throw Unsupported(
+                    $"building a '{type.Name}': its constructor must be exactly one 'this.field = expression' per field, with no other statements");
+            }
+
+            // The synthetic `value` is the first field, so the user's constructor is only
+            // responsible for the rest.
+            if (assignments.Count != layout.Fields.Length - 1)
+                throw Unsupported($"building a '{type.Name}': its constructor assigns {assignments.Count} field(s), but the class declares {layout.Fields.Length - 1} besides 'value'");
+
+            for (int i = 0; i < creation.Arguments.Count; i++)
+            {
+                var slot = DeclareTemp("$value$" + original.Parameters[i].Name, original.Parameters[i].Type);
+                Expression(creation.Arguments[i]);
+                EmitStoreLocal(slot);
+                _splicedParameters[original.Parameters[i]] = slot;
+            }
+
+            // Field order: `value` first, then the constructor's assignments by their field
+            // index — the same block shape the multi-field splice assembles.
+            EmitLiteral(new BoundLiteralExpression(creation.Syntax, type, enumValue));
+
+            var ordered = new List<(int Index, BoundExpression Value)>(assignments.Count);
+            foreach (var entry in assignments)
+                ordered.Add((Array.IndexOf(layout.Fields, entry.Field), entry.Value));
+
+            ordered.Sort((x, y) => x.Index.CompareTo(y.Index));
+
+            foreach (var entry in ordered)
+                Expression(entry.Value);
+        }
+
+        /// <summary>
+        /// Builds a <c>value class</c>, which allocates nothing (�2.9).
         /// </summary>
         /// <remarks>
         /// <para>
@@ -2955,19 +4601,42 @@ case BoundFieldExpression field:
         /// </para>
         /// <para>
         /// So the constructor is spliced rather than called, and the shape it has to have is
-        /// <c>this.field = expression</c> — one assignment, nothing else. That is what a value
+        /// <c>this.field = expression</c> � one assignment, nothing else. That is what a value
         /// class's constructor is for, and anything wider is refused rather than approximated,
         /// because there is no object for a second statement to observe.
         /// </para>
         /// </remarks>
         private void EmitValueClassCreation(BoundObjectCreationExpression creation, NamedTypeSymbol type)
         {
+            // An instance-factory constructor - every native class's, and an inline struct's
+            // [SurtrNativeConstructor] - creates the value itself: no receiver crosses the wire,
+            // its parameters start at slot 0, and the result comes back over that same slot. The
+            // call is flat and its result is the expression's value. Checked before the block
+            // lowering below, because a factory carries logic of its own: lowering `V2(x, y)`
+            // straight to a field block would silently drop it.
+            if (creation.Constructor is { } factory
+                && factory.Role == MethodRole.Constructor
+                && !factory.ReturnType.IsVoid)
+            {
+                foreach (var argument in creation.Arguments)
+                    Expression(argument);
+
+                EmitResolvedCall(factory, virtualCall: false, discardResult: false);
+                return;
+            }
+
+            if (ValueTypeLayout.IsMultiField(type))
+            {
+                EmitMultiValueClassCreation(creation, type);
+                return;
+            }
+
             if (creation.Constructor is not MethodSymbol constructor)
             {
                 // A value class that declared no constructor was given one by the binder taking the
                 // type of its single field; the binder already converted the one argument against
                 // that field type, so the value to wrap is simply the argument. (The binding
-                // guarantees exactly one argument here — zero or several never reach emission.)
+                // guarantees exactly one argument here � zero or several never reach emission.)
                 if (creation.Arguments.Count == 1)
                 {
                     Expression(creation.Arguments[0]);
@@ -2978,8 +4647,8 @@ case BoundFieldExpression field:
                     $"building a '{type.Name}' with no constructor, which leaves nothing to put in the field it wraps");
             }
 
-            // A construction of a generic value class carries the substituted clone (§6), whose
-            // parameters are new symbols and whose body is keyed by the declaration — bodies are
+            // A construction of a generic value class carries the substituted clone (�6), whose
+            // parameters are new symbols and whose body is keyed by the declaration � bodies are
             // bound once against it, never against a view. So the body and the spliced assignment's
             // parameters both come from the declaration, and each argument maps onto the
             // *declaration's* parameter, which is the one the assignment's expression references.
@@ -2993,7 +4662,7 @@ case BoundFieldExpression field:
                     $"building a '{type.Name}', whose constructor is not a single assignment to the field it wraps");
             }
 
-            // The canonical value-class constructor is `this._field = value;` — the wrapped value is
+            // The canonical value-class constructor is `this._field = value;` � the wrapped value is
             // a direct read of the one parameter. Then the construction *is* the argument, so it is
             // emitted straight rather than spliced through a temp local: the splice would pay a
             // `Stl $value$...; Ldl $value$...` round-trip (and a local slot) for a value that is
@@ -3012,7 +4681,7 @@ case BoundFieldExpression field:
             {
                 var slot = _method.DeclareLocal("$value$" + original.Parameters[i].Name);
                 Expression(creation.Arguments[i]);
-                Code.StoreLocal(slot);
+                EmitStoreLocal(slot);
                 _splicedParameters[original.Parameters[i]] = slot;
             }
 
@@ -3051,17 +4720,102 @@ case BoundFieldExpression field:
         }
 
         /// <summary>
+        /// Builds a multi-field value class: every constructor assignment evaluates straight onto
+        /// the operand stack, in field order, leaving exactly the block one value occupies.
+        /// </summary>
+        /// <remarks>
+        /// No temp holds the value under construction - there is nothing to take its address of,
+        /// and a second kind of statement in the constructor would observe half-built slots. The
+        /// shape is therefore strict: one <c>this.field = expression</c> per instance field, no
+        /// reads of <c>this</c> on any right-hand side, nothing else.
+        /// </remarks>
+        private void EmitMultiValueClassCreation(BoundObjectCreationExpression creation, NamedTypeSymbol type)
+        {
+            if (creation.Constructor is not MethodSymbol constructor)
+                throw Unsupported($"building a '{type.Name}', which declares several fields and so needs a constructor that assigns each one");
+
+            var original = constructor.OriginalDefinition ?? constructor;
+
+            if (_context.Bodies is null
+                || !_context.Bodies.TryGetValue(original, out var body)
+                || !TryGetFieldAssignments(body, out var assignments))
+            {
+                throw Unsupported(
+                    $"building a '{type.Name}': its constructor must be exactly one 'this.field = expression' per field, with no other statements");
+            }
+
+            if (!ValueTypeLayout.TryGet(type, out var layout, out var layoutError))
+                throw Unsupported(layoutError!);
+
+            if (assignments.Count != layout.Fields.Length)
+                throw Unsupported($"building a '{type.Name}': its constructor assigns {assignments.Count} field(s), but the class declares {layout.Fields.Length}");
+
+            for (int i = 0; i < creation.Arguments.Count; i++)
+            {
+                var slot = DeclareTemp("$value$" + original.Parameters[i].Name, original.Parameters[i].Type);
+                Expression(creation.Arguments[i]);
+                EmitStoreLocal(slot);
+                _splicedParameters[original.Parameters[i]] = slot;
+            }
+
+            // Emit in declaration order, whatever order the constructor wrote the assignments in,
+            // so the stack block matches the flattened layout the runtime links.
+            var ordered = new List<(int Index, BoundExpression Value)>(assignments.Count);
+            foreach (var entry in assignments)
+                ordered.Add((Array.IndexOf(layout.Fields, entry.Field), entry.Value));
+
+            ordered.Sort((x, y) => x.Index.CompareTo(y.Index));
+
+            foreach (var entry in ordered)
+                Expression(entry.Value);
+        }
+
+        /// <summary>Reads a multi-field value class constructor as its ordered list of field assignments.</summary>
+        private static bool TryGetFieldAssignments(
+            BoundStatement body,
+            out List<(FieldSymbol Field, BoundExpression Value)> assignments)
+        {
+            assignments = new List<(FieldSymbol, BoundExpression)>();
+
+            var statements = body is BoundBlockStatement block ? block.Statements : new BoundStatement[] { body };
+
+            foreach (var statement in statements)
+            {
+                if (statement is not BoundExpressionStatement
+                    {
+                        Expression: BoundAssignmentExpression
+                        {
+                            Target: BoundFieldExpression { Receiver: BoundThisExpression, Field: var target },
+                            Value: var value,
+                        },
+                    })
+                {
+                    return false;
+                }
+
+                assignments.Add((target, value));
+            }
+
+            return true;
+        }
+
+        /// <summary>
         /// Emits a call, choosing between splicing it, folding it and really making it.
         /// </summary>
         private void EmitCall(BoundCallExpression call, bool discardResult)
         {
-            if (TryFoldConstCall(call, discardResult))
+            // �3.6: a `noinline` callee refuses every optional fold of its invocations � the const
+            // fold below and the splice paths further down. What runs is the declaration itself, as
+            // a real call, at every site. The folds �7 makes *mandatory* (a `const` initializer, a
+            // `const if` condition) never reach here; those are evaluation semantics, not
+            // optimization, and no modifier vetoes them.
+            if (!call.Method.IsNoInline && TryFoldConstCall(call, discardResult))
                 return;
 
             // A method on a built-in collection is a native body the compiler could emit a call to,
             // but each of these operations also has a dedicated opcode that does the same thing in
             // one dispatch and no frame. Where the callee is one of them, this call site takes the
-            // opcode — the member is matched by identity so a user type that happens to declare its
+            // opcode � the member is matched by identity so a user type that happens to declare its
             // own `remove` is not confused with the built-in's. A local method never is one (its
             // `ImportedFrom` is null), so the three Try* dispatches are gated on a single
             // precomputed identity set instead of probing each name against the built-in classes.
@@ -3086,8 +4840,10 @@ case BoundFieldExpression field:
             }
 
             // `inline` is a hint and the heuristic a guess: a body either of them names that cannot
-            // be spliced falls through to a real call rather than failing the whole module.
-            if (call.Method.IsInline || ShouldInlineByCost(call))
+            // be spliced falls through to a real call rather than failing the whole module. A
+            // `noinline` callee reaches neither branch � it is exclusive with both hints at parse
+            // time, and the heuristic is asked only when nothing was written.
+            if (!call.Method.IsNoInline && (call.Method.IsInline || ShouldInlineByCost(call)))
             {
                 if (TryInline(call, discardResult))
                     return;
@@ -3097,8 +4853,12 @@ case BoundFieldExpression field:
             {
                 Expression(call.Receiver);
 
-                // §6.3: a value class is the field it wraps, and a field is not something to
-                // dispatch on — so a call that might resolve through the receiver's class boxes
+                // A nullable multi-field value's receiver is a boxed reference; a value-class
+                // instance dispatch expects the block, so unbox it first.
+                UnboxNullableBlockReceiver(call.Receiver.Type);
+
+                // ?6.3: a value class is the field it wraps, and a field is not something to
+                // dispatch on ? so a call that might resolve through the receiver's class boxes
                 // first, and `this` inside the callee unwraps. A direct dispatch needs neither.
                 BoxReceiverForCall(call.Method, call.Receiver.Type);
             }
@@ -3114,11 +4874,11 @@ case BoundFieldExpression field:
 
         /// <summary>
         /// Reads a generic method's result back out the same way any other erased slot is read
-        /// (§1.11's second obligation), when the call left one on the stack.
+        /// (�1.11's second obligation), when the call left one on the stack.
         /// </summary>
         /// <remarks>
         /// <c>SubstituteGenericCandidates</c> replaces a generic method with the concrete view its
-        /// arguments infer (§6) before binding ever sees it, so <c>call.Method.ReturnType</c> already
+        /// arguments infer (�6) before binding ever sees it, so <c>call.Method.ReturnType</c> already
         /// reads <c>int</c> where the declaration reads <c>T</c> - correct for type checking, since
         /// that is genuinely what a caller gets back, but silent about the fact that the declaration
         /// is compiled once, generically, and so its own return slot is erased regardless of what a
@@ -3135,12 +4895,35 @@ case BoundFieldExpression field:
         }
 
         /// <summary>
+        /// Boxes a single argument on its way into an erased parameter slot - §1.11's first
+        /// obligation, and the exact mirror of <see cref="UnerasedCallResult"/>.
+        /// </summary>
+        /// <remarks>
+        /// Only for a one-parameter callee reached without an argument list of its own, which in
+        /// practice means a property setter. An ordinary call gets this from the binder, which
+        /// writes a conversion node for every argument; an assignment through a property does not,
+        /// because the binder checked it against the property's substituted type and found nothing
+        /// to convert. <c>BoxDynamic</c> rather than a typed box for the same reason the read side
+        /// uses <c>Unerase</c>: the value may already be a reference, and this is a no-op then.
+        /// </remarks>
+        private void ErasedCallArgument(MethodSymbol method)
+        {
+            var original = method.OriginalDefinition ?? method;
+
+            if (original.Parameters.Count == 1
+                && original.Parameters[0].Type.NonNullable is TypeParameterSymbol)
+            {
+                Code.BoxDynamic();
+            }
+        }
+
+        /// <summary>
         /// Emits the call instruction for a method whose receiver and arguments are already on the
         /// stack.
         /// </summary>
         /// <remarks>
-        /// Where a call lands is a property of the callee, not of the call site — the interpreter
-        /// reads it off the method it names — so nothing here picks between bytecode and host code.
+        /// Where a call lands is a property of the callee, not of the call site � the interpreter
+        /// reads it off the method it names � so nothing here picks between bytecode and host code.
         /// What it does pick between is the four <em>tables</em> a callee can live in: this module's
         /// method builders, another module's functions, an interface's slots, and everything else.
         /// </remarks>
@@ -3150,7 +4933,7 @@ case BoundFieldExpression field:
             {
                 // The one case where the call site rather than the callee decides: a `super` call,
                 // or one on a sealed receiver, names a virtual method and must not go through the
-                // vtable — an override calling its base would otherwise call itself.
+                // vtable � an override calling its base would otherwise call itself.
                 if (!virtualCall && !method.IsStatic && method.ContainingType is not null && method.Dispatch != MethodDispatch.Direct)
                     Code.CallSpecial(local, discardResult);
                 else
@@ -3169,7 +4952,7 @@ case BoundFieldExpression field:
             }
 
             // A module-level member records no owner, so an access-table entry cannot name one in
-            // another module (`docs/VM-Plan.md` §3.3) - a cross-module call goes through the module
+            // another module (`docs/VM-Plan.md` �3.3) - a cross-module call goes through the module
             // reference table by path instead. Both halves are asked: a module built earlier in this
             // compilation, and one referenced as an image.
             if (method.ContainingType is null
@@ -3194,7 +4977,7 @@ case BoundFieldExpression field:
 
         /// <summary>
         /// Emits an argument bound for the built-in <c>array</c>/<c>dict</c>'s own <c>G0</c>/<c>K</c>/
-        /// <c>V</c>-typed member — a key, a value, an index target — the way
+        /// <c>V</c>-typed member � a key, a value, an index target � the way
         /// <see cref="TryEmitDictionaryOperation"/>/<see cref="TryEmitArrayOperation"/> need it.
         /// </summary>
         /// <remarks>
@@ -3203,9 +4986,9 @@ case BoundFieldExpression field:
         /// type, so a real generic method's own erased frame slot gets the box it needs. Array and
         /// dict declare their element/key/value members the same way (<c>G0</c>/<c>K</c>/<c>V</c>,
         /// per <c>docs/Runtime-Model.md</c>) for signature matching, but the opcodes these two
-        /// methods emit instead of a real call — <c>ArrSet</c>, <c>DictSet</c>, <c>ArrPush</c>, … —
+        /// methods emit instead of a real call � <c>ArrSet</c>, <c>DictSet</c>, <c>ArrPush</c>, � �
         /// read and write the collection's native <c>SurtrValue</c> storage directly and were never
-        /// erased to begin with (<c>docs/VM-Plan.md</c> §3.5's "no per-element type tags"), so the
+        /// erased to begin with (<c>docs/VM-Plan.md</c> �3.5's "no per-element type tags"), so the
         /// box that conversion produces is not just unneeded here, it is actively wrong: it stores a
         /// boxed reference where the opcode expects the raw value, and a later <c>DictGet</c>/
         /// <c>ArrGet</c> hands that reference back as if it were the value itself. Stripping the
@@ -3215,8 +4998,8 @@ case BoundFieldExpression field:
         /// that is not the erasure artifact is left untouched.
         /// <para>
         /// A second, narrower case reaches the same problem from the other side: an argument whose
-        /// own static type is <em>already</em> the bare type parameter — <c>item: T</c> passed to
-        /// <c>_items.push(item)</c> from inside the generic body that declares <c>T</c> — converts
+        /// own static type is <em>already</em> the bare type parameter � <c>item: T</c> passed to
+        /// <c>_items.push(item)</c> from inside the generic body that declares <c>T</c> � converts
         /// against it by <c>Identity</c>, since source and destination are the same unsubstituted
         /// symbol, so there is no <c>ImplicitErasure</c> node here to strip. But <c>item</c> is still
         /// boxed, the same way any <c>T</c>-typed value at rest inside a still-generic body is (an
@@ -3227,13 +5010,19 @@ case BoundFieldExpression field:
         /// </remarks>
         private void EmitCollectionOperand(BoundExpression argument)
         {
+            // An operand storing inline cannot cross into the collection's one-reference storage
+            // raw: it packs once pushed. The type that decides is the operand's OWN - the
+            // collection's members are declared against their bare G0/K/V parameters, so the
+            // conversion sitting on top usually reads 'unknown' by the time it reaches here.
             if (argument is BoundConversionExpression { Conversion.Kind: ConversionKind.ImplicitErasure } conversion)
             {
                 Expression(conversion.Operand);
+                BoxIfMultiSlot(conversion.Operand.Type);
                 return;
             }
 
             Expression(argument);
+            BoxIfMultiSlot(argument.Type);
             UnboxIfStillErased(argument.Type);
         }
 
@@ -3245,7 +5034,7 @@ case BoundFieldExpression field:
         /// The members lowered here are the ones with a dedicated opcode of identical semantics:
         /// <c>clear</c>, <c>get</c>, <c>set</c>, <c>containsKey</c>, <c>remove</c>, <c>keys</c> and
         /// <c>values</c>. <c>get</c>/<c>set</c> reach the same <c>DictGet</c>/<c>DictSet</c> the
-        /// index form <c>m[k]</c> already does — lowered here too, rather than left to duplicate a
+        /// index form <c>m[k]</c> already does � lowered here too, rather than left to duplicate a
         /// native call the index form already avoids. <c>length</c> is handled separately, in
         /// <see cref="EmitPropertyRead"/>.
         /// </remarks>
@@ -3269,7 +5058,10 @@ case BoundFieldExpression field:
                 if (discardResult)
                     Code.Pop();
                 else
+                {
+                    UnpackIfMultiSlot(call.Method.ReturnType);
                     BoxIfStillErased(call.Method.ReturnType);
+                }
                 return true;
             }
 
@@ -3325,7 +5117,7 @@ case BoundFieldExpression field:
 
         /// <summary>
         /// The array twin of <see cref="TryEmitDictionaryOperation"/>: replaces a call to a member
-        /// of the built-in <c>array</c> that has a dedicated opcode of identical semantics —
+        /// of the built-in <c>array</c> that has a dedicated opcode of identical semantics �
         /// <c>get</c>, <c>set</c>, <c>push</c>, <c>pop</c>, <c>insert</c>, <c>removeAt</c>,
         /// <c>clear</c>, <c>indexOf</c> and <c>contains</c>. <c>length</c> is handled separately, in
         /// <see cref="EmitPropertyRead"/>; <c>reverse</c>, <c>reserve</c>, <c>truncate</c>,
@@ -3344,7 +5136,10 @@ case BoundFieldExpression field:
                 if (discardResult)
                     Code.Pop();
                 else
+                {
+                    UnpackIfMultiSlot(call.Method.ReturnType);
                     BoxIfStillErased(call.Method.ReturnType);
+                }
                 return true;
             }
 
@@ -3371,6 +5166,8 @@ case BoundFieldExpression field:
                 Code.ArrPop();
                 if (discardResult)
                     Code.Pop();
+                else
+                    UnpackIfMultiSlot(call.Method.ReturnType);
                 return true;
             }
 
@@ -3425,7 +5222,7 @@ case BoundFieldExpression field:
         /// The string twin of <see cref="TryEmitDictionaryOperation"/>: <c>charAt</c> is exactly the
         /// index form <c>s[i]</c> under another name, so it reaches the same <c>StrGet</c>.
         /// <c>length</c> is handled separately, in <see cref="EmitPropertyRead"/>; every other
-        /// string method (<c>substring</c>, <c>repeat</c>, …) has no opcode of its own.
+        /// string method (<c>substring</c>, <c>repeat</c>, �) has no opcode of its own.
         /// </summary>
         private bool TryEmitStringOperation(BoundCallExpression call, bool discardResult)
         {
@@ -3452,9 +5249,9 @@ case BoundFieldExpression field:
         /// <remarks>
         /// Identity is the point: an imported symbol keeps the very <c>SurtrMethodInfo</c> the
         /// built-in declares, and that survives the generic substitution <c>MemberLookup</c>
-        /// performs — so a constructed <c>{K: V}</c> and its definition share one
+        /// performs � so a constructed <c>{K: V}</c> and its definition share one
         /// <c>ImportedFrom</c>. Comparing it by reference keeps a user class that declares its own
-        /// <c>remove</c>/<c>clear</c>/… from being mistaken for the dictionary's.
+        /// <c>remove</c>/<c>clear</c>/� from being mistaken for the dictionary's.
         /// </remarks>
         private static bool IsDictionaryMember(MethodSymbol method, string name)
             => method.ImportedFrom is { } imported
@@ -3466,7 +5263,7 @@ case BoundFieldExpression field:
                 ? overloads[0]
                 : null;
 
-        /// <summary>The array twin of <see cref="IsDictionaryMember"/> — same identity reasoning.</summary>
+        /// <summary>The array twin of <see cref="IsDictionaryMember"/> � same identity reasoning.</summary>
         private static bool IsArrayMember(MethodSymbol method, string name)
             => method.ImportedFrom is { } imported
                && ReferenceEquals(imported, ArrayMethod(name));
@@ -3477,7 +5274,7 @@ case BoundFieldExpression field:
                 ? overloads[0]
                 : null;
 
-        /// <summary>The string twin of <see cref="IsDictionaryMember"/> — same identity reasoning.</summary>
+        /// <summary>The string twin of <see cref="IsDictionaryMember"/> � same identity reasoning.</summary>
         private static bool IsStringMember(MethodSymbol method, string name)
             => method.ImportedFrom is { } imported
                && ReferenceEquals(imported, StringMethod(name));
@@ -3488,7 +5285,7 @@ case BoundFieldExpression field:
                 ? overloads[0]
                 : null;
 
-        /// <summary>The tuple twin of <see cref="IsDictionaryMember"/> — same identity reasoning.</summary>
+        /// <summary>The tuple twin of <see cref="IsDictionaryMember"/> � same identity reasoning.</summary>
         private static bool IsTupleMember(MethodSymbol method, string name)
             => method.ImportedFrom is { } imported
                && ReferenceEquals(imported, TupleMethod(name));
@@ -3499,9 +5296,46 @@ case BoundFieldExpression field:
                 ? overloads[0]
                 : null;
 
+        /// <summary>Whether this getter is one of the built-in range members the emitter reads as a sub-slot.</summary>
+        private static bool IsRangeSlotGetter(MethodSymbol method, string property)
+            => method.ImportedFrom is { } imported
+               && ReferenceEquals(imported, RangeSlotGetter(property));
+
+        /// <summary>The single overload of a named built-in range getter, or <see langword="null"/>.</summary>
+        private static SurtrMethodInfo? RangeSlotGetter(string property)
+            => SurtrBuiltIns.Range.TryGetMethods(MemberNames.Getter(property), out var overloads) && overloads.Length == 1
+                ? overloads[0]
+                : null;
+
+        /// <summary>
+        /// Lowers a read of the range's pure-slot members - <c>start</c>, <c>end</c>,
+        /// <c>isInclusive</c> - to one sub-slot read off the receiver's block, and answers whether
+        /// it did. Everything else on <c>range</c> keeps its native body.
+        /// </summary>
+        private bool TryRangeSlotRead(BoundPropertyExpression property)
+        {
+            var getter = property.Property.Getter;
+            if (getter is null || property.IsVirtualGet || property.Receiver is null || getter.ExtensionTargetType is not null)
+                return false;
+
+            int offset;
+            if (IsRangeSlotGetter(getter, "start"))
+                offset = 0;
+            else if (IsRangeSlotGetter(getter, "end"))
+                offset = 1;
+            else if (IsRangeSlotGetter(getter, "isInclusive"))
+                offset = 2;
+            else
+                return false;
+
+            int baseSlot = EnsureLocalRange(property.Receiver, RangeSlotWidth);
+            Code.LoadLocalField(baseSlot, offset);
+            return true;
+        }
+
         /// <summary>
         /// The built-in members this emitter can lower to a dedicated opcode, keyed by their
-        /// <c>SurtrMethodInfo</c> identity — the same set the <c>Is*Member</c> checks name. Built
+        /// <c>SurtrMethodInfo</c> identity � the same set the <c>Is*Member</c> checks name. Built
         /// once, so a call site decides in one set lookup whether any of the <c>Try*</c> operations
         /// could apply.
         /// </summary>
@@ -3525,15 +5359,25 @@ case BoundFieldExpression field:
 
         /// <summary>
         /// Replaces a call to a <c>const fun</c> with constant arguments by the value it folds to
-        /// (§7.2).
+        /// (�7.2).
         /// </summary>
         /// <remarks>
-        /// This is where §7.2's promise becomes observable: the callee still exists and can still be
+        /// This is where �7.2's promise becomes observable: the callee still exists and can still be
         /// called at run time, but a call the compiler could answer does not survive into the
-        /// bytecode. A fold that fails is not an error — the call is simply emitted.
+        /// bytecode. A fold that fails is not an error � the call is simply emitted.
         /// </remarks>
         private bool TryFoldConstCall(BoundCallExpression call, bool discardResult)
         {
+            // §2.3quater: a call on an enum's synthesized API with constant arguments — the receiver
+            // included, since every case is a literal for a bare enum — folds to the value the enum
+            // itself computes. Fitted before the receiver guard below because this is the one
+            // instance-call family the constant evaluator answers.
+            if (!discardResult && call.Method.IsConst && TryFoldEnumMember(call, out object? enumValue))
+            {
+                EmitLiteral(new BoundLiteralExpression(call.Syntax, call.Type, enumValue));
+                return true;
+            }
+
             if (discardResult || !call.Method.IsConst || _context.Folder is null || call.Receiver is not null)
                 return false;
 
@@ -3564,8 +5408,133 @@ case BoundFieldExpression field:
         }
 
         /// <summary>
-        /// Whether the default heuristic — no <c>inline</c> written — still wants this body spliced
-        /// (§3.6).
+        /// Folds a call on an enum's synthesized API (§2.3quater) when every part is constant: a
+        /// static <c>of</c>/<c>values</c>, or an instance member whose receiver is a case. Only a
+        /// bare enum folds — its value is an int, which is all a constant can hold.
+        /// </summary>
+        private bool TryFoldEnumMember(BoundCallExpression call, out object? value)
+        {
+            value = null;
+
+            var method = call.Method;
+            if (method.ContainingType is not NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum } @enum)
+                return false;
+
+            object? receiver = null;
+            if (call.Receiver is not null)
+            {
+                if (!TryFoldEnumValue(call.Receiver, out receiver))
+                    return false;
+            }
+            else if (!method.IsStatic)
+            {
+                return false;
+            }
+
+            var arguments = new object?[call.Arguments.Count];
+            for (int i = 0; i < arguments.Length; i++)
+            {
+                if (!TryFoldEnumValue(call.Arguments[i], out arguments[i]))
+                    return false;
+            }
+
+            var cases = Binding.EnumMemberSynthesizer.CasesOf(@enum);
+
+            switch (method.Name)
+            {
+                case Binding.EnumMemberSynthesizer.OfName when arguments.Length == 1 && arguments[0] is long wanted:
+                {
+                    foreach (var @case in cases)
+                    {
+                        if ((@case.EnumValue ?? 0) == (int)wanted)
+                        {
+                            value = wanted;
+                            return true;
+                        }
+                    }
+
+                    // A @Flags enum is total — any int is a representable combination; a plain one
+                    // answers null for a value no case carries.
+                    value = @enum.IsFlagsEnum ? wanted : null;
+                    return true;
+                }
+
+                case Binding.EnumMemberSynthesizer.OfName when arguments.Length == 1 && arguments[0] is string name:
+                {
+                    foreach (var @case in cases)
+                    {
+                        if (string.Equals(@case.Name, name, StringComparison.Ordinal))
+                        {
+                            value = (long)(@case.EnumValue ?? 0);
+                            return true;
+                        }
+                    }
+
+                    value = null;
+                    return true;
+                }
+
+                case Binding.EnumMemberSynthesizer.ToStringName when arguments.Length == 0 && receiver is long self:
+                {
+                    foreach (var @case in cases)
+                    {
+                        if ((@case.EnumValue ?? 0) == (int)self)
+                        {
+                            value = @case.Name;
+                            return true;
+                        }
+                    }
+
+                    value = @enum.Name + "(" + self + ")";
+                    return true;
+                }
+
+                case Binding.EnumMemberSynthesizer.EqualsName when arguments.Length == 1 && receiver is long self:
+                    value = self == EnumFoldInt(arguments[0]);
+                    return true;
+
+                case Binding.EnumMemberSynthesizer.HashCodeName when arguments.Length == 0 && receiver is long self:
+                    value = self;
+                    return true;
+
+                case Binding.EnumMemberSynthesizer.CompareToName when arguments.Length == 1 && receiver is long self:
+                    value = self - EnumFoldInt(arguments[0]);
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>Reads a value a constant enum expression folds to, when it is one.</summary>
+        private bool TryFoldEnumValue(BoundExpression expression, out object? value)
+        {
+            switch (expression)
+            {
+                case BoundLiteralExpression literal:
+                    value = literal.Value;
+                    return literal.Value is long or bool or char or string or null;
+
+                case BoundFieldExpression { Field: FieldSymbol { IsStatic: true, EnumValue: not null } field }
+                    when field.Type.NonNullable.TypeKind == TypeSymbolKind.Enum:
+                    value = (long)field.EnumValue!.Value;
+                    return true;
+
+                case BoundConversionExpression { Conversion.Kind: ConversionKind.Identity or ConversionKind.ImplicitNumeric } conversion:
+                    return TryFoldEnumValue(conversion.Operand, out value);
+
+                case BoundCallExpression call:
+                    return TryFoldEnumMember(call, out value);
+            }
+
+            value = null;
+            return false;
+        }
+
+        private static long EnumFoldInt(object? value) => value is long l ? l : 0;
+
+        /// <summary>
+        /// Whether the default heuristic � no <c>inline</c> written � still wants this body spliced
+        /// (�3.6).
         /// </summary>
         /// <remarks>
         /// The cheap guards <see cref="TryInline"/> would apply are checked here too, so a body the
@@ -3593,7 +5562,7 @@ case BoundFieldExpression field:
         }
 
         /// <summary>
-        /// Splices an <c>inline</c> call site (§3.6), if the body is available and it is safe to.
+        /// Splices an <c>inline</c> call site (�3.6), if the body is available and it is safe to.
         /// </summary>
         /// <remarks>
         /// Arguments land in real slots first, so an argument written once is evaluated once
@@ -3603,6 +5572,11 @@ case BoundFieldExpression field:
         /// </remarks>
         private bool TryInline(BoundCallExpression call, bool discardResult)
         {
+            // The authoritative `noinline` guard (�3.6): every path here goes through it, whatever
+            // the hint or heuristic at the call site decided.
+            if (call.Method.IsNoInline)
+                return false;
+
             if (_context.Bodies is null || !_context.Bodies.TryGetValue(call.Method, out var body))
                 return false;
 
@@ -3615,8 +5589,18 @@ case BoundFieldExpression field:
             if (call.Method.Role == MethodRole.Constructor)
                 return false;
 
+            // Nor is a generator, and for a sharper version of the same reason: what a call to one
+            // runs is the stub, which builds an object and returns; the body this lookup finds is
+            // the suspendable one, which belongs in a frame of its own. Splicing it would run the
+            // generator's own statements in the caller's frame and put a `Yield` where nothing
+            // resumed anything. §3.7 already refuses an `inline` generator at the declaration, but
+            // the cost heuristic asks nothing about what was written, so the refusal has to live
+            // here too.
+            if (call.Method.IsGenerator)
+                return false;
+
             // A body that splices itself, directly or through another inline function, would expand
-            // forever — and its locals would collide, since a symbol maps to one slot.
+            // forever � and its locals would collide, since a symbol maps to one slot.
             if (ReferenceEquals(call.Method, _symbol))
                 return false;
 
@@ -3629,19 +5613,24 @@ case BoundFieldExpression field:
             SurtrLocal? receiver = null;
             if (call.Receiver is not null)
             {
-                var slot = _method.DeclareLocal("$inlineThis");
+                // Sized by the receiver's own type, not the caller's: a module function splicing a
+                // value-class method's body has no receiver of its own, and a multi-field value
+                // occupies its whole width. The non-nullable form is what a value-class dispatch
+                // needs - a nullable multi-field receiver is stored boxed and unboxes here.
+                var slot = DeclareTemp("$inlineThis", call.Receiver.Type.NonNullable);
                 Expression(call.Receiver);
-                Code.StoreLocal(slot);
+                UnboxNullableBlockReceiver(call.Receiver.Type);
+                EmitStoreLocal(slot);
                 receiver = slot;
             }
 
             for (int i = 0; i < call.Arguments.Count; i++)
             {
                 var parameter = call.Method.Parameters[i];
-                var slot = _method.DeclareLocal("$inline$" + parameter.Name);
+                var slot = DeclareTemp("$inline$" + parameter.Name, parameter.Type);
 
                 Expression(call.Arguments[i]);
-                Code.StoreLocal(slot);
+                EmitStoreLocal(slot);
                 _splicedParameters[parameter] = slot;
             }
 
@@ -3651,8 +5640,8 @@ case BoundFieldExpression field:
             // local machinery below at all: there is no earlier `return` for a jump to skip past, so
             // the value can stay on the evaluation stack exactly as an ordinary expression's would,
             // instead of paying a store immediately followed by its own reload. The frame is still
-            // pushed — with an unused exit/result, since nothing here ever reaches EmitReturn to read
-            // them — purely so a call nested inside the value expression still sees this method as
+            // pushed � with an unused exit/result, since nothing here ever reaches EmitReturn to read
+            // them � purely so a call nested inside the value expression still sees this method as
             // "already being spliced" and refuses to splice it again (the cycle guard above).
             if (body is BoundBlockStatement { Statements: [BoundReturnStatement tailReturn] })
             {
@@ -3661,7 +5650,11 @@ case BoundFieldExpression field:
                 if (tailReturn.Value is not null)
                 {
                     if (hasResult)
+                    {
                         Expression(tailReturn.Value);
+                        if (call.Method.ReturnType.IsNullable && TryMultiSlotWidth(tailReturn.Value.Type, out _))
+                            BoxIfMultiSlot(tailReturn.Value.Type);
+                    }
                     else
                         EffectOnly(tailReturn.Value);
                 }
@@ -3670,7 +5663,7 @@ case BoundFieldExpression field:
                 return true;
             }
 
-            var result = hasResult ? _method.DeclareLocal("$inlineResult") : default;
+            var result = hasResult ? DeclareTemp("$inlineResult", _symbol.ReturnType) : default;
             var exit = Code.NewLabel();
 
             _inlines.Add(new InlineFrame(call.Method, exit, result, hasResult, receiver, _finallies.Count));
@@ -3685,7 +5678,7 @@ case BoundFieldExpression field:
             Code.MarkLabel(exit);
 
             if (hasResult)
-                Code.LoadLocal(result);
+                EmitLoadLocal(result);
 
             return true;
         }
@@ -3701,7 +5694,7 @@ case BoundFieldExpression field:
         }
 
         /// <summary>
-        /// Lifts a lambda to a static function of this module and builds a closure over it (§8).
+        /// Lifts a lambda to a static function of this module and builds a closure over it (�8).
         /// </summary>
         /// <remarks>
         /// Static, never an instance method on a synthesised class: <c>SurtrClosure</c> already
@@ -3747,7 +5740,15 @@ case BoundFieldExpression field:
                 next++;
 
             foreach (var captured in lambda.Captured)
+            {
+                // An upvalue is one slot; an inline value is several. Capturing one would need
+                // the packed form at the capture point and an unpack on every read inside - a
+                // design of its own, deferred rather than approximated.
+                if (IsInlineCaptured(captured))
+                    throw Unsupported($"a lambda capturing '{captured.Name}', whose type stores inline as several slots");
+
                 captures[captured] = next++;
+            }
 
             // The lifted body is emitted now rather than queued: it has its own builder and its own
             // instruction stream, so nothing about the caller's is disturbed by recursing.
@@ -3794,11 +5795,11 @@ case BoundFieldExpression field:
             switch (captured)
             {
                 case LocalSymbol local:
-                    LoadSymbol(local, () => Code.LoadLocal(Slot(local)));
+                    LoadSymbol(local, () => EmitLoadLocal(Slot(local)));
                     return;
 
                 case ParameterSymbol parameter:
-                    LoadSymbol(parameter, () => Code.LoadLocal(ParameterSlot(parameter)));
+                    LoadSymbol(parameter, () => EmitLoadLocal(ParameterSlot(parameter)));
                     return;
 
                 default:
@@ -3806,28 +5807,66 @@ case BoundFieldExpression field:
             }
         }
 
+        /// <summary>Whether a captured symbol's type stores inline as more than one slot.</summary>
+        private static bool IsInlineCaptured(Symbol captured)
+            => captured switch
+            {
+                LocalSymbol local => ValueTypeLayout.IsInlineType(local.Type, out _),
+                ParameterSymbol parameter => ValueTypeLayout.IsInlineType(parameter.Type, out _),
+                _ => false,
+            };
+
         private void EmitIndexRead(BoundIndexExpression index)
         {
             var target = index.Target.Type.NonNullable;
 
-            // §5.3 makes a tuple index a constant — the binder folds it and hands back a literal —
-            // so it belongs in the instruction rather than on the stack.
-            if (target.TypeKind == TypeSymbolKind.Tuple && index.Index is BoundLiteralExpression { Value: long ordinal })
+            // �5.3 makes a tuple index a constant � the binder folds it and hands back a literal �
+            // so it belongs in the instruction rather than on the stack. The tuple itself is a
+            // block now: spill its base into a frame range (free when it already lives in one)
+            // and read the element at its own flattened offset, exactly as a value-class field
+            // read does.
+            if (target is TupleTypeSymbol constantTuple && index.Index is BoundLiteralExpression { Value: long ordinal })
             {
-                Expression(index.Target);
-                Code.TupleElement((int)ordinal);
+                if (!ValueTypeLayout.IsInlineType(constantTuple, out int tupleWidth) || ordinal < 0 || ordinal >= constantTuple.ElementTypes.Count)
+                    throw Unsupported($"an index {ordinal} into '{constantTuple.ToDisplayString()}'");
+
+                int baseSlot = EnsureLocalRange(index.Target, tupleWidth);
+
+                int offset = 0;
+                for (int i = 0; i < ordinal; i++)
+                    offset += ValueTypeLayout.WidthOfType(constantTuple.ElementTypes[i]);
+
+                var elementType = constantTuple.ElementTypes[(int)ordinal];
+                if (TryMultiSlotWidth(elementType, out int elementWidth))
+                    Code.LoadValueLocal(baseSlot + offset, elementWidth);
+                else
+                    Code.LoadLocalField(baseSlot, offset);
+
                 BoxIfStillErased(index.Type);
                 return;
             }
 
             Expression(index.Target);
             Expression(index.Index);
+            // A key of an inline type reaches the collection packed, mirroring the write side.
+            BoxIfMultiSlot(index.Index.Type);
 
             switch (target.TypeKind)
             {
-                case TypeSymbolKind.Array: Code.ArrGet(); BoxIfStillErased(index.Type); return;
-                case TypeSymbolKind.Dictionary: Code.DictGet(); BoxIfStillErased(index.Type); return;
-                case TypeSymbolKind.Tuple: Code.TupGet(); BoxIfStillErased(index.Type); return;
+                case TypeSymbolKind.Array:
+                    Code.ArrGet();
+                    UnpackIfMultiSlot(index.Type);
+                    BoxIfStillErased(index.Type);
+                    return;
+                case TypeSymbolKind.Dictionary:
+                    Code.DictGet();
+                    UnpackIfMultiSlot(index.Type);
+                    BoxIfStillErased(index.Type);
+                    return;
+                case TypeSymbolKind.Tuple:
+                    Code.TupGet();
+                    BoxIfStillErased(index.Type);
+                    return;
             }
 
             if (target.SpecialType == SpecialType.String)
@@ -3841,21 +5880,21 @@ case BoundFieldExpression field:
 
         /// <summary>
         /// Boxes a value read straight off a collection's native storage when it is still typed by
-        /// the declaring generic's own bare type parameter — <c>self[i]</c> off a <c>T[]</c> inside
+        /// the declaring generic's own bare type parameter � <c>self[i]</c> off a <c>T[]</c> inside
         /// the body that declares <c>T</c>, say.
         /// </summary>
         /// <remarks>
         /// <c>ArrGet</c>/<c>DictGet</c>/<c>TupGet</c>/<c>TupleElement</c> read the collection's
-        /// storage directly (§3.5's "no per-element type tags"), which is the right raw value once
-        /// <c>T</c> is substituted to a concrete type — an <c>int[]</c>'s own indexer needs no box,
+        /// storage directly (�3.5's "no per-element type tags"), which is the right raw value once
+        /// <c>T</c> is substituted to a concrete type � an <c>int[]</c>'s own indexer needs no box,
         /// which is exactly what <see cref="EmitCollectionOperand"/> restores on the write side. But
         /// while <c>T</c> is still the declaring generic's own bare parameter, this body is compiled
         /// once for every <c>T</c>, so a value leaving through it has to become a reference the same
         /// way one reaching a generic parameter does on the way in (<c>ConversionTarget</c> in
-        /// <c>BodyBinder.Expressions.cs</c>) — except the compiler has no concrete type to pick
+        /// <c>BodyBinder.Expressions.cs</c>) � except the compiler has no concrete type to pick
         /// <c>BoxInt</c> from <c>BoxFloat</c> with here, since the collection this <c>T[]</c> names
         /// might be a concretely-typed one flowing in from a call site (raw storage) or one built
-        /// from scratch inside this very generic body (already-boxed storage, §1.11). <see
+        /// from scratch inside this very generic body (already-boxed storage, �1.11). <see
         /// cref="Surtr.Bytecode.OpCode.BoxDynamic"/> is exactly the opcode for that: it reads the value's own tag
         /// instead of a static type, and is a no-op when the value is already a reference. The read
         /// and the later <c>Unerase</c> a caller applies (<see cref="UnerasedCallResult"/>, the loop
@@ -3876,7 +5915,7 @@ case BoundFieldExpression field:
         /// that way across an erasure boundary (an argument, a field read) and nothing along the way
         /// had reason to undo it. But the array/dict/tuple storage it is about to be written into was
         /// never boxed to begin with, regardless of whether the collection's own compile-time element
-        /// type is concrete or still abstract (§3.5's "no per-element type tags" is a property of the
+        /// type is concrete or still abstract (�3.5's "no per-element type tags" is a property of the
         /// storage, not of how erased the accessing body happens to be). <see
         /// cref="Surtr.Bytecode.OpCode.UnboxDynamic"/> is a no-op for anything that is not a boxed primitive, so this
         /// is safe to call whenever the static type says <c>T</c>, without knowing in advance whether
@@ -3894,6 +5933,8 @@ case BoundFieldExpression field:
             {
                 Expression(element);
                 UnboxIfStillErased(element.Type);
+                // An element storing inline crosses into one-reference storage: it packs.
+                BoxIfMultiSlot(element.Type);
             }
 
             // One immediate carries both the descriptor the object keeps and the element family its
@@ -3901,15 +5942,35 @@ case BoundFieldExpression field:
             Code.PackArray(Descriptors.Emit(array.Type.NonNullable), array.Elements.Count);
         }
 
+        /// <summary>
+        /// Builds a tuple: every element evaluates straight onto the operand stack, in order,
+        /// leaving exactly the block one tuple value occupies.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Nothing is packed here any more. A tuple is a value type (�5.5 as lowered): its
+        /// elements <em>are</em> the value's slots, so the literal is the block - the same shape
+        /// every multi-field construction already leaves behind. Where the value meets a slot that
+        /// holds one reference - an array element, a dict key, an erased parameter - the boundary
+        /// boxes it (<see cref="BoxIfTuple"/>), which is what keeps <see cref="Surtr.Runtime.Objects.SurtrTuple"/>
+        /// alive as the boxed form.
+        /// </para>
+        /// </remarks>
         private void EmitTupleLiteral(BoundTupleLiteralExpression tuple)
         {
+            // The empty tuple has no block to leave behind - its width is the one slot of the
+            // boxed form - so it packs exactly as it always did.
+            if (tuple.Elements.Count == 0)
+            {
+                Code.PackTuple(Descriptors.Emit(tuple.Type.NonNullable), 0);
+                return;
+            }
+
             foreach (var element in tuple.Elements)
             {
                 Expression(element);
                 UnboxIfStillErased(element.Type);
             }
-
-            Code.PackTuple(Descriptors.Emit(tuple.Type.NonNullable), tuple.Elements.Count);
         }
 
         private void EmitDictLiteral(BoundDictLiteralExpression dictionary)
@@ -3918,8 +5979,10 @@ case BoundFieldExpression field:
             {
                 Expression(entry.Key);
                 UnboxIfStillErased(entry.Key.Type);
+                BoxIfMultiSlot(entry.Key.Type);
                 Expression(entry.Value);
                 UnboxIfStillErased(entry.Value.Type);
+                BoxIfMultiSlot(entry.Value.Type);
             }
 
             Code.PackDictionary(Descriptors.Emit(dictionary.Type.NonNullable), dictionary.Entries.Count);
@@ -3927,8 +5990,8 @@ case BoundFieldExpression field:
 
         /// <summary>
         /// Emits a construction of <c>array</c>, <c>dict</c> or <c>tuple</c> through their nameable
-        /// generic form (§5.3). Every shape folds to the same allocation opcodes the equivalent
-        /// literal already uses — never <c>ObjNew</c> — plus at most one native call
+        /// generic form (�5.3). Every shape folds to the same allocation opcodes the equivalent
+        /// literal already uses � never <c>ObjNew</c> � plus at most one native call
         /// (<see cref="BoundCollectionCreationExpression.ReserveMethod"/>, the one shape that has no
         /// single-opcode fold available).
         /// </summary>
@@ -3939,7 +6002,7 @@ case BoundFieldExpression field:
             switch (creation.Kind)
             {
                 case CollectionCreationKind.ArrayEmpty:
-                    // Identical to what an empty `[]` literal already emits (EmitArrayLiteral) —
+                    // Identical to what an empty `[]` literal already emits (EmitArrayLiteral) �
                     // routed through the same ArrPack rather than re-derived.
                     Code.PackArray(type, 0);
                     return;
@@ -3959,7 +6022,7 @@ case BoundFieldExpression field:
                 case CollectionCreationKind.DictCapacity:
                     // DictNew has no capacity operand, so this is the one shape that does not fold
                     // to a single opcode: allocate empty, then dup + call dict's own existing
-                    // `reserve` — the same "dup, call a void-returning instance method, keep one
+                    // `reserve` � the same "dup, call a void-returning instance method, keep one
                     // copy" idiom EmitObjectCreation already uses for a synthesized default
                     // constructor.
                     Code.NewDictionary(type);
@@ -4003,8 +6066,8 @@ case BoundFieldExpression field:
 
         private void EmitArrayCapacity(BoundCollectionCreationExpression creation, SurtrClassReference type)
         {
-            // A written literal folds straight to ArrNewX — the addressing mode Opcodes.md already
-            // documents for exactly this, "for arrays of statically known size" — with zero runtime
+            // A written literal folds straight to ArrNewX � the addressing mode Opcodes.md already
+            // documents for exactly this, "for arrays of statically known size" � with zero runtime
             // work; anything else pushes the runtime value and falls back to the stack-popping ArrNew.
             if (creation.Capacity is BoundLiteralExpression { Value: long constant }
                 && constant >= 0
@@ -4024,17 +6087,26 @@ case BoundFieldExpression field:
             var elementType = ((ArrayTypeSymbol)creation.Type.NonNullable).ElementType;
             var conversions = creation.ElementConversions!;
 
-            var slot = _method.DeclareLocal("$collect");
-            Expression(creation.Source);
-            Code.StoreLocal(slot);
+            // The source is a block; spill it into a range so each element can be read at its
+            // own flattened offset.
+            int slot = EnsureLocalRange(creation.Source, ValueTypeLayout.WidthOfType(tupleType));
 
             // Element 0 first, ..., element N-1 last: ArrPack pops in the same order EmitArrayLiteral
             // already pushes for a written literal, "the deepest popped value becomes element 0."
             for (int i = 0; i < conversions.Count; i++)
             {
-                Code.LoadLocal(slot);
-                Code.TupleElement(i);
-                EmitConversionTail(conversions[i], tupleType.ElementTypes[i], elementType);
+                int offset = 0;
+                for (int e = 0; e < i; e++)
+                    offset += ValueTypeLayout.WidthOfType(tupleType.ElementTypes[e]);
+
+                var sourceElement = tupleType.ElementTypes[i];
+                if (TryMultiSlotWidth(sourceElement, out int elementWidth))
+                    Code.LoadValueLocal(slot + offset, elementWidth);
+                else
+                    Code.LoadLocalField(slot, offset);
+
+                EmitConversionTail(conversions[i], sourceElement, elementType);
+                BoxIfMultiSlot(elementType);
             }
 
             Code.PackArray(type, conversions.Count);
@@ -4047,7 +6119,7 @@ case BoundFieldExpression field:
 
             var slot = _method.DeclareLocal("$collect");
             Expression(creation.Source!);
-            Code.StoreLocal(slot);
+            EmitStoreLocal(slot);
 
             // The library not declaring InvalidCastException is treated the same way EmitNullAssert
             // treats a missing NullReferenceException: the check is skipped rather than left with
@@ -4057,7 +6129,7 @@ case BoundFieldExpression field:
             {
                 var ok = Code.NewLabel();
 
-                Code.LoadLocal(slot);
+                EmitLoadLocal(slot);
                 Code.ArrLen();
                 Code.LoadInt(conversions.Count);
                 Code.JumpIfCompare(SurtrComparison.Equal, SurtrValueTypeCode.Integer, ok);
@@ -4069,20 +6141,28 @@ case BoundFieldExpression field:
 
             for (int i = 0; i < conversions.Count; i++)
             {
-                Code.LoadLocal(slot);
+                EmitLoadLocal(slot);
                 Code.LoadInt(i);
                 Code.ArrGet();
-                EmitConversionTail(conversions[i], ((ArrayTypeSymbol)creation.Source!.Type.NonNullable).ElementType, tupleType.ElementTypes[i]);
+
+                var targetElement = tupleType.ElementTypes[i];
+
+                // The array's own storage keeps one reference per element - an inline value sits
+                // there boxed - so the slot this element will occupy in the block gets the value
+                // itself.
+                UnpackIfMultiSlot(targetElement);
+
+                EmitConversionTail(conversions[i], ((ArrayTypeSymbol)creation.Source!.Type.NonNullable).ElementType, targetElement);
             }
 
-            Code.PackTuple(type, conversions.Count);
+            // No pack: the elements just pushed ARE the resulting value's block.
         }
 
         /// <summary>
-        /// <c>array&lt;T&gt;(size, defaultValue)</c> for a non-zero (or non-constant) default — the
+        /// <c>array&lt;T&gt;(size, defaultValue)</c> for a non-zero (or non-constant) default � the
         /// zero-value case never reaches here, folded onto <see cref="EmitArrayCapacity"/> instead
         /// (which already zero-fills) back in the binder. Every loop method below follows the same
-        /// hand-rolled counted-loop idiom <c>EmitForInIndexed</c>/<c>EmitForInRange</c> already use —
+        /// hand-rolled counted-loop idiom <c>EmitForInIndexed</c>/<c>EmitForInRange</c> already use �
         /// no shared "emit a counted loop" helper exists anywhere in this emitter, and none of these
         /// synthesized loops has a user-visible body to give <c>break</c>/<c>continue</c> targets to,
         /// so none of them call <c>PushLoop</c>/<c>PopTargets</c> either.
@@ -4096,39 +6176,39 @@ case BoundFieldExpression field:
             // Zero-filled by ArrNew/ArrNewX already; the loop below overwrites every slot with the
             // real default, evaluated once up front rather than once per index.
             EmitArrayCapacity(creation, type);
-            Code.StoreLocal(arraySlot);
+            EmitStoreLocal(arraySlot);
 
             Expression(creation.DefaultValue!);
-            Code.StoreLocal(defaultSlot);
+            EmitStoreLocal(defaultSlot);
 
             Code.LoadInt(0);
-            Code.StoreLocal(indexSlot);
+            EmitStoreLocal(indexSlot);
 
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(indexSlot);
-            Code.LoadLocal(arraySlot);
+            EmitLoadLocal(indexSlot);
+            EmitLoadLocal(arraySlot);
             Code.ArrLen();
             Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
 
-            Code.LoadLocal(arraySlot);
-            Code.LoadLocal(indexSlot);
-            Code.LoadLocal(defaultSlot);
+            EmitLoadLocal(arraySlot);
+            EmitLoadLocal(indexSlot);
+            EmitLoadLocal(defaultSlot);
             Code.ArrSet();
 
             Code.IncrementLocal(indexSlot, 1);
             Code.Jump(top);
             Code.MarkLabel(end);
-            Code.LoadLocal(arraySlot);
+            EmitLoadLocal(arraySlot);
         }
 
         /// <summary>
-        /// <c>array&lt;T&gt;(anotherArray)</c> — checked ahead of <see cref="EmitArrayFromIterable"/>
+        /// <c>array&lt;T&gt;(anotherArray)</c> � checked ahead of <see cref="EmitArrayFromIterable"/>
         /// in the binder precisely so this faster, non-interface-dispatch path is what an array
         /// argument actually takes: one <c>ArrLen</c>, one runtime <c>ArrNew</c>, then indexed
-        /// <c>ArrGet</c>/<c>ArrSet</c> — never <c>CallInterface</c>.
+        /// <c>ArrGet</c>/<c>ArrSet</c> � never <c>CallInterface</c>.
         /// </summary>
         private void EmitArrayCopy(BoundCollectionCreationExpression creation, SurtrClassReference type)
         {
@@ -4141,29 +6221,29 @@ case BoundFieldExpression field:
             var indexSlot = _method.DeclareLocal("$index");
 
             Expression(creation.Source);
-            Code.StoreLocal(sourceSlot);
+            EmitStoreLocal(sourceSlot);
 
-            Code.LoadLocal(sourceSlot);
+            EmitLoadLocal(sourceSlot);
             Code.ArrLen();
             Code.NewArray(type);
-            Code.StoreLocal(destSlot);
+            EmitStoreLocal(destSlot);
 
             Code.LoadInt(0);
-            Code.StoreLocal(indexSlot);
+            EmitStoreLocal(indexSlot);
 
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(indexSlot);
-            Code.LoadLocal(sourceSlot);
+            EmitLoadLocal(indexSlot);
+            EmitLoadLocal(sourceSlot);
             Code.ArrLen();
             Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
 
-            Code.LoadLocal(destSlot);
-            Code.LoadLocal(indexSlot);
-            Code.LoadLocal(sourceSlot);
-            Code.LoadLocal(indexSlot);
+            EmitLoadLocal(destSlot);
+            EmitLoadLocal(indexSlot);
+            EmitLoadLocal(sourceSlot);
+            EmitLoadLocal(indexSlot);
             Code.ArrGet();
             EmitConversionTail(conversion, sourceElementType, elementType);
             Code.ArrSet();
@@ -4171,11 +6251,11 @@ case BoundFieldExpression field:
             Code.IncrementLocal(indexSlot, 1);
             Code.Jump(top);
             Code.MarkLabel(end);
-            Code.LoadLocal(destSlot);
+            EmitLoadLocal(destSlot);
         }
 
         /// <summary>
-        /// <c>array&lt;T&gt;(anIterable)</c> — the lowest-priority, general-purpose shape, walking
+        /// <c>array&lt;T&gt;(anIterable)</c> � the lowest-priority, general-purpose shape, walking
         /// the source through <c>IIterable&lt;T&gt;</c> exactly as <c>EmitForInIterable</c> already
         /// does (interface dispatch on <c>iterate</c>/<c>moveNext</c>/<c>current</c>, the same
         /// <c>Unerase</c> rule for a reference element), pushing each result rather than storing to a
@@ -4196,27 +6276,30 @@ case BoundFieldExpression field:
             var cursorSlot = _method.DeclareLocal("$iterator");
 
             Code.PackArray(type, 0);
-            Code.StoreLocal(destSlot);
+            EmitStoreLocal(destSlot);
 
             Expression(creation.Source!);
+            // An inline source (a range, a value class) has to reach the interface dispatch as
+            // the object its class carries IIterable on - a block cannot be dispatched through.
+            BoxIfMultiSlot(creation.Source!.Type);
             Code.CallInterface(iterate);
-            Code.StoreLocal(cursorSlot);
+            EmitStoreLocal(cursorSlot);
 
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(cursorSlot);
+            EmitLoadLocal(cursorSlot);
             Code.CallInterface(moveNext);
             Code.JumpIfFalse(end);
 
-            Code.LoadLocal(destSlot);
-            Code.LoadLocal(cursorSlot);
+            EmitLoadLocal(destSlot);
+            EmitLoadLocal(cursorSlot);
             Code.CallInterface(current);
 
             // Same normalization `EmitForInIterable` needs: `current` reads back erased, but
             // whether the receiver already boxed it or is a built-in handing back raw storage is
-            // not something the contract call site can tell — `BoxDynamic` decides from the value's
+            // not something the contract call site can tell � `BoxDynamic` decides from the value's
             // own tag, a no-op if it was already a reference, and `Unerase` can then run
             // unconditionally.
             Code.BoxDynamic();
@@ -4227,11 +6310,11 @@ case BoundFieldExpression field:
 
             Code.Jump(top);
             Code.MarkLabel(end);
-            Code.LoadLocal(destSlot);
+            EmitLoadLocal(destSlot);
         }
 
         /// <summary>
-        /// <c>{K:V}(pairs)</c> — the pair read twice (once per slot) through a temp local, the same
+        /// <c>{K:V}(pairs)</c> � the pair read twice (once per slot) through a temp local, the same
         /// "evaluate once, use more than once" idiom every other cast/copy shape here already uses,
         /// rather than juggling a duplicate mid-stack.
         /// </summary>
@@ -4247,33 +6330,33 @@ case BoundFieldExpression field:
             var pairSlot = _method.DeclareLocal("$pair");
 
             Expression(creation.Source);
-            Code.StoreLocal(sourceSlot);
+            EmitStoreLocal(sourceSlot);
 
             Code.NewDictionary(type);
-            Code.StoreLocal(dictSlot);
+            EmitStoreLocal(dictSlot);
 
             Code.LoadInt(0);
-            Code.StoreLocal(indexSlot);
+            EmitStoreLocal(indexSlot);
 
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(indexSlot);
-            Code.LoadLocal(sourceSlot);
+            EmitLoadLocal(indexSlot);
+            EmitLoadLocal(sourceSlot);
             Code.ArrLen();
             Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
 
-            Code.LoadLocal(sourceSlot);
-            Code.LoadLocal(indexSlot);
+            EmitLoadLocal(sourceSlot);
+            EmitLoadLocal(indexSlot);
             Code.ArrGet();
-            Code.StoreLocal(pairSlot);
+            EmitStoreLocal(pairSlot);
 
-            Code.LoadLocal(dictSlot);
-            Code.LoadLocal(pairSlot);
+            EmitLoadLocal(dictSlot);
+            EmitLoadLocal(pairSlot);
             Code.TupleElement(0);
             EmitConversionTail(conversions[0], pairType.ElementTypes[0], dictType.KeyType);
-            Code.LoadLocal(pairSlot);
+            EmitLoadLocal(pairSlot);
             Code.TupleElement(1);
             EmitConversionTail(conversions[1], pairType.ElementTypes[1], dictType.ValueType);
             Code.DictSet();
@@ -4281,12 +6364,12 @@ case BoundFieldExpression field:
             Code.IncrementLocal(indexSlot, 1);
             Code.Jump(top);
             Code.MarkLabel(end);
-            Code.LoadLocal(dictSlot);
+            EmitLoadLocal(dictSlot);
         }
 
         /// <summary>
-        /// <c>{K:V}(keys, values)</c> — no element conversions: the binder only takes this path on an
-        /// exact element-type match (arrays are invariant, §6), so nothing here needs
+        /// <c>{K:V}(keys, values)</c> � no element conversions: the binder only takes this path on an
+        /// exact element-type match (arrays are invariant, �6), so nothing here needs
         /// <see cref="EmitConversionTail"/> the way every other cast/copy/pairs shape does.
         /// </summary>
         private void EmitDictFromParallelArrays(BoundCollectionCreationExpression creation, SurtrClassReference type)
@@ -4297,9 +6380,9 @@ case BoundFieldExpression field:
             var indexSlot = _method.DeclareLocal("$index");
 
             Expression(creation.Source!);
-            Code.StoreLocal(keysSlot);
+            EmitStoreLocal(keysSlot);
             Expression(creation.Source2!);
-            Code.StoreLocal(valuesSlot);
+            EmitStoreLocal(valuesSlot);
 
             // Same "skip the check if the library doesn't declare the exception" idiom EmitNullAssert
             // and EmitTupleFromArray already established.
@@ -4307,9 +6390,9 @@ case BoundFieldExpression field:
             {
                 var ok = Code.NewLabel();
 
-                Code.LoadLocal(keysSlot);
+                EmitLoadLocal(keysSlot);
                 Code.ArrLen();
-                Code.LoadLocal(valuesSlot);
+                EmitLoadLocal(valuesSlot);
                 Code.ArrLen();
                 Code.JumpIfCompare(SurtrComparison.Equal, SurtrValueTypeCode.Integer, ok);
 
@@ -4319,33 +6402,33 @@ case BoundFieldExpression field:
             }
 
             Code.NewDictionary(type);
-            Code.StoreLocal(dictSlot);
+            EmitStoreLocal(dictSlot);
 
             Code.LoadInt(0);
-            Code.StoreLocal(indexSlot);
+            EmitStoreLocal(indexSlot);
 
             var top = Code.NewLabel();
             var end = Code.NewLabel();
 
             Code.MarkLabel(top);
-            Code.LoadLocal(indexSlot);
-            Code.LoadLocal(keysSlot);
+            EmitLoadLocal(indexSlot);
+            EmitLoadLocal(keysSlot);
             Code.ArrLen();
             Code.JumpIfCompare(SurtrComparison.GreaterOrEqual, SurtrValueTypeCode.Integer, end);
 
-            Code.LoadLocal(dictSlot);
-            Code.LoadLocal(keysSlot);
-            Code.LoadLocal(indexSlot);
+            EmitLoadLocal(dictSlot);
+            EmitLoadLocal(keysSlot);
+            EmitLoadLocal(indexSlot);
             Code.ArrGet();
-            Code.LoadLocal(valuesSlot);
-            Code.LoadLocal(indexSlot);
+            EmitLoadLocal(valuesSlot);
+            EmitLoadLocal(indexSlot);
             Code.ArrGet();
             Code.DictSet();
 
             Code.IncrementLocal(indexSlot, 1);
             Code.Jump(top);
             Code.MarkLabel(end);
-            Code.LoadLocal(dictSlot);
+            EmitLoadLocal(dictSlot);
         }
 
         /// <summary>
@@ -4353,7 +6436,7 @@ case BoundFieldExpression field:
         /// </summary>
         /// <remarks>
         /// Every primitive already declares a native <c>toString</c>, so a non-string part is a call
-        /// to that rather than a new opcode — which also means interpolation means exactly what
+        /// to that rather than a new opcode � which also means interpolation means exactly what
         /// writing <c>.toString()</c> means.
         /// <para>
         /// One <c>StrCat</c> over n parts rather than n - 1 over two each: joined pairwise, every
@@ -4416,10 +6499,10 @@ case BoundFieldExpression field:
         /// </summary>
         private void EmitSwitchExpression(BoundSwitchExpression @switch)
         {
-            var subject = _method.DeclareLocal("$subject");
+            var subject = DeclareTemp("$subject", @switch.Subject.Type);
 
             Expression(@switch.Subject);
-            Code.StoreLocal(subject);
+            EmitStoreLocal(subject);
 
             var end = Code.NewLabel();
             var arms = new SurtrLabel[@switch.Arms.Count];
@@ -4436,8 +6519,8 @@ case BoundFieldExpression field:
             }
 
             // With no `else`, the binder has already established that the arms cover every case of a
-            // non-nullable enum (§4.3), so the last arm is what is left over once the others have
-            // been tested — and testing it as well would be comparing against the only value the
+            // non-nullable enum (�4.3), so the last arm is what is left over once the others have
+            // been tested � and testing it as well would be comparing against the only value the
             // subject can still be. This is the whole point of checking exhaustiveness: the form
             // that needs no fallback is the form the check exists to allow.
             if (fallback is null)
@@ -4451,30 +6534,203 @@ case BoundFieldExpression field:
 
             EmitDispatch(@switch.Subject.Type, subject, arms, labels, fallback.Value);
 
-            // Every arm produces one value, so they all have to leave the stack at the same depth —
+            // Every arm produces one value, so they all have to leave the stack at the same depth �
             // which is exactly what the emitter checks when the label joins them.
-            var result = _method.DeclareLocal("$switchResult");
+            var result = DeclareTemp("$switchResult", @switch.Arms[0].Result.Type);
 
             for (int i = 0; i < arms.Length; i++)
             {
                 Code.MarkLabel(arms[i]);
                 Expression(@switch.Arms[i].Result);
-                Code.StoreLocal(result);
+                EmitStoreLocal(result);
                 Code.Jump(end);
             }
 
             Code.MarkLabel(end);
-            Code.LoadLocal(result);
+            EmitLoadLocal(result);
         }
         #endregion
 
         #region Frame, captures and types
+
+        /// <summary>Slot width per frame index the emitter itself claimed: parameters first, then temps.</summary>
+        private readonly Dictionary<int, int> _slotWidthsByIndex = new();
+        private bool _frameWidthsRegistered;
+
+        /// <summary>
+        /// Loads a local range onto the operand stack - one slot for everything ordinary, a
+        /// contiguous block for a value-type variable.
+        /// </summary>
+        /// <summary>
+        /// Emits a generator's stub: the whole of what calling a generator function does (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The stub is why a call to a generator is an ordinary call. It has the generator's own
+        /// name, parameters and declared return - <c>generator&lt;T&gt;</c> - and its body pushes
+        /// its arguments, builds the object and returns it, without running a line of what the
+        /// source wrote. That lives in a hidden second method, which is what
+        /// <paramref name="body"/> names.
+        /// </para>
+        /// <para>
+        /// Doing it this way rather than emitting <c>GenNew</c> at each call site is what keeps
+        /// generators out of the metadata: the caller needs no flag saying "this one is special",
+        /// because the stub's declared return already says what it hands back - and it is what
+        /// lets a generator be <c>virtual</c> or satisfy a contract, since the stub dispatches like
+        /// any other method.
+        /// </para>
+        /// </remarks>
+        public void EmitGeneratorFactory(SurtrMethodToken body)
+        {
+            EnsureFrameWidths();
+
+            // The generator's own type, not the element's: the object keeps it, and a host or a
+            // diagnostic reading `YI` back gets `generator<int>` rather than a bare family symbol.
+            var generatorType = _context.Module.Type(Descriptors.Emit(_symbol.ReturnType));
+
+            int slots = 0;
+
+            if (!_symbol.IsStatic)
+            {
+                EmitLoadLocal(_method.Receiver);
+                slots += WidthOf(_method.Receiver);
+            }
+
+            for (int i = 0; i < _symbol.Parameters.Count; i++)
+            {
+                var slot = _method.Parameter(i);
+                EmitLoadLocal(slot);
+                slots += WidthOf(slot);
+            }
+
+            if (slots > byte.MaxValue)
+                throw Unsupported($"a generator taking {slots} argument slots, which is more than one byte can count");
+
+            Code.GenNew(body, generatorType, slots);
+            Code.ReturnValue();
+        }
+
+        private int WidthOf(SurtrLocal local)
+            => _slotWidthsByIndex.TryGetValue(local.Index, out int width) && width > 1 ? width : 1;
+
+        private void EmitLoadLocal(SurtrLocal local)
+        {
+            EnsureFrameWidths();
+
+            if (_slotWidthsByIndex.TryGetValue(local.Index, out int width) && width > 1)
+                Code.LoadValueLocal(local.Index, width);
+            else
+                Code.LoadLocal(local);
+        }
+
+        /// <summary>Pops whatever a local range holds back off the operand stack.</summary>
+        private void EmitStoreLocal(SurtrLocal local)
+        {
+            EnsureFrameWidths();
+
+            if (_slotWidthsByIndex.TryGetValue(local.Index, out int width) && width > 1)
+                Code.StoreValueLocal(local.Index, width);
+            else
+                Code.StoreLocal(local);
+        }
+
+        /// <summary>
+        /// Registers how wide every argument slot block is, once: the receiver of an instance
+        /// method on a multi-field value class occupies that value's whole width, and every
+        /// parameter occupies its own type's.
+        /// </summary>
+        private void EnsureFrameWidths()
+        {
+            if (_frameWidthsRegistered)
+                return;
+
+            _frameWidthsRegistered = true;
+
+            if (_method.HasReceiver && _symbol.ContainingType is NamedTypeSymbol receiverType && ValueTypeLayout.WidthOfType(receiverType) > 1)
+            {
+                if (!ValueTypeLayout.TryGet(receiverType, out var receiverLayout, out var receiverError))
+                    throw Unsupported(receiverError!);
+
+                _slotWidthsByIndex[0] = receiverLayout.Width;
+            }
+
+            foreach (var parameter in _symbol.Parameters)
+            {
+                var slot = ParameterSlot(parameter);
+                int width = SlotCountOfType(parameter.Type);
+                if (width > 1)
+                    _slotWidthsByIndex[slot.Index] = width;
+            }
+        }
+
+        /// <summary>How many slots one value of this type occupies inline: its flattened width when it is an inline type (multi-field value class or tuple), one otherwise.</summary>
+        private static int SlotCountOfType(TypeSymbol type) => ValueTypeLayout.WidthOfType(type);
+
+        /// <summary>Claims a temporary sized to hold a value of this type.</summary>
+        private SurtrLocal DeclareTemp(string name, TypeSymbol type)
+        {
+            int width = SlotCountOfType(type);
+            var slot = width == 1 ? _method.DeclareLocal(name) : _method.DeclareLocals(name, width);
+
+            if (width > 1)
+                _slotWidthsByIndex[slot.Index] = width;
+
+            return slot;
+        }
+
+        /// <summary>The base slot of a value-typed expression's storage, spilling it to a fresh temp when it does not already live in one.</summary>
+        private int EnsureLocalRange(BoundExpression expression, int width)
+        {
+            switch (expression)
+            {
+                case BoundLocalExpression local:
+                    return EnsureBlockSlot(local.Local.Type, width, () => Slot(local.Local).Index, () => EmitLoadLocal(Slot(local.Local)));
+
+                case BoundParameterExpression parameter:
+                    return EnsureBlockSlot(parameter.Parameter.Type, width, () => ParameterSlot(parameter.Parameter).Index, () => EmitLoadLocal(ParameterSlot(parameter.Parameter)));
+
+                default:
+                {
+                    var spilled = _method.DeclareLocals("$vt", width);
+                    _slotWidthsByIndex[spilled.Index] = width;
+                    Expression(expression);
+                    EmitStoreLocal(spilled);
+                    return spilled.Index;
+                }
+            }
+        }
+
+        /// <summary>
+        /// The base slot of a local or parameter read as a value-class block. A slot that stored a
+        /// <em>nullable</em> value holds a boxed reference, not the block, so reading it as the
+        /// block has to spill the unboxed block to a temp first.
+        /// </summary>
+        private int EnsureBlockSlot(TypeSymbol storageType, int width, Func<int> slot, Action load)
+        {
+            if (storageType.IsNullable && width > 1)
+            {
+                var spilled = _method.DeclareLocals("$vt", width);
+                _slotWidthsByIndex[spilled.Index] = width;
+                load();
+                UnpackIfMultiSlot(storageType.NonNullable);
+                EmitStoreLocal(spilled);
+                return spilled.Index;
+            }
+
+            return slot();
+        }
+
         private SurtrLocal Declare(LocalSymbol local)
         {
             if (_locals.TryGetValue(local, out var existing))
                 return existing;
 
-            var slot = _method.DeclareLocal(local.Name);
+            int width = SlotCountOfType(local.Type);
+            var slot = width == 1 ? _method.DeclareLocal(local.Name) : _method.DeclareLocals(local.Name, width);
+
+            if (width > 1)
+                _slotWidthsByIndex[slot.Index] = width;
+
             _locals.Add(local, slot);
             return slot;
         }
@@ -4493,8 +6749,8 @@ case BoundFieldExpression field:
             if (!ReferenceEquals(parameter.ContainingSymbol, _symbol) && parameter.ContainingSymbol is not null)
                 throw Unsupported($"a read of '{parameter.Name}', which belongs to another method");
 
-            // An instance operator's first parameter is its receiver (§5.6), and the runtime keeps
-            // the receiver as an implicit slot rather than a declared parameter — so parameter 0 is
+            // An instance operator's first parameter is its receiver (�5.6), and the runtime keeps
+            // the receiver as an implicit slot rather than a declared parameter � so parameter 0 is
             // local 0, and every later parameter shifts down by one to match.
             if (_symbol.Role == MethodRole.Operator && !_symbol.IsStatic)
                 return parameter.Ordinal == 0 ? _method.Receiver : _method.Parameter(parameter.Ordinal - 1);
@@ -4528,17 +6784,17 @@ case BoundFieldExpression field:
 
             if (_inlines.Count > 0 && _inlines[_inlines.Count - 1].Receiver is SurtrLocal spliced)
             {
-                Code.LoadLocal(spliced);
+                EmitLoadLocal(spliced);
                 return;
             }
 
             if (!_method.HasReceiver)
                 throw Unsupported("'this', in a body with no receiver");
 
-            Code.LoadLocal(_method.Receiver);
+            EmitLoadLocal(_method.Receiver);
 
             // Inside a value class's own method the receiver arrived boxed exactly when this
-            // method's own dispatch might have been resolved through its class — the same test
+            // method's own dispatch might have been resolved through its class � the same test
             // BoxReceiverForCall makes at every call site, so the two can never disagree about
             // which convention this body was compiled against. A direct dispatch never boxes on
             // the way in, so there is nothing here to unwrap.
@@ -4552,19 +6808,19 @@ case BoundFieldExpression field:
                 ?? throw Unsupported($"a use of '{field.Name}', which no module being built declares");
 
         /// <summary>
-        /// The value a bound expression folds to, for the emitter's own decisions — a switch key, a
+        /// The value a bound expression folds to, for the emitter's own decisions � a switch key, a
         /// const-fun argument.
         /// </summary>
         /// <remarks>
         /// A literal, a conversion the binder wrapped one in, or a unary/binary expression built out
-        /// of more of the same — so a <c>const fun</c> argument like <c>2 + 3</c> folds here too, not
+        /// of more of the same � so a <c>const fun</c> argument like <c>2 + 3</c> folds here too, not
         /// only a literal written directly. This works over the <em>bound</em> tree rather than
         /// syntax on purpose: a bound operand has already gone through the binder's own name
-        /// resolution (locals, parameters, and — since a <c>const</c> field folds to a literal at
-        /// bind time already — even a module or class constant), so nothing here can answer a
+        /// resolution (locals, parameters, and � since a <c>const</c> field folds to a literal at
+        /// bind time already � even a module or class constant), so nothing here can answer a
         /// local's name from an unrelated same-named constant the way a second, syntax-based lookup
         /// against <c>ConstantEvaluator</c>'s flat, module-wide name table could. It still does not
-        /// duplicate that evaluator's full reach — no calls, no conditionals — only the arithmetic a
+        /// duplicate that evaluator's full reach � no calls, no conditionals � only the arithmetic a
         /// `const fun` argument realistically needs one instruction lower than its declaration.
         /// </remarks>
         private static object? ConstantOf(BoundExpression expression) => expression switch
@@ -4586,18 +6842,36 @@ case BoundFieldExpression field:
 
             if (left is long li && right is long ri)
             {
+                // Folded in int, not in long, and wrapped at every step. The machine computes in
+                // int with wrap-around (Add, Sub, Mul all mask to 32 bits), so a fold that stayed
+                // in long would answer 4000000000 where the instruction answers -294967296. That
+                // was harmless while the only consumers were switch keys and const-fun arguments,
+                // which are small by nature; emitting the result as a literal makes any divergence
+                // a miscompile, so the arithmetic is done in the same width the VM uses.
+                int l = unchecked((int)li);
+                int r = unchecked((int)ri);
+
                 return binary.Operator switch
                 {
-                    BinaryOperator.Add => li + ri,
-                    BinaryOperator.Subtract => li - ri,
-                    BinaryOperator.Multiply => li * ri,
-                    BinaryOperator.Divide => ri != 0 ? li / ri : (object?)null,
-                    BinaryOperator.Modulo => ri != 0 ? li % ri : (object?)null,
-                    BinaryOperator.BitAnd => li & ri,
-                    BinaryOperator.BitOr => li | ri,
-                    BinaryOperator.BitXor => li ^ ri,
-                    BinaryOperator.ShiftLeft => li << (int)(ri & 31),
-                    BinaryOperator.ShiftRight => li >> (int)(ri & 31),
+                    BinaryOperator.Add => (long)unchecked(l + r),
+                    BinaryOperator.Subtract => (long)unchecked(l - r),
+                    BinaryOperator.Multiply => (long)unchecked(l * r),
+
+                    // The two shapes the interpreter traps on - a zero divisor, and the one
+                    // quotient that has no int - are refused rather than folded, so the trap stays
+                    // observable exactly where the program wrote it. This is the same rule that
+                    // keeps a folded expression from swallowing a fault the unfolded one raises.
+                    BinaryOperator.Divide => r != 0 && !(r == -1 && l == int.MinValue) ? (long)(l / r) : (object?)null,
+                    BinaryOperator.Modulo => r != 0 && !(r == -1 && l == int.MinValue) ? (long)(l % r) : (object?)null,
+
+                    BinaryOperator.BitAnd => (long)(l & r),
+                    BinaryOperator.BitOr => (long)(l | r),
+                    BinaryOperator.BitXor => (long)(l ^ r),
+
+                    // Masked, not trapped, because that is what Shl/Shr/UShr do.
+                    BinaryOperator.ShiftLeft => (long)unchecked(l << (r & 31)),
+                    BinaryOperator.ShiftRight => (long)(l >> (r & 31)),
+                    BinaryOperator.UnsignedShiftRight => (long)unchecked((int)((uint)l >> (r & 31))),
                     _ => null,
                 };
             }
@@ -4626,14 +6900,66 @@ case BoundFieldExpression field:
             if (ConstantOf(unary.Operand) is not object operand)
                 return null;
 
+            // Wrapped in int for the same reason the binary folds are: negating int.MinValue is
+            // itself on this machine, and folding it in long would answer 2147483648 instead.
             return (unary.Operator, operand) switch
             {
                 (UnaryOperator.Not, bool b) => !b,
-                (UnaryOperator.Negate, long i) => -i,
+                (UnaryOperator.Negate, long i) => (long)unchecked(-(int)i),
                 (UnaryOperator.Negate, double d) => -d,
-                (UnaryOperator.Complement, long c) => ~c,
+                (UnaryOperator.Complement, long c) => (long)(~unchecked((int)c)),
                 _ => null,
             };
+        }
+
+        /// <summary>
+        /// Emits a composite expression as the literal it folds to, and says whether it did.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <see cref="ConstantOf"/> could already answer this and was only ever asked by two
+        /// callers - a <c>switch</c>'s case keys and a <c>const fun</c>'s arguments - so
+        /// <c>let n = 2 * 3;</c> emitted <c>PushI8, PushI8, Mul</c> and a loop bound written
+        /// <c>N - 1</c> paid for a subtraction on every entry. Asking the same question during
+        /// emission costs nothing and removes the instructions outright.
+        /// </para>
+        /// <para>
+        /// Only a <em>composite</em> is worth folding: a literal already emits itself, and the
+        /// binder's conversion nodes are its own business. The result is gated on the expression's
+        /// static type rather than on the folded value's CLR type, so a fold can never quietly
+        /// change what a slot holds - a <c>char</c> arithmetic result, a nullable, or anything
+        /// whose declared type and folded shape disagree is emitted the long way instead.
+        /// </para>
+        /// </remarks>
+        private bool TryEmitFoldedConstant(BoundExpression expression)
+        {
+            if (expression is not (BoundBinaryExpression or BoundUnaryExpression))
+                return false;
+
+            var type = expression.Type;
+            if (type.IsNullable)
+                return false;
+
+            if (ConstantOf(expression) is not object folded)
+                return false;
+
+            switch (folded)
+            {
+                case long value when type.SpecialType == SpecialType.Int:
+                    Code.LoadInt(unchecked((int)value));
+                    return true;
+
+                case double value when type.SpecialType == SpecialType.Float:
+                    Code.LoadFloat(value);
+                    return true;
+
+                case bool value when type.SpecialType == SpecialType.Bool:
+                    Code.LoadBool(value);
+                    return true;
+
+                default:
+                    return false;
+            }
         }
 
         /// <summary>
@@ -4672,6 +6998,13 @@ case BoundFieldExpression field:
                     var underlying = ((NamedTypeSymbol)bare).UnderlyingType;
                     return underlying is null ? SurtrValueTypeCode.Object : TypeCodeOf(underlying);
                 }
+
+                // An enum is one int from the migration (§2.2): its first field is the synthetic
+                // `value`, so a value of it lives in exactly the slot an int does — which is
+                // what makes `|` an integer opcode, `==` a comparison of values, and the
+                // relational operators one comparison of the same slot.
+                case TypeSymbolKind.Enum:
+                    return SurtrValueTypeCode.Integer;
 
                 default: return SurtrValueTypeCode.Object;
             }

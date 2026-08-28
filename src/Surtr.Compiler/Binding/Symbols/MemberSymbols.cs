@@ -119,8 +119,32 @@ namespace Surtr.Compiler.Binding.Symbols
         /// <summary>Whether inlining is mandatory rather than a hint (§3.6).</summary>
         public bool IsForceInline { get; internal set; }
 
+        /// <summary>
+        /// Whether every fold of its invocations is off (§3.6): no splice by hint or heuristic, no
+        /// accessor lowering at the access site, and no call-site const folding. What runs is the
+        /// declaration itself, as a real call.
+        /// </summary>
+        public bool IsNoInline { get; internal set; }
+
         /// <summary>Whether it may be evaluated at compile time (§7.3).</summary>
         public bool IsConst { get; internal set; }
+
+        /// <summary>Whether it was introduced by <c>generator</c> rather than <c>fun</c> (§3.7).</summary>
+        /// <remarks>
+        /// <see cref="ReturnType"/> is the <em>view</em> type - <c>generator&lt;T&gt;</c> - not the
+        /// element, so a call site, overload resolution and every conversion rule read a generator
+        /// as the ordinary method it looks like from outside. What the source wrote as the return is
+        /// kept separately in <see cref="YieldType"/>, which is what a <c>yield</c> converts against.
+        /// Splitting them this way is why nothing in the binder outside the few places that handle
+        /// <c>yield</c> has to know a generator exists.
+        /// </remarks>
+        public bool IsGenerator { get; internal set; }
+
+        /// <summary>
+        /// What each <c>yield</c> produces - the type source wrote as the return - or
+        /// <see langword="null"/> when this is not a generator.
+        /// </summary>
+        public TypeSymbol? YieldType { get; internal set; }
 
         /// <summary>
         /// Whether the compiler synthesised it — a lambda body, a property accessor, a bridge —
@@ -356,6 +380,14 @@ namespace Surtr.Compiler.Binding.Symbols
 
         /// <summary>Whether the compiler synthesised it, such as a property's backing field.</summary>
         public bool IsSynthetic { get; internal set; }
+
+        /// <summary>
+        /// The constant value of an enum case (§2.4): its explicit <c>= n</c>, or its implied
+        /// position (progression for a plain enum, a single bit for a <c>@Flags</c> one).
+        /// <see langword="null"/> on anything that is not a case of a source enum — an imported
+        /// enum's cases carry only their ordinal.
+        /// </summary>
+        public int? EnumValue { get; internal set; }
 
         /// <summary>
         /// Whether it names a host global rather than storage of its own (§10).

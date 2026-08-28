@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using System;
@@ -108,8 +108,74 @@ namespace Surtr.Bytecode.Image
         /// version 5 reader would read the extra counts as the bytecode fields, so it is refused
         /// like every other older format.
         /// </para>
+        /// <para>
+        /// Version 7 exists in the record as the release the opcode set's free values resumed
+        /// from; it changed no layout.
+        /// </para>
+        /// <para>
+        /// Version 8 adds one boolean per class - <c>IsValueType</c>, written after the enum
+        /// flag - which tells the linker to lay the class out as a flattened value block rather
+        /// than one slot per field. A version 7 reader would read the flag byte as the first byte
+        /// of the base-type index, so it is refused like every other older format.
+        /// </para>
+        /// <para>
+        /// Version 9 changes no layout at all, and is a bump precisely because a byte already in
+        /// the layout changed <em>meaning</em>: <c>SurtrValueTypeCode</c> gained
+        /// <c>Generator</c> inside the built-in run, so every code from <c>Range</c> up shifted by
+        /// one. A version 8 reader would read a class's family byte and get the wrong family
+        /// silently, which is exactly the failure a refused version exists to prevent. Nothing was
+        /// added for generators themselves: a generator's element travels in the descriptor
+        /// (<c>YI</c>), and a call to a generator is an ordinary call to a stub whose declared
+        /// return says so, so no flag was needed.
+        /// </para>
+        /// <para>
+        /// Version 10 is the second renumbering, after the pattern of version 3: the retired
+        /// opcode values the set had accumulated were reclaimed by renumbering the whole
+        /// instruction set into one contiguous run - families in reading order, free values at
+        /// the end - instead of growing around holes nothing could ever fill again. No member's
+        /// name or semantics changed; only its number did, which means every opcode byte in every
+        /// older image now names a different instruction. A version 9 reader must refuse a
+        /// version 10 image for the same reason this reader refuses everything older than
+        /// itself: there is no upgrade path, only a recompile.
+        /// </para>
+        /// <para>
+        /// Version 11 adds one variance byte per generic type parameter on classes and
+        /// interfaces, written after the parameter names and before the constraint table. The
+        /// byte is the declaration-site <c>out</c>/<c>in</c> annotation (§6), and like the
+        /// constraint lists it serves only the compiler's importer, tooling and host interop -
+        /// never an execution path. A version 10 reader would read the first variance byte as
+        /// the constraint count, so it is refused like every other older format.
+        /// </para>
+        /// <para>
+        /// Version 12 gives every enum case its <c>value</c> in the <c>Class</c> section: each
+        /// <c>enumCases</c> entry is now <c>{ name, value: i32, visibility }</c> instead of
+        /// <c>{ name, visibility }</c>. The value is the key an exhaustive <c>switch</c> over the
+        /// enum dispatches on (§2.4), so it travels explicitly rather than being re-derived from
+        /// declaration position. A version 11 reader would read the value bytes as the next
+        /// case's name, so it is refused like every other older format.
+        /// </para>
+        /// <para>
+        /// Version 13 opens the extended instruction space: <c>0xFF</c> stops being a free value
+        /// and becomes <see cref="OpCode.Ext"/>, a prefix whose next byte is a
+        /// <see cref="SurtrExtOpCode"/>. Nothing about how a module is *framed* changed, which is
+        /// what this number normally tracks - the bump is deliberate anyway, because a version 12
+        /// reader meeting a prefixed instruction would trap on an unknown opcode somewhere in the
+        /// middle of a run instead of refusing the image at load. Failing at the boundary is the
+        /// whole point of having a version. From here, <b>adding extended opcodes does not bump
+        /// it again</b>: an instruction the reader does not know is a build that is too old, and
+        /// this version already says so.
+        /// </para>
+        /// <para>
+        /// Version 14 retires the thirty-nine <c>*X</c> twins in favour of the
+        /// <see cref="OpCode.Wide"/> prefix, and this is the bump such a change exists for: the
+        /// retired values are unassigned now, so a version 13 image's <c>JPGEX</c> would decode as
+        /// nothing at all, while a version 13 reader meeting a <c>Wide</c> would read the opcode
+        /// after it as an instruction of its own and take the rest of the method with it. Both
+        /// directions are silent misreads, which is exactly what a refusal at the boundary is for.
+        /// The framing itself is unchanged, as it was at 13.
+        /// </para>
         /// </remarks>
-        internal const ushort FormatVersion = 7;
+        internal const ushort FormatVersion = 14;
 
         private readonly byte[] _bytes;
         private readonly string _path;

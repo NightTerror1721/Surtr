@@ -130,3 +130,37 @@ public inline fun clamp<T : IComparable<T> & IEquatable<T>>(v: T?, lo: T, hi: T)
 
     throw OutOfRangeException("bad");
 }
+
+// Generators and the coroutine surface (3.7), plus scoped disposal (9.2).
+generator countdown(from: int): int {
+    var i = from;
+    while (i > 0) {
+        yield i;
+        i = i - 1;
+    }
+    return "done";
+}
+
+generator delegating(): int {
+    let sent = yield 0;
+    let inner = yield from countdown(3);
+    yield from [7, 8];
+    yield ((sent as int) + (inner == null ? 0 : 1));
+}
+
+interface ISource {
+    generator values(): int;
+}
+
+fun consume(): void {
+    let g: generator<int> = countdown(5);
+    for (x in g) { log("$x"); }
+
+    using (let a = openHandle("one")) {
+        log(a.name);
+    }
+
+    using (let first = openHandle("a"), let second = openHandle("b")) {
+        log(first.name + second.name);
+    }
+}

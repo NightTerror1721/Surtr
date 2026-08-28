@@ -48,6 +48,15 @@ namespace Surtr.Compiler.Binding
         private readonly Dictionary<string, ModuleSymbol> _moduleSymbols =
             new Dictionary<string, ModuleSymbol>(StringComparer.Ordinal);
 
+        /// <summary>
+        /// The module paths whose <see cref="ModuleSymbol"/> has had its surface imported. Kept
+        /// apart from <see cref="_moduleSymbols"/> because that dictionary also holds
+        /// containing-module shells, which are empty by design until this importer - or nothing -
+        /// fills them.
+        /// </summary>
+        private readonly Dictionary<string, ModuleSymbol> _completedModules =
+            new Dictionary<string, ModuleSymbol>(StringComparer.Ordinal);
+
         /// <summary>Creates an importer that interns everything it builds through one factory.</summary>
         public MetadataImporter(TypeSymbolFactory factory)
         {
@@ -86,10 +95,26 @@ namespace Surtr.Compiler.Binding
         /// <summary>The class behind every closure, which declares no parameters for the same reason.</summary>
         public NamedTypeSymbol ClosureType => _closureType ??= Import(SurtrBuiltIns.Closure);
 
+        /// <summary>
+        /// The one class behind every generator parameterisation, paired with a
+        /// <see cref="GeneratorTypeSymbol"/> the same way <see cref="ArrayType"/> is with an array.
+        /// </summary>
+        /// <remarks>
+        /// It declares one parameter, so constructing it with the element type is what makes
+        /// <c>current</c> read back as that element rather than as an erased slot - and what makes a
+        /// <c>generator&lt;int&gt;</c> satisfy <c>IIterable&lt;int&gt;</c> rather than
+        /// <c>IIterable&lt;unknown&gt;</c>.
+        /// </remarks>
+        public NamedTypeSymbol GeneratorType => _generatorType ??= Import(SurtrBuiltIns.Generator);
+
+        /// <summary>The <c>@Pure</c> attribute class, imported once for native methods marked pure.</summary>
+        private NamedTypeSymbol? _pureAttribute;
+
         private NamedTypeSymbol? _arrayType;
         private NamedTypeSymbol? _dictionaryType;
         private NamedTypeSymbol? _tupleType;
         private NamedTypeSymbol? _closureType;
+        private NamedTypeSymbol? _generatorType;
 
         /// <summary>Makes a module's types available to resolve against.</summary>
         public void AddModule(SurtrModule module)
@@ -110,16 +135,42 @@ namespace Surtr.Compiler.Binding
                 _hostTypes[fullName] = type;
         }
 
+        /// <summary>
+        /// Imports every host-declared type, for the binder to place in scope. A host type reaches
+        /// source through no module - it has none - so this is the only pass that turns the
+        /// registration into symbols; called repeatedly is harmless, everything interns through
+        /// <see cref="_types"/>.
+        /// </summary>
+        internal IEnumerable<NamedTypeSymbol> ImportedHostTypes()
+        {
+            foreach (var type in _hostTypes.Values)
+                yield return Import(type);
+        }
+
         /// <summary>Imports a whole module: its types and its module-level members.</summary>
+        /// <remarks>
+        /// Completing is keyed by path and idempotent, and it has to be: a containing-module shell
+        /// (<see cref="ModuleSymbolFor"/>) may already sit under this path, created while some
+        /// other module's metadata was being read - a base class, an interface a nested class
+        /// implements, anything whose descriptor names this module. That shell is deliberately
+        /// empty, and returning it as if it were an imported surface silently stripped every
+        /// built-in name out of the global scope (§13's implicit <c>surtr</c> import reads exactly
+        /// this method). Completion fills the shell in place, so one path keeps one
+        /// <see cref="ModuleSymbol"/> instance and every type interned against it gains the
+        /// members.
+        /// </remarks>
         public ModuleSymbol ImportModule(SurtrModule module)
         {
-            if (_moduleSymbols.TryGetValue(module.Path, out var cached))
-                return cached;
+            if (module is null)
+                throw new ArgumentNullException(nameof(module));
 
             AddModule(module);
 
-            var symbol = new ModuleSymbol(module.Path);
-            _moduleSymbols.Add(module.Path, symbol);
+            if (_completedModules.TryGetValue(module.Path, out var completed))
+                return completed;
+
+            var symbol = ModuleSymbolFor(module.Path);
+            _completedModules.Add(module.Path, symbol);
 
             var types = new List<NamedTypeSymbol>();
             foreach (var type in module.Classes)
@@ -207,6 +258,9 @@ namespace Surtr.Compiler.Binding
 
                 case SurtrValueTypeCode.Array:
                     return _factory.Array(Import(reference.GetArrayElementType(), declaringType));
+
+                case SurtrValueTypeCode.Generator:
+                    return _factory.Generator(Import(reference.GetGeneratorElementType(), declaringType));
 
                 case SurtrValueTypeCode.Dictionary:
                     return _factory.Dictionary(
@@ -410,6 +464,12 @@ namespace Surtr.Compiler.Binding
             {
                 SurtrInterface => TypeSymbolKind.Interface,
                 SurtrClass { IsEnum: true } => TypeSymbolKind.Enum,
+
+                // A native VALUE class - an inline struct the bridge materialized - is a value
+                // type to source exactly as a declared one: block layout, no receiver, §2.9
+                // machinery. Its TypeCode may read Native or Object depending on how it was
+                // registered, so value-ness is what decides, before the reference-kind check.
+                SurtrClass { IsValueType: true } => TypeSymbolKind.ValueClass,
                 SurtrClass { TypeCode: SurtrValueTypeCode.Native } => TypeSymbolKind.Native,
                 _ => TypeSymbolKind.Class,
             };
@@ -450,6 +510,12 @@ namespace Surtr.Compiler.Binding
                     parameters[i] = _factory.DeclareTypeParameter(declared[i], symbol, i);
 
                 symbol.SetTypeParameters(parameters);
+
+                // Variance rides next to the parameters in the image; a table shorter than the
+                // parameter list (an older host that never set one) reads as all-invariant.
+                var variance = type.GenericVariance;
+                for (int i = 0; i < parameters.Length; i++)
+                    parameters[i].Variance = Translate(i < variance.Length ? variance[i] : SurtrGenericVariance.Invariant);
             }
 
             return symbol;
@@ -702,6 +768,12 @@ namespace Surtr.Compiler.Binding
 
             symbol.Parameters = parameters2;
 
+            // A native built-in declared pure in C# carries the mark like any source-declared
+            // @Pure: the runtime recorded it on the method metadata, and here it becomes the same
+            // attribute use BuiltInAttributes recognises by name.
+            if (method.IsPure)
+                symbol.Attributes = new[] { new AttributeUse(_pureAttribute ??= Import(SurtrBuiltIns.Pure), System.Array.Empty<object?>()) };
+
             ImportMethodConstraints(symbol, method);
             return symbol;
         }
@@ -773,6 +845,13 @@ namespace Surtr.Compiler.Binding
             SurtrVisibility.Protected => Accessibility.Protected,
             SurtrVisibility.Internal => Accessibility.Internal,
             _ => Accessibility.Private,
+        };
+
+        private static TypeParameterVariance Translate(SurtrGenericVariance variance) => variance switch
+        {
+            SurtrGenericVariance.Covariant => TypeParameterVariance.Covariant,
+            SurtrGenericVariance.Contravariant => TypeParameterVariance.Contravariant,
+            _ => TypeParameterVariance.Invariant,
         };
 
         private static MethodDispatch Translate(SurtrMethodDispatch dispatch) => dispatch switch

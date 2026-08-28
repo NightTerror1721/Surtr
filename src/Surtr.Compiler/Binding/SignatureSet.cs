@@ -182,6 +182,13 @@ namespace Surtr.Compiler.Binding
                 case ClosureTypeSymbol closure:
                     return Reference(_factory.Closure(EraseAll(closure.ParameterTypes), Erase(closure.ReturnType)));
 
+                case NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum }:
+                    // An enum is a nominal value class from the migration (§2.4): its descriptor is
+                    // its own, so `f(Perm)` and `f(int)` are two real method table slots. What
+                    // erases — for the erased-signature contract slots — is the generic parameter,
+                    // not an enum's own name.
+                    return Reference(type);
+
                 case NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } valueClass:
                 {
                     // Erased to the field it wraps, and the nullability rides along: `EntityId?`

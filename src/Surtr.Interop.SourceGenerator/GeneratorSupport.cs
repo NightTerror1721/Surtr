@@ -17,8 +17,10 @@ namespace Surtr.Interop.SourceGenerator
         internal const string NativeFieldAttribute = "Surtr.Interop.Attributes.SurtrNativeFieldAttribute";
         internal const string NativePropertyAttribute = "Surtr.Interop.Attributes.SurtrNativePropertyAttribute";
         internal const string NativeParameterAttribute = "Surtr.Interop.Attributes.SurtrNativeParameterAttribute";
+
         internal const string NativeIgnoreAttribute = "Surtr.Interop.Attributes.SurtrNativeIgnoreAttribute";
 
+        internal const string NativeConstructorAttribute = "Surtr.Interop.Attributes.SurtrNativeConstructorAttribute";
         // Mirrors SurtrNamingPolicy values.
         internal const int PolicyDefault = 0;
         internal const int PolicySurtr = 1;

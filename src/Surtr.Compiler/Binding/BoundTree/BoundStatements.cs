@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Binding.Symbols;
 using Surtr.Compiler.Syntax.Ast;

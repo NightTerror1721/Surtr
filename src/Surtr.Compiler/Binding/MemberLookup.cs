@@ -241,6 +241,9 @@ namespace Surtr.Compiler.Binding
                 case ArrayTypeSymbol array:
                     return Construct(_importer.ArrayType, array.ElementType);
 
+                case GeneratorTypeSymbol generator:
+                    return Construct(_importer.GeneratorType, generator.ElementType);
+
                 case DictionaryTypeSymbol dictionary:
                     return Construct(_importer.DictionaryType, dictionary.KeyType, dictionary.ValueType);
 
@@ -297,6 +300,7 @@ namespace Surtr.Compiler.Binding
                         IsSynthetic = field.IsSynthetic,
                         IsNative = field.IsNative,
                         ImportedFrom = field.ImportedFrom,
+                        Attributes = field.Attributes,
 
                         // The way back to the one slot every construction shares.
                         OriginalDefinition = field.OriginalDefinition ?? field,
@@ -315,6 +319,7 @@ namespace Surtr.Compiler.Binding
                         Accessibility = property.Accessibility,
                         Getter = property.Getter is null ? null : SubstituteMethodInto(property.Getter, owner, substitution),
                         Setter = property.Setter is null ? null : SubstituteMethodInto(property.Setter, owner, substitution),
+                        Attributes = property.Attributes,
                     };
                 }
 
@@ -364,11 +369,23 @@ namespace Surtr.Compiler.Binding
                 IsNative = method.IsNative,
                 IsInline = method.IsInline,
                 IsForceInline = method.IsForceInline,
+                IsNoInline = method.IsNoInline,
                 IsConst = method.IsConst,
                 IsSynthetic = method.IsSynthetic,
                 IsConversion = method.IsConversion,
                 TypeParameters = method.TypeParameters,
                 Parameters = parameters,
+
+                // A substituted view is the same declaration under its own type arguments, so the
+                // declaration's marks travel with it - a pure native reached through a constructed
+                // array must still read as @Pure.
+                Attributes = method.Attributes,
+
+                // The element is substituted alongside the view type, so a `generator<T>` read
+                // through `Box<int>` yields `int` on both halves rather than agreeing on one and
+                // keeping the declaration's parameter on the other.
+                IsGenerator = method.IsGenerator,
+                YieldType = method.YieldType is { } yielded ? substitution.Apply(yielded) : null,
 
                 // Carried across, or an `int[]`'s `push` would be a symbol no call site could
                 // emit: a substituted view is still the same method table entry.

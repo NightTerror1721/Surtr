@@ -63,6 +63,23 @@ namespace Surtr.Compiler.CodeGen
         private readonly Dictionary<NamedTypeSymbol, SurtrMethodInfo> _builtDefaultConstructors =
             new Dictionary<NamedTypeSymbol, SurtrMethodInfo>();
 
+        /// <summary>
+        /// The hidden body method behind each generator's stub (§3.7).
+        /// </summary>
+        /// <remarks>
+        /// A generator declares two entries in the method table: the stub, which
+        /// <see cref="EmitContext"/> binds to the symbol because it is what every call site names,
+        /// and the body, which only <c>GenNew</c> ever names. Keeping the second here rather than in
+        /// the context is deliberate - nothing outside emission should be able to reach a method the
+        /// symbol table has no symbol for.
+        /// </remarks>
+        private readonly Dictionary<MethodSymbol, SurtrMethodBuilder> _generatorBodies =
+            new Dictionary<MethodSymbol, SurtrMethodBuilder>();
+
+        /// <summary>How many generators of each name a container has declared, for body naming.</summary>
+        private readonly Dictionary<string, int> _generatorNameCounts =
+            new Dictionary<string, int>(StringComparer.Ordinal);
+
         private readonly List<SurtrModule> _modules = new List<SurtrModule>();
 
         private readonly Dictionary<string, SurtrModule> _modulesByPath =
@@ -313,6 +330,11 @@ namespace Surtr.Compiler.CodeGen
                     break;
                 }
 
+                // §2.4: an enum is a value class whose first field is the synthetic `value`, so every enum —
+                // plain and @Flags alike — is a real class here, marked as a value type for the
+                // linker. Its descriptor stays nominal (§6.1); only the choice of opcode erases it
+                // to an int. `DefineEnum` carries `isEnum` so the reflection layer and the
+                // EnumCases table keep working.
                 case TypeSymbolKind.Enum:
                 {
                     var @enum = declaringClass is null
@@ -338,6 +360,13 @@ namespace Surtr.Compiler.CodeGen
                         : declaringClass.DefineNestedClass(declaredName, baseType, symbol.IsAbstract, Visibility(symbol), symbol.IsSealed);
 
                     Parameterise(@class.Class, symbol);
+
+                    // A multi-field value class is a value type at runtime: the linker reads this
+                    // flag to lay the class out as one flattened block rather than one slot per
+                    // field, which is what its boxed form and the collector both index against.
+                    if (ValueTypeLayout.IsMultiField(symbol))
+                        @class.Class.IsValueType = true;
+
                     context.Declare(symbol, @class);
                     emission = new TypeEmission(symbol, @class, null);
                     break;
@@ -586,10 +615,13 @@ namespace Surtr.Compiler.CodeGen
         private void DeclareField(EmitContext context, SurtrClassBuilder @class, NamedTypeSymbol owner, FieldSymbol field)
         {
             // An enum case is a static of the enum's own type, and the builder is what assigns the
-            // ordinal an exhaustive switch indexes on.
-            if (owner.TypeKind == TypeSymbolKind.Enum && field.IsStatic && ReferenceEquals(field.Type, owner))
+            // ordinal an exhaustive switch indexes on. Every enum case - a plain enum's and a
+            // @Flags one's alike - is now a value of the enum's type, so none of them falls to the
+            // ordinary static-field path below.
+            if (owner.TypeKind == TypeSymbolKind.Enum
+                && field.IsStatic && ReferenceEquals(field.Type, owner))
             {
-                var @case = @class.DefineEnumCase(field.Name, Visibility(field.Accessibility)).Field;
+                var @case = @class.DefineEnumCase(field.Name, field.EnumValue ?? 0, Visibility(field.Accessibility)).Field;
                 context.Declare(field, @case);
                 Attach(context, field, @case);
                 return;
@@ -624,7 +656,7 @@ namespace Surtr.Compiler.CodeGen
         {
             foreach (var use in symbol.Attributes)
             {
-                if (use.Type.IsCompileTimeOnlyAttribute)
+                if (!BuiltInAttributes.ReachesImage(use.Type))
                     continue;
 
                 member.AddAttribute(Usage(context, use));
@@ -661,7 +693,7 @@ namespace Surtr.Compiler.CodeGen
 
             foreach (var use in property.Attributes)
             {
-                if (use.Type.IsCompileTimeOnlyAttribute)
+                if (!BuiltInAttributes.ReachesImage(use.Type))
                     continue;
 
                 declared.AddAttribute(Usage(context, use));
@@ -747,13 +779,19 @@ namespace Surtr.Compiler.CodeGen
 
                 foreach (var use in method.Attributes)
                 {
-                    if (use.Type.IsCompileTimeOnlyAttribute)
+                    if (!BuiltInAttributes.ReachesImage(use.Type))
                         continue;
 
                     constructor.AddAttribute(Usage(context, use));
                 }
 
                 context.Declare(method, constructor);
+
+                // A constructor's signature carries value types like any other callee's: a
+                // creation site counts slots from this builder, so a VT parameter has to claim
+                // its flattened width here or every such call site lands one slot short.
+                ApplyValueLayout(constructor, method);
+
                 emission.Methods.Add((method, constructor));
                 emission.Constructors.Add((method, constructor));
                 return;
@@ -814,15 +852,90 @@ namespace Surtr.Compiler.CodeGen
 
             foreach (var use in method.Attributes)
             {
-                if (use.Type.IsCompileTimeOnlyAttribute)
+                if (!BuiltInAttributes.ReachesImage(use.Type))
                     continue;
 
                 builder.AddAttribute(Usage(context, use));
             }
 
             context.Declare(method, builder);
+            ApplyValueLayout(builder, method);
             emission.Methods.Add((method, builder));
+
+            if (method.IsGenerator)
+            {
+                var body = @class.DefineMethod(
+                    GeneratorBodyName(method),
+                    SurtrClassReference.Void,
+                    Parameters(context, method),
+                    method.IsStatic,
+                    SurtrMethodDispatch.Direct,
+                    isOverride: false,
+                    SurtrVisibility.Private,
+                    isSealed: false);
+
+                DeclareGenericParameters(body, method);
+                ApplyValueLayout(body, method);
+                _generatorBodies[method] = body;
+            }
         }
+
+        /// <summary>
+        /// A distinct name for one generator's hidden body, unique within its container.
+        /// </summary>
+        /// <remarks>
+        /// Two overloads of one generator name would otherwise produce two bodies called the same
+        /// thing. Numbering by declared name rather than by signature keeps the name readable in a
+        /// disassembly, which is the only place it is ever seen.
+        /// </remarks>
+        private string GeneratorBodyName(MethodSymbol method)
+        {
+            string owner = method.ContainingSymbol?.Name ?? string.Empty;
+            string key = owner + "." + method.Name;
+
+            _generatorNameCounts.TryGetValue(key, out int index);
+            _generatorNameCounts[key] = index + 1;
+
+            return SyntheticNames.GeneratorBody(method.Name, index);
+        }
+
+        /// <summary>
+        /// Tells a method builder how wide its argument blocks are, when its signature carries
+        /// value types - the receiver of an instance method on a multi-field value class
+        /// included. Absent, every argument stays one slot wide.
+        /// </summary>
+        private static void ApplyValueLayout(SurtrMethodBuilder builder, MethodSymbol method)
+        {
+            int receiverWidth = 1;
+            if (!method.IsStatic
+                && method.ContainingType is NamedTypeSymbol owner
+                && ValueTypeLayout.WidthOfType(owner) > 1)
+            {
+                receiverWidth = ValueTypeLayout.TryGet(owner, out var ownerLayout, out _)
+                    ? ownerLayout.Width
+                    : 1;
+            }
+
+            var widths = new int[method.Parameters.Count];
+            bool anyWide = receiverWidth > 1;
+
+            for (int i = 0; i < widths.Length; i++)
+            {
+                widths[i] = SlotWidthOf(method.Parameters[i].Type);
+                anyWide |= widths[i] > 1;
+            }
+
+            if (anyWide)
+                builder.SetArgumentLayout(receiverWidth, widths);
+
+            // The return width rides the declared type, not the call opcode's 0/1 gate - a
+            // multi-field value class is the one case the descriptor cannot answer.
+            int resultSlots = SlotWidthOf(method.ReturnType);
+            if (!method.ReturnType.IsVoid && resultSlots > 1)
+                builder.SetResultSlots(resultSlots);
+        }
+
+        private static int SlotWidthOf(TypeSymbol type) => ValueTypeLayout.WidthOfType(type);
 
         /// <summary>
         /// The names and per-parameter constraints of a generic method, in the descriptor form the
@@ -974,16 +1087,33 @@ namespace Surtr.Compiler.CodeGen
                     Visibility(method.Accessibility));
 
                 DeclareGenericParameters(function, method);
+                ApplyValueLayout(function, method);
 
                 foreach (var use in method.Attributes)
                 {
-                    if (use.Type.IsCompileTimeOnlyAttribute)
+                    if (!BuiltInAttributes.ReachesImage(use.Type))
                         continue;
 
                     function.AddAttribute(Usage(context, use));
                 }
 
                 context.Declare(method, function);
+
+                // The same two-entry split a generator gets inside a class: `function` is the stub
+                // that returns a `generator<T>`, and the body holding the `yield`s is a second,
+                // private function nothing but `GenNew` names.
+                if (method.IsGenerator)
+                {
+                    var generatorBody = builder.DefineFunction(
+                        GeneratorBodyName(method),
+                        SurtrClassReference.Void,
+                        Parameters(context, method),
+                        SurtrVisibility.Private);
+
+                    DeclareGenericParameters(generatorBody, method);
+                    ApplyValueLayout(generatorBody, method);
+                    _generatorBodies[method] = generatorBody;
+                }
             }
 
             // An extension method (§15) is, by the time it reaches here, an ordinary module-level
@@ -1040,16 +1170,34 @@ namespace Surtr.Compiler.CodeGen
             function.IsExtension = true;
 
             DeclareGenericParameters(function, method);
+                ApplyValueLayout(function, method);
 
             foreach (var use in method.Attributes)
             {
-                if (use.Type.IsCompileTimeOnlyAttribute)
+                if (!BuiltInAttributes.ReachesImage(use.Type))
                     continue;
 
                 function.AddAttribute(Usage(context, use));
             }
 
             context.Declare(method, function);
+
+            // An extension method is a module-level function by the time it reaches here (§15), so
+            // a generator among them splits exactly as one declared with `fun` at module scope
+            // does. The body is not marked as an extension: nothing resolves against it, only
+            // `GenNew` names it.
+            if (method.IsGenerator)
+            {
+                var generatorBody = builder.DefineFunction(
+                    GeneratorBodyName(method),
+                    SurtrClassReference.Void,
+                    Parameters(context, method),
+                    SurtrVisibility.Private);
+
+                DeclareGenericParameters(generatorBody, method);
+                ApplyValueLayout(generatorBody, method);
+                _generatorBodies[method] = generatorBody;
+            }
         }
 
         private SurtrParameterInfo[] Parameters(EmitContext context, MethodSymbol method)
@@ -1267,7 +1415,12 @@ namespace Surtr.Compiler.CodeGen
         {
             var owner = emission.Symbol;
 
-            foreach (var contract in owner.Interfaces)
+            // One bridge per erased slot key: two contracts redeclaring the same member shape
+            // (`ISet.isEmpty` over `IReadOnlySet.isEmpty`) are one vtable slot, and the dispatch
+            // tables key on exactly this string.
+            var bridgedKeys = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var contract in _binder.AllInterfacesOf(owner))
             {
                 var open = contract.Definition.Members;
                 var closed = _binder.MemberLookup.MembersOf(contract);
@@ -1275,6 +1428,9 @@ namespace Surtr.Compiler.CodeGen
                 for (int i = 0; i < open.Count && i < closed.Count; i++)
                 {
                     if (open[i] is not MethodSymbol declared || closed[i] is not MethodSymbol wanted)
+                        continue;
+
+                    if (!bridgedKeys.Add(SlotKey(declared)))
                         continue;
 
                     if (!NeedsBridge(owner, declared, wanted, out var target))
@@ -1307,6 +1463,24 @@ namespace Surtr.Compiler.CodeGen
             target = null!;
 
             string slot = SlotKey(declared);
+
+            // An ancestor may already answer this slot: either it declares a virtual member of the
+            // same erased shape, or the emitter gave one a bridge when IT was emitted (recorded on
+            // the ancestor's symbol � imported ancestors carry their bridges as ordinary virtual
+            // metadata instead). Either way the slot is filled by inheritance, and a second bridge
+            // here would collide with the inherited vtable entry at load.
+            for (var walk = owner.BaseType; walk is not null; walk = walk.BaseType)
+            {
+                if (walk.Definition.HasBridgeKey(slot))
+                    return false;
+
+                foreach (var inherited in _binder.MemberLookup.FindMethods(walk, wanted.Name))
+                {
+                    if (SlotKey(inherited) == slot && inherited.Dispatch != MethodDispatch.Direct)
+                        return false;
+                }
+            }
+
             string wantedKey = SlotKey(wanted);
 
             foreach (var candidate in _binder.MemberLookup.FindMethods(owner, wanted.Name))
@@ -1367,13 +1541,25 @@ namespace Surtr.Compiler.CodeGen
             var code = bridge.Code;
             code.LoadLocal(bridge.Receiver);
 
-            // The bridge is Virtual, so a value class receiver arrives boxed at this slot exactly
+            // Record the slot so subclasses inherit the answer instead of re-bridging it.
+            owner.Definition.AddBridgeKey(SlotKey(declared));
+
+            // The bridge is Virtual, so a value-class receiver arrives boxed at this slot exactly
             // as it does for any other interface-dispatched call on one (§6.3) — the same test
             // MethodBodyEmitter.LoadReceiver makes for a value class's own virtual-dispatch body,
-            // applied here since the bridge plays that same role. The `target` it forwards to keeps
-            // `Direct` dispatch and so expects the unboxed field, never the boxed form.
-            if (owner.TypeKind == TypeSymbolKind.ValueClass)
-                code.Unbox();
+            // applied here since the bridge plays that same role. An enum is a value class from
+            // the migration (§2.4), so its bridge unboxes the same way. The `target` it forwards
+            // to keeps `Direct` dispatch and so expects the unboxed field, never the boxed form.
+            // A multi-field value class arrives as the SurtrInstance BoxValue packed rather than
+            // the SurtrBoxed BoxAs produced, so its mirror is UnboxValue over the whole width -
+            // the frame the forwarding call enters claims every field slot.
+            if (owner.TypeKind is TypeSymbolKind.ValueClass or TypeSymbolKind.Enum)
+            {
+                if (ValueTypeLayout.WidthOfType(owner) > 1 && ValueTypeLayout.TryGet(owner, out var bridgeLayout, out _))
+                    code.UnboxValue(bridgeLayout.Width);
+                else
+                    code.Unbox();
+            }
 
             for (int i = 0; i < parameters.Length; i++)
             {
@@ -1411,10 +1597,40 @@ namespace Surtr.Compiler.CodeGen
         {
             var bare = target.NonNullable;
 
+            if (bare.TypeKind == TypeSymbolKind.Enum)
+            {
+                // An enum boxes as its own value: a bare one as the int it is (Box(Integer)), a
+                // case-carrying one as a SurtrInstance of the enum class (BoxValue). Either way
+                // the payload is the whole value, so unboxing reads it back.
+                if (ValueTypeLayout.WidthOfType((NamedTypeSymbol)bare) > 1
+                    && ValueTypeLayout.TryGet((NamedTypeSymbol)bare, out var enumLayout, out _))
+                {
+                    code.UnboxValue(enumLayout.Width);
+                }
+                else
+                {
+                    code.Unbox();
+                }
+
+                return;
+            }
+
             if (bare.TypeKind == TypeSymbolKind.ValueClass)
             {
                 code.CastTo(_descriptors.EmitBoxedForm((NamedTypeSymbol)bare));
-                code.Unbox();
+
+                // A multi-field value arrives as a SurtrInstance (BoxValue) whose whole block has
+                // to come back out, not the single-slot SurtrBoxed Unbox reads.
+                if (ValueTypeLayout.WidthOfType((NamedTypeSymbol)bare) > 1
+                    && ValueTypeLayout.TryGet((NamedTypeSymbol)bare, out var narrowLayout, out _))
+                {
+                    code.UnboxValue(narrowLayout.Width);
+                }
+                else
+                {
+                    code.Unbox();
+                }
+
                 return;
             }
 
@@ -1497,6 +1713,43 @@ namespace Surtr.Compiler.CodeGen
                     throw new SurtrEmitException($"'{symbol.Name}' has no body to emit.");
 
                 builder.Code.ReturnVoid();
+                return;
+            }
+
+            // �6.3's boxed-receiver convention exists for a single-field value class only: the box
+            // names the class, the unbox hands the body back the very field its frame holds. A
+            // multi-field value class has none yet - the box crosses the call as one reference slot
+            // while this frame would claim the whole width - so a non-Direct method on one is
+            // refused here rather than compiled against two disagreeing conventions.
+            if (symbol.Dispatch != MethodDispatch.Direct
+                && symbol.ContainingType is NamedTypeSymbol owner
+                && ValueTypeLayout.WidthOfType(owner) > 1)
+            {
+                throw new SurtrEmitException(
+                    "a non-Direct method on a multi-field value class has no receiver convention across a call yet");
+            }
+
+            // A generator is two methods (§3.7): what the caller reaches builds the object, and what
+            // the source wrote lives in a body only `GenNew` names. Emitting both here rather than
+            // at the declaration keeps every caller of EmitBody - class members, module functions,
+            // extensions - covered by one change.
+            if (symbol.IsGenerator)
+            {
+                if (!_generatorBodies.TryGetValue(symbol, out var generatorBody))
+                    throw new SurtrEmitException($"'{symbol.Name}' is a generator whose body method was never declared.");
+
+                new MethodBodyEmitter(builder, symbol, context)
+                    .EmitGeneratorFactory(generatorBody.Token);
+
+                var emitter = new MethodBodyEmitter(generatorBody, symbol, context);
+                emitter.Emit(body);
+
+                // Falling off the end is how a generator ends, so the body always needs the return
+                // the source never writes - and `Emit` only appends one for a void method, which
+                // this is not: its symbol's return type is the generator it produces.
+                if (generatorBody.Code.IsReachable)
+                    generatorBody.Code.ReturnVoid();
+
                 return;
             }
 

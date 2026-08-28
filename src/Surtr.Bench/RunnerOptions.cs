@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -48,6 +48,14 @@ namespace Surtr.Bench
         /// <summary>List the catalogue and what each case measures, then exit without running.</summary>
         public bool ListOnly;
 
+        /// <summary>Run the extended-prefix calibration instead of the catalogue.</summary>
+        /// <remarks>
+        /// A different question from every other mode: not "how fast is this workload" but "what
+        /// does one <c>Ext</c> dispatch cost", which is the number the extended instruction
+        /// space's admission rule rests on. See <see cref="PrefixTax"/>.
+        /// </remarks>
+        public bool PrefixTax;
+
         /// <summary>Run every workload once at its size and check the engines against the C# baseline, no timing.</summary>
         public bool VerifyOnly;
 
@@ -62,6 +70,17 @@ namespace Surtr.Bench
 
         /// <summary>Whole-catalogue passes; the reported number per workload is the median across rounds.</summary>
         public int Rounds = 1;
+
+        /// <summary>
+        /// Fresh processes per workload, when &gt; 1. The interpreter's dispatch loop is delivered
+        /// through the op cache (the decoded µop cache), which is indexed by the code's absolute
+        /// address — re-rolled by ASLR on every process launch. A single process therefore samples
+        /// ONE of the interpreter's two bimodal states, and its median is that state's, not the
+        /// interpreter's. Sampling several fresh processes and reporting the fastest gives the
+        /// true throughput; the state spread shows how far the unlucky state was. See
+        /// docs/Informe-Volatilidad-Run.md.
+        /// </summary>
+        public int Processes = 1;
 
         /// <summary>Print the reference engine's p90 and p99 alongside the median.</summary>
         public bool Percentiles;
@@ -84,6 +103,15 @@ namespace Surtr.Bench
 
         /// <summary>Above this spread the median is not yet worth quoting; <c>--strict</c> turns it into a failure.</summary>
         public const double SpreadWarningThreshold = 0.10;
+
+        /// <summary>
+        /// The MoonSharp circuit breaker: if one untimed probe call already costs this many times
+        /// Surtr's already-measured median, the full warmup+iterations run is skipped and the probe
+        /// itself stands in as a floor - a case can cost thousands of times what Surtr costs
+        /// (arrayFill measured ~7000x), and paying warmup+iterations at that ratio is what turned a
+        /// 40-case suite into a multi-hour run.
+        /// </summary>
+        public const double MoonSharpExtremeRatio = 1000.0;
 
         /// <summary>Whether the Surtr side runs. Only the baseline mode and the other engines' only-modes suppress it.</summary>
         public bool RunSurtr => !LuaOnly && !LuajitOnly && !BaselineOnly;
@@ -114,6 +142,10 @@ namespace Surtr.Bench
             + "  --no-warmup             skip the warm-up entirely; expect a much wider spread\n"
             + "  --rounds <n>            run the whole catalogue <n> times and report the median across\n"
             + "                          rounds (default 1); the best defence against cross-talk between cases\n"
+            + "  --processes <n>         measure each case in <n> fresh processes and report the fastest\n"
+            + "                          per case (the op-cache-friendly state) plus the state spread; a\n"
+            + "                          single process samples one of the interpreter's two bimodal states,\n"
+            + "                          so without this flag a run's numbers are that one state's\n"
             + "  --shuffle               run the cases in a seeded random order instead of declaration order\n"
             + "  --seed <n>              the shuffle seed (default 12345); also implies --shuffle\n"
             + "  --gc-inclusive          collect inside the timed region, so each sample pays for the\n"
@@ -137,6 +169,8 @@ namespace Surtr.Bench
             + "  --baseline-only         run only the C# baseline\n"
             + "  --csv <path>            append the results to <path> as CSV\n"
             + "  --list                  list the catalogue and what each case measures, then exit\n"
+            + "  --prefix-tax            measure what one Ext-prefixed dispatch costs, and exit;\n"
+            + "                          --iters sets the loop size, --rounds the sample count\n"
             + "  -h, --help              show this help\n";
 
         public static RunnerOptions Parse(string[] args)
@@ -183,6 +217,11 @@ namespace Surtr.Bench
                         options.Rounds = ParseInt(NextValue(args, ref i, arg), arg);
                         if (options.Rounds < 1)
                             throw new ArgumentException("--rounds must be at least 1.");
+                        break;
+                    case "--processes":
+                        options.Processes = ParseInt(NextValue(args, ref i, arg), arg);
+                        if (options.Processes < 1)
+                            throw new ArgumentException("--processes must be at least 1.");
                         break;
                     case "--shuffle":
                         options.Shuffle = true;
@@ -236,6 +275,9 @@ namespace Surtr.Bench
                         break;
                     case "--list":
                         options.ListOnly = true;
+                        break;
+                    case "--prefix-tax":
+                        options.PrefixTax = true;
                         break;
                     default:
                         throw new ArgumentException($"unknown option '{arg}'.");

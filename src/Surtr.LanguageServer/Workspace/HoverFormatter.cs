@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using Surtr.Compiler.Binding.Symbols;
 using Surtr.Compiler.Syntax.Ast;
@@ -82,6 +83,7 @@ namespace Surtr.LanguageServer.Workspace
                 TypeSymbolKind.Dictionary => "dictionary",
                 TypeSymbolKind.Tuple => "tuple",
                 TypeSymbolKind.Closure => "closure",
+                TypeSymbolKind.Generator => "generator",
                 _ => "type",
             };
 
@@ -165,9 +167,47 @@ namespace Surtr.LanguageServer.Workspace
             if (implements is not null)
                 builder.Append(Break).Append(implements);
 
+            string? throws = ThrowsLine(method);
+            if (throws is not null)
+                builder.Append(Break).Append(throws);
+
             builder.Append(Break).Append(ExtensionOrContainingLabel(method.ExtensionTargetType, method.ContainingSymbol, "method", "function"));
             return builder.ToString();
         }
+
+        /// <summary>
+        /// "throws `ArgumentException`, `FormatException`" for a method carrying §11's repeatable
+        /// <c>@Throws</c> marks, in the order they were written.
+        /// </summary>
+        /// <remarks>
+        /// The only attribute hover renders, and deliberately so: what a function can raise is
+        /// signature-level information a caller has to act on, where every other mark in the
+        /// vocabulary says something about the declaration rather than about how to call it. Read
+        /// off the uses directly rather than through the compiler's own recognition helper, which
+        /// is internal to it — the class name is ABI either way.
+        /// </remarks>
+        private static string? ThrowsLine(MethodSymbol method)
+        {
+            var attributes = method.Attributes;
+            if (attributes.Count == 0)
+                return null;
+
+            List<string>? named = null;
+
+            for (int i = 0; i < attributes.Count; i++)
+            {
+                if (!string.Equals(attributes[i].Type.Name, ThrowsAttributeName, StringComparison.Ordinal))
+                    continue;
+
+                if (attributes[i].Arguments.Count > 0 && attributes[i].Arguments[0] is string name && name.Length > 0)
+                    (named ??= new List<string>()).Add("`" + name + "`");
+            }
+
+            return named is null ? null : "throws " + string.Join(", ", named);
+        }
+
+        /// <summary>The §11 attribute class whose marks <see cref="ThrowsLine"/> reads.</summary>
+        private const string ThrowsAttributeName = "Throws";
 
         /// <summary>
         /// "implements `IFoo.bar`" for every interface a method satisfies without necessarily saying
@@ -251,12 +291,21 @@ namespace Surtr.LanguageServer.Workspace
                 case MethodRole.PropertySetter:
                     return "set " + propertyNameOf(method) + "(" + ParameterText(method, 0) + ")";
                 default:
-                    name = "fun " + method.Name + typeParameters;
+                    // A generator is introduced by its own keyword standing where `fun` would (§3.7),
+                    // so its card reads the way the source does rather than as an ordinary method.
+                    name = (method.IsGenerator ? "generator " : "fun ") + method.Name + typeParameters;
                     break;
             }
 
             string parameters = ParametersText(method);
-            string suffix = method.ReturnType.IsVoid ? string.Empty : " : " + method.ReturnType.ToDisplayString();
+
+            // What follows the colon of a generator's declaration is the *element* (§3.7), which
+            // MethodSymbol keeps in YieldType; ReturnType is the view type (`generator<elem>`) every
+            // call site sees. The heading mirrors what was written — the view type still shows
+            // wherever the result of a call is displayed — and falls back to ReturnType when the two
+            // did not both survive an import.
+            TypeSymbol declaredReturn = method.IsGenerator && method.YieldType is { } element ? element : method.ReturnType;
+            string suffix = declaredReturn.IsVoid ? string.Empty : " : " + declaredReturn.ToDisplayString();
             return name + parameters + suffix;
         }
 
@@ -346,7 +395,7 @@ namespace Surtr.LanguageServer.Workspace
             string kind = TypeKindLabel(type.TypeKind);
 
             var builder = new StringBuilder();
-            builder.Append(Fence(kind + " " + type.ToDisplayString()));
+            builder.Append(Fence(kind + " " + DisplayWithName(type)));
 
             var relations = new List<string>();
             if (type.BaseType is not null)
@@ -362,10 +411,47 @@ namespace Surtr.LanguageServer.Workspace
             return builder.ToString();
         }
 
+        /// <summary>
+        /// A generic declaration's card mirrors its own annotation — <c>interface IIterable&lt;out T&gt;</c>
+        /// reads exactly as it was written, the way a generator's card already does. Constructions
+        /// (<c>IIterable&lt;int&gt;</c>) and non-generic names render through
+        /// <see cref="TypeSymbol.ToDisplayString"/>, which has nothing to annotate.
+        /// </summary>
+        private static string DisplayWithName(NamedTypeSymbol type)
+        {
+            var parameters = type.TypeParameters;
+            if (parameters.Count == 0 || type.TypeArguments.Count > 0 || parameters.All(p => p.Variance == TypeParameterVariance.Invariant))
+                return type.ToDisplayString();
+
+            return type.Name + "<" + ParameterList(parameters) + ">";
+        }
+
+        private static string ParameterList(IReadOnlyList<TypeParameterSymbol> parameters)
+        {
+            var parts = new List<string>();
+            foreach (TypeParameterSymbol parameter in parameters)
+                parts.Add(VariancePrefix(parameter.Variance) + parameter.Name);
+            return string.Join(", ", parts);
+        }
+
+        /// <summary>The annotation as written before a covariant or contravariant parameter's name.</summary>
+        public static string VariancePrefix(TypeParameterVariance variance) => variance switch
+        {
+            TypeParameterVariance.Covariant => "out ",
+            TypeParameterVariance.Contravariant => "in ",
+            _ => string.Empty,
+        };
+
         private static string FormatTypeParameter(TypeParameterSymbol typeParameter)
         {
             var builder = new StringBuilder();
             builder.Append(Fence(typeParameter.Name));
+
+            if (typeParameter.Variance != TypeParameterVariance.Invariant)
+            {
+                string word = typeParameter.Variance == TypeParameterVariance.Covariant ? "out" : "in";
+                builder.Append(Break).Append(word + "-variant (" + word + ")");
+            }
 
             if (typeParameter.Constraints.Count > 0)
             {
@@ -389,6 +475,7 @@ namespace Surtr.LanguageServer.Workspace
                 case TypeSymbolKind.ValueClass: return "value class";
                 case TypeSymbolKind.Singleton: return "singleton";
                 case TypeSymbolKind.Native: return "native type";
+                case TypeSymbolKind.Generator: return "built-in generator";
                 default: return "type";
             }
         }

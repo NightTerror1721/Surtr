@@ -165,6 +165,19 @@ namespace Surtr.Compiler.Binding.Symbols
             internal set => Definition._interfaces = value;
         }
 
+        private readonly HashSet<string> _bridgeKeys = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// The erased slot keys this type's own synthesized bridges fill (§3.3), recorded by the
+        /// emitter as it defines them. A subclass consults its ancestors' sets to know an
+        /// interface obligation is already answered by inheritance and must not be bridged again.
+        /// </summary>
+        public IReadOnlyCollection<string> BridgeKeys => _bridgeKeys;
+
+        internal void AddBridgeKey(string key) => _bridgeKeys.Add(key);
+
+        internal bool HasBridgeKey(string key) => _bridgeKeys.Contains(key);
+
         /// <summary>
         /// The single field a <c>value class</c> wraps (§2.9), or <see langword="null"/> for every
         /// other kind. This is what the type erases to where its type is statically known.
@@ -176,6 +189,32 @@ namespace Surtr.Compiler.Binding.Symbols
         }
 
         private TypeSymbol? _underlyingType;
+
+        /// <summary>
+        /// Whether this enum carries <c>@Flags</c> (§11), which makes its cases the integers
+        /// <c>1 &lt;&lt; ordinal</c> and its values single <c>int</c> slots rather than references.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Set in the declaration phase off the written syntax, because the representation it
+        /// chooses is needed by everything downstream of declaration — the member phase's signature
+        /// keys, every descriptor, every opcode choice — and an attribute does not bind until
+        /// bodies do.
+        /// </para>
+        /// <para>
+        /// Always <see langword="false"/> for a type that is not an enum, and for an enum imported
+        /// from another module: the mark erases with the representation (the descriptor is
+        /// <c>I</c>), which is the same thing that happens to a <c>value class</c> across a module
+        /// boundary.
+        /// </para>
+        /// </remarks>
+        public bool IsFlagsEnum
+        {
+            get => Definition._isFlagsEnum;
+            internal set => Definition._isFlagsEnum = value;
+        }
+
+        private bool _isFlagsEnum;
 
         /// <summary>
         /// The static field holding a <c>singleton</c>'s one instance (§2.8), or

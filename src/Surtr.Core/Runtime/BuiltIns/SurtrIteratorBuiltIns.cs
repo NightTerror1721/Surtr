@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -11,7 +11,7 @@ namespace Surtr.Runtime.BuiltIns
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <c>Language-Syntax.md</c> §4.2 defines what <c>for-in</c> can walk by an interface rather
+    /// <c>Language-Syntax.md</c> Â§4.2 defines what <c>for-in</c> can walk by an interface rather
     /// than by a list of blessed types, so that a user class is iterable on exactly the same terms
     /// as an array. That only holds if the built-ins actually satisfy the contract - otherwise the
     /// interface is a promise only user code can keep, and <c>let xs: IIterable&lt;int&gt; = ints;</c>
@@ -68,6 +68,19 @@ namespace Surtr.Runtime.BuiltIns
                 "current",
                 SurtrClassReference.GenericParameter(0),
                 SurtrNativeEntryPoint.FromFunctionPointer(&Current),
+                dispatch: SurtrMethodDispatch.Virtual,
+                isPure: true);
+
+            // `IIterator<T>` extends `IDisposable`, so this slot has to exist - and on this cursor
+            // it has nothing to do. A walk over an array, a string or a snapshot of a dict's keys
+            // holds no resource and no suspended body; what makes the contract worth extending is
+            // the cursor that does, which is `generator`. Declared rather than inherited because
+            // Surtr interfaces have no default implementations, by the rule that lets the dispatch
+            // tables assume every slot is filled.
+            builder.Method(
+                "dispose",
+                SurtrClassReference.Void,
+                SurtrNativeEntryPoint.FromFunctionPointer(&Dispose),
                 dispatch: SurtrMethodDispatch.Virtual);
 
             // Not part of the contract, and deliberately so: rewinding is meaningful on a cursor
@@ -102,41 +115,50 @@ namespace Surtr.Runtime.BuiltIns
 
         #region The cursor
 
-        private static SurtrValue MoveNext(SurtrCallArguments arguments)
-            => SurtrValue.CreateBool(arguments.GetUnchecked<SurtrIterator>(0).MoveNext(arguments.Runtime));
+        private static int MoveNext(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateBool(arguments.GetUnchecked<SurtrIterator>(0).MoveNext(arguments.Runtime)));
 
-        private static SurtrValue Current(SurtrCallArguments arguments)
-            => arguments.GetUnchecked<SurtrIterator>(0).Current;
+        private static int Current(SurtrCallArguments arguments)
+            => arguments.Return(arguments.GetUnchecked<SurtrIterator>(0).Current);
 
-        private static SurtrValue Reset(SurtrCallArguments arguments)
+        private static int Reset(SurtrCallArguments arguments)
         {
             arguments.GetUnchecked<SurtrIterator>(0).Reset();
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
+
+        /// <summary><c>dispose()</c>: nothing to release on a cursor over a collection.</summary>
+        /// <remarks>
+        /// Writing no fields rather than clearing the source is deliberate: the cursor is reachable
+        /// from whoever holds it either way, and blanking its collection would turn a disposed
+        /// cursor into one that answers wrongly instead of one that answers the same. Idempotent by
+        /// construction, which is what the contract asks for.
+        /// </remarks>
+        private static int Dispose(SurtrCallArguments arguments) => 0;
 
         #endregion
 
         #region iterate()
 
-        private static SurtrValue IterateArray(SurtrCallArguments arguments)
-            => Register(arguments, SurtrIteratorKind.Array, arguments.GetUnchecked<SurtrArray>(0));
+        private static int IterateArray(SurtrCallArguments arguments)
+            => arguments.Return(Register(arguments, SurtrIteratorKind.Array, arguments.GetUnchecked<SurtrArray>(0)));
 
-        private static SurtrValue IterateString(SurtrCallArguments arguments)
-            => Register(arguments, SurtrIteratorKind.String, arguments.GetUnchecked<SurtrString>(0));
+        private static int IterateString(SurtrCallArguments arguments)
+            => arguments.Return(Register(arguments, SurtrIteratorKind.String, arguments.GetUnchecked<SurtrString>(0)));
 
-        private static SurtrValue IterateTuple(SurtrCallArguments arguments)
-            => Register(arguments, SurtrIteratorKind.Tuple, arguments.GetUnchecked<SurtrTuple>(0));
+        private static int IterateTuple(SurtrCallArguments arguments)
+            => arguments.Return(Register(arguments, SurtrIteratorKind.Tuple, arguments.GetUnchecked<SurtrTuple>(0)));
 
-        private static SurtrValue IterateRange(SurtrCallArguments arguments)
-            => Register(arguments, SurtrIteratorKind.Range, arguments.GetUnchecked<SurtrRange>(0));
+        private static int IterateRange(SurtrCallArguments arguments)
+            => arguments.Return(Register(arguments, SurtrIteratorKind.Range, arguments.GetUnchecked<SurtrRange>(0)));
 
-        private static SurtrValue IterateDictionary(SurtrCallArguments arguments)
+        private static int IterateDictionary(SurtrCallArguments arguments)
         {
             var source = arguments.GetUnchecked<SurtrDictionary>(0);
 
             // The snapshot is taken here rather than lazily, so the pairs a loop sees are settled
             // by the moment iteration began - see SurtrIterator's remarks on mutation.
-            return Register(arguments, SurtrIteratorKind.Dictionary, source, source.SnapshotKeys());
+            return arguments.Return(Register(arguments, SurtrIteratorKind.Dictionary, source, source.SnapshotKeys()));
         }
 
         private static SurtrValue Register(

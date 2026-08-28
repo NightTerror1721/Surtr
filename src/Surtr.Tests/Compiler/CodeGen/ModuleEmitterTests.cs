@@ -1,4 +1,4 @@
-﻿#nullable enable
+#nullable enable
 
 using Surtr.Bytecode.Image;
 using Surtr.Compiler.Binding;
@@ -6,8 +6,11 @@ using Surtr.Compiler.CodeGen;
 using Surtr.Compiler.Compilation;
 using Surtr.Compiler.Diagnostics;
 using Surtr.Runtime;
+using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
+using Surtr.Runtime.Testing;
+using Surtr.VM;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -22,7 +25,7 @@ namespace Surtr.Tests.Compiler.CodeGen
     /// </summary>
     /// <remarks>
     /// Nothing here stops at the bytecode. A test that asserted on an instruction sequence would
-    /// pin the encoding rather than the meaning, and the encoding is the emitter's to choose â€” what
+    /// pin the encoding rather than the meaning, and the encoding is the emitter's to choose — what
     /// has to hold is that the program computes what the source says it computes.
     /// </remarks>
     public sealed class ModuleEmitterTests : IDisposable
@@ -38,8 +41,13 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         private ModuleEmitter Build(string source, params (string Path, string Text)[] extra)
+            => Build(source, defineDebug: false, extra);
+
+        private ModuleEmitter Build(string source, bool defineDebug, params (string Path, string Text)[] extra)
         {
             var project = new SurtrProject(Root);
+            if (defineDebug)
+                project.Define("Debug", BuildConstant.Bool(true));
             project.AddSourceFile(Root + "/game/core/Test.surtr", source);
 
             foreach (var (path, text) in extra)
@@ -76,6 +84,10 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         private SurtrRuntime Run(string source, params (string Path, string Text)[] extra) => Load(Build(source, extra));
+
+        /// <summary>Builds and loads a module with the <c>Debug</c> constant defined, so checks on.</summary>
+        private SurtrRuntime RunDebug(string source, params (string Path, string Text)[] extra)
+            => Load(Build(source, defineDebug: true, extra));
 
         private static SurtrMethodInfo Function(SurtrRuntime runtime, string modulePath, string name)
         {
@@ -153,7 +165,7 @@ namespace Surtr.Tests.Compiler.CodeGen
         [Fact]
         public void AModuleReachesAnotherOneItDependsOn()
         {
-            // `public` is load-bearing: Â§3.1 defaults a module-level declaration to `internal`, which
+            // `public` is load-bearing: §3.1 defaults a module-level declaration to `internal`, which
             // is exactly the module it is declared in.
             var runtime = Run(
                 "import game.math.*;\nfun run(): int { return twice(21); }",
@@ -163,7 +175,7 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
         #endregion
 
-        #region Import: alias de modulo (Â§2.1, Fase 7)
+        #region Import: alias de modulo (§2.1, Fase 7)
         [Fact]
         public void AModuleAliasConstructsATypeThroughTheAliasedName()
         {
@@ -208,12 +220,12 @@ using var compilation = Reject(
         }
         #endregion
 
-        #region Import: modulo completo (Â§2.1, import module)
+        #region Import: modulo completo (§2.1, import module)
         [Fact]
         public void AWholeModuleImportBringsItsModuleMembersUnqualified()
         {
-            // `import module X.Y;` imports a whole module's surface — types and module-level
-            // members alike — the way `import X.Y.*;` would, without recursing into submodules.
+            // `import module X.Y;` imports a whole module's surface � types and module-level
+            // members alike � the way `import X.Y.*;` would, without recursing into submodules.
             var runtime = Run(
                 "import module game.math.Math;\nfun run(): int { return add(2, 3); }",
                 ("/game/math/Math.surtr", "public fun add(a: int, b: int): int { return a + b; }"));
@@ -235,7 +247,7 @@ using var compilation = Reject(
         public void AWholeModuleImportDoesNotReachASubmodule()
         {
             // Unlike a directory wildcard, `import module` names exactly one file's module and
-            // stops there — a submodule is a different module.
+            // stops there � a submodule is a different module.
             using var compilation = Reject(
                 "import module game.math;\nfun run(): int { return add(2, 3); }",
                 ("/game/math/Math.surtr", "public fun add(a: int, b: int): int { return a + b; }"));
@@ -257,7 +269,7 @@ using var compilation = Reject(
         }
         #endregion
 
-        #region Import: re-export (Â§2.1, export import)
+        #region Import: re-export (§2.1, export import)
         [Fact]
         public void AnExportImportReExposesTypesToAQualifiedConsumer()
         {
@@ -289,7 +301,7 @@ using var compilation = Reject(
         public void AnExportImportReExposesATypeToAClassField()
         {
             // A class field annotated with a type that an aggregator re-exported, reached by
-            // importing the aggregator as a module — the type resolves and works at runtime.
+            // importing the aggregator as a module � the type resolves and works at runtime.
             var runtime = Run(
                 "import proj.core.Index;\nclass Holder { public var v: Vec2; public fun make(): int { let b = Vec2(7); return b.x; } }\nfun run(): int { return Holder().make(); }",
                 ("/proj/math/Vec2.surtr", "public class Vec2 { public let x: int = 0; public constructor(x: int) { this.x = x; } }"),
@@ -340,7 +352,7 @@ using var compilation = Reject(
         [Fact]
         public void ANamedMemberImportBringsAModuleFunctionInUnqualified()
         {
-            // §2.1's broader member import: a named import may name a module-level function, not
+            // �2.1's broader member import: a named import may name a module-level function, not
             // only a type.
             var runtime = Run(
                 "import game.math.Math.add;\nfun run(): int { return add(2, 3); }",
@@ -381,7 +393,7 @@ using var compilation = Reject(
         }
         #endregion
 
-        #region Import: lista selectiva de miembros (Â§2.1, Fase 8)
+        #region Import: lista selectiva de miembros (§2.1, Fase 8)
         [Fact]
         public void ASelectiveImportBringsEveryListedNameIntoUnqualifiedScope()
         {
@@ -420,7 +432,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region Import: wildcard de directorio recursivo (Â§2.1, Fase 9)
+        #region Import: wildcard de directorio recursivo (§2.1, Fase 9)
         /// <summary>
         /// `game.math` has no files of its own - only its submodules do - which is exactly the
         /// case the old exact-match-only wildcard could never resolve at all.
@@ -471,7 +483,7 @@ var runtime = Run(
             Assert.True(compilation.HasErrors, "'game.other' is not nested under 'game.math' and must not be reachable.");
         }
 
-        /// <summary>A wildcard's functions/variables reach unqualified too (Â§2.5), for a submodule exactly as for the exact module.</summary>
+        /// <summary>A wildcard's functions/variables reach unqualified too (§2.5), for a submodule exactly as for the exact module.</summary>
         [Fact]
         public void ADirectoryWildcardBringsASubmodulesFunctionsInToo()
         {
@@ -483,10 +495,10 @@ var runtime = Run(
         }
         #endregion
 
-        #region Modulo por archivo con path explicito (Â§2.1)
+        #region Modulo por archivo con path explicito (§2.1)
         /// <summary>
         /// The stdlib keeps one module per file with the file name as the path's final segment, so
-        /// Â§2.1's directory derivation cannot name them and each file is told its module outright.
+        /// §2.1's directory derivation cannot name them and each file is told its module outright.
         /// A module declared that way is a module like any other: one sibling can import it by its
         /// whole path and reach its types. Regression for the stdlib build, where `List.surtr`'s
         /// `import surtr.collections.Collection;` resolved against nothing but the built-in `surtr`
@@ -553,7 +565,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// The stdlib's own <c>LinkedList&lt;T&gt;</c> â€” the exact sources the tool compiles â€”
+        /// The stdlib's own <c>LinkedList&lt;T&gt;</c> — the exact sources the tool compiles —
         /// runs against the extended contract the import enabled. Because
         /// <c>IReadOnlyList&lt;T&gt; : IReadOnlyCollection&lt;T&gt;</c> now holds, the class must
         /// implement <c>contains</c>/<c>copyTo</c>/<c>iterate</c> beside the original members, so
@@ -647,6 +659,10 @@ var runtime = Run(
             project.AddSourceFile(
                 Root + "/surtr/collections/List.surtr", "surtr.collections.List", listSource);
             project.AddSourceFile(
+                Root + "/surtr/collections/Set.surtr",
+                "surtr.collections.Set",
+                File.ReadAllText(collections + "/Set.surtr"));
+            project.AddSourceFile(
                 Root + "/surtr/collections/Sequence.surtr", "surtr.collections.Sequence", sequenceSource);
 
             var compilation = SurtrCompilation.Create(project);
@@ -670,7 +686,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region Import: modulo completo sin wildcard (Â§2.1)
+        #region Import: modulo completo sin wildcard (§2.1)
         /// <summary>Regression: a real trailing type name still wins - this phase must not change it.</summary>
         [Fact]
         public void ANamedImportWithARealTrailingTypeStillWorks()
@@ -747,7 +763,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region moduleof (Â§2.1)
+        #region moduleof (§2.1)
         [Fact]
         public void ModuleOfOnTheCurrentModuleCompilesAndRuns()
         {
@@ -929,11 +945,11 @@ var runtime = Run(
         }
         #endregion
 
-        #region Gaps closed after the Language-Syntax.md audit (Â§2.2, Â§2.4, Â§3.2, Â§4.2, Â§9)
+        #region Gaps closed after the Language-Syntax.md audit (§2.2, §2.4, §3.2, §4.2, §9)
         [Fact]
         public void AbstractAndSealedTogetherOnAClassIsRejected()
         {
-            // 'sealed' before 'abstract', matching Â§3.2's canonical order - so this reaches the
+            // 'sealed' before 'abstract', matching §3.2's canonical order - so this reaches the
             // semantic abstract+sealed check rather than the (separate, also real) order check.
             using var compilation = Reject("sealed abstract class Foo { }\nfun run(): int { return 1; }");
 
@@ -1033,7 +1049,7 @@ var runtime = Run(
         [Fact]
         public void AThrowExpressionFillsTheFalseBranchOfAConditional()
         {
-            // Â§9: `throw` is an expression typed `never`, so a branch of `?:` can be a throw and
+            // §9: `throw` is an expression typed `never`, so a branch of `?:` can be a throw and
             // the conditional still has the other branch's type.
             var runtime = Run(
                 "class MyException : Exception {\n"
@@ -1065,7 +1081,7 @@ var runtime = Run(
         [Fact]
         public void AThrowExpressionIsTheRightOperandOfNullCoalesce()
         {
-            // Â§9: `??`'s right operand can be a throw; the whole expression takes the left's
+            // §9: `??`'s right operand can be a throw; the whole expression takes the left's
             // non-nullable type.
             var runtime = Run(
                 "class MyException : Exception {\n"
@@ -1189,7 +1205,7 @@ var runtime = Run(
         {
             // The runtime places vtable slots by name plus parameter types, return type deliberately
             // excluded (SignatureKey). So a derived member that shares name and parameter shape with
-            // a base virtual collides with that slot even when its return type differs â€” the binding
+            // a base virtual collides with that slot even when its return type differs — the binding
             // must demand `override` here, or the linker collapses the two at load time.
             using var compilation = Reject(
                 "class Animal { public virtual fun speak(): string { return \"...\"; } }\n"
@@ -1202,7 +1218,7 @@ var runtime = Run(
         [Fact]
         public void OverrideWithDifferentReturnTypeIsAcceptedWhenMarkedOverride()
         {
-            // `override` makes the intent explicit, so the return-type difference is fine â€” the
+            // `override` makes the intent explicit, so the return-type difference is fine — the
             // member takes the base's slot deliberately.
             using var compilation = Reject(
                 "class Animal { public virtual fun speak(): string { return \"...\"; } }\n"
@@ -1304,7 +1320,7 @@ var runtime = Run(
             using var compilation = Reject(
                 "class Box<T> {\n  class Entry { public let x: T; }\n}\nfun run(): int { return 1; }");
 
-            Assert.True(compilation.HasErrors, "'T' belongs to Box, not Box.Entry - the static-nested rule (Â§6) says Entry cannot name it.");
+            Assert.True(compilation.HasErrors, "'T' belongs to Box, not Box.Entry - the static-nested rule (§6) says Entry cannot name it.");
         }
 
         [Fact]
@@ -1348,7 +1364,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// Â§2.6: a nested type is named from outside through its container, so a bare nested name
+        /// §2.6: a nested type is named from outside through its container, so a bare nested name
         /// must not answer at module level. The old registration flattened nested names into the
         /// module scope, which made this compile.
         /// </summary>
@@ -1362,7 +1378,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// The static-nested rule (Â§6) keeps a container's type parameters out of a nested type's
+        /// The static-nested rule (§6) keeps a container's type parameters out of a nested type's
         /// body, but a nested type still sees its siblings - the two live in separate scopes, which
         /// is exactly the split the same-named-nested-type fix depends on.
         /// </summary>
@@ -1490,7 +1506,7 @@ var runtime = Run(
         /// <summary>
         /// The property-read twin of <see cref="ASuperCallReachesTheBaseImplementation"/>. Before
         /// devirtualisation reached property accessors, <c>super.n</c> here still dispatched
-        /// virtually with a <c>Square</c> receiver â€” reaching <c>Square.n</c>'s own getter again
+        /// virtually with a <c>Square</c> receiver — reaching <c>Square.n</c>'s own getter again
         /// instead of <c>Shape.n</c>'s, which either answers 5 (self-recursion happening to read a
         /// field first) or never returns, rather than the 4 a genuine base call gives.
         /// </summary>
@@ -1523,14 +1539,14 @@ var runtime = Run(
         {
             var runtime = Run(
                 "interface Named { fun name(): string; }\n"
-                    + "class Hero : Named { public override fun name(): string { return \"hero\"; } }\n"
+                    + "class Hero : Named { public fun name(): string { return \"hero\"; } }\n"
                     + "fun run(): string { let n: Named = Hero(); return n.name(); }");
 
             Assert.Equal("hero", Text(runtime, "run"));
         }
         #endregion
 
-        #region Arrow-bodied members (Â§3.3, Â§3.4)
+        #region Arrow-bodied members (§3.3, §3.4)
         [Fact]
         public void AnArrowBodiedMethodReturnsItsExpression()
         {
@@ -1585,7 +1601,7 @@ var runtime = Run(
 
         /// <summary>
         /// A getter marked <c>virtual</c> on its own, with no dispatch modifier on the property
-        /// itself, still gets a real vtable slot and dispatches through it (Â§3.2, Â§3.4) â€” not just
+        /// itself, still gets a real vtable slot and dispatches through it (§3.2, §3.4) — not just
         /// metadata that says so, but an actual call through an <c>Animal</c>-typed reference landing
         /// on <c>Dog</c>'s override.
         /// </summary>
@@ -1607,23 +1623,44 @@ var runtime = Run(
 
         #region Enums
         [Fact]
-        public void AnEnumCaseIsAStaticInstanceTheInitializerBuilt()
+        public void AnEnumCaseIsAStaticTheInitializerBuilt()
         {
             var runtime = Run(
                 "enum Suit { Hearts, Spades }\n"
-                    + "fun run(): bool { return Suit.Hearts === Suit.Hearts; }");
+                    + "fun run(): bool { return Suit.Hearts == Suit.Hearts; }");
 
             Assert.True(Call(runtime, "run").AsBool);
         }
 
         [Fact]
-        public void TwoEnumCasesAreDifferentInstances()
+        public void TwoEnumCasesCompareByValue()
         {
             var runtime = Run(
                 "enum Suit { Hearts, Spades }\n"
-                    + "fun run(): bool { return Suit.Hearts === Suit.Spades; }");
+                    + "fun run(): bool { return Suit.Hearts == Suit.Spades; }");
 
             Assert.False(Call(runtime, "run").AsBool);
+        }
+
+        /// <summary>
+        /// §6.2: an enum is a value, so identity over one is refused outright — the same rejection
+        /// a value class gets, surfaced at emission like the value-class one.
+        /// </summary>
+        [Fact]
+        public void IdentityComparisonOverAnEnumIsRejected()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(Root + "/game/core/Test.surtr",
+                "enum Suit { Hearts, Spades }\nfun run(): bool { return Suit.Hearts === Suit.Spades; }");
+
+            var compilation = SurtrCompilation.Create(project);
+            _owned.Add(compilation);
+            var binder = compilation.Bind();
+            binder.BindBodies();
+
+            Assert.True(!compilation.HasErrors, "Binding must pass: identity over a value is refused at emission, like over a value class.");
+
+            Assert.False(new ModuleEmitter(compilation, binder).TryEmit(), "'===' over an enum must be rejected.");
         }
 
         [Fact]
@@ -1633,11 +1670,48 @@ var runtime = Run(
                 "enum Suit {\n"
                     + "  Hearts(1), Spades(4);\n"
                     + "  public let rank: int;\n"
-                    + "  public constructor(rank: int) { this.rank = rank; }\n"
+                    + "  private constructor(rank: int) { this.rank = rank; }\n"
                     + "}\n"
                     + "fun run(): int { return Suit.Spades.rank; }");
 
             Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The synthetic <c>value</c> is filled by the compiler, not the constructor: each case's
+        /// own implied value lands in the first field of the constructed block (§2.2).
+        /// </summary>
+        [Fact]
+        public void TheSyntheticValueFieldIsFilledPerCase()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(1), Spades(4);\n"
+                    + "  public let rank: int;\n"
+                    + "  private constructor(rank: int) { this.rank = rank; }\n"
+                    + "}\n"
+                    + "fun run(): int { return Suit.Spades.value; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A case-carrying enum is a multi-field value class, so <c>==</c> walks its fields
+        /// structurally: different values mean different instances, exactly like the old
+        /// representation promised with different singleton objects.
+        /// </summary>
+        [Fact]
+        public void MultiFieldEnumsCompareStructurallyByValue()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(\"h\"), Spades(\"s\");\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun run(): bool { return Suit.Hearts == Suit.Spades; }");
+
+            Assert.False(Call(runtime, "run").AsBool);
         }
 
         [Fact]
@@ -1649,6 +1723,465 @@ var runtime = Run(
                     + "fun run(): int { return rank(Suit.Spades); }");
 
             Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A switch over a case-carrying enum dispatches on the <c>value</c> slot of the block
+        /// (§2.4) — the user fields stay out of the key, and explicit case values are the keys.
+        /// </summary>
+        [Fact]
+        public void ASwitchOverAMultiFieldEnumMatchesByExplicitValue()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(\"h\") = 1, Spades(\"s\") = 10, Clubs(\"c\") = 11;\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun rank(s: Suit): int { switch (s) { case Suit.Hearts: return 1; case Suit.Spades: return 4; case Suit.Clubs: return 7; } return 0; }\n"
+                    + "fun run(): int { return rank(Suit.Spades); }");
+
+            Assert.Equal(4, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The synthesized API every enum answers to (§2.3): structural <c>equals</c>, a
+        /// <c>hashCode</c> equal to the value's own for a bare enum, and a <c>toString</c> naming
+        /// the case.
+        /// </summary>
+        [Fact]
+        public void AnEnumAnswersEqualsHashCodeAndToString()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades }\n"
+                + "fun run(): int {\n"
+                + "  var n = 0;\n"
+                + "  if (Suit.Hearts.equals(Suit.Hearts)) { n = n + 1; }\n"
+                + "  if (!Suit.Hearts.equals(Suit.Spades)) { n = n + 10; }\n"
+                + "  if (Suit.Hearts.hashCode() == 0) { n = n + 100; }\n"
+                + "  if (Suit.Hearts.toString() == \"Hearts\") { n = n + 1000; }\n"
+                + "  return n;\n"
+                + "}");
+
+            Assert.Equal(1111, Int(runtime, "run"));
+        }
+
+        /// <summary>A <c>toString</c> on a value no case names falls back to <c>Name(value)</c>.</summary>
+        [Fact]
+        public void ToStringFallsBackToTheQualifiedNameForAnUnknownValue()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts }\n"
+                + "fun run(): string { return Suit.of(77) == null ? \"fallback\" : \"case\"; }");
+
+            Assert.Equal("fallback", Text(runtime, "run"));
+        }
+
+        /// <summary><c>values()</c> returns every case in declaration order.</summary>
+        [Fact]
+        public void ValuesReturnsEveryCaseInDeclarationOrder()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades, Clubs }\n"
+                + "fun run(): int { let all = Suit.values(); return all.length * 100 + (all[2] == Suit.Clubs ? 1 : 0); }");
+
+            Assert.Equal(301, Int(runtime, "run"));
+        }
+
+        /// <summary><c>values()</c> returns a fresh array per call (§6.7) — mutating one call's copy never leaks into the next.</summary>
+        [Fact]
+        public void ValuesReturnsAFreshArrayPerCall()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades }\n"
+                + "fun run(): int { let a = Suit.values(); a[0] = Suit.Spades; return Suit.values()[0] == Suit.Hearts ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary><c>of(value)</c> is the inverse of <c>.value</c>, and null when no case carries the value.</summary>
+        [Fact]
+        public void OfValueRoundTripsAndIsNullForUnknowns()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts = 1, Spades = 4 }\n"
+                + "fun roundTrip(): int { return Suit.of(Suit.Spades.value).value; }\n"
+                + "fun unknown(): int { return Suit.of(99) == null ? 1 : 0; }");
+
+            Assert.Equal(4, Int(runtime, "roundTrip"));
+            Assert.Equal(1, Int(runtime, "unknown"));
+        }
+
+        /// <summary><c>of(name)</c> finds a case by its exact name, and null otherwise.</summary>
+        [Fact]
+        public void OfNameFindsCasesExactlyAndIsNullOtherwise()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades }\n"
+                + "fun found(): int { return Suit.of(\"Spades\") == Suit.Spades ? 1 : 0; }\n"
+                + "fun wrongCase(): int { return Suit.of(\"hearts\") == null ? 1 : 0; }\n"
+                + "fun unknown(): int { return Suit.of(\"Diamonds\") == null ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "found"));
+            Assert.Equal(1, Int(runtime, "wrongCase"));
+            Assert.Equal(1, Int(runtime, "unknown"));
+        }
+
+        /// <summary>
+        /// A <c>@Flags</c> enum's <c>of(value)</c> is total: any int is a representable
+        /// combination, so it is never null (§2.3).
+        /// </summary>
+        [Fact]
+        public void AFlagsEnumsOfValueIsTotal()
+        {
+            var runtime = Run(
+                Perms + "fun run(): int { return Perm.of(3) == null ? 0 : (Perm.of(3) == (Perm.Read | Perm.Write) ? 1 : 0); }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>Enums order by value, through the synthesized <c>compareTo</c> and <c>operator&lt;=&gt;</c> (§2.3, §5.6).</summary>
+        [Fact]
+        public void EnumsOrderByValueThroughCompareToAndSpaceship()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades, Clubs }\n"
+                + "fun compare(): int { return Suit.Spades.compareTo(Suit.Hearts) > 0 ? 1 : 0; }\n"
+                + "fun less(): int { return Suit.Hearts < Suit.Spades ? 1 : 0; }\n"
+                + "fun greaterOrEqual(): int { return Suit.Spades >= Suit.Hearts ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "compare"));
+            Assert.Equal(1, Int(runtime, "less"));
+            Assert.Equal(1, Int(runtime, "greaterOrEqual"));
+        }
+
+        /// <summary>
+        /// Every enum satisfies <c>IEquatable&lt;E&gt;</c> and <c>IComparable&lt;E&gt;</c> (§6.8):
+        /// a generic constraint instantiates with an enum, and the contract slots dispatch through
+        /// the synthesized members via the bridge.
+        /// </summary>
+        [Fact]
+        public void AnEnumSatisfiesTheComparableAndEquatableContracts()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades }\n"
+                + "fun biggest<T : IComparable<T>>(a: T, b: T): T { return a.compareTo(b) >= 0 ? a : b; }\n"
+                + "fun same<E : IEquatable<E>>(a: E, b: E): bool { return a.equals(b); }\n"
+                + "fun run(): int { return biggest(Suit.Spades, Suit.Hearts) == Suit.Spades && same(Suit.Hearts, Suit.Hearts) ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>A case-carrying enum satisfies the same contracts; the bridge unboxes its block receiver and arguments.</summary>
+        [Fact]
+        public void ACaseCarryingEnumSatisfiesTheContracts()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(\"h\"), Spades(\"s\");\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun biggest<T : IComparable<T>>(a: T, b: T): T { return a.compareTo(b) >= 0 ? a : b; }\n"
+                    + "fun run(): int { return biggest(Suit.Spades, Suit.Hearts) == Suit.Spades ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// §2.3ter: <c>==</c> over an enum is a slot comparison and never lowers to a call to
+        /// <c>equals</c> — even a user-written <c>equals</c> that lies cannot change it.
+        /// </summary>
+        [Fact]
+        public void EqualityOverAnEnumNeverCallsEquals()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades;\n"
+                + "  public fun equals(other: Suit): bool { return false; } }\n"
+                + "fun run(): int { return Suit.Hearts == Suit.Hearts ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>A member the source declares replaces the synthesized one (§2.3, R9).</summary>
+        [Fact]
+        public void AUserWrittenEqualsOverridesTheSynthesizedOne()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades;\n"
+                + "  public fun equals(other: Suit): bool { return false; } }\n"
+                + "fun run(): int { return Suit.Hearts.equals(Suit.Hearts) ? 1 : 0; }");
+
+            Assert.Equal(0, Int(runtime, "run"));
+        }
+
+        /// <summary>Duplicate values in a <c>@Flags</c> enum are equal for both comparison and equality (§2.3).</summary>
+        [Fact]
+        public void DuplicateFlagsValuesCompareEqual()
+        {
+            var runtime = Run(
+                "@Flags enum Perm { None = 0, Read = 1, Write = 2, ReadAlias = 1 }\n"
+                + "fun run(): int { return Perm.Read.compareTo(Perm.ReadAlias) == 0 && Perm.Read.equals(Perm.ReadAlias) ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary><c>of(value)</c> on a duplicate <c>@Flags</c> value returns the first case (§2.3).</summary>
+        [Fact]
+        public void OfValueReturnsTheFirstCaseForADuplicateFlagsValue()
+        {
+            var runtime = Run(
+                "@Flags enum Perm { None = 0, Read = 1, ReadAlias = 1 }\n"
+                + "fun run(): int { return Perm.of(1) == Perm.Read ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>Ordering is by value, not declaration position (§6.8).</summary>
+        [Fact]
+        public void OrderingIsByExplicitValueNotDeclarationOrder()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts = 1, Spades = 100 }\n"
+                + "fun run(): int { return Suit.Hearts < Suit.Spades && Suit.Spades > Suit.Hearts ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
+        /// <summary>The synthesized API works for a case-carrying enum too: values holds the blocks, equality walks every field, and ordering reads the <c>value</c> slot.</summary>
+        [Fact]
+        public void TheSynthesizedApiWorksForACaseCarryingEnum()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(\"h\"), Spades(\"s\");\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "  var n = 0;\n"
+                    + "  if (Suit.values().length == 2) { n = n + 1; }\n"
+                    + "  if (Suit.Hearts.equals(Suit.Hearts) && !Suit.Hearts.equals(Suit.Spades)) { n = n + 10; }\n"
+                    + "  if (Suit.Hearts.compareTo(Suit.Spades) < 0 && Suit.Spades > Suit.Hearts) { n = n + 100; }\n"
+                    + "  return n;\n"
+                    + "}");
+
+            Assert.Equal(111, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// A case-carrying enum's nullable form is a boxed reference (§5.1, value-types handoff),
+        /// so its <c>of</c> is synthesized even multi-field: it boxes a matching case's block and
+        /// returns the null reference for an unknown value.
+        /// </summary>
+        [Fact]
+        public void OfIsSynthesizedForACaseCarryingEnumAndReturnsNullForUnknowns()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(\"h\"), Spades(\"s\");\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun known(): int { let s = Suit.of(1); return s == null ? -1 : s.glyph == \"s\" ? 1 : 0; }\n"
+                    + "fun unknown(): int { return Suit.of(99) == null ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "known"));
+            Assert.Equal(1, Int(runtime, "unknown"));
+        }
+
+        /// <summary>
+        /// A multi-field value class's nullable form can be returned as null without underflow: its
+        /// <c>T?</c> is a boxed reference (present = boxed instance, absent = null), so the null
+        /// occupies the same single slot a present value is boxed into.
+        /// </summary>
+        [Fact]
+        public void ANullableMultiFieldValueClassCanReturnNull()
+        {
+            var runtime = Run(
+                "value class Vec2 {\n"
+                    + "  public let x: int;\n"
+                    + "  public let y: int;\n"
+                    + "  public constructor(x: int, y: int) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "fun nothing(): Vec2? { return null; }\n"
+                    + "fun something(): Vec2? { return Vec2(1, 2); }\n"
+                    + "fun check(): int { return nothing() == null ? (something() == null ? 0 : 1) : 0; }");
+
+            Assert.Equal(1, Int(runtime, "check"));
+        }
+
+        /// <summary>
+        /// A nullable multi-field value class unboxes when a null-check narrows it to the block
+        /// form, so reading a field off it works.
+        /// </summary>
+        [Fact]
+        public void ANullableMultiFieldValueClassUnboxesForFieldAccess()
+        {
+            var runtime = Run(
+                "value class Vec2 {\n"
+                    + "  public let x: int;\n"
+                    + "  public let y: int;\n"
+                    + "  public constructor(x: int, y: int) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "fun roundTrip(): int { let v: Vec2? = Vec2(3, 4); return v == null ? -1 : v.x; }");
+
+            Assert.Equal(3, Int(runtime, "roundTrip"));
+        }
+
+        /// <summary>
+        /// A nullable multi-field value class round-trips through <c>of</c>/<c>.value</c>-style
+        /// access: the boxed reference unboxes back into the block on read.
+        /// </summary>
+        [Fact]
+        public void ANullableMultiFieldValueClassRoundTripsThroughAssert()
+        {
+            var runtime = Run(
+                "value class Vec2 {\n"
+                    + "  public let x: int;\n"
+                    + "  public let y: int;\n"
+                    + "  public constructor(x: int, y: int) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "fun roundTrip(): int { let v: Vec2? = Vec2(7, 8); let w = v!!; return w.x; }");
+
+            Assert.Equal(7, Int(runtime, "roundTrip"));
+        }
+
+        /// <summary>
+        /// A nullable multi-field value class works with <c>?.</c>: the boxed receiver unboxes
+        /// before the member access, and a null receiver produces the nullable result's absent
+        /// value.
+        /// </summary>
+        [Fact]
+        public void ANullableMultiFieldValueClassSupportsNullConditional()
+        {
+            var runtime = Run(
+                "value class Vec2 {\n"
+                    + "  public let x: int;\n"
+                    + "  public let y: int;\n"
+                    + "  public constructor(x: int, y: int) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "fun present(): int { let v: Vec2? = Vec2(9, 1); return (v?.x ?? 0); }\n"
+                    + "fun absent(): int { let v: Vec2? = null; return (v?.x ?? 0); }");
+
+            Assert.Equal(9, Int(runtime, "present"));
+            Assert.Equal(0, Int(runtime, "absent"));
+        }
+
+        /// <summary>
+        /// A case-carrying enum's <c>of</c> round-trips through <c>.value</c>: the boxed case
+        /// unboxes back into the block, so reading the value slot off it works.
+        /// </summary>
+        [Fact]
+        public void OfRoundTripsForACaseCarryingEnum()
+        {
+            var runtime = Run(
+                "enum Suit {\n"
+                    + "  Hearts(\"h\"), Spades(\"s\");\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun roundTrip(): int { let s = Suit.of(Suit.Spades.value); return s == null ? -1 : s.value; }");
+
+            Assert.Equal(1, Int(runtime, "roundTrip"));
+        }
+
+        /// <summary>
+        /// Calling a method on a nullable multi-field value (narrowed to its block form) unboxes
+        /// the boxed receiver before the dispatch, so instance methods work off an <c>of</c> result.
+        /// </summary>
+        [Fact]
+        public void AMethodOnANarrowedNullableBlockUnboxesItsReceiver()
+        {
+            var runtime = Run(
+                "value class Vec2 {\n"
+                    + "  public let x: int;\n"
+                    + "  public let y: int;\n"
+                    + "  public constructor(x: int, y: int) { this.x = x; this.y = y; }\n"
+                    + "  public fun sum(): int { return this.x + this.y; }\n"
+                    + "}\n"
+                    + "fun run(): int { let v: Vec2? = Vec2(3, 4); return v == null ? -1 : v.sum(); }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The value-types handoff's original repros now emit: a multi-field value class and a
+        /// case-carrying enum can return <c>null</c> from their nullable type without underflow.
+        /// </summary>
+        [Fact]
+        public void NullableMultiFieldValuesReturnNullWithoutUnderflow()
+        {
+            var runtime = Run(
+                "value class Vec2 {\n"
+                    + "  public let x: int;\n"
+                    + "  public let y: int;\n"
+                    + "  public constructor(x: int, y: int) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "enum Suit {\n"
+                    + "  Hearts(\"h\"), Spades(\"s\");\n"
+                    + "  public let glyph: string;\n"
+                    + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                    + "}\n"
+                    + "fun make(): Vec2? { return null; }\n"
+                    + "fun pick(): Suit? { return null; }\n"
+                    + "fun check(): int { return make() == null && pick() == null ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "check"));
+        }
+
+        /// <summary>
+        /// The synthesized bodies carry the <c>@Pure</c>/<c>@NoAlloc</c> marks (§2.3bis): a user
+        /// <c>@NoAlloc</c> body may call them, and the analyzer accepts the synthesized bodies as
+        /// written.
+        /// </summary>
+        [Fact]
+        public void TheSynthesizedBodiesPassTheNoAllocPromise()
+        {
+            var runtime = Run(
+                "enum Suit { Hearts, Spades }\n"
+                + "@NoAlloc\n"
+                + "public fun run(): bool { return Suit.Hearts.equals(Suit.Hearts) && Suit.of(0) != null; }");
+
+            Assert.True(Call(runtime, "run").AsBool);
+        }
+
+        /// <summary>
+        /// A <c>@Flags</c> combination no case names still renders — the <c>toString</c> fallback
+        /// is <c>Name(value)</c> (§2.3).
+        /// </summary>
+        [Fact]
+        public void AFlagsCombinationToStringsThroughTheFallback()
+        {
+            var runtime = Run(
+                Perms + "fun run(): string { return (Perm.Read | Perm.Write).toString(); }");
+
+            Assert.Equal("Perm(3)", Text(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The <c>@Pure</c>/<c>@NoAlloc</c> marks the synthesized members carry (§2.3bis) travel
+        /// through the image, so a module importing the enum sees them exactly as a source author
+        /// would have written them.
+        /// </summary>
+        [Fact]
+        public void TheSynthesizedMarksSurviveTheImage()
+        {
+            var emitter = Build(
+                "enum Suit { Hearts, Spades }");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            var suit = module.FindClass("Suit")!;
+            Assert.True(suit.TryGetMethods("equals", out var equals));
+            Assert.True(equals[0].TryGetAttribute(SurtrBuiltIns.Pure, out _), "equals is @Pure.");
+            Assert.True(equals[0].TryGetAttribute(SurtrBuiltIns.NoAlloc, out _), "equals is @NoAlloc.");
+
+            Assert.True(suit.TryGetMethods("values", out var values));
+            Assert.False(values[0].TryGetAttribute(SurtrBuiltIns.Pure, out _), "values() is deliberately not @Pure (§6.7).");
         }
         #endregion
 
@@ -1836,6 +2369,140 @@ var runtime = Run(
             Assert.Equal(10, Int(runtime, "run"));
         }
 
+        #region Ranges as values (§2.9)
+
+        [Fact]
+        public void ProbeArrayOfRangesOnly()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let a = [10..12];\n"
+                    + "  let first: range = a[0];\n"
+                    + "  return first.start * 100 + first.end;\n"
+                    + "}");
+            Assert.Equal(1012, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ProbeDictWithRangeKeysOnly()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let scores: {range: int} = {};\n"
+                    + "  scores[5..=9] = 42;\n"
+                    + "  return scores[5..=9];\n"
+                    + "}");
+            Assert.Equal(42, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// An escaped range is three slots, so it round-trips through variables, parameters,
+        /// returns and calls without ever being a reference the registry owns.
+        /// </summary>
+        [Fact]
+        public void AnEscapedRangeSurvivesVariablesParametersAndReturns()
+        {
+            var runtime = Run(
+                "fun widen(r: range): range { return r; }\n"
+                    + "fun run(): int {\n"
+                    + "  let r = widen(2..=6);\n"
+                    + "  var n = 0;\n"
+                    + "  for (i in r) { n += i; }\n"
+                    + "  return r.start * 10000 + r.end * 100 + n;\n"
+                    + "}");
+
+            // start=2, end=6, sum 2+3+4+5+6=20.
+            Assert.Equal(20000 + 600 + 20, Int(runtime, "run"));
+        }
+
+        /// <summary>Two ranges written the same way are the same value; the flag alone separates the forms.</summary>
+        [Fact]
+        public void RangeEqualityIsStructuralAndFormSensitive()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let a = 0..3;\n"
+                    + "  let b = 0..3;\n"
+                    + "  let c = 0..=3;\n"
+                    + "  if (a != b) { return 1; }\n"
+                    + "  if (a == c) { return 2; }\n"
+                    + "  if (!(a == b)) { return 3; }\n"
+                    + "  if (!(a.start == c.start && a.end == c.end)) { return 4; }\n"
+                    + "  return 0;\n"
+                    + "}");
+
+            Assert.Equal(0, Int(runtime, "run"));
+        }
+
+        /// <summary>The members that are pure slot reads fold; the computed ones reach their native bodies.</summary>
+        [Fact]
+        public void ARangesMembersAnswerFromTheBlock()
+        {
+            var runtime = Run(
+                "fun run(): string {\n"
+                    + "  let r = 2..=7;\n"
+                    + "  let empty = 9..9;\n"
+                    + "  return \"\" + r.start + \",\" + r.end + \",\" + r.length + \",\" + r.isEmpty + \",\" + empty.isEmpty + \",\" + r.contains(7) + \",\" + r.contains(8);\n"
+                    + "}");
+
+            Assert.Equal("2,7,6,false,true,true,false", Text(runtime, "run"));
+        }
+
+        /// <summary><c>string(aRange)</c> spells it back the way it was written.</summary>
+        [Fact]
+        public void ARangeToStringRoundTripsItsSpelling()
+        {
+            var runtime = Run(
+                "fun run(): string { return string(1..4) + \"|\" + string(1..=4); }");
+
+            Assert.Equal("1..4|1..=4", Text(runtime, "run"));
+        }
+
+        /// <summary>
+        /// Crossing into one-reference storage packs the block: array elements keep their bounds
+        /// and a dictionary keyed by ranges finds keys by value, not by pack identity.
+        /// </summary>
+        [Fact]
+        public void ARangePacksIntoSingleSlotStorage()
+        {
+            var runtime = Run(
+                "fun run(): int {\n"
+                    + "  let a = [10..12, 20..=22];\n"
+                    + "  let first: range = a[0];\n"
+                    + "  let scores: {range: int} = {};\n"
+                    + "  scores[5..=9] = 42;\n"
+                    + "  scores[5..=9] = scores[5..=9] + 1;\n"
+                    + "  return first.start * 1000 + first.end * 10 + (first.isInclusive ? 0 : 1) + scores[5..=9] * 100000;\n"
+                    + "}");
+
+            // first = 10..12 → 10000+120+1; the dict key was found by value and updated to 43.
+            Assert.Equal(43 * 100000 + 10121, Int(runtime, "run"));
+        }
+
+        /// <summary>A range nested inside composites flattens like any other inline value.</summary>
+        [Fact]
+        public void ARangeFlattensIntoTuplesAndValueClassFields()
+        {
+            var runtime = Run(
+                "value class Window {\n"
+                    + "  public let rows: range;\n"
+                    + "  constructor(rows: range) { this.rows = rows; }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "  let w = Window(3..=5);\n"
+                    + "  let pair = (1..2, w.rows);\n"
+                    + "  let inner: range = pair[1];\n"
+                    + "  var n = 0;\n"
+                    + "  for (i in inner) { n += i; }\n"
+                    + "  return w.rows.end * 100 + pair[0].end * 10 + n;\n"
+                    + "}");
+
+            // rows end=5, (1..2).end=2, sum 3+4+5=12 → 512? no: 500 + 20 + 12.
+            Assert.Equal(532, Int(runtime, "run"));
+        }
+
+        #endregion
+
         [Fact]
         public void AnInlineFunctionIsSplicedIntoItsCallSite()
         {
@@ -1847,7 +2514,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// A spliced body with more than one `return` still has to join them at one exit â€” the
+        /// A spliced body with more than one `return` still has to join them at one exit — the
         /// single-tail-return fast path (see <c>LoweringChoiceTests</c>) does not apply here, and
         /// both exits still have to reach the right value.
         /// </summary>
@@ -1863,7 +2530,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// The cost heuristic (Â§3.6) splices a body no <c>inline</c> was written on: a single-return
+        /// The cost heuristic (§3.6) splices a body no <c>inline</c> was written on: a single-return
         /// arithmetic body is two instructions, and a frame for it is the frame the heuristic exists
         /// to remove.
         /// </summary>
@@ -1878,8 +2545,8 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// An auto-property's accessors are one instruction each â€” a field load and a field store â€”
-        /// and Â§3.6 inlines both at the call site, so reading and writing one never pays for a frame.
+        /// An auto-property's accessors are one instruction each — a field load and a field store —
+        /// and §3.6 inlines both at the call site, so reading and writing one never pays for a frame.
         /// </summary>
         [Fact]
         public void AnAutoPropertyReadAndWriteLowerToTheBackingField()
@@ -1962,7 +2629,7 @@ var runtime = Run(
 
         /// <summary>
         /// A computed property's setter honors <c>forceinline</c> the same way its getter and an
-        /// ordinary method do (Â§3.4/Â§3.6) - before this, only the getter side of a property ever
+        /// ordinary method do (§3.4/§3.6) - before this, only the getter side of a property ever
         /// reached the inline machinery, and a computed setter's hint was silently ignored.
         /// </summary>
         [Fact]
@@ -2036,7 +2703,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// A constant *expression* argument folds exactly like a literal one â€” the disassembly-level
+        /// A constant *expression* argument folds exactly like a literal one — the disassembly-level
         /// confirmation that the call site itself disappears is in <c>LoweringChoiceTests</c>.
         /// </summary>
         [Fact]
@@ -2071,7 +2738,7 @@ var runtime = Run(
 
         /// <summary>
         /// Building a <em>generic</em> value class reaches its constructor through the substituted
-        /// clone (Â§6), but the body and the wrapped assignment are keyed by the declaration. The
+        /// clone (§6), but the body and the wrapped assignment are keyed by the declaration. The
         /// splice has to resolve through <c>OriginalDefinition</c> or every construction of one
         /// fails with a SURTR4001 instead of emitting the wrapped field.
         /// </summary>
@@ -2099,10 +2766,10 @@ var runtime = Run(
         }
         #endregion
 
-        #region Const bindings (Â§7.1)
+        #region Const bindings (§7.1)
         /// <summary>
-        /// A module-level `const` has to fold into every use and carry no slot at all â€” the same
-        /// promise Â§7.1 makes and, before this fix, the compiler did not keep: it compiled to an
+        /// A module-level `const` has to fold into every use and carry no slot at all — the same
+        /// promise §7.1 makes and, before this fix, the compiler did not keep: it compiled to an
         /// ordinary module variable indistinguishable from a `static let`.
         /// </summary>
         [Fact]
@@ -2170,7 +2837,7 @@ var runtime = Run(
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidConstType);
         }
 
-        /// <summary>A `const` still works as a parameter default (Â§3.5) with no slot of its own.</summary>
+        /// <summary>A `const` still works as a parameter default (§3.5) with no slot of its own.</summary>
         [Fact]
         public void AModuleConstUsableAsADefaultCarriesNoSlotEither()
         {
@@ -2183,7 +2850,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region Parameter defaults (Â§3.5)
+        #region Parameter defaults (§3.5)
         [Fact]
         public void AnOmittedArgumentTakesItsDefault()
         {
@@ -2306,7 +2973,7 @@ var runtime = Run(
                 "Unexpected: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
         }
 
-        /// <summary>A comparison against the null literal folds like any other constant binary (Â§7.3).</summary>
+        /// <summary>A comparison against the null literal folds like any other constant binary (§7.3).</summary>
         [Fact]
         public void ANullComparisonFoldsInADeclarationLevelConstIf()
         {
@@ -2334,7 +3001,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region Singletons (Â§2.8)
+        #region Singletons (§2.8)
         [Fact]
         public void ASingletonIsBuiltOnceAndReachedByItsOwnName()
         {
@@ -2353,7 +3020,7 @@ var runtime = Run(
         {
             var runtime = Run(
                 "interface Named { fun name(): string; }\n"
-                    + "singleton Registry : Named { public override fun name(): string { return \"registry\"; } }\n"
+                    + "singleton Registry : Named { public fun name(): string { return \"registry\"; } }\n"
                     + "fun describe(n: Named): string { return n.name(); }\n"
                     + "fun run(): string { return describe(Registry); }");
 
@@ -2397,7 +3064,7 @@ var runtime = Run(
                 "class Score : IComparable<Score> {\n"
                     + "  public let value: int;\n"
                     + "  public constructor(value: int) { this.value = value; }\n"
-                    + "  public override fun compareTo(other: Score): int { return this.value <=> other.value; }\n"
+                    + "  public fun compareTo(other: Score): int { return this.value <=> other.value; }\n"
                     + "}\n"
                     + "fun order(a: IComparable<Score>, b: Score): int { return a.compareTo(b); }\n"
                     + "fun run(): int { return order(Score(9), Score(4)); }");
@@ -2420,9 +3087,9 @@ var runtime = Run(
         }
         #endregion
 
-        #region Interface satisfaction without `override` (Â§3.3)
+        #region Interface satisfaction without `override` (§3.3)
         /// <summary>
-        /// A plain method â€” no `virtual`/`override` â€” satisfies an interface obligation as long as
+        /// A plain method — no `virtual`/`override` — satisfies an interface obligation as long as
         /// its signature matches. It stays `Direct` (callable straight off the concrete type), and
         /// a synthetic bridge occupies the interface's slot for calls that go through <c>IBar</c>.
         /// </summary>
@@ -2454,7 +3121,7 @@ var runtime = Run(
 
         /// <summary>
         /// A class may still write `virtual`/`override` for a member it wants a subclass to be able
-        /// to replace further â€” that path is untouched, and the two forms interoperate: a bridge
+        /// to replace further — that path is untouched, and the two forms interoperate: a bridge
         /// forwards to whichever the class actually declared.
         /// </summary>
         [Fact]
@@ -2471,7 +3138,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region Value classes (Â§2.9)
+        #region Value classes (§2.9)
         [Fact]
         public void AValueClassMethodIsCallableOnItsOwnType()
         {
@@ -2487,9 +3154,9 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// A computed property's getter is a call on the receiver too (Â§6.3's boxing rule applies
-        /// to it exactly as it does to an ordinary method call) â€” the wrapped field stays `let`
-        /// (Â§2.9), so the property only reads it back transformed.
+        /// A computed property's getter is a call on the receiver too (§6.3's boxing rule applies
+        /// to it exactly as it does to an ordinary method call) — the wrapped field stays `let`
+        /// (§2.9), so the property only reads it back transformed.
         /// </summary>
         [Fact]
         public void AValueClassComputedPropertyReadsThroughItsGetter()
@@ -2615,7 +3282,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region Closures held in members (Â§8)
+        #region Closures held in members (§8)
         [Fact]
         public void AClosureInAStaticIsCalledThroughItsTypeName()
         {
@@ -2659,7 +3326,7 @@ var runtime = Run(
             Assert.Equal(6, Int(runtime, "run"));
         }
 
-        /// <summary>Â§5.1: the guard wraps the invocation, so a null receiver calls nothing.</summary>
+        /// <summary>§5.1: the guard wraps the invocation, so a null receiver calls nothing.</summary>
         [Fact]
         public void ANullReceiverCallsNoClosureAtAll()
         {
@@ -2674,7 +3341,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region Method-group to closure (Â§8)
+        #region Method-group to closure (§8)
         [Fact]
         public void ABareModuleFunctionNameConvertsToAClosureWithNoLambdaWritten()
         {
@@ -2849,7 +3516,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region Constructor chaining (Â§3.2)
+        #region Constructor chaining (§3.2)
         [Fact]
         public void ASuperChainRunsTheBaseConstructor()
         {
@@ -2881,7 +3548,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// Â§3.2: the chained-to constructor already ran them, so running them again would undo
+        /// §3.2: the chained-to constructor already ran them, so running them again would undo
         /// whatever it did with them.
         /// </summary>
         [Fact]
@@ -2912,7 +3579,7 @@ var runtime = Run(
             Assert.Equal(10, Int(runtime, "run"));
         }
 
-        /// <summary>Â§3.2: a constructor that omits the chain still reaches the base's parameterless one.</summary>
+        /// <summary>§3.2: a constructor that omits the chain still reaches the base's parameterless one.</summary>
         [Fact]
         public void AConstructorWithNoChainStillReachesItsBase()
         {
@@ -2966,7 +3633,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// Â§3.2 gives an omitted chain one meaning â€” the base's parameterless constructor â€” so where
+        /// §3.2 gives an omitted chain one meaning — the base's parameterless constructor — so where
         /// the base has none, the omission names nothing and the base would go unconstructed.
         /// </summary>
         [Fact]
@@ -3033,7 +3700,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// Â§9's own shape: every library exception takes a message, so a subclass has to pass one up.
+        /// §9's own shape: every library exception takes a message, so a subclass has to pass one up.
         /// </summary>
         [Fact]
         public void AUserExceptionChainsItsMessageIntoTheLibrary()
@@ -3080,18 +3747,18 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// Â§2.6 lets a fully qualified name reach a type with no <c>import</c> at all, and binding
+        /// §2.6 lets a fully qualified name reach a type with no <c>import</c> at all, and binding
         /// already resolved one that way (<see cref="Binding.BinderTests.AFullyQualifiedNameWorksWithoutAnImport"/>)
-        /// â€” but until now, the dependency graph <see cref="ModuleEmitter"/> emits in
+        /// — but until now, the dependency graph <see cref="ModuleEmitter"/> emits in
         /// (<c>SurtrCompilation.LoadOrder</c>) only ever learned about an edge from an explicit
         /// <c>import</c>, scanned once at parse time before binding ran. A construction reached only
         /// through a fully qualified name had no edge recorded at all, so the two modules could come
-        /// out in either relative order â€” and calling into whichever one hadn't been built yet threw
+        /// out in either relative order — and calling into whichever one hadn't been built yet threw
         /// "uses a call to 'ctor', which is neither being emitted here nor already built" (SURTR4001)
         /// at emission, though binding itself reported nothing wrong. Fixed by having
         /// <c>TypeResolver</c> record the edge itself, the moment it resolves such a name, and having
         /// <c>ModuleEmitter</c> ask <c>SurtrCompilation</c> to recompute the load order right before
-        /// it starts emitting â€” by which point binding has always finished discovering every one.
+        /// it starts emitting — by which point binding has always finished discovering every one.
         /// </summary>
         [Fact]
         public void ConstructingAClassFromAnotherModuleWorksWithNoImportAtAll()
@@ -3104,7 +3771,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// The same gap, for a class whose constructor is <em>written</em> rather than synthesised â€”
+        /// The same gap, for a class whose constructor is <em>written</em> rather than synthesised —
         /// the shape <see cref="ConstructingAClassFromAnotherModuleWorksWithNoImportAtAll"/> exercises,
         /// but confirmed once more against exactly the reduced case the bug was first reproduced with.
         /// </summary>
@@ -3127,7 +3794,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region Static blocks (Â§2.5, Â§3.2)
+        #region Static blocks (§2.5, §3.2)
         [Fact]
         public void AModuleStaticBlockRunsAtLoad()
         {
@@ -3146,7 +3813,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// Â§2.5 runs a block in the source position it appears among the field initializers, so a
+        /// §2.5 runs a block in the source position it appears among the field initializers, so a
         /// block reads what the ones above it wrote and is read by the ones below.
         /// </summary>
         [Fact]
@@ -3159,7 +3826,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region Nullable access (Â§5.1)
+        #region Nullable access (§5.1)
         [Fact]
         public void ASafeNavigationYieldsNullInsteadOfFaulting()
         {
@@ -3280,7 +3947,7 @@ var runtime = Run(
         /// against <c>EQ</c>/<c>NE</c>, and those are the integer opcodes: they compare the low 32
         /// bits, because int, bool and char share a representation and differ only in their tag.
         /// Absence differs from a present value in nothing <em>but</em> its tag, and the payload
-        /// <c>PushAbsent</c> leaves there is the missing primitive's type code â€” so an <c>int?</c>
+        /// <c>PushAbsent</c> leaves there is the missing primitive's type code — so an <c>int?</c>
         /// holding <c>SurtrValueTypeCode.Integer</c>, which is 1, compared equal to null.
         /// </para>
         /// <para>
@@ -3364,7 +4031,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region Null and instanceof checks â€” value correctness for LoweringChoiceTests' shape assertions
+        #region Null and instanceof checks — value correctness for LoweringChoiceTests' shape assertions
 
         [Fact]
         public void ANullEqualityOnAReferenceComputesCorrectly()
@@ -3425,7 +4092,7 @@ var runtime = Run(
         /// against the chosen parameter. That retyping used to be unreachable: `Convert`'s general
         /// "already broken, don't cascade" bail-out on <c>expression.Type.IsError</c> caught the
         /// placeholder first and returned the still-untyped literal, which <c>EmitLiteral</c> then
-        /// read as a plain null *reference* (<c>LoadNull</c>) instead of the absent tag Â§5.1
+        /// read as a plain null *reference* (<c>LoadNull</c>) instead of the absent tag §5.1
         /// requires for a nullable primitive - so `n ?? -1` silently reinterpreted the null
         /// reference's all-zero payload as a present `0`.
         /// </summary>
@@ -3465,7 +4132,7 @@ var runtime = Run(
 
         #endregion
 
-        #region Varargs (Â§3.5)
+        #region Varargs (§3.5)
         [Fact]
         public void AVarargsCallAbsorbsTheSurplus()
         {
@@ -3506,7 +4173,7 @@ var runtime = Run(
             Assert.Equal("b", Text(runtime, "run"));
         }
 
-        /// <summary>Â§13.4's own shape, which was unreachable while varargs did not resolve.</summary>
+        /// <summary>§13.4's own shape, which was unreachable while varargs did not resolve.</summary>
         [Fact]
         public void StringFormatIsCallableFromSource()
         {
@@ -3526,9 +4193,9 @@ var runtime = Run(
         }
         #endregion
 
-        #region Interfaces (Â§2.3, Â§3.4)
+        #region Interfaces (§2.3, §3.4)
         /// <summary>
-        /// Â§2.3 allows a nested type in a contract: it carries no state, so it does not reopen the
+        /// §2.3 allows a nested type in a contract: it carries no state, so it does not reopen the
         /// "pure contract" rule.
         /// </summary>
         [Fact]
@@ -3540,9 +4207,9 @@ var runtime = Run(
                     + "  fun getKind(): Kind;\n"
                     + "}\n"
                     + "class Circle : IShape {\n"
-                    + "  public override fun getKind(): IShape.Kind { return IShape.Kind.Circle; }\n"
+                    + "  public fun getKind(): IShape.Kind { return IShape.Kind.Circle; }\n"
                     + "}\n"
-                    + "fun run(): int { let c: IShape = Circle(); return c.getKind() === IShape.Kind.Circle ? 1 : 0; }");
+                    + "fun run(): int { let c: IShape = Circle(); return c.getKind() == IShape.Kind.Circle ? 1 : 0; }");
 
             Assert.Equal(1, Int(runtime, "run"));
         }
@@ -3555,22 +4222,22 @@ var runtime = Run(
                     + "  public class Handle { public let id: int = 3; public constructor() { } }\n"
                     + "  fun make(): Handle;\n"
                     + "}\n"
-                    + "class F : IFactory { public override fun make(): IFactory.Handle { return IFactory.Handle(); } }\n"
+                    + "class F : IFactory { public fun make(): IFactory.Handle { return IFactory.Handle(); } }\n"
                     + "fun run(): int { let f: IFactory = F(); return f.make().id; }");
 
             Assert.Equal(3, Int(runtime, "run"));
         }
 
         /// <summary>
-        /// A property satisfying a contract is written <c>override</c> like one replacing a base â€”
-        /// Â§2.2 makes a contract a promise â€” and the linker rejects an override with no base entry.
+        /// A property satisfying a contract is written <c>override</c> like one replacing a base —
+        /// §2.2 makes a contract a promise — and the linker rejects an override with no base entry.
         /// </summary>
         [Fact]
         public void APropertyCanImplementAnInterfaceProperty()
         {
             var runtime = Run(
                 "interface INamed { name: string { get; } }\n"
-                    + "class C : INamed { public override name: string { get { return \"x\"; } } }\n"
+                    + "class C : INamed { public name: string { get { return \"x\"; } } }\n"
                     + "fun run(): string { let n: INamed = C(); return n.name; }");
 
             Assert.Equal("x", Text(runtime, "run"));
@@ -3582,7 +4249,7 @@ var runtime = Run(
         {
             var runtime = Run(
                 "interface ICounted { count: int { get; set; } }\n"
-                    + "class C : ICounted { public override count: int { get; set; } }\n"
+                    + "class C : ICounted { public count: int { get; set; } }\n"
                     + "fun run(): int { let c: ICounted = C(); c.count = 7; return c.count; }");
 
             Assert.Equal(7, Int(runtime, "run"));
@@ -3639,7 +4306,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// Declaring the class itself <c>abstract</c> is the escape hatch â€” but the member still has
+        /// Declaring the class itself <c>abstract</c> is the escape hatch — but the member still has
         /// to be redeclared <c>abstract</c> there, since only a <c>virtual</c>/<c>abstract</c>
         /// declaration creates a vtable slot at all; leaving it out entirely gives the interface
         /// dispatch table nothing to route through, abstract class or not.
@@ -3664,7 +4331,7 @@ var runtime = Run(
 
         /// <summary>
         /// An abstract class implementing an interface but never even redeclaring the member
-        /// abstract leaves no vtable slot at all â€” a load-time crash with no diagnostic before this
+        /// abstract leaves no vtable slot at all — a load-time crash with no diagnostic before this
         /// fix, since the compiler treated "abstract" as a blanket exemption.
         /// </summary>
         [Fact]
@@ -3681,7 +4348,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region Exhaustive switch expressions (Â§4.3)
+        #region Exhaustive switch expressions (§4.3)
         /// <summary>
         /// The form exhaustiveness checking exists to allow: every case listed, so no <c>else</c> is
         /// needed and the last arm is what is left over.
@@ -3710,7 +4377,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// Anything without a fixed set of values still needs one â€” reported at binding, where it is
+        /// Anything without a fixed set of values still needs one — reported at binding, where it is
         /// a property of the program, rather than at emit as something not lowered.
         /// </summary>
         [Fact]
@@ -3733,7 +4400,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region Operator overloads (Â§5.6)
+        #region Operator overloads (§5.6)
         /// <summary>
         /// A declared `operator==` has to win over the built-in fallback, which would otherwise
         /// treat two operands of the same class as "assignable to each other" (identity) and
@@ -3750,6 +4417,23 @@ var runtime = Run(
                     + "  operator==(a: Vec2, b: Vec2): bool { return a.x == b.x && a.y == b.y; }\n"
                     + "}\n"
                     + "fun run(): bool { let a = Vec2(1.0, 2.0); let b = Vec2(1.0, 2.0); return a == b; }");
+
+            Assert.True(Call(runtime, "run").AsBool);
+        }
+
+        /// <summary>§3.3: an operator may take an arrow body — the same sugar, the same lowering.</summary>
+        [Fact]
+        public void AnArrowBodiedOperatorComputesLikeABlockOne()
+        {
+            var runtime = Run(
+                "class Vec2 {\n"
+                    + "  public var x: float;\n"
+                    + "  public var y: float;\n"
+                    + "  constructor(x: float, y: float) => init(x, y);\n"
+                    + "  private fun init(x: float, y: float): void { this.x = x; this.y = y; }\n"
+                    + "  operator+(a: Vec2, b: Vec2): Vec2 => Vec2(a.x + b.x, a.y + b.y);\n"
+                    + "}\n"
+                    + "fun run(): bool { let s = Vec2(1.0, 2.0) + Vec2(3.0, 4.0); return s.x == 4.0 && s.y == 6.0; }");
 
             Assert.True(Call(runtime, "run").AsBool);
         }
@@ -3785,8 +4469,8 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// `<`, `<=`, `>` and `>=` are declared through `operator<=>` alone (Â§5.6) â€” a type never
-        /// writes them separately â€” so the relational form has to reduce the three-way `int` result
+        /// `<`, `<=`, `>` and `>=` are declared through `operator<=>` alone (§5.6) — a type never
+        /// writes them separately — so the relational form has to reduce the three-way `int` result
         /// to a `bool` itself, and used to surface the raw `int` as the whole expression's type.
         /// </summary>
         [Fact]
@@ -3827,7 +4511,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// A <c>virtual operator</c> is an instance method (Â§5.6), so the call goes through the
+        /// A <c>virtual operator</c> is an instance method (§5.6), so the call goes through the
         /// receiver's vtable: an operand pair whose static type is the base still lands on the
         /// derived override.
         /// </summary>
@@ -3858,7 +4542,7 @@ var runtime = Run(
                     + "  operator+(self: IAddable, other: IAddable): int;\n"
                     + "}\n"
                     + "class Vec2 : IAddable {\n"
-                    + "  override operator+(self: IAddable, other: IAddable): int { return 7; }\n"
+                    + "  virtual operator+(self: IAddable, other: IAddable): int { return 7; }\n"
                     + "}\n"
                     + "fun run(): int {\n"
                     + "  let a: IAddable = Vec2();\n"
@@ -3936,9 +4620,9 @@ var runtime = Run(
         }
         #endregion
 
-        #region Indexers (Â§5.6)
+        #region Indexers (§5.6)
         /// <summary>
-        /// An overload is always static, so the read form takes the receiver and the index â€” the
+        /// An overload is always static, so the read form takes the receiver and the index — the
         /// same shape every other binary overload has.
         /// </summary>
         [Fact]
@@ -3968,7 +4652,7 @@ var runtime = Run(
             Assert.Equal(99, Int(runtime, "run"));
         }
 
-        /// <summary>Â§5.6 puts no restriction on the index's type; only on how many there are.</summary>
+        /// <summary>§5.6 puts no restriction on the index's type; only on how many there are.</summary>
         [Fact]
         public void AnIndexerMayTakeAnyKeyType()
         {
@@ -3992,9 +4676,9 @@ var runtime = Run(
         }
         #endregion
 
-        #region Attributes (Â§11)
+        #region Attributes (§11)
         /// <summary>
-        /// Through the image, because that is the form an attribute has to survive in: Â§11's audience
+        /// Through the image, because that is the form an attribute has to survive in: §11's audience
         /// is host reflection, which reads a module someone compiled earlier.
         /// </summary>
         private SurtrModule Reload(string source)
@@ -4071,7 +4755,7 @@ var runtime = Run(
             Assert.Equal("SerializeField()", Describe(field));
         }
 
-        /// <summary>Â§11's own example, arguments and all.</summary>
+        /// <summary>§11's own example, arguments and all.</summary>
         [Fact]
         public void AnAttributeOnAPropertyKeepsItsArguments()
         {
@@ -4101,7 +4785,7 @@ var runtime = Run(
             Assert.Equal("A(), B()", Describe(overloads[0]));
         }
 
-        /// <summary>An argument is a constant, and Â§7.1 is where a named one comes from.</summary>
+        /// <summary>An argument is a constant, and §7.1 is where a named one comes from.</summary>
         [Fact]
         public void AnAttributeArgumentMayBeAConst()
         {
@@ -4109,6 +4793,16 @@ var runtime = Run(
                 "const Limit: int = 42;\nclass Marker : Attribute { public let n: int = 0; }\n@Marker(Limit)\nclass Target { }");
 
             Assert.Equal("Marker(42)", Describe(module.FindClass("Target")!));
+        }
+
+        /// <summary>An attribute argument may be an enum constant — the case folds to its value (§2.3quater).</summary>
+        [Fact]
+        public void AnAttributeArgumentMayBeAnEnumConstant()
+        {
+            var module = Reload(
+                "enum Level { Low, High }\nclass Marker : Attribute { public let level: Level; }\n@Marker(Level.High)\nclass Target { }");
+
+            Assert.Equal("Marker(1)", Describe(module.FindClass("Target")!));
         }
 
         [Fact]
@@ -4120,7 +4814,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// An attribute instance is built when its module loads, before anything runs â€” so an
+        /// An attribute instance is built when its module loads, before anything runs — so an
         /// argument that is not a constant has nothing to be.
         /// </summary>
         [Fact]
@@ -4205,7 +4899,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// <c>CompileTimeOnly</c> retention (Â§11): checked and folded like any other attribute use,
+        /// <c>CompileTimeOnly</c> retention (§11): checked and folded like any other attribute use,
         /// but never reaches the compiled image - the opposite of the default <c>Runtime</c> case,
         /// which does.
         /// </summary>
@@ -4238,7 +4932,965 @@ var runtime = Run(
         }
         #endregion
 
+        #region Atributos built-in: @Value y @Range punta a punta
+
+        [Fact]
+        public void AValueClassAnswersEqualsWithoutDeclaringIt()
+        {
+            var runtime = Run(
+                "@Value\n"
+                    + "class Vec2 {\n"
+                    + "  public let x: float;\n"
+                    + "  public let y: float;\n"
+                    + "  constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "fun equal(): int { return Vec2(1.0, 2.0).equals(Vec2(1.0, 2.0)) ? 1 : 0; }\n"
+                    + "fun different(): int { return Vec2(1.0, 2.0).equals(Vec2(1.0, 3.0)) ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "equal"));
+            Assert.Equal(0, Int(runtime, "different"));
+        }
+
+        /// <summary>
+        /// The value members are real methods, not call-site lowering: they exist in the image as
+        /// the <c>$</c>-prefixed ABI members §11.1 names, and a host can invoke them by reflection.
+        /// </summary>
+        [Fact]
+        public void AValueClassEmitsRealValueMembers()
+        {
+            var emitter = Build(
+                "@Value\n"
+                    + "class Vec2 {\n"
+                    + "  public let x: float;\n"
+                    + "  public let y: float;\n"
+                    + "  constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            var vec = module.FindClass("Vec2")!;
+            Assert.True(vec.TryGetMethods("$equals", out var equals) && equals.Length == 1);
+            Assert.True(vec.TryGetMethods("$hashCode", out var hashCode) && hashCode.Length == 1);
+            Assert.True(vec.TryGetMethods("$toDisplayString", out var display) && display.Length == 1);
+
+            var a = runtime.NewInstance(vec);
+            var b = runtime.NewInstance(vec);
+            var aRef = SurtrValue.CreateReference(a.GetSurtrReference());
+            var bRef = SurtrValue.CreateReference(b.GetSurtrReference());
+
+            // Two freshly allocated, zeroed instances are structurally equal.
+            Assert.True(runtime.Invoke(equals[0], aRef, bRef).AsBool);
+
+            // The hash is a real integer, and equal values share it.
+            var hashA = runtime.Invoke(hashCode[0], aRef).AsInt;
+            var hashB = runtime.Invoke(hashCode[0], bRef).AsInt;
+            Assert.Equal(hashA, hashB);
+
+            // The display names the class and reaches the field labels.
+            var text = runtime.Resolve<SurtrString>(runtime.Invoke(display[0], aRef))!.Text;
+            Assert.StartsWith("Vec2(", text);
+            Assert.Contains("x=", text);
+        }
+
+        [Fact]
+        public void ADeclaredEqualsWinsOverTheSynthesis()
+        {
+            var runtime = Run(
+                "@Value\n"
+                    + "class Picky {\n"
+                    + "  public let n: int;\n"
+                    + "  constructor(n: int) { this.n = n; }\n"
+                    + "  public fun equals(other: Picky): bool { return false; }\n"
+                    + "}\n"
+                    + "fun run(): int { return Picky(1).equals(Picky(1)) ? 1 : 0; }");
+
+            Assert.Equal(0, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// <c>@Value</c> turns <c>==</c> into a field-by-field comparison, so two distinct
+        /// instances of the same shape answer as equal - the whole point of the opt-in.
+        /// </summary>
+        [Fact]
+        public void ValueMarkedClassesCompareStructurally()
+        {
+            var runtime = Run(
+                "@Value\n"
+                    + "class Vec2 {\n"
+                    + "  public let x: float;\n"
+                    + "  public let y: float;\n"
+                    + "  constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "fun equal(): int { return Vec2(1.0, 2.0) == Vec2(1.0, 2.0) ? 1 : 0; }\n"
+                    + "fun different(): int { return Vec2(1.0, 2.0) == Vec2(1.0, 3.0) ? 1 : 0; }\n"
+                    + "fun notEqual(): int { return Vec2(1.0, 2.0) != Vec2(1.0, 3.0) ? 1 : 0; }\n"
+                    + "fun sameInstance(): int { var v = Vec2(9.0, 9.0); return v == v ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "equal"));
+            Assert.Equal(0, Int(runtime, "different"));
+            Assert.Equal(1, Int(runtime, "notEqual"));
+            Assert.Equal(1, Int(runtime, "sameInstance"));
+        }
+
+        [Fact]
+        public void ValueEqualityCoversInheritedFieldsAndNullSafely()
+        {
+            var runtime = Run(
+                "@Value\n"
+                    + "class Base {\n"
+                    + "  public let tag: string;\n"
+                    + "  constructor(tag: string) { this.tag = tag; }\n"
+                    + "}\n"
+                    + "@Value\n"
+                    + "class Item : Base {\n"
+                    + "  public let n: int;\n"
+                    + "  constructor(tag: string, n: int) : super(tag) { this.n = n; }\n"
+                    + "}\n"
+                    + "fun inheritedMatters(): int { return Item(\"a\", 1) == Item(\"b\", 1) ? 1 : 0; }\n"
+                    + "fun inheritedCounts(): int { return Item(\"a\", 1) == Item(\"a\", 1) ? 1 : 0; }\n"
+                    + "fun againstNull(): int { return Item(\"a\", 1) == null ? 1 : 0; }");
+
+            Assert.Equal(0, Int(runtime, "inheritedMatters"));
+            Assert.Equal(1, Int(runtime, "inheritedCounts"));
+            Assert.Equal(0, Int(runtime, "againstNull"));
+        }
+
+        /// <summary>A declared operator== outranks the mark, exactly as §11.1 orders the rules.</summary>
+        [Fact]
+        public void ADeclaredOperatorStillWinsOverTheValueMark()
+        {
+            var runtime = Run(
+                "@Value\n"
+                    + "class Picky {\n"
+                    + "  public let n: int;\n"
+                    + "  constructor(n: int) { this.n = n; }\n"
+                    + "  operator==(a: Picky, b: Picky): bool { return false; }\n"
+                    + "}\n"
+                    + "fun run(): int { return Picky(1) == Picky(1) ? 1 : 0; }");
+
+            Assert.Equal(0, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ANestedValueFieldComparesStructurallyToo()
+        {
+            var runtime = Run(
+                "@Value\n"
+                    + "class Inner {\n"
+                    + "  public let n: int;\n"
+                    + "  constructor(n: int) { this.n = n; }\n"
+                    + "}\n"
+                    + "@Value\n"
+                    + "class Outer {\n"
+                    + "  public let inner: Inner?;\n"
+                    + "  constructor(inner: Inner?) { this.inner = inner; }\n"
+                    + "}\n"
+                    + "fun deep(): int { return Outer(Inner(4)) == Outer(Inner(4)) ? 1 : 0; }\n"
+                    + "fun shallowBreaksIt(): int { return Outer(Inner(4)) == Outer(Inner(5)) ? 1 : 0; }\n"
+                    + "fun nullFieldsAgree(): int { return Outer(null) == Outer(null) ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "deep"));
+            Assert.Equal(0, Int(runtime, "shallowBreaksIt"));
+            Assert.Equal(1, Int(runtime, "nullFieldsAgree"));
+        }
+
+        /// <summary>
+        /// The mark is spent inside the compiler: like everything CompileTimeOnly, the use never
+        /// reaches the image.
+        /// </summary>
+        [Fact]
+        public void AValueUseIsNeverEmitted()
+        {
+            var module = Reload(
+                "@Value\n"
+                    + "class Vec {\n"
+                    + "  public let x: float = 0.0;\n"
+                    + "}");
+
+            Assert.Equal(string.Empty, Describe(module.FindClass("Vec")!));
+        }
+
+        [Fact]
+        public void ARangeUseSurvivesTheImageWithBothBounds()
+        {
+            var emitter = Build(
+                "class Player {\n"
+                    + "  @Range(0, 100)\n"
+                    + "  public var health: float = 100.0;\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            Assert.True(module.FindClass("Player")!.TryGetField("health", out var field));
+            Assert.True(field.TryGetAttribute(SurtrBuiltIns.RangeAttribute, out var usage));
+
+            var instance = runtime.Resolve<SurtrInstance>(SurtrValue.CreateReference(usage.Instance))!;
+            Assert.Equal(0.0, instance[0].AsFloat);
+            Assert.Equal(100.0, instance[1].AsFloat);
+        }
+
+        [Fact]
+        public void AnExportUseCarriesItsAliasThroughTheImage()
+        {
+            var emitter = Build(
+                "@Export\n"
+                    + "class Enemy {\n"
+                    + "  @Export(\"hitPoints\")\n"
+                    + "  public var health: float = 10.0;\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            var enemy = module.FindClass("Enemy")!;
+            Assert.True(enemy.TryGetAttribute(SurtrBuiltIns.Export, out _), "The class mark should survive.");
+
+            Assert.True(enemy.TryGetField("health", out var health));
+            Assert.True(health.TryGetAttribute(SurtrBuiltIns.Export, out var alias));
+            var instance = runtime.Resolve<SurtrInstance>(SurtrValue.CreateReference(alias.Instance))!;
+            Assert.Equal("hitPoints", runtime.Resolve<SurtrString>(instance[0])!.Text);
+        }
+
+        #endregion
+
+        #region Runner de @Test/@TestSuite
+
+        /// <summary>
+        /// The host-side runner discovers tests purely through reflection - the <c>@Test</c> mark
+        /// on parameterless methods, the <c>@TestSuite</c> mark naming a group - and runs them,
+        /// static ones directly and instance ones on a fresh instance whose parameterless
+        /// constructor has run.
+        /// </summary>
+        [Fact]
+        public void TestRunnerDiscoversAndRunsPassingTests()
+        {
+            var runtime = Run(
+                "@TestSuite(\"Vec\")\n"
+                    + "class VecTests {\n"
+                    + "  @Test(\"one\")\n"
+                    + "  public fun first(): void { }\n"
+                    + "  @Test\n"
+                    + "  public static fun second(): void { }\n"
+                    + "  public fun notATest(): void { }\n"
+                    + "}\n"
+                    + "public fun unrelated(): void { }");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var results = SurtrTestRunner.Run(runtime, module);
+
+            Assert.Equal(2, results.Count);
+            Assert.All(results, r => Assert.True(r.Passed));
+            Assert.Contains(results, r => r.Name == "one" && r.Suite == "Vec");
+            Assert.Contains(results, r => r.Name == "second" && r.Suite == "Vec");
+        }
+
+        [Fact]
+        public void TestRunnerReportsAThrowingTestAsFailed()
+        {
+            var runtime = Run(
+                "@TestSuite\n"
+                    + "class MathTests {\n"
+                    + "  @Test(\"boom\")\n"
+                    + "  public fun divides(): void { let x: int = 1 / 0; }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var results = SurtrTestRunner.Run(runtime, module);
+
+            var failed = Assert.Single(results);
+            Assert.Equal("boom", failed.Name);
+            Assert.False(failed.Passed);
+            Assert.Equal(SurtrTestOutcome.Failed, failed.Outcome);
+            Assert.False(string.IsNullOrEmpty(failed.Failure));
+        }
+
+        /// <summary>
+        /// <c>@TestIgnore</c> is the complement of <c>@Test</c> (§P9): the runner still discovers
+        /// the method and reports it, with the reason the mark carries, but never enters the body -
+        /// which the effect counter is what proves.
+        /// </summary>
+        [Fact]
+        public void TestRunnerReportsAnIgnoredTestAsSkippedWithoutRunningIt()
+        {
+            var runtime = Run(
+                "var ran: int = 0;\n"
+                    + "public fun effects(): int { return ran; }\n"
+                    + "@TestSuite(\"Vec\")\n"
+                    + "class VecTests {\n"
+                    + "  @Test(\"kept\")\n"
+                    + "  public fun kept(): void { ran = ran + 1; }\n"
+                    + "  @Test(\"dropped\")\n"
+                    + "  @TestIgnore(\"flaky on CI\")\n"
+                    + "  public fun dropped(): void { ran = ran + 100; }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var results = SurtrTestRunner.Run(runtime, module);
+
+            Assert.Equal(2, results.Count);
+
+            var kept = Assert.Single(results, r => r.Name == "kept");
+            Assert.Equal(SurtrTestOutcome.Passed, kept.Outcome);
+
+            var dropped = Assert.Single(results, r => r.Name == "dropped");
+            Assert.Equal(SurtrTestOutcome.Skipped, dropped.Outcome);
+            Assert.True(dropped.Skipped);
+            Assert.False(dropped.Passed);
+            Assert.Equal("flaky on CI", dropped.SkipReason);
+            Assert.Null(dropped.Failure);
+
+            Assert.Equal(1, Int(runtime, "effects"));
+        }
+
+        [Fact]
+        public void AnIgnoredTestWithNoReasonStillSkips()
+        {
+            var runtime = Run(
+                "class Tests {\n"
+                    + "  @Test\n"
+                    + "  @TestIgnore\n"
+                    + "  public fun boom(): void { let x: int = 1 / 0; }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var skipped = Assert.Single(SurtrTestRunner.Run(runtime, module));
+
+            Assert.Equal(SurtrTestOutcome.Skipped, skipped.Outcome);
+            Assert.Null(skipped.SkipReason);
+        }
+
+        [Fact]
+        public void ATestIgnoreUseCarriesItsReasonThroughTheImage()
+        {
+            var emitter = Build(
+                "class Tests {\n"
+                    + "  @Test\n"
+                    + "  @TestIgnore(\"waiting on #42\")\n"
+                    + "  public fun pending(): void { }\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            Assert.True(module.FindClass("Tests")!.TryGetMethods("pending", out var overloads));
+            Assert.True(overloads[0].TryGetAttribute(SurtrBuiltIns.TestIgnore, out var usage));
+
+            var instance = runtime.Resolve<SurtrInstance>(SurtrValue.CreateReference(usage.Instance))!;
+            Assert.Equal("waiting on #42", runtime.Resolve<SurtrString>(instance[0])!.Text);
+        }
+
+        #endregion
+
+        #region Fixtures de @TestBefore/@TestAfter (§P10)
+
+        /// <summary>
+        /// Per-test, not per-suite (§P10): two tests in one class mean the fixtures run twice
+        /// each, which the counters are what separate from a once-around-the-group reading.
+        /// </summary>
+        [Fact]
+        public void FixturesRunAroundEachTestRatherThanOncePerSuite()
+        {
+            var runtime = Run(
+                "var beforeRuns: int = 0;\n"
+                    + "var afterRuns: int = 0;\n"
+                    + "public fun readBefores(): int { return beforeRuns; }\n"
+                    + "public fun readAfters(): int { return afterRuns; }\n"
+                    + "class Tests {\n"
+                    + "  @TestBefore\n"
+                    + "  public static fun setUp(): void { beforeRuns = beforeRuns + 1; }\n"
+                    + "  @TestAfter\n"
+                    + "  public static fun tearDown(): void { afterRuns = afterRuns + 1; }\n"
+                    + "  @Test(\"a\")\n"
+                    + "  public static fun a(): void { }\n"
+                    + "  @Test(\"b\")\n"
+                    + "  public static fun b(): void { }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var results = SurtrTestRunner.Run(runtime, module);
+
+            Assert.Equal(2, results.Count);
+            Assert.All(results, r => Assert.True(r.Passed));
+            Assert.Equal(2, Int(runtime, "readBefores"));
+            Assert.Equal(2, Int(runtime, "readAfters"));
+        }
+
+        /// <summary>
+        /// The guarantee that makes acquiring something in a <c>@TestBefore</c> safe: the body
+        /// never runs, the test is reported failed, and the <c>@TestAfter</c> runs anyway.
+        /// </summary>
+        [Fact]
+        public void AThrowingBeforeFailsTheTestAndStillRunsTheAfter()
+        {
+            var runtime = Run(
+                "var afterRuns: int = 0;\n"
+                    + "var bodyRuns: int = 0;\n"
+                    + "public fun readAfters(): int { return afterRuns; }\n"
+                    + "public fun readBody(): int { return bodyRuns; }\n"
+                    + "class Tests {\n"
+                    + "  @TestBefore\n"
+                    + "  public static fun setUp(): void { let x: int = 1 / 0; }\n"
+                    + "  @TestAfter\n"
+                    + "  public static fun tearDown(): void { afterRuns = afterRuns + 1; }\n"
+                    + "  @Test(\"t\")\n"
+                    + "  public static fun t(): void { bodyRuns = bodyRuns + 1; }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var failed = Assert.Single(SurtrTestRunner.Run(runtime, module));
+
+            Assert.Equal(SurtrTestOutcome.Failed, failed.Outcome);
+            Assert.False(string.IsNullOrEmpty(failed.Failure));
+            Assert.Equal(0, Int(runtime, "readBody"));
+            Assert.Equal(1, Int(runtime, "readAfters"));
+        }
+
+        [Fact]
+        public void AFixtureWrapsItsOwnClassesTestsAndNoOthers()
+        {
+            var runtime = Run(
+                "var alphaSetUps: int = 0;\n"
+                    + "public fun readAlpha(): int { return alphaSetUps; }\n"
+                    + "class Alpha {\n"
+                    + "  @TestBefore\n"
+                    + "  public static fun setUp(): void { alphaSetUps = alphaSetUps + 1; }\n"
+                    + "  @Test(\"alpha\")\n"
+                    + "  public static fun alpha(): void { }\n"
+                    + "}\n"
+                    + "class Beta {\n"
+                    + "  @Test(\"beta\")\n"
+                    + "  public static fun beta(): void { }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var results = SurtrTestRunner.Run(runtime, module);
+
+            Assert.Equal(2, results.Count);
+            Assert.All(results, r => Assert.True(r.Passed));
+            Assert.Equal(1, Int(runtime, "readAlpha"));
+        }
+
+        /// <summary>
+        /// Module scope means every test in the module, the ones inside its classes included — and
+        /// a loose <c>@Test fun</c> is discovered as an ordinary test, under the module's path for
+        /// a suite since there is no <c>@TestSuite</c> to name it (§2.5).
+        /// </summary>
+        [Fact]
+        public void AModuleLevelFixtureWrapsBothLooseAndClassTests()
+        {
+            var runtime = Run(
+                "var setUps: int = 0;\n"
+                    + "var looseRuns: int = 0;\n"
+                    + "public fun readSetUps(): int { return setUps; }\n"
+                    + "public fun readLoose(): int { return looseRuns; }\n"
+                    + "@TestBefore\n"
+                    + "public fun setUp(): void { setUps = setUps + 1; }\n"
+                    + "@Test(\"loose\")\n"
+                    + "public fun loose(): void { looseRuns = looseRuns + 1; }\n"
+                    + "class Tests {\n"
+                    + "  @Test(\"inClass\")\n"
+                    + "  public static fun inClass(): void { }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var results = SurtrTestRunner.Run(runtime, module);
+
+            Assert.Equal(2, results.Count);
+            Assert.All(results, r => Assert.True(r.Passed));
+
+            var loose = Assert.Single(results, r => r.Name == "loose");
+            Assert.Equal("game.core.Test", loose.Suite);
+            Assert.Contains(results, r => r.Name == "inClass" && r.Suite == "Tests");
+
+            Assert.Equal(2, Int(runtime, "readSetUps"));
+            Assert.Equal(1, Int(runtime, "readLoose"));
+        }
+
+        [Fact]
+        public void AnInstanceFixtureAndItsTestShareOneInstance()
+        {
+            var runtime = Run(
+                "var observed: int = 0;\n"
+                    + "public fun readObserved(): int { return observed; }\n"
+                    + "class Tests {\n"
+                    + "  public var n: int = 0;\n"
+                    + "  @TestBefore\n"
+                    + "  public fun setUp(): void { n = 41; }\n"
+                    + "  @Test(\"shares\")\n"
+                    + "  public fun shares(): void { observed = n; }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            Assert.True(Assert.Single(SurtrTestRunner.Run(runtime, module)).Passed);
+            Assert.Equal(41, Int(runtime, "readObserved"));
+        }
+
+        /// <summary>
+        /// A static test beside an instance fixture still gets an instance built for it — the
+        /// fixture has to have something to run on, and the test not needing one does not answer
+        /// that question.
+        /// </summary>
+        [Fact]
+        public void AStaticTestStillGetsAnInstanceWhenItsFixtureIsOne()
+        {
+            var runtime = Run(
+                "var touched: int = 0;\n"
+                    + "public fun readTouched(): int { return touched; }\n"
+                    + "class Tests {\n"
+                    + "  @TestBefore\n"
+                    + "  public fun setUp(): void { touched = touched + 1; }\n"
+                    + "  @Test(\"staticOne\")\n"
+                    + "  public static fun staticOne(): void { }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            Assert.True(Assert.Single(SurtrTestRunner.Run(runtime, module)).Passed);
+            Assert.Equal(1, Int(runtime, "readTouched"));
+        }
+
+        [Fact]
+        public void AnIgnoredTestRunsNoFixturesEither()
+        {
+            var runtime = Run(
+                "var setUps: int = 0;\n"
+                    + "public fun readSetUps(): int { return setUps; }\n"
+                    + "class Tests {\n"
+                    + "  @TestBefore\n"
+                    + "  public static fun setUp(): void { setUps = setUps + 1; }\n"
+                    + "  @Test\n"
+                    + "  @TestIgnore(\"pending\")\n"
+                    + "  public static fun dropped(): void { }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            Assert.True(Assert.Single(SurtrTestRunner.Run(runtime, module)).Skipped);
+            Assert.Equal(0, Int(runtime, "readSetUps"));
+        }
+
+        #endregion
+
+        #region Runner de @Benchmark (§P11)
+
+        /// <summary>
+        /// A benchmark is discovered like a test and run unlike one (§P11): repeatedly, warmup
+        /// first, and timed. The effect counter is what proves the repetition — one call would be
+        /// a test.
+        /// </summary>
+        [Fact]
+        public void BenchmarkRunnerWarmsUpThenTimesEachDiscoveredMethod()
+        {
+            var runtime = Run(
+                "var calls: int = 0;\n"
+                    + "public fun readCalls(): int { return calls; }\n"
+                    + "@TestSuite(\"Math\")\n"
+                    + "class MathBenchmarks {\n"
+                    + "  @Benchmark\n"
+                    + "  public static fun addition(): void { calls = calls + 1; }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var measured = Assert.Single(SurtrTestRunner.RunBenchmarks(runtime, warmup: 2, iterations: 5, module));
+
+            Assert.Equal("addition", measured.Name);
+            Assert.Equal("Math", measured.Suite);
+            Assert.Equal(5, measured.Iterations);
+            Assert.True(measured.Measured);
+            Assert.Null(measured.Failure);
+            Assert.True(measured.TotalMilliseconds >= 0.0);
+            Assert.True(measured.MinimumMilliseconds <= measured.MedianMilliseconds);
+            Assert.Equal(measured.MedianMilliseconds * 1_000_000.0, measured.NanosecondsPerOperation);
+
+            Assert.Equal(7, Int(runtime, "readCalls"));
+        }
+
+        [Fact]
+        public void TheTestPassAndTheBenchmarkPassDiscoverDifferentMethods()
+        {
+            var runtime = Run(
+                "class Suite {\n"
+                    + "  @Test(\"t\")\n"
+                    + "  public static fun t(): void { }\n"
+                    + "  @Benchmark\n"
+                    + "  public static fun b(): void { }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+
+            var tests = SurtrTestRunner.Run(runtime, module);
+            Assert.Equal("t", Assert.Single(tests).Name);
+
+            var benchmarks = SurtrTestRunner.RunBenchmarks(runtime, warmup: 0, iterations: 1, module);
+            Assert.Equal("b", Assert.Single(benchmarks).Name);
+        }
+
+        [Fact]
+        public void AnInstanceBenchmarkBuildsItsReceiverOnceBeforeTheWarmup()
+        {
+            var runtime = Run(
+                "var constructions: int = 0;\n"
+                    + "public fun readConstructions(): int { return constructions; }\n"
+                    + "class Benchmarks {\n"
+                    + "  public constructor() { constructions = constructions + 1; }\n"
+                    + "  @Benchmark\n"
+                    + "  public fun work(): void { }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var measured = Assert.Single(SurtrTestRunner.RunBenchmarks(runtime, warmup: 3, iterations: 4, module));
+
+            Assert.True(measured.Measured);
+            Assert.Equal(1, Int(runtime, "readConstructions"));
+        }
+
+        [Fact]
+        public void AThrowingBenchmarkReportsItsFailureRatherThanANumber()
+        {
+            var runtime = Run(
+                "class Benchmarks {\n"
+                    + "  @Benchmark\n"
+                    + "  public static fun boom(): void { let x: int = 1 / 0; }\n"
+                    + "}");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            var measured = Assert.Single(SurtrTestRunner.RunBenchmarks(runtime, warmup: 0, iterations: 1, module));
+
+            Assert.False(measured.Measured);
+            Assert.False(string.IsNullOrEmpty(measured.Failure));
+            Assert.Equal(0.0, measured.MedianMilliseconds);
+        }
+
+        [Fact]
+        public void ABenchmarkPassNeedsAtLeastOneTimedCall()
+        {
+            var runtime = Run("class Empty { }");
+
+            Assert.True(runtime.TryGetModule("game.core.Test", out var module));
+            Assert.Throws<System.ArgumentOutOfRangeException>(
+                () => SurtrTestRunner.RunBenchmarks(runtime, warmup: 0, iterations: 0, module));
+        }
+
+        [Fact]
+        public void ABenchmarkUseSurvivesTheImage()
+        {
+            var emitter = Build(
+                "class Benchmarks {\n"
+                    + "  @Benchmark\n"
+                    + "  public fun work(): void { }\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            Assert.True(module.FindClass("Benchmarks")!.TryGetMethods("work", out var overloads));
+            Assert.True(overloads[0].TryGetAttribute(SurtrBuiltIns.Benchmark, out _));
+        }
+
+        #endregion
+
+        #region @Throws en imagen (§P12)
+
+        /// <summary>
+        /// <c>@Throws</c> is the one built-in written more than once on a declaration (§P12), so
+        /// what the image has to carry is a list rather than a value: both uses materialize, each
+        /// with its own <c>name</c>, in the order they were written.
+        /// </summary>
+        [Fact]
+        public void BothThrowsUsesSurviveTheImageAsSeparateInstances()
+        {
+            var emitter = Build(
+                "class Parser {\n"
+                    + "  @Throws(\"ArgumentException\")\n"
+                    + "  @Throws(\"FormatException\")\n"
+                    + "  public fun parse(text: string): int { return 0; }\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            Assert.True(module.FindClass("Parser")!.TryGetMethods("parse", out var overloads));
+
+            var named = new List<string>();
+            foreach (var usage in overloads[0].Attributes)
+            {
+                if (!ReferenceEquals(usage.AttributeType.ResolvedClass, SurtrBuiltIns.Throws))
+                    continue;
+
+                var instance = runtime.Resolve<SurtrInstance>(SurtrValue.CreateReference(usage.Instance))!;
+                named.Add(runtime.Resolve<SurtrString>(instance[0])!.Text);
+            }
+
+            Assert.Equal(new[] { "ArgumentException", "FormatException" }, named);
+        }
+
+        /// <summary>
+        /// <c>@NoAlloc</c> reaches the image like every mark but <c>@Value</c> (§P13): its meaning
+        /// is a compile-time check, but a host profiling a build wants to know which members
+        /// promised what.
+        /// </summary>
+        [Fact]
+        public void ANoAllocMarkSurvivesTheImage()
+        {
+            var emitter = Build(
+                "class Physics {\n"
+                    + "  @NoAlloc\n"
+                    + "  public fun step(dt: float): float { return dt * 2.0; }\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            Assert.True(module.FindClass("Physics")!.TryGetMethods("step", out var overloads));
+            Assert.True(overloads[0].TryGetAttribute(SurtrBuiltIns.NoAlloc, out _));
+        }
+
+        #endregion
+
+        #region @Flags: representacion entera (§P14)
+
+        private const string Perms =
+            "@Flags\n"
+                + "enum Perm { Read, Write, Execute }\n";
+
+        /// <summary>
+        /// The mark changes the representation (§P14): a case is the integer <c>1 &lt;&lt; ordinal</c>
+        /// rather than a static instance, which is what makes a combination a value of the type at
+        /// all — two references ANDed together name nothing.
+        /// </summary>
+        [Fact]
+        public void EachFlagsCaseIsTheBitAtItsDeclaredPosition()
+        {
+            var runtime = Run(
+                Perms
+                    + "public fun read(): int { return Perm.Read as int; }\n"
+                    + "public fun write(): int { return Perm.Write as int; }\n"
+                    + "public fun execute(): int { return Perm.Execute as int; }");
+
+            Assert.Equal(1, Int(runtime, "read"));
+            Assert.Equal(2, Int(runtime, "write"));
+            Assert.Equal(4, Int(runtime, "execute"));
+        }
+
+        [Fact]
+        public void TheBitwiseOperatorsCombineAndMaskAndProduceTheEnumItself()
+        {
+            var runtime = Run(
+                Perms
+                    + "public fun combined(): int { return (Perm.Read | Perm.Execute) as int; }\n"
+                    + "public fun masked(): int { return ((Perm.Read | Perm.Execute) & Perm.Execute) as int; }\n"
+                    + "public fun toggled(): int { return (Perm.Read ^ Perm.Read) as int; }\n"
+                    // The result being the enum is what lets it land in a declared slot with no cast.
+                    + "public fun assigned(): int { let rw: Perm = Perm.Read | Perm.Write; return rw as int; }");
+
+            Assert.Equal(5, Int(runtime, "combined"));
+            Assert.Equal(4, Int(runtime, "masked"));
+            Assert.Equal(0, Int(runtime, "toggled"));
+            Assert.Equal(3, Int(runtime, "assigned"));
+        }
+
+        [Fact]
+        public void ComplementRemovesAFlag()
+        {
+            var runtime = Run(
+                Perms
+                    + "public fun removed(): int { return ((Perm.Read | Perm.Write) & ~Perm.Write) as int; }");
+
+            Assert.Equal(1, Int(runtime, "removed"));
+        }
+
+        /// <summary>
+        /// Compound assignment comes free: the binder expands <c>p |= f</c> to <c>p = p | f</c>
+        /// before anything reads an operator, so the branch that resolves <c>|</c> is the only one
+        /// there ever was.
+        /// </summary>
+        [Fact]
+        public void CompoundAssignmentWorksThroughTheSameOperator()
+        {
+            var runtime = Run(
+                Perms
+                    + "public fun compound(): int { var p: Perm = Perm.Read; p |= Perm.Execute; return p as int; }\n"
+                    + "public fun cleared(): int { var p: Perm = Perm.Read | Perm.Write; p &= ~Perm.Read; return p as int; }");
+
+            Assert.Equal(5, Int(runtime, "compound"));
+            Assert.Equal(2, Int(runtime, "cleared"));
+        }
+
+        [Fact]
+        public void EqualityComparesValuesRatherThanReferences()
+        {
+            var runtime = Run(
+                Perms
+                    + "public fun holds(): int { let p: Perm = Perm.Read | Perm.Write; return (p & Perm.Write) == Perm.Write ? 1 : 0; }\n"
+                    + "public fun lacks(): int { let p: Perm = Perm.Read | Perm.Write; return (p & Perm.Execute) == Perm.Execute ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "holds"));
+            Assert.Equal(0, Int(runtime, "lacks"));
+        }
+
+        /// <summary>
+        /// The cast is explicit in both directions and moves no bits — but it has to be written,
+        /// because an arbitrary int is not a combination of the enum's cases. It is also what makes
+        /// the empty set expressible, there being no case for zero.
+        /// </summary>
+        [Fact]
+        public void TheCastToAndFromIntRoundTripsAndNamesTheEmptySet()
+        {
+            var runtime = Run(
+                Perms
+                    + "public fun roundTrip(): int { return (5 as Perm) as int; }\n"
+                    + "public fun empty(): int { let none: Perm = 0 as Perm; return (Perm.Read & ~Perm.Read) == none ? 1 : 0; }");
+
+            Assert.Equal(5, Int(runtime, "roundTrip"));
+            Assert.Equal(1, Int(runtime, "empty"));
+        }
+
+        /// <summary>
+        /// An ordinary enum is untouched: its cases stay instances, so combining them is still not
+        /// a thing the language does.
+        /// </summary>
+        [Fact]
+        public void AnUnmarkedEnumKeepsItsInstanceRepresentation()
+        {
+            var runtime = Run(
+                "enum Color { Red, Green }\n"
+                    + "public fun same(): int { return Color.Red == Color.Red ? 1 : 0; }\n"
+                    + "public fun different(): int { return Color.Red == Color.Green ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "same"));
+            Assert.Equal(0, Int(runtime, "different"));
+        }
+
+        /// <summary>
+        /// The mark reaches the image, and the type it marks arrives as a value-class enum: the
+        /// shared representation of every enum from the migration, with <c>IsValueType</c> set for
+        /// the linker and the synthetic <c>value</c> field present.
+        /// </summary>
+        [Fact]
+        public void AFlagsEnumTravelsAsAValueClassEnum()
+        {
+            var emitter = Build(Perms + "public fun unused(): int { return 0; }");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            var perm = module.FindClass("Perm")!;
+            Assert.True(perm.IsEnum, "A @Flags enum is an enum at runtime — a value class over the synthetic 'value' field.");
+            Assert.True(perm.IsValueType, "An enum is a value class, so the linker flattens it.");
+            Assert.True(perm.TryGetAttribute(SurtrBuiltIns.Flags, out _), "The mark itself still travels.");
+            Assert.True(perm.TryGetField("Read", out _));
+            Assert.True(perm.TryGetField("value", out _), "The synthetic 'value' field travels with the enum.");
+        }
+
+        /// <summary>
+        /// <c>contains</c> is a lowering, not a member (§P14): the receiver is an int with no
+        /// instance behind it, so what the call means is <c>(p &amp; f) == f</c> and that is what
+        /// it binds to.
+        /// </summary>
+        [Fact]
+        public void ContainsTestsOneFlagOfACombination()
+        {
+            var runtime = Run(
+                Perms
+                    + "public fun holds(): int { let p: Perm = Perm.Read | Perm.Write; return p.contains(Perm.Write) ? 1 : 0; }\n"
+                    + "public fun lacks(): int { let p: Perm = Perm.Read | Perm.Write; return p.contains(Perm.Execute) ? 1 : 0; }\n"
+                    + "public fun holdsBoth(): int { let p: Perm = Perm.Read | Perm.Write; return p.contains(Perm.Read | Perm.Write) ? 1 : 0; }\n"
+                    + "public fun onACase(): int { return Perm.Read.contains(Perm.Read) ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "holds"));
+            Assert.Equal(0, Int(runtime, "lacks"));
+            Assert.Equal(1, Int(runtime, "holdsBoth"));
+            Assert.Equal(1, Int(runtime, "onACase"));
+        }
+
+        /// <summary>
+        /// The argument is read twice by the test and only once by the program: it goes into a
+        /// temporary, so an argument with an effect keeps having exactly one.
+        /// </summary>
+        [Fact]
+        public void ContainsEvaluatesItsArgumentExactlyOnce()
+        {
+            var runtime = Run(
+                Perms
+                    + "var calls: int = 0;\n"
+                    + "public fun readCalls(): int { return calls; }\n"
+                    + "fun pick(): Perm { calls = calls + 1; return Perm.Write; }\n"
+                    + "public fun run(): int { let p: Perm = Perm.Read | Perm.Write; return p.contains(pick()) ? 1 : 0; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+            Assert.Equal(1, Int(runtime, "readCalls"));
+        }
+
+        #endregion
+
         #region Reflexion de atributos: Type/Member (Fase 6)
+
+        /// <summary>
+        /// The built-in vocabulary rides the same path a user attribute does: the use serializes
+        /// against the built-in class's descriptor and materializes into a real instance at load,
+        /// which is what both the host (<c>TryGetAttribute</c>) and scripts
+        /// (<c>Member.attributes()</c>) read afterwards.
+        /// </summary>
+        [Fact]
+        public void ABuiltInObsoleteUseSurvivesTheImageAndMaterializes()
+        {
+            var emitter = Build(
+                "class Player {\n"
+                    + "  @Obsolete(\"use run2\")\n"
+                    + "  public fun run(): void { }\n"
+                    + "}");
+
+            var reloaded = SurtrModuleImage.FromBytes(emitter.EmitImages()[0].ToBytes());
+            using var runtime = new SurtrRuntime();
+            var module = reloaded.Instantiate();
+            runtime.LoadModule(module);
+
+            Assert.True(module.FindClass("Player")!.TryGetMethods("run", out var overloads));
+            Assert.Equal("Obsolete(use run2)", Describe(overloads[0]));
+
+            Assert.True(overloads[0].TryGetAttribute(SurtrBuiltIns.Obsolete, out var usage));
+            var instance = runtime.Resolve<SurtrInstance>(SurtrValue.CreateReference(usage.Instance))!;
+            Assert.Equal("Obsolete", instance.Class.Name);
+            Assert.Equal("use run2", runtime.Resolve<SurtrString>(instance[0])!.Text);
+        }
+
+        [Fact]
+        public void AScriptReadsABuiltInAttributesReasonThroughReflection()
+        {
+            var runtime = Run(
+                "class Player {\n"
+                    + "  @NoDiscard(\"check whether it parsed\")\n"
+                    + "  public fun tryRun(): bool { return true; }\n"
+                    + "}\n"
+                    + "fun reason(): string {\n"
+                    + "    for (m in Type.of(Player()).members()) {\n"
+                    + "        if (m.name == \"tryRun\") {\n"
+                    + "            let attrs = m.attributes();\n"
+                    + "            if (attrs.length > 0) { return (attrs[0] as NoDiscard).reason; }\n"
+                    + "        }\n"
+                    + "    }\n"
+                    + "    return \"\";\n"
+                    + "}");
+
+            Assert.Equal("check whether it parsed", Text(runtime, "reason"));
+        }
+
         [Fact]
         public void TypeOfReportsTheDeclaredClassName()
         {
@@ -4475,7 +6127,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// Â§1.1's separate type/value namespaces let `Box` name a class and a local at once; the
+        /// §1.1's separate type/value namespaces let `Box` name a class and a local at once; the
         /// binder resolves the ambiguity type-first, the same order every other place this binder
         /// meets the identical ambiguity already uses (see <c>TryBindAsType</c>'s own remarks).
         /// </summary>
@@ -4504,16 +6156,16 @@ var runtime = Run(
                 "class Box<T> { public fun n(): int { return 1; } }\n"
                     + "fun boxIntTypeName(): string { return typeof(Box<int>).name; }");
 
-            // Â§6: arity mangles into the name segment, so a generic class's own metadata name
+            // §6: arity mangles into the name segment, so a generic class's own metadata name
             // carries the backtick - the same `Box`1` any other reflection over it would report.
             Assert.Equal("Box`1", Text(runtime, "boxIntTypeName"));
         }
 
         /// <summary>
-        /// The generic metadata the compiler now keeps (Â§docs/Plan-Genericos-Metadata.md, Pasos 1-2)
+        /// The generic metadata the compiler now keeps (§docs/Plan-Genericos-Metadata.md, Pasos 1-2)
         /// is readable from Surtr: a Type's parameter names and their bounds are the class's own
-        /// tables, exposed verbatim. The open class â€” whose descriptor's argument is the
-        /// declaration's own parameter â€” is reached through Type.get of its open descriptor, since
+        /// tables, exposed verbatim. The open class — whose descriptor's argument is the
+        /// declaration's own parameter — is reached through Type.get of its open descriptor, since
         /// neither typeof(Box) nor Box() can name it (the parser only reads a type operand with an
         /// argument list, and a construction without arguments is ambiguous).
         /// </summary>
@@ -4566,7 +6218,7 @@ var runtime = Run(
         }
 
         /// <summary>
-        /// An open form â€” the descriptor whose argument is the declaration's own parameter â€” is
+        /// An open form — the descriptor whose argument is the declaration's own parameter — is
         /// the class itself, not a construction: same identity as Type.of(instance), and no
         /// arguments to report. typeof(Box) cannot reach it (the parser only reads a type operand
         /// when there is an argument list), so the open class is reached through Type.of or
@@ -4616,7 +6268,7 @@ var runtime = Run(
         }
         #endregion
 
-        #region Accessibility (Â§3.1)
+        #region Accessibility (§3.1)
         private static SurtrCompilation Reject(string source, params (string Path, string Text)[] extra)
         {
             var project = new SurtrProject(Root);
@@ -4638,7 +6290,7 @@ var runtime = Run(
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.Inaccessible);
         }
 
-        /// <summary>Â§3.1: a class member with no visibility written is private.</summary>
+        /// <summary>§3.1: a class member with no visibility written is private.</summary>
         [Fact]
         public void AMemberWithNoVisibilityWrittenIsPrivate()
         {
@@ -4666,7 +6318,7 @@ var runtime = Run(
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.Inaccessible);
         }
 
-        /// <summary>Â§3.1's other default: a top-level declaration is internal to its own module.</summary>
+        /// <summary>§3.1's other default: a top-level declaration is internal to its own module.</summary>
         [Fact]
         public void AModuleLevelFunctionIsNotReachableFromAnotherModule()
         {
@@ -4687,7 +6339,7 @@ var runtime = Run(
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.Inaccessible);
         }
 
-        /// <summary>And writing it out in full does not get around it (Â§2.1's convenience, not a loophole).</summary>
+        /// <summary>And writing it out in full does not get around it (§2.1's convenience, not a loophole).</summary>
         [Fact]
         public void AQualifiedNameDoesNotBypassVisibility()
         {
@@ -4698,7 +6350,7 @@ using var compilation = Reject(
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.Inaccessible);
         }
 
-        /// <summary>Â§2.6: a nested type takes a visibility like any other member.</summary>
+        /// <summary>§2.6: a nested type takes a visibility like any other member.</summary>
         [Fact]
         public void APrivateNestedTypeIsNotReachableFromOutside()
         {
@@ -4722,7 +6374,7 @@ using var compilation = Reject(
 
         /// <summary>
         /// What <c>private</c> names is a declaration's whole text, so one instance reaches another's
-        /// â€” the rule C# and Java both have.
+        /// — the rule C# and Java both have.
         /// </summary>
         [Fact]
         public void APrivateMemberIsReachableOnAnotherInstanceOfTheSameType()
@@ -4788,7 +6440,7 @@ using var compilation = Reject(
             Assert.Equal(3, Int(runtime, "run"));
         }
 
-        /// <summary>The standard library is public, and every program leans on it (Â§13).</summary>
+        /// <summary>The standard library is public, and every program leans on it (§13).</summary>
         [Fact]
         public void TheStandardLibraryStaysReachable()
         {
@@ -4798,9 +6450,9 @@ using var compilation = Reject(
         }
         #endregion
 
-        #region Lambda inference (Â§8, Â§5.9)
+        #region Lambda inference (§8, §5.9)
         /// <summary>
-        /// Â§5.9 lets a lambda's parameters go unwritten where a target type supplies them, and at a
+        /// §5.9 lets a lambda's parameters go unwritten where a target type supplies them, and at a
         /// call site that target is the parameter of whichever overload wins.
         /// </summary>
         [Fact]
@@ -4812,7 +6464,7 @@ using var compilation = Reject(
             Assert.Equal(6, Int(runtime, "run"));
         }
 
-        /// <summary>Â§8's own example, which needs both parameters typed from `sort`'s comparator.</summary>
+        /// <summary>§8's own example, which needs both parameters typed from `sort`'s comparator.</summary>
         [Fact]
         public void TheComparatorInSpecSection8Compiles()
         {
@@ -4871,7 +6523,7 @@ using var compilation = Reject(
 
         /// <summary>
         /// Arity is all applicability can ask of an unbound lambda, since its parameter types come
-        /// <em>from</em> the parameter â€” but arity is enough to tell two overloads apart.
+        /// <em>from</em> the parameter — but arity is enough to tell two overloads apart.
         /// </summary>
         [Fact]
         public void ArityPicksBetweenTwoClosureOverloads()
@@ -4942,7 +6594,7 @@ using var compilation = Reject(
         }
         #endregion
 
-        #region Generics (Â§6)
+        #region Generics (§6)
         private const string Box =
             "class Box<T> {\n"
                 + "  private let _value: T;\n"
@@ -4951,7 +6603,7 @@ using var compilation = Reject(
                 + "}\n";
 
         /// <summary>
-        /// Â§6's own example: a bound is what lets a body call anything on a <c>T</c> at all.
+        /// §6's own example: a bound is what lets a body call anything on a <c>T</c> at all.
         /// </summary>
         [Fact]
         public void AConstraintExposesItsMembersOnATypeParameter()
@@ -4960,7 +6612,7 @@ using var compilation = Reject(
                 "class Score : IComparable<Score> {\n"
                     + "  public let value: int;\n"
                     + "  constructor(value: int) { this.value = value; }\n"
-                    + "  public override fun compareTo(other: Score): int { return value - other.value; }\n"
+                    + "  public fun compareTo(other: Score): int { return value - other.value; }\n"
                     + "}\n"
                     + "fun biggest<T : IComparable<T>>(a: T, b: T): T { return a.compareTo(b) >= 0 ? a : b; }\n"
                     + "fun run(): int { let s: Score = biggest(Score(4), Score(9)); return s.value; }");
@@ -4971,8 +6623,8 @@ using var compilation = Reject(
         [Fact]
         public void AStaticFieldOnAGenericClassIsReachedThroughItsConstruction()
         {
-            // Â§6: a static member of a generic class is reached through a *construction* â€”
-            // `Box<int>.counter` â€” which substitutes the type. The field is one slot shared by
+            // §6: a static member of a generic class is reached through a *construction* —
+            // `Box<int>.counter` — which substitutes the type. The field is one slot shared by
             // every construction (erasure).
             var runtime = Run(
                 "class Counter<T> {\n"
@@ -5085,7 +6737,7 @@ using var compilation = Reject(
         }
 
         /// <summary>
-        /// The built-ins satisfy the same contracts a user class does (Â§13.2):
+        /// The built-ins satisfy the same contracts a user class does (§13.2):
         /// <c>int : IComparable&lt;int&gt;</c>, so <c>biggest&lt;T : IComparable&lt;T&gt;&gt;</c>
         /// instantiates with <c>T = int</c> exactly as it does with a Surtr class. This is the
         /// generic-constraint path, which reaches a primitive receiver through
@@ -5127,7 +6779,7 @@ using var compilation = Reject(
 
         /// <summary>
         /// <c>char</c> and <c>bool</c> also satisfy their contracts: <c>char</c> orders, <c>bool</c>
-        /// only equates (Â§13.2 - the language defines no ordering over booleans).
+        /// only equates (§13.2 - the language defines no ordering over booleans).
         /// </summary>
         [Fact]
         public void ACharSatisfiesAnIComparableConstraint()
@@ -5199,7 +6851,7 @@ using var compilation = Reject(
             var runtime = Run("class Box<T : IComparable<T>> { constructor() { } }");
 
             Assert.True(runtime.TryGetModule("game.core.Test", out var module));
-            // The arity is part of the type's identity (Â§6), so the metadata name is mangled.
+            // The arity is part of the type's identity (§6), so the metadata name is mangled.
             Assert.True(module.TryGetClass("Box`1", out var box));
 
             Assert.Equal("T", box.GenericParameters[0]);
@@ -5219,7 +6871,7 @@ using var compilation = Reject(
                 "public class Score : IComparable<Score> {\n"
                     + "  public let value: int;\n"
                     + "  constructor(value: int) { this.value = value; }\n"
-                    + "  public override fun compareTo(other: Score): int { return value - other.value; }\n"
+                    + "  public fun compareTo(other: Score): int { return value - other.value; }\n"
                     + "}\n"
                     + "public class Plain { }\n"
                     + "public fun biggest<T : IComparable<T>>(a: T, b: T): T { return a.compareTo(b) >= 0 ? a : b; }");
@@ -5283,7 +6935,7 @@ using var compilation = Reject(
                 "public class Score : IComparable<Score> {\n"
                     + "  public let value: int;\n"
                     + "  constructor(value: int) { this.value = value; }\n"
-                    + "  public override fun compareTo(other: Score): int { return value - other.value; }\n"
+                    + "  public fun compareTo(other: Score): int { return value - other.value; }\n"
                     + "}\n"
                     + "public class Box<T : IComparable<T>> {\n"
                     + "  public let value: T;\n"
@@ -5338,7 +6990,7 @@ using var compilation = Reject(
         }
 
         /// <summary>
-        /// One class, one method table, one compiled body â€” and two constructions that read as
+        /// One class, one method table, one compiled body — and two constructions that read as
         /// different types. That is the whole of what erasure buys and what the compiler owes.
         /// </summary>
         [Fact]
@@ -5377,7 +7029,7 @@ using var compilation = Reject(
             Assert.Equal(3, Int(runtime, "run"));
         }
 
-        /// <summary>Â§6: arity is part of identity, so these are two declarations sharing a spelling.</summary>
+        /// <summary>§6: arity is part of identity, so these are two declarations sharing a spelling.</summary>
         [Fact]
         public void ArityPicksBetweenTwoDeclarationsOfOneName()
         {
@@ -5448,7 +7100,7 @@ using var compilation = Reject(
         [Fact]
         public void AConstructionWithNoOwnSourceDefersToItsParameter()
         {
-            // The real Brecha B: `take(Box())` â€” the construction has no type arguments written and
+            // The real Brecha B: `take(Box())` — the construction has no type arguments written and
             // no argument of its own to infer from, so the winning parameter `Box<int>` supplies
             // them, exactly as it would type a deferred lambda.
             var runtime = Run(
@@ -5461,7 +7113,7 @@ using var compilation = Reject(
                     + "fun take(b: Box<int>): int { return b.hasValue() ? 0 : 1; }\n"
                     + "fun run(): int { return take(Box()); }");
 
-            // `Box()` built a `Box<int>` with a null value, so `hasValue` is false â€” the point is
+            // `Box()` built a `Box<int>` with a null value, so `hasValue` is false — the point is
             // that it bound at all: before the deferral it failed with CannotInferTypeArgument.
             Assert.Equal(1, Int(runtime, "run"));
         }
@@ -5487,9 +7139,9 @@ using var compilation = Reject(
         public void AConstructionWithItsOwnIntStillWidensToItsFloatParameter()
         {
             // `take(Box(5))` with `take(b: Box<float>)`: the `5` is an int but the parameter is
-            // `Box<float>`, so the intâ†’float conversion has to happen BEFORE the box. The value
+            // `Box<float>`, so the int→float conversion has to happen BEFORE the box. The value
             // class's own type parameter `T` is already substituted to `float` in the construction,
-            // so it must convert against `float` â€” not be treated as a method type parameter and
+            // so it must convert against `float` — not be treated as a method type parameter and
             // erased to `unknown`, which would box the raw int and then fail the cast on read.
             var runtime = Run(
                 "class Box<T> {\n"
@@ -5527,7 +7179,7 @@ using var compilation = Reject(
         }
 
         /// <summary>
-        /// Â§6 checks a bound against the <em>substituted</em> type: <c>T : IComparable&lt;T&gt;</c>
+        /// §6 checks a bound against the <em>substituted</em> type: <c>T : IComparable&lt;T&gt;</c>
         /// asked of a <c>Plain</c> is asking about <c>IComparable&lt;Plain&gt;</c>.
         /// </summary>
         [Fact]
@@ -5546,7 +7198,7 @@ using var compilation = Reject(
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.ConstraintNotSatisfied);
         }
 
-        /// <summary>Two answers for one parameter is a refusal, not a widening â€” Â§3.5's "no silent pick".</summary>
+        /// <summary>Two answers for one parameter is a refusal, not a widening — §3.5's "no silent pick".</summary>
         [Fact]
         public void ContradictoryInferenceIsReported()
         {
@@ -5561,7 +7213,7 @@ using var compilation = Reject(
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.CannotInferTypeArgument);
         }
 
-        /// <summary>Â§1.11's two obligations, seen from source: box on the way in, cast on the way out.</summary>
+        /// <summary>§1.11's two obligations, seen from source: box on the way in, cast on the way out.</summary>
         [Fact]
         public void APrimitiveSurvivesARoundTripThroughAnErasedSlot()
         {
@@ -5599,7 +7251,7 @@ using var compilation = Reject(
         }
 
         /// <summary>
-        /// A generic class satisfying a generic contract, walked by <c>for-in</c> â€” which puts the
+        /// A generic class satisfying a generic contract, walked by <c>for-in</c> — which puts the
         /// bridge, the erased slot and interface dispatch on one path.
         /// </summary>
         [Fact]
@@ -5609,7 +7261,7 @@ using var compilation = Reject(
                 "class Single<T> : IIterable<T> {\n"
                     + "  private let _value: T;\n"
                     + "  constructor(value: T) { _value = value; }\n"
-                    + "  public override fun iterate(): IIterator<T> { return [_value].iterate(); }\n"
+                    + "  public fun iterate(): IIterator<T> { return [_value].iterate(); }\n"
                     + "}\n"
                     + "fun run(): int { var total = 0; for (n in Single(4)) { total += n; } return total; }");
 
@@ -5618,7 +7270,7 @@ using var compilation = Reject(
 
         /// <summary>
         /// A non-generic class implementing a built-in generic interface with a fixed argument and
-        /// no chain involved â€” the simplest shape of the scenario reported as failing to resolve;
+        /// no chain involved — the simplest shape of the scenario reported as failing to resolve;
         /// runs end to end on the real VM, not just through the binder.
         /// </summary>
         [Fact]
@@ -5626,7 +7278,7 @@ using var compilation = Reject(
         {
             var runtime = Run(
                 "class Counter : IIterable<int> {\n"
-                    + "  public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
+                    + "  public fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
                     + "}\n"
                     + "fun run(): int { var total = 0; for (n in Counter()) { total += n; } return total; }");
 
@@ -5650,7 +7302,7 @@ using var compilation = Reject(
 
         /// <summary>
         /// A construction with nothing to infer from is refused rather than guessed at, the same
-        /// trade Â§5.9 makes for a bare <c>[]</c>.
+        /// trade §5.9 makes for a bare <c>[]</c>.
         /// </summary>
         [Fact]
         public void AConstructionWithNothingToInferFromIsReported()
@@ -5722,7 +7374,7 @@ using var compilation = Reject(
         }
 
         /// <summary>
-        /// Inside its own declaration, a field typed `T` is not a wildcard slot â€” assigning a
+        /// Inside its own declaration, a field typed `T` is not a wildcard slot — assigning a
         /// concrete literal to it is exactly as wrong as assigning it into any other type the
         /// method does not declare, and used to compile silently because `T` was classified the
         /// same way `unknown` is.
@@ -5758,7 +7410,7 @@ using var compilation = Reject(
 
         /// <summary>
         /// A value satisfying `T`'s own constraint still does not become assignable to a `T`-typed
-        /// slot â€” Java has the same asymmetry, for the same reason: knowing `T` can be used as
+        /// slot — Java has the same asymmetry, for the same reason: knowing `T` can be used as
         /// `IComparable&lt;T&gt;` says nothing about what may flow the other way into `T`.
         /// </summary>
         [Fact]
@@ -5768,7 +7420,7 @@ using var compilation = Reject(
                 "class Score : IComparable<Score> {\n"
                     + "  public let value: int;\n"
                     + "  constructor(value: int) { this.value = value; }\n"
-                    + "  public override fun compareTo(other: Score): int { return value - other.value; }\n"
+                    + "  public fun compareTo(other: Score): int { return value - other.value; }\n"
                     + "}\n"
                     + "class Holder<T : IComparable<T>> {\n"
                     + "  public var item: T;\n"
@@ -5778,11 +7430,317 @@ using var compilation = Reject(
 
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.CannotConvert);
         }
+
+        /// <summary>
+        /// Inside its own declaration, a constrained generic may be applied to its own bare
+        /// parameter — <c>Node&lt;T&gt;</code> as a member of <c>Node&lt;T : IComparable&lt;T&gt;&gt;</c>
+        /// — because §6 promises every construction will satisfy the bound, and the bare parameter
+        /// is what every construction hands its members. Used to read as a failed bounds check.
+        /// </summary>
+        [Fact]
+        public void ASelfReferencingConstructionInsideItsOwnDeclarationCompiles()
+        {
+            var runtime = Run(
+                "class Node<T : IComparable<T>> {\n"
+                    + "  public let value: T;\n"
+                    + "  public var next: Node<T>?;\n"
+                    + "  constructor(value: T) { this.value = value; }\n"
+                    + "}\n"
+                    + "fun run(): int { let n = Node(7); n.next = Node(8); return n.next!!.value - 1; }");
+
+            Assert.Equal(7, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// §6's bound widens in the body too: a <c>T</c> flows into an
+        /// <c>IComparable&lt;T&gt;</c>-typed local, which is the whole point of writing the bound.
+        /// </summary>
+        [Fact]
+        public void ATypeParameterWidensToItsBoundInABody()
+        {
+            var runtime = Run(
+                "class Score : IComparable<Score> {\n"
+                    + "  public let value: int;\n"
+                    + "  constructor(value: int) { this.value = value; }\n"
+                    + "  public fun compareTo(other: Score): int { return value - other.value; }\n"
+                    + "}\n"
+                    + "class Box<T : IComparable<T>> {\n"
+                    + "  public let item: T;\n"
+                    + "  constructor(item: T) { this.item = item; }\n"
+                    + "  public fun beats(other: T): bool {\n"
+                    + "    let comparable: IComparable<T> = this.item;\n"
+                    + "    return comparable.compareTo(other) > 0;\n"
+                    + "  }\n"
+                    + "}\n"
+                    + "fun run(): bool { let b = Box(Score(9)); return b.beats(Score(4)); }");
+
+            Assert.True(Call(runtime, "run").AsBool);
+        }
+
+        /// <summary>
+        /// Passing the bare parameter as a type argument satisfies the callee's substituted bound:
+        /// inside <c>Box&lt;T : IComparable&lt;T&gt;&gt;</c>, calling
+        /// <c>biggest&lt;U : IComparable&lt;U&gt;&gt;(a, b)</c> infers <c>U = T</c>, and the check
+        /// must read the promise, not reject it.
+        /// </summary>
+        [Fact]
+        public void ABareTypeArgumentSatisfiesAnotherCallsSubstitutedBound()
+        {
+            var runtime = Run(
+                "class Score : IComparable<Score> {\n"
+                    + "  public let value: int;\n"
+                    + "  constructor(value: int) { this.value = value; }\n"
+                    + "  public fun compareTo(other: Score): int { return value - other.value; }\n"
+                    + "}\n"
+                    + "fun biggest<U : IComparable<U>>(a: U, b: U): U { return a.compareTo(b) >= 0 ? a : b; }\n"
+                    + "class Box<T : IComparable<T>> {\n"
+                    + "  public let item: T;\n"
+                    + "  constructor(item: T) { this.item = item; }\n"
+                    + "  public fun best(other: T): T { return biggest(this.item, other); }\n"
+                    + "}\n"
+                    + "fun run(): int { let b = Box(Score(3)); return b.best(Score(11)).value; }");
+
+            Assert.Equal(11, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// Mutually referencing bounds (<c>&lt;T : U&gt;, &lt;U : T&gt;</c>) are a declaration
+        /// error — the cycle promises nothing any construction can satisfy — reported at the
+        /// declaration rather than as a failed check at every later use.
+        /// </summary>
+        [Fact]
+        public void MutuallyReferencingBoundsAreReportedAtTheDeclaration()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "class Left<T : U, U : T> {\n"
+                    + "  public var pair: Left<T, U>?;\n"
+                    + "}\n"
+                    + "fun run(): int { return 1; }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.CircularTypeParameterConstraint);
+        }
+
+        /// <summary>A parameter bounded by itself is the one-parameter shape of the same cycle.</summary>
+        [Fact]
+        public void ASelfBoundTypeParameterIsReportedAtTheDeclaration()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "class Odd<T : T> { }\nfun run(): int { return 1; }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.CircularTypeParameterConstraint);
+        }
+
+        /// <summary>
+        /// Two parameters sharing a bound (<c>&lt;T : C, U : C&gt;</c>) is not a cycle — the shared
+        /// bound must not be mistaken for one on the walk.
+        /// </summary>
+        [Fact]
+        public void SharedBoundsAreNotMistakenForACycle()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(
+                Root + "/game/core/Test.surtr",
+                "interface IC { fun n(): int; }\n"
+                    + "class Pair<T : IC, U : IC> {\n"
+                    + "  public var again: Pair<T, U>?;\n"
+                    + "}\n"
+                    + "fun run(): int { return 1; }");
+
+            using var compilation = SurtrCompilation.Create(project);
+            compilation.Bind().BindBodies();
+
+            Assert.False(compilation.HasErrors,
+                "Unexpected: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+        }
+
+        /// <summary>
+        /// The widening is one-way: the bound still does not reach back into a `T`-typed slot, so
+        /// an explicit cast out of the bound remains the only path down.
+        /// </summary>
+        [Fact]
+        public void WideningToABoundIsImplicitButComingBackStaysExplicit()
+        {
+            using var compilation = Reject(
+                "class Holder<T : IComparable<T>> {\n"
+                    + "  public var item: T;\n"
+                    + "  constructor(item: T) { this.item = item; }\n"
+                    + "  public fun corrupt(c: IComparable<T>): void { this.item = c; }\n"
+                    + "}");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.CannotConvert);
+        }
+
         #endregion
 
-        #region Module-level natives (Â§10)
+        #region Variance (§6)
         /// <summary>
-        /// Â§10: a module naming a host global nobody registered fails to load, rather than reading a
+        /// The motivating case: a collection of derived elements consumed where the element's base
+        /// is expected. <c>IIterable</c> declares <c>out T</c>, so the array widens with its
+        /// elements and the loop reads real values back — which is what makes this an end-to-end
+        /// test and not just a type-checker one.
+        /// </summary>
+        [Fact]
+        public void ACovariantIterableAcceptsADerivedElementsCollection()
+        {
+            var runtime = Run(
+                "interface IShape { fun area(): float; }\n"
+                    + "class Circle : IShape {\n"
+                    + "  public let radius: float;\n"
+                    + "  constructor(radius: float) { this.radius = radius; }\n"
+                    + "  public fun area(): float { return 3.0 * radius * radius; }\n"
+                    + "}\n"
+                    + "fun total(shapes: IIterable<IShape>): float {\n"
+                    + "  var sum = 0.0;\n"
+                    + "  for (s in shapes) { sum = sum + s.area(); }\n"
+                    + "  return sum;\n"
+                    + "}\n"
+                    + "fun run(): float {\n"
+                    + "  let circles: Circle[] = [Circle(1.0), Circle(2.0)];\n"
+                    + "  return total(circles);\n"
+                    + "}");
+
+            var result = Call(runtime, "run").AsFloat;
+            Assert.Equal(3.0 * (1.0 + 4.0), result, 5);
+        }
+
+        /// <summary>
+        /// A comparer of animals compares dogs: the argument widens <em>against</em> the
+        /// annotation, the call runs for real, and the base-typed member reads a dog through it.
+        /// </summary>
+        [Fact]
+        public void AContravariantComparerServesWhereADerivedOneIsAskedFor()
+        {
+            var runtime = Run(
+                "class Animal {\n"
+                    + "  public let rank: int;\n"
+                    + "  constructor(rank: int) { this.rank = rank; }\n"
+                    + "}\n"
+                    + "class Dog : Animal {\n"
+                    + "  constructor(rank: int) : super(rank) { }\n"
+                    + "}\n"
+                    + "class ByRank : IComparable<Animal> {\n"
+                    + "  public fun compareTo(other: Animal): int { return other.rank; }\n"
+                    + "}\n"
+                    + "fun serve(c: IComparable<Dog>): int { return c.compareTo(Dog(41)); }\n"
+                    + "fun run(): int { return serve(ByRank()); }");
+
+            Assert.Equal(41, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// Method-group style: an animal handler serves where a dog handler is declared — that is
+        /// what contravariance of inputs means. Before closure variance this was an error; now it
+        /// compiles and calls back through the widened handler with a real dog.
+        /// </summary>
+        [Fact]
+        public void AContravariantClosureAcceptsAWiderHandler()
+        {
+            var runtime = Run(
+                "class Animal { public fun name(): string { return \"animal\"; } }\n"
+                    + "class Dog : Animal { }\n"
+                    + "fun speak(handler: (Dog) -> string): string { return handler(Dog()); }\n"
+                    + "fun run(): string { let describe = (a: Animal) => a.name(); return speak(describe); }");
+
+            Assert.Equal("animal", Text(runtime, "run"));
+        }
+
+        /// <summary>The invariance default still holds for mutable collections.</summary>
+        [Fact]
+        public void AnUnannotatedCollectionStaysInvariant()
+        {
+            // Arrays are invariant because they are writable: feeding dogs where animals are
+            // stored would let someone push a cat into a dog array (§3.1). IIterable widens
+            // because it only reads; the array itself never does.
+            using var compilation = Reject(
+                "class Animal { }\n"
+                    + "class Dog : Animal { }\n"
+                    + "fun feed(meal: Animal[]): void { }\n"
+                    + "fun run(): void { let dogs: Dog[] = [Dog()]; feed(dogs); }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedCall);
+        }
+
+        /// <summary><c>out T</c> in a parameter position is refused at the declaration itself.</summary>
+        [Fact]
+        public void ACovariantParameterInAnInputPositionIsRefusedAtTheDeclaration()
+        {
+            using var compilation = Reject(
+                "interface Sink<out T> {\n"
+                    + "  fun write(item: T): void;\n"
+                    + "}\n"
+                    + "fun run(): void { }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.VariantParameterUsedAsInput);
+        }
+
+        /// <summary>And symmetrically, <c>in T</c> in a return position.</summary>
+        [Fact]
+        public void AContravariantParameterInAnOutputPositionIsRefusedAtTheDeclaration()
+        {
+            using var compilation = Reject(
+                "interface Source<in T> {\n"
+                    + "  fun next(): T;\n"
+                    + "}\n"
+                    + "fun run(): void { }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.VariantParameterUsedAsOutput);
+        }
+
+        /// <summary>
+        /// A field reads and writes, so it forces its own declaration invariant — reported once,
+        /// at the annotation, not as a mysterious subtype failure somewhere else.
+        /// </summary>
+        [Fact]
+        public void ACovariantParameterOverAFieldIsRefused()
+        {
+            using var compilation = Reject(
+                "class Cell<out T> {\n"
+                    + "  public var item: T;\n"
+                    + "}\n"
+                    + "fun run(): void { }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.VariantParameterUsedAsInput);
+        }
+
+        /// <summary>Variance belongs to declarations; a method's parameters cannot carry it.</summary>
+        [Fact]
+        public void AVarianceModifierOnAMethodTypeParameterIsRefused()
+        {
+            using var compilation = Reject(
+                "fun first<out T>(items: T[]): T { return items[0]; }\n"
+                    + "fun run(): int { return first([1, 2]); }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidVarianceModifier);
+        }
+
+        /// <summary>
+        /// An alias is transparent — it *is* its target — so there is no family of constructions
+        /// for an annotation to relate, and writing one is refused rather than silently ignored.
+        /// </summary>
+        [Fact]
+        public void AVarianceModifierOnAnAliasTypeParameterIsRefused()
+        {
+            using var compilation = Reject(
+                "alias P<out T> = IIterable<T>;\n"
+                    + "fun run(): void { }");
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidVarianceModifier);
+        }
+        #endregion
+
+        #region Module-level natives (§10)
+        /// <summary>
+        /// §10: a module naming a host global nobody registered fails to load, rather than reading a
         /// zero out of storage of its own.
         /// </summary>
         [Fact]
@@ -5806,7 +7764,7 @@ using var compilation = Reject(
         [Fact]
         public unsafe void ANativeVariableReadsTheHostsOwnStorage()
         {
-            // A module-level `native let` is a native property with only a getter (Â§10); the host
+            // A module-level `native let` is a native property with only a getter (§10); the host
             // publishes that getter's body by its link name, `get_<name>` prefixed with the module
             // path - the same convention a native class accessor uses, minus the type.
             var emitter = Build("native let ScreenWidth: int;\nfun run(): int { return ScreenWidth; }");
@@ -5820,12 +7778,12 @@ using var compilation = Reject(
             Assert.Equal(1280, Int(runtime, "run"));
         }
 
-        private static SurtrValue GetScreenWidth(SurtrCallArguments arguments) => SurtrValue.CreateInt(1280);
+        private static int GetScreenWidth(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(1280));
 
         [Fact]
         public unsafe void AWriteToANativeVariableLandsInTheHostsOwnStorage()
         {
-            // A module-level `native var` gets both accessors (Â§10); both need a body registered
+            // A module-level `native var` gets both accessors (§10); both need a body registered
             // before load even though `run` only calls the setter here - `BindNativeBodies` binds
             // every native member the module declares, not only the ones a given caller reaches.
             var emitter = Build("native var TimeScale: float;\nfun run(): int { TimeScale = 0.5; return 1; }");
@@ -5845,11 +7803,11 @@ using var compilation = Reject(
         // A plain static field, not a closure capture: SurtrNativeEntryPoint.FromFunctionPointer
         // needs a static method with no captured state.
         private static double? _writtenTimeScale;
-        private static SurtrValue GetTimeScale(SurtrCallArguments arguments) => SurtrValue.CreateFloat(_writtenTimeScale ?? 0.0);
-        private static SurtrValue SetTimeScale(SurtrCallArguments arguments)
+        private static int GetTimeScale(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateFloat(_writtenTimeScale ?? 0.0));
+        private static int SetTimeScale(SurtrCallArguments arguments)
         {
             _writtenTimeScale = arguments.GetFloat(0);
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
         [Fact]
@@ -5868,8 +7826,8 @@ using var compilation = Reject(
         }
 
         // A module-level native takes no receiver, so its first declared parameter is argument zero.
-        private static SurtrValue Square(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetInt(0) * arguments.GetInt(0));
+        private static int Square(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetInt(0) * arguments.GetInt(0)));
 
         [Fact]
         public void ANativeVariableCannotHaveAnInitializer()
@@ -5884,7 +7842,7 @@ using var compilation = Reject(
         }
 
         /// <summary>
-        /// A module-level native travels as <c>&lt;modulePath&gt;.&lt;name&gt;</c> (Â§10), so two
+        /// A module-level native travels as <c>&lt;modulePath&gt;.&lt;name&gt;</c> (§10), so two
         /// modules declaring a same-named <c>native fun</c> bind against distinct link names
         /// instead of silently sharing whatever single body was registered under the bare name.
         /// </summary>
@@ -5911,15 +7869,15 @@ using var compilation = Reject(
             Assert.Equal(2, runtime.Invoke(runOverloads[0]).AsInt);
         }
 
-        private static SurtrValue FirstLoad(SurtrCallArguments arguments) => SurtrValue.CreateInt(1);
+        private static int FirstLoad(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(1));
 
-        private static SurtrValue SecondLoad(SurtrCallArguments arguments) => SurtrValue.CreateInt(2);
+        private static int SecondLoad(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(2));
         #endregion
 
-        #region Class-level natives (Â§10)
+        #region Class-level natives (§10)
         //
         // A `native` member inside a class binds by link name exactly like a module-level one does
-        // (Â§10): `moduleName:ClassName.memberName`, derived by ModuleEmitter.LinkName from the
+        // (§10): `moduleName:ClassName.memberName`, derived by ModuleEmitter.LinkName from the
         // owning type's FullMetadataName plus the accessor's own name - no signature, since the
         // compiler always supplies an explicit link name and never falls back to deriving one.
 
@@ -5943,7 +7901,7 @@ using var compilation = Reject(
             Assert.Equal(42, Int(runtime, "run"));
         }
 
-        private static SurtrValue DoubleSecondArgument(SurtrCallArguments arguments) => SurtrValue.CreateInt(arguments.GetInt(1) * 2);
+        private static int DoubleSecondArgument(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(arguments.GetInt(1) * 2));
 
         [Fact]
         public unsafe void AStaticNativeMethodInsideAClassReachesTheHostsBody()
@@ -5964,7 +7922,7 @@ using var compilation = Reject(
             Assert.Equal(21, Int(runtime, "run"));
         }
 
-        private static SurtrValue TripleFirstArgument(SurtrCallArguments arguments) => SurtrValue.CreateInt(arguments.GetInt(0) * 3);
+        private static int TripleFirstArgument(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(arguments.GetInt(0) * 3));
 
         /// <summary>
         /// A native property written the explicit `{ get; set; }` way, compiled through the real
@@ -5997,11 +7955,11 @@ using var compilation = Reject(
         }
 
         private static int _boxValue;
-        private static SurtrValue GetBoxValue(SurtrCallArguments arguments) => SurtrValue.CreateInt(_boxValue + 1000);
-        private static SurtrValue SetBoxValue(SurtrCallArguments arguments)
+        private static int GetBoxValue(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(_boxValue + 1000));
+        private static int SetBoxValue(SurtrCallArguments arguments)
         {
             _boxValue = arguments.GetInt(1);
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
         /// <summary>
@@ -6028,7 +7986,7 @@ using var compilation = Reject(
             Assert.Equal(99, Int(runtime, "run"));
         }
 
-        private static SurtrValue GetNinetyNine(SurtrCallArguments arguments) => SurtrValue.CreateInt(99);
+        private static int GetNinetyNine(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(99));
 
         /// <summary>The read-write twin: a `native var` inside a class gets both accessors.</summary>
         [Fact]
@@ -6055,11 +8013,11 @@ using var compilation = Reject(
         }
 
         private static int _fooX;
-        private static SurtrValue GetFooX(SurtrCallArguments arguments) => SurtrValue.CreateInt(_fooX + 2000);
-        private static SurtrValue SetFooX(SurtrCallArguments arguments)
+        private static int GetFooX(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(_fooX + 2000));
+        private static int SetFooX(SurtrCallArguments arguments)
         {
             _fooX = arguments.GetInt(1);
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
         /// <summary>A `native let`/`native var` inside a class can be static too, same as an
@@ -6083,7 +8041,7 @@ using var compilation = Reject(
             Assert.Equal(55, Int(runtime, "run"));
         }
 
-        private static SurtrValue GetFiftyFive(SurtrCallArguments arguments) => SurtrValue.CreateInt(55);
+        private static int GetFiftyFive(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(55));
 
         [Fact]
         public void ANativeLetInsideAClassCannotHaveAnInitializer()
@@ -6117,7 +8075,7 @@ using var compilation = Reject(
             Assert.Equal(1, Int(runtime, "run"));
         }
 
-        private static SurtrValue AlwaysTrue(SurtrCallArguments arguments) => SurtrValue.CreateBool(true);
+        private static int AlwaysTrue(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateBool(true));
 
         [Fact]
         public unsafe void ANativeMethodOnAnEnumReachesTheHostsBody()
@@ -6138,7 +8096,7 @@ using var compilation = Reject(
             Assert.Equal(7, Int(runtime, "run"));
         }
 
-        private static SurtrValue GetSeven(SurtrCallArguments arguments) => SurtrValue.CreateInt(7);
+        private static int GetSeven(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(7));
 
         [Fact]
         public unsafe void ANativeMethodOnANestedClassReachesTheHostsBody()
@@ -6154,16 +8112,16 @@ using var compilation = Reject(
             var runtime = new SurtrRuntime();
             _owned.Add(runtime);
 
-            // A nested type's FullMetadataName chains with '.', same as its display name: Â§2.6.
+            // A nested type's FullMetadataName chains with '.', same as its display name: §2.6.
             runtime.DefineNativeBody("game.core.Test:Outer.Inner.ping", SurtrNativeEntryPoint.FromFunctionPointer(&GetThree));
             runtime.LoadModule(emitter.Modules[0]);
 
             Assert.Equal(3, Int(runtime, "run"));
         }
 
-        private static SurtrValue GetThree(SurtrCallArguments arguments) => SurtrValue.CreateInt(3);
+        private static int GetThree(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(3));
 
-        /// <summary>Â§10 for a class member, mirroring <see cref="AModuleNamingAnUnregisteredNativeFunctionFailsToLoad"/>.</summary>
+        /// <summary>§10 for a class member, mirroring <see cref="AModuleNamingAnUnregisteredNativeFunctionFailsToLoad"/>.</summary>
         [Fact]
         public void AClassNamingAnUnregisteredNativeMemberFailsToLoad()
         {
@@ -6238,7 +8196,7 @@ using var compilation = Reject(
 
         #endregion
 
-        #region Built-in member opcode substitution â€” value correctness for LoweringChoiceTests' shape assertions
+        #region Built-in member opcode substitution — value correctness for LoweringChoiceTests' shape assertions
 
         [Fact]
         public void ArrayOperationsComputeCorrectlyThroughTheirOpcodes()
@@ -6313,7 +8271,7 @@ using var compilation = Reject(
 
         #endregion
 
-        #region Nameable collection constructors (Â§5.3.1)
+        #region Nameable collection constructors (§5.3.1)
 
         [Fact]
         public void ArrayEmptyConstructorIsEmpty()
@@ -6430,7 +8388,7 @@ using var compilation = Reject(
         }
 
         /// <summary>
-        /// <c>array&lt;int&gt;</c> and <c>int[]</c> aren't just convertible â€” they're the same type,
+        /// <c>array&lt;int&gt;</c> and <c>int[]</c> aren't just convertible — they're the same type,
         /// so a value built through one name behaves exactly as one declared through the other.
         /// </summary>
         [Fact]
@@ -6480,7 +8438,7 @@ using var compilation = Reject(
 
         #endregion
 
-        #region Nameable primitive/string/range constructors (Â§5.3.2)
+        #region Nameable primitive/string/range constructors (§5.3.2)
 
         [Fact]
         public void APrimitiveConstructorConvertsBetweenPrimitives()
@@ -6664,7 +8622,7 @@ using var compilation = Reject(
 
         #endregion
 
-        #region Nameable array/dict shapes with a runtime length (Â§5.3.3)
+        #region Nameable array/dict shapes with a runtime length (§5.3.3)
 
         [Fact]
         public void ArraySizeDefaultConstructorFillsEveryElement()
@@ -6691,7 +8649,7 @@ using var compilation = Reject(
                     + "  return copy.length * 1000 + copy.get(0) + src.length;\n"
                     + "}");
 
-            // src stays length 3 after mutating copy â€” proof they don't alias the same buffer.
+            // src stays length 3 after mutating copy — proof they don't alias the same buffer.
             Assert.Equal(4000 + 1 + 3, Int(runtime, "run"));
         }
 
@@ -6777,7 +8735,7 @@ using var compilation = Reject(
 
         #endregion
 
-        #region Extension methods (Â§15) â€” Fase 1: instance methods, same module, non-generic
+        #region Extension methods (§15) — Fase 1: instance methods, same module, non-generic
         private const string Vec2 =
             "class Vec2 {\n"
                 + "  public let x: float;\n"
@@ -6956,7 +8914,7 @@ using var compilation = Reject(
         }
         #endregion
 
-        #region Extension methods (Â§15) â€” Fase 2: imports and scope visibility
+        #region Extension methods (§15) — Fase 2: imports and scope visibility
         [Fact]
         public void AnExtensionMethodBroughtByAWildcardImportIsCallable()
         {
@@ -7005,11 +8963,11 @@ using var compilation = Reject(
                 ("/game/util/M.surtr",
                     Vec2 + "extension Vec2 { fun lengthSquared(v: Vec2): float => v.x * v.x + v.y * v.y; }"));
 
-            Assert.True(compilation.HasErrors, "An extension block with no visibility written defaults to internal (Â§3.1) and should not reach another module.");
+            Assert.True(compilation.HasErrors, "An extension block with no visibility written defaults to internal (§3.1) and should not reach another module.");
         }
         #endregion
 
-        #region Extension methods (Â§15) â€” Fase 3: static methods
+        #region Extension methods (§15) — Fase 3: static methods
         [Fact]
         public void AStaticExtensionMethodIsCallableOnItsTargetType()
         {
@@ -7078,11 +9036,11 @@ using var compilation = Reject(
                         + "}\n"
                         + "extension Vec2 { static fun zero(): Vec2 => Vec2(0.0, 0.0); }"));
 
-            Assert.True(compilation.HasErrors, "A static extension with no visibility written defaults to internal (Â§3.1) and should not reach another module.");
+            Assert.True(compilation.HasErrors, "A static extension with no visibility written defaults to internal (§3.1) and should not reach another module.");
         }
         #endregion
 
-        #region Extension methods (Â§15) â€” Fase 4: extension properties
+        #region Extension methods (§15) — Fase 4: extension properties
         [Fact]
         public void AReadOnlyExtensionPropertyIsReadableOnItsTargetType()
         {
@@ -7140,7 +9098,7 @@ using var compilation = Reject(
         [Fact]
         public void AnExtensionMethodCanReferenceItsReceiverAsThisToo()
         {
-            // Â§15.1's own explicit-parameter model still requires the parameter to be written out
+            // §15.1's own explicit-parameter model still requires the parameter to be written out
             // (`self` here) - `this` is an additional way to reach the very same parameter, not a
             // replacement for writing it.
             var runtime = Run(
@@ -7217,7 +9175,7 @@ using var compilation = Reject(
         }
         #endregion
 
-        #region Extension methods (Â§15) â€” Fase 5: composite and built-in targets
+        #region Extension methods (§15) — Fase 5: composite and built-in targets
         [Fact]
         public void AnExtensionMethodIsCallableOnAnArrayTargetType()
         {
@@ -7291,11 +9249,11 @@ using var compilation = Reject(
         }
         #endregion
 
-        #region Extension methods (Â§15) â€” Fase 6: generic extensions
+        #region Extension methods (§15) — Fase 6: generic extensions
         [Fact]
         public void AnExtensionMethodOverAnArrayInfersItsElementTypeImplicitly()
         {
-            // `T` needs no separate `<T>` list at all (Â§15.4) - the bare name inside the target
+            // `T` needs no separate `<T>` list at all (§15.4) - the bare name inside the target
             // type (`T[]`) is enough to declare it.
             var runtime = Run(
                 "extension T[] { fun second(self: T[]): T => self[1]; }\n"
@@ -7317,8 +9275,8 @@ using var compilation = Reject(
         [Fact]
         public void AGenericExtensionMethodsOwnTypeParameterIsNotTheTargetsRealG0()
         {
-            // Â§15.4: the extension's own `T` is inferred fresh at each call site through ordinary
-            // generic-method substitution, never through the array built-in's own erasure â€” an
+            // §15.4: the extension's own `T` is inferred fresh at each call site through ordinary
+            // generic-method substitution, never through the array built-in's own erasure — an
             // extra parameter of type `T` (`fallback`), not just the receiver, still infers and
             // substitutes correctly.
             var runtime = Run(
@@ -7335,7 +9293,7 @@ using var compilation = Reject(
                 "class Score : IComparable<Score> {\n"
                     + "  public let value: int;\n"
                     + "  constructor(value: int) { this.value = value; }\n"
-                    + "  public override fun compareTo(other: Score): int { return value - other.value; }\n"
+                    + "  public fun compareTo(other: Score): int { return value - other.value; }\n"
                     + "}\n"
                     + "extension<T : IComparable<T>> T[] {\n"
                     + "  fun maxOf(self: T[]): T {\n"
@@ -7390,7 +9348,7 @@ using var compilation = Reject(
         /// <summary>
         /// The same contract, reached through a Surtr source class rather than a built-in
         /// composite: the receiver satisfies <c>IIterable&lt;int&gt;</c> with its own
-        /// <c>override iterate()</c>, so the extension's <c>T</c> infers from the user type's
+        /// <c>iterate()</c>, so the extension's <c>T</c> infers from the user type's
         /// imported interface slot.
         /// </summary>
         [Fact]
@@ -7400,7 +9358,7 @@ using var compilation = Reject(
                 "class Rope : IIterable<int> {\n"
                     + "  public let chars: int[];\n"
                     + "  constructor(chars: int[]) { this.chars = chars; }\n"
-                    + "  public override fun iterate(): IIterator<int> => chars.iterate();\n"
+                    + "  public fun iterate(): IIterator<int> => chars.iterate();\n"
                     + "}\n"
                     + "extension IIterable<T> { fun countAll(self: IIterable<T>): int {\n"
                     + "  var total = 0;\n"
@@ -7470,7 +9428,7 @@ using var compilation = Reject(
                 "class Score : IComparable<Score> {\n"
                     + "  public let value: int;\n"
                     + "  constructor(value: int) { this.value = value; }\n"
-                    + "  public override fun compareTo(other: Score): int { return value - other.value; }\n"
+                    + "  public fun compareTo(other: Score): int { return value - other.value; }\n"
                     + "}\n"
                     + "extension IComparable<T> { fun isLessThan(self: IComparable<T>, other: T): bool => self.compareTo(other) < 0; }\n"
                     + "fun run(): int { return Score(4).isLessThan(Score(9)) ? 1 : 0; }");
@@ -7481,7 +9439,7 @@ using var compilation = Reject(
         /// <summary>
         /// The same extension, over the same built-in interface, but this time the receiver
         /// implementing it is <c>int</c> rather than a Surtr class - the built-ins satisfy
-        /// <c>IComparable</c>/<c>IEquatable</c> too (Â§13.2), so an extension written once against
+        /// <c>IComparable</c>/<c>IEquatable</c> too (§13.2), so an extension written once against
         /// the contract reaches a primitive the same way it reaches a user type.
         /// </summary>
         [Fact]
@@ -7604,6 +9562,206 @@ using var compilation = Reject(
 
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedName);
         }
+        #endregion
+
+        #region @Range runtime checks (§P4)
+
+        [Fact]
+        public void AnInRangeAssignmentPassesWhenChecksAreOn()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 50.0;\n"
+                    + "  public fun setHealth(v: float): void { health = v; }\n"
+                    + "}\n"
+                    + "fun run(): float { let p = Player(); p.setHealth(75.0); return p.health; }");
+
+            Assert.Equal(75.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AnOutOfRangeAssignmentThrowsWithTheFieldAndBoundsNamed()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 50.0;\n"
+                    + "  public fun setHealth(v: float): void { health = v; }\n"
+                    + "}\n"
+                    + "fun run(): float { let p = Player(); p.setHealth(150.0); return p.health; }");
+
+            var thrown = Assert.Throws<SurtrThrownException>(() => Call(runtime, "run"));
+            Assert.Contains("ArgumentOutOfRangeException", thrown.Message, StringComparison.Ordinal);
+
+            var raised = runtime.Resolve<SurtrInstance>(SurtrValue.CreateReference(thrown.Reference));
+            Assert.NotNull(raised);
+            string message = runtime.Resolve<SurtrString>(raised![0])!.Text;
+            Assert.Contains("health", message, StringComparison.Ordinal);
+            Assert.Contains("100", message, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void AnIntegerFieldIsCheckedAgainstItsFloatBounds()
+        {
+            var runtime = RunDebug(
+                "class Game {\n"
+                    + "  @Range(1, 8)\n"
+                    + "  public var bounces: int = 3;\n"
+                    + "  public fun setBounces(v: int): void { bounces = v; }\n"
+                    + "}\n"
+                    + "fun run(): int { let g = Game(); g.setBounces(9); return g.bounces; }");
+
+            Assert.Throws<SurtrThrownException>(() => Call(runtime, "run"));
+        }
+
+        [Fact]
+        public void APropertySetIsCheckedLikeAFieldWrite()
+        {
+            var runtime = RunDebug(
+                "class Gauge {\n"
+                    + "  private var _level: float = 0.0;\n"
+                    + "  @Range(0.0, 10.0)\n"
+                    + "  public level: float\n"
+                    + "  {\n"
+                    + "    get { return _level; }\n"
+                    + "    set { _level = value; }\n"
+                    + "  }\n"
+                    + "}\n"
+                    + "fun run(): float { let g = Gauge(); g.level = 42.0; return g.level; }");
+
+            Assert.Throws<SurtrThrownException>(() => Call(runtime, "run"));
+        }
+
+        [Fact]
+        public void AReleaseBuildWithoutDebugCarriesNoCheck()
+        {
+            var runtime = Run(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 50.0;\n"
+                    + "  public fun setHealth(v: float): void { health = v; }\n"
+                    + "}\n"
+                    + "fun run(): float { let p = Player(); p.setHealth(150.0); return p.health; }");
+
+            Assert.Equal(150.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void ASingleLowerBoundRejectsOnlyValuesBelowIt()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(100.0)\n"
+                    + "  public var health: float = 150.0;\n"
+                    + "  public fun setHealth(v: float): void { health = v; }\n"
+                    + "}\n"
+                    + "fun below(): float { let p = Player(); p.setHealth(25.0); return p.health; }\n"
+                    + "fun above(): float { let p = Player(); p.setHealth(200.0); return p.health; }");
+
+            var thrown = Assert.Throws<SurtrThrownException>(() => Call(runtime, "below"));
+            Assert.Contains("ArgumentOutOfRangeException", thrown.Message, StringComparison.Ordinal);
+
+            Assert.Equal(200.0, Call(runtime, "above").AsFloat);
+        }
+
+        [Fact]
+        public void AStaticFieldWriteIsCheckedAgainstItsRange()
+        {
+            var runtime = RunDebug(
+                "class Config {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public static var health: float = 50.0;\n"
+                    + "}\n"
+                    + "fun run(): float { Config.health = 150.0; return Config.health; }");
+
+            Assert.Throws<SurtrThrownException>(() => Call(runtime, "run"));
+        }
+
+        [Fact]
+        public void AnOutOfRangeFieldInitializerThrowsAtConstruction()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 150.0;\n"
+                    + "}\n"
+                    + "fun run(): float { let p = Player(); return p.health; }");
+
+            var thrown = Assert.Throws<SurtrThrownException>(() => Call(runtime, "run"));
+            Assert.Contains("ArgumentOutOfRangeException", thrown.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void AnInRangeFieldInitializerConstructsNormally()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 25.0;\n"
+                    + "}\n"
+                    + "fun run(): float { let p = Player(); return p.health; }");
+
+            Assert.Equal(25.0, Call(runtime, "run").AsFloat);
+        }
+
+        [Fact]
+        public void AnOutOfRangeStaticFieldInitializerThrowsAtLoad()
+        {
+            var thrown = Assert.Throws<SurtrThrownException>(() =>
+            {
+                _ = RunDebug(
+                    "class Config {\n"
+                        + "  @Range(0.0, 100.0)\n"
+                        + "  public static var health: float = 150.0;\n"
+                        + "}\n"
+                        + "fun run(): float { return Config.health; }");
+            });
+
+            Assert.Contains("ArgumentOutOfRangeException", thrown.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ANestedAssignmentIntoARangedFieldIsChecked()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 50.0;\n"
+                    + "}\n"
+                    + "fun run(): float { var result = 0.0; let p = Player(); result = (p.health = 150.0) + 1.0; return result; }");
+
+            Assert.Throws<SurtrThrownException>(() => Call(runtime, "run"));
+        }
+
+        [Fact]
+        public void ACompoundAssignmentIntoARangedFieldIsChecked()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 50.0;\n"
+                    + "}\n"
+                    + "fun run(): float { let p = Player(); p.health += 200.0; return p.health; }");
+
+            Assert.Throws<SurtrThrownException>(() => Call(runtime, "run"));
+        }
+
+        [Fact]
+        public void ARangedAssignmentValueIsEvaluatedExactlyOnce()
+        {
+            var runtime = RunDebug(
+                "class Player {\n"
+                    + "  @Range(0.0, 100.0)\n"
+                    + "  public var health: float = 50.0;\n"
+                    + "}\n"
+                    + "var calls: int = 0;\n"
+                    + "fun next(): float { calls = calls + 1; return 75.0; }\n"
+                    + "fun run(): int { let p = Player(); p.health = next(); return calls; }");
+
+            Assert.Equal(1, Int(runtime, "run"));
+        }
+
         #endregion
     }
 }

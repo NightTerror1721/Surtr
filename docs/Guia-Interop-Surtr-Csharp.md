@@ -142,7 +142,8 @@ cualifica el nombre, que es como el código Surtr los referencia.
 | `char` | `C` | — |
 | `string` | `S` | se interna como `SurtrString` |
 | enum registrado | descriptor del enum | **enum Surtr completo** (objeto por valor, cacheado) |
-| clase/struct `[SurtrNativeType]` | `N...` | se envuelve/desenvuelve (structs: boxing) |
+| clase/struct `[SurtrNativeType]` | `N...` | se envuelve/desenvuelve; un struct `Inline = true` viaja como bloque de slots (§5.1) |
+| clase `[SurtrNativeType]` que hereda `SurtrNativeObject` | `N...` | **sin envoltura**: el objeto ya es una entidad Surtr y se adopta tal cual (`RegisterHost`) |
 | delegate / `Action`/`Func` | `L(...)R` | **closure Surtr** (ambas direcciones) |
 | `object` opaco | `Nsurtr:native` | `SurtrNativeProxy` |
 | `T[]` | `A...` | `SurtrArray` |
@@ -151,15 +152,112 @@ cualifica el nombre, que es como el código Surtr los referencia.
 - **Enums**: un enum C# es un enum Surtr real (clase sealed con cases). El bridge cachea un
   `SurtrNativeObject` por valor (rooteado) y lo cablea en los cases, de modo que `MyEnum.A` resuelve
   al mismo objeto y un `switch` exhaustivo compila a jump table. El marshaling es O(1) sin boxing.
-- **Structs**: se empaquetan (boxing) y aparecen como clases normales.
+- **Clases que heredan `SurtrNativeObject`**: no se envuelven ni se desenvuelven — el objeto ya
+  **es** una entidad Surtr. Cada cruce (constructor, parámetro, resultado, campo, posición
+  `object`) lo adopta vía `SurtrRuntime.RegisterHost`, con caché de identidad rooteada: la misma
+  instancia CLR responde siempre la misma referencia. En sentido inverso, el receptor/parámetro
+  resuelve directo a la instancia (`HostValueOf`), nunca al `Target` de un proxy — que sería null
+  o el objeto equivocado en una fachada que guarda su estado en campos propios.
+- **Structs**: por defecto se empaquetan (boxing) y aparecen como clases normales. Con
+  `[SurtrNativeType(Inline = true)]` se exponen como **tipo de valor**: un bloque de slots
+  contiguos, sin asignacion. Ver §5.1.
 - **Campos CLR**: son **campos nativos** reales (`SurtrNativeFieldInfo`, leídos/escritos por el VM
   vía entry points), no propiedades.
 - **`out`**: se pliega al retorno — `void F(out int x)` → `int`; `bool TryGet(out int v)` → tupla
   `(bool, int)`. `ref`/`in` no tienen equivalente y **no se exponen** (warning).
+  La tupla resultante es un **tipo de valor**, así que viaja como un bloque plano de slots: el
+  cuerpo nativo escribe un slot por elemento y devuelve esa cuenta, que es lo que dice
+  `ResultSlotCount`. No es una referencia a un `SurtrTuple` empaquetado — quien llama copia
+  `ResultSlotCount` slots, y una sola referencia en el slot 0 dejaría el resto del bloque con lo
+  que hubiera en la pila. `SurtrRuntime.Invoke` reempaqueta el bloque en un `SurtrTuple` al cruzar
+  hacia el host, así que un llamador C# sigue recibiendo un valor único.
 - **Genéricos**: solo formas cerradas. `typeof(Box<int>)` en reflexión, o `TypeArguments` en el
   atributo para el generador. Un genérico abierto sin forma cerrada se omite (warning).
 - **Delegates**: un parámetro/retorno delegado se mapea a un closure (`L(...)R`). CLR→Surtr envuelve
   el delegado en un `SurtrClosure`; Surtr→CLR crea un delegado que invoca el closure.
+
+### 5.1 Structs inline (`Inline = true`)
+
+Un struct marcado `[SurtrNativeType(Inline = true)]` deja de ser un objeto del heap detras de una
+referencia y pasa a ser un **tipo de valor de Surtr**: un tramo de slots contiguos.
+
+```csharp
+[SurtrNativeType(Module = "unity", Name = "Vector3", Inline = true)]
+public struct Vector3
+{
+    public float X;
+    public float Y;
+    public float Z;
+
+    public static Vector3 Of(float x, float y, float z) => new(x, y, z);
+
+    public float SqrMagnitude() => (X * X) + (Y * Y) + (Z * Z);
+
+    public static Vector3 operator +(Vector3 a, Vector3 b) => new(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
+}
+```
+
+**El almacenamiento pasa a ser de Surtr.** Un `Vector3` son tres slots: leer `v.x` es una lectura de
+slot que no entra en codigo del host, pasarlo copia tres slots, y `a + b` es una llamada de seis
+slots de entrada y tres de salida que no asigna nada en el heap de Surtr. El struct CLR se
+reconstruye a partir de los slots **solo** cuando un miembro nativo necesita uno. Sin `Inline`, el
+mismo struct se envuelve en un `SurtrNativeObject` y cada acceso a un campo cruza la frontera.
+
+**Es opt-in a proposito.** Un valor inline no tiene identidad — dos copias del mismo `Vector3` no se
+pueden distinguir — asi que `===` deja de significar nada, sus campos pasan a ser de solo lectura y
+nunca puede ser nulo. Esas son las semanticas que un tipo de valor debe tener, pero no son las que
+tenia un struct empaquetado: cambiarlas en silencio para todos los structs cambiaria lo que
+significa el codigo host que ya existe.
+
+**Que es elegible.** Cada campo de instancia expuesto tiene que ser un primitivo de Surtr (entero,
+flotante, booleano o caracter) u otro struct expuesto tambien con `Inline = true`. Un campo de
+cualquier otro tipo — un `string`, un array, una clase — es una referencia a algo que el struct CLR
+posee, y reconstruir el struct desde slots obligaria a decidir quien es el dueño del referente. El
+scanner **rechaza el tipo** en vez de exponer la mitad. Un struct anidado pliega sus propios slots en
+el tramo, asi que un `Bounds` de dos `Vector3` son seis slots, no dos referencias; hay que
+registrarlo despues del que contiene, el mismo orden que ya necesita una clase base.
+
+**Tres cosas no se pueden hacer, y las tres fallan con un error claro en vez de compilar mal:**
+
+| Que | Por que |
+|---|---|
+| Ocultar un campo con `[SurtrNativeIgnore]` | Dejaria un hueco en mitad del bloque y el struct CLR ya no se podria reconstruir. Un tipo inline son todos sus campos o ninguno. |
+| Un struct sin campos de instancia | Un tipo de valor inline *es* sus campos; uno sin ninguno no es nada. |
+| `Inline = true` sobre una clase o un enum | Solo un struct tiene representacion inline que pedir. |
+| `[SurtrNativeConstructor]` fuera de un struct inline, sobre un método de instancia, o con `out`/`ref` | El rol constructor de un tipo inline es exclusivamente una fábrica estática que devuelve el propio struct; cualquier otra colocación se rechaza al escanear. |
+
+**Constructores: la convención de fábrica de instancias.** Un constructor de Surtr se alcanza
+asignando primero y ejecutando el cuerpo contra la instancia nueva como receptor; un valor inline
+no tiene nada que asignar ni receptor que rellenar — *es* su resultado. Por eso:
+
+- **Struct inline**: los constructores de instancia no se exponen. El rol lo juega un **método
+  estático marcado `[SurtrNativeConstructor]`** que devuelva el propio struct — exclusivo de tipos
+  `Inline = true`, sin parámetros `out`/`ref`. Surtr source lo alcanza con sintaxis de
+  construcción (`let v = Vector3.One();`) y recibe el bloque plano, exactamente como cualquier
+  valor inline. Sin el atributo, el método estático sigue expuesto como método ordinario.
+- **Clase nativa**: los constructores públicos de instancia **sí se exponen**, cruzando el wire
+  como una *fábrica de instancias*: sin receptor, parámetros desde el slot 0, y el nuevo objeto —
+  envuelto y registrado por el runtime — escrito sobre ese mismo slot. Es la misma forma que
+  cualquier método estático nativo, reconocible en metadatos porque su retorno nombra a la propia
+  clase en lugar de `V`. Desde fuente, `let g = Gauge(5);` construye el objeto CLR real; no hay
+  ningún `ObjNew` de por medio.
+
+**Desde fuente Surtr.** Un tipo registrado que el proyecto pasa al compilador vía
+`SurtrProject.AddHostType` queda implícitamente en scope en todos los ficheros - la capa más
+externa, sombreada por cualquier declaración más cercana - así que `let g = Gauge(5);` o
+`let v = Vector3.One();` compilan contra los miembros reales del tipo: la fábrica corre con su
+lógica, los campos se leen como slots del bloque, y las llamadas a métodos son llamadas nativas
+normales.
+
+**Coste, y por que las dos rutas no cuestan lo mismo.** Leer un campo desde Surtr no cruza la
+frontera en ningun caso — es una lectura de slot. La diferencia esta en llamar a un miembro nativo:
+
+- **Generador** (recomendado): reconstruye el bloque con un *object initializer* tipado —
+  `new Vector3 { X = (float)args.GetFloat(0), Y = ..., Z = ... }` — y escribe el resultado con
+  `WriteResult` campo a campo. Sin boxing y sin reflexion. Un struct anidado se expande en el mismo
+  inicializador, en su propio offset, asi que un `Bounds` se lee de un unico tramo de seis slots.
+- **Fallback por reflexion**: asigna una caja por struct y por llamada, porque es la unica forma
+  sobre la que `FieldInfo.SetValue` puede escribir. Es el precio del fallback, no del modelo.
 
 ## 6. Operadores, indexadores y comparación
 

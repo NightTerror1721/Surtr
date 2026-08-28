@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using System;
@@ -110,7 +110,7 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Materialises an integer literal without touching the constant pool.</summary>
         /// <remarks>
         /// <c>PushI8</c>/<c>PushI16</c>/<c>PushI32</c> carry the value inline, so a small integer
-        /// costs no pool slot at all - which matters because the cheap <c>Ldc0</c>…<c>Ldc9</c>
+        /// costs no pool slot at all - which matters because the cheap <c>Ldc0</c>â€¦<c>Ldc9</c>
         /// encodings are a scarce resource better spent on values that cannot be pushed inline.
         /// </remarks>
         public SurtrCodeEmitter LoadInt(int value)
@@ -178,6 +178,21 @@ namespace Surtr.Bytecode.Emit
         /// <summary>Writes a static field or module-level variable, naming it directly.</summary>
         public SurtrCodeEmitter StoreStaticField(SurtrFieldInfo field) => StoreStaticField(_module.Field(field));
 
+        /// <summary>
+        /// Reads an instance field whose declared type is a multi-field value class, pushing the
+        /// field's whole inline block.
+        /// </summary>
+        public SurtrCodeEmitter LoadValueField(SurtrFieldInfo field, int slots) => LoadValueField(_module.Field(field), slots);
+
+        /// <summary>Writes an instance field whose declared type is a multi-field value class.</summary>
+        public SurtrCodeEmitter StoreValueField(SurtrFieldInfo field, int slots) => StoreValueField(_module.Field(field), slots);
+
+        /// <summary>Reads a static or module-level field holding an inline value.</summary>
+        public SurtrCodeEmitter LoadValueStatic(SurtrFieldInfo field, int slots) => LoadValueStatic(_module.Field(field), slots);
+
+        /// <summary>Writes a static or module-level field holding an inline value.</summary>
+        public SurtrCodeEmitter StoreValueStatic(SurtrFieldInfo field, int slots) => StoreValueStatic(_module.Field(field), slots);
+
         #endregion
 
         #region Types, allocation and casts
@@ -216,6 +231,18 @@ namespace Surtr.Bytecode.Emit
 
         /// <summary>Pushes the <c>Type</c> value for the named type.</summary>
         public SurtrCodeEmitter LoadTypeOf(SurtrClassReference type) => LoadTypeOf(_module.Type(type));
+
+        /// <summary>Boxes the top value as an instance of the named class, in the narrowest encoding that reaches it.</summary>
+        /// <remarks>
+        /// The tier-two <see cref="BoxAs(SurtrTypeToken)"/> stays literal on purpose; this is what
+        /// a caller that names the class rather than the slot should reach for, so a type table
+        /// past 65536 entries widens instead of throwing.
+        /// </remarks>
+        public SurtrCodeEmitter BoxAs(SurtrClassReference type)
+        {
+            SurtrTypeToken token = _module.Type(type);
+            return TypeIndex(token) <= ushort.MaxValue ? BoxAs(token) : BoxAsX(token);
+        }
 
         /// <summary>Pushes the <c>Module</c> value for another module, in the narrowest encoding that reaches it.</summary>
         public SurtrCodeEmitter LoadModuleOf(SurtrModuleToken module)
@@ -290,10 +317,6 @@ namespace Surtr.Bytecode.Emit
         public SurtrCodeEmitter Remainder(SurtrValueTypeCode operandType)
             => operandType == SurtrValueTypeCode.Float ? FMod() : RequireIntegral(operandType, "Mod").Mod();
 
-        /// <summary>Raises the deeper operand to the power of the top one.</summary>
-        public SurtrCodeEmitter Power(SurtrValueTypeCode operandType)
-            => operandType == SurtrValueTypeCode.Float ? FPow() : RequireIntegral(operandType, "Pow").Pow();
-
         /// <summary>Negates the top operand.</summary>
         public SurtrCodeEmitter Negate(SurtrValueTypeCode operandType)
             => operandType == SurtrValueTypeCode.Float ? FNeg() : RequireIntegral(operandType, "Neg").Neg();
@@ -328,8 +351,7 @@ namespace Surtr.Bytecode.Emit
             SurtrLabel target,
             SurtrJumpWidth width = SurtrJumpWidth.Auto)
         {
-            var (shortOp, wideOp) = ComparisonBranchOpCodes(comparison, operandType);
-            return Branch(shortOp, wideOp, target, 2, width, false);
+            return Branch(ComparisonBranchOpCode(comparison, operandType), target, 2, width, false);
         }
 
         private static OpCode ComparisonOpCode(SurtrComparison comparison, SurtrValueTypeCode operandType)
@@ -359,7 +381,7 @@ namespace Surtr.Bytecode.Emit
             }
 
             // A still-abstract type parameter: `==`/`!=` are value equality everywhere in Surtr
-            // (Language-Syntax.md §5.7), and REQ/RNE below would answer by entity identity instead —
+            // (Language-Syntax.md Â§5.7), and REQ/RNE below would answer by entity identity instead â€”
             // wrong the moment two independently boxed primitives hold the same value. DynEQ/DynNE
             // read the runtime's own SurtrValueComparer, which already treats a boxed 5 and an
             // unboxed 5 as one value for exactly this reason.
@@ -398,18 +420,18 @@ namespace Surtr.Bytecode.Emit
             };
         }
 
-        private static (OpCode Short, OpCode Wide) ComparisonBranchOpCodes(SurtrComparison comparison, SurtrValueTypeCode operandType)
+        private static OpCode ComparisonBranchOpCode(SurtrComparison comparison, SurtrValueTypeCode operandType)
         {
             if (operandType == SurtrValueTypeCode.Float)
             {
                 return comparison switch
                 {
-                    SurtrComparison.Equal => (OpCode.JPFEQ, OpCode.JPFEQX),
-                    SurtrComparison.NotEqual => (OpCode.JPFNE, OpCode.JPFNEX),
-                    SurtrComparison.Greater => (OpCode.JPFGT, OpCode.JPFGTX),
-                    SurtrComparison.GreaterOrEqual => (OpCode.JPFGE, OpCode.JPFGEX),
-                    SurtrComparison.Less => (OpCode.JPFLT, OpCode.JPFLTX),
-                    SurtrComparison.LessOrEqual => (OpCode.JPFLE, OpCode.JPFLEX),
+                    SurtrComparison.Equal => OpCode.JPFEQ,
+                    SurtrComparison.NotEqual => OpCode.JPFNE,
+                    SurtrComparison.Greater => OpCode.JPFGT,
+                    SurtrComparison.GreaterOrEqual => OpCode.JPFGE,
+                    SurtrComparison.Less => OpCode.JPFLT,
+                    SurtrComparison.LessOrEqual => OpCode.JPFLE,
                     _ => throw UnknownComparison(comparison),
                 };
             }
@@ -418,8 +440,8 @@ namespace Surtr.Bytecode.Emit
             {
                 return comparison switch
                 {
-                    SurtrComparison.Equal => (OpCode.JPStrEQ, OpCode.JPStrEQX),
-                    SurtrComparison.NotEqual => (OpCode.JPStrNE, OpCode.JPStrNEX),
+                    SurtrComparison.Equal => OpCode.JPStrEQ,
+                    SurtrComparison.NotEqual => OpCode.JPStrNE,
                     _ => throw NoOrdering(comparison, operandType),
                 };
             }
@@ -428,8 +450,8 @@ namespace Surtr.Bytecode.Emit
             {
                 return comparison switch
                 {
-                    SurtrComparison.Equal => (OpCode.JPREQ, OpCode.JPREQX),
-                    SurtrComparison.NotEqual => (OpCode.JPRNE, OpCode.JPRNEX),
+                    SurtrComparison.Equal => OpCode.JPREQ,
+                    SurtrComparison.NotEqual => OpCode.JPRNE,
                     _ => throw NoOrdering(comparison, operandType),
                 };
             }
@@ -439,12 +461,12 @@ namespace Surtr.Bytecode.Emit
 
             return comparison switch
             {
-                SurtrComparison.Equal => (OpCode.JPEQ, OpCode.JPEQX),
-                SurtrComparison.NotEqual => (OpCode.JPNE, OpCode.JPNEX),
-                SurtrComparison.Greater => (OpCode.JPGT, OpCode.JPGTX),
-                SurtrComparison.GreaterOrEqual => (OpCode.JPGE, OpCode.JPGEX),
-                SurtrComparison.Less => (OpCode.JPLT, OpCode.JPLTX),
-                SurtrComparison.LessOrEqual => (OpCode.JPLE, OpCode.JPLEX),
+                SurtrComparison.Equal => OpCode.JPEQ,
+                SurtrComparison.NotEqual => OpCode.JPNE,
+                SurtrComparison.Greater => OpCode.JPGT,
+                SurtrComparison.GreaterOrEqual => OpCode.JPGE,
+                SurtrComparison.Less => OpCode.JPLT,
+                SurtrComparison.LessOrEqual => OpCode.JPLE,
                 _ => throw UnknownComparison(comparison),
             };
         }
@@ -523,23 +545,23 @@ namespace Surtr.Bytecode.Emit
 
         /// <summary>Branches unconditionally.</summary>
         public SurtrCodeEmitter Jump(SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
-            => Branch(OpCode.JP, OpCode.JPX, target, 0, width, true);
+            => Branch(OpCode.JP, target, 0, width, true);
 
         /// <summary>Pops a condition and branches when it is false.</summary>
         public SurtrCodeEmitter JumpIfFalse(SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
-            => Branch(OpCode.JPZ, OpCode.JPZX, target, 1, width, false);
+            => Branch(OpCode.JPZ, target, 1, width, false);
 
         /// <summary>Pops a condition and branches when it is true.</summary>
         public SurtrCodeEmitter JumpIfTrue(SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
-            => Branch(OpCode.JPNZ, OpCode.JPNZX, target, 1, width, false);
+            => Branch(OpCode.JPNZ, target, 1, width, false);
 
         /// <summary>Pops a value and branches when it is the null reference.</summary>
         public SurtrCodeEmitter JumpIfNull(SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
-            => Branch(OpCode.JPN, OpCode.JPNX, target, 1, width, false);
+            => Branch(OpCode.JPN, target, 1, width, false);
 
         /// <summary>Pops a value and branches when it is a non-null reference.</summary>
         public SurtrCodeEmitter JumpIfNotNull(SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
-            => Branch(OpCode.JPNN, OpCode.JPNNX, target, 1, width, false);
+            => Branch(OpCode.JPNN, target, 1, width, false);
 
         /// <summary>Pops a value and branches when it is an instance of <paramref name="type"/>.</summary>
         public SurtrCodeEmitter JumpIfInstanceOf(SurtrTypeToken type, SurtrLabel target, SurtrJumpWidth width = SurtrJumpWidth.Auto)
@@ -616,12 +638,14 @@ namespace Surtr.Bytecode.Emit
             if (callee is null)
                 throw new ArgumentNullException(nameof(callee));
 
-            int arguments = callee.ArgumentSlotCount;
-            int results = discardResult || callee.ReturnTypeReference.TypeCode.IsVoid ? 0 : 1;
+            // The encoded retCount stays the 0/1 gate; the tracker credits the callee's whole
+            // result width, because an inline block occupies every one of its slots.
+            int slots = discardResult ? 0 : callee.ResultSlotCount;
+            int results = Math.Min(slots, 1);
 
             // A method builder always carries a body, and an interface member never can, so this is
             // the one call form that needs no contract test.
-            return EmitCall(callee.Token, callee.IsModuleLevel, callee.IsStatic, false, callee.Dispatch, arguments, results);
+            return EmitCall(callee.Token, callee.IsModuleLevel, callee.IsStatic, false, callee.Dispatch, callee.ArgumentSlotCount, results, slots);
         }
 
         /// <summary>
@@ -642,19 +666,25 @@ namespace Surtr.Bytecode.Emit
             bool moduleLevel = callee.DeclaringType is null;
             bool contract = _module.IsInterfaceMethod(callee);
 
-            int arguments = callee.ParameterCount + (moduleLevel || callee.IsStatic ? 0 : 1);
-            int results = discardResult || callee.ReturnType.Reference.TypeCode.IsVoid ? 0 : 1;
+            int slots = discardResult ? 0 : callee.ResultSlotCount;
+            int results = Math.Min(slots, 1);
 
-            return EmitCall(_module.Method(callee), moduleLevel, callee.IsStatic, contract, callee.Dispatch, arguments, results);
+            return EmitCall(_module.Method(callee), moduleLevel, callee.IsStatic, contract, callee.Dispatch, callee.ArgumentSlotCount, results, slots);
         }
 
         /// <summary>Calls a method through the receiver's virtual method table, whatever the callee declares.</summary>
         public SurtrCodeEmitter CallVirtual(SurtrMethodInfo callee, bool discardResult = false)
-            => InvokeVirtual(_module.Method(RequireInstance(callee)), callee.ParameterCount + 1, ResultsFor(callee, discardResult));
+        {
+            int slots = discardResult ? 0 : callee.ResultSlotCount;
+            return InvokeVirtual(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount, Math.Min(slots, 1), slots);
+        }
 
         /// <summary>Calls a method without virtual dispatch: constructors, and explicit base calls.</summary>
         public SurtrCodeEmitter CallSpecial(SurtrMethodInfo callee, bool discardResult = false)
-            => InvokeSpecial(_module.Method(RequireInstance(callee)), callee.ParameterCount + 1, ResultsFor(callee, discardResult));
+        {
+            int slots = discardResult ? 0 : callee.ResultSlotCount;
+            return InvokeSpecial(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount, Math.Min(slots, 1), slots);
+        }
 
         /// <summary>
         /// Calls a method declared on this builder without virtual dispatch.
@@ -673,13 +703,16 @@ namespace Surtr.Bytecode.Emit
             if (callee.IsStatic || callee.IsModuleLevel)
                 throw new ArgumentException($"'{callee.Name}' is static or module-level and has no receiver to dispatch on.", nameof(callee));
 
-            int results = discardResult || callee.ReturnTypeReference.TypeCode.IsVoid ? 0 : 1;
-            return InvokeSpecial(callee.Token, callee.ArgumentSlotCount, results);
+            int slots = discardResult ? 0 : callee.ResultSlotCount;
+            return InvokeSpecial(callee.Token, callee.ArgumentSlotCount, Math.Min(slots, 1), slots);
         }
 
         /// <summary>Calls a method through an interface contract.</summary>
         public SurtrCodeEmitter CallInterface(SurtrMethodInfo callee, bool discardResult = false)
-            => InvokeInterface(_module.Method(RequireInstance(callee)), callee.ParameterCount + 1, ResultsFor(callee, discardResult));
+        {
+            int slots = discardResult ? 0 : callee.ResultSlotCount;
+            return InvokeInterface(_module.Method(RequireInstance(callee)), callee.ArgumentSlotCount, Math.Min(slots, 1), slots);
+        }
 
         /// <summary>Calls a module-level function in another, already-built module.</summary>
         public SurtrCodeEmitter CallExternal(Runtime.Classes.SurtrModule target, SurtrMethodInfo callee, bool discardResult = false)
@@ -688,12 +721,13 @@ namespace Surtr.Bytecode.Emit
                 throw new ArgumentNullException(nameof(callee));
 
             var token = _module.ExternalMethod(target, callee);
-            int arguments = callee.ParameterCount + (callee.DeclaringType is null || callee.IsStatic ? 0 : 1);
-            int results = ResultsFor(callee, discardResult);
+            int arguments = callee.ArgumentSlotCount;
+            int slots = discardResult ? 0 : callee.ResultSlotCount;
+            int results = Math.Min(slots, 1);
 
             return token.ModuleIndex <= ushort.MaxValue && token.FunctionIndex <= ushort.MaxValue
-                ? CallModule(token, arguments, results)
-                : CallModuleX(token, arguments, results);
+                ? CallModule(token, arguments, results, slots)
+                : CallModuleX(token, arguments, results, slots);
         }
 
         /// <summary>Calls the closure sitting below <paramref name="argumentCount"/> arguments on the stack.</summary>
@@ -723,30 +757,31 @@ namespace Surtr.Bytecode.Emit
             bool contract,
             SurtrMethodDispatch dispatch,
             int arguments,
-            int results)
+            int results,
+            int resultSlots = -1)
         {
             bool wide = MethodIndex(token) > ushort.MaxValue;
 
             if (moduleLevel)
             {
                 return wide
-                    ? CallLocalModuleX(token, arguments, results)
-                    : CallLocalModule(token, arguments, results);
+                    ? CallLocalModuleX(token, arguments, results, resultSlots)
+                    : CallLocalModule(token, arguments, results, resultSlots);
             }
 
             if (contract)
-                return InvokeInterface(token, arguments, results);
+                return InvokeInterface(token, arguments, results, resultSlots);
 
             if (isStatic)
             {
                 return wide
-                    ? InvokeStaticX(token, arguments, results)
-                    : InvokeStatic(token, arguments, results);
+                    ? InvokeStaticX(token, arguments, results, resultSlots)
+                    : InvokeStatic(token, arguments, results, resultSlots);
             }
 
             return dispatch == SurtrMethodDispatch.Direct
-                ? InvokeSpecial(token, arguments, results)
-                : InvokeVirtual(token, arguments, results);
+                ? InvokeSpecial(token, arguments, results, resultSlots)
+                : InvokeVirtual(token, arguments, results, resultSlots);
         }
 
         private static SurtrMethodInfo RequireInstance(SurtrMethodInfo callee)
@@ -759,9 +794,6 @@ namespace Surtr.Bytecode.Emit
 
             return callee;
         }
-
-        private static int ResultsFor(SurtrMethodInfo callee, bool discardResult)
-            => discardResult || callee.ReturnType.Reference.TypeCode.IsVoid ? 0 : 1;
 
         #endregion
     }

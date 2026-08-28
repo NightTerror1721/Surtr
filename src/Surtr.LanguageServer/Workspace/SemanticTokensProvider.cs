@@ -410,6 +410,18 @@ namespace Surtr.LanguageServer.Workspace
                     if (property.Receiver is not null)
                         yield return property.Receiver;
                     break;
+
+                case BoundYieldExpression yieldExpression:
+                    yield return yieldExpression.Value;
+                    break;
+
+                case BoundThrowExpression throwExpression:
+                    yield return throwExpression.Value;
+                    break;
+
+                case BoundSequenceExpression sequence:
+                    yield return sequence.Value;
+                    break;
             }
         }
 
@@ -575,11 +587,24 @@ namespace Surtr.LanguageServer.Workspace
             }
         }
 
-        /// <summary>Tags a type parameter's own declaration name and each of its constraint types.</summary>
+        /// <summary>
+        /// Tags a type parameter's own declaration name, its variance annotation when it wrote one,
+        /// and each of its constraint types.
+        /// </summary>
+        /// <remarks>
+        /// The parameter's span starts at the annotation, so when one was written the first token
+        /// inside the span <em>is</em> the variance word. Only <c>out</c> needs this pass: the
+        /// parser reads it as an ordinary identifier, and without the tag it would fall through to
+        /// the grammar's variable rule. <c>in</c> is reserved outright (for-in owns the word), so
+        /// the grammar already colours it everywhere.
+        /// </remarks>
         private static void TagTypeParameters(IReadOnlyList<TypeParameterSyntax> parameters, List<Token> tokens, List<TaggedSpan> spans)
         {
             foreach (var parameter in parameters)
             {
+                if (parameter.Variance == VarianceModifier.Covariant && FindKeywordToken(parameter.Span, tokens, "out") is Token outToken)
+                    spans.Add(new TaggedSpan(outToken.Span, ModifierTokenType));
+
                 if (FindNameToken(parameter.Span, tokens, parameter.Name) is Token nameToken)
                     spans.Add(new TaggedSpan(nameToken.Span, TypeParameterTokenType));
 

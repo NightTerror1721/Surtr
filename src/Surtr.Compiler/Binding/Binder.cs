@@ -129,6 +129,12 @@ namespace Surtr.Compiler.Binding
         private ConstFolder? _constFolder;
         private string? _lastFoldFailure;
 
+        /// <summary>The <c>@Pure</c> functions this compilation verified safe to fold (§P3 fase 3).</summary>
+        private readonly HashSet<MethodSymbol> _foldablePure = new HashSet<MethodSymbol>();
+
+        /// <summary>Folds <c>@Pure</c> calls with constant arguments inside bound bodies.</summary>
+        private ConstFolder? _pureFolder;
+
         private Binder(SurtrCompilation compilation)
         {
             _compilation = compilation;
@@ -243,6 +249,12 @@ namespace Surtr.Compiler.Binding
             var library = _compilation.Importer.ImportModule(SurtrBuiltIns.Module);
             foreach (var type in library.Types)
                 _globalScope.AddCandidate(type.Name, type);
+
+            // Host-declared types (SurtrProject.AddHostType) reach source through no module, so
+            // they join the same outermost layer: registered explicitly by the project, visible
+            // everywhere, shadowable by any nearer declaration.
+            foreach (var hostType in _compilation.Importer.ImportedHostTypes())
+                _globalScope.AddCandidate(hostType.Name, hostType);
         }
         #endregion
 
@@ -418,6 +430,16 @@ namespace Surtr.Compiler.Binding
 
             var symbol = _factory.DeclareType(syntax.Name, kind, module, containingType);
 
+            // Read off the syntax rather than off a bound AttributeUse, and this is the one mark in
+            // §11 that has to be: @Flags changes the enum's representation to a single int (§P14),
+            // which the member phase, SignatureSet and every descriptor need to know - and marks do
+            // not bind until BindBodies, long after all three. A parameterless attribute's presence
+            // is a question the syntax already answers, so this asks it there, exactly as a
+            // declaration-level `const if` is answered before anything is bound. The bound use is
+            // still recorded later, for the image and for reflection.
+            if (kind == TypeSymbolKind.Enum && HasWrittenAttribute(syntax, BuiltInAttributes.Flags))
+                symbol.IsFlagsEnum = true;
+
             // §3.1's two defaults: a top-level declaration is internal to its module, and one nested
             // inside a type is a member of it and private like any other — except inside an
             // interface, where §2.3 makes every member implicitly public and a nested type is not
@@ -463,6 +485,12 @@ namespace Surtr.Compiler.Binding
                         parameters[i] = _factory.DeclareTypeParameter(syntax.TypeParameters[i].Name, symbol, i);
 
                     symbol.SetTypeParameters(parameters);
+
+                    // Variance is a property of the declaration, read back by every later subtype
+                    // question and written into the image; the positions it promises are verified
+                    // once all members are bound, in MemberPhase.
+                    for (int i = 0; i < parameters.Length; i++)
+                        parameters[i].Variance = TranslateVariance(syntax.TypeParameters[i].Variance);
                 }
             }
 
@@ -549,7 +577,22 @@ namespace Surtr.Compiler.Binding
             {
                 var parameters = new TypeParameterSymbol[syntax.TypeParameters.Count];
                 for (int i = 0; i < parameters.Length; i++)
+                {
+                    // Same rule a method's parameters answer: variance relates constructions of a
+                    // declaration, and an alias is transparent - it *is* its target, so there is
+                    // no family of constructions for an annotation to relate.
+                    if (syntax.TypeParameters[i].Variance != VarianceModifier.None)
+                    {
+                        _diagnostics.ReportError(
+                            SurtrDiagnosticCode.InvalidVarianceModifier,
+                            $"'{(syntax.TypeParameters[i].Variance == VarianceModifier.Covariant ? "out" : "in")}' is not valid on the type parameter '{syntax.TypeParameters[i].Name}' of alias '{alias.Name}'; "
+                                + "only class and interface declarations can declare variance.",
+                            sourceName,
+                            syntax.TypeParameters[i].Span);
+                    }
+
                     parameters[i] = _factory.DeclareTypeParameter(syntax.TypeParameters[i].Name, alias, i);
+                }
 
                 alias.TypeParameters = parameters;
             }
@@ -1124,9 +1167,11 @@ namespace Surtr.Compiler.Binding
             foreach (var binding in _declared)
             {
                 CheckSealedOverrides(binding);
+                CheckOverrideReplacesAnInheritedDispatch(binding);
                 CheckOverrideRequired(binding);
                 CheckBaseConstructorIsReachable(binding);
                 CheckMembersImplemented(binding);
+                CheckTypeParameterPositions(binding);
             }
 
             // Last, because a bound like `<T : IComparable<T>>` names a type whose own hierarchy is
@@ -1164,6 +1209,62 @@ namespace Surtr.Compiler.Binding
                     }
 
                     break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Rejects an <c>override</c> that replaces nothing: no member of any base class declares
+        /// <c>virtual</c> or <c>abstract</c> with the matching erased signature (§3.3).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The walk covers the base <em>class</em> chain only — interfaces are not inheritances, so
+        /// a method whose signature comes from a contract alone has nothing to override and must
+        /// be written plain (§3.3: satisfying an interface never requires the modifier). The
+        /// modifier stays legal where the same signature also descends from a base class's
+        /// abstract or virtual member: there the declaration really does replace that member,
+        /// whatever else it happens to satisfy along the way.
+        /// </para>
+        /// <para>
+        /// Matched on the same erased name-plus-parameter comparison
+        /// (<see cref="SignatureSet.MatchesSlot"/>) <see cref="CheckOverrideRequired"/> uses, so
+        /// the two checks agree on what "the same slot" means: one rejects the member that should
+        /// say <c>override</c> and does not, this one rejects the one that says it and may not.
+        /// </para>
+        /// </remarks>
+        private void CheckOverrideReplacesAnInheritedDispatch(TypeBinding binding)
+        {
+            var symbol = binding.Symbol;
+
+            foreach (var member in symbol.Members)
+            {
+                if (member is not MethodSymbol { IsOverride: true } method)
+                    continue;
+
+                bool replaced = false;
+                for (var walk = symbol.BaseType; walk is not null && !replaced; walk = walk.BaseType)
+                {
+                    foreach (var candidate in walk.Members)
+                    {
+                        if (candidate is MethodSymbol { Dispatch: MethodDispatch.Virtual or MethodDispatch.Abstract } dispatchCandidate
+                            && dispatchCandidate.IsStatic == method.IsStatic
+                            && _signatures.MatchesSlot(method, dispatchCandidate))
+                        {
+                            replaced = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!replaced)
+                {
+                    Report(
+                        SurtrDiagnosticCode.InvalidOverride,
+                        binding,
+                        binding.Syntax.Span,
+                        $"'{symbol.Name}.{method.Name}' is marked override, but no base class declares a virtual or abstract member it would replace - "
+                            + "satisfying an interface never writes override, so drop the modifier.");
                 }
             }
         }
@@ -1612,6 +1713,10 @@ namespace Surtr.Compiler.Binding
                     continue;
                 }
 
+                // §11.1: deriving from an obsolete type is a use of it, unless this declaration
+                // carries the mark too.
+                QueueIfObsoleteType(binding.SourceName, symbol, named, baseSyntax.Span);
+
                 if (named.TypeKind == TypeSymbolKind.Interface)
                 {
                     interfaces.Add(named);
@@ -1692,6 +1797,24 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
+        /// Every interface <paramref name="type"/> owes an answer to, transitively: the ones it
+        /// names, its base chain's, and each interface's own extensions — substituted the way the
+        /// construction reads them.
+        /// </summary>
+        /// <remarks>
+        /// The emitter's bridge synthesis walks this list per obligation, so a member written
+        /// without <c>override</c> gets its erased-signature bridge for <em>every</em> contract
+        /// that requires it, however many interface levels up that requirement lives.
+        /// </remarks>
+        internal IReadOnlyList<NamedTypeSymbol> AllInterfacesOf(NamedTypeSymbol type)
+        {
+            var visited = new HashSet<NamedTypeSymbol>();
+            var contracts = new List<NamedTypeSymbol>();
+            CollectInterfaces(type, visited, contracts);
+            return contracts;
+        }
+
+        /// <summary>
         /// Whether making <paramref name="candidate"/> the base of <paramref name="symbol"/> would
         /// close a loop, which is the same question <c>SurtrBuildState.Linking</c> answers at load
         /// — asked here so it can be pointed at a span.
@@ -1722,6 +1845,25 @@ namespace Surtr.Compiler.Binding
             var signatures = new SignatureSet(_factory, _diagnostics);
             var names = new HashSet<string>(StringComparer.Ordinal);
             int letFields = 0;
+
+            // §2.4: every enum declares `public let value: int` as its first instance field. The
+            // compiler owns the field and fills it when it builds each case (§2.2); the name is
+            // reserved (CheckEnumReservedNames below) so no source member can steal it. Placed
+            // before the declared members so the field order an enum's flattened value layout
+            // reads — value first, then whatever the cases carry — is also `Members` order.
+            if (syntax.Kind == TypeDeclarationKind.Enum)
+            {
+                var value = new FieldSymbol("value", symbol, _factory.Int)
+                {
+                    IsReadOnly = true,
+                    Accessibility = Accessibility.Public,
+                    IsSynthetic = true,
+                };
+
+                members.Add(value);
+                names.Add("value");
+                letFields++;
+            }
 
             foreach (var member in binding.Members)
             {
@@ -1783,6 +1925,15 @@ namespace Surtr.Compiler.Binding
                             continue;
                         }
 
+                        // The same always-public rule as a method's, and it covers each accessor
+                        // too - that check lives where the accessor's own run is read (§3.4).
+                        if (isInterface && property.Visibility is not (Visibility.Default or Visibility.Public))
+                        {
+                            Report(SurtrDiagnosticCode.InvalidInterfaceMember, binding, property.Span,
+                                $"An interface member is always public, so '{property.Name}' cannot be '{Describe(property.Visibility)}'.");
+                            continue;
+                        }
+
                         // A native accessor has a real body - the host's - so it is exactly as much
                         // a default implementation as one written in Surtr, and an interface allows
                         // neither (§2.3).
@@ -1818,6 +1969,15 @@ namespace Surtr.Compiler.Binding
                         {
                             Report(SurtrDiagnosticCode.InvalidInterfaceMember, binding, method.Span,
                                 $"An interface has no statics, so '{method.Name}' cannot be one.");
+                            continue;
+                        }
+
+                        // §3.1: an interface member is always public - writing nothing means
+                        // public, and every other modifier lies about a contract.
+                        if (isInterface && method.Visibility is not (Visibility.Default or Visibility.Public))
+                        {
+                            Report(SurtrDiagnosticCode.InvalidInterfaceMember, binding, method.Span,
+                                $"An interface member is always public, so '{method.Name}' cannot be '{Describe(method.Visibility)}'.");
                             continue;
                         }
 
@@ -1899,27 +2059,84 @@ namespace Surtr.Compiler.Binding
                 }
             }
 
+            int nextValue = 0;
+            int position = 0;
+            var caseValues = new HashSet<int>();
             foreach (var enumCase in syntax.EnumCases)
             {
+                int value;
+                if (enumCase.ExplicitValue is { } explicitValue)
+                {
+                    if (explicitValue < 0)
+                    {
+                        Report(SurtrDiagnosticCode.InvalidEnumValue, binding, enumCase.Span,
+                            $"'{symbol.Name}' case '{enumCase.Name}' has value {explicitValue}, which is negative; an enum value is 0 or more.");
+                        value = 0;
+                    }
+                    else if (explicitValue > int.MaxValue)
+                    {
+                        Report(SurtrDiagnosticCode.InvalidEnumValue, binding, enumCase.Span,
+                            $"'{symbol.Name}' case '{enumCase.Name}' has value {explicitValue}, which does not fit an int.");
+                        value = 0;
+                    }
+                    else
+                    {
+                        value = (int)explicitValue;
+
+                        if (symbol.IsFlagsEnum && value != 0 && !IsPowerOfTwo(value))
+                        {
+                            Report(SurtrDiagnosticCode.InvalidEnumValue, binding, enumCase.Span,
+                                $"'{symbol.Name}' is '@Flags', so '{enumCase.Name}' must be a power of two (or 0); {value} is not.");
+                        }
+                    }
+                }
+                else
+                {
+                    value = symbol.IsFlagsEnum ? 1 << position : nextValue;
+                }
+
+                // Duplicates are idiom in a @Flags enum (bit aliases, an explicit 0); in a plain
+                // enum they would break the reverse value-to-name lookup behind toString and the
+                // dense switch tables (§2.4).
+                if (!symbol.IsFlagsEnum && !caseValues.Add(value))
+                {
+                    Report(SurtrDiagnosticCode.DuplicateEnumValue, binding, enumCase.Span,
+                        $"'{symbol.Name}' already has a case with value {value}; a plain enum names each value once.");
+                }
+                else
+                {
+                    _ = caseValues.Add(value);
+                }
+
                 var field = new FieldSymbol(enumCase.Name, symbol, symbol)
                 {
                     IsStatic = true,
                     IsReadOnly = true,
                     Accessibility = Accessibility.Public,
+                    EnumValue = value,
                 };
 
                 members.Add(field);
 
-                // A case is a static holding one instance the enum's own initializer builds, so it
-                // is an initializer like any other — with a construction on the right.
+                // A case is a static holding one value the enum's own initializer builds, so it
+                // is an initializer like any other — with the case's value on the right.
                 _initializers.Add(new InitializerBinding(
                     field, null, enumCase, binding.Scope, binding.Module, symbol, binding.SourceName, _nextInitializerOrder++));
 
                 if (!names.Add(enumCase.Name))
                     Duplicate(binding, enumCase.Span, enumCase.Name);
+
+                nextValue = value + 1;
+                position++;
             }
 
-            if (syntax.Kind == TypeDeclarationKind.ValueClass)
+            if (symbol.IsFlagsEnum)
+                CheckFlagsEnumIsPlain(binding, syntax, symbol, members);
+
+            if (syntax.Kind == TypeDeclarationKind.Enum)
+                CheckEnumReservedNames(binding, syntax, members);
+
+            if (syntax.Kind is TypeDeclarationKind.Enum or TypeDeclarationKind.ValueClass)
                 BindValueClassField(binding, members, letFields);
 
             if (syntax.Kind == TypeDeclarationKind.Singleton)
@@ -1928,30 +2145,188 @@ namespace Surtr.Compiler.Binding
             symbol.Members = members;
         }
 
+        /// <summary>
+        /// Rejects everything a <c>@Flags</c> enum's representation leaves nowhere to put.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A <c>@Flags</c> enum is a bare value class whose <c>value</c> is a set of bits, so a
+        /// combination like <c>Read | Write</c> is not any case: there is no object for a member to
+        /// run on, no receiver for a declared interface to dispatch through, and no constructor
+        /// argument to build. It may only satisfy the two implicit contracts, and its own cases —
+        /// the constants, not things declared on an instance.
+        /// </para>
+        /// <para>
+        /// Reported against each offending declaration rather than against the mark, so the message
+        /// points at what has to change. An error, because there is no representation to fall back
+        /// on: unlike §11's other checks this is not advice about intent.
+        /// </para>
+        /// </remarks>
+        private void CheckFlagsEnumIsPlain(
+            TypeBinding binding,
+            TypeDeclarationSyntax syntax,
+            NamedTypeSymbol symbol,
+            List<Symbol> members)
+        {
+            for (int i = 0; i < syntax.EnumCases.Count; i++)
+            {
+                var @case = syntax.EnumCases[i];
+                if (@case.Arguments.Count > 0)
+                {
+                    Report(SurtrDiagnosticCode.InvalidFlagsEnum, binding, @case.Span,
+                        $"'{symbol.Name}' is '@Flags', so '{@case.Name}' is the bit {i} rather than an instance; it cannot take constructor arguments.");
+                }
+
+                // An implicit case is the bit at its own position, and an int holds 31 usable
+                // bits — so the 32nd implicit case would overflow. An explicit value is checked
+                // per-value instead: the bits may repeat, which is exactly what lets a flags enum
+                // go past 31 cases by naming them (§2.1).
+                if (@case.ExplicitValue is null && i >= 31)
+                {
+                    Report(SurtrDiagnosticCode.InvalidFlagsEnum, binding, @case.Span,
+                        $"'{symbol.Name}' is '@Flags', so '{@case.Name}' is the bit {i}; an int holds 31 usable bits, and a case past that has to write its value explicitly.");
+                }
+            }
+
+            if (symbol.Interfaces.Count > 0)
+            {
+                Report(SurtrDiagnosticCode.InvalidFlagsEnum, binding, syntax.Span,
+                    $"'{symbol.Name}' is '@Flags', so its values are ints with no receiver to dispatch through; it may only satisfy the implicit IEquatable and IComparable contracts, never one written here.");
+            }
+
+            foreach (var member in members)
+            {
+                // Its own cases are the members it is allowed to have, and nothing else: they are
+                // the constants, not things declared on an instance. The synthetic `value` field is
+                // the compiler's, not a declaration, so it is exempt.
+                if (IsSyntheticMember(member))
+                    continue;
+
+                if (member is FieldSymbol { IsStatic: true } @case && ReferenceEquals(@case.Type, symbol))
+                    continue;
+
+                Report(SurtrDiagnosticCode.InvalidFlagsEnum, binding, syntax.Span,
+                    $"'{symbol.Name}' is '@Flags', so it has no instance for '{member.Name}' to belong to; a flags enum declares cases only.");
+
+                break;
+            }
+        }
+
+        /// <summary>
+        /// Rejects an enum member or case named after the synthesized enum API (§2.4).
+        /// </summary>
+        /// <remarks>
+        /// <c>value</c>, <c>values</c> and <c>of</c> are part of what every enum answers to, so a
+        /// declaration stealing one would collide with the synthesis later. Reported once against
+        /// the whole declaration rather than per member — one offender is enough to know the enum
+        /// has to change.
+        /// </remarks>
+        private void CheckEnumReservedNames(TypeBinding binding, TypeDeclarationSyntax syntax, List<Symbol> members)
+        {
+            foreach (var member in members)
+            {
+                // The synthetic `value` field is the compiler's answer to the name, not a
+                // declaration stealing it.
+                if (IsSyntheticMember(member))
+                    continue;
+
+                if (IsReservedEnumName(member.Name))
+                {
+                    Report(SurtrDiagnosticCode.ReservedEnumMember, binding, syntax.Span,
+                        $"'{member.Name}' is reserved on an enum: every enum answers to 'value', 'values' and 'of' (§2.4).");
+                    return;
+                }
+            }
+
+            foreach (var @case in syntax.EnumCases)
+            {
+                if (IsReservedEnumName(@case.Name))
+                {
+                    Report(SurtrDiagnosticCode.ReservedEnumMember, binding, @case.Span,
+                        $"'{@case.Name}' is reserved on an enum: every enum answers to 'value', 'values' and 'of' (§2.4).");
+                    return;
+                }
+            }
+        }
+
+        private static bool IsReservedEnumName(string name) => name switch
+        {
+            "value" or "values" or "of" => true,
+            _ => false,
+        };
+
+        /// <summary>Whether the compiler synthesised the member, so source never collided with it.</summary>
+        private static bool IsSyntheticMember(Symbol member) => member switch
+        {
+            FieldSymbol { IsSynthetic: true } => true,
+            MethodSymbol { IsSynthetic: true } => true,
+            _ => false,
+        };
+
+        private static bool IsPowerOfTwo(int value) => value > 0 && (value & (value - 1)) == 0;
+
+        /// <summary>
+        /// Enforces the field discipline a value-shaped type shares: every instance field is
+        /// declared <c>let</c>, and the class either erases to its one field (§2.9) or lays out as
+        /// a flattened value block. An enum is the same shape from the migration: its synthetic
+        /// <c>value</c> field plus whatever the cases carry, all readonly — but its descriptor
+        /// stays nominal (§6.1), so the single-field erasure (<see cref="NamedTypeSymbol.UnderlyingType"/>)
+        /// is deliberately never applied to it.
+        /// </summary>
         private void BindValueClassField(TypeBinding binding, List<Symbol> members, int letFields)
         {
-            // §2.9: exactly one field, declared `let`. Two would leave nothing to erase to.
-            FieldSymbol? wrapped = null;
-            int instanceFields = 0;
+            bool isEnum = binding.Syntax.Kind == TypeDeclarationKind.Enum;
+
+            // §2.9, generalized: every instance field is declared `let`, and there is at least one.
+            // Exactly one field keeps the erasure the section introduced - the class IS that field
+            // wherever its type is statically known. Several fields make the class a value type in
+            // its own right: it occupies one flattened block of slots instead, and never erases.
+            var instanceFields = new List<FieldSymbol>();
 
             foreach (var member in members)
             {
                 if (member is FieldSymbol field && !field.IsStatic)
-                {
-                    instanceFields++;
-                    wrapped ??= field;
-                }
+                    instanceFields.Add(field);
             }
 
-            if (instanceFields != 1 || letFields != 1)
+            if (instanceFields.Count == 0 || instanceFields.Count != letFields)
             {
                 Report(SurtrDiagnosticCode.InvalidValueClass, binding, binding.Syntax.Span,
-                    $"A value class wraps exactly one 'let' field; '{binding.Symbol.Name}' declares {instanceFields}.");
+                    $"{(isEnum ? "An enum" : "A value class")} declares its fields 'let'; '{binding.Symbol.Name}' declares {instanceFields.Count} instance field(s), {letFields} of them 'let'.");
 
                 return;
             }
 
-            binding.Symbol.UnderlyingType = wrapped!.Type;
+            if (instanceFields.Count > 1 && binding.Symbol.TypeParameters.Count > 0)
+            {
+                Report(SurtrDiagnosticCode.ValueTypeLayout, binding, binding.Syntax.Span,
+                    $"'{binding.Symbol.Name}' declares generic parameters; a multi-field value class cannot have one layout per substitution.");
+
+                return;
+            }
+
+            if (instanceFields.Count == 1)
+            {
+                // An enum's descriptor stays nominal whatever its width (§6.1), so only a value
+                // class ever erases to its single field.
+                if (!isEnum)
+                    binding.Symbol.UnderlyingType = instanceFields[0].Type;
+                return;
+            }
+
+            // A multi-field value class: no erasure. A direct self-reference is caught now; the
+            // full flattened width - indirect cycles and the slot cap included - is checked when
+            // the emitter first needs the layout, which is where ValueTypeLayout reports.
+            foreach (var field in instanceFields)
+            {
+                if (ReferenceEquals(field.Type.NonNullable, binding.Symbol))
+                {
+                    Report(SurtrDiagnosticCode.ValueTypeLayout, binding, binding.Syntax.Span,
+                        $"'{binding.Symbol.Name}' contains itself; no finite value layout can hold it.");
+
+                    return;
+                }
+            }
         }
 
         /// <summary>
@@ -2181,8 +2556,10 @@ namespace Surtr.Compiler.Binding
                     Accessibility = ResolveExtensionMemberAccessibility(method.Visibility, blockAccessibility, sourceName, method.Span),
                     IsInline = method.Inline == InlineModifier.Inline,
                     IsForceInline = method.Inline == InlineModifier.ForceInline,
+                    IsNoInline = method.Inline == InlineModifier.NoInline,
                     ExtensionDeclaringContainer = containingType,
                     ExtensionIsStatic = method.IsStatic,
+                    IsGenerator = method.IsGenerator,
                 };
 
                 // The block's own type parameters (§15.4), written explicitly only when a bound is
@@ -2216,10 +2593,23 @@ namespace Surtr.Compiler.Binding
 
                 extMethod.ExtensionTargetType = target;
 
-                if (method.ReturnType is not null)
+                if (method.IsGenerator)
+                {
+                    // The same split a class's or a module's generator gets: the written type is the
+                    // element, and the member's own return becomes `generator<element>`. Routed
+                    // through the shared helper so §3.7's refusals read identically wherever a
+                    // generator is declared.
+                    BindGeneratorShape(extMethod, method, methodScope, sourceName);
+                }
+                else if (method.ReturnType is not null)
+                {
                     extMethod.ReturnType = _resolver.Resolve(method.ReturnType, methodScope, sourceName);
+                }
                 else
+                {
                     _inferReturnTypes.Add(extMethod);
+                }
+
                 extMethod.Parameters = BindParameters(method.Parameters, extMethod, methodScope, sourceName);
 
                 // An instance extension's receiver — `obj.method()` is bound against it — is an
@@ -2658,7 +3048,8 @@ namespace Surtr.Compiler.Binding
                 body.Module,
                 body.ContainingType,
                 body.Method,
-                ImportedBy(body.Module));
+                ImportedBy(body.Module),
+                pureFolder: _pureFolder);
 
             int before = _diagnostics.Count;
             var bound = binder.BindBody(body.Syntax);
@@ -2789,6 +3180,61 @@ namespace Surtr.Compiler.Binding
             FoldDefaults();
             ReportUnfoldedDefaults();
 
+            // §11: before any ordinary body, because a body asks what its targets carry while it
+            // binds - the call that should warn about an @Obsolete method binds against the mark,
+            // so the marks have to exist first. Everything this needs is ready above: every type
+            // exists (the member phase ran), defaults have folded (an argument may be one), and the
+            // const functions a folded argument could name are bound.
+            foreach (var attribute in _attributes)
+                BindAttributes(attribute);
+
+            // §11's test-family marks are metadata a host reads, so a combination that cannot hold
+            // is otherwise silent - the runner simply never discovers the method. This is the pass
+            // that says so, and it has to be a second one: a target carries no marks until the loop
+            // above has run over every one of its attributes.
+            foreach (var attribute in _attributes)
+            {
+                AttributeRoleCheck.Verify(attribute.Target, attribute.Syntax, attribute.SourceName, _diagnostics);
+                CheckThrowsTypes(attribute);
+            }
+
+            // Now that the marks exist, the declaration-signature uses queued during the member
+            // phase can be judged: an @Obsolete type referenced from a non-obsolete declaration
+            // (its base, a field/property type, a method's return) is the warning's point.
+            foreach (var use in _deferredObsoleteTypeUses)
+            {
+                if (!BuiltInAttributes.IsObsolete(use.Type) || BuiltInAttributes.IsObsolete(use.Owner))
+                    continue;
+
+                _diagnostics.ReportWarning(
+                    SurtrDiagnosticCode.ObsoleteMemberUsed,
+                    BuiltInAttributes.ObsoleteMessage(use.Type, use.Type.Name),
+                    use.SourceName,
+                    use.Span);
+            }
+
+            // §11.1: after the @Value marks are known, every class carrying one gains the value
+            // members it did not declare - structural $equals, combined $hashCode, $toDisplayString -
+            // as real methods with bound bodies, so the emitter ships them like any other member.
+            SynthesizeValueMembers();
+
+            // §2.4: every enum gains the members it answers to - equals/hashCode/toString/values/
+            // of×2/compareTo/operator<=> - and the implicit IEquatable<E>/IComparable<E> contracts.
+            SynthesizeEnumMembers();
+
+            // The @Pure functions first, for the same reason the const funs are: §P3 folds a call by
+            // running the callee's emitted body, so an ordinary body can only be answered once every
+            // foldable @Pure function has a body. Binding them in a round of their own is the whole
+            // of that ordering - BindOne skips anything already bound, so the round below does not
+            // double-bind them.
+            foreach (var body in _bodies)
+            {
+                if (BuiltInAttributes.IsPure(body.Method))
+                    BindOne(body);
+            }
+
+            PreparePureFolding();
+
             foreach (var body in _bodies)
                 BindOne(body);
 
@@ -2802,12 +3248,6 @@ namespace Surtr.Compiler.Binding
 
             foreach (var chain in _chains)
                 BindChain(chain);
-
-            // After the defaults have folded, so an attribute argument may be a `const` (§11 takes
-            // constants, §7.1 is where they come from) - and after every type exists, since the
-            // attribute class is resolved by name like any other.
-            foreach (var attribute in _attributes)
-                BindAttributes(attribute);
 
             // After every fragment is bound and every body with it: a fragment reaching a static
             // through a call is the same mistake as one reading it outright, and answering that
@@ -2890,14 +3330,16 @@ namespace Surtr.Compiler.Binding
                 initializer.Module,
                 initializer.ContainingType,
                 owner,
-                ImportedBy(initializer.Module));
+                ImportedBy(initializer.Module),
+                rangeChecksEnabled: _compilation.Project.BuildConstants.ContainsKey("Debug"),
+                pureFolder: _pureFolder);
 
             BoundExpression value;
 
             if (initializer.EnumCase is EnumCaseSyntax enumCase)
                 value = binder.BindEnumCase(enumCase, initializer.ContainingType!);
             else if (initializer.Syntax is ExpressionSyntax written)
-                value = binder.BindInitializer(written, initializer.Field.Type);
+                value = binder.BindInitializer(written, initializer.Field.Type, initializer.Field);
             else
                 value = binder.BindSingletonInstance(initializer.ContainingType!, initializer.Anchor);
 
@@ -2987,6 +3429,25 @@ namespace Surtr.Compiler.Binding
                     }
                 }
 
+                // A built-in attribute arrives as imported metadata, whose symbol carries no target
+                // list (that is a declaration-side fact), so the restriction the vocabulary fixes
+                // for it is enforced from the recognition table instead - same check, same error,
+                // one source of truth beside the names themselves.
+                if (BuiltInAttributes.TryGetTargets(type.Name, out SurtrAttributeTargets builtinTargets))
+                {
+                    SurtrAttributeTargets actual = DeclarationTargetOf(binding.Target);
+                    if ((builtinTargets & actual) == 0)
+                    {
+                        ReportAt(
+                            binding.SourceName,
+                            written.Span,
+                            SurtrDiagnosticCode.AttributeTargetMismatch,
+                            $"'{written.Name}' cannot be written here; it applies only to {DescribeBuiltinTargets(builtinTargets)}, not {DescribeAttributeTarget(actual)}.");
+
+                        continue;
+                    }
+                }
+
                 var arguments = new object?[written.Arguments.Count];
                 bool folded = true;
 
@@ -3008,12 +3469,210 @@ namespace Surtr.Compiler.Binding
                 }
 
                 if (folded)
+                    folded = ValidateAttributeArguments(binding, written, type, arguments);
+
+                if (folded)
                     uses.Add(new AttributeUse(type, arguments));
             }
 
             if (uses.Count > 0)
                 binding.Target.Attributes = uses;
         }
+
+        /// <summary>
+        /// Checks that every <c>@Throws("Name")</c> on this declaration names an exception class.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The mark is documentation, so a stale name is a warning rather than an error — but one
+        /// worth having, because nothing else would ever read it: an argument is a string literal,
+        /// which resolves against no scope on its own, so a renamed exception leaves the mark
+        /// pointing at a name that no longer exists and nothing to say so.
+        /// </para>
+        /// <para>
+        /// Resolution goes through <c>TryResolveTypeName</c> rather than <c>Resolve</c> precisely
+        /// because a failure here must not report an error of its own; the name is split on '.' so
+        /// a qualified one resolves the way §2.6 reads any other. The root is looked up the same
+        /// way, and a compilation where <c>Exception</c> itself does not resolve simply skips the
+        /// check rather than accusing every mark.
+        /// </para>
+        /// </remarks>
+        private void CheckThrowsTypes(AttributeBinding binding)
+        {
+            if (binding.Target.Attributes.Count == 0)
+                return;
+
+            for (int i = 0; i < binding.Syntax.Count; i++)
+            {
+                var written = binding.Syntax[i];
+                if (!string.Equals(written.Name, BuiltInAttributes.Throws, StringComparison.Ordinal))
+                    continue;
+
+                if (written.Arguments.Count == 0
+                    || !Constants.TryEvaluate(written.Arguments[0], out object? value)
+                    || value is not string name
+                    || name.Length == 0)
+                {
+                    continue;
+                }
+
+                var span = written.Arguments[0].Span;
+
+                if (!_resolver.TryResolveTypeName(name.Split('.'), binding.Scope, span, out var named))
+                {
+                    _diagnostics.ReportWarning(
+                        SurtrDiagnosticCode.ThrowsTypeNotException,
+                        $"'@Throws' names '{name}', which is not a type in scope here.",
+                        binding.SourceName,
+                        span);
+
+                    continue;
+                }
+
+                if (!_resolver.TryResolveTypeName(ExceptionRootPath, binding.Scope, span, out var root))
+                    continue;
+
+                if (!DescendsFrom(named, root))
+                {
+                    _diagnostics.ReportWarning(
+                        SurtrDiagnosticCode.ThrowsTypeNotException,
+                        $"'@Throws' names '{name}', which does not descend from 'Exception'; only an exception can be thrown (§9).",
+                        binding.SourceName,
+                        span);
+                }
+            }
+        }
+
+        /// <summary>The one-segment path naming §9's exception root, allocated once.</summary>
+        private static readonly string[] ExceptionRootPath = new[] { "Exception" };
+
+        /// <summary>
+        /// Whether <paramref name="type"/> is <paramref name="root"/> or extends it. Reference
+        /// identity is enough at each step: every type is interned, so two symbols for one type do
+        /// not exist.
+        /// </summary>
+        private static bool DescendsFrom(NamedTypeSymbol type, NamedTypeSymbol root)
+        {
+            for (NamedTypeSymbol? walk = type; walk is not null; walk = walk.BaseType)
+            {
+                if (ReferenceEquals(walk, root))
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Checks one use's folded arguments against what its attribute class declares to receive.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// §11 fills an attribute's fields positionally — the same fill <c>SurtrRuntime</c> performs
+        /// at load — so the two questions that matter are how many fields there are and whether each
+        /// argument's kind of constant fits the field it lands in. Until now both surfaced only when
+        /// a module failed to load; reporting them here makes them ordinary compile errors, which is
+        /// where a wrong argument list belongs.
+        /// </para>
+        /// <para>
+        /// Only the class's own non-static, non-const, compiler-written fields count: a const is no
+        /// slot at all (§7.1), and a synthesised backing field is not something an argument names.
+        /// Fields whose types still mention a type parameter are left unchecked — there is nothing
+        /// concrete to compare a constant against yet.
+        /// </para>
+        /// </remarks>
+        /// <returns>Whether the use may be recorded.</returns>
+        private bool ValidateAttributeArguments(
+            AttributeBinding binding,
+            AttributeSyntax written,
+            NamedTypeSymbol type,
+            object?[] arguments)
+        {
+            List<FieldSymbol> fields = AttributeArgumentSlots(type);
+
+            if (arguments.Length > fields.Count)
+            {
+                ReportAt(
+                    binding.SourceName,
+                    written.Span,
+                    SurtrDiagnosticCode.AttributeArgumentCountMismatch,
+                    $"'{written.Name}' was given {arguments.Length} argument(s) but its class declares {fields.Count} field(s) to fill.");
+
+                return false;
+            }
+
+            for (int i = 0; i < arguments.Length; i++)
+            {
+                if (fields[i].Type.ContainsTypeParameter)
+                    continue;
+
+                TypeSymbol fieldType = fields[i].Type.NonNullable;
+                if (!ConstantFitsField(arguments[i], fieldType))
+                {
+                    ReportAt(
+                        binding.SourceName,
+                        written.Arguments[i].Span,
+                        SurtrDiagnosticCode.AttributeArgumentTypeMismatch,
+                        $"Argument {i} of '{written.Name}' cannot fill '{fields[i].ToDisplayString()}': {DescribeAttributeConstant(arguments[i])} is not a value of that type.");
+
+                    return false;
+                }
+
+                // What the use records is what the field will hold, so the widening the check just
+                // allowed is applied here rather than left to whoever materializes the instance -
+                // an integer constant landing in a float slot as raw bits would read back as NaN.
+                if (fieldType.SpecialType == SpecialType.Float && arguments[i] is long widened)
+                    arguments[i] = (double)widened;
+            }
+
+            return true;
+        }
+
+        /// <summary>The attribute class's own fields, which positional arguments fill in order.</summary>
+        private static List<FieldSymbol> AttributeArgumentSlots(NamedTypeSymbol type)
+        {
+            var slots = new List<FieldSymbol>();
+
+            foreach (Symbol member in type.Definition.Members)
+            {
+                if (member is FieldSymbol field && !field.IsStatic && !field.IsConst && !field.IsSynthetic)
+                    slots.Add(field);
+            }
+
+            return slots;
+        }
+
+        /// <summary>Whether a folded attribute argument can sit in a field of this type.</summary>
+        /// <remarks>
+        /// The kinds of constant an argument folds to, against the field's special types, with the
+        /// same widening §5 gives ordinary implicit conversions: an integer widens to a float field,
+        /// and nothing else crosses. Null fits only where a reference would — a string or a
+        /// class-typed field — never a primitive.
+        /// </remarks>
+        private static bool ConstantFitsField(object? value, TypeSymbol fieldType) => fieldType.SpecialType switch
+        {
+            SpecialType.Int => value is long,
+            SpecialType.Float => value is long or double,
+            SpecialType.Bool => value is bool,
+            SpecialType.Char => value is char,
+            SpecialType.String => value is string or null,
+
+            // §2.3quater: an enum argument folds to its `value`, so it fills an enum-typed field
+            // as the int it is.
+            SpecialType.None when fieldType.TypeKind == TypeSymbolKind.Enum => value is long or null,
+            SpecialType.None => value is null,
+            _ => false,
+        };
+
+        private static string DescribeAttributeConstant(object? value) => value switch
+        {
+            null => "null",
+            long => "an integer",
+            double => "a float",
+            bool => "a boolean",
+            char => "a character",
+            string => "a string",
+            _ => "this constant",
+        };
 
         private static bool ExtendsAttribute(NamedTypeSymbol type)
         {
@@ -3054,6 +3713,20 @@ namespace Surtr.Compiler.Binding
             _ => "this kind of declaration",
         };
 
+        /// <summary>Lists what a built-in attribute's targets allow, for its mismatch error.</summary>
+        private static string DescribeBuiltinTargets(SurtrAttributeTargets targets)
+        {
+            var parts = new List<string>();
+            if ((targets & SurtrAttributeTargets.Class) != 0) parts.Add("classes");
+            if ((targets & SurtrAttributeTargets.Interface) != 0) parts.Add("interfaces");
+            if ((targets & SurtrAttributeTargets.Enum) != 0) parts.Add("enums");
+            if ((targets & SurtrAttributeTargets.Field) != 0) parts.Add("fields");
+            if ((targets & SurtrAttributeTargets.Property) != 0) parts.Add("properties");
+            if ((targets & SurtrAttributeTargets.Method) != 0) parts.Add("methods");
+
+            return string.Join(", ", parts);
+        }
+
         /// <summary>
         /// Binds one <c>static { ... }</c> block, in the scope its declaration sits in (§2.5, §3.2).
         /// </summary>
@@ -3086,7 +3759,8 @@ namespace Surtr.Compiler.Binding
                 block.Module,
                 block.ContainingType,
                 owner,
-                ImportedBy(block.Module));
+                ImportedBy(block.Module),
+                pureFolder: _pureFolder);
 
             var body = binder.BindBody(block.Syntax.Body);
             _boundStaticBlocks.Add(new BoundStaticBlock(body, block.ContainingType, block.Module, block.Order));
@@ -3128,7 +3802,8 @@ namespace Surtr.Compiler.Binding
                 chain.Module,
                 chain.Owner,
                 chain.Constructor,
-                ImportedBy(chain.Module));
+                ImportedBy(chain.Module),
+                pureFolder: _pureFolder);
 
             if (binder.BindConstructorChain(chain.Syntax, target, chain.Syntax.ChainsToThis) is BoundConstructorChain bound)
                 _boundChains.Add(chain.Constructor, bound);
@@ -3191,15 +3866,28 @@ namespace Surtr.Compiler.Binding
                 body.Module,
                 body.ContainingType,
                 body.Method,
-                ImportedBy(body.Module));
+                ImportedBy(body.Module),
+                rangeChecksEnabled: _compilation.Project.BuildConstants.ContainsKey("Debug"),
+                pureFolder: _pureFolder);
 
-            var bound = binder.BindBody(body.Syntax);
+            BoundStatement bound = binder.BindBody(body.Syntax);
+
+            // §P3: cross-statement CSE of pure calls, once a foldable set exists. Runs on the bound
+            // tree before flow analysis, so the analysis sees the final shape.
+            if (_pureFolder is not null)
+                bound = CrossStatementCse.Rewrite(bound, _pureFolder.CanFold);
+
             _bound.Add(body.Method, bound);
             _bodyFiles[body.Method] = body.SourceName;
 
             // After binding, not during: reachability and definite assignment are questions
             // about a whole body, and the bound tree is the form that has one.
             FlowAnalysis.Analyze(body.Method, bound, _diagnostics, body.SourceName);
+
+            // §11's memory contract, on the same form and for the same reason - and only when the
+            // mark is there, so a body that promised nothing is never walked.
+            if (BuiltInAttributes.IsNoAlloc(body.Method))
+                NoAllocCheck.Verify(body.Method, bound, _diagnostics, body.SourceName);
         }
 
         /// <summary>
@@ -3229,12 +3917,95 @@ namespace Surtr.Compiler.Binding
                 any = true;
             }
 
+            // The enum members fold whenever the enums are bound (§2.3quater): a case read, or a
+            // call on the synthesized API, resolves against the enum the evaluator named. Set
+            // regardless of whether any `const fun` exists, since a compilation may only use enums
+            // in constants.
+            Constants.EnumFolder = FoldEnumConstant;
+
             if (!any)
                 return;
 
             _constFolder = new ConstFolder(_bound);
             Constants.CallFolder = FoldConstCall;
+            Constants.EnumFolder = FoldEnumConstant;
         }
+
+        /// <summary>
+        /// Decides which <c>@Pure</c> functions may be folded at compile time, and builds the folder
+        /// that folds their calls (§P3 fase 3).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The gate is the greatest fixed point of <see cref="PureFoldVerifier.PassesLocalChecks"/>:
+        /// a function is foldable when its own body is pure by inspection — no property reads, no
+        /// construction, no read of mutable state, no write outside a local — and every function it
+        /// calls is itself foldable. A cycle of mutually-recursive pure functions is foldable as a
+        /// whole, while one impure leaf disqualifies every caller that reaches it. Folding a call to
+        /// such a function by running it on the scratch runtime cannot change what the program
+        /// observes, because nothing in the reachable body observes anything outside its parameters.
+        /// </para>
+        /// <para>
+        /// A compilation with no foldable <c>@Pure</c> function builds no folder, so nothing pays for
+        /// the feature it does not use.
+        /// </para>
+        /// </remarks>
+        private void PreparePureFolding()
+        {
+            var foldable = new HashSet<MethodSymbol>();
+            var calls = new Dictionary<MethodSymbol, HashSet<MethodSymbol>>();
+
+            foreach (var pair in _bound)
+            {
+                if (!BuiltInAttributes.IsPure(pair.Key))
+                    continue;
+
+                if (PureFoldVerifier.PassesLocalChecks(pair.Key, pair.Value, out var targets))
+                {
+                    calls[pair.Key] = targets;
+                    foldable.Add(pair.Key);
+                }
+            }
+
+            // A foldable function may only call other foldable functions. Converging downward from
+            // everything that passes local checks leaves exactly the closed, greatest set. A native
+            // built-in declared pure in C# counts as foldable — it has no body to fold, but it is
+            // trusted not to observe anything outside its arguments, so a caller that reaches it
+            // stays foldable and the native itself runs in the evaluator's scratch runtime.
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+
+                foreach (var method in foldable.ToList())
+                {
+                    foreach (var target in calls[method])
+                    {
+                        if (foldable.Contains(target) || IsTrustedPureNative(target))
+                            continue;
+
+                        foldable.Remove(method);
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+
+            _foldablePure.Clear();
+            _foldablePure.UnionWith(foldable);
+
+            if (_foldablePure.Count == 0)
+                return;
+
+            _pureFolder = new ConstFolder(_bound, isPureCandidate: _foldablePure.Contains);
+        }
+
+        /// <summary>
+        /// Whether a method is a native built-in the runtime declared pure — trusted not to observe
+        /// anything outside its arguments, even though it has no body to fold.
+        /// </summary>
+        private static bool IsTrustedPureNative(MethodSymbol method)
+            => method.IsNative && BuiltInAttributes.IsPure(method);
 
         /// <summary>
         /// Resolves a <c>const fun</c> call written inside a constant expression, and folds it.
@@ -3282,6 +4053,136 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
+        /// Folds an enum expression the evaluator recognised (§2.3quater): a case read, or a call
+        /// on the synthesized API. Only a bare enum folds as a constant — its value is an int, which
+        /// is all a constant can hold; a case-carrying enum's block has no constant form.
+        /// </summary>
+        private bool FoldEnumConstant(string enumName, object? receiverValue, string member, object?[]? arguments, out object? value)
+        {
+            value = null;
+
+            var @enum = FindEnumByName(enumName);
+            if (@enum is null)
+                return false;
+
+            // A plain read: a case's value.
+            if (arguments is null)
+            {
+                foreach (var field in EnumMemberSynthesizer.CasesOf(@enum))
+                {
+                    if (string.Equals(field.Name, member, StringComparison.Ordinal))
+                    {
+                        value = (long)(field.EnumValue ?? 0);
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            if (InstanceFieldsOf(@enum).Count != 1)
+                return false;
+
+            switch (member)
+            {
+                case EnumMemberSynthesizer.OfName when arguments.Length == 1 && arguments[0] is long wanted:
+                {
+                    foreach (var field in EnumMemberSynthesizer.CasesOf(@enum))
+                    {
+                        if ((field.EnumValue ?? 0) == (int)wanted)
+                        {
+                            value = wanted;
+                            return true;
+                        }
+                    }
+
+                    // A @Flags enum is total — any int is a representable combination; a plain one
+                    // answers null for a value no case carries.
+                    value = @enum.IsFlagsEnum ? wanted : null;
+                    return true;
+                }
+
+                case EnumMemberSynthesizer.OfName when arguments.Length == 1 && arguments[0] is string name:
+                {
+                    foreach (var field in EnumMemberSynthesizer.CasesOf(@enum))
+                    {
+                        if (string.Equals(field.Name, name, StringComparison.Ordinal))
+                        {
+                            value = (long)(field.EnumValue ?? 0);
+                            return true;
+                        }
+                    }
+
+                    value = null;
+                    return true;
+                }
+
+                case EnumMemberSynthesizer.ToStringName when arguments.Length == 0 && receiverValue is long receiver:
+                {
+                    foreach (var field in EnumMemberSynthesizer.CasesOf(@enum))
+                    {
+                        if ((field.EnumValue ?? 0) == (int)receiver)
+                        {
+                            value = field.Name;
+                            return true;
+                        }
+                    }
+
+                    value = @enum.Name + "(" + receiver + ")";
+                    return true;
+                }
+
+                case EnumMemberSynthesizer.EqualsName when arguments.Length == 1 && receiverValue is long self:
+                    value = self == FoldToInt(arguments[0]);
+                    return true;
+
+                case EnumMemberSynthesizer.HashCodeName when arguments.Length == 0 && receiverValue is long self:
+                    value = self;
+                    return true;
+
+                case EnumMemberSynthesizer.CompareToName when arguments.Length == 1 && receiverValue is long self:
+                    value = self - FoldToInt(arguments[0]);
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static long FoldToInt(object? value) => value is long l ? l : 0;
+
+        /// <summary>Finds a source enum by its written name, across every module.</summary>
+        private NamedTypeSymbol? FindEnumByName(string name)
+        {
+            foreach (var module in _modules.Values)
+            {
+                foreach (var type in module.Types)
+                {
+                    if (type.TypeKind == TypeSymbolKind.Enum && string.Equals(type.Name, name, StringComparison.Ordinal))
+                        return type;
+
+                    if (FindNestedEnum(type, name) is NamedTypeSymbol nested)
+                        return nested;
+                }
+            }
+
+            return null;
+        }
+
+        private static NamedTypeSymbol? FindNestedEnum(NamedTypeSymbol type, string name)
+        {
+            foreach (var nested in type.NestedTypes)
+            {
+                if (nested.TypeKind == TypeSymbolKind.Enum && string.Equals(nested.Name, name, StringComparison.Ordinal))
+                    return nested;
+
+                if (FindNestedEnum(nested, name) is NamedTypeSymbol deeper)
+                    return deeper;
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Checks that every <c>const</c> initializer really is a constant expression (§7.1).
         /// </summary>
         /// <remarks>
@@ -3309,11 +4210,13 @@ namespace Surtr.Compiler.Binding
             }
         }
 
-        /// <summary>Releases the scratch runtime const folding used, if one was built.</summary>
+        /// <summary>Releases the scratch runtimes const folding and @Pure folding used, if any.</summary>
         public void Dispose()
         {
             _constFolder?.Dispose();
             _constFolder = null;
+            _pureFolder?.Dispose();
+            _pureFolder = null;
         }
 
         private void RecordBody(
@@ -3332,7 +4235,11 @@ namespace Surtr.Compiler.Binding
         #region Member binding
         private FieldSymbol BindField(FieldDeclarationSyntax syntax, NamedTypeSymbol owner, TypeBinding binding)
         {
-            var field = new FieldSymbol(syntax.Name, owner, ResolveOrInfer(syntax.Type, binding.Scope, binding.SourceName))
+            TypeSymbol fieldType = ResolveOrInfer(syntax.Type, binding.Scope, binding.SourceName);
+            if (fieldType.NonNullable is NamedTypeSymbol namedFieldType && syntax.Type is not null)
+                QueueIfObsoleteType(binding.SourceName, owner, namedFieldType, syntax.Type.Span);
+
+            var field = new FieldSymbol(syntax.Name, owner, fieldType)
             {
                 // §7.1: a const is implicitly static and never written to again — there is no
                 // per-instance constant, so neither is read from what was written on the declaration.
@@ -3356,7 +4263,11 @@ namespace Surtr.Compiler.Binding
 
         private FieldSymbol BindModuleField(FieldDeclarationSyntax syntax, ModuleSymbol owner, Scope scope, string sourceName)
         {
-            var field = new FieldSymbol(syntax.Name, owner, ResolveOrInfer(syntax.Type, scope, sourceName))
+            TypeSymbol fieldType = ResolveOrInfer(syntax.Type, scope, sourceName);
+            if (fieldType.NonNullable is NamedTypeSymbol namedFieldType && syntax.Type is not null)
+                QueueIfObsoleteType(sourceName, owner, namedFieldType, syntax.Type.Span);
+
+            var field = new FieldSymbol(syntax.Name, owner, fieldType)
             {
                 IsStatic = true,
                 IsReadOnly = syntax.IsConst || !syntax.IsMutable,
@@ -3518,6 +4429,9 @@ namespace Surtr.Compiler.Binding
             bool isInterface)
         {
             var type = _resolver.Resolve(syntax.Type, binding.Scope, binding.SourceName);
+            if (type.NonNullable is NamedTypeSymbol propertyType)
+                QueueIfObsoleteType(binding.SourceName, owner, propertyType, syntax.Type.Span);
+
             var accessibility = Translate(syntax.Visibility, isInterface ? Accessibility.Public : Accessibility.Private);
 
             var property = new PropertySymbol(syntax.Name, owner, type)
@@ -3592,7 +4506,7 @@ namespace Surtr.Compiler.Binding
 
             if (getter is not null)
             {
-                Accessibility getterAccessibility = ResolveAccessorAccessibility(getter, accessibility, sourceName);
+                Accessibility getterAccessibility = ResolveAccessorAccessibility(getter, accessibility, sourceName, isInterface);
                 var bound = new MethodSymbol(MemberNames.Getter(property.Name), owner, property.Type)
                 {
                     IsStatic = property.IsStatic,
@@ -3603,6 +4517,7 @@ namespace Surtr.Compiler.Binding
                     IsSealed = getter.HasOwnDispatch ? getter.IsSealed : isSealed,
                     IsInline = (getter.Inline != InlineModifier.None ? getter.Inline : inline) == InlineModifier.Inline,
                     IsForceInline = (getter.Inline != InlineModifier.None ? getter.Inline : inline) == InlineModifier.ForceInline,
+                    IsNoInline = (getter.Inline != InlineModifier.None ? getter.Inline : inline) == InlineModifier.NoInline,
                     IsNative = isNative,
                 };
 
@@ -3612,7 +4527,7 @@ namespace Surtr.Compiler.Binding
 
             if (setter is not null)
             {
-                Accessibility setterAccessibility = ResolveAccessorAccessibility(setter, accessibility, sourceName);
+                Accessibility setterAccessibility = ResolveAccessorAccessibility(setter, accessibility, sourceName, isInterface);
                 var bound = new MethodSymbol(MemberNames.Setter(property.Name), owner, _factory.Void)
                 {
                     IsStatic = property.IsStatic,
@@ -3623,6 +4538,7 @@ namespace Surtr.Compiler.Binding
                     IsSealed = setter.HasOwnDispatch ? setter.IsSealed : isSealed,
                     IsInline = (setter.Inline != InlineModifier.None ? setter.Inline : inline) == InlineModifier.Inline,
                     IsForceInline = (setter.Inline != InlineModifier.None ? setter.Inline : inline) == InlineModifier.ForceInline,
+                    IsNoInline = (setter.Inline != InlineModifier.None ? setter.Inline : inline) == InlineModifier.NoInline,
                     IsNative = isNative,
                 };
 
@@ -3637,9 +4553,21 @@ namespace Surtr.Compiler.Binding
         /// property's. An accessor's own visibility must be strictly narrower than the property's —
         /// equal is pointless (the accessor could have written nothing) and wider would let a caller
         /// reach, through that one accessor, something the property itself already hides from them.
+        /// An accessor inside an interface takes no visibility at all: its member is always public.
         /// </summary>
-        private Accessibility ResolveAccessorAccessibility(AccessorSyntax accessor, Accessibility propertyAccessibility, string sourceName)
+        private Accessibility ResolveAccessorAccessibility(
+            AccessorSyntax accessor,
+            Accessibility propertyAccessibility,
+            string sourceName,
+            bool isInterface = false)
         {
+            if (isInterface && accessor.Visibility is not (Visibility.Default or Visibility.Public))
+            {
+                ReportAt(sourceName, accessor.Span, SurtrDiagnosticCode.InvalidInterfaceMember,
+                    $"An interface member is always public, so an accessor cannot be '{Describe(accessor.Visibility)}'.");
+                return propertyAccessibility;
+            }
+
             if (accessor.Visibility == Visibility.Default)
                 return propertyAccessibility;
 
@@ -3661,6 +4589,14 @@ namespace Surtr.Compiler.Binding
             _ => "public",
         };
 
+        private static string Describe(Visibility visibility) => visibility switch
+        {
+            Visibility.Private => "private",
+            Visibility.Protected => "protected",
+            Visibility.Internal => "internal",
+            _ => "public",
+        };
+
         private MethodSymbol BindMethod(
             MethodDeclarationSyntax syntax,
             NamedTypeSymbol owner,
@@ -3678,7 +4614,9 @@ namespace Surtr.Compiler.Binding
                 IsNative = syntax.IsNative,
                 IsInline = syntax.Inline == InlineModifier.Inline,
                 IsForceInline = syntax.Inline == InlineModifier.ForceInline,
+                IsNoInline = syntax.Inline == InlineModifier.NoInline,
                 IsConst = syntax.IsConst,
+                IsGenerator = syntax.IsGenerator,
             };
 
             BindTypeParameters(method, syntax.TypeParameters, scope, binding.SourceName);
@@ -3703,7 +4641,9 @@ namespace Surtr.Compiler.Binding
                 IsNative = syntax.IsNative,
                 IsInline = syntax.Inline == InlineModifier.Inline,
                 IsForceInline = syntax.Inline == InlineModifier.ForceInline,
+                IsNoInline = syntax.Inline == InlineModifier.NoInline,
                 IsConst = syntax.IsConst,
+                IsGenerator = syntax.IsGenerator,
             };
 
             BindTypeParameters(method, syntax.TypeParameters, scope, sourceName);
@@ -3726,9 +4666,17 @@ namespace Surtr.Compiler.Binding
         /// </remarks>
         private void BindMethodReturnType(MethodSymbol method, MethodDeclarationSyntax syntax, Scope scope, string sourceName)
         {
+            if (syntax.IsGenerator)
+            {
+                BindGeneratorShape(method, syntax, scope, sourceName);
+                return;
+            }
+
             if (syntax.ReturnType is not null)
             {
                 method.ReturnType = _resolver.Resolve(syntax.ReturnType, scope, sourceName);
+                if (method.ReturnType.NonNullable is NamedTypeSymbol returnType)
+                    QueueIfObsoleteType(sourceName, method, returnType, syntax.ReturnType.Span);
                 return;
             }
 
@@ -3749,6 +4697,79 @@ namespace Surtr.Compiler.Binding
             _inferReturnTypes.Add(method);
         }
 
+        /// <summary>
+        /// Settles a generator's two types and the rules §3.7 puts on the declaration.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The written return type is the <em>element</em>, following C#'s iterators, and the
+        /// method's own return type - what a call site sees - becomes
+        /// <c>generator&lt;element&gt;</c>. Everything downstream of here reads an ordinary method
+        /// returning an ordinary type; only <c>yield</c> looks at
+        /// <see cref="MethodSymbol.YieldType"/>.
+        /// </para>
+        /// <para>
+        /// The element is never inferred, unlike an ordinary method's return type. Inference reads a
+        /// body's <c>return</c>s, and a generator's carry no value - the elements come out of its
+        /// <c>yield</c>s, which may be nested in any control flow and may legitimately be absent.
+        /// Requiring it written is one rule rather than a second inference with different inputs.
+        /// </para>
+        /// </remarks>
+        private void BindGeneratorShape(MethodSymbol method, MethodDeclarationSyntax syntax, Scope scope, string sourceName)
+        {
+            if (syntax.Inline != InlineModifier.None && syntax.Inline != InlineModifier.NoInline)
+            {
+                // §3.6 splices a body into its call site. A generator's body does not run at the
+                // call site at all - the call builds an object and returns - so there is nothing to
+                // splice, and `forceinline` must fail rather than fall back silently.
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidGeneratorDeclaration,
+                    $"'{method.Name}' is a generator, so it cannot be inlined: a generator's body does not run at its call site (§3.7).");
+            }
+
+            if (syntax.IsConst)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidGeneratorDeclaration,
+                    $"'{method.Name}' cannot be both 'const' and a generator: folding one would have to run a body that is meant to be suspended (§3.7).");
+            }
+
+            if (syntax.IsNative)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidGeneratorDeclaration,
+                    $"'{method.Name}' cannot be both 'native' and a generator: a generator's suspension points are bytecode the compiler emits (§3.7).");
+            }
+
+            // A bodyless generator is legal exactly where a bodyless method is: an interface member
+            // or an `abstract` one, both of which arrive here as `Abstract` dispatch. What it
+            // declares is the obligation - a member whose calls hand back a `generator<T>` - and an
+            // implementation satisfies it with a real `generator`, whose stub (§12.4) fills the
+            // slot like any other method. Anywhere else, a generator with no body has no `yield`s,
+            // and a generator is defined by where its `yield`s are.
+            if (syntax.Body is null && method.Dispatch != MethodDispatch.Abstract)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidGeneratorDeclaration,
+                    $"'{method.Name}' is a generator, so it needs a body: a generator is defined by the 'yield's in it (§3.7).");
+            }
+
+            if (syntax.ReturnType is null)
+            {
+                ReportAt(sourceName, syntax.Span, SurtrDiagnosticCode.InvalidGeneratorDeclaration,
+                    $"'{method.Name}' is a generator, so the element type it yields must be written after the ':'; it is not inferred from the body (§3.7).");
+                return;
+            }
+
+            var element = _resolver.Resolve(syntax.ReturnType, scope, sourceName);
+
+            if (element.SpecialType == SpecialType.Void)
+            {
+                ReportAt(sourceName, syntax.ReturnType.Span, SurtrDiagnosticCode.InvalidGeneratorDeclaration,
+                    $"'{method.Name}' declares 'void' as what it yields, but a generator's declared type is the element it produces, and 'void' is not a type (§3.7).");
+                return;
+            }
+
+            method.YieldType = element;
+            method.ReturnType = element.IsError ? _factory.ErrorType : _factory.Generator(element);
+        }
+
         private MethodSymbol BindConstructor(
             ConstructorDeclarationSyntax syntax,
             NamedTypeSymbol owner,
@@ -3756,9 +4777,18 @@ namespace Surtr.Compiler.Binding
         {
             var method = new MethodSymbol(MemberNames.Constructor, owner, _factory.Void)
             {
-                Accessibility = Translate(syntax.Visibility, Accessibility.Public),
+                Accessibility = Translate(syntax.Visibility, owner.TypeKind == TypeSymbolKind.Enum ? Accessibility.Private : Accessibility.Public),
                 Role = MethodRole.Constructor,
             };
+
+            // §2.4: an enum's only instances are its cases, so nothing but the case list may call
+            // the constructor. A written visibility other than private is reported and forced.
+            if (owner.TypeKind == TypeSymbolKind.Enum && method.Accessibility != Accessibility.Private)
+            {
+                Report(SurtrDiagnosticCode.InvalidEnumConstructor, binding, syntax.Span,
+                    $"'{owner.Name}' is an enum; its constructor is always private, since only the case list may call it.");
+                method.Accessibility = Accessibility.Private;
+            }
 
             method.Parameters = BindParameters(syntax.Parameters, method, binding.Scope, binding.SourceName);
             RecordBody(method, syntax.Body, binding.Scope, binding.Module, owner, binding.SourceName);
@@ -4058,6 +5088,19 @@ namespace Surtr.Compiler.Binding
             var parameters = new TypeParameterSymbol[syntax.Count];
             for (int i = 0; i < parameters.Length; i++)
             {
+                // A method's parameters are chosen per call and live only inside their own body,
+                // so there is no family of constructions for variance to relate. The annotation
+                // is a declaration-site concept, and this is not one.
+                if (syntax[i].Variance != VarianceModifier.None)
+                {
+                    _diagnostics.ReportError(
+                        SurtrDiagnosticCode.InvalidVarianceModifier,
+                        $"'{(syntax[i].Variance == VarianceModifier.Covariant ? "out" : "in")}' is not valid on the type parameter '{syntax[i].Name}' of method '{method.Name}'; "
+                            + "only class and interface declarations can declare variance.",
+                        sourceName,
+                        syntax[i].Span);
+                }
+
                 parameters[i] = _factory.DeclareTypeParameter(syntax[i].Name, method, i);
                 scope.TryDeclare(syntax[i].Name, parameters[i]);
             }
@@ -4094,7 +5137,290 @@ namespace Surtr.Compiler.Binding
                         bounds[c] = _resolver.Resolve(written[c], binding.Scope, binding.SourceName);
 
                     binding.Parameters[i].Constraints = bounds;
+
+                    // A cycle is a property of the declaration, not of any use: `<T : U, U : T>`
+                    // promises two parameters each at least the other, which no construction can
+                    // satisfy or violate. Caught here — the walk below only sees this binding's own
+                    // parameters, which is exactly the graph that can be cyclic through written
+                    // bounds — so the error names the declaration instead of every later use.
+                    CheckConstraintCycle(binding.Parameters, i, binding.Syntax[i], binding.SourceName);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Rejects a type parameter whose bounds lead back to itself through other parameters of the
+        /// same declaration (§6).
+        /// </summary>
+        /// <remarks>
+        /// Only the declaring list's own parameters are followed: a bound naming a parameter of an
+        /// enclosing or unrelated declaration cannot resolve in scope here anyway. The walk carries
+        /// its path set so a shared bound (<c>&lt;T : C, U : C&gt;</c>) is not mistaken for a
+        /// cycle — only a parameter already on the current path closes one.
+        /// </remarks>
+        private void CheckConstraintCycle(
+            IReadOnlyList<TypeParameterSymbol> parameters,
+            int start,
+            TypeParameterSyntax syntax,
+            string sourceName)
+        {
+            var path = new List<TypeParameterSymbol> { parameters[start] };
+            if (FollowsBackTo(parameters[start], path))
+            {
+                var chain = new System.Text.StringBuilder(path[0].Name);
+                for (int i = 1; i < path.Count; i++)
+                    chain.Append(" -> ").Append(path[i].Name);
+
+                ReportAt(
+                    sourceName,
+                    syntax.Span,
+                    SurtrDiagnosticCode.CircularTypeParameterConstraint,
+                    $"'{syntax.Name}' has bounds that lead back to itself ('{chain}'); a circular constraint cannot be satisfied.");
+            }
+        }
+
+        private bool FollowsBackTo(TypeParameterSymbol parameter, List<TypeParameterSymbol> path)
+        {
+            foreach (var bound in parameter.Constraints)
+            {
+                if (bound.NonNullable is not TypeParameterSymbol next)
+                    continue;
+
+                // Already on the current path — including the starting parameter at path[0] — so
+                // the bounds close a circle.
+                if (path.Contains(next))
+                    return true;
+
+                path.Add(next);
+                if (FollowsBackTo(next, path))
+                    return true;
+
+                path.RemoveAt(path.Count - 1);
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Proves every <c>out</c>/<c>in</c> annotation this declaration wrote: a covariant
+        /// parameter never appears in an input position of its own declaration, a contravariant
+        /// one never in an output position (§6).
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The walk runs once per declaration, after every member signature is bound and before
+        /// any construction could be compared — variance is a promise the declaration makes, so a
+        /// broken one is reported here rather than as a mysterious subtype failure at some distant
+        /// use. Positions follow §6's table: returns and getters produce, parameters and setters
+        /// consume, a field both reads and writes, an array element or dict entry both reads and
+        /// writes because the collections are mutable, a constraint produces promises.
+        /// </para>
+        /// <para>
+        /// Polarity composes through nested constructions: a <c>IIterator&lt;T&gt;</c> field sits
+        /// under an invariant owner's both-positions; a contravariant argument flips the
+        /// polarity its children are read under. Only this declaration's own annotated parameters
+        /// can fail — another declaration's parameters were proven where they were declared, and a
+        /// method's parameters cannot carry variance at all.
+        /// </para>
+        /// </remarks>
+        private void CheckTypeParameterPositions(TypeBinding binding)
+        {
+            var symbol = binding.Symbol;
+            var parameters = symbol.TypeParameters;
+
+            bool anyVariant = false;
+            for (int i = 0; i < parameters.Count && !anyVariant; i++)
+                anyVariant = parameters[i].Variance != TypeParameterVariance.Invariant;
+
+            if (!anyVariant)
+                return;
+
+            var checker = new PositionChecker(this, binding);
+
+            // The bounds each parameter promises sit in output positions: `<U : T>` has U
+            // promising everything T promises, which is producing, not consuming.
+            foreach (var parameter in parameters)
+                checker.WalkEach(parameter.Constraints, Position.Output);
+
+            // A base class or declared interface is written in terms of this declaration's
+            // parameters, and implementing it means producing what it asks for.
+            if (symbol.BaseType is NamedTypeSymbol baseType)
+                checker.Walk(baseType, Position.Output);
+
+            for (int i = 0; i < symbol.Interfaces.Count; i++)
+                checker.Walk(symbol.Interfaces[i], Position.Output);
+
+            foreach (var member in symbol.Members)
+            {
+                switch (member)
+                {
+                    case MethodSymbol method when method.ContainingSymbol == symbol:
+                        checker.MemberName = method.Name;
+                        checker.Walk(method.ReturnType, Position.Output);
+                        for (int p = 0; p < method.Parameters.Count; p++)
+                            checker.Walk(method.Parameters[p].Type, Position.Input);
+                        break;
+
+                    case PropertySymbol property:
+                        checker.MemberName = property.Name;
+                        if (property.Getter is not null)
+                            checker.Walk(property.Type, Position.Output);
+
+                        if (property.Setter is not null)
+                            checker.Walk(property.Type, Position.Input);
+
+                        break;
+
+                    case FieldSymbol field:
+                        // A field is legible and writable by anyone who can see it, which is why
+                        // a generic value class stays invariant whatever its members wish.
+                        checker.MemberName = field.Name;
+                        checker.Walk(field.Type, Position.Both);
+                        break;
+                }
+            }
+        }
+
+        private static TypeParameterVariance TranslateVariance(VarianceModifier variance) => variance switch
+        {
+            VarianceModifier.Covariant => TypeParameterVariance.Covariant,
+            VarianceModifier.Contravariant => TypeParameterVariance.Contravariant,
+            _ => TypeParameterVariance.Invariant,
+        };
+
+        /// <summary>Which direction a position consumes: output-only, input-only, or unavoidably both.</summary>
+        private enum Position
+        {
+            Output,
+            Input,
+            Both,
+        }
+
+        private sealed class PositionChecker
+        {
+            private readonly Binder _binder;
+            private readonly TypeBinding _binding;
+            private readonly HashSet<TypeParameterSymbol> _reported = new HashSet<TypeParameterSymbol>();
+
+            public string MemberName = string.Empty;
+
+            public PositionChecker(Binder binder, TypeBinding binding)
+            {
+                _binder = binder;
+                _binding = binding;
+            }
+
+            public void WalkEach(IReadOnlyList<TypeSymbol> types, Position position)
+            {
+                for (int i = 0; i < types.Count; i++)
+                    Walk(types[i], position);
+            }
+
+            public void Walk(TypeSymbol type, Position position)
+            {
+                switch (type.NonNullable)
+                {
+                    case TypeParameterSymbol parameter:
+                        Check(parameter, position);
+                        return;
+
+                    // A nested construction inherits this walk's polarity through the argument's
+                    // own annotation: `out` passes it on, `in` flips it, an invariant parameter
+                    // pins its argument to both directions.
+                    case NamedTypeSymbol named when named.IsConstructed:
+                        {
+                            var arguments = named.TypeArguments;
+                            var declared = named.TypeParameters;
+                            for (int i = 0; i < arguments.Count && i < declared.Count; i++)
+                            {
+                                Walk(arguments[i], declared[i].Variance switch
+                                {
+                                    TypeParameterVariance.Covariant => position,
+                                    TypeParameterVariance.Contravariant => Flip(position),
+                                    _ => Position.Both,
+                                });
+                            }
+
+                            return;
+                        }
+
+                    case ClosureTypeSymbol closure:
+                        for (int i = 0; i < closure.ParameterTypes.Count; i++)
+                            Walk(closure.ParameterTypes[i], Flip(position));
+
+                        Walk(closure.ReturnType, position);
+                        return;
+
+                    // A generator only ever yields, so its element rides the same direction as
+                    // the position the generator itself was found in.
+                    case GeneratorTypeSymbol generator:
+                        Walk(generator.ElementType, position);
+                        return;
+
+                    // Tuples hand their polarity straight to each element.
+                    case TupleTypeSymbol tuple:
+                        for (int i = 0; i < tuple.ElementTypes.Count; i++)
+                            Walk(tuple.ElementTypes[i], position);
+
+                        return;
+
+                    // Arrays and dicts are mutable containers: reading and writing meet in every
+                    // slot, so anything annotated inside them is forced invariant (§3.2).
+                    case ArrayTypeSymbol array:
+                        Walk(array.ElementType, Position.Both);
+                        return;
+
+                    case DictionaryTypeSymbol dictionary:
+                        Walk(dictionary.KeyType, Position.Both);
+                        Walk(dictionary.ValueType, Position.Both);
+                        return;
+
+                    default:
+                        return;
+                }
+            }
+
+            private static Position Flip(Position position) => position switch
+            {
+                Position.Output => Position.Input,
+                Position.Input => Position.Output,
+                _ => Position.Both,
+            };
+
+            private void Check(TypeParameterSymbol parameter, Position position)
+            {
+                if (parameter.ContainingSymbol != _binding.Symbol)
+                    return;
+
+                bool fails = parameter.Variance switch
+                {
+                    TypeParameterVariance.Covariant => position is Position.Input or Position.Both,
+                    TypeParameterVariance.Contravariant => position is Position.Output or Position.Both,
+                    _ => false,
+                };
+
+                if (!fails || !_reported.Add(parameter))
+                    return;
+
+                string word = parameter.Variance == TypeParameterVariance.Covariant ? "out" : "in";
+                SurtrDiagnosticCode code = parameter.Variance == TypeParameterVariance.Covariant
+                    ? SurtrDiagnosticCode.VariantParameterUsedAsInput
+                    : SurtrDiagnosticCode.VariantParameterUsedAsOutput;
+
+                string site = MemberName.Length == 0 ? $"'{_binding.Symbol.Name}'" : $"member '{MemberName}'";
+                _binder.Report(
+                    code,
+                    _binding,
+                    Span(parameter),
+                    $"Cannot use {word}-variant type parameter '{parameter.Name}' here ({site}): "
+                        + $"a {word} parameter may only appear {(parameter.Variance == TypeParameterVariance.Covariant ? "in output positions" : "in input positions")} of '{_binding.Symbol.Name}'.");
+            }
+
+            private SourceSpan Span(TypeParameterSymbol parameter)
+            {
+                var syntaxes = _binding.Syntax.TypeParameters;
+                int ordinal = parameter.Ordinal;
+                return ordinal < syntaxes.Count ? syntaxes[ordinal].Span : _binding.Syntax.Span;
             }
         }
 
@@ -4197,6 +5523,415 @@ namespace Surtr.Compiler.Binding
         private void ReportAt(string sourceName, SourceSpan span, SurtrDiagnosticCode code, string message)
             => _diagnostics.ReportError(code, message, sourceName, span);
 
+        /// <summary>
+        /// Whether a declaration was written with the named attribute, asked of the syntax.
+        /// </summary>
+        /// <remarks>
+        /// Only sound for a parameterless built-in, and only used for one: what the bound uses add
+        /// over this is folded arguments and a resolved class, and a mark that carries no arguments
+        /// has neither to contribute. §11's recognition is by name at every other site too.
+        /// </remarks>
+        private static bool HasWrittenAttribute(DeclarationSyntax declaration, string name)
+        {
+            var attributes = declaration.Attributes;
+            for (int i = 0; i < attributes.Count; i++)
+            {
+                if (string.Equals(attributes[i].Name, name, StringComparison.Ordinal))
+                    return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Reports the use of an <c>@Obsolete</c> type in a declaration's own signature — the base
+        /// it extends, the type of a field or property, a method's return. Deferred: the marks are
+        /// bound in <see cref="BindAttributes"/>, which runs after every type exists, so whether
+        /// either the referenced type or the referencing declaration carries <c>@Obsolete</c> is
+        /// only known once that phase has run. Drain happens right after it, in
+        /// <see cref="BindBodies"/>, under §11.1's quiet-inside-obsolete rule.
+        /// </summary>
+        private void QueueIfObsoleteType(string sourceName, Symbol owner, NamedTypeSymbol type, SourceSpan span)
+            => _deferredObsoleteTypeUses.Add((sourceName, owner, type, span));
+
+        private readonly List<(string SourceName, Symbol Owner, NamedTypeSymbol Type, SourceSpan Span)> _deferredObsoleteTypeUses =
+            new();
+
+        /// <summary>
+        /// Gives each <c>@Value</c> class the value members it did not declare (§11.1): structural
+        /// <c>$equals</c>, combined <c>$hashCode</c> and <c>$toDisplayString</c>. Runs after
+        /// <see cref="BindAttributes"/> so the mark is known, and creates real methods with bound
+        /// bodies so the emitter ships them like any other member — callable, overridable by
+        /// declaring one's own, and consistent with the <c>==</c>/<c>!=</c> the same mark turns
+        /// structural.
+        /// </summary>
+        private void SynthesizeValueMembers()
+        {
+            foreach (var module in _modules.Values)
+            {
+                foreach (var type in module.Types)
+                    SynthesizeValueMembersFor(type);
+            }
+        }
+
+        private void SynthesizeValueMembersFor(NamedTypeSymbol type)
+        {
+            if (type.TypeKind == TypeSymbolKind.Class && BuiltInAttributes.IsMarkedValue(type.Definition))
+                AddValueMembers(type);
+
+            foreach (var nested in type.NestedTypes)
+                SynthesizeValueMembersFor(nested);
+        }
+
+        private void AddValueMembers(NamedTypeSymbol type)
+        {
+            var definition = type.Definition;
+            var fields = ValueMemberSynthesizer.FieldsOf(definition);
+            var members = new List<Symbol>(definition.Members);
+
+            bool hasEquals = false, hasHashCode = false, hasDisplay = false;
+            foreach (var member in members)
+            {
+                if (member is not MethodSymbol method)
+                    continue;
+
+                hasEquals |= method.Name == ValueMemberSynthesizer.EqualsName;
+                hasHashCode |= method.Name == ValueMemberSynthesizer.HashCodeName;
+                hasDisplay |= method.Name == ValueMemberSynthesizer.ToDisplayStringName;
+            }
+
+            if (!hasEquals)
+            {
+                var method = new MethodSymbol(ValueMemberSynthesizer.EqualsName, definition, _factory.Bool)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    Dispatch = MethodDispatch.Direct,
+                    Parameters = new[] { new ParameterSymbol("other", definition, ordinal: 0) },
+                };
+                members.Add(method);
+                _bound[method] = ValueMemberSynthesizer.EqualsBody(_factory, definition, fields, method);
+            }
+
+            if (!hasHashCode)
+            {
+                var method = new MethodSymbol(ValueMemberSynthesizer.HashCodeName, definition, _factory.Int)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    Dispatch = MethodDispatch.Direct,
+                };
+                members.Add(method);
+                _bound[method] = ValueMemberSynthesizer.HashCodeBody(_factory, MemberLookup, definition, fields, method);
+            }
+
+            if (!hasDisplay)
+            {
+                var method = new MethodSymbol(ValueMemberSynthesizer.ToDisplayStringName, definition, _factory.String)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    Dispatch = MethodDispatch.Direct,
+                };
+                members.Add(method);
+                _bound[method] = ValueMemberSynthesizer.ToDisplayStringBody(_factory, MemberLookup, definition, fields, method);
+            }
+
+if (members.Count != definition.Members.Count)
+                definition.Members = members;
+        }
+
+        /// <summary>
+        /// Gives every source enum the members it did not declare (§2.4, §2.3): <c>equals</c>,
+        /// <c>hashCode</c>, <c>toString</c>, <c>values</c>, the two <c>of</c> forms,
+        /// <c>compareTo</c> and <c>operator&lt;=&gt;</c>, plus the implicit
+        /// <c>IEquatable&lt;E&gt;</c>/<c>IComparable&lt;E&gt;</c> contracts. Real methods with
+        /// bound bodies, emitted like any other member — callable from source, overridable by
+        /// declaring one's own (for the names that are not reserved), and consistent with the
+        /// <c>==</c>/<c>!=</c> and relational forms the same representation already answers.
+        /// </summary>
+        private void SynthesizeEnumMembers()
+        {
+            foreach (var module in _modules.Values)
+            {
+                foreach (var type in module.Types)
+                    SynthesizeEnumMembersFor(type);
+            }
+        }
+
+        private void SynthesizeEnumMembersFor(NamedTypeSymbol type)
+        {
+            if (type.TypeKind == TypeSymbolKind.Enum)
+                AddEnumMembers(type);
+
+            foreach (var nested in type.NestedTypes)
+                SynthesizeEnumMembersFor(nested);
+        }
+
+        private void AddEnumMembers(NamedTypeSymbol type)
+        {
+            var definition = type.Definition;
+            var members = new List<Symbol>(definition.Members);
+
+            var cases = EnumMemberSynthesizer.CasesOf(definition);
+            var fields = InstanceFieldsOf(definition);
+
+            // A bare enum — its `value` is the whole value — is the one whose members fold as
+            // constants (§2.3quater): a constant can only hold an int, which is exactly it.
+            bool canBeConst = fields.Count == 1;
+
+            AddEnumContracts(definition);
+
+            if (!HasMethod(members, EnumMemberSynthesizer.EqualsName, isStatic: false, definition))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.EqualsName, definition, _factory.Bool)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsInline = true,
+                    IsConst = canBeConst,
+                    Parameters = new[] { new ParameterSymbol("other", definition, ordinal: 0) },
+                    Attributes = PureAndNoAlloc(),
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.EqualsBody(_factory, definition, fields, method);
+            }
+
+            if (!HasMethod(members, EnumMemberSynthesizer.HashCodeName, isStatic: false, null))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.HashCodeName, definition, _factory.Int)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsInline = true,
+                    IsConst = canBeConst,
+                    Attributes = PureAndNoAlloc(),
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.HashCodeBody(_factory, MemberLookup, definition, fields, method);
+            }
+
+            if (!HasMethod(members, EnumMemberSynthesizer.ToStringName, isStatic: false, null))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.ToStringName, definition, _factory.String)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsConst = canBeConst,
+                    Attributes = PureOnly(),
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.ToStringBody(_factory, definition, cases, method);
+            }
+
+            if (!HasMethod(members, EnumMemberSynthesizer.ValuesName, isStatic: true, null))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.ValuesName, definition, _factory.Array(definition))
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsStatic = true,
+                    IsConst = canBeConst,
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.ValuesBody(_factory, definition, cases, method);
+            }
+
+            // `of` returns E? — a null for "no such case". The nullable form is a boxed reference
+            // for a multi-field enum, so its `E?` can carry null like any other's (§5.1, value-types
+            // handoff): the synthesized body boxes a matching case's block and returns the null
+            // reference otherwise. Synthesized for every enum, multi-field included.
+            if (!HasMethod(members, EnumMemberSynthesizer.OfName, isStatic: true, _factory.Int))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.OfName, definition, definition.Nullable)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsStatic = true,
+                    IsInline = true,
+                    IsConst = canBeConst,
+                    Parameters = new[] { new ParameterSymbol("value", _factory.Int, ordinal: 0) },
+                    Attributes = PureAndNoAlloc(),
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.OfValueBody(_factory, definition, cases, method, definition.IsFlagsEnum);
+            }
+
+            if (!HasMethod(members, EnumMemberSynthesizer.OfName, isStatic: true, _factory.String))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.OfName, definition, definition.Nullable)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsStatic = true,
+                    IsConst = canBeConst,
+                    Parameters = new[] { new ParameterSymbol("name", _factory.String, ordinal: 0) },
+                    Attributes = PureAndNoAlloc(),
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.OfNameBody(_factory, definition, cases, method);
+            }
+
+            if (!HasMethod(members, EnumMemberSynthesizer.CompareToName, isStatic: false, definition))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.CompareToName, definition, _factory.Int)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsInline = true,
+                    IsConst = canBeConst,
+                    Parameters = new[] { new ParameterSymbol("other", definition, ordinal: 0) },
+                    Attributes = PureAndNoAlloc(),
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.CompareToBody(_factory, definition, method);
+            }
+
+            if (!HasMethod(members, EnumMemberSynthesizer.SpaceshipName, isStatic: true, definition))
+            {
+                var method = new MethodSymbol(EnumMemberSynthesizer.SpaceshipName, definition, _factory.Int)
+                {
+                    IsSynthetic = true,
+                    Accessibility = Accessibility.Public,
+                    IsStatic = true,
+                    Role = MethodRole.Operator,
+                    IsForceInline = true,
+                    Parameters = new[]
+                    {
+                        new ParameterSymbol("a", definition, ordinal: 0),
+                        new ParameterSymbol("b", definition, ordinal: 1),
+                    },
+                };
+                members.Add(method);
+                _bound[method] = EnumMemberSynthesizer.SpaceshipBody(_factory, definition, method);
+            }
+
+            if (members.Count != definition.Members.Count)
+                definition.Members = members;
+        }
+
+        /// <summary>The enum's instance fields, <c>value</c> first, in declaration order.</summary>
+        private static List<FieldSymbol> InstanceFieldsOf(NamedTypeSymbol type)
+        {
+            var fields = new List<FieldSymbol>();
+            foreach (var member in type.Definition.Members)
+            {
+                if (member is FieldSymbol { IsStatic: false } field)
+                    fields.Add(field);
+            }
+
+            return fields;
+        }
+
+        /// <summary>Whether the enum already declares the member the synthesis would add.</summary>
+        private static bool HasMethod(List<Symbol> members, string name, bool isStatic, TypeSymbol? parameterType)
+        {
+            int parameterCount = parameterType is null ? 0 : 1;
+            foreach (var member in members)
+            {
+                if (member is not MethodSymbol { IsStatic: var declaredStatic } method
+                    || declaredStatic != isStatic
+                    || !string.Equals(method.Name, name, StringComparison.Ordinal)
+                    || method.Parameters.Count != parameterCount)
+                {
+                    continue;
+                }
+
+                if (parameterType is null
+                    || ReferenceEquals(method.Parameters[0].Type.NonNullable, parameterType.NonNullable))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>Adds <c>IComparable&lt;E&gt;</c> and <c>IEquatable&lt;E&gt;</c> to the enum's declared interfaces (§6.8).</summary>
+        private void AddEnumContracts(NamedTypeSymbol definition)
+        {
+            if (definition.Interfaces.Count > 0)
+            {
+                bool hasComparable = false, hasEquatable = false;
+                foreach (var contract in definition.Interfaces)
+                {
+                    hasComparable |= string.Equals(contract.Name, "IComparable", StringComparison.Ordinal);
+                    hasEquatable |= string.Equals(contract.Name, "IEquatable", StringComparison.Ordinal);
+                }
+
+                if (hasComparable && hasEquatable)
+                    return;
+            }
+
+            var contracts = new List<NamedTypeSymbol>(definition.Interfaces);
+            AddEnumContract(contracts, "IComparable", definition);
+            AddEnumContract(contracts, "IEquatable", definition);
+            definition.Interfaces = contracts;
+        }
+
+        private void AddEnumContract(List<NamedTypeSymbol> contracts, string name, NamedTypeSymbol argument)
+        {
+            foreach (var existing in contracts)
+            {
+                if (string.Equals(existing.Name, name, StringComparison.Ordinal))
+                    return;
+            }
+
+            if (ResolveGlobalType(name) is NamedTypeSymbol { TypeKind: TypeSymbolKind.Interface } contract)
+                contracts.Add(contract.Construct(new[] { (TypeSymbol)argument }));
+        }
+
+        private NamedTypeSymbol? _pureAttribute;
+        private NamedTypeSymbol? _noAllocAttribute;
+
+        /// <summary>The <c>@Pure @NoAlloc</c> marks a synthesized body's promises carry (§2.3bis).</summary>
+        private IReadOnlyList<AttributeUse> PureAndNoAlloc()
+        {
+            var uses = new List<AttributeUse>();
+            if (_pureAttribute is null)
+                _pureAttribute = ResolveGlobalType("Pure");
+            if (_noAllocAttribute is null)
+                _noAllocAttribute = ResolveGlobalType("NoAlloc");
+
+            if (_pureAttribute is not null)
+                uses.Add(new AttributeUse(_pureAttribute, Array.Empty<object?>()));
+            if (_noAllocAttribute is not null)
+                uses.Add(new AttributeUse(_noAllocAttribute, Array.Empty<object?>()));
+
+            return uses;
+        }
+
+        /// <summary>The <c>@Pure</c> mark, for a body that is deterministic but may interpolate (§2.3bis).</summary>
+        private IReadOnlyList<AttributeUse> PureOnly()
+        {
+            if (_pureAttribute is null)
+                _pureAttribute = ResolveGlobalType("Pure");
+
+            return _pureAttribute is null
+                ? Array.Empty<AttributeUse>()
+                : new[] { new AttributeUse(_pureAttribute, Array.Empty<object?>()) };
+        }
+
+        /// <summary>Resolves a name from the outermost scope — the standard library's implicit import (§13).</summary>
+        private NamedTypeSymbol? ResolveGlobalType(string name)
+        {
+            var found = _globalScope.LookupLocal(name);
+
+            if (found.Symbol is NamedTypeSymbol named)
+                return named;
+
+            if (found.IsAmbiguous)
+            {
+                foreach (var candidate in found.Candidates)
+                {
+                    if (candidate is NamedTypeSymbol ambiguous)
+                        return ambiguous;
+                }
+            }
+
+            return null;
+        }
+
         private static string Join(IReadOnlyList<string> path, int count)
         {
             var builder = new System.Text.StringBuilder();
@@ -4204,7 +5939,6 @@ namespace Surtr.Compiler.Binding
             {
                 if (i > 0)
                     builder.Append('.');
-
                 builder.Append(path[i]);
             }
 

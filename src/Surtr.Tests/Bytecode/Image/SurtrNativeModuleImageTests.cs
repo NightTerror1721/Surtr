@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode.Emit;
 using Surtr.Bytecode.Image;
@@ -16,41 +16,41 @@ namespace Surtr.Tests.Bytecode.Image
     /// <remarks>
     /// The thing being pinned down throughout is that a native body travels as a <em>name</em> and
     /// never as an address. An image written in one process is read in another, where the address
-    /// means nothing and the name means the same thing — so the declaration says what the member
+    /// means nothing and the name means the same thing â€” so the declaration says what the member
     /// looks like and what it is called, and each runtime publishes its own body under that name.
     /// </remarks>
     public unsafe class SurtrNativeModuleImageTests
     {
         #region Host entry points
 
-        private static SurtrValue Answer(SurtrCallArguments arguments) => SurtrValue.CreateInt(42);
+        private static int Answer(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(42));
 
-        private static SurtrValue Rejected(SurtrCallArguments arguments) => SurtrValue.CreateInt(-1);
+        private static int Rejected(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(-1));
 
-        private static SurtrValue Doubled(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetInt(0) * 2);
+        private static int Doubled(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetInt(0) * 2));
 
-        private static SurtrValue Tripled(SurtrCallArguments arguments)
-            => SurtrValue.CreateInt(arguments.GetInt(0) * 3);
+        private static int Tripled(SurtrCallArguments arguments)
+            => arguments.Return(SurtrValue.CreateInt(arguments.GetInt(0) * 3));
 
         /// <summary>Reads slot 0 of the receiver, for the native-property cases.</summary>
-        private static SurtrValue ReadSlot(SurtrCallArguments arguments)
-            => arguments.GetUnchecked<SurtrInstance>(0)[0];
+        private static int ReadSlot(SurtrCallArguments arguments)
+            => arguments.Return(arguments.GetUnchecked<SurtrInstance>(0)[0]);
 
         /// <summary>Writes slot 0 of the receiver.</summary>
-        private static SurtrValue WriteSlot(SurtrCallArguments arguments)
+        private static int WriteSlot(SurtrCallArguments arguments)
         {
             arguments.GetUnchecked<SurtrInstance>(0)[0] = arguments.GetValueUnchecked(1);
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
-        private static SurtrValue Construct(SurtrCallArguments arguments)
+        private static int Construct(SurtrCallArguments arguments)
         {
             arguments.GetUnchecked<SurtrInstance>(0)[0] = arguments.GetValueUnchecked(1);
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
-        private static SurtrNativeEntryPoint Entry(delegate*<SurtrCallArguments, SurtrValue> body)
+        private static SurtrNativeEntryPoint Entry(delegate*<SurtrCallArguments, int> body)
             => SurtrNativeEntryPoint.FromFunctionPointer(body);
 
         #endregion
@@ -152,7 +152,7 @@ namespace Surtr.Tests.Bytecode.Image
 
         /// <summary>
         /// One module, two halves: a bytecode function that calls a native method declared beside
-        /// it. This is the shape Language-Syntax.md §13.1 describes for the standard library.
+        /// it. This is the shape Language-Syntax.md Â§13.1 describes for the standard library.
         /// </summary>
         private static SurtrModuleImage HybridImage()
         {
@@ -301,14 +301,14 @@ namespace Surtr.Tests.Bytecode.Image
         private const string ModuleSetterLink = "globals:set_value(I)";
 
         private static int _moduleValue;
-        private static SurtrValue ReadModuleValue(SurtrCallArguments arguments) => SurtrValue.CreateInt(_moduleValue);
-        private static SurtrValue WriteModuleValue(SurtrCallArguments arguments)
+        private static int ReadModuleValue(SurtrCallArguments arguments) => arguments.Return(SurtrValue.CreateInt(_moduleValue));
+        private static int WriteModuleValue(SurtrCallArguments arguments)
         {
             _moduleValue = arguments.GetInt(0);
-            return SurtrValue.Null;
+            return arguments.Return(SurtrValue.Null);
         }
 
-        /// <summary>A module-level property whose whole accessor pair is host code — no receiver.</summary>
+        /// <summary>A module-level property whose whole accessor pair is host code â€” no receiver.</summary>
         private static SurtrModuleImage ModuleLevelNativePropertyImage()
         {
             var builder = new SurtrModuleBuilder("globals");
@@ -322,7 +322,7 @@ namespace Surtr.Tests.Bytecode.Image
 
         /// <summary>
         /// A module-level `native` property has no receiver, but it is still an ordinary member
-        /// (§10): the compiler already relies on exactly this for `native let`/`native var` at
+        /// (Â§10): the compiler already relies on exactly this for `native let`/`native var` at
         /// module scope, so the builder has to accept it rather than reject it as a leftover
         /// host-global concept.
         /// </summary>
@@ -391,7 +391,7 @@ namespace Surtr.Tests.Bytecode.Image
 
         /// <summary>
         /// Overloads get distinct derived names, because the signature is part of what names a
-        /// member — the same reason it keys the access tables.
+        /// member â€” the same reason it keys the access tables.
         /// </summary>
         [Fact]
         public void OverloadsDeriveDistinctLinkNames()
@@ -435,7 +435,7 @@ namespace Surtr.Tests.Bytecode.Image
         }
 
         /// <summary>
-        /// A module the host linked directly still writes an image, using the derived names — so
+        /// A module the host linked directly still writes an image, using the derived names â€” so
         /// "I built this with pointers" and "I want to ship it" are not exclusive.
         /// </summary>
         [Fact]
@@ -464,7 +464,7 @@ namespace Surtr.Tests.Bytecode.Image
 
         #region Shape
 
-        /// <summary>A native member on a nested class is bound too — binding walks the whole tree.</summary>
+        /// <summary>A native member on a nested class is bound too â€” binding walks the whole tree.</summary>
         [Fact]
         public void ANestedClassesNativeMemberIsBound()
         {
@@ -553,7 +553,7 @@ namespace Surtr.Tests.Bytecode.Image
         }
 
         /// <summary>
-        /// A closure copies the address out flat, so a body bound later would never be seen — an
+        /// A closure copies the address out flat, so a body bound later would never be seen â€” an
         /// unbound method is caught where the closure is made rather than where it is called.
         /// </summary>
         [Fact]

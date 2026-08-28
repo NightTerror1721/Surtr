@@ -7,8 +7,9 @@ namespace Surtr.Tests.Compiler.Binding
 {
     /// <summary>
     /// Covers which types reach which. Everything here follows from three decisions taken
-    /// elsewhere: generics are invariant (§6), there are no user-defined implicit conversions
-    /// (§5.6), and <c>unknown</c> is the erased slot with a surface name (§5.10).
+    /// elsewhere: generics are invariant by default with opt-in declaration-site variance (§6),
+    /// there are no user-defined implicit conversions (§5.6), and <c>unknown</c> is the erased slot
+    /// with a surface name (§5.10).
     /// </summary>
     public sealed class ConversionsTests
     {
@@ -235,7 +236,8 @@ namespace Surtr.Tests.Compiler.Binding
         [Fact]
         public void GenericsAreInvariant()
         {
-            // §6 supports no declaration-site variance, so one construction reaches only itself.
+            // §6's default is still invariance: one construction reaches only itself unless the
+            // declaration annotated a parameter out/in (see the variance regions below).
             var conversions = Setup(out var factory);
 
             var animal = Declare(factory, "Animal");
@@ -263,6 +265,256 @@ namespace Surtr.Tests.Compiler.Binding
 
             Assert.False(conversions.IsAssignable(factory.Array(dog), factory.Array(animal)));
         }
+
+        /// <summary>Declares a generic type whose parameters carry the given variances (§6).</summary>
+        private static NamedTypeSymbol DeclareVariant(
+            TypeSymbolFactory factory,
+            string name,
+            params TypeParameterVariance[] variances)
+        {
+            var symbol = Declare(factory, name);
+            var parameters = new TypeParameterSymbol[variances.Length];
+            for (int i = 0; i < variances.Length; i++)
+            {
+                parameters[i] = factory.DeclareTypeParameter("T" + i, symbol, i);
+                parameters[i].Variance = variances[i];
+            }
+
+            symbol.SetTypeParameters(parameters);
+            return symbol;
+        }
+
+        #region Declared variance
+
+        /// <summary>
+        /// The one place total invariance opens up: a construction widens along an <c>out</c>
+        /// annotation and nothing else — and only because the declaration asked for it.
+        /// </summary>
+        [Fact]
+        public void ACovariantConstructionWidensAlongItsAnnotation()
+        {
+            var conversions = Setup(out var factory);
+
+            var animal = Declare(factory, "Animal");
+            var dog = Declare(factory, "Dog");
+            dog.BaseType = animal;
+
+            var producer = DeclareVariant(factory, "Producer", TypeParameterVariance.Covariant);
+
+            Assert.True(conversions.IsAssignable(
+                producer.Construct(new TypeSymbol[] { dog }),
+                producer.Construct(new TypeSymbol[] { animal })));
+
+            // Widening is one-way: the annotation promises production, not consumption.
+            Assert.False(conversions.IsAssignable(
+                producer.Construct(new TypeSymbol[] { animal }),
+                producer.Construct(new TypeSymbol[] { dog })));
+        }
+
+        /// <summary>A comparer of animals compares dogs: <c>in</c> flips the direction.</summary>
+        [Fact]
+        public void AContravariantConstructionNarrowsAlongItsAnnotation()
+        {
+            var conversions = Setup(out var factory);
+
+            var animal = Declare(factory, "Animal");
+            var dog = Declare(factory, "Dog");
+            dog.BaseType = animal;
+
+            var consumer = DeclareVariant(factory, "Consumer", TypeParameterVariance.Contravariant);
+
+            Assert.True(conversions.IsAssignable(
+                consumer.Construct(new TypeSymbol[] { animal }),
+                consumer.Construct(new TypeSymbol[] { dog })));
+
+            Assert.False(conversions.IsAssignable(
+                consumer.Construct(new TypeSymbol[] { dog }),
+                consumer.Construct(new TypeSymbol[] { animal })));
+        }
+
+        /// <summary>Variance is opt-in per parameter: whatever was not annotated stays exact.</summary>
+        [Fact]
+        public void AnUnannotatedParameterStaysInvariant()
+        {
+            var conversions = Setup(out var factory);
+
+            var animal = Declare(factory, "Animal");
+            var dog = Declare(factory, "Dog");
+            dog.BaseType = animal;
+
+            var pair = DeclareVariant(factory, "Pair", TypeParameterVariance.Invariant, TypeParameterVariance.Covariant);
+
+            var ofDog = pair.Construct(new TypeSymbol[] { dog, dog });
+            var widened = pair.Construct(new TypeSymbol[] { dog, animal });
+            Assert.True(conversions.IsAssignable(ofDog, widened));
+
+            // The invariant first slot refuses to move even though the second one widens.
+            Assert.False(conversions.IsAssignable(
+                pair.Construct(new TypeSymbol[] { dog, dog }),
+                pair.Construct(new TypeSymbol[] { animal, animal })));
+        }
+
+        /// <summary>
+        /// The restricted matching is what keeps variance sound under erasure: an implicit
+        /// conversion that would box differently — int to float — must not relate two
+        /// constructions, because no per-element conversion exists at run time to apply it.
+        /// </summary>
+        [Fact]
+        public void CovarianceNeverRidesANumericWidening()
+        {
+            var conversions = Setup(out var factory);
+
+            var producer = DeclareVariant(factory, "Producer", TypeParameterVariance.Covariant);
+
+            Assert.True(conversions.IsAssignable(factory.Int, factory.Float));
+            Assert.False(conversions.IsAssignable(
+                producer.Construct(new TypeSymbol[] { factory.Int }),
+                producer.Construct(new TypeSymbol[] { factory.Float })));
+        }
+
+        /// <summary>Nullability moves one way only, argument by argument as for whole types.</summary>
+        [Fact]
+        public void VarianceArgumentsStillMoveOnlyTowardNullable()
+        {
+            var conversions = Setup(out var factory);
+
+            var animal = Declare(factory, "Animal");
+
+            var producer = DeclareVariant(factory, "Producer", TypeParameterVariance.Covariant);
+
+            // A nullable element read into a nullable slot is fine; the reverse promises values
+            // that include null where none were allowed.
+            var ofAnimal = producer.Construct(new TypeSymbol[] { animal });
+            var ofNullableAnimal = producer.Construct(new TypeSymbol[] { animal.Nullable });
+
+            Assert.True(conversions.IsAssignable(ofAnimal, ofNullableAnimal));
+            Assert.False(conversions.IsAssignable(ofNullableAnimal, ofAnimal));
+        }
+
+        /// <summary>A covariant element carrying another construction composes.</summary>
+        [Fact]
+        public void CovarianceComposesThroughNestedConstructions()
+        {
+            var conversions = Setup(out var factory);
+
+            var animal = Declare(factory, "Animal");
+            var dog = Declare(factory, "Dog");
+            dog.BaseType = animal;
+
+            var producer = DeclareVariant(factory, "Producer", TypeParameterVariance.Covariant);
+
+            var nestedOfDog = producer.Construct(new TypeSymbol[] { producer.Construct(new TypeSymbol[] { dog }) });
+            var nestedOfAnimal = producer.Construct(new TypeSymbol[] { producer.Construct(new TypeSymbol[] { animal }) });
+
+            Assert.True(conversions.IsAssignable(nestedOfDog, nestedOfAnimal));
+            Assert.False(conversions.IsAssignable(nestedOfAnimal, nestedOfDog));
+        }
+
+        /// <summary>
+        /// The walk already reads every base «as seen from» its construction, so variance applies
+        /// at whichever ancestor the question lands on — not only when both sides share it.
+        /// </summary>
+        [Fact]
+        public void VarianceAppliesThroughTheHierarchyWalk()
+        {
+            var conversions = Setup(out var factory);
+
+            var animal = Declare(factory, "Animal");
+            var dog = Declare(factory, "Dog");
+            dog.BaseType = animal;
+
+            var iterable = DeclareVariant(factory, "IIterable", TypeParameterVariance.Covariant);
+            var collection = Declare(factory, "ICollection", TypeSymbolKind.Interface);
+            collection.SetTypeParameters(new[] { factory.DeclareTypeParameter("T", collection, 0) });
+            collection.Interfaces = new[] { iterable.Construct(new TypeSymbol[] { collection.TypeParameters[0] }) };
+
+            var list = Declare(factory, "List");
+            list.SetTypeParameters(new[] { factory.DeclareTypeParameter("T", list, 0) });
+            list.Interfaces = new[] { collection.Construct(new TypeSymbol[] { list.TypeParameters[0] }) };
+
+            var listOfDog = list.Construct(new TypeSymbol[] { dog });
+            var iterableOfAnimal = iterable.Construct(new TypeSymbol[] { animal });
+
+            Assert.True(conversions.IsSubtype(listOfDog, iterableOfAnimal));
+        }
+        #endregion
+
+        #region Structural variance
+
+        /// <summary>
+        /// Closures are contravariant in their inputs and covariant in their output — the case of
+        /// highest daily value, since handlers and mappers are everywhere.
+        /// </summary>
+        [Fact]
+        public void AClosureWidensAgainstItsInputsAndAlongItsOutput()
+        {
+            var conversions = Setup(out var factory);
+
+            var animal = Declare(factory, "Animal");
+            var dog = Declare(factory, "Dog");
+            dog.BaseType = animal;
+
+            var handleAnyAnimal = factory.Closure(new TypeSymbol[] { animal }, factory.Int);
+            var handleOnlyDogs = factory.Closure(new TypeSymbol[] { dog }, factory.Int);
+
+            // A handler that handles any animal serves wherever a dog handler is asked for —
+            // never the reverse, which would hand it cats.
+            Assert.True(conversions.IsAssignable(handleAnyAnimal, handleOnlyDogs));
+            Assert.False(conversions.IsAssignable(handleOnlyDogs, handleAnyAnimal));
+
+            // And the output still has to narrow in the ordinary direction.
+            var produceAnimal = factory.Closure(new TypeSymbol[] { factory.Int }, animal);
+            var produceDog = factory.Closure(new TypeSymbol[] { factory.Int }, dog);
+            Assert.True(conversions.IsAssignable(produceDog, produceAnimal));
+            Assert.False(conversions.IsAssignable(produceAnimal, produceDog));
+        }
+
+        [Fact]
+        public void AChangedArityIsStillNoConversion()
+        {
+            var conversions = Setup(out var factory);
+
+            var one = factory.Closure(new TypeSymbol[] { factory.Int }, factory.Int);
+            var two = factory.Closure(new TypeSymbol[] { factory.Int, factory.Int }, factory.Int);
+            Assert.False(conversions.IsAssignable(one, two));
+
+            var pair = factory.Tuple(new TypeSymbol[] { factory.Int, factory.String });
+            var triple = factory.Tuple(new TypeSymbol[] { factory.Int, factory.String, factory.String });
+            Assert.False(conversions.IsAssignable(pair, triple));
+        }
+
+        /// <summary>Tuples widen element by element, coherently with their structural equality.</summary>
+        [Fact]
+        public void TuplesWidenElementByElement()
+        {
+            var conversions = Setup(out var factory);
+
+            var animal = Declare(factory, "Animal");
+            var dog = Declare(factory, "Dog");
+            dog.BaseType = animal;
+
+            var specific = factory.Tuple(new TypeSymbol[] { dog, animal });
+            var wider = factory.Tuple(new TypeSymbol[] { animal, animal });
+
+            Assert.True(conversions.IsAssignable(specific, wider));
+            Assert.False(conversions.IsAssignable(wider, specific));
+        }
+
+        /// <summary>A generator only yields, so it widens exactly like a covariant construction.</summary>
+        [Fact]
+        public void GeneratorsWidenWithWhatTheyYield()
+        {
+            var conversions = Setup(out var factory);
+
+            var animal = Declare(factory, "Animal");
+            var dog = Declare(factory, "Dog");
+            dog.BaseType = animal;
+
+            Assert.True(conversions.IsAssignable(factory.Generator(dog), factory.Generator(animal)));
+            Assert.False(conversions.IsAssignable(factory.Generator(animal), factory.Generator(dog)));
+        }
+        #endregion
+
         #endregion
 
         #region Value classes and user conversions

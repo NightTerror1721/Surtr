@@ -79,6 +79,12 @@ namespace Surtr.Compiler.Syntax
                 case TokenType.KeywordFun:
                     return ParseMethod(start, docComment, attributes, modifiers);
 
+                // Everything a generator's header holds is a method's header, so the same parse
+                // runs; what the flag changes is downstream, where the written return type is read
+                // as the element rather than as what a call hands back (§3.7).
+                case TokenType.KeywordGenerator:
+                    return ParseMethod(start, docComment, attributes, modifiers, isGenerator: true);
+
                 case TokenType.KeywordLet:
                 case TokenType.KeywordVar:
                     return ParseField(start, docComment, attributes, modifiers);
@@ -242,11 +248,22 @@ namespace Surtr.Compiler.Syntax
                     case TokenType.KeywordForceInline:
                         if (modifiers.Inline != InlineModifier.None)
                         {
-                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'inline'/'forceinline'.");
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'inline'/'forceinline'/'noinline'.");
                         }
 
                         RequireOrder(4, "forceinline");
                         modifiers.Inline = InlineModifier.ForceInline;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordNoInline:
+                        if (modifiers.Inline != InlineModifier.None)
+                        {
+                            throw reader.Error(SurtrDiagnosticCode.InvalidModifier, "A declaration can only carry one of 'inline'/'forceinline'/'noinline'.");
+                        }
+
+                        RequireOrder(4, "noinline");
+                        modifiers.Inline = InlineModifier.NoInline;
                         reader.Advance();
                         continue;
 
@@ -350,6 +367,11 @@ namespace Surtr.Compiler.Syntax
 
                     case TokenType.KeywordForceInline:
                         modifiers.Inline = InlineModifier.ForceInline;
+                        reader.Advance();
+                        continue;
+
+                    case TokenType.KeywordNoInline:
+                        modifiers.Inline = InlineModifier.NoInline;
                         reader.Advance();
                         continue;
 
@@ -546,7 +568,20 @@ namespace Surtr.Compiler.Syntax
                     ? ParseArgumentList()
                     : Array.Empty<ArgumentSyntax>();
 
-                cases.Add(new EnumCaseSyntax(SpanFrom(start), name, arguments, caseDoc));
+                // §2.4: a case may carry an explicit value, written after its arguments:
+                // `Hearts("♥", true) = 1,`. Only an integer literal is accepted - the value has
+                // to fold at compile time, so an expression would be a promise the compiler
+                // cannot keep cheaply.
+                long? explicitValue = null;
+                if (reader.Match(TokenType.Assign))
+                {
+                    if (reader.CurrentType != TokenType.IntegerLiteral)
+                        throw reader.Error(SurtrDiagnosticCode.UnexpectedToken, "an integer literal as the case's value after '='");
+
+                    explicitValue = reader.Advance().Payload.AsInteger;
+                }
+
+                cases.Add(new EnumCaseSyntax(SpanFrom(start), name, arguments, caseDoc, explicitValue));
 
                 if (!reader.Match(TokenType.Comma))
                 {
@@ -709,11 +744,11 @@ namespace Surtr.Compiler.Syntax
 
         /// <summary>Parses a method, or a module-level function (§3.2, §2.5).</summary>
         private DeclarationSyntax ParseMethod(SourceLocation start, IReadOnlyList<string> docComment,
-            IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers)
+            IReadOnlyList<AttributeSyntax> attributes, Modifiers modifiers, bool isGenerator = false)
         {
             reader.Advance();
 
-            string name = reader.ExpectIdentifier("a method name");
+            string name = reader.ExpectIdentifier(isGenerator ? "a generator name" : "a method name");
             IReadOnlyList<TypeParameterSyntax> typeParameters = ParseTypeParameterList();
             IReadOnlyList<ParameterSyntax> parameters = ParseParameterList();
 
@@ -729,6 +764,12 @@ namespace Surtr.Compiler.Syntax
             BlockStatementSyntax? body = null;
             if (reader.Check(TokenType.FatArrow))
             {
+                // §3.7: an arrow body is one expression, and an expression cannot contain a
+                // `yield`, so a generator written this way could only ever be an empty one with a
+                // discarded expression in it. Rejected outright rather than silently accepted.
+                if (isGenerator)
+                    throw reader.Error(SurtrDiagnosticCode.GeneratorNeedsABlockBody, "A generator needs a block body: an arrow body is a single expression, which cannot contain a 'yield' (§3.7).");
+
                 bool returnsVoid = returnType is NamedTypeSyntax namedReturnType
                     && namedReturnType.Path.Count == 1
                     && namedReturnType.Path[0] == "void";
@@ -741,7 +782,7 @@ namespace Surtr.Compiler.Syntax
 
             return new MethodDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility, name, typeParameters,
                 parameters, returnType, body, modifiers.IsStatic, modifiers.Dispatch, modifiers.IsSealed,
-                modifiers.Inline, modifiers.IsConst, modifiers.IsNative);
+                modifiers.Inline, modifiers.IsConst, modifiers.IsNative, isGenerator);
         }
 
         /// <summary>Parses a constructor and its optional <c>: super(...)</c> or <c>: this(...)</c> chain (§3.2).</summary>
@@ -753,10 +794,11 @@ namespace Surtr.Compiler.Syntax
                 // §3.6: a constructor is never spliced - what runs is not its body alone but the
                 // chain and the initializers the emitter prepends to it - so the cost heuristic or
                 // a stray `inline` must not get it there. Forceinline must not fall back silently,
-                // so the modifier is rejected outright rather than ignored.
+                // and `noinline` would promise to stop a fold that already never happens, so any
+                // of the three is rejected outright rather than ignored.
                 throw reader.Error(
                     SurtrDiagnosticCode.InvalidModifier,
-                    "A constructor is never inlined; 'inline'/'forceinline' is not written on one.",
+                    "A constructor is never inlined; 'inline'/'forceinline'/'noinline' is not written on one.",
                     start);
             }
 
@@ -781,7 +823,18 @@ namespace Surtr.Compiler.Syntax
                 chainArguments = ParseArgumentList();
             }
 
-            BlockStatementSyntax body = ParseBlock();
+            BlockStatementSyntax body;
+            if (reader.Check(TokenType.FatArrow))
+            {
+                // §3.3: a constructor may take an arrow body too — sugar for a block holding one
+                // expression statement, since nothing here returns a value.
+                body = ParseArrowBody(returnsVoid: true);
+            }
+            else
+            {
+                body = ParseBlock();
+            }
+
             return new ConstructorDeclarationSyntax(SpanFrom(start), attributes, docComment, modifiers.Visibility,
                 parameters, chainArguments, chainsToThis, body);
         }
@@ -847,9 +900,22 @@ namespace Surtr.Compiler.Syntax
             }
 
             // No body means an abstract operator, declared for a subclass to override — signature-only,
-            // exactly as a method's (§3.2). An interface's operators are always written this way.
+            // exactly as a method's (§3.2). An arrow body (§3.3) is sugar for a one-statement block,
+            // the same lowering a method takes: a `return` for a value-returning overload, an
+            // expression statement where the return type is `void` (a conversion never is).
             BlockStatementSyntax? operatorBody = null;
-            if (!reader.Match(TokenType.Semicolon))
+            if (reader.Match(TokenType.Semicolon))
+            {
+                // abstract — nothing to parse
+            }
+            else if (reader.Check(TokenType.FatArrow))
+            {
+                bool returnsVoid = returnType is NamedTypeSyntax namedReturnType
+                    && namedReturnType.Path.Count == 1
+                    && namedReturnType.Path[0] == "void";
+                operatorBody = ParseArrowBody(returnsVoid);
+            }
+            else
             {
                 operatorBody = ParseBlock();
             }

@@ -52,7 +52,7 @@ surface syntax just gives each descriptor symbol a spelling:
 | `char` | `C` | |
 | `string` | `S` | |
 | `void` | `V` | **return position only** — `void` is deliberately not a type per `CLAUDE.md`, so a field, local or parameter can never be declared `void` |
-| `range` | `R` | a half-open or closed interval of `int`s (§5.4); unparameterised, since both bounds are always `int` |
+| `range` | `R` | a half-open or closed interval of `int`s (§5.4); unparameterised, since both bounds are always `int`. An **inline value** like a tuple (§2.9): three slots - start, end, inclusive - travelling flat through locals, arguments and returns, packing only when it crosses into one-reference storage. Equality is structural: same bounds and same form, same value, whatever identity its packed form would carry |
 | `unknown` | `E` | holds any value; must be cast before use (§5.10) |
 
 Composite built-ins are written in the parameterised forms of §5.3 — `T[]`, `{K: V}`, `(T, T, ...)`,
@@ -80,11 +80,11 @@ Hard-reserved, never usable as an identifier:
 ```
 abstract   alias     as        break     case      catch       class     const
 constructor          continue  default   else      enum        extension false
-finally    for       forceinline         fun       if          import    in
-inline     interface internal  is        let       moduleof    native    null
-operator   override  private   protected public    return      sealed   singleton
-static     switch    throw     true      try       typeof      var      virtual
-while
+finally    for       forceinline         fun       generator   if        import
+in         inline    interface internal  is        let         moduleof  native
+noinline   null      operator  override  private   protected   public    return
+sealed     singleton static    switch    throw     true        try       typeof
+using      var       virtual   while     yield
 ```
 
 And a sixth line, because the list keeps growing and `export` joined §2.1's imports:
@@ -92,6 +92,18 @@ And a sixth line, because the list keeps growing and `export` joined §2.1's imp
 ```
 export
 ```
+
+`using` (§9.2) is reserved rather than contextual, and it has to be: `using (x)` in statement
+position is indistinguishable from a call to a function named `using`, so nothing but reserving it
+settles the parse. It cost nothing to reserve — no `.surtr` source in the tree used the word as an
+identifier.
+
+`generator` and `yield` (§3.7) are hard-reserved rather than contextual, and deliberately so:
+`generator` introduces a member the way `constructor` and `operator` do, and `yield` opens a
+statement the way `return` does — the grammar branches on both, which is the standard §1.2 applies
+to everything on this list. `generator` is also the one reserved word that appears in type
+position, since `generator<T>` is the type a generator function's call produces; the two readings
+never overlap, because a declaration and a type never start in the same place.
 
 Four words are **contextual**, not reserved (§3.2): `this`, `super`, `value` and `attribute` mean
 something specific only where they are legal, and remain usable as ordinary identifiers everywhere
@@ -337,6 +349,9 @@ Members are signature-only: a trailing `;` instead of a body, and no `abstract` 
 interface member is implicitly abstract and public, which is all `SurtrInterface.AddMethod` /
 `AddProperty` accept anyway (fields, statics and default bodies are rejected there). Writing
 `abstract` explicitly would just repeat something the declaration context already guarantees.
+The always-public half is enforced, not just implied: a member written `private`, `protected` or
+`internal` — on the member or on one of its accessors (§3.4) — is a compile error
+(`InvalidInterfaceMember`), because every other spelling would lie about what a contract promises.
 
 An interface may still contain **nested types** — a nested `enum`, `interface`, or `class` — even
 though it can't contain static members. A nested type isn't a member with a body or storage the
@@ -350,19 +365,19 @@ interface IShape {
 }
 ```
 
-### 2.4 Enums — Java-style, each value is a real instance
+### 2.4 Enums — a value class with a fixed set of named values
 
 ```
 enum Suit : ICardSuit {
-    Hearts("♥", true),
-    Spades("♠", false),
-    Diamonds("♦", true),
+    Hearts("♥", true) = 1,
+    Spades("♠", false) = 10,
+    Diamonds("♦", true) = 11,
     Clubs("♣", false);
 
     private let _symbol: string;
     private let _isRed: bool;
 
-    constructor(symbol: string, isRed: bool) {
+    private constructor(symbol: string, isRed: bool) {
         _symbol = symbol;
         _isRed = isRed;
     }
@@ -373,25 +388,86 @@ enum Suit : ICardSuit {
 }
 ```
 
-An enum is a sealed class with a fixed set of named static instances. Each case list entry is a
-constructor call against the enum's own constructor; a case with no arguments (`enum Color { Red,
-Green, Blue }`) just calls the implicit parameterless constructor. The `;` after the case list is
-required exactly when member declarations follow it (same rule as Java), so the simple all-constant
-form needs no trailing punctuation:
+An enum is a **sealed value class** whose first instance field is the synthetic
+`public let value: int` — the case's own value. Its descriptor stays nominal (§6.1 of the migration
+design), so another module sees the enum, not an `int`; only the choice of opcode treats it as one.
+
+Each case list entry is a call to the enum's own constructor — always **private**, since only the
+case list may build one. A case with no arguments (`enum Color { Red, Green, Blue }`) calls the
+implicit parameterless constructor. The `;` after the case list is required exactly when member
+declarations follow it, so the simple all-constant form needs no trailing punctuation.
+
+**Every case has a value.** The implicit progression starts at `0` and adds `1` per case; an explicit
+value is written `Label(args…) = n` after the arguments, and the progression continues from it.
+`n` must be an integer literal ≥ 0 (negatives are rejected). Duplicates are an error in a plain enum
+(`DuplicateEnumValue`) — they would break the reverse value→name lookup — and allowed in a
+`@Flags` one (§2.4 Flags below). Ordering, `==`, `switch` and `toString` all use the value, so with
+explicit values it is the numeric order that counts, not the declaration position.
 
 ```
-enum Color { Red, Green, Blue }
+enum Suit { Hearts, Spades, Clubs }          // 0, 1, 2
+enum Rank { Ace = 1, Two, Three }            // 1, 2, 3
 ```
 
 A member's own leading identifier (a no-modifier property's name) and a bare case name are the same
 shape, so the parser tells the case list's end from a following member by looking one token past the
-identifier: only a case is ever followed by `(`, `,`, `;` or `}`; a property name is always followed
-by `:`. Missing the `;` before a member is therefore still an error rather than a silent
-misparse — the case list ends at the property either way.
+identifier: only a case is ever followed by `(`, `=`, `,`, `;` or `}`; a property name is always
+followed by `:`. Missing the `;` before a member is therefore still an error rather than a silent
+misparse.
 
-Enums can implement interfaces (`: ICardSuit` above) since each case is a genuine instance, but
-cannot declare a base class — the enum class itself already occupies that slot, and naming one there
-is rejected.
+Enums can implement interfaces, and cannot declare a base class — the enum class itself already
+occupies that slot.
+
+**Every enum answers to a synthesized API** — real methods with bound bodies, emitted into the image,
+overridable by declaring one's own (for the names that are not reserved): structural `equals(other)`
+and `hashCode()`; `toString()` naming the case (or `Name(value)` for a value no case carries);
+`static values()` returning a fresh array of every case in declaration order; `static of(value: int)`
+and `static of(name: string)` returning the matching case or `null`; and `compareTo(other)` plus
+`operator<=>`, which give `< <= > >=` for free. `value`, `values` and `of` are reserved names inside
+an enum. An enum also satisfies `IEquatable<E>` and `IComparable<E>` implicitly. `==` compares the
+value (it never lowers to a call to `equals`), and `===` is rejected over an enum, exactly as over
+any value.
+
+**`@Flags` (§11.1) makes the cases bits of a set rather than alternatives.** A marked enum is still a
+bare value class — one field, `value` — and its cases are the integers `1 << position` when implicit,
+or the written power-of-two (or zero) when explicit. A variable of it holds one `int`, and a
+combination of cases is a value of the type:
+
+```
+@Flags
+enum Perm { Read, Write, Execute }        // 1, 2, 4
+
+let rw: Perm = Perm.Read | Perm.Write;    // 3, and still a Perm
+let ro = rw & ~Perm.Write;                // 1
+rw.contains(Perm.Write);                  // true
+```
+
+`&`, `|` and `^` combine two values of the **same** marked enum and produce that enum — which is
+what makes the assignment above need no cast — and `~` gives every bit a value does not have. The
+compound forms (`|=`, `&=`, `^=`) follow from those. Two *different* flag enums share no bit
+meanings, so combining them is rejected; the shifts are rejected too, since which bit a case
+occupies is the compiler's to assign and moving one produces a value no case names.
+
+`contains(flag)` is `(value & flag) == flag`, written as a call because that is how it reads. A
+marked enum must be plain — no members, no interfaces, no constructor arguments on its cases — but
+it may satisfy the two implicit contracts. An implicit case is the bit at its own position, and an
+`int` holds 31 usable bits, so the 32nd *implicit* case is rejected; an explicit value may repeat a
+bit, which is what lets a flags enum name more than 31 cases. Writing a forbidden declaration is an
+error (`InvalidFlagsEnum`).
+
+The cast to and from `int` is explicit in both directions, for a marked enum only. It moves no bits,
+but it has to be written, because an arbitrary `int` is not a combination of the enum's cases — and
+it is what makes the empty set expressible, there being no case for zero. A plain enum's inverse of
+`value` is the synthesized `of(value)`:
+
+```
+let none: Perm = 0 as Perm;
+let raw: int = rw as int;                 // 3, for storing or sending somewhere
+let suit: Suit? = Suit.of(10);            // Spades, or null for a value no case names
+```
+
+Because a flags enum is a value class, `of(value)` on it is **total**: any `int` is a representable
+combination, so `Perm.of(3)` is never null. The flags-ness travels in the image with the enum itself.
 
 **Per-case method bodies (Java's anonymous-constant pattern) are not supported.** Behavior always
 lives on the enum class itself, shared by every case — branch inside a method on `this` (or on a
@@ -594,37 +670,62 @@ value class EntityId {
     }
 }
 
+value class Vec2 {
+    public let x: float;
+    public let y: float;
+
+    constructor(x: float, y: float) { this.x = x; this.y = y; }
+
+    public fun add(other: Vec2): Vec2 { return Vec2(this.x + other.x, this.y + other.y); }
+    public fun dot(other: Vec2): float { return this.x * other.x + this.y * other.y; }
+}
+
 fun despawn(id: EntityId): void { ... }
 
 despawn(EntityId(7));
 despawn(7);            // error: an int is not an EntityId
 ```
 
-A `value class` wraps exactly one field. The type checker treats it as **a type of its own**, so an
-`EntityId` and an `int` are not interchangeable — but at runtime it is **erased to the field it
-wraps**, so passing one allocates nothing and costs exactly what passing the underlying value
-costs.
+A `value class` groups one or more fields into **a type of its own**. The type checker keeps it
+apart from anything else — an `EntityId` and an `int` are not interchangeable — and at runtime it
+has **no heap object at all**: a value occupies as many consecutive slots as it has fields, moved
+around by copy wherever it goes. Constructing one, passing one, returning one and storing one in a
+field each cost exactly what moving those slots costs, which for the one-field case is exactly what
+moving the underlying value costs.
 
 This is what a transparent alias (§2.7) deliberately is not, and it is why the "strong alias" idea
 is spelled this way rather than as a second kind of `alias`: expressed as a class it can carry
 methods, implement interfaces, and be constructed, which a bare aliasing form could not.
 
-- **Exactly one field**, declared `let`. A value class with two would have nothing to erase to.
+- **One or more fields, every one declared `let`.** A value is immutable: assignment copies the
+  whole block, so a mutable field would let two copies disagree about a value that has no identity
+  to disagree over. The one-field case is the special one only in its representation — it erases to
+  the field itself and occupies one slot, which is why it existed before the general form did.
 - It may declare methods, properties and a constructor, but **cannot extend or be extended** — it
-  has no room for an instance layout to inherit or add to.
-- Its field may be any type, including another value class.
+  has no room for an instance layout to inherit or add to. It may implement interfaces.
+- A field may be any type, **including another value class**, whose slots are folded into the
+  containing run. A value type that reaches itself, directly or through a cycle, is refused: no
+  finite layout can hold it.
+- A value flattens to at most **254 slots**. A call carries its argument count in one byte of
+  immediate and the receiver takes one of them, so nothing wider could travel.
+- **`===` is refused on a value.** Identity comparison asks which object two references name, and
+  a value has no object and no identity. Equality (`==`) compares the fields.
 
-**Where the erasure stops.** A value class is erased *where the type is statically known*. Flowing
-into a slot that only knows it holds a reference — an erased generic parameter (§6), an `unknown`
-(§5.10), or a variable typed as an interface it implements — it must **box**, exactly as a
-primitive does in the same position, and the boxed form is a real object with a real class. That is
-the same bargain Kotlin's `value class` makes, and it is unavoidable: those slots hold a reference
-by definition, so something has to be the reference.
+**Where the erasure stops.** A value class stays inline *where the type is statically known*.
+Flowing into a slot that only knows it holds a reference — an erased generic parameter (§6), an
+`unknown` (§5.10), a variable typed as an interface it implements, or an element of an array or
+dictionary — it must **box**, exactly as a primitive does in the same position, and the boxed form
+is a real object of that class whose fields receive the slots verbatim. That is the same bargain
+Kotlin's `value class` makes, and it is unavoidable: those slots hold a reference by definition, so
+something has to be the reference.
 
 The practical consequence is that a value class is free in the code that names its type, and costs
-a boxing allocation in the code that does not — so it pays off for ids, quantities and handles
-threaded through concretely-typed code, and pays nothing back if it spends its life inside a
-generic container.
+a boxing allocation in the code that does not — so it pays off for ids, quantities, vectors and
+handles threaded through concretely-typed code, and pays nothing back if it spends its life inside
+a generic container.
+
+**A tuple is a value type too** (§5.3): `(int, float)` is two slots, not an object, and a function
+returning one hands both slots back without allocating. §4.5 covers binding them apart.
 
 ---
 
@@ -643,7 +744,7 @@ accidentally exposed outside a type without saying so.
 A consistent left-to-right order for every member:
 
 ```
-<visibility>? <static>? <sealed>? <virtual|override|abstract>? <inline|forceinline>? <const>? <native>? <let|var|constructor|fun|alias|operator>? <name> ...
+<visibility>? <static>? <sealed>? <virtual|override|abstract>? <inline|forceinline|noinline>? <const>? <native>? <let|var|constructor|fun|alias|operator>? <name> ...
 ```
 
 The parser enforces this order — a modifier written out of turn (`static public fun f(): void { }`,
@@ -746,6 +847,13 @@ there is a base slot to replace) remains fully supported and unchanged: it is th
 interface-satisfying member itself overridable by a further subclass, which a `Direct` member
 never is, having no vtable slot of its own to replace.
 
+**`override` with nothing to replace is an error.** The modifier is owed by — and only by — a
+member whose signature also comes down the base-*class* chain as `virtual` or `abstract`
+(`InvalidOverride`). A method whose only claim is an interface obligation must be written plain,
+even when it uses the interface's own name for its slot; it stays legal where the same signature
+descends from an abstract or virtual class member too, because there the declaration really does
+replace that member while it happens to satisfy the contract along the way.
+
 `abstract` on the **class** is its own explicit, mandatory modifier — `abstract class Foo { ... }`
 — rather than something inferred from the class containing an abstract member. Requiring it
 explicitly lets a class be non-instantiable *without* any abstract members (a common pattern: a
@@ -788,17 +896,17 @@ switches that accessor to custom logic while leaving the other one auto-generate
 error. This is exactly the `get_x`/`set_x` accessor-method shape `SurtrPropertyBuilder` already
 wires for built-ins, applied to user-declared classes too.
 
-An `inline`/`forceinline` on the property applies to its accessors (§3.6) — unless the accessor
-writes its own, per the rule below.
+An `inline`/`forceinline`/`noinline` on the property applies to its accessors (§3.6) — unless the
+accessor writes its own, per the rule below.
 
 **An accessor may carry its own modifier run**, independently of the other and of the property:
-visibility, `virtual`/`override`/`abstract`, `sealed`, and `inline`/`forceinline`, written directly
-before `get`/`set` in the same left-to-right order §3.2 fixes for a member. Whatever an accessor
-does *not* write, it inherits from the property — visibility and the inline hint independently of
-each other, and dispatch (`virtual`/`override`/`abstract`) together with `sealed` as one pair, since
-`sealed` only qualifies an `override`. This is why writing just `private` on a setter changes
-nothing else about it: the setter still inherits the property's own dispatch and inline hint, only
-its visibility narrowed.
+visibility, `virtual`/`override`/`abstract`, `sealed`, and `inline`/`forceinline`/`noinline`,
+written directly before `get`/`set` in the same left-to-right order §3.2 fixes for a member.
+Whatever an accessor does *not* write, it inherits from the property — visibility and the inline
+hint independently of each other, and dispatch (`virtual`/`override`/`abstract`) together with
+`sealed` as one pair, since `sealed` only qualifies an `override`. This is why writing just
+`private` on a setter changes nothing else about it: the setter still inherits the property's own
+dispatch and inline hint, only its visibility narrowed.
 
 ```
 public value: int {
@@ -913,7 +1021,7 @@ diagnostics-style and host-facing APIs (`format`, `log`), and should be kept off
 inside a frame budget. The runtime itself never needs it: `SurtrCallArguments` already gives a
 native function a counted argument span with no array in sight.
 
-### 3.6 Inlining: `inline` and `forceinline`
+### 3.6 Inlining: `inline`, `forceinline` and `noinline`
 
 ```
 inline fun clamp(v: int, lo: int, hi: int): int {
@@ -922,6 +1030,10 @@ inline fun clamp(v: int, lo: int, hi: int): int {
 
 forceinline fun dot(a: Vec2, b: Vec2): float {
     return a.x * b.x + a.y * b.y;
+}
+
+noinline fun audit(x: int): int {
+    return x * x + 7 * 3;   // stays a real call, everywhere
 }
 ```
 
@@ -936,6 +1048,14 @@ that machinery dwarfs the work.
   if inlining is *impossible* rather than merely unattractive, it is a **compile error naming the
   reason**, never a silent fallback to a normal call. A `forceinline` that quietly did nothing
   would fail exactly when you most wanted to know.
+- **`noinline` is the veto.** It refuses every *optional* fold of the declaration's invocations:
+  no splice by hint or heuristic, no backing-field lowering of its auto-property accessors (the
+  access stays a real call), and no call-site const folding of its `const fun` calls. What runs is
+  the declaration itself — one frame, visible in a stack trace — at every site. The three keywords
+  are mutually exclusive (`InvalidModifier`), written in that order slot before `const`. What
+  `noinline` cannot veto are §7's *mandatory* folds: a `const` initializer or a `const if`
+  condition still evaluates the function, because there folding is what gives the value, not an
+  optimization on top of one.
 
 **There is also a default, written nothing.** A call site with no modifier consults a cost heuristic
 (`CodeGen/InlineCost.cs`) that walks the callee's bound body and splices it when the body is cheap
@@ -993,6 +1113,252 @@ fallback depends on the build model, which does not exist yet — see §14.
 
 `inline` and `const` (§7) are independent and compose: `const` decides whether a call happens at
 compile time at all, `inline` decides how a call that survives to runtime is emitted.
+
+### 3.7 Generators: `generator` and `yield`
+
+A **generator** is a function that produces a sequence one element at a time, remembering where it
+left off between requests. It is introduced by `generator`, standing exactly where `fun` would —
+like `constructor` and `operator`, it is the keyword that says what kind of member this is, not a
+modifier on a method.
+
+```surtr
+generator countdown(from: int): int {
+    var i = from;
+    while (i > 0) {
+        yield i;
+        i = i - 1;
+    }
+}
+
+fun total(): int {
+    var sum = 0;
+    for (x in countdown(5)) { sum = sum + x; }   // 5 + 4 + 3 + 2 + 1
+    return sum;
+}
+```
+
+Four rules carry the whole construct:
+
+- **The declared type is the element**, not what a call hands back. `countdown` is declared `: int`
+  because each `yield` produces an `int`; calling it produces a `generator<int>`. This follows C#'s
+  iterators, and it is what keeps the declaration readable — the interesting type is the one the
+  body works in.
+- **`yield expr;` hands one element out and suspends.** The value converts to the declared element
+  by the same rules a `return` converts to a return type.
+- **`return;` ends the sequence**, as does falling off the end. `return expr;` also ends it and
+  leaves a **result** alongside the elements — what a delegating `yield from` evaluates to, and what
+  `result` reads back. It is typed `unknown`, because the declaration names the element and has
+  nowhere to write a second type.
+- **Calling a generator runs none of its body.** The call captures the arguments and builds the
+  object; the body starts on the first request for an element. So a generator function is free of
+  side effects until something iterates it.
+
+#### The type: `generator<T>`
+
+`generator<T>` is a built-in type like `array` or `range`, writable anywhere a type is:
+
+```surtr
+let g: generator<int> = countdown(5);
+let xs: IIterable<int> = g;      // satisfies the contract, with nothing extra declared
+let cursor: IIterator<int> = g;  // and is its own cursor
+```
+
+It satisfies **both** `IIterable<T>` and `IIterator<T>`, and `iterate()` hands back the generator
+itself. That is not a shortcut — it follows from the next rule.
+
+#### One object, one walk; one call, one object
+
+A generator **object** is single-use: it holds one in-progress walk, and when that walk ends there
+is nothing left in it. Iterating one that has already started raises `InvalidOperationException`
+rather than quietly producing nothing, because an empty second loop is a bug that never announces
+itself.
+
+Restarting is calling the **function** again, which builds a fresh generator:
+
+```surtr
+let g = countdown(3);
+for (a in g) { }                      // 3, 2, 1
+for (b in g) { }                      // error: this generator has already been iterated
+
+for (a in countdown(3)) { }           // 3, 2, 1
+for (b in countdown(3)) { }           // 3, 2, 1 again - a different generator
+```
+
+This is JavaScript's and Python's model for the object and C#'s for the function, and the pair is
+what makes `for (x in countdown(5))` — by far the common case — always walk the whole sequence
+without anyone having to think about it. It also composes with `Sequence<T>` (§13.2) for free,
+since a `Sequence` holds a *provider* and a generator function is one:
+
+```surtr
+let s = Sequence<int>(() => countdown(5));
+let doubled = s.map(x => x * 2).toArray();
+```
+
+#### Delegation: `yield from`
+
+`yield from expr;` hands out every element of `expr`, in order, and then carries on:
+
+```surtr
+generator inner(): int { yield 2; yield 3; }
+
+generator outer(): int {
+    yield 1;
+    yield from inner();
+    yield 4;
+}                                   // 1, 2, 3, 4
+```
+
+The operand is anything a `for-in` could walk — another generator, an array, a range, a
+`Sequence<T>`, a user class satisfying `IIterable<T>` — and its element must reach the declaring
+generator's element by the same conversions a plain `yield` allows.
+
+It is what makes a recursive walk expressible at all:
+
+```surtr
+generator inorder(node: Node?): int {
+    if (node == null) { return; }
+    yield from inorder(node!!.left);
+    yield node!!.value;
+    yield from inorder(node!!.right);
+}
+```
+
+`from` is **contextual**, recognized only directly after `yield`, so it stays an ordinary
+identifier everywhere else — including as a parameter of the generator doing the yielding. The one
+cost is that a variable literally named `from` cannot be yielded bare: write `yield (from);`.
+
+Delegating to a generator is not the loop it looks like. The delegating generator suspends without
+a frame and records a link, so a resume goes straight to the innermost generator that still has
+one — an N-deep chain costs one suspension per element rather than N. Delegating to anything else
+is the loop, since an array has no frame to link to. Measured: three levels of `yield from` cost 7 %
+more than none.
+
+Delegating to a generator that is already running — `yield from` on itself, or around a cycle —
+raises `InvalidOperationException`, the same guard that stops a generator resuming itself.
+
+#### Where a generator may be written, and where a `yield` may
+
+A `generator` is legal as a module-level function, an instance or static method, a member of an
+`extension` block (§15), and a member of an interface. It may declare type parameters like any
+other method, and may be `virtual`, `abstract` or `override`.
+
+An interface declares one exactly as a class does, without a body:
+
+```surtr
+interface ISource {
+    generator values(): int;
+}
+```
+
+What that declares is an obligation whose calls hand back a `generator<int>`; an implementation
+satisfies it with a real `generator`. Nothing about suspension crosses the interface.
+
+It is **not** legal as a constructor, an operator, a property accessor, or a lambda, nor with
+`const` or `native` — and it cannot be `inline`/`forceinline`, because §3.6 splices a body into its
+call site and a generator's body does not run at its call site at all.
+
+A `yield` is legal only in the lexical body of a generator. Three placements are refused:
+
+| Placement | Why |
+|---|---|
+| Outside a generator | there is no element type to convert against |
+| Inside a lambda nested in a generator | the lambda is a function of its own, with its own frame; the generator's frame is not in reach to suspend |
+| Inside a `finally` | that block runs *because* the generator is being closed, so suspending there would answer a close with an element |
+
+**A `yield` inside a `try` is legal**, `catch` and `finally` alike, and that is what deterministic
+disposal (§9.2) bought. The handler search reads the suspended frame's own saved instruction
+pointer, so a `catch` around the suspension point takes what `raise` throws in, and a `finally`
+around it runs when the generator is closed. The one placement left out is the `finally` block
+itself: it runs during a close, and a close that got an element back would leave a generator alive
+after something was told it was disposed.
+
+A `try/catch` around the *consumption* of a generator works as it always did — an exception raised
+inside a body propagates out of the request that reached it, and exhausts the generator.
+
+A generator whose body contains no `yield` is legal and produces nothing — a useful base case for a
+recursive walk — but warns, because it is far more often an omission.
+
+#### Coroutines: `send`, `raise`, `dispose`, `result`
+
+A generator is not only a sequence; it is a suspended body something else can talk to. Four members
+on `generator<T>` make that traffic two-way, and none of them is on a contract — nothing else in the
+language can be sent to or raised into.
+
+```
+generator negotiate(): int {
+    let first = yield 1;                 // evaluates to what send() injected
+    let second = yield ((first as int) + 1);
+    return "done";                       // the result, read back through `result`
+}
+
+fun drive(): void {
+    let g = negotiate();
+    g.moveNext();                        // runs to the first yield; g.current is 1
+    g.send(10);                          // the first `yield` evaluates to 10; g.current is 11
+    g.raise(InvalidOperationException("stop"));   // throws where it is suspended
+    g.dispose();                         // ends it, running its pending `finally` blocks
+    let r = g.result;                    // what `return expr;` left, or null
+}
+```
+
+- **`yield` is an expression**, at the lowest precedence there is — JavaScript's and Python's rule.
+  So `let cmd = yield status;` reads straight, and as an operand of anything else it needs
+  parentheses: `yield a + b` yields the sum, and `(yield a) + b` adds to what came back. What it
+  evaluates to is `unknown`, so it is cast at the point of use (§5.10). Written as a statement it
+  costs exactly what it always did — the compiler simply does not emit the read.
+- **`send(v)`** resumes and hands `v` to the suspended `yield`, answering `true` or `false` the way
+  `moveNext()` does; the element is read through `current`, so the two ways of advancing have one
+  shape. Sending to a generator that has not started is refused rather than silently dropping the
+  value — there is no suspended `yield` to hand it to.
+- **`raise(e)`** throws inside the body at the point it is suspended. It is spelled `raise` and not
+  `throw` because `throw` is reserved (§1.2), so `g.throw(e)` would not parse.
+- **`dispose()`** ends the body from outside, running whatever `finally` blocks it has pending. It
+  is `IDisposable.dispose` (§9.2), which is why a `for-in` over a generator closes it on every way
+  out — including a `break`. It is idempotent, and closing a delegation closes every level,
+  innermost first.
+
+The signal `dispose()` raises inside the body is a `GeneratorExit`, and **no typed `catch` ever
+matches it**: only a `finally` sees it. So a body that wraps its suspension in a broad
+`catch (e: Exception)` still gets closed, which is the guarantee Python gets by putting
+`GeneratorExit` outside `except Exception`. A body that somehow yields again while being closed is
+an error rather than a generator that quietly survived its own disposal.
+
+**`yield from` is an expression too**, and evaluates to what the generator it delegated to returned
+— PEP 380's rule:
+
+```
+generator inner(): int { yield 1; yield 2; return 30; }
+
+generator outer(): int {
+    let total = yield from inner();      // 30, after handing out 1 and 2
+    yield (total as int);
+}
+```
+
+Delegating to something that is not a generator evaluates to `null`, because an array has no return
+value to hand back.
+
+#### What it costs
+
+A `for-in` whose sequence is statically a `generator<T>` compiles to a direct suspend/resume with
+no interface dispatch and no iterator object, the same way §4.2 lowers a loop over an array to an
+indexed walk. The contract is what makes a generator assignable to an `IIterable<T>`; it is not
+what a loop over one runs.
+
+The suspension itself copies the live frame — locals and pending operands — out of the machine's
+stack and back in on the next request. That is why a `yield` cannot cross a call: by the time a
+function a generator called is running, the generator's own frame is no longer the one on top.
+Every language in this family accepts the same restriction. In exchange, a local that lives across
+a `yield` stays a local: nothing is promoted to the heap, and a generator costs exactly one
+allocation however many elements it produces.
+
+Wrapping a `yield` in a `try` costs nothing measurable — protected regions are a table of ranges,
+with no instruction to enter one. `send` is the one part of the surface that is not cheap: it goes
+through the general path rather than a compiled one, because a `for-in` never injects a value, and a
+primitive sent into an `unknown` parameter is boxed like anything else reaching an erased slot
+(§5.10). Measured at 50 000 elements: an ordinary walk is 1.42 ms and one allocation, the same walk
+with the `yield` inside a `try/finally` is 1.30 ms and one allocation, and a `send`-driven loop is
+5.2 ms and one allocation per injected value.
 
 ---
 
@@ -1117,6 +1483,7 @@ What each yields:
 | `string` | `char` |
 | `range` | `int` |
 | `{K: V}` | `(K, V)` — a pair per entry |
+| `generator<T>` | `T` (§3.7) |
 
 A dictionary yields **pairs**, not keys: iterating one almost always wants both halves, and the
 keys-only form is already spelled `for (k in d.keys())`. A dictionary is walked over a snapshot of
@@ -1224,6 +1591,38 @@ quite a lot, and forbidding it would push every constructor into inventing a sec
 In practice this comes up mainly for **non-private** fields, since §1.3's `_` prefix on private
 fields means a parameter and the field it initializes rarely collide there — `_name = name;` needs
 no `this.` at all.
+
+### 4.5 Destructuring a tuple
+
+```
+let (quotient, remainder) = divmod(17, 5);
+var (x, y) = origin;
+
+var row = 0;
+var column = 0;
+(row, column) = nextCell();          // the assignment form: existing targets
+```
+
+A tuple can be taken apart into names, in a declaration (`let`/`var`) or as an assignment to
+targets that already exist. Both forms are **pure desugaring** — no bound node of their own and no
+opcode of their own. The value is evaluated **once** into a hidden temporary, and each name reads
+its own element off it by constant index, which is the element access §5.3 already defines. Every
+name is declared exactly like any ordinary local, so scoping, flow analysis, capture and emission
+all work on it unchanged.
+
+- The subject must be a **tuple**, and the pattern must bind **exactly as many names as it has
+  elements**. Anything else is refused rather than filled in or dropped.
+- A declaration's names take the element types; nothing is written, and nothing can be.
+- The assignment form writes anything assignable — a variable, a parameter, a field — and refuses
+  anything else at the element that caused it, rather than failing the whole statement.
+- Evaluating once is a guarantee, not an implementation detail: `(a, b) = f()` calls `f` once.
+
+Because a tuple is a value type (§2.9), nothing here allocates: a function returning `(int, int)`
+hands back two slots and the pattern binds two locals out of them.
+
+**Names only, in this version.** A nested pattern (`let (a, (b, c)) = ...`) is not accepted — the
+inner tuple binds to one name and is taken apart by a second statement. The restriction is about
+the pattern grammar, not the values: a tuple of tuples is an ordinary tuple everywhere else.
 
 ---
 
@@ -2416,6 +2815,67 @@ still reachable.
 implicit type of a throw expression. It is not a value type: a variable cannot be declared of it
 in any way that reads one back, since no value ever has that type.
 
+### 9.2 Disposal: `IDisposable` and `using`
+
+Some things have to be released at a moment the collector cannot pick — a host file handle, a
+native buffer, a generator suspended halfway through a `try/finally`. Surtr's registry sweeps by
+dropping its reference and has **no finalization hook**, so an object never learns it died. What the
+language offers instead is a contract and two places that honour it.
+
+```
+public interface IDisposable {
+    fun dispose(): void;
+}
+```
+
+`IDisposable` is built in, beside `IIterable` and `IIterator`, because the compiler has to name it:
+a `for-in` closes its cursor and a `using` closes its resource, and neither can depend on a
+particular library module having been loaded.
+
+**`using` opens a resource for a block and closes it on every way out.**
+
+```
+using (let file = openFile("data.bin")) {
+    process(file);
+}
+
+using (let source = open("in"), let sink = create("out")) {
+    copy(source, sink);
+}
+```
+
+- A resource is declared with `let`, never `var`: one that could be reassigned would leave the close
+  pointed at something other than what was opened.
+- Its type must satisfy `IDisposable`, or the declaration is an error.
+- Several resources close in **reverse order**, because the second may have been opened from the
+  first — and a resource whose own opening throws leaves the ones before it closed.
+- A nullable resource is allowed and simply not closed when it is null.
+
+It is exactly `try { B } finally { r.dispose(); }` with a null guard, and nothing more: a `break`, a
+`return` and an escaping exception all run the close through the machinery `try/finally` already
+has. If `dispose()` itself throws while an exception was travelling, the one from `dispose()` wins
+and the original is lost — C#'s behaviour, not Java's; there is no suppressed-exception list.
+
+**A `for-in` closes what it walks.** `IIterator<T>` extends `IDisposable`, so every cursor has a
+`dispose()` and a loop always knows statically that it has something to close — no run-time question
+per loop, and no way for a generator travelling as an `IIterable<T>` to escape the close. The loop
+closes on all four exits: running out, `break`, `return`, and an exception. The loops that walk a
+built-in collection by index — an array, a tuple, a dict, a `range`, a `string` (§4.2) — create no
+cursor and so pay nothing at all.
+
+Entering a protected region costs nothing in this VM, so what a loop over a cursor pays is one call
+on the way out. Once per loop, never per element — and where a body has nothing protecting its
+suspension point, the close finds that out before building a frame or an exception, so a `break` out
+of an ordinary generator allocates nothing. `genYield` measures 1.42 ms, unchanged from before the
+close existed.
+
+**What is not guaranteed.** An `IDisposable` stored in a field and abandoned is never closed; a
+generator held in a variable and never walked never runs its `finally`. This is C#'s and Java's
+position, stated rather than hidden: closing the abandoned needs reference counting, which is the
+collection decision this language did not take. What *is* guaranteed is that the two normal ways to
+consume a resource — a `for-in` and a `using` — are safe, and that stepping outside them is
+explicit.
+
 ---
 
 ## 10. Native/host interop surface
@@ -2507,8 +2967,9 @@ Java-style, `@Name(args)` directly above the declaration it applies to — not C
 `[Name(args)]`. Reads as metadata *attached to* the next line rather than a bracketed clause that
 could be mistaken for an array-typed something, and keeps the one `[` / `]` pair in the language
 meaning exactly one thing (array indexing/type, §5.3/§5.4). An attribute can decorate any
-declaration — class, interface, enum, field, property, method, parameter — the same set `///` doc
-comments attach to. Concretely, this is aimed at two audiences: compiler/tooling directives
+declaration — class, interface, enum, field, property, or method (including constructors and
+module-level functions); parameters cannot carry one yet — the same set `///` doc comments attach
+to minus enum cases. Concretely, this is aimed at two audiences: compiler/tooling directives
 (`@Obsolete`, `@Deprecated`-style warnings) and future Unity interop, where a host embedding Surtr
 will want to reflect on attributes to do things like expose a field to the inspector.
 
@@ -2575,6 +3036,191 @@ for (m in t.members()) {
 §13.5 covers the whole reflection surface these belong to — `Type`, `Member` and `Module`, and the
 `typeof`/`moduleof` operators that produce them — alongside the rest of the built-in types §13
 documents.
+
+**Arguments are checked against the attribute's own declaration.** The arguments fill its fields
+positionally, so a use that hands the class more constants than it has instance fields to fill is
+an error at compile time (`AttributeArgumentCountMismatch`) rather than a module that fails to
+load later; and each constant has to fit the field it lands in
+(`AttributeArgumentTypeMismatch`), with §5's implicit widening — an integer widens into a `float`
+field, nothing else crosses kinds, and `null` fits only a reference-typed field. Fewer arguments
+than fields is fine: the rest keep their initializers' values. Only the class's own non-static,
+non-const fields count as slots, in declaration order.
+
+### 11.1 The built-in attributes
+
+Two attributes come with the language, declared once by the runtime's built-in module and so in
+scope of every compilation without any `import` — nameable like `Exception` is. Both carry one
+optional `reason: string` (quoted in the warning when present), keep `Runtime` retention so hosts
+and scripts can read them back through reflection, and are recognized by their class's simple
+name: a user-declared `attribute class Obsolete` of their own means the same thing.
+
+- **`@Obsolete("reason")`** marks a declaration that is being retired. Every *use* of something
+  marked — calling the method or function, reading or writing the field or property, constructing
+  the class — warns (`ObsoleteMemberUsed`) with the reason as its text. Code inside another
+  obsolete declaration is silent: an obsolete method calling an obsolete method is migration work,
+  not a mistake. Between two overloads the arguments tie on (§3.5 leaves them equally good), the
+  unmarked one wins quietly; only when every applicable overload is marked does the call resolve
+  to one and warn.
+
+  ```
+  @Obsolete("use moveTo(dx, dy)")
+  public fun move(x: float, y: float): void { ... }
+
+  public fun update(): void {
+      move(1.0, 2.0);    // warning: 'move' is obsolete: use moveTo(dx, dy)
+  }
+  ```
+
+- **`@NoDiscard("reason")`** marks a function whose result should not be thrown away. A call whose
+  value goes nowhere — the call sitting as a statement — warns (`NoDiscardResultUnused`);
+  assigning the result, passing it on, or chaining into another call is using it and stays quiet.
+  It is a warning rather than an error because ignoring a result can be deliberate; assigning it
+  to a named local is how a source says so explicitly.
+
+  ```
+  @NoDiscard("the bool says whether it parsed")
+  public fun tryParse(text: string): bool { ... }
+
+  public fun load(): void {
+      tryParse(input);            // warning: the result of 'tryParse' is marked @NoDiscard but was not used
+      let ok = tryParse(input);   // fine
+  }
+  ```
+
+Both ride the ordinary attribute machinery everywhere else: they serialize into images as uses of
+their built-in classes (`surtr:Obsolete`, `surtr:NoDiscard`), materialize at load, and read back
+host-side through `TryGetAttribute(SurtrBuiltIns.Obsolete, ...)` and script-side through
+`(m.attributes()[0] as Obsolete).reason`.
+
+The rest of the built-in vocabulary sits alongside them, declared by the same built-in module. Every
+one of them arrives as imported metadata, so its target list is enforced from the recognition table
+rather than from a declaration — the same `AttributeTargetMismatch` error, applied to whichever
+declaration the use lands on.
+
+| Attribute | Targets | Carries | What it does |
+|---|---|---|---|
+| `@Obsolete(reason)` | any declaration | `reason: string` | warns at every use |
+| `@NoDiscard(reason)` | method | `reason: string` | warns when the result is dropped |
+| `@Range(lo, hi)` | field, property | `lo`, `hi`: float | documents a numeric range; checked under `Debug` |
+| `@Value` | class | — | structural equality; compile-time only |
+| `@Export(name)` | class, field, property | `name: string` | what a module offers its host |
+| `@Test(name)` | method | `name: string` | a test the runner discovers |
+| `@TestSuite(name)` | class | `name: string` | names the group its tests belong to |
+| `@TestIgnore(reason)` | method | `reason: string` | discovered and reported, never run |
+| `@TestBefore` / `@TestAfter` | method | — | fixtures run around each test in scope |
+| `@Benchmark` | method | — | run repeatedly and timed, by a pass of its own |
+| `@Pure` | method, property | — | same result for the same arguments, no effects |
+| `@NoAlloc` | method, property | — | promises the body puts nothing on the heap |
+| `@Throws(name)` | method | `name: string` | documents an exception it can raise; repeatable |
+| `@Flags` | enum | — | makes the cases bits of a set (§2.4) |
+| `@MainThread` | class, method, property | — | may only run on the host's main thread |
+| `@ThreadSafe` | class, method | — | safe to call from any thread |
+
+Four of them are worth reading past the table, because each does something the others do not:
+
+- **`@TestIgnore("reason")`** is the complement of `@Test`, and the runner still *discovers* the
+  method — it reports it as skipped with the reason, and never enters the body. Reporting rather
+  than filtering is the point: a skip nobody can see is indistinguishable from a deleted test.
+  Written without `@Test` there is nothing to skip, and that warns (`IgnoreWithoutTest`).
+
+- **`@TestBefore` / `@TestAfter`** run around *each* test in their scope, not once around the
+  group. A fixture in a class wraps that class's own tests; one at module level wraps every test in
+  the module. The test and its fixtures share one instance, which is what lets a `@TestBefore` set
+  up state the test reads, and a `@TestAfter` runs whatever happened — including after a
+  `@TestBefore` that threw, since a fixture that only ran on the happy path would be no guarantee.
+  A fixture that takes parameters, returns a value, or is also a `@Test` warns
+  (`InvalidTestFixture`).
+
+- **`@NoAlloc`** is `@Pure`'s sibling on the memory axis: it promises the body allocates nothing,
+  and the compiler reports the constructs it can see doing so — an object creation, a collection
+  literal, a string concatenation or interpolation, a lambda, a `yield`
+  (`AllocationInNoAllocBody`). Like `@Pure` it is trusted rather than proven, so three things stay
+  silent by design: calls are not followed into the callee, tuples are allowed (a tuple is a value
+  type laid out inline, §2.9), and invoking an existing closure is allowed where creating one is
+  not.
+
+- **`@Throws("Name")`** is the one repeatable built-in — a function that can raise three things
+  carries three marks. The name is resolved and checked to descend from `Exception`, so a renamed
+  exception does not leave the mark pointing at nothing (`ThrowsTypeNotException`, a warning: the
+  mark is documentation). It is also the one attribute an editor's hover renders, as a
+  `throws X, Y` line, because what a function can raise is something a *caller* has to act on.
+
+**`@Flags` is the one that changes what its target *is*.** Everything else in this section records
+something about a declaration; `@Flags` turns an enum's cases into bits of a set — the enum stays a
+value class, but its values combine with `|`/`&`/`^` and `contains`. §2.4 covers it.
+
+- **`@Range(lo, hi)`** documents the bounds a numeric field or property is meant to stay within.
+  `lo` and `hi` are floats (integer literals widen on the way in), and the use carries them into the
+  image so a host — an inspector drawing a slider, say — reads them back through
+  `TryGetAttribute(SurtrBuiltIns.RangeAttribute)`. The compiler stores what the field will hold,
+  so the bounds materialize as the floats they were declared, not as raw integers.
+
+  ```
+  class Player {
+      @Range(0.0, 100.0)
+      public var health: float = 100.0;
+  }
+  ```
+
+- **`@Value`** opts a *class* into structural equality: where two values of a plain class compare
+  by identity, two of a `@Value` class compare field by field. `==` becomes "same reference, or
+  neither is null and every field pair is equal" — inherited fields included, a nested `@Value`
+  field recursing, and a self-referencing field stopping at identity so cycles cannot loop forever.
+  A declared `operator==` still wins; `!=` is the negation; `===` is untouched. A class with no
+  instance fields keeps plain identity (there is nothing structural to compare). The mark is
+  compile-time only: it shapes what the compiler emits and never reaches the image.
+
+  ```
+  @Value
+  class Vec2 {
+      public let x: float;
+      public let y: float;
+      constructor(x: float, y: float) { this.x = x; this.y = y; }
+  }
+
+  fun same(): bool { return Vec2(1.0, 2.0) == Vec2(1.0, 2.0); }   // true
+  ```
+
+  The opt-in is per class — a base class marked `@Value` does not turn a silent subclass into a
+  value. (Value classes already compare structurally on their own, so `@Value` is for the classes
+  that would otherwise fall back to identity.)
+
+  A `@Value` class also carries the value members it did not declare, as real emitted methods:
+  `$equals(other)`, `$hashCode()` and `$toDisplayString()` — the `$` ABI prefix, hidden from
+  reflection like every compiler-made member. `equals` and `==` share one field-by-field algorithm,
+  so they always agree; `hashCode` is an FNV fold over per-field hashes, so equal values always
+  hash equal; `toDisplayString` renders `Name(field=value, ...)`. Writing one's own
+  `equals`/`hashCode`/`toDisplayString` is the readable form that wins the call; the `$` forms stay
+  as the ABI contract for hosts and future runtime integration.
+
+- **`@Export("alias")`** marks what a module offers its embedding host: a whole class, or one
+  field/property, under an optional alias different from the Surtr name. It changes nothing about
+  language visibility — `public`/`internal` still decide reach — and is a read-only contract the
+  host consumes through `TryGetAttribute(SurtrBuiltIns.Export)`, the way a C# `[SerializeField]` is
+  a hint to Unity rather than a language rule.
+
+- **`@Test("name")`** marks a parameterless method as a test; **`@TestSuite("name")`** names the
+  class a group of tests lives in. Discovery and execution are pure reflection: the host-side
+  `SurtrTestRunner.Run(runtime, modules)` walks each module's classes, finds the `@Test` methods
+  (suites named by their `@TestSuite` mark or falling back to the class name), and runs them —
+  statics directly, instance tests on a fresh instance whose parameterless constructor has run —
+  reporting the exception message of any that fail. Because everything rides the ordinary image
+  and reflection machinery, a Surtr project gains tests with no compiler change.
+
+  ```
+  @TestSuite("Vec2")
+  class Vec2Tests {
+      @Test("sums components")
+      public fun sumWorks(): void { assert(Vec2(1.0, 2.0).add(Vec2(3.0, 4.0)) == Vec2(4.0, 6.0)); }
+  }
+  ```
+
+- **`@Pure`, `@MainThread` and `@ThreadSafe`** are contracts the language records today and verifies
+  later. `@Pure` promises a function returns the same value for the same arguments with no
+  observable side effects — a tooling/optimizer input; `@MainThread` declares a member may only run
+  on the embedding host's main thread (a Unity draw call, say); `@ThreadSafe` declares one safe to
+  call from any thread. All three stay readable through reflection from the start, ready for the
+  verifier that will eventually lint them.
 
 ---
 

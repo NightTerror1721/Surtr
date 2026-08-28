@@ -20,6 +20,7 @@ namespace Surtr.Runtime.Classes
         private readonly int _codeOffset;
         private readonly int _localCount;
         private readonly int _maxStackSize;
+        private readonly int _argumentSlotCount;
         private SurtrExceptionHandler[] _handlers = System.Array.Empty<SurtrExceptionHandler>();
 
         internal SurtrBytecodeMethodInfo(
@@ -40,13 +41,20 @@ namespace Surtr.Runtime.Classes
             string[]? genericParameters = null,
             string[][]? genericConstraints = null,
             bool isExtension = false,
-            bool isBridge = false)
+            bool isBridge = false,
+            int argumentSlotCount = -1)
             : base(name, SurtrMethodImplKind.Bytecode, dispatch, role, isOverride, returnType, parameters, isStatic, visibility, declaringType, isSealed, genericParameters, genericConstraints, isExtension, isBridge)
         {
             _chunk = chunk;
             _entryIndex = entryIndex;
             _localCount = localCount;
             _maxStackSize = maxStackSize;
+
+            // The sentinel travels through untouched when nothing was baked: an image carries no
+            // slot count, so ArgumentSlotCount has to fall through to the declared shape rather
+            // than read as a bare parameter count - which would drop an instance method's
+            // receiver and shift every cross-module call site against it by one.
+            _argumentSlotCount = argumentSlotCount;
 
             // Snapshot the offset instead of indexing the chunk on every call. The table is
             // fixed once the loader has built it, so this can never drift.
@@ -80,6 +88,15 @@ namespace Surtr.Runtime.Classes
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             get => _maxStackSize;
         }
+
+        /// <summary>
+        /// How many stack slots a call site leaves for this method's arguments, receiver
+        /// included - value-type parameters occupy their flattened width, so this is the sum of
+        /// those widths rather than a plain parameter count. Metadata read back from an image
+        /// carries no baked count and falls through to the declared shape.
+        /// </summary>
+        public override int ArgumentSlotCount
+            => _argumentSlotCount >= 0 ? _argumentSlotCount : base.ArgumentSlotCount;
 
         /// <summary>The byte offset into the chunk's code where this method's body starts.</summary>
         internal int CodeOffset

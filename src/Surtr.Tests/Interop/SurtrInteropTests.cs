@@ -1,13 +1,15 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Interop;
 using Surtr.Interop.Attributes;
 using Surtr.Runtime;
+using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
 using Surtr.Tests.VM;
 using System;
+using System.Linq;
 using Xunit;
 
 namespace Surtr.Tests.Interop
@@ -21,17 +23,17 @@ namespace Surtr.Tests.Interop
             public int Value;
         }
 
-        private static SurtrValue GetValue(SurtrCallArguments args)
+        private static int GetValue(SurtrCallArguments args)
         {
             var target = args.Runtime.Resolve<SurtrNativeObject>(args[0])!.TargetAs<Thing>()!;
-            return SurtrValue.CreateInt(target.Value);
+            return args.Return(SurtrValue.CreateInt(target.Value));
         }
 
-        private static SurtrValue SetValue(SurtrCallArguments args)
+        private static int SetValue(SurtrCallArguments args)
         {
             var target = args.Runtime.Resolve<SurtrNativeObject>(args[0])!.TargetAs<Thing>()!;
             target.Value = args.GetInt(1);
-            return SurtrValue.Null;
+            return args.Return(SurtrValue.Null);
         }
 
         private static SurtrValue Run(SurtrRuntime runtime, SurtrModule module, BytecodeBuilder builder, int maxStackSize = 32)
@@ -135,6 +137,15 @@ namespace Surtr.Tests.Interop
             Error,
         }
 
+        [SurtrNativeType]
+        [System.Flags]
+        public enum Perm
+        {
+            Read = 1,
+            Write = 2,
+            Execute = 4,
+        }
+
         [Fact]
         public void DefineNativeEnum_ProducesASurtrEnumWithCases()
         {
@@ -142,7 +153,8 @@ namespace Surtr.Tests.Interop
 
             var descriptor = SurtrReflectionScanner.Scan(typeof(LogLevel));
             Assert.Equal(NativeTypeKind.Enum, descriptor.Kind);
-            Assert.Equal(new[] { "Debug", "Info", "Warning", "Error" }, descriptor.EnumCases);
+            Assert.Equal(new[] { "Debug", "Info", "Warning", "Error" }, descriptor.EnumCases.Select(c => c.Name));
+            Assert.Equal(new[] { 0L, 1L, 2L, 3L }, descriptor.EnumCases.Select(c => c.Value));
 
             var enumClass = SurtrBridge.Register(runtime, descriptor);
 
@@ -150,6 +162,35 @@ namespace Surtr.Tests.Interop
             Assert.Equal(4, enumClass.EnumCases.Length);
             Assert.Equal("Debug", enumClass.EnumCases[0].Name);
             Assert.Equal(3, enumClass.EnumCases[3].Ordinal);
+
+            // A case's value travels with it: the static holds the int, not a proxy reference.
+            Assert.Equal(2, enumClass.EnumCases[2].Value);
+
+            // An enum is a value class whose first field is `value` (§2.4).
+            Assert.True(enumClass.IsValueType);
+            Assert.True(enumClass.TryGetField("value", out _));
+        }
+
+        [Fact]
+        public void AFlagsEnumRegistersAsFlagsAndMarshalizesArithmetically()
+        {
+            using var runtime = new SurtrRuntime();
+
+            // A [Flags] CLR enum reports it, with each case's numeric value.
+            var descriptor = SurtrReflectionScanner.Scan(typeof(Perm));
+            Assert.True(descriptor.IsFlags);
+            Assert.Equal(new[] { 1L, 2L, 4L }, descriptor.EnumCases.Select(c => c.Value));
+
+            var enumClass = SurtrBridge.Register(runtime, descriptor);
+            Assert.True(enumClass.TryGetAttribute(SurtrBuiltIns.Flags, out _), "A [Flags] CLR enum registers as a Surtr @Flags enum.");
+
+            // Marshaling is pure arithmetic: a combination of bits with no named case is as valid
+            // as a named one — no proxy, no cache, no "not registered".
+            var surtr = SurtrEnums.ToSurtr(runtime, Perm.Read | Perm.Write);
+            Assert.Equal(3, surtr.AsInt);
+
+            Assert.Equal(Perm.Read | Perm.Write, SurtrEnums.ToClr<Perm>(runtime, surtr));
+            Assert.Equal((Perm)6, SurtrEnums.ToClr<Perm>(runtime, SurtrValue.CreateInt(6)));
         }
 
         #endregion

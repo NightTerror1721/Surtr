@@ -1,7 +1,8 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Binding.BoundTree;
 using Surtr.Compiler.Binding.Symbols;
+using Surtr.Compiler.CodeGen;
 using Surtr.Compiler.Diagnostics;
 using Surtr.Compiler.Syntax;
 using Surtr.Compiler.Syntax.Ast;
@@ -49,6 +50,16 @@ namespace Surtr.Compiler.Binding
         private readonly ModuleSymbol _module;
         private readonly MethodSymbol _method;
 
+        /// <summary>
+        /// Whether this build asks for <c>@Range</c> runtime checks (§P4). Backed by the
+        /// <c>Debug</c> build constant: defined, the binder inserts a range check on every
+        /// assignment to a ranged field or property-set; absent, the check costs nothing at all.
+        /// </summary>
+        private readonly bool _rangeChecksEnabled;
+
+        /// <summary>Folds <c>@Pure</c> calls with constant arguments, when this compilation builds one.</summary>
+        private readonly ConstFolder? _pureFolder;
+
         // Modules a wildcard import brought in. §2.5 makes a module a container of members, so its
         // functions and variables are in scope unqualified exactly as its types are. A named or
         // selective import that reached a module-level member carries a filter naming exactly
@@ -69,6 +80,28 @@ namespace Surtr.Compiler.Binding
         private Scope _values;
         private int _loopDepth;
         private readonly List<string> _loopLabels = new List<string>();
+
+        /// <summary>
+        /// How many enclosing <c>finally</c> blocks a statement is inside (§3.7's yield rule).
+        /// </summary>
+        /// <remarks>
+        /// A <c>finally</c> and not a <c>try</c>, which is the whole of what §9.2 bought: a
+        /// suspended generator can now be closed, and closing one runs its pending <c>finally</c>
+        /// blocks, so a <c>yield</c> inside a <c>try</c> no longer leaves work that nothing is
+        /// obliged to run. Inside the <c>finally</c> itself it stays refused - that block runs
+        /// <em>during</em> a close, and suspending there would answer a close with an element.
+        /// </remarks>
+        private int _finallyDepth;
+
+        /// <summary>
+        /// How many <c>yield</c>s this body has, so a generator that never yields can be reported.
+        /// </summary>
+        /// <remarks>
+        /// Counted here rather than found by a later walk because the binder is already visiting
+        /// every statement, and because the answer is about the <em>declaration</em> - it is
+        /// reported once, against the generator, not at any statement.
+        /// </remarks>
+        private int _yieldCount;
 
         /// <summary>One lambda whose body is being bound, and what it has been found to capture.</summary>
         /// <remarks>
@@ -108,7 +141,9 @@ namespace Surtr.Compiler.Binding
             ModuleSymbol module,
             NamedTypeSymbol? containingType,
             MethodSymbol method,
-            IReadOnlyList<ImportedModule>? imported = null)
+            IReadOnlyList<ImportedModule>? imported = null,
+            bool rangeChecksEnabled = false,
+            ConstFolder? pureFolder = null)
         {
             _imported = imported ?? Array.Empty<ImportedModule>();
             _factory = factory;
@@ -123,6 +158,8 @@ namespace Surtr.Compiler.Binding
             _module = module;
             _containingType = containingType;
             _method = method;
+            _rangeChecksEnabled = rangeChecksEnabled;
+            _pureFolder = pureFolder;
 
             _values = new Scope();
             foreach (var parameter in method.Parameters)
@@ -133,7 +170,24 @@ namespace Surtr.Compiler.Binding
         public MethodSymbol Method => _method;
 
         /// <summary>Binds a whole body.</summary>
-        public BoundBlockStatement BindBody(BlockStatementSyntax body) => (BoundBlockStatement)BindBlock(body);
+        public BoundBlockStatement BindBody(BlockStatementSyntax body)
+        {
+            var bound = (BoundBlockStatement)BindBlock(body);
+
+            // Legal - an empty generator is a genuine base case, the way `inorder(null)` wants to
+            // produce nothing - but far more often an omission, so it warns rather than passing in
+            // silence. Reported against the declaration, since there is no statement to point at.
+            if (_method.IsGenerator && _yieldCount == 0)
+            {
+                _diagnostics.ReportWarning(
+                    SurtrDiagnosticCode.GeneratorNeverYields,
+                    $"'{_method.Name}' is a generator but contains no 'yield', so iterating it produces nothing.",
+                    _sourceName,
+                    body.Span);
+            }
+
+            return bound;
+        }
 
         /// <summary>
         /// Binds a field's initializer against the field's own type.
@@ -142,14 +196,86 @@ namespace Surtr.Compiler.Binding
         /// An initializer is not a body, but it is an expression in a member's scope and it runs —
         /// a static one from the declaring type's initializer, an instance one from every
         /// constructor. Binding it here rather than at emit is what puts its conversions in the
-        /// tree like everything else's.
+        /// tree like everything else's. A <c>@Range</c> mark on the field wraps the value in its
+        /// guard, so a field that is declared out of range fails at construction rather than
+        /// silently.
         /// </remarks>
-        public BoundExpression BindInitializer(ExpressionSyntax syntax, TypeSymbol declared)
-            => BindConverted(syntax, declared);
+        public BoundExpression BindInitializer(ExpressionSyntax syntax, TypeSymbol declared, FieldSymbol field)
+        {
+            var value = BindConverted(syntax, declared);
+            return RangeCheckValue(syntax, value, field, field.Type);
+        }
 
         /// <summary>Binds one enum case as the construction it is (§2.4).</summary>
         public BoundExpression BindEnumCase(EnumCaseSyntax syntax, NamedTypeSymbol @enum)
-            => BindObjectCreation(syntax, syntax.Arguments, @enum);
+        {
+            int value = CaseValueOf(syntax, @enum);
+
+            // §2.2: an enum is a value class whose first field is `value`, so a case whose enum
+            // has no fields besides it IS that value — the case reads as the literal, which is
+            // what makes `Suit.Hearts` usable wherever a constant is. That covers a @Flags enum
+            // (its value is a single bit) and a plain enum that carries nothing.
+            if (@enum.IsFlagsEnum || !HasUserInstanceFields(@enum))
+                return new BoundLiteralExpression(syntax, @enum, (long)value);
+
+            // A multi-field enum builds a real value: the case's constructor arguments, with the
+            // case value attached so the emitter can fill the `value` slot of the constructed
+            // block (§2.2) — the field is never a constructor parameter.
+            return WithEnumValue(BindObjectCreation(syntax, syntax.Arguments, @enum), value);
+        }
+
+        /// <summary>
+        /// Rebuilds a construction carrying the enum case value it stores in the synthetic
+        /// <c>value</c> field, so the emitter can put it in the right slot of the built block.
+        /// </summary>
+        private static BoundExpression WithEnumValue(BoundExpression construction, int value)
+            => construction is BoundObjectCreationExpression creation
+                ? new BoundObjectCreationExpression(creation.Syntax, (NamedTypeSymbol)creation.Type, creation.Constructor, creation.Arguments, value)
+                : construction;
+
+        /// <summary>Whether the enum declares any instance field besides the synthetic <c>value</c>.</summary>
+        private static bool HasUserInstanceFields(NamedTypeSymbol @enum)
+        {
+            int fields = 0;
+            foreach (var member in @enum.Members)
+            {
+                if (member is FieldSymbol { IsStatic: false })
+                {
+                    fields++;
+                    if (fields > 1)
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// A case's value in its enum: the <c>= n</c> written on it, or its position in the
+        /// declaration, which for a <c>@Flags</c> enum is the bit it stands for.
+        /// </summary>
+        /// <remarks>
+        /// Read off the enum's own member list rather than passed in, so it agrees with the value
+        /// the declaration phase stored on the case's field — the two coming apart would give one
+        /// case two values with nothing to notice.
+        /// </remarks>
+        private static int CaseValueOf(EnumCaseSyntax syntax, NamedTypeSymbol @enum)
+        {
+            int ordinal = 0;
+
+            foreach (var member in @enum.Members)
+            {
+                if (member is not FieldSymbol { IsStatic: true } @case || !ReferenceEquals(@case.Type, @enum))
+                    continue;
+
+                if (string.Equals(@case.Name, syntax.Name, StringComparison.Ordinal))
+                    return @case.EnumValue ?? (1 << ordinal);
+
+                ordinal++;
+            }
+
+            return 1 << ordinal;
+        }
 
         /// <summary>Binds a <c>singleton</c>'s one instance, which its module builds at load (§2.8).</summary>
         /// <remarks>

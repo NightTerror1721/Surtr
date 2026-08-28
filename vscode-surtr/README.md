@@ -24,24 +24,37 @@ Syntax highlighting, hover, go-to-definition and diagnostics for the
   - `array<T>`, `dict<K, V>` and `tuple<...>` (`support.type.surtr`) — the nameable,
     callable forms of `T[]`, `{K: V}` and `(T1, ..., Tn)`, recognized wherever they're
     followed by `<`, including in constructor-call position (`array<int>(5)`)
+  - variance modifiers (`out`/`in`, §6) inside a declaration's type-parameter list —
+    `interface IIterable<out T>` — coloured as modifiers, with the server confirming the
+    one contextual word (`out`) by position
   - attributes (`@Range(0, 100)`)
   - every operator from the §5.7 precedence table
 - **Hover signatures** — type-accurate, cross-file, produced by the real compiler
   binder: fields, locals, parameters, methods (with their full signature), types
-  and aliases.
+  and aliases. A generator's card mirrors its declaration — `generator countdown(from: int): int`,
+  element included — rather than showing the `generator<int>` a call produces; a generic
+  declaration's card mirrors its variance annotations — `interface IIterable<out T>` —
+  and a type parameter's card names its direction and constraints.
 - **Semantic tokens** — the server resolves what the regex grammar cannot, with real
   position accuracy: type references in *any* position (annotations, base lists,
-  `is`/`as`/`typeof`, constructions), type parameters, the contextual keywords
-  (`this`/`super`/`value`/`attribute`/`get`/`set`) coloured as modifiers rather than
+  `is`/`as`/`typeof`, constructions, operands of `yield`), type parameters, the contextual
+  keywords (`this`/`super`/`value`/`attribute`/`get`/`set`/`out`) coloured as modifiers rather than
   bare keywords, and constructor calls tagged as calls.
 - **Inlay hints** — grey inline hints for an inferred local's type (`let x = 5` →
   `x : int`), a lambda's return type, and the parameter a positional argument fills
-  when its value does not say so (`spawn(1.0, hp)` → `spawn(x: 1.0, hp:)`).
+  when its value does not say so (`spawn(1.0, hp)` → `spawn(x: 1.0, hp:)`). A local
+  initialized directly by a `yield` is skipped: it always infers `unknown`, and one
+  hint per coroutine line would be noise.
 - **Go to definition** — cross-file, resolved from the bound tree.
 - **Diagnostics** — every compile error the binder reports, re-published on each
   edit (errors and warnings underlined in the editor).
+- **Code actions** — implement-missing-members: since `IIterator<T>` extends
+  `IDisposable` (§9.2), a hand-written cursor missing its `dispose()` gets a stub
+  along with everything else.
 - **Code snippets** — classes, methods, constructors, properties, enums,
-  singletons, value classes, control flow, and more.
+  singletons, value classes, covariant/contravariant interfaces (`interfaceout`,
+  `interfacein`), generators (`generator`, `yield from`, a `send` loop),
+  `using` blocks, control flow, and more.
 - Matching bracket colorization and auto-closing pairs via `language-configuration.json`.
 
 ## The language server
@@ -147,6 +160,12 @@ grammars work rather than how a real parser does:
 
 - Built-in type names are highlighted everywhere, even though §1.1 allows them to be
   shadowed by a user type name — a static highlighter cannot resolve namespaces.
+- `generator` gets both of its readings (§1.2): followed by `<` it is the built-in type
+  (`support.type`), anywhere else the member introducer standing where `fun` would —
+  the two never overlap, because a declaration's next token is always its name.
+- `from` is coloured only as part of the unit `yield from`, matching the parser's own
+  contextual rule (§3.7); a bare `from`, or `yield (from)` with the parens, stays an
+  ordinary identifier.
 - Type names are highlighted *in type positions*, recognized by grammar rather than
   resolution: an identifier after `:` (annotations, return types, catch bindings), in a
   base/interface list, inside `<…>` constraints, or after `as`/`as?`/`is` is a

@@ -1,0 +1,206 @@
+import surtr.collections.Collection;
+
+public interface IQueue<T> : ICollection<T>
+{
+    isEmpty: bool { get; }
+
+    fun enqueue(item: T): void;
+    fun dequeue(): T;
+    fun peek(): T;
+}
+
+public interface IDeque<T> : IQueue<T>
+{
+    fun enqueueFront(item: T): void;
+    fun dequeueBack(): T;
+}
+
+public class Queue<T> : IQueue<T>
+{
+    protected var _front: Node<T>?;
+    protected var _back: Node<T>?;
+    protected var _count: int;
+
+    public constructor()
+    {
+        this._front = null;
+        this._back = null;
+        this._count = 0;
+    }
+
+    public inline length: int => _count;
+    public inline isReadOnly: bool => false;
+    public inline isEmpty: bool => _count == 0;
+
+    public inline front: T => _front?.value ?? throw InvalidOperationException("Queue is empty.");
+
+    public fun enqueue(item: T): void
+    {
+        var node = Node<T>(item);
+        if (_back != null)
+            _back.next = node;
+        _back = node;
+        if (_front == null)
+            _front = node;
+        _count += 1;
+    }
+
+    public fun dequeue(): T
+    {
+        if (isEmpty)
+            throw InvalidOperationException("Queue is empty.");
+
+        var value = _front!!.value;
+        _front = _front!!.next;
+        if (_front == null)
+            _back = null;
+        _count -= 1;
+        return value;
+    }
+
+    public fun peek(): T
+    {
+        return _front?.value ?? throw InvalidOperationException("Queue is empty.");
+    }
+
+    public inline fun add(item: T): void => enqueue(item);
+    public inline fun remove(item: T): bool { throw InvalidOperationException("Queue does not support removing arbitrary items."); }
+    public inline fun clear(): void
+    {
+        _front = null;
+        _back = null;
+        _count = 0;
+    }
+
+    public fun contains(item: T): bool
+    {
+        var current = _front;
+        while (current != null)
+        {
+            if (current.value == item)
+                return true;
+            current = current.next;
+        }
+        return false;
+    }
+
+    public fun copyTo(array: T[], arrayIndex: int): void
+    {
+        var current = _front;
+        var i = 0;
+        while (current != null)
+        {
+            array[arrayIndex + i] = current.value;
+            current = current.next;
+            i += 1;
+        }
+    }
+
+    public inline fun iterate(): IIterator<T> => Iterator(_front, _count);
+
+
+    protected sealed class Node<T>
+    {
+        public var value: T;
+        public var next: Node<T>?;
+
+        public constructor(value: T)
+        {
+            this.value = value;
+            this.next = null;
+        }
+    }
+    protected static inline fun makeNode(value: T) => Node<T>(value);
+
+    private sealed class Iterator<T> : IIterator<T>
+    {
+        private var _current: Node<T>?;
+        private var _count: int;
+        private var _index: int;
+
+        public constructor(start: Node<T>?, count: int)
+        {
+            _current = start;
+            _count = count;
+            _index = -1;
+        }
+
+        public current: T
+        {
+            get
+            {
+                if (_index < 0 || _index >= _count)
+                    throw InvalidOperationException("Iterator is not at a valid position.");
+                return _current!!.value;
+            }
+        }
+
+        // Nothing held that outlives this cursor, so the contract slot is filled and empty.
+        public fun dispose(): void { }
+
+        public fun moveNext(): bool
+        {
+            if (_index + 1 >= _count)
+                return false;
+
+            if (_index == -1)
+                _current = _current; // Start at the front
+            else
+                _current = _current!!.next;
+
+            _index += 1;
+            return true;
+        }
+
+        public fun reset(): void
+        {
+            _current = null;
+            _index = -1;
+        }
+    }
+}
+
+public class Deque<T> : Queue<T>, IDeque<T>
+{
+    public fun enqueueFront(item: T): void
+    {
+        var node = makeNode(item);
+        if (this._front != null)
+            node.next = this._front;
+        this._front = node;
+        if (this._back == null)
+            this._back = node;
+        this._count += 1;
+    }
+
+    public inline fun enqueueBack(item: T): void => enqueue(item);
+
+    public fun dequeueBack(): T
+    {
+        if (isEmpty)
+            throw InvalidOperationException("Deque is empty.");
+
+        if (this._front == this._back)
+        {
+            var value = this._back!!.value;
+            this._front = null;
+            this._back = null;
+            this._count -= 1;
+            return value;
+        }
+
+        var current = this._front;
+        while (current!!.next != this._back)
+        {
+            current = current.next;
+        }
+
+        var value = this._back!!.value;
+        current.next = null;
+        this._back = current;
+        this._count -= 1;
+        return value;
+    }
+
+    public inline fun dequeueFront(): T => dequeue();
+}

@@ -585,11 +585,88 @@ namespace Surtr.Tests.Compiler.Binding
             var suit = Type(binder, "game.core.Test", "Suit");
             Assert.True(suit.IsSealed);
 
+            // Every enum carries a synthetic `public let value: int` as its first instance field
+            // (§2.4) - the case value the compiler writes when it builds each case.
+            var value = suit.Members.OfType<FieldSymbol>().Single(f => f.Name == "value");
+            Assert.False(value.IsStatic);
+            Assert.True(value.IsReadOnly);
+            Assert.True(value.IsSynthetic);
+            Assert.Same(compilation.TypeFactory.Int, value.Type);
+
             // Each case is a static readonly of the enum's own type.
-            var cases = suit.Members.OfType<FieldSymbol>().ToList();
+            var cases = suit.Members.OfType<FieldSymbol>().Where(c => c.IsStatic).ToList();
             Assert.Equal(2, cases.Count);
-            Assert.All(cases, c => Assert.True(c.IsStatic && c.IsReadOnly));
+            Assert.All(cases, c => Assert.True(c.IsReadOnly));
             Assert.All(cases, c => Assert.Same(suit, c.Type));
+
+            // Each case carries its implied value: progression from 0 (§2.4).
+            Assert.Equal(0, cases[0].EnumValue);
+            Assert.Equal(1, cases[1].EnumValue);
+        }
+
+        [Fact]
+        public void ExplicitValuesOnCasesSetTheStoredConstantAndContinueTheProgression()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "enum Suit { Hearts = 1, Spades, Clubs = 10, Diamonds }"));
+
+            AssertNoErrors(compilation);
+
+            var suit = Type(binder, "game.core.Test", "Suit");
+            var cases = suit.Members.OfType<FieldSymbol>().OrderBy(c => c.Name).ToList();
+            Assert.Equal(1, cases.Single(c => c.Name == "Hearts").EnumValue);
+            Assert.Equal(2, cases.Single(c => c.Name == "Spades").EnumValue);
+            Assert.Equal(10, cases.Single(c => c.Name == "Clubs").EnumValue);
+            Assert.Equal(11, cases.Single(c => c.Name == "Diamonds").EnumValue);
+        }
+
+        [Fact]
+        public void AFlagsCaseRejectsANonPowerOfTwoValue()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "@Flags enum Perm { Read = 1, Write = 2, Execute = 3 }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidEnumValue);
+        }
+
+        [Fact]
+        public void AFlagsEnumAllowsDuplicateValuesAsBitAliases()
+        {
+            var binder = Bind(out var compilation, ("game/core/Test.surtr",
+                "@Flags enum Perm { None = 0, Read = 1, Write = 2, ReadAlias = 1 }"));
+
+            AssertNoErrors(compilation);
+
+            var perm = Type(binder, "game.core.Test", "Perm");
+            Assert.Equal(1, perm.Members.OfType<FieldSymbol>().Single(c => c.Name == "ReadAlias").EnumValue);
+        }
+
+        [Fact]
+        public void APlainEnumRejectsDuplicateValues()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "enum Suit { Hearts = 1, Spades = 1 }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.DuplicateEnumValue);
+        }
+
+        [Fact]
+        public void AnEnumConstructorMustBePrivate()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "enum Suit { Hearts;\n  private let rank: int;\n  public constructor(rank: int) { this.rank = rank; } }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidEnumConstructor);
+        }
+
+        [Fact]
+        public void AnEnumReservesValueValuesAndOf()
+        {
+            Bind(out var first, ("game/core/Test.surtr", "enum Suit { Hearts;\n  public fun values(): int { return 1; } }"));
+            AssertReports(first, SurtrDiagnosticCode.ReservedEnumMember);
+
+            Bind(out var second, ("game/core/Test.surtr", "enum Suit { Hearts = 0;\n  private let of: int; }"));
+            AssertReports(second, SurtrDiagnosticCode.ReservedEnumMember);
         }
         #endregion
 
@@ -771,10 +848,13 @@ namespace Surtr.Tests.Compiler.Binding
         [Fact]
         public void AValueClassWithTwoFieldsHasNothingToEraseTo()
         {
+            // §2.9 generalized: several 'let' fields no longer refuse - the class becomes a
+            // multi-field value type that occupies a flattened block instead of erasing.
             Bind(out var compilation, ("game/core/Test.surtr",
                 "value class Pair { public let a: int; public let b: int; }"));
 
-            AssertReports(compilation, SurtrDiagnosticCode.InvalidValueClass);
+            Assert.False(compilation.HasErrors,
+                string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
         }
 
         [Fact]
@@ -894,6 +974,50 @@ namespace Surtr.Tests.Compiler.Binding
                 Assert.Equal(MethodDispatch.Abstract, method.Dispatch);
                 Assert.Equal(Accessibility.Public, method.Accessibility);
             }
+        }
+
+        [Fact]
+        public void AnInterfaceMemberCannotBePrivate()
+        {
+            // §3.1: an interface member is always public - writing nothing means public, so any
+            // other modifier lies about a contract and is refused rather than silently narrowed.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { private fun doThing(): void; }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
+        }
+
+        [Fact]
+        public void AnInterfaceMemberCannotBeProtectedOrInternal()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing {\n"
+                + "  protected fun touch(): void;\n"
+                + "  internal fun poke(): void;\n"
+                + "}"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
+            Assert.Equal(2, compilation.Diagnostics.Count(d => d.Code == SurtrDiagnosticCode.InvalidInterfaceMember));
+        }
+
+        [Fact]
+        public void AnInterfacePropertyCannotCarryAVisibility()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { private x: int { get; } }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
+        }
+
+        [Fact]
+        public void AnInterfaceAccessorCannotCarryAVisibility()
+        {
+            // §3.4 lets an accessor narrow a class property's visibility; an interface property has
+            // none to narrow from, so the same always-public rule reaches into the accessor run.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { x: int { private get; set; } }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidInterfaceMember);
         }
         #endregion
 
@@ -1170,7 +1294,7 @@ namespace Surtr.Tests.Compiler.Binding
                 + "  operator+(self: IAddable, other: IAddable): IAddable;\n"
                 + "}\n"
                 + "class Vec2 : IAddable {\n"
-                + "  override operator+(self: IAddable, other: IAddable): IAddable { return self; }\n"
+                + "  virtual operator+(self: IAddable, other: IAddable): IAddable { return self; }\n"
                 + "}"));
 
             AssertNoErrors(compilation);
@@ -1267,8 +1391,8 @@ namespace Surtr.Tests.Compiler.Binding
                 + "{\n"
                 + "    private let _col: IReadOnlyCollection<T>;\n"
                 + "    public constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
-                + "    public override fun get(index: int): T { return _col.get(index); }\n"
-                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "    public fun get(index: int): T { return _col.get(index); }\n"
+                + "    public fun iterate(): IIterator<T> { return _col.iterate(); }\n"
                 + "}"));
 
             binder.BindBodies();
@@ -1294,8 +1418,8 @@ namespace Surtr.Tests.Compiler.Binding
                 + "{\n"
                 + "    private let _col: IReadOnlyCollection<T>;\n"
                 + "    public constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
-                + "    public override fun get(index: int): T { return _col.get(index); }\n"
-                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "    public fun get(index: int): T { return _col.get(index); }\n"
+                + "    public fun iterate(): IIterator<T> { return _col.iterate(); }\n"
                 + "}"));
 
             binder.BindBodies();
@@ -1322,9 +1446,9 @@ namespace Surtr.Tests.Compiler.Binding
                 + "{\n"
                 + "    private let _col: IReadOnlyCollection<T>;\n"
                 + "    public constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
-                + "    public override fun get(index: int): T { return _col.get(index); }\n"
-                + "    public override fun add(item: int): void { }\n"
-                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "    public fun get(index: int): T { return _col.get(index); }\n"
+                + "    public fun add(item: int): void { }\n"
+                + "    public fun iterate(): IIterator<T> { return _col.iterate(); }\n"
                 + "}"));
 
             binder.BindBodies();
@@ -1344,13 +1468,59 @@ namespace Surtr.Tests.Compiler.Binding
                 + "{\n"
                 + "    private let _col: IReadOnlyCollection<T>;\n"
                 + "    public constructor(collection: IReadOnlyCollection<T>) { this._col = collection; }\n"
-                + "    public override fun get(index: int): T { return _col.get(index); }\n"
-                + "    public override fun iterate(): IIterator<T> { return _col.iterate(); }\n"
+                + "    public fun get(index: int): T { return _col.get(index); }\n"
+                + "    public fun iterate(): IIterator<T> { return _col.iterate(); }\n"
                 + "}"));
 
             binder.BindBodies();
 
             AssertNoErrors(compilation);
+        }
+        #endregion
+
+        #region Override targets
+        [Fact]
+        public void AnOverrideImplementingOnlyAnInterfaceIsRejected()
+        {
+            // §3.3: a contract is a promise rather than an inheritance, so satisfying one never
+            // takes the modifier - the linker would have nothing in the class chain to replace.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { fun doThing(): void; }\n"
+                + "class Widget : IThing { public override fun doThing(): void { } }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOverride);
+        }
+
+        [Fact]
+        public void AnOverrideWithNothingAtAllToReplaceIsRejected()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "class Widget { public override fun doThing(): void { } }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOverride);
+        }
+
+        [Fact]
+        public void AnOverrideAlsoReplacingAnAbstractBaseMemberIsAccepted()
+        {
+            // The signature arrives twice - down the class chain as abstract, sideways as an
+            // interface obligation - and the class-chain answer is the one that counts: this
+            // override really does replace Shape's slot.
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { fun doThing(): void; }\n"
+                + "abstract class Shape : IThing { public abstract fun doThing(): void; }\n"
+                + "class Widget : Shape { public override fun doThing(): void { } }"));
+
+            AssertNoErrors(compilation);
+        }
+
+        [Fact]
+        public void AnInterfaceCannotDeclareAnOverride()
+        {
+            Bind(out var compilation, ("game/core/Test.surtr",
+                "interface IThing { override fun doThing(): void; }"));
+
+            AssertReports(compilation, SurtrDiagnosticCode.InvalidOverride);
         }
         #endregion
 
@@ -1369,7 +1539,7 @@ namespace Surtr.Tests.Compiler.Binding
             var binder = Bind(out var compilation, ("game/core/Test.surtr",
                 "class Counter : IIterable<int>\n"
                 + "{\n"
-                + "    public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
+                + "    public fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
                 + "}"));
 
             binder.BindBodies();
@@ -1409,7 +1579,7 @@ namespace Surtr.Tests.Compiler.Binding
                 "interface INumbers : IIterable<int> { }\n"
                 + "class Counter : INumbers\n"
                 + "{\n"
-                + "    public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
+                + "    public fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
                 + "}"));
 
             binder.BindBodies();
@@ -1470,7 +1640,7 @@ namespace Surtr.Tests.Compiler.Binding
             var binder = Bind(out var compilation, ("game/core/Test.surtr",
                 "class Counter : IIterable<int>\n"
                 + "{\n"
-                + "    public override fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
+                + "    public fun iterate(): IIterator<int> { return [1, 2, 3].iterate(); }\n"
                 + "}"));
 
             binder.BindBodies();

@@ -152,9 +152,39 @@ namespace Surtr.Runtime.Objects
                 case SurtrTuple leftTuple:
                     return rightEntity is SurtrTuple rightTuple && TuplesEqual(leftTuple, rightTuple);
 
+                case SurtrRange leftRange:
+                    // A range is an immutable value like a tuple: two packs of the same bounds and
+                    // flag are the same value, whatever identity their boxes carry.
+                    return rightEntity is SurtrRange rightRange
+                        && leftRange.Start == rightRange.Start
+                        && leftRange.End == rightRange.End
+                        && leftRange.IsInclusive == rightRange.IsInclusive;
+
+                case SurtrInstance leftValue when leftValue.Class.IsValueType:
+                    // A boxed value type compares structurally, like a tuple: it has no identity,
+                    // so two boxes holding the same slots are the same value - and the class must
+                    // agree too, exactly as it must for two boxes of different value classes.
+                    return rightEntity is SurtrInstance rightValue
+                        && ReferenceEquals(leftValue.Class, rightValue.Class)
+                        && InstancesEqual(leftValue.Fields, rightValue.Fields);
+
                 default:
                     return false;
             }
+        }
+
+        private bool InstancesEqual(SurtrValue[] left, SurtrValue[] right)
+        {
+            if (left.Length != right.Length)
+                return false;
+
+            for (int i = 0; i < left.Length; i++)
+            {
+                if (!ValuesEqual(left[i], right[i]))
+                    return false;
+            }
+
+            return true;
         }
 
         private bool TuplesEqual(SurtrTuple left, SurtrTuple right)
@@ -192,6 +222,25 @@ namespace Surtr.Runtime.Objects
                 case SurtrTuple tuple:
                     return TupleHash(tuple);
 
+                // The hash half of range structural equality: same bounds and flag, same bucket.
+                case SurtrRange range:
+                {
+                    // FNV-1a, the same mixer TupleHash uses.
+                    unchecked
+                    {
+                        int hash = (int)2166136261;
+                        hash = (hash ^ range.Start.GetHashCode()) * 16777619;
+                        hash = (hash ^ range.End.GetHashCode()) * 16777619;
+                        hash = (hash ^ range.IsInclusive.GetHashCode()) * 16777619;
+                        return hash;
+                    }
+                }
+
+                // The hash half of structural equality: a boxed value hashes over its slots, so
+                // two boxes of the same value land in one bucket and ValuesEqual then settles it.
+                case SurtrInstance value when value.Class.IsValueType:
+                    return SlotsHash(value.Fields);
+
                 default:
                     return reference;
             }
@@ -208,6 +257,18 @@ namespace Surtr.Runtime.Objects
                 int hash = (int)2166136261;
                 for (int i = 0; i < elements.Length; i++)
                     hash = (hash ^ HashOf(elements[i])) * 16777619;
+
+                return hash;
+            }
+        }
+
+        private int SlotsHash(SurtrValue[] slots)
+        {
+            unchecked
+            {
+                int hash = (int)2166136261;
+                for (int i = 0; i < slots.Length; i++)
+                    hash = (hash ^ HashOf(slots[i])) * 16777619;
 
                 return hash;
             }

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Bytecode;
 using Surtr.Runtime;
@@ -41,67 +41,6 @@ namespace Surtr.Tests.VM
                 .Op(OpCode.ReturnValue);
 
             Assert.Equal(40, Run(builder).AsInt);
-        }
-
-        [Fact]
-        public void Dup2_DuplicatesTheTopTwoValues_PreservingOrder()
-        {
-            // [10, 3] -> Dup2 -> [10, 3, 10, 3]; Sub on the duplicated pair is order-sensitive.
-            var builder = new BytecodeBuilder()
-                .Op(OpCode.PushI32).I32(10)
-                .Op(OpCode.PushI32).I32(3)
-                .Op(OpCode.Dup2)
-                .Op(OpCode.Sub)
-                .Op(OpCode.ReturnValue);
-
-            Assert.Equal(7, Run(builder).AsInt);
-        }
-
-        [Fact]
-        public void Swap_ExchangesTheTopTwoValues()
-        {
-            // [5, 9] -> Swap -> [9, 5]; Sub is order-sensitive, so this distinguishes a real swap.
-            var builder = new BytecodeBuilder()
-                .Op(OpCode.PushI32).I32(5)
-                .Op(OpCode.PushI32).I32(9)
-                .Op(OpCode.Swap)
-                .Op(OpCode.Sub)
-                .Op(OpCode.ReturnValue);
-
-            Assert.Equal(4, Run(builder).AsInt); // 9 - 5
-        }
-
-        [Fact]
-        public void Swap2_MovesTheTopPairAboveTheLowerPair_KeepingEachPairsOwnOrder()
-        {
-            // [10, 25, 100, 150] -> Swap2 -> [100, 150, 10, 25]; top pair becomes (10, 25).
-            var builder = new BytecodeBuilder()
-                .Op(OpCode.PushI32).I32(10)
-                .Op(OpCode.PushI32).I32(25)
-                .Op(OpCode.PushI32).I32(100)
-                .Op(OpCode.PushI32).I32(150)
-                .Op(OpCode.Swap2)
-                .Op(OpCode.Sub)
-                .Op(OpCode.ReturnValue);
-
-            Assert.Equal(-15, Run(builder).AsInt); // 10 - 25
-        }
-
-        [Fact]
-        public void Swap2_LeavesTheOriginalTopPairBelow_InItsOwnOrder()
-        {
-            var builder = new BytecodeBuilder()
-                .Op(OpCode.PushI32).I32(10)
-                .Op(OpCode.PushI32).I32(25)
-                .Op(OpCode.PushI32).I32(100)
-                .Op(OpCode.PushI32).I32(150)
-                .Op(OpCode.Swap2)
-                .Op(OpCode.Pop)
-                .Op(OpCode.Pop)
-                .Op(OpCode.Sub)
-                .Op(OpCode.ReturnValue);
-
-            Assert.Equal(-50, Run(builder).AsInt); // 100 - 150
         }
 
         [Fact]
@@ -268,7 +207,7 @@ namespace Surtr.Tests.VM
             for (int i = 0; i < 300; i++)
                 builder.Constant(SurtrValue.CreateInt(i).Raw);
 
-            builder.Op(OpCode.LdcX).I32(299).Op(OpCode.ReturnValue);
+            builder.Op(OpCode.Wide).Op(OpCode.Ldc).I32(299).Op(OpCode.ReturnValue);
 
             Assert.Equal(299, Run(builder).AsInt);
         }

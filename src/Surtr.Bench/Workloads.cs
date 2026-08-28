@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -36,13 +36,23 @@ namespace Surtr.Bench
         /// <summary>The C# reference implementation for a float-returning workload.</summary>
         public Func<long, double>? BaselineFloat { get; }
 
+        /// <summary>
+        /// True for a case kept for what it demonstrates rather than for the LuaJIT/C# ranking —
+        /// e.g. the same computation written both the fast idiomatic way and a needlessly slower
+        /// way, to document the cost of the wrong shape. It still runs and is still reported, but
+        /// the aggregate geometric mean skips it: including it would let one avoidable idiom choice
+        /// move a ranking nothing else in the suite is meant to describe.
+        /// </summary>
+        public bool DiagnosticOnly { get; }
+
         public Workload(
             string name,
             long size,
             WorkloadKind kind,
             string measures,
             Func<long, long>? baselineInt = null,
-            Func<long, double>? baselineFloat = null)
+            Func<long, double>? baselineFloat = null,
+            bool diagnosticOnly = false)
         {
             Name = name;
             Size = size;
@@ -50,6 +60,7 @@ namespace Surtr.Bench
             Measures = measures;
             BaselineInt = baselineInt;
             BaselineFloat = baselineFloat;
+            DiagnosticOnly = diagnosticOnly;
         }
     }
 
@@ -93,10 +104,66 @@ namespace Surtr.Bench
     internal static class Workloads
     {
         /// <summary>The single Surtr module, compiled once and loaded into one runtime.</summary>
+        /// <summary>A second module, so that a cross-module call has something to call.</summary>
+        /// <remarks>
+        /// Deliberately one trivial function. What <c>crossModule</c> measures is the
+        /// difference between <c>CallModule</c> and <c>CallLocalModule</c> - the module table
+        /// hop and the second method table - not anything the callee does.
+        /// </remarks>
+        public const string OtherModuleSource = """
+            public fun step(value: int): int {
+                var t = value;
+                if (t > 1000000) { t = t - 1000000; }
+                if (t < 0) { t = 0 - t; }
+                return t + 1;
+            }
+            """;
+
         public const string ModuleSource = """
+            import bench.Other;
+
             value class EntityId {
                 public let raw: int;
                 public constructor(raw: int) { this.raw = raw; }
+            }
+
+            // A multi-field value type: two float slots, no heap object anywhere. Its methods take
+            // and return Vec2 by value, so a call passes two raw slots and the return comes back
+            // over the frame base through ReturnValues. Nothing here allocates.
+            value class Vec2 {
+                public let x: float;
+                public let y: float;
+
+                public constructor(x: float, y: float) { this.x = x; this.y = y; }
+
+                public fun add(other: Vec2): Vec2 { return Vec2(this.x + other.x, this.y + other.y); }
+                public fun scale(k: float): Vec2 { return Vec2(this.x * k, this.y * k); }
+                public fun dot(other: Vec2): float { return this.x * other.x + this.y * other.y; }
+            }
+
+            // The same declaration as Vec2 with the `value` dropped: an ordinary class, so every
+            // operation allocates a heap object. vec2Class against vec2Math is the whole point of
+            // the feature measured on one line of difference.
+            class Vec2Ref {
+                public let x: float;
+                public let y: float;
+
+                public constructor(x: float, y: float) { this.x = x; this.y = y; }
+
+                public fun add(other: Vec2Ref): Vec2Ref { return Vec2Ref(this.x + other.x, this.y + other.y); }
+                public fun scale(k: float): Vec2Ref { return Vec2Ref(this.x * k, this.y * k); }
+                public fun dot(other: Vec2Ref): float { return this.x * other.x + this.y * other.y; }
+            }
+
+            // Two value-type fields stored inline: the instance is four slots wide and holds no
+            // reference at all, so its reference-slot map is empty and a collection skips it.
+            class Body {
+                public var position: Vec2;
+                public var velocity: Vec2;
+                public constructor(position: Vec2, velocity: Vec2) {
+                    this.position = position;
+                    this.velocity = velocity;
+                }
             }
 
             class Adder {
@@ -117,8 +184,10 @@ namespace Surtr.Bench
                 fun sides(): int;
             }
 
+            // No `override`: §2.2 makes satisfying a contract a promise rather than an inheritance,
+            // so the modifier would name a base member that does not exist.
             class Triangle : ISides {
-                public override fun sides(): int { return 3; }
+                public fun sides(): int { return 3; }
             }
 
             class Holder {
@@ -132,7 +201,11 @@ namespace Surtr.Bench
                 public constructor(a: int, b: int) { this.a = a; this.b = b; }
             }
 
-            class Box<T> {
+            // A single-field generic value class: it erases to just that field (CLAUDE.md's layout
+            // rule), so `generics` measures only the box-in/cast-out cost an erased slot costs -
+            // not a second, unrelated heap allocation for the container, which `allocation` already
+            // isolates on its own.
+            value class Box<T> {
                 private let _value: T;
                 public constructor(value: T) { _value = value; }
                 public fun get(): T { return _value; }
@@ -145,6 +218,43 @@ namespace Surtr.Bench
             fun fib(n: int): int {
                 if (n < 2) { return n; }
                 return fib(n - 1) + fib(n - 2);
+            }
+
+            // A loop whose body is one store of a fresh value - no accumulation, so no dependent
+            // chain between iterations and nothing for the out-of-order engine to hide the guard
+            // behind. intLoop cannot answer that question: its body carries a
+            // `%`, an integer division of some thirty cycles that everything else overlaps with.
+            // A call that crosses a module boundary, against methodCalls as its own control.
+            // CallModule resolves through the module table and then that module's method table;
+            // CallLocalModule reads one table. This is the only case in the catalogue that pays
+            // the difference, and it exists so the question is answerable.
+            // The control for crossModule: byte-for-byte the same callee, reached through
+            // CallLocalModule instead of CallModule. The delta between the two rows is exactly
+            // what resolving through the module table costs, which is the whole of what a flat
+            // per-runtime table would remove.
+            fun localStep(value: int): int {
+                var t = value;
+                if (t > 1000000) { t = t - 1000000; }
+                if (t < 0) { t = 0 - t; }
+                return t + 1;
+            }
+
+            fun localModule(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) { acc = (acc + localStep(i)) % 100000007; }
+                return acc;
+            }
+
+            fun crossModule(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) { acc = (acc + step(i)) % 100000007; }
+                return acc;
+            }
+
+            fun tightGuard(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) { acc = i + 1; }
+                return acc;
             }
 
             fun intLoop(n: int): int {
@@ -345,6 +455,18 @@ namespace Surtr.Bench
                 return acc;
             }
 
+            // The dictionary walk, which is the most expensive of the three for-in lowerings to
+            // write out: guard, read the key from the snapshot, look the value up, lay the pair
+            // into the loop variable's two slots, step, jump. The pair is a value, so the loop
+            // allocates nothing per entry either way.
+            fun forInDict(n: int): int {
+                let m: {int: int} = {};
+                for (var i = 0; i < n; i += 1) { m[i] = i * 3; }
+                var acc: int = 0;
+                for (e in m) { acc = (acc + e[0] + e[1]) % 100000007; }
+                return acc;
+            }
+
             // The same loop with the sequence typed as the interface, which is what stops the
             // compiler lowering it to an indexed walk and forces the real iterate()/moveNext()
             // path. VM-Plan §3.1 records that cost; this is what measures it.
@@ -354,6 +476,112 @@ namespace Surtr.Bench
                 let seq: IIterable<int> = xs;
                 var acc: int = 0;
                 for (x in seq) { acc = (acc + x) % 100000007; }
+                return acc;
+            }
+
+            // What a generator replaces, and what it costs. `genYield` suspends and resumes a real
+            // frame per element; `handIterator` is the class you write today to do the same thing,
+            // paying two interface dispatches per element instead. They produce the same sequence,
+            // so the checksums have to agree - which is also what stops either one quietly
+            // measuring a different loop.
+            generator upToGen(n: int): int {
+                var i: int = 0;
+                while (i < n) { yield i; i = i + 1; }
+            }
+
+            fun genYield(n: int): int {
+                var acc: int = 0;
+                for (x in upToGen(n)) { acc = (acc + x) % 100000007; }
+                return acc;
+            }
+
+            class RangeCursor : IIterator<int> {
+                private var _i: int = 0;
+                private let _n: int;
+
+                public constructor(n: int) { this._n = n; }
+
+                public current: int { get => _i - 1; }
+
+                public fun moveNext(): bool {
+                    if (_i >= _n) { return false; }
+                    _i = _i + 1;
+                    return true;
+                }
+
+                // Nothing held that outlives this cursor. The slot exists because IIterator<T>
+                // extends IDisposable, which is what lets a for-in close whatever it walks.
+                public fun dispose(): void { }
+            }
+
+            // The cursor is held by its own type, not by IIterator<int>. What this case is for is
+            // the *class* a generator saves you writing, and the interface-dispatched walk over one
+            // is already what `iterator` measures - so typing it here would measure that twice and
+            // nothing new.
+            fun handIterator(n: int): int {
+                let cursor = RangeCursor(n);
+                var acc: int = 0;
+                while (cursor.moveNext()) { acc = (acc + cursor.current) % 100000007; }
+                return acc;
+            }
+
+            // Three levels of `yield from`, which is what the delegation link exists for: only the
+            // innermost generator has a frame, so an element costs one suspend/resume plus two
+            // pointer hops rather than three of each. Against genYield it says what a level costs.
+            generator delegLeaf(n: int): int {
+                var i: int = 0;
+                while (i < n) { yield i; i = i + 1; }
+            }
+
+            generator delegMid(n: int): int { yield from delegLeaf(n); }
+
+            generator delegTop(n: int): int { yield from delegMid(n); }
+
+            fun genDelegate(n: int): int {
+                var acc: int = 0;
+                for (x in delegTop(n)) { acc = (acc + x) % 100000007; }
+                return acc;
+            }
+
+            // Two-way traffic: every element goes out through a `yield` and a value comes back
+            // in through `send`, which is the coroutine shape rather than the iteration one. It
+            // costs a native call and a nested entry into the machine per element, because a
+            // `for-in` never sends and so `send` has no compiled fast path.
+            generator sendEcho(n: int): int {
+                var i: int = 0;
+                while (i < n) {
+                    let back = yield i;
+                    i = (back as int) + 1;
+                }
+            }
+
+            fun genSend(n: int): int {
+                let g = sendEcho(n);
+                var acc: int = 0;
+                var more = g.moveNext();
+                while (more) {
+                    acc = (acc + g.current) % 100000007;
+                    more = g.send(g.current);
+                }
+                return acc;
+            }
+
+            // A `yield` inside a protected region, which the language forbade until deterministic
+            // close made it answerable. Entering a `try` costs nothing in this VM - handlers are a
+            // table of ranges - so against genYield this says whether that claim survives contact
+            // with a frame that is copied out and back while the region is open.
+            generator guardedRange(n: int): int {
+                var i: int = 0;
+                try {
+                    while (i < n) { yield i; i = i + 1; }
+                } finally {
+                    i = 0;
+                }
+            }
+
+            fun genFinally(n: int): int {
+                var acc: int = 0;
+                for (x in guardedRange(n)) { acc = (acc + x) % 100000007; }
                 return acc;
             }
 
@@ -456,11 +684,123 @@ namespace Surtr.Bench
                 return acc;
             }
 
+            // The same stable merge sort array.sort runs natively, written in Surtr. The A/B for
+            // P9: a native sort calls its comparator by re-entering the interpreter once per
+            // comparison, while this one calls it as an ordinary closure inside the running loop -
+            // and pays for the merge bookkeeping the native version got from C# for free. Which
+            // way that trade falls is the measurement, not a rule.
+            fun mergeSort(items: int[], comparator: (int, int) -> int): void {
+                let length = items.length;
+                if (length < 2) { return; }
+
+                let scratch = array<int>(length);
+                var width = 1;
+
+                while (width < length) {
+                    let span = width + width;
+                    var start = 0;
+
+                    while (start < length) {
+                        var middle = start + width;
+                        if (middle > length) { middle = length; }
+                        var end = start + span;
+                        if (end > length) { end = length; }
+
+                        var left = start;
+                        var right = middle;
+                        var next = start;
+
+                        while (next < end) {
+                            var takeLeft = right >= end;
+                            if (!takeLeft && left < middle) {
+                                takeLeft = comparator(items[left], items[right]) <= 0;
+                            }
+
+                            if (takeLeft) { scratch[next] = items[left]; left = left + 1; }
+                            else { scratch[next] = items[right]; right = right + 1; }
+
+                            next = next + 1;
+                        }
+
+                        start = start + span;
+                    }
+
+                    var i = 0;
+                    while (i < length) { items[i] = scratch[i]; i = i + 1; }
+                    width = span;
+                }
+            }
+
+            fun sortBytecode(n: int): int {
+                let xs: int[] = [];
+                for (var i = 0; i < n; i += 1) { xs.push((i * 7919) % 10007); }
+                mergeSort(xs, (a: int, b: int) => a - b);
+                var acc: int = 0;
+                for (var i = 0; i < xs.length; i += 1) { acc = (acc + xs[i] * (i % 7 + 1)) % 100000007; }
+                return acc;
+            }
+
             fun tuples(n: int): int {
                 var acc: int = 0;
                 for (var i = 0; i < n; i += 1) {
                     let t = (i, i + 1);
                     acc = (acc + t[0] + t[1]) % 100000007;
+                }
+                return acc;
+            }
+
+            // Game-style vector arithmetic over a two-field value type: three constructions and
+            // three calls per iteration, none of which touches the heap. Read the alloc column
+            // against Lua's, which has no value types and builds a table per operation. The
+            // recurrence contracts towards v, so the three engines cannot drift past tolerance.
+            fun vec2Math(n: int): float {
+                let v = Vec2(0.5, -0.25);
+                var p = Vec2(0.0, 0.0);
+                var acc: float = 0.0;
+                for (var i = 0; i < n; i += 1) {
+                    p = p.add(v).scale(0.5);
+                    acc = acc * 0.5 + p.dot(v) + (i % 7) * 0.125;
+                }
+                return acc;
+            }
+
+            // Byte-for-byte vec2Math with `class` in place of `value class`. The two rows differ
+            // only in the alloc column and in what the collector is then handed.
+            fun vec2Class(n: int): float {
+                let v = Vec2Ref(0.5, -0.25);
+                var p = Vec2Ref(0.0, 0.0);
+                var acc: float = 0.0;
+                for (var i = 0; i < n; i += 1) {
+                    p = p.add(v).scale(0.5);
+                    acc = acc * 0.5 + p.dot(v) + (i % 7) * 0.125;
+                }
+                return acc;
+            }
+
+            // The same arithmetic read out of and written back into inline value-type fields:
+            // LoadValueField/StoreValueField on a four-slot instance, rather than locals.
+            fun vec2Fields(n: int): float {
+                let body = Body(Vec2(0.0, 0.0), Vec2(0.5, -0.25));
+                var acc: float = 0.0;
+                for (var i = 0; i < n; i += 1) {
+                    body.position = body.position.add(body.velocity).scale(0.5);
+                    acc = acc * 0.5 + body.position.dot(body.velocity) + (i % 7) * 0.125;
+                }
+                return acc;
+            }
+
+            // Multi-slot return and destructuring: divmod hands back two slots over the frame base
+            // and the caller binds both names without a tuple object ever existing. This is the
+            // shape Lua's multiple returns have had all along and Surtr did not.
+            fun divmod(a: int, b: int): (int, int) {
+                return (a / b, a % b);
+            }
+
+            fun tupleReturn(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) {
+                    let (q, r) = divmod(i, 7);
+                    acc = (acc + q * 3 + r) % 100000007;
                 }
                 return acc;
             }
@@ -523,6 +863,235 @@ namespace Surtr.Bench
                 }
                 return acc;
             }
+
+            // Bitwise: And, Or, Xor, Not, Shl, Shr (logical, >>>) and Sar (arithmetic, >>) - a
+            // whole opcode family the rest of the suite never touches, since every other case's
+            // arithmetic is +, -, *, /, %.
+            fun bitwiseOps(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) {
+                    var x = (i & 0xFF) | (i << 3);
+                    x = (x ^ 0x5A5A) & ~1;
+                    x = (x >> 2) | (x >>> 1);
+                    acc = (acc + x) % 100000007;
+                }
+                return acc;
+            }
+
+            // The `range` type, exclusive and inclusive: a for-in over each still lowers to the
+            // ForRangeNext family (§4.2 of the language spec), but the inclusive form is its own
+            // opcode (ForRangeNextLE) that nothing else in the suite reaches.
+            fun rangeLoop(n: int): int {
+                var acc: int = 0;
+                for (x in 0..n) { acc = (acc + x) % 100000007; }
+                for (y in 0..=n) { acc = (acc + y * 2) % 100000007; }
+                return acc;
+            }
+
+            // String indexing (StrGet), a string switch (JPStrEQ / a hash dispatch) and a sparse
+            // int switch (SwitchLookup) - switchDense only exercises the dense jump-table form.
+            fun stringIndexSwitch(n: int): int {
+                let alphabet = "abcdefghijklmnopqrstuvwxyz";
+                let words: string[] = ["cat", "dog", "fish", "bird", "cow"];
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) {
+                    let ch = alphabet[i % 26];
+                    var bonus = 0;
+                    if (ch == 'a') { bonus = 1; }
+                    let w = words[i % 5];
+                    let v = switch (w) {
+                        "cat" -> 1,
+                        "dog" -> 2,
+                        "fish" -> 3,
+                        "bird" -> 4,
+                        else -> 5,
+                    };
+                    let sparse = switch (i % 100) {
+                        3 -> 10,
+                        17 -> 20,
+                        42 -> 30,
+                        99 -> 40,
+                        else -> 50,
+                    };
+                    acc = (acc + v + sparse + bonus) % 100000007;
+                }
+                return acc;
+            }
+
+            // `as` used as a value rather than immediately branched on, plus `typeof` in both its
+            // static form (a name known at compile time) and its dynamic form (read off a value).
+            fun castAndTypeof(n: int): int {
+                var acc: int = 0;
+                let intType = typeof(int);
+                for (var i = 0; i < n; i += 1) {
+                    let boxed: unknown = i;
+                    let back = (boxed as int) + 1;
+                    let valueType = typeof(boxed);
+                    var bonus = 0;
+                    if (valueType == intType) { bonus = 1; }
+                    acc = (acc + back + bonus) % 100000007;
+                }
+                return acc;
+            }
+
+            class MathHelpers {
+                public static fun square(x: int): int { return x * x; }
+            }
+
+            // A class-level `static` method: InvokeStatic, which nothing else in the suite calls -
+            // every other call is an instance method, a module-level function or a closure.
+            fun staticCalls(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) {
+                    acc = (acc + MathHelpers.square(i % 1000)) % 100000007;
+                }
+                return acc;
+            }
+
+            class NativeMath {
+                public native fun square(x: int): int;
+                public static native fun cube(x: int): int;
+            }
+
+            // A native *method on a user class* - interop and mathFns only call native *module-level*
+            // functions, and stringTransform only calls a native method on a *built-in* class.
+            fun nativeInstanceCalls(n: int): int {
+                let m = NativeMath();
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) {
+                    acc = (acc + m.square(i % 1000)) % 100000007;
+                }
+                return acc;
+            }
+
+            // The static counterpart: a native class member reached with no receiver at all.
+            fun nativeStaticCalls(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) {
+                    acc = (acc + NativeMath.cube(i % 100)) % 100000007;
+                }
+                return acc;
+            }
+
+            // for-in over a string (StrForNext) and over a tuple (TupForNext) - forIn/iterator only
+            // ever walk an array, and forInDict only a dictionary.
+            fun forInStringTuple(n: int): int {
+                let word = "surtrbenchmarkstring";
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) {
+                    for (c in word) { acc = (acc + (c as int)) % 100000007; }
+                }
+                let t = (1, 2, 3, 4);
+                for (var i = 0; i < n; i += 1) {
+                    for (v in t) { acc = (acc + (v as int)) % 100000007; }
+                }
+                return acc;
+            }
+
+            // The rest of array's surface - arrayFill/arrayIndex only exercise push/get/set.
+            fun arrayFullSurface(n: int): int {
+                var xs: int[] = [];
+                for (var i = 0; i < n; i += 1) { xs.push(i); }
+                var acc: int = 0;
+                xs.insert(0, 999);
+                let idx = xs.indexOf(999);
+                acc = (acc + idx) % 100000007;
+                let has = xs.contains(500);
+                var bonus = 0;
+                if (has) { bonus = 1; }
+                xs.removeAt(0);
+                while (xs.length > 0) {
+                    acc = (acc + xs.pop()) % 100000007;
+                }
+                xs.clear();
+                return (acc + bonus) % 100000007;
+            }
+
+            // A tuple flowing through an `unknown` slot and back: tuples stays in the fast inline
+            // form (its own doc-comment says so), so TupPack/TupGet/TupGetC never actually box a
+            // tuple anywhere else in the suite.
+            fun tupleBoxed(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) {
+                    let boxed: unknown = (i, i + 1);
+                    let t = boxed as (int, int);
+                    acc = (acc + t[0] + t[1]) % 100000007;
+                }
+                return acc;
+            }
+
+            class Resource : IDisposable {
+                public var closed: bool;
+                public constructor() { this.closed = false; }
+                public fun dispose(): void { this.closed = true; }
+            }
+
+            // A user-declared `IDisposable` closed by `using` - the only disposal path the suite
+            // otherwise exercises is a generator's implicit close (genFinally).
+            fun disposal(n: int): int {
+                var acc: int = 0;
+                for (var i = 0; i < n; i += 1) {
+                    using (let r = Resource()) {
+                        acc = (acc + i) % 100000007;
+                    }
+                }
+                return acc;
+            }
+
+            // A countdown: `>` as a loop condition, which nothing else in the suite writes - every
+            // counted loop elsewhere runs upward, so JPGT/JPGE never fire. Deliberately a `while`:
+            // no fusion exists for a descending guard, so this is also the honest cost of the
+            // unfused path on a loop shape the fusion cannot reach.
+            fun countdownWhile(n: int): int {
+                var acc: int = 0;
+                var i = n;
+                while (i > 0) {
+                    acc = (acc + i) % 100000007;
+                    i = i - 1;
+                }
+                return acc;
+            }
+
+            // A genuinely data-dependent while: the Collatz step count per seed has no fixed
+            // iteration count, unlike every counted loop elsewhere in the suite - so this is the
+            // one case whose inner branch the JIT/interpreter cannot learn a fixed pattern for.
+            fun collatzWhile(n: int): int {
+                var acc: int = 0;
+                for (var seed = 1; seed <= n; seed += 1) {
+                    var x = seed;
+                    var steps = 0;
+                    while (x != 1) {
+                        if (x % 2 == 0) { x = x / 2; } else { x = x * 3 + 1; }
+                        steps = steps + 1;
+                    }
+                    acc = (acc + steps) % 100000007;
+                }
+                return acc;
+            }
+
+            class Node {
+                public var value: int;
+                public var next: Node?;
+                public constructor(value: int) { this.value = value; }
+            }
+
+            // A while walking a real linked structure by reference until null - IsNull/IsNotNull's
+            // natural home, and a shape a counted range can't express at all.
+            fun linkedListWalk(n: int): int {
+                var head: Node? = null;
+                for (var i = n - 1; i >= 0; i -= 1) {
+                    let node = Node(i);
+                    node.next = head;
+                    head = node;
+                }
+                var acc: int = 0;
+                var cur: Node? = head;
+                while (cur != null) {
+                    acc = (acc + cur.value) % 100000007;
+                    cur = cur.next;
+                }
+                return acc;
+            }
             """;
 
         /// <summary>The equivalent Lua chunk, loaded once into one MoonSharp script.</summary>
@@ -569,9 +1138,34 @@ namespace Surtr.Bench
             function Box.new(v) return setmetatable({v = v}, Box) end
             function Box:get() return self.v end
 
+            local Vec2 = {}
+            Vec2.__index = Vec2
+            function Vec2.new(x, y) return setmetatable({x = x, y = y}, Vec2) end
+            function Vec2:add(o) return Vec2.new(self.x + o.x, self.y + o.y) end
+            function Vec2:scale(k) return Vec2.new(self.x * k, self.y * k) end
+            function Vec2:dot(o) return self.x * o.x + self.y * o.y end
+
+            local Body = {}
+            Body.__index = Body
+            function Body.new(p, v) return setmetatable({position = p, velocity = v}, Body) end
+
             function fib(n)
                 if n < 2 then return n end
                 return fib(n - 1) + fib(n - 2)
+            end
+
+            function crossModule(n)
+                local acc = 0
+                for i = 0, n - 1 do acc = (acc + i + 1) % 100000007 end
+                return acc
+            end
+
+            localModule = crossModule
+
+            function tightGuard(n)
+                local acc = 0
+                for i = 0, n - 1 do acc = i + 1 end
+                return acc
             end
 
             function intLoop(n)
@@ -740,6 +1334,14 @@ namespace Surtr.Bench
                 return acc
             end
 
+            function forInDict(n)
+                local m = {}
+                for i = 0, n - 1 do m[i] = i * 3 end
+                local acc = 0
+                for k, v in pairs(m) do acc = (acc + k + v) % 100000007 end
+                return acc
+            end
+
             function forIn(n)
                 local xs = {}
                 for i = 0, n - 1 do xs[#xs + 1] = i end
@@ -759,6 +1361,94 @@ namespace Surtr.Bench
                     return xs[index]
                 end
                 for x in nextValue do acc = (acc + x) % 100000007 end
+                return acc
+            end
+
+            -- Lua's answer to a generator is a coroutine, which is what `coroutine.wrap` builds: a
+            -- suspended frame resumed per element. It is the honest counterpart to `genYield`, and
+            -- more general than Surtr's - Lua can suspend across calls, at the cost of a stack per
+            -- coroutine (Plan-Generadores §4.C).
+            function genYield(n)
+                local produce = coroutine.wrap(function()
+                    for i = 0, n - 1 do coroutine.yield(i) end
+                end)
+                local acc = 0
+                for x in produce do acc = (acc + x) % 100000007 end
+                return acc
+            end
+
+            -- The written-out cursor, the same shape the Surtr side spells as a class.
+            function handIterator(n)
+                local cursor = { i = 0, n = n }
+                function cursor:moveNext()
+                    if self.i >= self.n then return false end
+                    self.i = self.i + 1
+                    return true
+                end
+                function cursor:current() return self.i - 1 end
+
+                local acc = 0
+                while cursor:moveNext() do acc = (acc + cursor:current()) % 100000007 end
+                return acc
+            end
+
+            -- Lua has no delegation form: a coroutine that wants to re-yield another's elements
+            -- writes the loop out. That is the honest counterpart, and the gap against Surtr's link
+            -- is exactly what having the construct in the language buys.
+            function genDelegate(n)
+                local function leaf()
+                    for i = 0, n - 1 do coroutine.yield(i) end
+                end
+                local function mid()
+                    local inner = coroutine.wrap(leaf)
+                    for x in inner do coroutine.yield(x) end
+                end
+                local top = coroutine.wrap(function()
+                    local inner = coroutine.wrap(mid)
+                    for x in inner do coroutine.yield(x) end
+                end)
+
+                local acc = 0
+                for x in top do acc = (acc + x) % 100000007 end
+                return acc
+            end
+
+            -- Lua's coroutines are two-way natively: resume's extra arguments are what the
+            -- matching yield returns. This is the shape Surtr's send now has.
+            function genSend(n)
+                local co = coroutine.create(function(first)
+                    local i = 0
+                    while i < n do
+                        local back = coroutine.yield(i)
+                        i = back + 1
+                    end
+                end)
+
+                local acc = 0
+                local ok, value = coroutine.resume(co, 0)
+                while ok and value ~= nil do
+                    acc = (acc + value) % 100000007
+                    ok, value = coroutine.resume(co, value)
+                end
+                return acc
+            end
+
+            -- A pcall around the loop is the nearest Lua has to a protected region wrapping the
+            -- suspension; there is no finally, so the cleanup runs after it.
+            function genFinally(n)
+                local produce = coroutine.wrap(function()
+                    local i = 0
+                    local ok = pcall(function()
+                        while i < n do
+                            coroutine.yield(i)
+                            i = i + 1
+                        end
+                    end)
+                    i = 0
+                end)
+
+                local acc = 0
+                for x in produce do acc = (acc + x) % 100000007 end
                 return acc
             end
 
@@ -860,11 +1550,64 @@ namespace Surtr.Bench
                 return acc
             end
 
+            -- Lua has one sort, so both Surtr sort cases compare against the same Lua row: the
+            -- question the A/B asks is Surtr-internal.
+            sortBytecode = sortArray
+
             function tuples(n)
                 local acc = 0
                 for i = 0, n - 1 do
                     local t = {i, i + 1}
                     acc = (acc + t[1] + t[2]) % 100000007
+                end
+                return acc
+            end
+
+            function vec2Math(n)
+                local v = Vec2.new(0.5, -0.25)
+                local p = Vec2.new(0.0, 0.0)
+                local acc = 0.0
+                for i = 0, n - 1 do
+                    p = p:add(v):scale(0.5)
+                    acc = acc * 0.5 + p:dot(v) + (i % 7) * 0.125
+                end
+                return acc
+            end
+
+            -- Lua has no value types, so this is vec2Math's body a second time: the pair that is
+            -- an A/B in Surtr and in C# is one implementation here, which is itself the finding.
+            function vec2Class(n)
+                local v = Vec2.new(0.5, -0.25)
+                local p = Vec2.new(0.0, 0.0)
+                local acc = 0.0
+                for i = 0, n - 1 do
+                    p = p:add(v):scale(0.5)
+                    acc = acc * 0.5 + p:dot(v) + (i % 7) * 0.125
+                end
+                return acc
+            end
+
+            function vec2Fields(n)
+                local body = Body.new(Vec2.new(0.0, 0.0), Vec2.new(0.5, -0.25))
+                local acc = 0.0
+                for i = 0, n - 1 do
+                    body.position = body.position:add(body.velocity):scale(0.5)
+                    acc = acc * 0.5 + body.position:dot(body.velocity) + (i % 7) * 0.125
+                end
+                return acc
+            end
+
+            -- Multiple returns are native to Lua, so this is the one case where Lua's own idiom is
+            -- exactly what the new Surtr convention does rather than an approximation of it.
+            function divmod(a, b)
+                return math.floor(a / b), a % b
+            end
+
+            function tupleReturn(n)
+                local acc = 0
+                for i = 0, n - 1 do
+                    local q, r = divmod(i, 7)
+                    acc = (acc + q * 3 + r) % 100000007
                 end
                 return acc
             end
@@ -910,6 +1653,233 @@ namespace Surtr.Bench
                 end
                 return acc
             end
+
+            -- Lua 5.1 has no bitwise operators at all (they arrived in 5.3), so bitwiseOps' `&`,
+            -- `|`, `^` need a manual bit-at-a-time emulation. Every value bitwiseOps ever feeds
+            -- these stays non-negative, which is what makes plain magnitude-bit AND/OR/XOR correct
+            -- without a two's-complement model.
+            local function band(a, b)
+                local r, p = 0, 1
+                while a > 0 or b > 0 do
+                    if a % 2 == 1 and b % 2 == 1 then r = r + p end
+                    a = math.floor(a / 2)
+                    b = math.floor(b / 2)
+                    p = p * 2
+                end
+                return r
+            end
+
+            local function bor(a, b)
+                local r, p = 0, 1
+                while a > 0 or b > 0 do
+                    if a % 2 == 1 or b % 2 == 1 then r = r + p end
+                    a = math.floor(a / 2)
+                    b = math.floor(b / 2)
+                    p = p * 2
+                end
+                return r
+            end
+
+            local function bxor(a, b)
+                local r, p = 0, 1
+                while a > 0 or b > 0 do
+                    if (a % 2 == 1) ~= (b % 2 == 1) then r = r + p end
+                    a = math.floor(a / 2)
+                    b = math.floor(b / 2)
+                    p = p * 2
+                end
+                return r
+            end
+
+            function bitwiseOps(n)
+                local acc = 0
+                for i = 0, n - 1 do
+                    local x = bor(band(i, 0xFF), i * 8)
+                    x = bxor(x, 0x5A5A)
+                    x = x - (x % 2)
+                    local a = math.floor(x / 4)
+                    local b = math.floor(x / 2)
+                    x = bor(a, b)
+                    acc = (acc + x) % 100000007
+                end
+                return acc
+            end
+
+            function rangeLoop(n)
+                local acc = 0
+                for x = 0, n - 1 do acc = (acc + x) % 100000007 end
+                for y = 0, n do acc = (acc + y * 2) % 100000007 end
+                return acc
+            end
+
+            function stringIndexSwitch(n)
+                local alphabet = "abcdefghijklmnopqrstuvwxyz"
+                local words = {"cat", "dog", "fish", "bird", "cow"}
+                local acc = 0
+                for i = 0, n - 1 do
+                    local ch = string.sub(alphabet, (i % 26) + 1, (i % 26) + 1)
+                    local bonus = 0
+                    if ch == "a" then bonus = 1 end
+                    local w = words[(i % 5) + 1]
+                    local v
+                    if w == "cat" then v = 1
+                    elseif w == "dog" then v = 2
+                    elseif w == "fish" then v = 3
+                    elseif w == "bird" then v = 4
+                    else v = 5 end
+                    local m = i % 100
+                    local sparse
+                    if m == 3 then sparse = 10
+                    elseif m == 17 then sparse = 20
+                    elseif m == 42 then sparse = 30
+                    elseif m == 99 then sparse = 40
+                    else sparse = 50 end
+                    acc = (acc + v + sparse + bonus) % 100000007
+                end
+                return acc
+            end
+
+            function castAndTypeof(n)
+                local acc = 0
+                local intTypeName = type(0)
+                for i = 0, n - 1 do
+                    local boxed = i
+                    local back = boxed + 1
+                    local bonus = 0
+                    if type(boxed) == intTypeName then bonus = 1 end
+                    acc = (acc + back + bonus) % 100000007
+                end
+                return acc
+            end
+
+            local function mathHelpersSquare(x) return x * x end
+            function staticCalls(n)
+                local acc = 0
+                for i = 0, n - 1 do
+                    acc = (acc + mathHelpersSquare(i % 1000)) % 100000007
+                end
+                return acc
+            end
+
+            -- Lua has no native/host boundary distinct from Lua itself, exactly like hostAdd
+            -- above; the honest analogue is an ordinary function call.
+            local function nativeMathSquare(x) return x * x end
+            local function nativeMathCube(x) return x * x * x end
+            function nativeInstanceCalls(n)
+                local acc = 0
+                for i = 0, n - 1 do
+                    acc = (acc + nativeMathSquare(i % 1000)) % 100000007
+                end
+                return acc
+            end
+            function nativeStaticCalls(n)
+                local acc = 0
+                for i = 0, n - 1 do
+                    acc = (acc + nativeMathCube(i % 100)) % 100000007
+                end
+                return acc
+            end
+
+            function forInStringTuple(n)
+                local word = "surtrbenchmarkstring"
+                local acc = 0
+                for i = 0, n - 1 do
+                    for j = 1, #word do
+                        acc = (acc + string.byte(word, j)) % 100000007
+                    end
+                end
+                local t = {1, 2, 3, 4}
+                for i = 0, n - 1 do
+                    for _, v in ipairs(t) do
+                        acc = (acc + v) % 100000007
+                    end
+                end
+                return acc
+            end
+
+            function arrayFullSurface(n)
+                local xs = {}
+                for i = 0, n - 1 do xs[#xs + 1] = i end
+                local acc = 0
+                table.insert(xs, 1, 999)
+                local idx = -1
+                for i = 1, #xs do
+                    if xs[i] == 999 then idx = i - 1; break end
+                end
+                acc = (acc + idx) % 100000007
+                local has = false
+                for i = 1, #xs do
+                    if xs[i] == 500 then has = true; break end
+                end
+                local bonus = 0
+                if has then bonus = 1 end
+                table.remove(xs, 1)
+                while #xs > 0 do
+                    local v = xs[#xs]
+                    xs[#xs] = nil
+                    acc = (acc + v) % 100000007
+                end
+                xs = {}
+                return (acc + bonus) % 100000007
+            end
+
+            function tupleBoxed(n)
+                local acc = 0
+                for i = 0, n - 1 do
+                    local t = {i, i + 1}
+                    acc = (acc + t[1] + t[2]) % 100000007
+                end
+                return acc
+            end
+
+            -- Lua 5.1 has no IDisposable/using - the honest idiom is a table with a manual close.
+            function disposal(n)
+                local acc = 0
+                for i = 0, n - 1 do
+                    local r = {closed = false}
+                    acc = (acc + i) % 100000007
+                    r.closed = true
+                end
+                return acc
+            end
+
+            function countdownWhile(n)
+                local acc = 0
+                local i = n
+                while i > 0 do
+                    acc = (acc + i) % 100000007
+                    i = i - 1
+                end
+                return acc
+            end
+
+            function collatzWhile(n)
+                local acc = 0
+                for seed = 1, n do
+                    local x = seed
+                    local steps = 0
+                    while x ~= 1 do
+                        if x % 2 == 0 then x = x / 2 else x = x * 3 + 1 end
+                        steps = steps + 1
+                    end
+                    acc = (acc + steps) % 100000007
+                end
+                return acc
+            end
+
+            function linkedListWalk(n)
+                local head = nil
+                for i = n - 1, 0, -1 do
+                    head = {value = i, next = head}
+                end
+                local acc = 0
+                local cur = head
+                while cur ~= nil do
+                    acc = (acc + cur.value) % 100000007
+                    cur = cur.next
+                end
+                return acc
+            end
             """;
 
         private const long Modulus = 100000007;
@@ -918,6 +1888,7 @@ namespace Surtr.Bench
         {
             new Workload("fib", 24, WorkloadKind.Int, "recursive calls, frame setup", Fib),
             new Workload("intLoop", 1000000, WorkloadKind.Int, "integer arithmetic and branching", IntLoop),
+            new Workload("tightGuard", 1000000, WorkloadKind.Int, "a counted loop whose body is one store: the guard is a real fraction of it", TightGuard),
             new Workload("floatLoop", 1000000, WorkloadKind.Float, "float arithmetic, NaN-boxed", baselineFloat: FloatLoop),
             new Workload("mathFns", 100000, WorkloadKind.Float, "float calls across the native boundary", baselineFloat: MathFns),
             new Workload("arrayFill", 50000, WorkloadKind.Int, "array growth via push", ArrayFill),
@@ -934,13 +1905,21 @@ namespace Surtr.Bench
             new Workload("methodGroupInvoke", 300000, WorkloadKind.Int, "invocation through a method-group value, non-inlinable target", MethodGroupInvoke),
             new Workload("closureCapture", 300000, WorkloadKind.Int, "closure environment + upvalue read/write", ClosureCapture),
             new Workload("methodCalls", 300000, WorkloadKind.Int, "direct instance dispatch", MethodCalls),
+            new Workload("localModule", 300000, WorkloadKind.Int, "the same call inside one module: the control for crossModule", CrossModule),
+            new Workload("crossModule", 300000, WorkloadKind.Int, "a call that crosses a module boundary: two table hops instead of one", CrossModule),
             new Workload("virtualCalls", 300000, WorkloadKind.Int, "vtable dispatch", VirtualCalls),
             new Workload("interfaceCalls", 300000, WorkloadKind.Int, "interfaceId table dispatch", InterfaceCalls),
             new Workload("fieldAccess", 300000, WorkloadKind.Int, "instance field get/set", FieldAccess),
             new Workload("propertyAccess", 300000, WorkloadKind.Int, "get_x/set_x accessor pair", PropertyAccess),
             new Workload("exceptions", 8000, WorkloadKind.Int, "raise and handler-table search", Exceptions),
             new Workload("forIn", 50000, WorkloadKind.Int, "for-in lowered to an indexed loop", ForIn),
+            new Workload("forInDict", 50000, WorkloadKind.Int, "for-in over a dictionary: key snapshot, value lookup and pair per entry", ForInDict),
             new Workload("iterator", 50000, WorkloadKind.Int, "the general iterate()/moveNext() path", Iterator),
+            new Workload("genYield", 50000, WorkloadKind.Int, "generator: suspend and resume a frame per element", GenYield),
+            new Workload("handIterator", 50000, WorkloadKind.Int, "the cursor class a generator replaces", HandIterator),
+            new Workload("genDelegate", 50000, WorkloadKind.Int, "three levels of yield from, through the delegation link", GenDelegate),
+            new Workload("genSend", 50000, WorkloadKind.Int, "coroutine: a value injected at every yield", GenSend),
+            new Workload("genFinally", 50000, WorkloadKind.Int, "generator suspending inside a try/finally", GenFinally),
             new Workload("interop", 300000, WorkloadKind.Int, "host function call", Interop),
             new Workload("valueClass", 300000, WorkloadKind.Int, "value class, erased to its field", ValueClass),
             new Workload("generics", 300000, WorkloadKind.Int, "erased slot: box in, cast out", Generics),
@@ -951,7 +1930,26 @@ namespace Surtr.Bench
             new Workload("nullable", 300000, WorkloadKind.Int, "nullable primitive, absent tag", Nullable),
             new Workload("enums", 300000, WorkloadKind.Int, "enum case access and comparison", Enums),
             new Workload("sortArray", 20000, WorkloadKind.Int, "native member re-entering the VM per compare", SortArray),
-            new Workload("tuples", 300000, WorkloadKind.Int, "TupPack and TupGetC", Tuples),
+            new Workload("sortBytecode", 20000, WorkloadKind.Int, "the same merge sort in Surtr: no boundary per compare, but the merge costs bytecode", SortArray),
+            new Workload("tuples", 300000, WorkloadKind.Int, "tuple literal and element read, inline slots", Tuples),
+            new Workload("vec2Math", 300000, WorkloadKind.Float, "multi-field value type: construct, pass and return by value", baselineFloat: Vec2Math),
+            new Workload("vec2Fields", 300000, WorkloadKind.Float, "value-type fields stored inline in an instance", baselineFloat: Vec2Fields),
+            new Workload("vec2Class", 300000, WorkloadKind.Float, "vec2Math with a reference class: the A/B for the alloc column", baselineFloat: Vec2Class, diagnosticOnly: true),
+            new Workload("tupleReturn", 300000, WorkloadKind.Int, "multi-slot return and destructuring, no tuple object", TupleReturn),
+            new Workload("bitwiseOps", 300000, WorkloadKind.Int, "And/Or/Xor/Not/Shl/Shr/Sar - the bitwise family, untouched elsewhere", BitwiseOps),
+            new Workload("rangeLoop", 300000, WorkloadKind.Int, "the range type: exclusive and inclusive for-in", RangeLoop),
+            new Workload("stringIndexSwitch", 300000, WorkloadKind.Int, "string indexing, a string switch and a sparse int switch", StringIndexSwitch),
+            new Workload("castAndTypeof", 300000, WorkloadKind.Int, "'as' used as a value, plus static and dynamic typeof", CastAndTypeof),
+            new Workload("staticCalls", 300000, WorkloadKind.Int, "a class-level static method: InvokeStatic", StaticCalls),
+            new Workload("nativeInstanceCalls", 300000, WorkloadKind.Int, "a native method on a user-declared class, instance dispatch", NativeInstanceCalls),
+            new Workload("nativeStaticCalls", 300000, WorkloadKind.Int, "a native method on a user-declared class, no receiver", NativeStaticCalls),
+            new Workload("forInStringTuple", 50000, WorkloadKind.Int, "for-in over a string and over a tuple", ForInStringTuple),
+            new Workload("arrayFullSurface", 50000, WorkloadKind.Int, "pop/insert/removeAt/clear/indexOf/contains - the rest of array's surface", ArrayFullSurface),
+            new Workload("tupleBoxed", 300000, WorkloadKind.Int, "a tuple through an unknown slot: the boxed form, not tuples' inline one", TupleBoxed),
+            new Workload("disposal", 300000, WorkloadKind.Int, "a user IDisposable closed by using, outside a generator", Disposal),
+            new Workload("countdownWhile", 300000, WorkloadKind.Int, "a descending guard (>): no fusion reaches it, unlike every other loop here", CountdownWhile),
+            new Workload("collatzWhile", 3000, WorkloadKind.Int, "a data-dependent while with no fixed iteration count", CollatzWhile),
+            new Workload("linkedListWalk", 300000, WorkloadKind.Int, "a while walking real references to null - IsNull/IsNotNull's home", LinkedListWalk),
         };
 
         public static IReadOnlyList<Workload> AllWorkloads => All;
@@ -1022,6 +2020,22 @@ namespace Surtr.Bench
         }
 
         private static long Fib(long n) => n < 2 ? n : Fib(n - 1) + Fib(n - 2);
+
+        private static long CrossModule(long n)
+        {
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+                acc = (acc + i + 1) % Modulus;
+            return acc;
+        }
+
+        private static long TightGuard(long n)
+        {
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+                acc = i + 1;
+            return acc;
+        }
 
         private static long IntLoop(long n)
         {
@@ -1263,6 +2277,17 @@ namespace Surtr.Bench
             return acc;
         }
 
+        private static long ForInDict(long n)
+        {
+            var m = new Dictionary<long, long>();
+            for (long i = 0; i < n; i++)
+                m[i] = i * 3;
+            long acc = 0;
+            foreach (var entry in m)
+                acc = (acc + entry.Key + entry.Value) % Modulus;
+            return acc;
+        }
+
         // Typed as the interface, so the enumerator is reached through IEnumerable<T> and boxed —
         // the closest C# has to the path Surtr takes when the sequence is not statically an array.
         private static long Iterator(long n)
@@ -1274,6 +2299,146 @@ namespace Surtr.Bench
             long acc = 0;
             foreach (long x in seq)
                 acc = (acc + x) % Modulus;
+            return acc;
+        }
+
+        // C#'s generator is `yield return`, compiled to a state machine (Plan-Generadores §4.A) -
+        // the other implementation strategy, measured against the copied frame Surtr chose.
+        private static IEnumerable<long> UpToGen(long n)
+        {
+            for (long i = 0; i < n; i++)
+                yield return i;
+        }
+
+        private static long GenYield(long n)
+        {
+            long acc = 0;
+            foreach (long x in UpToGen(n))
+                acc = (acc + x) % Modulus;
+            return acc;
+        }
+
+        // C# has no delegation form either - `yield return` cannot re-yield a sequence - so each
+        // level writes the foreach out, which is the shape Surtr's loop lowering also takes when
+        // the operand is not a generator.
+        private static IEnumerable<long> DelegLeaf(long n)
+        {
+            for (long i = 0; i < n; i++)
+                yield return i;
+        }
+
+        private static IEnumerable<long> DelegMid(long n)
+        {
+            foreach (long x in DelegLeaf(n))
+                yield return x;
+        }
+
+        private static IEnumerable<long> DelegTop(long n)
+        {
+            foreach (long x in DelegMid(n))
+                yield return x;
+        }
+
+        private static long GenDelegate(long n)
+        {
+            long acc = 0;
+            foreach (long x in DelegTop(n))
+                acc = (acc + x) % Modulus;
+            return acc;
+        }
+
+        // C# iterators are one-way: `yield return` has no value coming back, so the honest
+        // counterpart to a send loop is an explicit cursor the driver hands a value to each step.
+        // Writing it as an IEnumerable would measure a different program.
+        private sealed class EchoCursor
+        {
+            private readonly long _n;
+
+            public EchoCursor(long n) => _n = n;
+
+            public long Current { get; private set; }
+
+            public bool MoveNext(long sent)
+            {
+                long next = Current == 0 && !_started ? 0 : sent + 1;
+                _started = true;
+
+                if (next >= _n)
+                    return false;
+
+                Current = next;
+                return true;
+            }
+
+            private bool _started;
+        }
+
+        private static long GenSend(long n)
+        {
+            var cursor = new EchoCursor(n);
+            long acc = 0;
+
+            while (cursor.MoveNext(cursor.Current))
+                acc = (acc + cursor.Current) % Modulus;
+
+            return acc;
+        }
+
+        // The `try/finally` around the suspension, which C# does allow in an iterator - the
+        // `finally` runs when the enumerator is disposed, which is exactly the guarantee Surtr
+        // just grew.
+        private static IEnumerable<long> GuardedRange(long n)
+        {
+            long i = 0;
+
+            try
+            {
+                while (i < n)
+                {
+                    yield return i;
+                    i++;
+                }
+            }
+            finally
+            {
+                i = 0;
+            }
+        }
+
+        private static long GenFinally(long n)
+        {
+            long acc = 0;
+            foreach (long x in GuardedRange(n))
+                acc = (acc + x) % Modulus;
+            return acc;
+        }
+
+        /// <summary>The cursor written by hand, which is what a generator saves you writing.</summary>
+        private sealed class RangeCursor
+        {
+            private long _i;
+            private readonly long _n;
+
+            public RangeCursor(long n) => _n = n;
+
+            public long Current => _i - 1;
+
+            public bool MoveNext()
+            {
+                if (_i >= _n)
+                    return false;
+
+                _i++;
+                return true;
+            }
+        }
+
+        private static long HandIterator(long n)
+        {
+            var cursor = new RangeCursor(n);
+            long acc = 0;
+            while (cursor.MoveNext())
+                acc = (acc + cursor.Current) % Modulus;
             return acc;
         }
 
@@ -1407,6 +2572,106 @@ namespace Surtr.Bench
             return acc;
         }
 
+        // A real C# struct, which is what a C# program would reach for here. The JIT will keep it
+        // in registers and the whole loop allocates nothing — that is C#'s honest answer to the
+        // same question Surtr's value types answer, and is the number worth comparing against.
+        private readonly struct Vec2
+        {
+            public readonly double X;
+            public readonly double Y;
+
+            public Vec2(double x, double y)
+            {
+                X = x;
+                Y = y;
+            }
+
+            public Vec2 Add(Vec2 other) => new Vec2(X + other.X, Y + other.Y);
+            public Vec2 Scale(double k) => new Vec2(X * k, Y * k);
+            public double Dot(Vec2 other) => X * other.X + Y * other.Y;
+        }
+
+        // The reference twin of the struct above, for the vec2Class A/B. C# answers the same
+        // question Surtr does here, and the JIT will not sink these allocations away.
+        private sealed class Vec2Ref
+        {
+            public readonly double X;
+            public readonly double Y;
+
+            public Vec2Ref(double x, double y)
+            {
+                X = x;
+                Y = y;
+            }
+
+            public Vec2Ref Add(Vec2Ref other) => new Vec2Ref(X + other.X, Y + other.Y);
+            public Vec2Ref Scale(double k) => new Vec2Ref(X * k, Y * k);
+            public double Dot(Vec2Ref other) => X * other.X + Y * other.Y;
+        }
+
+        private sealed class Body
+        {
+            public Vec2 Position;
+            public Vec2 Velocity;
+
+            public Body(Vec2 position, Vec2 velocity)
+            {
+                Position = position;
+                Velocity = velocity;
+            }
+        }
+
+        private static double Vec2Math(long n)
+        {
+            var v = new Vec2(0.5, -0.25);
+            var p = new Vec2(0.0, 0.0);
+            double acc = 0.0;
+            for (long i = 0; i < n; i++)
+            {
+                p = p.Add(v).Scale(0.5);
+                acc = acc * 0.5 + p.Dot(v) + (i % 7) * 0.125;
+            }
+            return acc;
+        }
+
+        private static double Vec2Class(long n)
+        {
+            var v = new Vec2Ref(0.5, -0.25);
+            var p = new Vec2Ref(0.0, 0.0);
+            double acc = 0.0;
+            for (long i = 0; i < n; i++)
+            {
+                p = p.Add(v).Scale(0.5);
+                acc = acc * 0.5 + p.Dot(v) + (i % 7) * 0.125;
+            }
+            return acc;
+        }
+
+        private static double Vec2Fields(long n)
+        {
+            var body = new Body(new Vec2(0.0, 0.0), new Vec2(0.5, -0.25));
+            double acc = 0.0;
+            for (long i = 0; i < n; i++)
+            {
+                body.Position = body.Position.Add(body.Velocity).Scale(0.5);
+                acc = acc * 0.5 + body.Position.Dot(body.Velocity) + (i % 7) * 0.125;
+            }
+            return acc;
+        }
+
+        private static (long Quotient, long Remainder) DivMod(long a, long b) => (a / b, a % b);
+
+        private static long TupleReturn(long n)
+        {
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+            {
+                var (q, r) = DivMod(i, 7);
+                acc = (acc + q * 3 + r) % Modulus;
+            }
+            return acc;
+        }
+
         // A local function capturing a mutable holder and mutating it through the capture, the C#
         // shape closest to what Surtr's closureCapture does. The JIT may keep the holder in a
         // register and fuse the capture away entirely — that is C#'s honest answer and is left alone.
@@ -1457,6 +2722,210 @@ namespace Surtr.Bench
                 acc = (acc + sub.Length) % Modulus;
                 string rep = s.Replace("the", "a");
                 acc = (acc + rep.Length) % Modulus;
+            }
+            return acc;
+        }
+
+        private static long BitwiseOps(long n)
+        {
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+            {
+                long x = (i & 0xFF) | (i << 3);
+                x = (x ^ 0x5A5A) & ~1L;
+                x = (x >> 2) | (x >> 1);
+                acc = (acc + x) % Modulus;
+            }
+            return acc;
+        }
+
+        private static long RangeLoop(long n)
+        {
+            long acc = 0;
+            for (long x = 0; x < n; x++) acc = (acc + x) % Modulus;
+            for (long y = 0; y <= n; y++) acc = (acc + y * 2) % Modulus;
+            return acc;
+        }
+
+        private static long StringIndexSwitch(long n)
+        {
+            const string alphabet = "abcdefghijklmnopqrstuvwxyz";
+            string[] words = { "cat", "dog", "fish", "bird", "cow" };
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+            {
+                char ch = alphabet[(int)(i % 26)];
+                long bonus = ch == 'a' ? 1 : 0;
+                string w = words[(int)(i % 5)];
+                long v = w switch { "cat" => 1, "dog" => 2, "fish" => 3, "bird" => 4, _ => 5 };
+                long m = i % 100;
+                long sparse = m switch { 3 => 10, 17 => 20, 42 => 30, 99 => 40, _ => 50 };
+                acc = (acc + v + sparse + bonus) % Modulus;
+            }
+            return acc;
+        }
+
+        private static long CastAndTypeof(long n)
+        {
+            long acc = 0;
+            Type intType = typeof(int);
+            for (long i = 0; i < n; i++)
+            {
+                object boxed = (int)i;
+                long back = (int)boxed + 1;
+                Type valueType = boxed.GetType();
+                long bonus = valueType == intType ? 1 : 0;
+                acc = (acc + back + bonus) % Modulus;
+            }
+            return acc;
+        }
+
+        private static long StaticCallsMathSquare(long x) => x * x;
+
+        private static long StaticCalls(long n)
+        {
+            long acc = 0;
+            for (long i = 0; i < n; i++) acc = (acc + StaticCallsMathSquare(i % 1000)) % Modulus;
+            return acc;
+        }
+
+        // Lua and Surtr both reuse an ordinary/static call for the "native" boundary baseline -
+        // C# has no such boundary to cross either, so this is the same honest shape.
+        private static long NativeSquareHost(long x) => x * x;
+        private static long NativeCubeHost(long x) => x * x * x;
+
+        private static long NativeInstanceCalls(long n)
+        {
+            long acc = 0;
+            for (long i = 0; i < n; i++) acc = (acc + NativeSquareHost(i % 1000)) % Modulus;
+            return acc;
+        }
+
+        private static long NativeStaticCalls(long n)
+        {
+            long acc = 0;
+            for (long i = 0; i < n; i++) acc = (acc + NativeCubeHost(i % 100)) % Modulus;
+            return acc;
+        }
+
+        private static long ForInStringTuple(long n)
+        {
+            const string word = "surtrbenchmarkstring";
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+            {
+                foreach (char c in word) acc = (acc + c) % Modulus;
+            }
+            var t = (1L, 2L, 3L, 4L);
+            for (long i = 0; i < n; i++)
+            {
+                acc = (acc + t.Item1) % Modulus;
+                acc = (acc + t.Item2) % Modulus;
+                acc = (acc + t.Item3) % Modulus;
+                acc = (acc + t.Item4) % Modulus;
+            }
+            return acc;
+        }
+
+        private static long ArrayFullSurface(long n)
+        {
+            var xs = new List<long>();
+            for (long i = 0; i < n; i++) xs.Add(i);
+            long acc = 0;
+            xs.Insert(0, 999);
+            long idx = xs.IndexOf(999);
+            acc = (acc + idx) % Modulus;
+            bool has = xs.Contains(500);
+            long bonus = has ? 1 : 0;
+            xs.RemoveAt(0);
+            while (xs.Count > 0)
+            {
+                long v = xs[xs.Count - 1];
+                xs.RemoveAt(xs.Count - 1);
+                acc = (acc + v) % Modulus;
+            }
+            xs.Clear();
+            return (acc + bonus) % Modulus;
+        }
+
+        private static long TupleBoxed(long n)
+        {
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+            {
+                object boxed = (i, i + 1);
+                var t = ((long, long))boxed;
+                acc = (acc + t.Item1 + t.Item2) % Modulus;
+            }
+            return acc;
+        }
+
+        private sealed class DisposableResource : IDisposable
+        {
+            public bool Closed;
+            public void Dispose() => Closed = true;
+        }
+
+        private static long Disposal(long n)
+        {
+            long acc = 0;
+            for (long i = 0; i < n; i++)
+            {
+                using (var r = new DisposableResource())
+                {
+                    acc = (acc + i) % Modulus;
+                }
+            }
+            return acc;
+        }
+
+        private static long CountdownWhile(long n)
+        {
+            long acc = 0;
+            long i = n;
+            while (i > 0)
+            {
+                acc = (acc + i) % Modulus;
+                i = i - 1;
+            }
+            return acc;
+        }
+
+        private static long CollatzWhile(long n)
+        {
+            long acc = 0;
+            for (long seed = 1; seed <= n; seed++)
+            {
+                long x = seed;
+                long steps = 0;
+                while (x != 1)
+                {
+                    if (x % 2 == 0) x = x / 2; else x = x * 3 + 1;
+                    steps++;
+                }
+                acc = (acc + steps) % Modulus;
+            }
+            return acc;
+        }
+
+        private sealed class BenchListNode
+        {
+            public long Value;
+            public BenchListNode? Next;
+        }
+
+        private static long LinkedListWalk(long n)
+        {
+            BenchListNode? head = null;
+            for (long i = n - 1; i >= 0; i--)
+                head = new BenchListNode { Value = i, Next = head };
+
+            long acc = 0;
+            var cur = head;
+            while (cur != null)
+            {
+                acc = (acc + cur.Value) % Modulus;
+                cur = cur.Next;
             }
             return acc;
         }

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Classes;
 using Surtr.Runtime.Objects;
@@ -320,7 +320,7 @@ namespace Surtr.Bytecode.Emit
 
         private static void AppendEnumCase(StringBuilder builder, string indent, SurtrEnumCaseInfo enumCase)
         {
-            builder.Append(indent).Append("case ").Append(enumCase.Name).Append(" = ").Append(enumCase.Ordinal);
+            builder.Append(indent).Append("case ").Append(enumCase.Name).Append(" = ").Append(enumCase.Value);
 
             if (enumCase.Field.Slot >= 0)
                 builder.Append("  ; slot ").Append(enumCase.Field.Slot);
@@ -847,6 +847,16 @@ namespace Surtr.Bytecode.Emit
             var op = (OpCode)chunk.Code[position];
             int operand = position + 1;
 
+            // The prefix is not an instruction, so it is not printed as one: the line names the
+            // sub-opcode, and the whole two-byte header is accounted for before any immediate is
+            // read. Decoding lives in its own method for the same reason the interpreter's lives
+            // in its own switch - the two spaces are independent.
+            if (op == OpCode.Ext)
+                return AppendExtInstruction(builder, chunk, position, jumpTargets, labels, indent);
+
+            if (op == OpCode.Wide)
+                return AppendWideInstruction(builder, chunk, position, jumpTargets, labels, indent);
+
             builder.Append(indent).Append("  ").Append(Hex(position)).Append("  ").Append(op.ToString());
 
             switch (op)
@@ -854,9 +864,6 @@ namespace Surtr.Bytecode.Emit
                 // ---- no immediate ------------------------------------------------------------
                 case OpCode.Nop:
                 case OpCode.Dup:
-                case OpCode.Dup2:
-                case OpCode.Swap:
-                case OpCode.Swap2:
                 case OpCode.PushNull:
                 case OpCode.PushTrue:
                 case OpCode.PushFalse:
@@ -893,8 +900,6 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.FDiv:
                 case OpCode.Mod:
                 case OpCode.FMod:
-                case OpCode.Pow:
-                case OpCode.FPow:
                 case OpCode.Neg:
                 case OpCode.FNeg:
                 case OpCode.Inv:
@@ -935,6 +940,14 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.IsPresent:
                 case OpCode.RangeNew:
                 case OpCode.RangeNewInclusive:
+                case OpCode.RangePack:
+                case OpCode.RangeUnpack:
+                case OpCode.GenIterate:
+                case OpCode.GenResume:
+                case OpCode.GenCurrent:
+                case OpCode.Yield:
+                case OpCode.GenDelegate:
+                case OpCode.GenResumed:
                 case OpCode.BoxInt:
                 case OpCode.BoxFloat:
                 case OpCode.BoxBool:
@@ -957,7 +970,6 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.ArrClear:
                 case OpCode.ArrIndexOf:
                 case OpCode.ArrIn:
-                case OpCode.ArrNIn:
                 case OpCode.TupLen:
                 case OpCode.TupGet:
                 case OpCode.DictLen:
@@ -966,7 +978,6 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.DictDel:
                 case OpCode.DictClear:
                 case OpCode.DictIn:
-                case OpCode.DictNIn:
                 case OpCode.Throw:
                 case OpCode.ReturnVoid:
                 case OpCode.ReturnValue:
@@ -998,9 +1009,6 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.Ldc:
                     return AppendConstant(builder, chunk, operand, ReadU16(chunk, operand), 2);
 
-                case OpCode.LdcX:
-                    return AppendConstant(builder, chunk, operand, ReadI32(chunk, operand), 4);
-
                 // ---- frame slots and host globals --------------------------------------------
                 case OpCode.LdlS:
                 case OpCode.StlS:
@@ -1009,8 +1017,22 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.UpValueGet:
                 case OpCode.StrCat:
                 case OpCode.PushAbsent:
+                case OpCode.ReturnValues:
+                case OpCode.UnboxValue:
                     builder.Append(' ').Append(chunk.Code[operand]).AppendLine();
                     return operand + 1;
+
+                case OpCode.LoadValueLocal:
+                case OpCode.StoreValueLocal:
+                    builder.Append(' ').Append(ReadU16(chunk, operand))
+                           .Append(" x").Append(chunk.Code[operand + 2]).AppendLine();
+                    return operand + 3;
+
+                case OpCode.LoadLocalField:
+                case OpCode.StoreLocalField:
+                    builder.Append(' ').Append(ReadU16(chunk, operand))
+                           .Append('+').Append(ReadU16(chunk, operand + 2)).AppendLine();
+                    return operand + 4;
 
                 case OpCode.IncLocal:
                     builder.Append(' ').Append(chunk.Code[operand])
@@ -1036,20 +1058,9 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.LoadType:
                     return AppendType(builder, chunk, operand, ReadU16(chunk, operand), 2);
 
-                case OpCode.InstanceOfX:
-                case OpCode.CastX:
-                case OpCode.CastOrNullX:
-                case OpCode.ObjNewX:
-                case OpCode.BoxAsX:
-                case OpCode.LoadTypeX:
-                    return AppendType(builder, chunk, operand, ReadI32(chunk, operand), 4);
-
                 // ---- module access table -------------------------------------------------------
                 case OpCode.LoadModule:
                     return AppendModule(builder, chunk, operand, ReadU16(chunk, operand), 2);
-
-                case OpCode.LoadModuleX:
-                    return AppendModule(builder, chunk, operand, ReadI32(chunk, operand), 4);
 
                 case OpCode.ArrNewX:
                     AppendTypeName(builder, chunk, ReadU16(chunk, operand));
@@ -1067,6 +1078,11 @@ namespace Surtr.Bytecode.Emit
                     builder.Append(" count=").Append(chunk.Code[operand + 2]).AppendLine();
                     return operand + 3;
 
+                case OpCode.BoxValue:
+                    AppendTypeName(builder, chunk, ReadU16(chunk, operand));
+                    builder.Append(" x").Append(chunk.Code[operand + 2]).AppendLine();
+                    return operand + 3;
+
                 // ---- field access table ------------------------------------------------------
                 case OpCode.FieldGet:
                 case OpCode.FieldSet:
@@ -1074,9 +1090,21 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.StaticFieldSet:
                     return AppendFieldOperand(builder, chunk, operand, ReadU16(chunk, operand), 2);
 
-                case OpCode.StaticFieldGetX:
-                case OpCode.StaticFieldSetX:
-                    return AppendFieldOperand(builder, chunk, operand, ReadI32(chunk, operand), 4);
+                case OpCode.LoadValueField:
+                case OpCode.StoreValueField:
+                case OpCode.LoadValueStatic:
+                case OpCode.StoreValueStatic:
+                    AppendFieldName(builder, chunk, ReadU16(chunk, operand));
+                    builder.Append(" x").Append(chunk.Code[operand + 2]).AppendLine();
+                    return operand + 3;
+
+                // ---- generators --------------------------------------------------------------
+                case OpCode.GenNew:
+                    AppendMethodName(builder, chunk, ReadU16(chunk, operand));
+                    builder.Append(' ');
+                    AppendTypeName(builder, chunk, ReadU16(chunk, operand + 2));
+                    builder.Append(" args=").Append(chunk.Code[operand + 4]).AppendLine();
+                    return operand + 5;
 
                 // ---- closures ----------------------------------------------------------------
                 case OpCode.NewClosure:
@@ -1084,20 +1112,10 @@ namespace Surtr.Bytecode.Emit
                     builder.Append(" upvalues=").Append(chunk.Code[operand + 2]).AppendLine();
                     return operand + 3;
 
-                case OpCode.NewClosureX:
-                    AppendMethodName(builder, chunk, ReadI32(chunk, operand));
-                    builder.Append(" upvalues=").Append(chunk.Code[operand + 4]).AppendLine();
-                    return operand + 5;
-
                 case OpCode.NewFunction:
                     AppendMethodName(builder, chunk, ReadU16(chunk, operand));
                     builder.AppendLine();
                     return operand + 2;
-
-                case OpCode.NewFunctionX:
-                    AppendMethodName(builder, chunk, ReadI32(chunk, operand));
-                    builder.AppendLine();
-                    return operand + 4;
 
                 // ---- branches ----------------------------------------------------------------
                 case OpCode.JPZ:
@@ -1125,29 +1143,6 @@ namespace Surtr.Bytecode.Emit
                 case OpCode.JPFLE:
                     return AppendBranch(builder, chunk, operand, (short)ReadU16(chunk, operand), 2, jumpTargets, labels);
 
-                case OpCode.JPZX:
-                case OpCode.JPNZX:
-                case OpCode.JPNX:
-                case OpCode.JPNNX:
-                case OpCode.JPAX:
-                case OpCode.JPNAX:
-                case OpCode.JPX:
-                case OpCode.JPEQX:
-                case OpCode.JPFEQX:
-                case OpCode.JPREQX:
-                case OpCode.JPStrEQX:
-                case OpCode.JPNEX:
-                case OpCode.JPFNEX:
-                case OpCode.JPRNEX:
-                case OpCode.JPStrNEX:
-                case OpCode.JPGTX:
-                case OpCode.JPFGTX:
-                case OpCode.JPGEX:
-                case OpCode.JPFGEX:
-                case OpCode.JPLTX:
-                case OpCode.JPFLTX:
-                case OpCode.JPLEX:
-                case OpCode.JPFLEX:
                     return AppendBranch(builder, chunk, operand, ReadI32(chunk, operand), 4, jumpTargets, labels);
 
                 case OpCode.JPInstanceOf:
@@ -1159,17 +1154,6 @@ namespace Surtr.Bytecode.Emit
                     AppendTargetRef(builder, target, labels);
                     builder.AppendLine();
                     return operand + 4;
-                }
-
-                case OpCode.JPInstanceOfX:
-                {
-                    AppendTypeName(builder, chunk, ReadI32(chunk, operand));
-                    int target = operand + 8 + ReadI32(chunk, operand + 4);
-                    jumpTargets?.Add(target);
-                    builder.Append(" -> ");
-                    AppendTargetRef(builder, target, labels);
-                    builder.AppendLine();
-                    return operand + 8;
                 }
 
                 case OpCode.Switch:
@@ -1188,21 +1172,10 @@ namespace Surtr.Bytecode.Emit
                     AppendCounts(builder, chunk, operand + 2);
                     return operand + 4;
 
-                case OpCode.CallLocalModuleX:
-                case OpCode.InvokeStaticX:
-                    AppendMethodName(builder, chunk, ReadI32(chunk, operand));
-                    AppendCounts(builder, chunk, operand + 4);
-                    return operand + 6;
-
                 case OpCode.CallModule:
                     AppendExternal(builder, chunk, ReadU16(chunk, operand), ReadU16(chunk, operand + 2));
                     AppendCounts(builder, chunk, operand + 4);
                     return operand + 6;
-
-                case OpCode.CallModuleX:
-                    AppendExternal(builder, chunk, ReadI32(chunk, operand), ReadI32(chunk, operand + 4));
-                    AppendCounts(builder, chunk, operand + 8);
-                    return operand + 10;
 
                 case OpCode.InvokeClosure:
                     AppendCounts(builder, chunk, operand);
@@ -1308,6 +1281,14 @@ namespace Surtr.Bytecode.Emit
 
             builder.AppendLine();
             return operand + width;
+        }
+
+        private static void AppendFieldName(StringBuilder builder, SurtrChunk chunk, int index)
+        {
+            builder.Append(' ').Append(index);
+
+            if ((uint)index < (uint)chunk.FieldTable.Length && chunk.FieldTable[index] is { } field)
+                builder.Append(" (").Append(field.Name).Append(')');
         }
 
         private static void AppendMethodName(StringBuilder builder, SurtrChunk chunk, int index)
@@ -1426,6 +1407,212 @@ namespace Surtr.Bytecode.Emit
             }
 
             return operand + 8 + (count * 8);
+        }
+
+        /// <summary>Decodes one instruction from the extended space, prefix included.</summary>
+        /// <remarks>
+        /// <paramref name="position"/> is the prefix byte; the sub-opcode is the next one and its
+        /// immediates start two bytes in. The returned position is past the whole instruction.
+        /// </remarks>
+        /// <summary>
+        /// Renders one instruction behind <see cref="OpCode.Wide"/>: the same opcode the ordinary
+        /// decoder knows, with its single index or offset read as four bytes.
+        /// </summary>
+        /// <remarks>
+        /// Written as its own method rather than as a width flag threaded through the ordinary
+        /// decoder, for the reason the extended space has one too: the widened forms are a small,
+        /// closed set of six shapes, and forty unrelated cases would otherwise each have to carry
+        /// a test for a width they can never have.
+        /// </remarks>
+        private static int AppendWideInstruction(
+            StringBuilder builder,
+            SurtrChunk chunk,
+            int position,
+            List<int>? jumpTargets,
+            Dictionary<int, string>? labels,
+            string indent)
+        {
+            var op = (OpCode)chunk.Code[position + 1];
+            int operand = position + 2;
+
+            builder.Append(indent).Append("  ").Append(Hex(position)).Append("  Wide ").Append(op.ToString());
+
+            switch (op)
+            {
+                case OpCode.Ldc:
+                    return AppendConstant(builder, chunk, operand, ReadI32(chunk, operand), 4);
+
+                case OpCode.InstanceOf:
+                case OpCode.Cast:
+                case OpCode.CastOrNull:
+                case OpCode.ObjNew:
+                case OpCode.BoxAs:
+                case OpCode.LoadType:
+                    return AppendType(builder, chunk, operand, ReadI32(chunk, operand), 4);
+
+                case OpCode.LoadModule:
+                    return AppendModule(builder, chunk, operand, ReadI32(chunk, operand), 4);
+
+                case OpCode.StaticFieldGet:
+                case OpCode.StaticFieldSet:
+                    return AppendFieldOperand(builder, chunk, operand, ReadI32(chunk, operand), 4);
+
+                case OpCode.NewClosure:
+                    AppendMethodName(builder, chunk, ReadI32(chunk, operand));
+                    builder.Append(" upvalues=").Append(chunk.Code[operand + 4]).AppendLine();
+                    return operand + 5;
+
+                case OpCode.NewFunction:
+                    AppendMethodName(builder, chunk, ReadI32(chunk, operand));
+                    builder.AppendLine();
+                    return operand + 4;
+
+                case OpCode.JPInstanceOf:
+                {
+                    AppendTypeName(builder, chunk, ReadI32(chunk, operand));
+                    int target = operand + 8 + ReadI32(chunk, operand + 4);
+                    jumpTargets?.Add(target);
+                    builder.Append(" -> ");
+                    AppendTargetRef(builder, target, labels);
+                    builder.AppendLine();
+                    return operand + 8;
+                }
+
+                case OpCode.CallLocalModule:
+                case OpCode.InvokeStatic:
+                    AppendMethodName(builder, chunk, ReadI32(chunk, operand));
+                    AppendCounts(builder, chunk, operand + 4);
+                    return operand + 6;
+
+                case OpCode.CallModule:
+                    AppendExternal(builder, chunk, ReadI32(chunk, operand), ReadI32(chunk, operand + 4));
+                    AppendCounts(builder, chunk, operand + 8);
+                    return operand + 10;
+
+                case OpCode.JP:
+                case OpCode.JPZ:
+                case OpCode.JPNZ:
+                case OpCode.JPN:
+                case OpCode.JPNN:
+                case OpCode.JPA:
+                case OpCode.JPNA:
+                case OpCode.JPEQ:
+                case OpCode.JPNE:
+                case OpCode.JPGT:
+                case OpCode.JPGE:
+                case OpCode.JPLT:
+                case OpCode.JPLE:
+                case OpCode.JPFEQ:
+                case OpCode.JPFNE:
+                case OpCode.JPFGT:
+                case OpCode.JPFGE:
+                case OpCode.JPFLT:
+                case OpCode.JPFLE:
+                case OpCode.JPREQ:
+                case OpCode.JPRNE:
+                case OpCode.JPStrEQ:
+                case OpCode.JPStrNE:
+                {
+                    int target = operand + 4 + ReadI32(chunk, operand);
+                    jumpTargets?.Add(target);
+                    builder.Append(' ').Append(ReadI32(chunk, operand)).Append(" -> ");
+                    AppendTargetRef(builder, target, labels);
+                    builder.AppendLine();
+                    return operand + 4;
+                }
+
+                default:
+                    builder.Append("  ; opcode 0x")
+                        .Append(((byte)op).ToString("X2", CultureInfo.InvariantCulture))
+                        .Append(" has no wide form").AppendLine();
+                    return operand;
+            }
+        }
+
+        private static int AppendExtInstruction(
+            StringBuilder builder,
+            SurtrChunk chunk,
+            int position,
+            List<int>? jumpTargets,
+            Dictionary<int, string>? labels,
+            string indent)
+        {
+            var op = (SurtrExtOpCode)chunk.Code[position + 1];
+            int operand = position + 2;
+
+            builder.Append(indent).Append("  ").Append(Hex(position)).Append("  ").Append(op.ToString());
+
+            switch (op)
+            {
+                case SurtrExtOpCode.Probe:
+                    builder.Append(' ').Append(chunk.Code[operand]).AppendLine();
+                    return operand + 1;
+
+                // ---- loop steps: slot operands, then a branch back into the body -------------
+                case SurtrExtOpCode.ArrForNext:
+                case SurtrExtOpCode.StrForNext:
+                case SurtrExtOpCode.TupForNext:
+                    return AppendExtLoopStep(builder, chunk, operand, slots: 3, offsetWidth: 2, jumpTargets, labels);
+
+                case SurtrExtOpCode.ArrForNextX:
+                case SurtrExtOpCode.StrForNextX:
+                case SurtrExtOpCode.TupForNextX:
+                    return AppendExtLoopStep(builder, chunk, operand, slots: 3, offsetWidth: 4, jumpTargets, labels);
+
+                case SurtrExtOpCode.DictForNext:
+                    return AppendExtLoopStep(builder, chunk, operand, slots: 4, offsetWidth: 2, jumpTargets, labels);
+
+                case SurtrExtOpCode.DictForNextX:
+                    return AppendExtLoopStep(builder, chunk, operand, slots: 4, offsetWidth: 4, jumpTargets, labels);
+
+                case SurtrExtOpCode.ForRangeNextLE:
+                case SurtrExtOpCode.ForRangeNextLT:
+                    return AppendExtLoopStep(builder, chunk, operand, slots: 2, offsetWidth: 2, jumpTargets, labels);
+
+                case SurtrExtOpCode.ForRangeNextLEX:
+                case SurtrExtOpCode.ForRangeNextLTX:
+                    return AppendExtLoopStep(builder, chunk, operand, slots: 2, offsetWidth: 4, jumpTargets, labels);
+
+                default:
+                    builder.Append(" ; unknown extended opcode 0x")
+                        .Append(((byte)op).ToString("X2", CultureInfo.InvariantCulture))
+                        .AppendLine();
+                    return operand;
+            }
+        }
+
+        /// <summary>Renders a loop step's slot operands and the branch back into the body.</summary>
+        /// <remarks>
+        /// One shape covers the whole family: <paramref name="slots"/> single-byte frame indices,
+        /// then a signed offset of <paramref name="offsetWidth"/> bytes measured from the end of
+        /// the instruction, exactly like every branch outside <c>Switch</c>.
+        /// </remarks>
+        private static int AppendExtLoopStep(
+            StringBuilder builder,
+            SurtrChunk chunk,
+            int operand,
+            int slots,
+            int offsetWidth,
+            List<int>? jumpTargets,
+            Dictionary<int, string>? labels)
+        {
+            for (int i = 0; i < slots; i++)
+                builder.Append(' ').Append(chunk.Code[operand + i]);
+
+            int offsetAt = operand + slots;
+            int offset = offsetWidth == 2
+                ? (short)ReadU16(chunk, offsetAt)
+                : ReadI32(chunk, offsetAt);
+
+            int end = offsetAt + offsetWidth;
+            int target = end + offset;
+
+            jumpTargets?.Add(target);
+            builder.Append(" -> ");
+            AppendTargetRef(builder, target, labels);
+            builder.AppendLine();
+
+            return end;
         }
 
         private static int ReadU16(SurtrChunk chunk, int position)

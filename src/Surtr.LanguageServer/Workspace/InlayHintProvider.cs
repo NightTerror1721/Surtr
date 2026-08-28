@@ -279,6 +279,19 @@ namespace Surtr.LanguageServer.Workspace
                     if (property.Receiver is not null)
                         WalkExpression(property.Receiver, text, tokens, lines, hints);
                     break;
+
+                case BoundYieldExpression yieldExpression:
+                    WalkExpression(yieldExpression.Value, text, tokens, lines, hints);
+                    break;
+
+                case BoundThrowExpression throwExpression:
+                    WalkExpression(throwExpression.Value, text, tokens, lines, hints);
+                    break;
+
+                case BoundSequenceExpression sequence:
+                    WalkStatement(sequence.Statement, text, tokens, lines, hints);
+                    WalkExpression(sequence.Value, text, tokens, lines, hints);
+                    break;
             }
         }
 
@@ -287,6 +300,12 @@ namespace Surtr.LanguageServer.Workspace
         // ------------------------------------------------------------------------------------
 
         /// <summary>A <c>: Type</c> hint after a local whose type was inferred, not written.</summary>
+        /// <remarks>
+        /// A local initialized directly by a <c>yield</c> or <c>yield from</c> is skipped: its
+        /// inferred type is always <c>unknown</c>, and repeating that on every line of a coroutine
+        /// is noise — the cast the type demands is already underlined by any use that needs one.
+        /// Inference to <c>unknown</c> from anything else keeps hinting exactly as before.
+        /// </remarks>
         private static void HintInferredType(
             BoundLocalDeclarationStatement declaration, string text, List<Token> tokens, TextLines lines, List<InlayHint> hints)
         {
@@ -297,6 +316,9 @@ namespace Surtr.LanguageServer.Workspace
             {
                 return;
             }
+
+            if (declaration.Initializer is BoundYieldExpression)
+                return;
 
             Token? nameToken = FirstNameToken(localSyntax.Span, tokens, declaration.Local.Name);
             if (nameToken is null)

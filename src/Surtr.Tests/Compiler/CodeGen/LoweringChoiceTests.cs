@@ -252,14 +252,21 @@ namespace Surtr.Tests.Compiler.CodeGen
 
         #region Tuples
 
+        /// <summary>
+        /// A tuple is its block now: the constant index folds into an offset read off the frame
+        /// range the value lives in - no boxed-element opcode either direction.
+        /// </summary>
         [Fact]
-        public void ATupleIndexIsAnImmediateRatherThanAPush()
+        public void ATupleIndexReadsTheFrameRangeRatherThanABoxedElement()
         {
             string code = Disassemble(
                 "fun run(): string { let p: (int, string) = (3, \"origin\"); return p[1]; }");
 
-            Assert.Equal(1, Count(code, "TupGetC"));
+            Assert.Equal(0, Count(code, "TupGetC"));
             Assert.Equal(0, Count(code, "TupGet"));
+            Assert.Equal(0, Count(code, "TupPack"));
+            // Element 1 sits at offset 1 of the two-slot block.
+            Assert.Equal(1, Count(code, "LoadLocalField"));
         }
 
         #endregion
@@ -421,11 +428,18 @@ namespace Surtr.Tests.Compiler.CodeGen
 
         #region Counted loops
 
+        /// <remarks>
+        /// The increment is deliberately not the loop's last statement. Where it is, the whole
+        /// loop takes the fused counted step instead and there is no <c>IncLocal</c> left to see -
+        /// which <c>LoopFusionTests</c> covers. What this pins is the narrower choice: an
+        /// increment written as a statement updates its slot in place rather than going out to the
+        /// operand stack and back.
+        /// </remarks>
         [Fact]
         public void AnIncrementInStatementPositionUpdatesTheLocalInPlace()
         {
             string code = Disassemble(
-                "fun run(): int { var i: int = 0; while (i < 10) { i = i + 1; } return i; }");
+                "fun run(): int { var i: int = 0; var t = 0; while (i < 10) { i = i + 1; t = t + i; } return t; }");
 
             Assert.Equal(1, Count(code, "IncLocal"));
         }
@@ -456,10 +470,19 @@ namespace Surtr.Tests.Compiler.CodeGen
         /// Prefix and postfix differ only in which value they leave behind, and a discarded one
         /// leaves neither — so a `for` step and a bare `i++;` are the same instruction.
         /// </summary>
+        /// <remarks>
+        /// The condition is deliberately `!=` rather than `&lt;`: a `&lt;`/`&lt;=` counted loop
+        /// whose step is exactly this shape now qualifies for the whole-loop
+        /// <c>ForRangeNext</c> fusion (<c>MethodBodyEmitter.TryEmitCountedFor</c>/
+        /// <c>TryEmitCountedWhile</c>, which recognise `i++`/`++i` as well as `i += 1`), which
+        /// would fold the increment into that instruction instead of leaving it as its own
+        /// `IncLocal` - a real improvement, but not what this test isolates. `!=` keeps the
+        /// increment's own lowering choice the only thing in play.
+        /// </remarks>
         [Theory]
-        [InlineData("for (var i: int = 0; i < 10; i++) { }")]
-        [InlineData("for (var i: int = 0; i < 10; ++i) { }")]
-        [InlineData("var i: int = 0; while (i < 10) { i++; }")]
+        [InlineData("for (var i: int = 0; i != 10; i++) { }")]
+        [InlineData("for (var i: int = 0; i != 10; ++i) { }")]
+        [InlineData("var i: int = 0; while (i != 10) { i++; }")]
         public void ADiscardedIncrementIsOneInstruction(string body)
         {
             string code = Disassemble("fun run(): int { " + body + " return 0; }");
@@ -477,14 +500,26 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(0, Count(code, "IncLocal"));
         }
 
+        /// <summary>
+        /// The whole per-element step of a <c>for-in</c> over an array is one instruction.
+        /// </summary>
+        /// <remarks>
+        /// This used to assert one <c>IncLocal</c> - the step's own increment, back when the step
+        /// was <c>IncLocal</c> plus a jump and the guard and the read were four more instructions
+        /// each at the top. <c>ArrForNext</c> is all of it, so there is no increment left to count.
+        /// </remarks>
         [Fact]
         public void AForInOverAnArrayStepsWithTheFusedInstruction()
         {
             string code = Disassemble(
                 "fun run(xs: int[]): int { var total: int = 0; for (x in xs) { total = total + x; } return total; }");
 
-            // The loop counter's step. `total = total + x` is not one: its right side is no constant.
-            Assert.Equal(1, Count(code, "IncLocal"));
+            Assert.Equal(1, Count(code, "ArrForNext"));
+            Assert.Equal(0, Count(code, "IncLocal"));
+
+            // The guard and the element read are inside the step now, not instructions of their own.
+            Assert.Equal(0, Count(code, "ArrLen"));
+            Assert.Equal(0, Count(code, "ArrGet"));
         }
 
         #endregion
@@ -897,6 +932,53 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(0, Count(code, "InvokeSpecial"));
         }
 
+        /// <summary>
+        /// §3.6: <c>noinline</c> refuses the splice the default heuristic would have made — the same
+        /// trivial body that <see cref="ATrivialFunctionIsSplicedByDefault"/> shows splicing stays a
+        /// real call when the declaration says no.
+        /// </summary>
+        [Fact]
+        public void ANoinlineFunctionIsNotSplicedByTheHeuristic()
+        {
+            string code = Disassemble(
+                "noinline fun twice(x: int): int { return x + x; }\n"
+                    + "fun run(a: int): int { return twice(a); }");
+
+            Assert.Equal(1, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// And it refuses the call-site const fold too (§7.2's optional half): a literal argument
+        /// folds a plain <c>const fun</c> away entirely —
+        /// <see cref="AConstFunCallWithALiteralArgumentFoldsAway"/> — but not one declared
+        /// <c>noinline</c>. The mandatory folds (a `const` initializer, a `const if`) are evaluation,
+        /// not optimization, and still run the function.
+        /// </summary>
+        [Fact]
+        public void ANoinlineConstFunCallDoesNotFoldAtTheCallSite()
+        {
+            string code = Disassemble(
+                "noinline const fun square(x: int): int { return x * x; }\n"
+                    + "fun run(): int { return square(5); }");
+
+            Assert.Equal(1, Count(code, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// An auto-property marked <c>noinline</c> is reached through its accessor rather than by
+        /// the backing-field opcode — the mirror of
+        /// <see cref="AnAutoPropertyIsAccessedByFieldOpcodeNotByACall"/>.
+        /// </summary>
+        [Fact]
+        public void ANoinlineAutoPropertyIsAccessedByCallNotByFieldOpcode()
+        {
+            string code = Disassemble(
+                "class A { public noinline n: int { get; set; } }\n"
+                    + "fun run(): int { let a = A(); return a.n; }");
+
+            Assert.Equal(1, Count(code, "InvokeSpecial"));
+        }
+
         #endregion
 
         #region Devirtualisation (§2.2, §3.3)
@@ -1192,13 +1274,18 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(0, Count(code, "InvokeSpecial"));
         }
 
+        /// <summary>
+        /// A tuple's arity is static at every well-typed site, so its length folds into the
+        /// instruction stream - a constant push, no dispatch and no call.
+        /// </summary>
         [Fact]
-        public void TupleLengthUsesTupLenNotACall()
+        public void TupleLengthFoldsToAConstantNotACallOrADispatch()
         {
             string code = Disassemble("fun run(t: (int, string)): int { return t.length; }");
 
-            Assert.Equal(1, Count(code, "TupLen"));
+            Assert.Equal(0, Count(code, "TupLen"));
             Assert.Equal(0, Count(code, "InvokeSpecial"));
+            Assert.Equal(1, Count(code, "PushI8"));
         }
 
         [Fact]
@@ -1292,17 +1379,19 @@ namespace Surtr.Tests.Compiler.CodeGen
 
         /// <summary>
         /// A tuple's arity is always known at compile time, so array-from-tuple never needs a
-        /// runtime length check — no comparison, no branch, just the reads and the pack. Value
-        /// correctness is <see cref="ModuleEmitterTests.ArrayFromTupleCastReadsEveryElementInOrder"/>.
+        /// runtime length check - no comparison, no branch, just the offset reads off the block
+        /// and the pack. Value correctness is
+        /// <see cref="ModuleEmitterTests.ArrayFromTupleCastReadsEveryElementInOrder"/>.
         /// </summary>
         [Fact]
-        public void ArrayFromTupleCastUsesTupGetCAndArrPackWithNoRuntimeCheck()
+        public void ArrayFromTupleCastUsesOffsetReadsAndArrPackWithNoRuntimeCheck()
         {
             // .get(0), not .length: .length would itself emit an ArrLen unrelated to the
             // construction, muddying the very count this test exists to pin.
             string code = Disassemble("fun run(): int { let a = array<int>((10, 20, 30)); return a.get(0); }");
 
-            Assert.Equal(3, Count(code, "TupGetC"));
+            Assert.Equal(0, Count(code, "TupGetC"));
+            Assert.Equal(3, Count(code, "LoadLocalField"));
             Assert.Equal(1, Count(code, "ArrPack"));
             Assert.Equal(0, Count(code, "ArrLen"));
             Assert.Equal(0, Count(code, "ObjNew"));
@@ -1311,25 +1400,22 @@ namespace Surtr.Tests.Compiler.CodeGen
         }
 
         /// <summary>
-        /// Tuple-from-array is the one cast direction with a runtime fact to check — the array's
-        /// actual length — so exactly one ArrLen precedes the unrolled reads, still with no call.
+        /// Tuple-from-array is the one cast direction with a runtime fact to check - the array's
+        /// actual length - so exactly one ArrLen precedes the unrolled reads. The result needs no
+        /// pack at all: the reads leave the elements as the block the tuple value is.
         /// Value correctness is
         /// <see cref="ModuleEmitterTests.TupleFromArrayCastReadsEveryElementIntoItsSlot"/> and
         /// <see cref="ModuleEmitterTests.TupleFromArrayArityMismatchThrowsInvalidCastException"/>.
         /// </summary>
         [Fact]
-        public void TupleFromArrayCastUsesOneArrLenCheckThenArrGetAndTupPack()
+        public void TupleFromArrayCastUsesOneArrLenCheckThenArrGetAndLeavesTheBlock()
         {
             string code = Disassemble(
                 "fun run(xs: int[]): int { let t = tuple<int, int, int>(xs); return t[0]; }");
 
             Assert.Equal(1, Count(code, "ArrLen"));
             Assert.Equal(3, Count(code, "ArrGet"));
-            Assert.Equal(1, Count(code, "TupPack"));
-            // Neither ObjNew nor InvokeSpecial is asserted away here: the InvalidCastException the
-            // length-mismatch trap raises is a real class instance, so allocating it and calling its
-            // constructor legitimately uses both. What matters is that the tuple itself never does —
-            // TupPack is its only allocation, above.
+            Assert.Equal(0, Count(code, "TupPack"));
         }
 
         #endregion
@@ -1437,6 +1523,96 @@ namespace Surtr.Tests.Compiler.CodeGen
             Assert.Equal(1, Count(code, "ArrPush"));
             Assert.Equal(0, Count(code, "ArrGet"));
             Assert.Equal(0, Count(code, "ObjNew"));
+        }
+
+        #endregion
+
+        #region Enum switches (§2.4)
+
+        /// <summary>
+        /// A case's label folds to its value (§2.4), so a switch over a bare enum dispatches on
+        /// the subject's int with a jump table — the whole point of the migration — rather than a
+        /// chain of comparisons. No <c>JPEQ</c>, no static loads per arm.
+        /// </summary>
+        [Fact]
+        public void ASwitchOverABareEnumCompilesToAJumpTable()
+        {
+            string code = Disassemble(
+                "enum Suit { Hearts, Spades, Clubs }\n"
+                + "fun run(s: Suit): int { switch (s) { case Suit.Hearts: return 1; case Suit.Spades: return 4; case Suit.Clubs: return 7; } return 0; }");
+
+            Assert.True(Count(code, "Switch") > 0 || Count(code, "SwitchLookup") > 0,
+                "The case labels fold to their values, so the dispatch is a table:\n" + code);
+            Assert.Equal(0, Count(code, "JPEQ"));
+        }
+
+        /// <summary>
+        /// A case-carrying enum's subject is a multi-field value class, so the dispatch lowers to
+        /// the <c>value</c> slot of the block; the table still engages on the folded labels.
+        /// </summary>
+        [Fact]
+        public void ASwitchOverAMultiFieldEnumCompilesToAJumpTableOnTheValueSlot()
+        {
+            string code = Disassemble(
+                "enum Suit {\n"
+                + "  Hearts(\"h\"), Spades(\"s\"), Clubs(\"c\");\n"
+                + "  public let glyph: string;\n"
+                + "  private constructor(glyph: string) { this.glyph = glyph; }\n"
+                + "}\n"
+                + "fun run(s: Suit): int { switch (s) { case Suit.Hearts: return 1; case Suit.Spades: return 4; case Suit.Clubs: return 7; } return 0; }");
+
+            Assert.True(Count(code, "Switch") > 0 || Count(code, "SwitchLookup") > 0,
+                "A multi-field enum dispatches on its value slot with a table:\n" + code);
+            Assert.Equal(0, Count(code, "JPEQ"));
+        }
+
+        /// <summary>
+        /// A switch over a <c>@Flags</c> enum stays on the chain when a key repeats (a bit alias is
+        /// a duplicate value), which is the same first-match semantics a dense table would have to
+        /// guess at — <c>TryCollectIntegerCases</c> gives up and the chain takes over.
+        /// </summary>
+        [Fact]
+        public void ASwitchOverAFlagsEnumWithDuplicateValuesFallsBackToAChain()
+        {
+            string code = Disassemble(
+                "@Flags enum Perm { None = 0, Read = 1, Write = 2, ReadAlias = 1 }\n"
+                + "fun run(p: Perm): int { switch (p) { case Perm.None: return 0; case Perm.Read: return 1; case Perm.ReadAlias: return 2; case Perm.Write: return 3; } return -1; }");
+
+            Assert.Equal(0, Count(code, "Switch"));
+            Assert.Equal(0, Count(code, "SwitchLookup"));
+            Assert.True(Count(code, "JPEQ") > 0,
+                "Duplicate keys must fall back to the first-match comparison chain:\n" + code);
+        }
+
+        /// <summary>
+        /// §2.3ter: the synthesized <c>operator&lt;=&gt;</c> is <c>forceinline</c>, so a relational
+        /// over an enum splices it — the body of <c>run</c> contains no call at all.
+        /// </summary>
+        [Fact]
+        public void ARelationalOverAnEnumSplicesTheForceInlineOperator()
+        {
+            string code = Disassemble(
+                "enum Suit { Hearts, Spades }\n"
+                + "fun run(a: Suit, b: Suit): bool { return a < b; }");
+
+            string run = MethodBody(code, "run(a: game.core.Test:Suit, b: game.core.Test:Suit): bool");
+            Assert.Equal(0, Count(run, "InvokeSpecial"));
+            Assert.Equal(0, Count(run, "CallLocalModule"));
+        }
+
+        /// <summary>
+        /// A call on an enum's synthesized API with constant parts folds away entirely (§2.3quater):
+        /// the receiver is a case (a literal for a bare enum), so the call becomes the value itself.
+        /// </summary>
+        [Fact]
+        public void AConstEnumCallFoldsAwayEntirely()
+        {
+            string code = Disassemble(
+                "enum Suit { Hearts, Spades }\n"
+                + "fun run(): bool { return Suit.Hearts.equals(Suit.Spades); }");
+
+            string run = MethodBody(code, "run(): bool");
+            Assert.Equal(0, Count(run, "InvokeSpecial"));
         }
 
         #endregion

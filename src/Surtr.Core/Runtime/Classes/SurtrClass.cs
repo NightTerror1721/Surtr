@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Runtime.Objects;
 using Surtr.Runtime.Utilities;
@@ -75,6 +75,34 @@ namespace Surtr.Runtime.Classes
 
         /// <summary>How many slots an instance of this class occupies. What the allocator needs.</summary>
         internal int InstanceSlotCount;
+
+        /// <summary>
+        /// Whether instances of this class live inline as one or more value slots rather than
+        /// behind a reference: a multi-field <c>value class</c>, once the language grows one.
+        /// </summary>
+        /// <remarks>
+        /// A value type has no identity of its own - two copies of the same value are
+        /// indistinguishable, which is why <c>===</c> is meaningless on it and why equality is
+        /// structural (see <see cref="Objects.SurtrValueComparer"/>). Where its type is statically
+        /// known it occupies <see cref="FlattenedSlotWidth"/> contiguous slots in whatever holds
+        /// it; where it flows into a reference-typed slot it boxes into an ordinary
+        /// <see cref="Objects.SurtrInstance"/> of this very class, whose field slots receive the
+        /// value verbatim.
+        /// </remarks>
+        /// <summary>Public so a host or the compiler's module builder can flag a class as a value type before linking.</summary>
+        public bool IsValueType { get; set; }
+
+        /// <summary>
+        /// How many slots one inline value of this class occupies: the sum of its instance fields'
+        /// own widths, with nested value types flattened. One for every non-value class.
+        /// </summary>
+        /// <remarks>
+        /// Computed at link time by <see cref="SurtrTypeLinker"/>; negative until then, since zero
+        /// is a legitimate width for a field-less value type. The cap lives with the linker - a
+        /// call's <c>argsCount</c> immediate is one byte wide, so nothing wider than 254 slots can
+        /// ever be passed or returned.
+        /// </remarks>
+        internal int FlattenedSlotWidth = -1;
 
         /// <summary>
         /// Which instance slots hold a <see cref="SurtrRef"/>, in ascending order.
@@ -196,12 +224,12 @@ namespace Surtr.Runtime.Classes
         /// <param name="declaringType">The type this class is nested in, or <see langword="null"/> at module level.</param>
         /// <param name="isSealed">
         /// Whether nothing may extend this class. Mutually exclusive with
-        /// <paramref name="isAbstract"/>, per <c>Language-Syntax.md</c> §2.2 - a class that cannot
+        /// <paramref name="isAbstract"/>, per <c>Language-Syntax.md</c> Â§2.2 - a class that cannot
         /// be instantiated and cannot be extended could never have an instance.
         /// </param>
         /// <param name="isEnum">
         /// Whether this class is an enum: a sealed class with a fixed set of named static
-        /// instances (<c>Language-Syntax.md</c> §2.4). Implies <paramref name="isSealed"/>.
+        /// instances (<c>Language-Syntax.md</c> Â§2.4). Implies <paramref name="isSealed"/>.
         /// </param>
         public SurtrClass(
             string name,
@@ -319,7 +347,7 @@ namespace Surtr.Runtime.Classes
         /// </summary>
         /// <remarks>
         /// The ordinal is what makes an exhaustive <c>switch</c> over an enum
-        /// (<c>Language-Syntax.md</c> §4.3) compile to a dense jump table: the cases are instances,
+        /// (<c>Language-Syntax.md</c> Â§4.3) compile to a dense jump table: the cases are instances,
         /// so without one the keys would be references and there would be nothing to index on.
         /// </remarks>
         public ReadOnlySpan<SurtrEnumCaseInfo> EnumCases
@@ -473,7 +501,7 @@ namespace Surtr.Runtime.Classes
         /// <exception cref="InvalidOperationException">The class is already built.</exception>
         /// <exception cref="ArgumentException">
         /// A member with the same signature is already declared. Two members differing only in
-        /// return type land here too, which is what <c>Language-Syntax.md</c> §3.5's first rule
+        /// return type land here too, which is what <c>Language-Syntax.md</c> Â§3.5's first rule
         /// asks for - no call site could choose between them.
         /// </exception>
         public void AddMethod(SurtrMethodInfo method)
@@ -485,14 +513,15 @@ namespace Surtr.Runtime.Classes
         }
 
         /// <summary>
-        /// Declares the next enum case, backed by a static field holding the instance.
+        /// Declares the next enum case, backed by a static field holding the value.
         /// </summary>
         /// <remarks>
         /// The ordinal is assigned here rather than accepted, so it always matches declaration
-        /// order and can never be handed out twice.
+        /// order and can never be handed out twice. The value is the case's <c>= n</c> (or implied
+        /// progression), the key a <c>switch</c> over the enum dispatches on.
         /// </remarks>
         /// <exception cref="InvalidOperationException">The class is already built, or is not an enum.</exception>
-        public SurtrEnumCaseInfo AddEnumCase(SurtrFieldInfo field)
+        public SurtrEnumCaseInfo AddEnumCase(SurtrFieldInfo field, int value)
         {
             ThrowIfBuilt();
 
@@ -502,7 +531,7 @@ namespace Surtr.Runtime.Classes
             if (!field.IsStatic)
                 throw new ArgumentException($"Enum case '{field.Name}' must be a static field.", nameof(field));
 
-            var caseInfo = new SurtrEnumCaseInfo(field.Name, _enumCases.Length, field);
+            var caseInfo = new SurtrEnumCaseInfo(field.Name, _enumCases.Length, value, field);
 
             Array.Resize(ref _enumCases, _enumCases.Length + 1);
             _enumCases[^1] = caseInfo;

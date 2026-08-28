@@ -80,7 +80,7 @@ or a version mismatch, and both are reported as `SurtrImageFormatException` rath
 | Field | Type | Meaning |
 |---|---|---|
 | `magic` | `u64` | `0x444F4D5254525553` — `SURTRMOD` in ASCII, little-endian |
-| `formatVersion` | `u16` | Currently **6**. A reader refuses anything else outright. |
+| `formatVersion` | `u16` | Currently **8**. A reader refuses anything else outright. |
 | `strings` | `i32` count, then each: `i32` byte length + UTF-8 bytes | The string table. |
 
 `formatVersion` counts changes to how a module is **framed**. It is normally separate from the
@@ -122,6 +122,25 @@ it — an extension method is an ordinary method whose receiver is its first par
 it a module compiled later would import the method as a plain function and `obj.member(...)` would
 stop resolving. A version 6 reader would read the flag as the first parameter count, so it is
 refused like every other older format.
+
+**Version 8** adds one `bool` to the `Class` section: `isValueType`, written after `isEnum` and
+before the base-type index. It tells the linker to lay the class out as a **flattened value block**
+— `n` consecutive slots, with a nested value-typed field's own slots folded into the run — rather
+than one reference slot per field, and it is what makes a multi-field `value class` survive a round
+trip through an image at all. Nothing else in the layout moved: a value class's methods, fields and
+attributes are written exactly as any other class's, because at the metadata level that is what it
+is. A version 7 reader would take the flag byte as the first byte of the base-type index, so it is
+refused like every other older format.
+
+Version 7 itself changed no layout; it exists in the record as the release the opcode set's free
+values resumed from.
+
+**Version 12** adds each enum case's `value` to the `Class` section: an `enumCases` entry is now
+`{ name: str, value: i32, visibility: u8 }` instead of `{ name, visibility }`. The value is the
+key an exhaustive `switch` over the enum dispatches on (§2.4 of the syntax doc) — the ordinal stays
+derived from declaration order, but the switch no longer depends on it. The `isFlags` byte is not
+written yet; that is the separate §6.4 decision. A version 11 reader would read the value bytes as
+the next case's name, so it is refused like every other older format.
 
 The string table is written in front of the body but is only complete once the body has been walked,
 so the writer builds the body into a buffer first and prepends the table.
@@ -295,11 +314,12 @@ some runtime interns it — the same reason `SurtrConstant` exists at all.
 | `isAbstract` | `bool` | |
 | `isSealed` | `bool` | |
 | `isEnum` | `bool` | |
+| `isValueType` | `bool` | Written since format version 8. Lay the class out as a flattened value block rather than one reference slot per field. The widths themselves are not written — the linker recomputes them from the field types, so a nested value type's layout cannot disagree with its own declaration. |
 | `baseType` | `str?` | `-1` for a class with no base — there is no root `object`. |
 | `interfaces` | `str[]` | Declared, not the transitive closure; the linker builds that. |
 | `genericParameters` | `str[]` | Names only, one per parameter. |
 | `constraints` | per parameter: `i32` count + `str[]` | The bounds each parameter declared, as descriptors (`G<n>` included, e.g. `Osurtr:IComparable`1;G0`). Written only when `genericParameters` is non-empty; one list per parameter, empty where the parameter is unconstrained. |
-| `enumCases` | `{ name: str, visibility: u8 }[]` | |
+| `enumCases` | `{ name: str, value: i32, visibility: u8 }[]` | `value` written since format version 12 — the key a `switch` over the enum dispatches on. |
 | `fields` | `Field[]` | Enum-case backing fields excluded — see below. |
 | `properties` | `Property[]` | |
 | `methods` | `Method[]` | |
@@ -311,9 +331,10 @@ module path, the enclosing names and this one — a name and a position determin
 spellings of one thing can disagree.
 
 **An enum case's ordinal is not written either.** The cases are replayed through `AddEnumCase` in
-declaration order, which is what assigns them. Writing the ordinal and trusting it would let a
-hand-edited image renumber a dense `switch` into taking the wrong arm. Their backing fields are
-excluded from the field section for the same reason: `AddEnumCase` creates them.
+declaration order, which is what assigns them. Each case's *value* is written, since version 12: it
+is the key a dense `switch` over the enum dispatches on, so trusting the written value is safe —
+unlike the ordinal, which a hand-edited image could once renumber into taking the wrong arm. Their
+backing fields are excluded from the field section: `AddEnumCase` creates them.
 
 #### `Interface`
 

@@ -97,10 +97,13 @@ namespace Surtr.Compiler.Binding
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Everything here follows from three decisions taken elsewhere. Generics are invariant (§6),
-    /// so a construction converts only to itself. There are no user-defined <em>implicit</em>
-    /// conversions (§5.6), so the implicit set is fixed and small. And <c>unknown</c> is the erased
-    /// slot with a surface name (§5.10), so it takes anything and gives nothing back without a cast.
+    /// Everything here follows from three decisions taken elsewhere. Generics are invariant
+    /// <em>by default</em> (§6): a construction converts only to itself unless its declaration
+    /// annotated a parameter <c>out</c>/<c>in</c>, in which case the annotation's direction — and
+    /// nothing wider than reference conversion — relates two constructions of one declaration.
+    /// There are no user-defined <em>implicit</em> conversions (§5.6), so the implicit set is fixed
+    /// and small. And <c>unknown</c> is the erased slot with a surface name (§5.10), so it takes
+    /// anything and gives nothing back without a cast.
     /// </para>
     /// <para>
     /// The error type converts both ways and silently, so one unresolved name does not produce a
@@ -205,11 +208,27 @@ namespace Surtr.Compiler.Binding
 
         /// <summary>
         /// Whether <paramref name="derived"/> is <paramref name="baseType"/> or something below it,
-        /// through base classes or interfaces.
+        /// through base classes, interfaces, or a type parameter's own bounds.
         /// </summary>
+        /// <remarks>
+        /// A type parameter is above exactly what its bounds promise (§6): inside
+        /// <c>Node&lt;T : IComparable&lt;T&gt;&gt;</c>, writing <c>Node&lt;T&gt;</c> in a member of
+        /// its own declaration asks whether the bare parameter satisfies
+        /// <c>IComparable&lt;T&gt;</c> — and §6's answer is yes, because that is precisely what the
+        /// bound promises every construction will satisfy. Without this walk the question read as a
+        /// flat no and every self-referencing use of a constrained generic failed its bounds check.
+        /// </remarks>
         public bool IsSubtype(TypeSymbol derived, TypeSymbol baseType)
         {
             if (ReferenceEquals(derived.NonNullable, baseType.NonNullable))
+                return true;
+
+            // A bare parameter is below nothing in the class graph, but above its own bounds (§6):
+            // asked whether `T` satisfies `IComparable<T>` under `<T : IComparable<T>>`, the walk
+            // below would read as a flat no, and every self-referencing use of a constrained
+            // generic would fail a check its declaration promises it passes.
+            if (derived.NonNullable is TypeParameterSymbol parameter
+                && ReachesThroughBounds(parameter, baseType, new HashSet<TypeParameterSymbol>()))
                 return true;
 
             // A composite is not a NamedTypeSymbol and carries no interface list of its own, but the
@@ -222,6 +241,65 @@ namespace Surtr.Compiler.Binding
             // subtype check — the most frequent primitive of overload resolution.
             _subtypeScratch.Clear();
             return WalkForBase(from, to, _subtypeScratch);
+        }
+
+        /// <summary>
+        /// Whether one of <paramref name="parameter"/>'s bounds reaches
+        /// <paramref name="target"/> — directly, through deeper bounds, or by subtyping.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The visiting set tracks the parameters on the <em>current path</em> only, added on entry
+        /// and removed on exit, so mutually referencing bounds (<c>&lt;T : U, U : T&gt;</c>) stop at
+        /// the cycle without a diamond shape being mistaken for one. It is allocated by the caller:
+        /// this walk is rare next to the ordinary subtype test, and a fresh set keeps re-entrant
+        /// calls from sharing state.
+        /// </para>
+        /// <para>
+        /// Each concrete bound goes through <see cref="WalkForBase"/> rather than a plain equality,
+        /// because a bound may itself be generic (<c>T : IEnumerable&lt;T&gt;</c>) and the question
+        /// is about the whole hierarchy above it.
+        /// </para>
+        /// </remarks>
+        private bool ReachesThroughBounds(TypeParameterSymbol parameter, TypeSymbol target, HashSet<TypeParameterSymbol> visiting)
+        {
+            if (!visiting.Add(parameter))
+                return false;
+
+            try
+            {
+                foreach (var bound in parameter.Constraints)
+                {
+                    if (bound.IsError)
+                        continue;
+
+                    var boundCore = bound.NonNullable;
+
+                    if (boundCore is TypeParameterSymbol nested)
+                    {
+                        if (!ReferenceEquals(nested, parameter) && ReachesThroughBounds(nested, target, visiting))
+                            return true;
+                    }
+                    else if (ReferenceEquals(boundCore, target.NonNullable))
+                    {
+                        return true;
+                    }
+                    else if (Named(bound) is NamedTypeSymbol from && target.NonNullable is NamedTypeSymbol to)
+                    {
+                        // A fresh set rather than the shared scratch: bounds checks now also run
+                        // nested inside variance matching, where clearing a set an outer walk is
+                        // using would drop its cycle protection.
+                        if (WalkForBase(from, to, new HashSet<NamedTypeSymbol>()))
+                            return true;
+                    }
+                }
+            }
+            finally
+            {
+                visiting.Remove(parameter);
+            }
+
+            return false;
         }
 
         private NamedTypeSymbol? Named(TypeSymbol type)
@@ -251,6 +329,15 @@ namespace Surtr.Compiler.Binding
             if (ReferenceEquals(from, to))
                 return true;
 
+            // Same declaration, different arguments: the annotations decide. This is the one place
+            // the old total invariance opens up — and only for a declaration that asked for it,
+            // which keeps every unannotated construction converting exactly as before.
+            if (ReferenceEquals(from.Definition, to.Definition)
+                && MatchesVariantArguments(from, to))
+            {
+                return true;
+            }
+
             var substitution = from.SubstitutionFromArguments(_factory);
 
             foreach (var contract in from.Interfaces)
@@ -262,6 +349,119 @@ namespace Surtr.Compiler.Binding
             return from.BaseType is NamedTypeSymbol baseType
                 && !ReferenceEquals(baseType, from)
                 && WalkForBase(AsSeenFrom(baseType, substitution), to, seen);
+        }
+
+        /// <summary>
+        /// Whether two constructions of one declaration relate argument by argument under what
+        /// each parameter declared: invariant demands identity, <c>out</c> an element-wise
+        /// conversion in, <c>in</c> an element-wise conversion out.
+        /// </summary>
+        private bool MatchesVariantArguments(NamedTypeSymbol from, NamedTypeSymbol to)
+        {
+            var fromArguments = from.TypeArguments;
+            var toArguments = to.TypeArguments;
+            if (fromArguments.Count != toArguments.Count)
+                return false;
+
+            var parameters = from.Definition.TypeParameters;
+            for (int i = 0; i < fromArguments.Count; i++)
+            {
+                switch (i < parameters.Count ? parameters[i].Variance : TypeParameterVariance.Invariant)
+                {
+                    case TypeParameterVariance.Covariant:
+                        if (!IsVariantAssignable(fromArguments[i], toArguments[i]))
+                            return false;
+
+                        break;
+
+                    case TypeParameterVariance.Contravariant:
+                        if (!IsVariantAssignable(toArguments[i], fromArguments[i]))
+                            return false;
+
+                        break;
+
+                    default:
+                        // Interned constructions make reference equality the same relation as type
+                        // equality — the same fact every signature key in the compiler leans on.
+                        if (!ReferenceEquals(fromArguments[i], toArguments[i]))
+                            return false;
+
+                        break;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// The restricted assignability variance is allowed to lean on: identity, nullability
+        /// widening, hierarchy through <see cref="WalkForBase"/>, bounds of a bare parameter, and
+        /// the structural families.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately narrower than <see cref="ClassifyImplicitOnly"/>. Numeric widening would be
+        /// unsound under erasure — a covariant read hands back the boxed reference it stored, and
+        /// no per-element conversion exists at run time to turn an int box into a float one — and
+        /// user-defined conversions are explicit-only besides. Nullability moves one way only,
+        /// exactly as it does for whole types: non-null flows into nullable, never back.
+        /// </remarks>
+        private bool IsVariantAssignable(TypeSymbol source, TypeSymbol destination)
+        {
+            if (ReferenceEquals(source, destination))
+                return true;
+
+            if (source.IsError || destination.IsError || source.IsNever)
+                return true;
+
+            if (source.IsNullable && !destination.IsNullable)
+                return false;
+
+            var from = source.NonNullable;
+            var to = destination.NonNullable;
+            if (ReferenceEquals(from, to))
+                return true;
+
+            switch (from, to)
+            {
+                // A fresh visiting set rather than the shared scratch: this runs *inside* an
+                // active WalkForBase whenever a covariant read nests another construction, and
+                // clearing a set the outer walk is using would drop its cycle protection.
+                case (NamedTypeSymbol namedFrom, NamedTypeSymbol namedTo):
+                    return WalkForBase(namedFrom, namedTo, new HashSet<NamedTypeSymbol>());
+
+                case (ClosureTypeSymbol closureFrom, ClosureTypeSymbol closureTo):
+                    if (closureFrom.ParameterTypes.Count != closureTo.ParameterTypes.Count)
+                        return false;
+
+                    for (int i = 0; i < closureFrom.ParameterTypes.Count; i++)
+                    {
+                        if (!IsVariantAssignable(closureTo.ParameterTypes[i], closureFrom.ParameterTypes[i]))
+                            return false;
+                    }
+
+                    return IsVariantAssignable(closureFrom.ReturnType, closureTo.ReturnType);
+
+                case (TupleTypeSymbol tupleFrom, TupleTypeSymbol tupleTo):
+                    if (tupleFrom.ElementTypes.Count != tupleTo.ElementTypes.Count)
+                        return false;
+
+                    for (int i = 0; i < tupleFrom.ElementTypes.Count; i++)
+                    {
+                        if (!IsVariantAssignable(tupleFrom.ElementTypes[i], tupleTo.ElementTypes[i]))
+                            return false;
+                    }
+
+                    return true;
+
+                case (GeneratorTypeSymbol generatorFrom, GeneratorTypeSymbol generatorTo):
+                    return IsVariantAssignable(generatorFrom.ElementType, generatorTo.ElementType);
+
+                case (TypeParameterSymbol bounded, _):
+                    return ReachesThroughBounds(bounded, destination, new HashSet<TypeParameterSymbol>());
+
+                default:
+                    return false;
+            }
         }
 
         private static NamedTypeSymbol AsSeenFrom(NamedTypeSymbol type, TypeSubstitution substitution)
@@ -290,6 +490,17 @@ namespace Surtr.Compiler.Binding
             if (destination.SpecialType == SpecialType.Unknown)
                 return Conversion.Of(ConversionKind.ImplicitErasure);
 
+            // §6: a constrained parameter widens to its bounds, exactly as a concrete class widens
+            // to its base. Inside `<T : IComparable<T>>`, a `T` may flow into an
+            // `IComparable<T>`-typed slot — that upcast is the bound's whole purpose, and without it
+            // a body could see the member through lookup yet be refused the assignment to call it.
+            // Nullability rides along one way only: `T` and `T?` both reach a nullable bound, a
+            // nullable `T?` never reaches a non-nullable one.
+            if (source.NonNullable is TypeParameterSymbol bounded
+                && !(source.IsNullable && !destination.IsNullable)
+                && ReachesThroughBounds(bounded, destination.NonNullable, new HashSet<TypeParameterSymbol>()))
+                return Conversion.Of(ConversionKind.ImplicitReference);
+
             if (IsErasedSlot(source))
                 return Conversion.None;
 
@@ -311,8 +522,23 @@ namespace Surtr.Compiler.Binding
             if (to is NamedTypeSymbol && IsSubtype(from, to))
                 return Conversion.Of(ConversionKind.ImplicitReference);
 
+            // §6: the structural families carry variance of their own. A closure accepts a
+            // closure whose inputs are wider and whose output is narrower, a tuple widens
+            // element by element, and a generator widens with what it yields — the same
+            // direction-restricted comparison declared variance uses, applied to types nobody
+            // had to annotate because their shape already says which side produces.
+            if (from.TypeKind is TypeSymbolKind.Closure or TypeSymbolKind.Tuple or TypeSymbolKind.Generator
+                && IsVariantAssignable(from, to))
+            {
+                return Conversion.Of(ConversionKind.ImplicitReference);
+            }
+
             return Conversion.None;
         }
+
+        /// <summary>Whether a type is an enum marked <c>@Flags</c>, whose values are single ints (§P14).</summary>
+        private static bool IsFlagsEnum(TypeSymbol type)
+            => type is NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum, IsFlagsEnum: true };
 
         private Conversion ClassifyExplicit(TypeSymbol source, TypeSymbol destination)
         {
@@ -324,6 +550,14 @@ namespace Surtr.Compiler.Binding
             var to = destination.NonNullable;
 
             if (from.IsPrimitive && to.IsPrimitive && !from.IsVoid && !to.IsVoid)
+                return Conversion.Of(ConversionKind.ExplicitNumeric);
+
+            // §P14: a @Flags enum is one int, so this moves no bits - but it has to be written,
+            // because the two are different types to everything above emit, and because the whole
+            // point of the enum is that an arbitrary int is not one of its combinations. It is what
+            // makes the empty set expressible (`0 as Perm`) and what lets a flag set be stored or
+            // sent somewhere that only holds numbers.
+            if (IsFlagsEnum(from) ? to.SpecialType == SpecialType.Int : from.SpecialType == SpecialType.Int && IsFlagsEnum(to))
                 return Conversion.Of(ConversionKind.ExplicitNumeric);
 
             // `T?` narrowing back to `T` is what `!!` asserts, and it is a cast like any other.

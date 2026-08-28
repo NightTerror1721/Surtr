@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using System;
 using System.Collections.Generic;
@@ -849,6 +849,7 @@ namespace Surtr.Compiler.Syntax
                     break;
 
                 case 5:
+                    if (Is(text, "using")) return TokenType.KeywordUsing;
                     if (Is(text, "alias")) return TokenType.KeywordAlias;
                     if (Is(text, "break")) return TokenType.KeywordBreak;
                     if (Is(text, "catch")) return TokenType.KeywordCatch;
@@ -857,6 +858,7 @@ namespace Surtr.Compiler.Syntax
                     if (Is(text, "false")) return TokenType.KeywordFalse;
                     if (Is(text, "throw")) return TokenType.KeywordThrow;
                     if (Is(text, "while")) return TokenType.KeywordWhile;
+                    if (Is(text, "yield")) return TokenType.KeywordYield;
                     break;
 
                 case 6:
@@ -884,12 +886,14 @@ namespace Surtr.Compiler.Syntax
                     if (Is(text, "continue")) return TokenType.KeywordContinue;
                     if (Is(text, "internal")) return TokenType.KeywordInternal;
                     if (Is(text, "moduleof")) return TokenType.KeywordModuleOf;
+                    if (Is(text, "noinline")) return TokenType.KeywordNoInline;
                     if (Is(text, "operator")) return TokenType.KeywordOperator;
                     if (Is(text, "override")) return TokenType.KeywordOverride;
                     break;
 
                 case 9:
                     if (Is(text, "extension")) return TokenType.KeywordExtension;
+                    if (Is(text, "generator")) return TokenType.KeywordGenerator;
                     if (Is(text, "interface")) return TokenType.KeywordInterface;
                     if (Is(text, "protected")) return TokenType.KeywordProtected;
                     if (Is(text, "singleton")) return TokenType.KeywordSingleton;

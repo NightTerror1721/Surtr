@@ -172,7 +172,15 @@ images too.
 
 ## What remains to implement
 
-1. **The trap-to-class mapping** (`docs/VM-Plan.md` §1.9 × §13.3), in `Surtr.Core`, is what
-   actually makes `catch (e: IndexOutOfRangeException)` work; until the wrap sites in `Execute`
-   name these real classes, only a catch-all matches. Unrelated to this project's own scope, but
-   tracked here because it affects the exception hierarchy this library extends.
+Nothing structural is open on this project's side. Two things were closed here and are worth not
+re-discovering:
+
+- **The trap-to-class mapping** (`docs/VM-Plan.md` §1.9 × §13.3) lives in `Surtr.Core` and is
+  done: every wrap site in `Execute` raises the built-in class the trap names, so
+  `catch (e: IndexOutOfRangeException)` matches without a catch-all. The classes this module
+  declares are the ones *beyond* that set (`NotSupportedException`), for user code to throw and
+  catch among themselves.
+- **`InvalidOperationException` deliberately does NOT live here.** It is one of the trap-mapped
+  built-ins, and a same-named twin in this module split catch-by-type in two: `Stack.pop()` threw
+  the twin while the VM raised the built-in, so a natural `catch` matched only one of them. The
+  collections throw the built-in name, which is implicitly in scope everywhere; keep it that way.

@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 namespace Surtr.Compiler.Diagnostics
 {
@@ -99,6 +99,20 @@ namespace Surtr.Compiler.Diagnostics
         /// </summary>
         InvalidParameterList = 2012,
 
+        /// <summary>
+        /// A <c>generator</c> was written with an arrow body (§3.7). An arrow body is one
+        /// expression, and <c>yield</c> is a statement, so the declaration could only ever be an
+        /// empty generator whose expression is discarded.
+        /// </summary>
+        GeneratorNeedsABlockBody = 2013,
+
+        /// <summary>
+        /// A <c>using</c> resource was not written as a <c>let</c> (§9.2) - most often as a
+        /// <c>var</c>, which is refused because a resource that can be reassigned would leave the
+        /// close pointed at something other than what was opened.
+        /// </summary>
+        InvalidUsingResource = 2014,
+
         #endregion
 
         #region Binding — 3xxx
@@ -148,6 +162,12 @@ namespace Surtr.Compiler.Diagnostics
 
         /// <summary>A <c>value class</c> that does not wrap exactly one <c>let</c> field, or that extends something (§2.9).</summary>
         InvalidValueClass = 3011,
+
+        /// <summary>A multi-field value class whose flattened layout cannot be represented: it contains itself, exceeds the per-call slot budget, or declares generic parameters.</summary>
+        ValueTypeLayout = 3012,
+
+        /// <summary>Identity comparison (<c>===</c>) over a value class, which has no identity to compare.</summary>
+        ValueClassIdentity = 3013,
 
         /// <summary>
         /// An interface member that is not a public abstract method or property: a field, a static,
@@ -461,6 +481,201 @@ namespace Surtr.Compiler.Diagnostics
         /// degenerate type that cannot be named by its arity and could even be "constructed".
         /// </summary>
         InvalidGenericDeclaration = 3066,
+
+        /// <summary>
+        /// A destructuring binding (§4.5's <c>let (a, b) = ...</c> and the matching assignment form)
+        /// is malformed: the left side is not a tuple of names, the names' count does not match the
+        /// value's arity, or the value is not a tuple at all.
+        /// </summary>
+        InvalidDestructuring = 3067,
+
+        /// <summary>
+        /// An <c>override</c> that replaces nothing (§3.3): no member of any base class declares
+        /// <c>virtual</c> or <c>abstract</c> with the matching signature. The common case is
+        /// writing <c>override</c> to satisfy an interface — a contract is a promise rather than
+        /// an inheritance, so satisfying one never takes the modifier. It stays legal where the
+        /// same signature also descends from a base class's abstract or virtual member, because
+        /// there the override really does replace something.
+        /// </summary>
+        InvalidOverride = 3068,
+
+        /// <summary>
+        /// A type parameter's bounds form a cycle (§6): <c>&lt;T : U, U : T&gt;</c> — directly or
+        /// through a longer chain. The cycle promises two parameters each "at least" the other, which
+        /// says nothing any construction could satisfy or violate; every later use would fail its
+        /// bounds check with an error that names no fixable site. Reported once at the declaration,
+        /// the way C# reports CS0454.
+        /// </summary>
+        CircularTypeParameterConstraint = 3069,
+
+        /// <summary>
+        /// A <c>yield</c> appeared where there is nothing to yield from (§3.7): outside a
+        /// generator, inside a lambda nested in one, or inside a <c>try</c>. The lambda case is the
+        /// one worth naming - the lambda compiles to a closure with a frame of its own, and phase 1
+        /// suspends a frame by copying it, so there is no generator frame in reach to suspend.
+        /// </summary>
+        InvalidYield = 3070,
+
+        /// <summary>
+        /// A <c>generator</c> declaration breaks one of §3.7's rules: it returns <c>void</c>, it
+        /// carries <c>inline</c>/<c>forceinline</c>, or it is declared <c>const</c>, <c>native</c>
+        /// or in an interface.
+        /// </summary>
+        InvalidGeneratorDeclaration = 3071,
+
+        /// <summary>
+        /// A <c>generator</c> body contains no <c>yield</c> (§3.7). Legal - an empty generator is a
+        /// useful base case - but reported as a warning, because it is far more often an omission
+        /// than an intention.
+        /// </summary>
+        GeneratorNeverYields = 3072,
+
+        /// <summary>
+        /// A <c>using</c> resource's type does not satisfy <c>IDisposable</c> (§9.2), so there is
+        /// nothing for the block to close on the way out.
+        /// </summary>
+        NotDisposable = 3073,
+
+        /// <summary>
+        /// An <c>out</c>/<c>in</c> variance annotation written where no declaration can carry it
+        /// (§6): a method's type parameters live only inside their own body, so there is no
+        /// construction to relate and variance would say nothing.
+        /// </summary>
+        InvalidVarianceModifier = 3074,
+
+        /// <summary>
+        /// A parameter declared <c>out</c> appears in an input position of its own declaration
+        /// (§6) — a method parameter, a setter value, a field, an array element — where accepting
+        /// a supertype's construction would mean reading back something that was never written.
+        /// Reported once, at the declaration, before any use exists.
+        /// </summary>
+        VariantParameterUsedAsInput = 3075,
+
+        /// <summary>
+        /// A parameter declared <c>in</c> appears in an output position of its own declaration
+        /// (§6) — a return type, a getter result — where handing back a subtype's construction
+        /// would promise values the declaration cannot produce.
+        /// </summary>
+        VariantParameterUsedAsOutput = 3076,
+
+        /// <summary>
+        /// An <c>@Name(...)</c> use (§11) passes more positional arguments than the attribute class
+        /// declares instance fields to receive. Arguments fill the attribute's fields by position,
+        /// both here and at load (<c>SurtrRuntime.MaterializeAttributes</c>), so a surplus has no
+        /// slot to land in — checked here rather than left to fail module loading later.
+        /// </summary>
+        AttributeArgumentCountMismatch = 3077,
+
+        /// <summary>
+        /// A positional argument of an <c>@Name(...)</c> use (§11) holds a kind of constant its
+        /// field cannot take — text into an <c>int</c> field, say. Arguments fill fields by
+        /// position, so the one that does not line up is named rather than the whole list.
+        /// </summary>
+        AttributeArgumentTypeMismatch = 3078,
+
+        /// <summary>
+        /// A use of something marked <c>@Obsolete</c> (§11): a call, a field or property access, or
+        /// a construction. A warning rather than an error — the old form still works, and the point
+        /// is to move callers along, named in the attribute's reason text.
+        /// </summary>
+        ObsoleteMemberUsed = 3079,
+
+        /// <summary>
+        /// A call to a function marked <c>@NoDiscard</c> (§11) whose result is dropped: the call
+        /// sits as a statement and the value it returns goes nowhere. Also a warning — ignoring a
+        /// result can be deliberate — but one worth seeing every time, since the mark says the
+        /// value usually is not safe to ignore.
+        /// </summary>
+        NoDiscardResultUnused = 3080,
+
+        /// <summary>
+        /// A body marked <c>@Pure</c> (§11) does something a pure function must not: it calls a
+        /// function that does not carry the mark, or writes a field or property another scope can
+        /// see. A warning — the compiler trusts the contract rather than proving it, and flags the
+        /// cheap local cases the report's phase 2 describes.
+        /// </summary>
+        PureContractViolated = 3081,
+
+        /// <summary>
+        /// A body marked <c>@NoAlloc</c> (§11) contains a construct that allocates on the heap —
+        /// an object creation, a collection literal, a string concatenation or interpolation, a
+        /// lambda, or a <c>yield</c>. A warning, on the same terms as
+        /// <see cref="PureContractViolated"/>: the mark is a contract the compiler checks locally
+        /// rather than proves, so it flags what it can see in the body itself.
+        /// </summary>
+        AllocationInNoAllocBody = 3082,
+
+        /// <summary>
+        /// An enum marked <c>@Flags</c> (§11) declares something its representation cannot carry.
+        /// The mark makes its values single <c>int</c>s — its cases are <c>1 &lt;&lt; ordinal</c>
+        /// and a combination of them is no case at all — so there is no instance for a member to
+        /// run on, no receiver for an interface to dispatch through, and no constructor for a case
+        /// to call. An error rather than a warning: unlike every other lint in §11 this one is not
+        /// about intent, it is about a declaration the compiler has no representation for.
+        /// </summary>
+        /// <remarks>
+        /// The power-of-two check on written case values is <see cref="InvalidEnumValue"/>; this
+        /// one covers everything the integer representation leaves nowhere to put — members,
+        /// interfaces and constructor arguments on the cases.
+        /// </remarks>
+        InvalidFlagsEnum = 3083,
+
+        /// <summary>
+        /// A <c>@Throws("Name")</c> mark (§11) names something that is not an exception: either no
+        /// type of that name is in scope, or the one that is does not descend from
+        /// <c>Exception</c>. A warning — the mark is documentation, so a stale name should be seen
+        /// without failing the build.
+        /// </summary>
+        ThrowsTypeNotException = 3084,
+
+        /// <summary>
+        /// A method marked <c>@TestBefore</c> or <c>@TestAfter</c> (§11) cannot serve as a fixture:
+        /// it takes parameters, returns something, or also carries <c>@Test</c>, which would make
+        /// the same method both the fixture and the thing it wraps.
+        /// </summary>
+        InvalidTestFixture = 3085,
+
+        /// <summary>
+        /// A method carries <c>@TestIgnore</c> (§11) without carrying <c>@Test</c>, so there is
+        /// nothing for the mark to skip — the runner never discovers the method in the first place.
+        /// </summary>
+        IgnoreWithoutTest = 3086,
+
+        /// <summary>
+        /// A method carries both <c>@Benchmark</c> and <c>@Test</c> (§11). The two roles are
+        /// discovered by separate passes and run under different rules — a test once, a benchmark
+        /// repeatedly and timed — so one method answering to both is reported rather than picked
+        /// between.
+        /// </summary>
+        BenchmarkWithTest = 3087,
+
+        /// <summary>
+        /// An enum case's explicit value (§2.4) is invalid: negative, beyond an <c>int</c>, or not
+        /// a power of two on a <c>@Flags</c> enum. A plain enum numbers its cases 0, 1, 2… unless
+        /// told otherwise; a marked enum's cases are single bits, so an explicit value must be a
+        /// power of two (0 names the empty set).
+        /// </summary>
+        InvalidEnumValue = 3088,
+
+        /// <summary>
+        /// Two cases of a plain enum carry the same value (§2.4). A duplicate would break the
+        /// reverse value-to-name lookup behind <c>toString</c> and the dense switch tables, so it
+        /// is refused; a <c>@Flags</c> enum allows duplicates (bit aliases).
+        /// </summary>
+        DuplicateEnumValue = 3089,
+
+        /// <summary>
+        /// An enum declares a constructor with a visibility other than <c>private</c> (§2.4). An
+        /// enum's only instances are its cases, so nothing but the case list may call the
+        /// constructor; the compiler forces it private.
+        /// </summary>
+        InvalidEnumConstructor = 3090,
+
+        /// <summary>
+        /// An enum's own declaration names a member reserved by the synthesized enum API (§2.4):
+        /// <c>value</c>, <c>values</c> or <c>of</c>.
+        /// </summary>
+        ReservedEnumMember = 3091,
 
         #endregion
 

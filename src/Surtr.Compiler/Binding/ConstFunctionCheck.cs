@@ -17,7 +17,9 @@ namespace Surtr.Compiler.Binding
     /// The restrictions exist so that folding a call is the same thing as running it: no host
     /// <c>native</c> function, no mutation of anything outside the call, no I/O, and a body known
     /// statically — so neither <c>virtual</c> nor <c>abstract</c>, since folding has to know which
-    /// body runs.
+    /// body runs. An <em>instance</em> method is allowed when its receiver folds (§2.3quater): the
+    /// enum's synthesized members are instance and const, and a fold passes the folded receiver as
+    /// the first argument.
     /// </para>
     /// <para>
     /// Reported here rather than left to the folder, because these are properties of the
@@ -58,9 +60,6 @@ namespace Surtr.Compiler.Binding
 
             if (method.IsNative)
                 check.Report(body.Span, $"'{method.Name}' is const, so it cannot be native — there is no bytecode to run.");
-
-            if (!method.IsStatic && method.ContainingType is not null)
-                check.Report(body.Span, $"'{method.Name}' is const, so it cannot take a receiver; declare it static.");
 
             check.Statement(body);
         }
@@ -270,6 +269,14 @@ namespace Surtr.Compiler.Binding
 
                 case BoundThrowExpression @throw:
                     Expression(@throw.Value);
+                    return;
+
+                case BoundSequenceExpression sequence:
+                    // A range guard over a value is ordinary statements + one expression: the
+                    // temporary's declaration and the `if` are checked like any others, and so is
+                    // the captured value.
+                    Statement(sequence.Statement);
+                    Expression(sequence.Value);
                     return;
             }
         }

@@ -139,7 +139,8 @@ only ever seeing one class per declaration. There is no root `object` class: a b
 
 ```surtr
 alias EntityId = int;                       // type alias: transparent
-value class Health { public let value: int; }              // one-field wrapper, erased at runtime
+value class Health { public let value: int; }              // one field: erased to it, one slot
+value class Vec2 { public let x: float; public let y: float; }  // two fields: two inline slots, no object
 singleton Registry : IRegistry { ... }                     // class + one static instance
 
 interface IShape {
@@ -347,11 +348,12 @@ Everything the VM treats as a language-level value derives from `SurtrObject`:
 | Type | Holds |
 |---|---|
 | `SurtrString` | a CLR `string` plus its cached hash |
-| `SurtrArray` / `SurtrTuple` | growable / fixed `SurtrValue[]` |
+| `SurtrArray` | a growable `SurtrValue[]` |
+| `SurtrTuple` | a fixed `SurtrValue[]` — the *boxed* form of a tuple, for the boundaries that need an object |
 | `SurtrDictionary` | a `{K: V}` (with a specialised `int`-keyed store that skips the comparer) |
 | `SurtrClosure` | a method plus captured values |
 | `SurtrBoxed` | one primitive, under the *same* class the unboxed value has |
-| `SurtrInstance` | the field slots of a class Surtr source declared |
+| `SurtrInstance` | the field slots of a class Surtr source declared — and the boxed form of a `value class` |
 | `SurtrIterator` | a collection plus a position |
 | `SurtrNativeObject` / `SurtrNativeProxy` | a host CLR object |
 
@@ -359,6 +361,16 @@ Everything the VM treats as a language-level value derives from `SurtrObject`:
 interpreter can move primitives without allocating or consulting metadata. Class metadata is owned
 outright by its owner (the built-ins, or a runtime's context) and is never registered with the
 collector.
+
+**Value types have no row in that table, which is the point.** A `value class` and a tuple are
+**`n` contiguous raw slots** — in a local, in a parameter, in a return, in an instance's field
+block, in a static's storage — with no heap object, no entity id and nothing for the collector to
+sweep. A one-field value class is one slot and erases to the field it wraps; a multi-field one is a
+run, with a nested value type's slots folded into it. They become objects only at the boundaries
+that hold a reference by definition — an array or dictionary element, a dictionary key, an erased
+generic slot or `unknown`, an interface-typed variable, and the host boundary — where `BoxValue`
+allocates an ordinary instance whose fields take the slots verbatim, so every path that already
+walks instances needs no special case.
 
 ### The entity registry (the collector)
 

@@ -45,6 +45,53 @@ namespace Surtr.Compiler.Binding.Symbols
         public override string ToDisplayString() => WithNullableSuffix(ElementType.ToDisplayString() + "[]");
     }
 
+    /// <summary>A generator type, written <c>generator&lt;T&gt;</c> (§3.7).</summary>
+    /// <remarks>
+    /// Shaped exactly like <see cref="ArrayTypeSymbol"/>, and for the same reason: one element type,
+    /// one built-in class behind every parameterisation, and a descriptor that nests it
+    /// (<c>YI</c>). It is a composite rather than a <c>NamedTypeSymbol</c> because
+    /// <c>generator</c> names no declaration a module could hold - it is a family, like
+    /// <c>array</c>, whose members live on the one built-in class <c>MemberLookup.BackingType</c>
+    /// pairs it with.
+    /// </remarks>
+    public sealed class GeneratorTypeSymbol : TypeSymbol
+    {
+        internal GeneratorTypeSymbol(TypeSymbol elementType, bool isNullable = false) : base(isNullable)
+            => ElementType = elementType;
+
+        /// <summary>The element the generator yields.</summary>
+        public TypeSymbol ElementType { get; }
+
+        private string? _name;
+
+        /// <inheritdoc/>
+        public override string Name => _name ??= ToDisplayString();
+
+        /// <inheritdoc/>
+        public override TypeSymbolKind TypeKind => TypeSymbolKind.Generator;
+
+        /// <inheritdoc/>
+        public override bool IsReferenceType => true;
+
+        /// <inheritdoc/>
+        public override bool ContainsTypeParameter => ElementType.ContainsTypeParameter;
+
+        /// <inheritdoc/>
+        public override TypeSymbol Substitute(TypeSubstitution substitution)
+        {
+            var element = ElementType.Substitute(substitution);
+            return ReferenceEquals(element, ElementType)
+                ? this
+                : substitution.Factory.Generator(element).WithNullability(IsNullable);
+        }
+
+        /// <inheritdoc/>
+        private protected override TypeSymbol CreateDual() => new GeneratorTypeSymbol(ElementType, !IsNullable);
+
+        /// <inheritdoc/>
+        public override string ToDisplayString() => WithNullableSuffix("generator<" + ElementType.ToDisplayString() + ">");
+    }
+
     /// <summary>A dictionary type, written <c>{K: V}</c> (§5.4).</summary>
     public sealed class DictionaryTypeSymbol : TypeSymbol
     {

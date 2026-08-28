@@ -1,4 +1,4 @@
-#nullable enable
+﻿#nullable enable
 
 using Surtr.Compiler.Binding.BoundTree;
 using Surtr.Compiler.Binding.Symbols;
@@ -42,6 +42,13 @@ namespace Surtr.Compiler.Binding
         private readonly string _sourceName;
         private readonly MethodSymbol _method;
 
+        /// <summary>
+        /// Whether the analyzed body is marked <c>@Pure</c> (§P3). Set by <see cref="Analyze"/> and
+        /// read by the expression walk, so the pure-contract checks know whether this body promised
+        /// referential transparency and is therefore held to it.
+        /// </summary>
+        private readonly bool _isPure;
+
         private readonly HashSet<LocalSymbol> _assigned = new HashSet<LocalSymbol>();
         private readonly HashSet<LocalSymbol> _reported = new HashSet<LocalSymbol>();
 
@@ -76,6 +83,7 @@ namespace Surtr.Compiler.Binding
             _diagnostics = diagnostics;
             _sourceName = sourceName;
             _method = method;
+            _isPure = BuiltInAttributes.IsPure(method);
         }
 
         /// <summary>Checks one body, reporting whatever it finds.</summary>
@@ -90,7 +98,12 @@ namespace Surtr.Compiler.Binding
             var analysis = new FlowAnalysis(diagnostics, sourceName, method);
             analysis.Statement(body);
 
-            if (analysis._reachable && !method.ReturnType.IsVoid && !method.ReturnType.IsNever && !method.ReturnType.IsError)
+            // A generator's declared return is `generator<T>`, but its body never returns one:
+            // falling off the end is how a generator ends, exactly as it is for a void method
+            // (§3.7). Asking it to return its own view type would report every correct generator.
+            if (analysis._reachable
+                && !method.IsGenerator
+                && !method.ReturnType.IsVoid && !method.ReturnType.IsNever && !method.ReturnType.IsError)
             {
                 diagnostics.ReportError(
                     SurtrDiagnosticCode.NotAllPathsReturn,
@@ -133,6 +146,7 @@ namespace Surtr.Compiler.Binding
 
                 case BoundExpressionStatement expression:
                     Expression(expression.Expression);
+                    ReportIfNoDiscardWasDropped(expression);
                     return;
 
                 case BoundLocalDeclarationStatement local:
@@ -340,6 +354,92 @@ namespace Surtr.Compiler.Binding
             }
         }
 
+        /// <summary>
+        /// Reports a statement-expression whose call resolved to something marked
+        /// <c>@NoDiscard</c> (§11): the value came back and went nowhere.
+        /// </summary>
+        /// <remarks>
+        /// Only the dropped case warns. A call feeding anything — an assignment, an argument, a
+        /// chain like <c>f().g()</c>, where the statement's call is g's — has its result used, so
+        /// this looks at exactly what the statement evaluated and nothing it flowed into.
+        /// </remarks>
+        private void ReportIfNoDiscardWasDropped(BoundExpressionStatement statement)
+        {
+            BoundExpression expression = statement.Expression;
+            while (expression is BoundConversionExpression conversion)
+                expression = conversion.Operand;
+
+            if (expression is not BoundCallExpression call)
+                return;
+
+            MethodSymbol method = call.Method;
+            if (!BuiltInAttributes.IsNoDiscard(method) || method.ReturnType.SpecialType == SpecialType.Void)
+                return;
+
+            string? reason = BuiltInAttributes.NoDiscardReason(method);
+            string message = reason is null
+                ? $"The result of '{method.Name}' is marked @NoDiscard but was not used; assign it to make ignoring it explicit."
+                : $"The result of '{method.Name}' is marked @NoDiscard but was not used: {reason}";
+
+            _diagnostics.ReportWarning(
+                SurtrDiagnosticCode.NoDiscardResultUnused,
+                message,
+                _sourceName,
+                statement.Span);
+        }
+
+        /// <summary>
+        /// Reports a call a <c>@Pure</c> body must not make: one that resolved to a method carrying
+        /// no <c>@Pure</c> mark (§P3). The contract is opt-in — the caller marks its own functions
+        /// and the standard library marks its pure ones — so a call to an unmarked function is the
+        /// cheap local signal that referential transparency has no guarantee to rely on.
+        /// </summary>
+        /// <remarks>
+        /// A property read is not a call and is not checked here: reading <c>obj.x</c> is a getter
+        /// call inside the bound tree, but a read is the shape <c>@Pure</c> exists to protect, so
+        /// only a method call — the half that can run arbitrary code — warns.
+        /// </remarks>
+        private void ReportIfPureCallsImpure(BoundCallExpression call)
+        {
+            if (!_isPure || BuiltInAttributes.IsPure(call.Method))
+                return;
+
+            _diagnostics.ReportWarning(
+                SurtrDiagnosticCode.PureContractViolated,
+                $"'{_method.Name}' is marked @Pure but calls '{call.Method.Name}', which is not marked @Pure.",
+                _sourceName,
+                call.Span);
+        }
+
+        /// <summary>
+        /// Reports a write a <c>@Pure</c> body must not make: an assignment whose target is a field
+        /// or property another scope can see (§P3). Writing a local is invisible outside the call,
+        /// so it stays pure; writing a member any other code can observe is not.
+        /// </summary>
+        private void ReportIfPureMutation(BoundAssignmentExpression assignment)
+        {
+            if (!_isPure)
+                return;
+
+            string? member = assignment.Target switch
+            {
+                BoundFieldExpression { Field.Accessibility: Accessibility.Public or Accessibility.Internal } field
+                    => field.Field.Name,
+                BoundPropertyExpression { Property.Accessibility: Accessibility.Public or Accessibility.Internal } property
+                    => property.Property.Name,
+                _ => null,
+            };
+
+            if (member is null)
+                return;
+
+            _diagnostics.ReportWarning(
+                SurtrDiagnosticCode.PureContractViolated,
+                $"'{_method.Name}' is marked @Pure but assigns '{member}', which is visible outside this scope.",
+                _sourceName,
+                assignment.Span);
+        }
+
         private BreakTarget Push(string? label)
         {
             var target = new BreakTarget(label);
@@ -411,6 +511,7 @@ namespace Surtr.Compiler.Binding
                     else
                         Expression(assignment.Target);
 
+                    ReportIfPureMutation(assignment);
                     return;
                 }
 
@@ -421,6 +522,14 @@ namespace Surtr.Compiler.Binding
 
                 case BoundUnaryExpression unary:
                     Expression(unary.Operand);
+                    return;
+
+                // A yield hands a value out and comes back: unlike a return it does not end the
+                // flow, so everything after it stays reachable and every local it reads counts as
+                // read there. What it evaluates to is unknown and unassigned to any local here,
+                // so only its operand is walked.
+                case BoundYieldExpression yield:
+                    Expression(yield.Value);
                     return;
 
                 case BoundConversionExpression conversion:
@@ -457,6 +566,14 @@ namespace Surtr.Compiler.Binding
                     _reachable = false;
                     return;
 
+                case BoundSequenceExpression sequence:
+                    // The statement runs first — its temporary declaration assigns, its guard can
+                    // throw — and only then is the captured value read, exactly as the two would be
+                    // in an `if` over the same statement followed by the value.
+                    Statement(sequence.Statement);
+                    Expression(sequence.Value);
+                    return;
+
                 case BoundCallExpression call:
                 {
                     if (call.Receiver is not null)
@@ -465,6 +582,7 @@ namespace Surtr.Compiler.Binding
                     foreach (var argument in call.Arguments)
                         Expression(argument);
 
+                    ReportIfPureCallsImpure(call);
                     return;
                 }
 

@@ -79,6 +79,8 @@ namespace Surtr.Runtime.Classes
         private static void LinkModuleMembers(SurtrModule module)
         {
             var staticFields = new List<SurtrFieldInfo>();
+            var visiting = new HashSet<SurtrClass>();
+            int staticSlots = 0;
 
             foreach (var field in module.Fields)
             {
@@ -96,7 +98,12 @@ namespace Surtr.Runtime.Classes
                     throw new InvalidOperationException(
                         $"Module-level variable '{module.Path}.{field.Name}' must be static; a module has no instances for an instance field to belong to.");
 
-                field.SlotIndex = staticFields.Count;
+                // Same rule as a class's own statics: a global holding an inline value claims that
+                // value's whole flattened width.
+                int width = FieldSlotWidth(field, visiting);
+
+                field.SlotIndex = staticSlots;
+                staticSlots += width;
                 staticFields.Add(field);
                 field.MarkBuilt();
             }
@@ -104,11 +111,11 @@ namespace Surtr.Runtime.Classes
             module.StaticFields = staticFields.ToArray();
 
             module.StaticStorage.Dispose();
-            module.StaticStorage = new SurtrNativeArray<SurtrRawValue>(staticFields.Count, zeroed: true);
+            module.StaticStorage = new SurtrNativeArray<SurtrRawValue>(staticSlots, zeroed: true);
             BindStaticStorage(staticFields, module.StaticStorage);
 
             module.ReferenceStaticSlots.Dispose();
-            module.ReferenceStaticSlots = BuildStaticReferenceSlots(staticFields);
+            module.ReferenceStaticSlots = BuildStaticReferenceSlots(staticFields, visiting);
 
             var functions = new List<SurtrMethodInfo>();
             SurtrMethodInfo? initializer = null;
@@ -333,8 +340,28 @@ namespace Surtr.Runtime.Classes
         #endregion
 
         #region Fields
+
+        /// <summary>
+        /// How many slots one inline value may occupy: a call's <c>argsCount</c> immediate is one
+        /// byte wide, and the receiver takes the last slot, so nothing wider can ever travel.
+        /// </summary>
+        private const int MaxValueTypeSlots = 254;
+
         private static void BuildFieldLayout(SurtrClass type, SurtrClass? baseType)
         {
+            // A value type lays out differently from everything else: its fields flatten into one
+            // contiguous block rather than claiming one slot each, and a field holding another
+            // value type contributes that value's whole width.
+            if (type.IsValueType)
+            {
+                if (baseType is not null)
+                    throw new InvalidOperationException(
+                        $"Value type '{type.Name}' cannot extend '{baseType.Name}'; a value type has no identity to inherit through.");
+
+                BuildValueFieldLayout(type, new HashSet<SurtrClass>());
+                return;
+            }
+
             var instanceFields = new List<SurtrFieldInfo>();
 
             // Inherited fields keep the slots the base gave them, so an access compiled against
@@ -343,6 +370,10 @@ namespace Surtr.Runtime.Classes
                 instanceFields.AddRange(baseType.InstanceFields);
 
             var staticFields = new List<SurtrFieldInfo>();
+            var visiting = new HashSet<SurtrClass>();
+
+            int instanceSlots = baseType?.InstanceSlotCount ?? 0;
+            int staticSlots = 0;
 
             foreach (var field in type.Fields)
             {
@@ -355,14 +386,21 @@ namespace Surtr.Runtime.Classes
                     continue;
                 }
 
+                // A field whose declared type is a multi-field value class claims that value's
+                // whole flattened width in consecutive slots - the inline representation, with no
+                // indirection through a boxed instance.
+                int width = FieldSlotWidth(field, visiting);
+
                 if (field.IsStatic)
                 {
-                    field.SlotIndex = staticFields.Count;
+                    field.SlotIndex = staticSlots;
+                    staticSlots += width;
                     staticFields.Add(field);
                 }
                 else
                 {
-                    field.SlotIndex = instanceFields.Count;
+                    field.SlotIndex = instanceSlots;
+                    instanceSlots += width;
                     instanceFields.Add(field);
                 }
 
@@ -371,16 +409,211 @@ namespace Surtr.Runtime.Classes
 
             type.InstanceFields = instanceFields.ToArray();
             type.StaticFields = staticFields.ToArray();
-            type.InstanceSlotCount = instanceFields.Count;
+            type.InstanceSlotCount = instanceSlots;
 
-            BuildReferenceSlots(type, instanceFields);
+            BuildReferenceSlots(type, instanceFields, visiting);
 
             type.StaticStorage.Dispose();
-            type.StaticStorage = new SurtrNativeArray<SurtrRawValue>(staticFields.Count, zeroed: true);
+            type.StaticStorage = new SurtrNativeArray<SurtrRawValue>(staticSlots, zeroed: true);
             BindStaticStorage(staticFields, type.StaticStorage);
 
             type.ReferenceStaticSlots.Dispose();
-            type.ReferenceStaticSlots = BuildStaticReferenceSlots(staticFields);
+            type.ReferenceStaticSlots = BuildStaticReferenceSlots(staticFields, visiting);
+        }
+
+        /// <summary>
+        /// How many storage slots one field claims: the flattened width of a multi-field value
+        /// type it holds, of a tuple descriptor, or the single slot everything else always
+        /// occupied.
+        /// </summary>
+        /// <remarks>
+        /// A one-field wrapper keeps contributing exactly one slot - erasure means it <em>is</em>
+        /// its field wherever the type is statically known, so there is no wider form to lay out.
+        /// Only classes flagged as value types by their own layout rule reach the recursive walk,
+        /// which builds the inner value first when declaration order has not already done so. A
+        /// tuple's width comes from its own descriptor - <c>T(I,Ox;)</c> says two slots without
+        /// resolving anything - because a tuple has no class metadata to consult.
+        /// </remarks>
+        private static int FieldSlotWidth(SurtrFieldInfo field, HashSet<SurtrClass> visiting)
+        {
+            var type = field.FieldType.Reference;
+
+            // A tuple has no class metadata to consult - its descriptor says everything.
+            if (type.TypeCode == SurtrValueTypeCode.Tuple)
+                return TupleSlotWidth(type);
+
+            // A range is likewise descriptor-complete: always the same three slots
+            // (start, end, inclusive), whatever instance or static storage holds it.
+            if (type.TypeCode == SurtrValueTypeCode.Range)
+                return 3;
+
+            if (!type.TypeCode.IsReferenceType)
+                return 1;
+
+            if (field.FieldType.ResolvedType is SurtrClass { IsValueType: true } value)
+            {
+                BuildValueFieldLayout(value, visiting);
+                return value.FlattenedSlotWidth;
+            }
+
+            return 1;
+        }
+
+        /// <summary>The flattened width of a tuple descriptor: one slot per slot of every element.</summary>
+        private static int TupleSlotWidth(SurtrClassReference tuple)
+        {
+            const int maxSlots = MaxValueTypeSlots;
+            int total = 0;
+
+            foreach (var element in tuple.GetTupleElementTypes())
+            {
+                total += element.TypeCode switch
+                {
+                    SurtrValueTypeCode.Tuple => TupleSlotWidth(element),
+                    SurtrValueTypeCode.Range => 3,
+                    _ => 1,
+                };
+
+                if (total > maxSlots)
+                    throw new InvalidOperationException(
+                        $"The tuple '{tuple.Descriptor}' flattens to more than {maxSlots} slots.");
+            }
+
+            return total;
+        }
+
+        /// <summary>
+        /// Lays out a value type: its instance fields flatten into one contiguous block of
+        /// <see cref="SurtrClass.FlattenedSlotWidth"/> slots, nested value types included.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Each field's slot index is the offset where its block starts inside the flattened
+        /// layout, so a sub-slot read compiled against this class is one addition away from a
+        /// frame or field base. A reference-typed field contributes the single slot it always
+        /// did; a value-type field contributes every reference slot of the inner value, shifted
+        /// by the field's own offset - which is what keeps the collector's reference map complete
+        /// for a string living two value types deep.
+        /// </para>
+        /// <para>
+        /// A field may name another value type that has not been laid out yet - declaration order,
+        /// cross-module loads and nesting give no ordering guarantee - so the walk builds the
+        /// inner value first, on demand. <paramref name="visiting"/> is the build-in-progress set:
+        /// meeting a type already in it means the fields loop back on themselves, which no finite
+        /// layout can represent.
+        /// </para>
+        /// </remarks>
+        private static void BuildValueFieldLayout(SurtrClass type, HashSet<SurtrClass> visiting)
+        {
+            if (type.FlattenedSlotWidth >= 0)
+                return;
+
+            if (!visiting.Add(type))
+                throw new InvalidOperationException(
+                    $"Value type '{type.Name}' contains itself; no finite layout can hold it.");
+
+            try
+            {
+                var staticFields = new List<SurtrFieldInfo>();
+                var instanceFields = new List<SurtrFieldInfo>();
+                var referenceSlots = new List<int>();
+
+                int offset = 0;
+                int staticSlots = 0;
+
+                // Statics are collected first and sized afterwards, because one can hold a value
+                // of the class itself - an enum case is exactly that - and its width is the
+                // flattened value this walk is computing. Sized against `offset` in the second
+                // pass, a self-typed static contributes the very width being built.
+                foreach (var field in type.Fields)
+                {
+                    // Same rule as the ordinary layout: a native field lives in the host and
+                    // contributes nothing.
+                    if (field is SurtrNativeFieldInfo)
+                    {
+                        field.MarkBuilt();
+                        continue;
+                    }
+
+                    if (field.IsStatic)
+                    {
+                        staticFields.Add(field);
+                        continue;
+                    }
+
+                    SurtrClass? nestedValue = null;
+                    if (field.FieldType.Reference.TypeCode.IsReferenceType)
+                    {
+                        if (field.FieldType.ResolvedType is SurtrClass { IsValueType: true } resolvedValue)
+                        {
+                            BuildValueFieldLayout(resolvedValue, visiting);
+                            nestedValue = resolvedValue;
+                        }
+                    }
+
+                    field.SlotIndex = offset;
+                    instanceFields.Add(field);
+
+                    if (nestedValue is not null)
+                    {
+                        var inner = nestedValue.ReferenceSlots;
+                        for (int i = 0; i < inner.Length; i++)
+                            referenceSlots.Add(offset + inner[i]);
+                    }
+                    else if (field.FieldType.Reference.TypeCode.IsReferenceType)
+                    {
+                        referenceSlots.Add(offset);
+                    }
+
+                    // The same width predicate FieldSlotWidth answers, inlined: a range claims
+                    // its three slots, a nested value class its flattened layout, everything
+                    // else one slot.
+                    offset += nestedValue?.FlattenedSlotWidth ?? FieldSlotWidth(field, visiting);
+                    field.MarkBuilt();
+                }
+
+                foreach (var field in staticFields)
+                {
+                    // Statics are ordinary named storage, not part of any inline value - but
+                    // one holding an inline value claims that value's whole width, exactly as
+                    // a static of an ordinary class does. A static holding the class's own
+                    // value (an enum case) claims the flattened width just computed.
+                    int width = ReferenceEquals(field.FieldType.ResolvedType, type)
+                        ? offset
+                        : FieldSlotWidth(field, visiting);
+                    field.SlotIndex = staticSlots;
+                    staticSlots += width;
+                    field.MarkBuilt();
+                }
+
+                if (offset > MaxValueTypeSlots)
+                    throw new InvalidOperationException(
+                        $"Value type '{type.Name}' flattens to {offset} slots; the limit is {MaxValueTypeSlots}, because a call carries its arguments in one byte of immediate.");
+
+                type.InstanceFields = instanceFields.ToArray();
+                type.StaticFields = staticFields.ToArray();
+
+                // InstanceSlotCount and FlattenedSlotWidth agree by construction here: the boxed
+                // form is an ordinary instance sized to receive one inline value verbatim.
+                type.InstanceSlotCount = offset;
+                type.FlattenedSlotWidth = offset;
+
+                type.ReferenceSlots.Dispose();
+                type.ReferenceSlots = new SurtrNativeArray<int>(referenceSlots.Count);
+                for (int i = 0; i < referenceSlots.Count; i++)
+                    type.ReferenceSlots[i] = referenceSlots[i];
+
+                type.StaticStorage.Dispose();
+                type.StaticStorage = new SurtrNativeArray<SurtrRawValue>(staticSlots, zeroed: true);
+                BindStaticStorage(staticFields, type.StaticStorage);
+
+                type.ReferenceStaticSlots.Dispose();
+                type.ReferenceStaticSlots = BuildStaticReferenceSlots(staticFields, visiting);
+            }
+            finally
+            {
+                visiting.Remove(type);
+            }
         }
 
         /// <summary>
@@ -397,50 +630,93 @@ namespace Surtr.Runtime.Classes
         /// Compacts the static slots a collection has to follow, the same way instance layout does
         /// for <see cref="SurtrClass.ReferenceSlots"/>.
         /// </summary>
-        private static SurtrNativeArray<int> BuildStaticReferenceSlots(List<SurtrFieldInfo> staticFields)
+        /// <remarks>
+        /// A static holding a multi-field value type contributes every reference slot of the inner
+        /// value, shifted by the static's own base - the string inside a static
+        /// <c>Vec2</c>-carrying struct is just as much a root as the static itself was.
+        /// </remarks>
+        private static SurtrNativeArray<int> BuildStaticReferenceSlots(List<SurtrFieldInfo> staticFields, HashSet<SurtrClass> visiting)
         {
-            int referenceCount = 0;
-            for (int i = 0; i < staticFields.Count; i++)
-            {
-                if (staticFields[i].FieldType.Reference.TypeCode.IsReferenceType)
-                    referenceCount++;
-            }
+            var collected = new List<int>();
 
-            var slots = new SurtrNativeArray<int>(referenceCount);
-
-            int next = 0;
             for (int i = 0; i < staticFields.Count; i++)
-            {
-                if (staticFields[i].FieldType.Reference.TypeCode.IsReferenceType)
-                    slots[next++] = staticFields[i].SlotIndex;
-            }
+                CollectReferenceSlots(staticFields[i], collected, visiting);
+
+            var slots = new SurtrNativeArray<int>(collected.Count);
+
+            for (int i = 0; i < collected.Count; i++)
+                slots[i] = collected[i];
 
             return slots;
         }
 
-        private static void BuildReferenceSlots(SurtrClass type, List<SurtrFieldInfo> instanceFields)
+        private static void BuildReferenceSlots(SurtrClass type, List<SurtrFieldInfo> instanceFields, HashSet<SurtrClass> visiting)
         {
             // Which slots the collector has to follow. Derived from the declared types, which the
             // compiler already knows, rather than from the tags it could test at run time.
-            int referenceCount = 0;
+            var collected = new List<int>();
+
             for (int i = 0; i < instanceFields.Count; i++)
-            {
-                if (instanceFields[i].FieldType.Reference.TypeCode.IsReferenceType)
-                    referenceCount++;
-            }
+                CollectReferenceSlots(instanceFields[i], collected, visiting);
 
             type.ReferenceSlots.Dispose();
-            var slots = new SurtrNativeArray<int>(referenceCount);
+            var slots = new SurtrNativeArray<int>(collected.Count);
 
-            int next = 0;
-            for (int i = 0; i < instanceFields.Count; i++)
-            {
-                var field = instanceFields[i];
-                if (field.FieldType.Reference.TypeCode.IsReferenceType)
-                    slots[next++] = field.SlotIndex;
-            }
+            for (int i = 0; i < collected.Count; i++)
+                slots[i] = collected[i];
 
             type.ReferenceSlots = slots;
+        }
+
+        /// <summary>
+        /// Adds the reference slots one field contributes at its own absolute position: its single
+        /// slot when the field is an ordinary reference, every shifted inner slot when it holds an
+        /// inline value, and the recursive walk of a tuple's elements when it holds one of those.
+        /// </summary>
+        private static void CollectReferenceSlots(SurtrFieldInfo field, List<int> collected, HashSet<SurtrClass> visiting)
+        {
+            var type = field.FieldType.Reference;
+            int offset = field.SlotIndex;
+
+            if (type.TypeCode == SurtrValueTypeCode.Tuple)
+            {
+                // Elements arrive as bare descriptors with no resolved handle; a class-typed
+                // element therefore contributes its one reference slot, which is exactly what it
+                // is when it is not a value type. A range element is an inline value now: it
+                // claims three slots and contributes none.
+                foreach (var element in type.GetTupleElementTypes())
+                {
+                    if (element.TypeCode.IsReferenceType)
+                        collected.Add(offset);
+
+                    offset += element.TypeCode switch
+                    {
+                        SurtrValueTypeCode.Tuple => TupleSlotWidth(element),
+                        SurtrValueTypeCode.Range => 3,
+                        _ => 1,
+                    };
+                }
+
+                return;
+            }
+
+            if (!type.TypeCode.IsReferenceType)
+                return;
+
+            if (field.FieldType.ResolvedType is SurtrClass { IsValueType: true } value)
+            {
+                BuildValueFieldLayout(value, visiting);
+
+                // The inner map is relative to the value's own block; the field's slot index is
+                // where that block starts, so the shift is one addition per entry.
+                var inner = value.ReferenceSlots;
+                for (int i = 0; i < inner.Length; i++)
+                    collected.Add(offset + inner[i]);
+
+                return;
+            }
+
+            collected.Add(offset);
         }
         #endregion
 
