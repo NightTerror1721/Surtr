@@ -90,8 +90,9 @@ SurtrValue result = runtime.Invoke(overloads[0], entityValue); // "entity #1 at 
 ## The language
 
 The surface syntax is TypeScript/Kotlin-flavoured: braces for blocks, `name: Type` annotation
-order, a modern keyword set, mandatory `;` statement terminators, and trailing commas allowed
-everywhere a comma-separated list appears. Source files use the **`.surtr`** extension.
+order, a modern keyword set, optional `;` statement terminators (a line break ends a statement),
+and trailing commas allowed everywhere a comma-separated list appears. Source files use the
+**`.surtr`** extension.
 
 ### Modules and imports
 

@@ -21,6 +21,15 @@ namespace Surtr.Tests.Compiler.Syntax
             return new Parser(SurtrSourceBuffer.FromString(source)).ParseCompilationUnit();
         }
 
+        /// <summary>Parses a source and asserts it produced no problems at all.</summary>
+        private static CompilationUnitSyntax ParseWithoutErrors(string source)
+        {
+            Parser parser = new Parser(SurtrSourceBuffer.FromString(source));
+            CompilationUnitSyntax unit = parser.ParseCompilationUnit();
+            Assert.Empty(parser.Diagnostics);
+            return unit;
+        }
+
         private static T ParseSingle<T>(string source) where T : DeclarationSyntax
         {
             return Assert.IsType<T>(Parse(source).Declarations.Single());
@@ -805,6 +814,135 @@ namespace Surtr.Tests.Compiler.Syntax
             AssertRejected("fun f(): void { try { a(); } }", SurtrDiagnosticCode.IncompleteTryStatement);
         }
 
+        // ---- §1 optional semicolons -----------------------------------------------------------
+
+        /// <summary>§1: a line break terminates a statement, so a whole body can be `;`-less.</summary>
+        [Fact]
+        public void StatementsParseWithoutTrailingSemicolons()
+        {
+            CompilationUnitSyntax unit = ParseWithoutErrors(
+                "fun f(): void {\n" +
+                "    let a = 1\n" +
+                "    let b = a + 1\n" +
+                "    foo(a, b)\n" +
+                "    return\n" +
+                "}\n");
+
+            MethodDeclarationSyntax method = Assert.IsType<MethodDeclarationSyntax>(unit.Declarations.Single());
+            Assert.Equal(4, method.Body!.Statements.Count);
+            Assert.IsType<LocalDeclarationStatementSyntax>(method.Body.Statements[0]);
+            Assert.IsType<LocalDeclarationStatementSyntax>(method.Body.Statements[1]);
+            Assert.IsType<ExpressionStatementSyntax>(method.Body.Statements[2]);
+            Assert.IsType<ReturnStatementSyntax>(method.Body.Statements[3]);
+        }
+
+        /// <summary>§1: the same rule covers imports and module-level declarations.</summary>
+        [Fact]
+        public void DeclarationsParseWithoutTrailingSemicolons()
+        {
+            CompilationUnitSyntax unit = ParseWithoutErrors(
+                "import Ogame.core.Entity\n" +
+                "alias Handler = (Entity, float) -> void\n" +
+                "let screenWidth: int = 640\n" +
+                "fun run(): int { return screenWidth; }\n");
+
+            Assert.Equal(3, unit.Declarations.Count);
+            Assert.IsType<AliasDeclarationSyntax>(unit.Declarations[0]);
+            Assert.IsType<FieldDeclarationSyntax>(unit.Declarations[1]);
+            Assert.IsType<MethodDeclarationSyntax>(unit.Declarations[2]);
+        }
+
+        /// <summary>§1: a `;` stays legal, and two statements on one line still need one.</summary>
+        [Theory]
+        [InlineData("fun f(): void { let a = 1 let b = 2 }")]
+        [InlineData("fun f(): void { foo() bar() }")]
+        [InlineData("let a = 1 let b = 2")]
+        [InlineData("let a = 1 fun b(): void { }")]
+        public void TwoStatementsOnOneLineStillNeedASemicolon(string source)
+        {
+            AssertRejected(source, SurtrDiagnosticCode.UnexpectedToken);
+        }
+
+        /// <summary>§1: a bare `return` never reaches for an operand on the next line.</summary>
+        [Fact]
+        public void AReturnDoesNotReachForAnOperandOnTheNextLine()
+        {
+            MethodDeclarationSyntax method = ParseSingle<MethodDeclarationSyntax>(
+                "fun f(): void {\n    return\n    foo()\n}");
+
+            Assert.IsType<ReturnStatementSyntax>(method.Body!.Statements[0]);
+            Assert.IsType<ExpressionStatementSyntax>(method.Body.Statements[1]);
+        }
+
+        /// <summary>§1: a `break` on its own line does not swallow the next line as a label.</summary>
+        [Fact]
+        public void ABreakDoesNotSwallowTheNextLineAsItsLabel()
+        {
+            MethodDeclarationSyntax method = ParseSingle<MethodDeclarationSyntax>(
+                "fun f(): void { while (true) { break\n    foo() } }");
+
+            WhileStatementSyntax loop = Assert.IsType<WhileStatementSyntax>(method.Body!.Statements.Single());
+            BlockStatementSyntax body = Assert.IsType<BlockStatementSyntax>(loop.Body);
+            Assert.IsType<BreakStatementSyntax>(body.Statements[0]);
+            Assert.IsType<ExpressionStatementSyntax>(body.Statements[1]);
+        }
+
+        /// <summary>§1: an operator at the start of a line continues the statement above it, as in TypeScript.</summary>
+        [Fact]
+        public void AnOperatorOnTheNextLineContinuesTheExpression()
+        {
+            MethodDeclarationSyntax method = ParseSingle<MethodDeclarationSyntax>(
+                "fun f(): int {\n    let x = 1 +\n        2\n    return x;\n}");
+
+            LocalDeclarationStatementSyntax local = Assert.IsType<LocalDeclarationStatementSyntax>(method.Body!.Statements[0]);
+            BinaryExpressionSyntax sum = Assert.IsType<BinaryExpressionSyntax>(local.Initializer);
+            Assert.Equal(BinaryOperator.Add, sum.Operator);
+            Assert.Equal(2, Assert.IsType<LiteralExpressionSyntax>(sum.Right).Literal.Payload.AsInteger);
+        }
+
+        /// <summary>§1: a `{` on the next line still opens the body — a line break is not a signature end.</summary>
+        [Fact]
+        public void ABraceOnTheNextLineStillOpensAMethodBody()
+        {
+            MethodDeclarationSyntax method = ParseSingle<MethodDeclarationSyntax>(
+                "fun f(): int\n{\n    return 1\n}\n");
+
+            Assert.NotNull(method.Body);
+        }
+
+        /// <summary>§1: a signature-only member ends at a line break, exactly as at a `;`.</summary>
+        [Fact]
+        public void SignatureOnlyMembersEndAtALineBreak()
+        {
+            TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>(
+                "interface IBar {\n    fun doThing(x: int): void\n    fun other(): int\n}");
+
+            Assert.All(type.Members.Cast<MethodDeclarationSyntax>(), method => Assert.Null(method.Body));
+        }
+
+        /// <summary>§1: auto-accessors end at a line break inside their braces.</summary>
+        [Fact]
+        public void AutoAccessorsEndAtALineBreak()
+        {
+            TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>(
+                "class Foo {\n    public name: string {\n        get\n        set\n    }\n}");
+
+            PropertyDeclarationSyntax property = Assert.IsType<PropertyDeclarationSyntax>(type.Members.Single());
+            Assert.Equal(2, property.Accessors.Count);
+            Assert.All(property.Accessors, accessor => Assert.Null(accessor.Body));
+        }
+
+        /// <summary>§1: arrow-bodied members end at a line break too.</summary>
+        [Fact]
+        public void ArrowBodiedMembersNeedNoSemicolon()
+        {
+            TypeDeclarationSyntax type = ParseSingle<TypeDeclarationSyntax>(
+                "class V {\n    operator+(a: V, b: V): V => a\n    fun f(): int => 1\n}");
+
+            Assert.IsType<OperatorDeclarationSyntax>(type.Members[0]);
+            Assert.NotNull(Assert.IsType<MethodDeclarationSyntax>(type.Members[1]).Body);
+        }
+
         // ---- §7 compile-time evaluation ------------------------------------------------------
 
         [Fact]
@@ -921,7 +1059,7 @@ namespace Surtr.Tests.Compiler.Syntax
         // ---- errors ---------------------------------------------------------------------------
 
         [Theory]
-        [InlineData("let x = 1")]
+        [InlineData("let x = 1 let y = 2")]
         [InlineData("class Foo {")]
         [InlineData("fun f(): void { let = 1; }")]
         [InlineData("fun f(): void { if a { } }")]

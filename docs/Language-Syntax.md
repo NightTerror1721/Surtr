@@ -22,9 +22,15 @@ features deliberately deferred. Read it before treating this as a build plan.
   keyword set. Chosen over a straight C#-clone because Surtr's type system already leans on
   postfix-style composition (descriptors nest as `container<param>`), and over Rust-like because
   Surtr does not need expression-oriented blocks or ownership syntax.
-- **Statement terminator: `;` is mandatory.** No ASI. Keeps the grammar unambiguous and the parser
-  simple — worth more than the keystrokes it costs, especially for a language whose front end
-  doesn't exist yet and needs to stay easy to hand-write.
+- **Statement terminator: `;` is optional.** A statement or declaration ends at an explicit `;`,
+  or — when none is written — at a line break, at a `}` closing an enclosing block, or at the end
+  of the file. Two statements on one line still need a `;` between them, and the `;` separating a
+  `for (...; ...; ...)` header's clauses stays mandatory. An expression continues across a line
+  break whenever the next token can extend it — a binary operator, a `.`, a `(` — the same greedy
+  rule TypeScript applies, so a continuation operator is written at the end of the line it belongs
+  to; `return`, `break` and `continue` are the exception and never take an operand or a label from
+  the next line. Nothing is rejected for keeping the `;`: an explicit one always works, and the
+  two styles mix freely.
 - **Declaration order: `name: Type`.** Applies uniformly to locals, fields, parameters and return
   types. Matches the family choice and reads left-to-right with type inference (`let x = 5;` vs
   `let x: int = 5;`).
