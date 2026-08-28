@@ -920,7 +920,24 @@ namespace Surtr.Compiler.Binding
             // `x == null` types the literal from the other side, which is the one context a null
             // has here — and without it the comparison would be against the error type.
             var left = BindExpression(syntax.Left);
-            var right = BindExpression(syntax.Right, IsNullLiteral(syntax.Right) ? left.Type.Nullable : null);
+
+            // `&&` evaluates its right side only when the left held, and `||` only when it
+            // did not — so the right side binds under what the left side proved either way, which
+            // is how `a != null && a > 0` reads `a` without an assertion.
+            BoundExpression right;
+            if (syntax.Operator is BinaryOperator.LogicalAnd or BinaryOperator.LogicalOr)
+            {
+                var narrowed = syntax.Operator == BinaryOperator.LogicalAnd
+                    ? NarrowingsFrom(syntax.Left)
+                    : NegatedNarrowingsFrom(syntax.Left);
+                PushNarrowings(narrowed);
+                right = BindExpression(syntax.Right);
+                PopNarrowings();
+            }
+            else
+            {
+                right = BindExpression(syntax.Right, IsNullLiteral(syntax.Right) ? left.Type.Nullable : null);
+            }
 
             if (IsNullLiteral(syntax.Left) && !right.Type.IsError)
                 left = BindExpression(syntax.Left, right.Type.Nullable);
@@ -1420,6 +1437,11 @@ namespace Surtr.Compiler.Binding
                 case UnaryOperator.PostIncrement:
                 case UnaryOperator.PostDecrement:
                 {
+                    // A condition that narrowed the operand makes its read a conversion;
+                    // `++`/`--` write the slot back, so it operates on the plain symbol.
+                    if (operand is BoundConversionExpression { Operand: BoundLocalExpression or BoundParameterExpression } narrowedOperand)
+                        operand = narrowedOperand.Operand;
+
                     if (!operand.IsAssignable)
                     {
                         return Error(
@@ -1429,7 +1451,12 @@ namespace Surtr.Compiler.Binding
                     }
 
                     if (type.SpecialType is SpecialType.Int or SpecialType.Float or SpecialType.Char)
+                    {
+                        // `++`/`--` write their operand back, so a condition that narrowed it
+                        // stops proving anything about it.
+                        InvalidateNarrowing(operand);
                         return new BoundUnaryExpression(syntax, syntax.Operator, operand, type);
+                    }
 
                     break;
                 }
@@ -1495,6 +1522,13 @@ namespace Surtr.Compiler.Binding
 
             var target = BindExpression(syntax.Target);
 
+            // A condition that narrowed the target makes its read a conversion; an assignment
+            // writes the slot, so the write lands on the plain symbol. The read is unaffected:
+            // the value below still binds under the narrowing, which is why the retraction waits
+            // for the write itself (RangeCheckWrite, or the `??=` branch below).
+            if (target is BoundConversionExpression { Operand: BoundLocalExpression or BoundParameterExpression } narrowedTarget)
+                target = narrowedTarget.Operand;
+
             if (target.Type.IsError)
             {
                 BindExpression(syntax.Value);
@@ -1539,6 +1573,7 @@ namespace Surtr.Compiler.Binding
 
             if (syntax.Operator == AssignmentOperator.NullCoalesce)
             {
+                InvalidateNarrowing(target);
                 return new BoundAssignmentExpression(syntax, target, Convert(value, target.Type, syntax.Value.Span));
             }
 
@@ -1572,6 +1607,10 @@ namespace Surtr.Compiler.Binding
         {
             Symbol? member = RangedMember(target);
             var guarded = member is null ? value : RangeCheckValue(syntax, value, member, MemberType(member));
+
+            // Every write to a local or a parameter lands here (a plain `=`, a compound `+=`, a
+            // `??=`) — one place to retract what a condition proved about it.
+            InvalidateNarrowing(target);
             return new BoundAssignmentExpression(syntax, target, guarded);
         }
 
@@ -4621,8 +4660,18 @@ namespace Surtr.Compiler.Binding
         private BoundExpression BindConditional(ConditionalExpressionSyntax syntax, TypeSymbol? expected)
         {
             var condition = BindConverted(syntax.Condition, _factory.Bool);
+
+            // Each arm runs under what the condition proved for its side, like the branches of an
+            // `if`: the true arm under the condition, the false arm under its negation.
+            var narrowings = NarrowingsFrom(syntax.Condition);
+            PushNarrowings(narrowings);
             var whenTrue = BindExpression(syntax.WhenTrue, expected);
+            PopNarrowings();
+
+            var negated = NegatedNarrowingsFrom(syntax.Condition);
+            PushNarrowings(negated);
             var whenFalse = BindExpression(syntax.WhenFalse, expected);
+            PopNarrowings();
 
             var type = expected ?? CommonType(whenTrue.Type, whenFalse.Type, syntax, "?:");
             if (type is null)

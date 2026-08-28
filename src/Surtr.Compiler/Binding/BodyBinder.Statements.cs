@@ -40,10 +40,15 @@ namespace Surtr.Compiler.Binding
         {
             var previous = PushScope();
 
+            // A block is also where narrowing stops counting: a guard clause proven in one block
+            // must not reach past it, so the block saves and restores what conditions proved.
+            var narrowed = SnapshotNarrowings();
+
             var statements = new BoundStatement[syntax.Statements.Count];
             for (int i = 0; i < statements.Length; i++)
                 statements[i] = BindStatement(syntax.Statements[i]);
 
+            RestoreNarrowings(narrowed);
             PopScope(previous);
             return new BoundBlockStatement(syntax, statements);
         }
@@ -266,6 +271,7 @@ namespace Surtr.Compiler.Binding
                     continue;
                 }
 
+                InvalidateNarrowing(target);
                 statements.Add(new BoundExpressionStatement(
                     statement,
                     new BoundAssignmentExpression(targets.Elements[i], target, ReadElement(statement, temporary, tuple, i))));
@@ -446,9 +452,23 @@ namespace Surtr.Compiler.Binding
             var narrowings = NarrowingsFrom(syntax.Condition);
             PushNarrowings(narrowings);
             var then = BindStatement(syntax.Then);
-            PopNarrowings(narrowings);
+            PopNarrowings();
 
-            var otherwise = syntax.Else is null ? null : BindStatement(syntax.Else);
+            BoundStatement? otherwise = null;
+            if (syntax.Else is not null)
+            {
+                // The else is the branch where the condition failed, so the negation is what
+                // holds there.
+                var negated = NegatedNarrowingsFrom(syntax.Condition);
+                PushNarrowings(negated);
+                otherwise = BindStatement(syntax.Else);
+                PopNarrowings();
+            }
+
+            // A guard clause — a branch that never falls through — leaves the condition's negation
+            // proven for the rest of the enclosing block, until a write to the variable retracts it.
+            if (Terminates(then))
+                KeepNarrowings(NegatedNarrowingsFrom(syntax.Condition));
 
             return new BoundIfStatement(syntax, condition, then, otherwise);
         }
@@ -457,9 +477,14 @@ namespace Surtr.Compiler.Binding
         {
             var condition = BindConverted(syntax.Condition, _factory.Bool);
 
+            // The condition is re-checked before every iteration, so what it proves holds for the
+            // whole body — and a write inside the body retracts it for the statements after it.
+            var narrowings = NarrowingsFrom(syntax.Condition);
+            PushNarrowings(narrowings);
             _loopDepth++;
             var body = BindStatement(syntax.Body);
             _loopDepth--;
+            PopNarrowings();
 
             return new BoundWhileStatement(syntax, condition, body);
         }
@@ -484,9 +509,16 @@ namespace Surtr.Compiler.Binding
             var condition = syntax.Condition is null ? null : BindConverted(syntax.Condition, _factory.Bool);
             var step = syntax.Step is null ? null : BindExpression(syntax.Step);
 
+            // The condition is re-checked before every iteration, so what it proves holds for the
+            // body — but not for the step, which runs after the body may have written its variables.
+            var narrowings = syntax.Condition is null ? null : NarrowingsFrom(syntax.Condition);
+            if (narrowings is not null)
+                PushNarrowings(narrowings);
             _loopDepth++;
             var body = BindStatement(syntax.Body);
             _loopDepth--;
+            if (narrowings is not null)
+                PopNarrowings();
 
             PopScope(previous);
             return new BoundForStatement(syntax, initializer, condition, step, body);

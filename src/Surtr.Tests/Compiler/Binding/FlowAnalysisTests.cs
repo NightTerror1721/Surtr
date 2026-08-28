@@ -428,6 +428,110 @@ namespace Surtr.Tests.Compiler.Binding
         {
             AssertReports(BindIn("let a: int? = null;\nlet b: int = a;"), SurtrDiagnosticCode.CannotConvert);
         }
+
+        [Fact]
+        public void AGuardClauseNarrowsWhatFollowsIt()
+        {
+            AssertNoErrors(BindIn("let a: int? = null;\nif (a == null) return;\nlet b: int = a;"));
+        }
+
+        [Fact]
+        public void NullOnTheLeftGuardsToo()
+        {
+            AssertNoErrors(BindIn("let a: int? = null;\nif (null == a) return;\nlet b: int = a;"));
+        }
+
+        [Fact]
+        public void AGuardClauseDoesNotApplyWithoutATerminatingBranch()
+        {
+            AssertReports(
+                BindIn("let a: int? = null;\nif (a == null) { }\nlet b: int = a;"),
+                SurtrDiagnosticCode.CannotConvert);
+        }
+
+        [Fact]
+        public void AGuardClauseDoesNotLeakPastItsBlock()
+        {
+            AssertReports(
+                BindIn("let a: int? = null;\n{ if (a == null) return; }\nlet b: int = a;"),
+                SurtrDiagnosticCode.CannotConvert);
+        }
+
+        [Fact]
+        public void AGuardClauseIsRetractedByAWrite()
+        {
+            AssertReports(
+                BindIn("var a: int? = null;\nif (a == null) return;\na = null;\nlet b: int = a;"),
+                SurtrDiagnosticCode.CannotConvert);
+        }
+
+        [Fact]
+        public void AnElseBranchIsNarrowedByTheNegatedCondition()
+        {
+            AssertNoErrors(BindIn("let a: int? = null;\nif (a == null) { }\nelse { let b: int = a; }"));
+        }
+
+        [Fact]
+        public void TwoChecksJoinedByOrNarrowTheElse()
+        {
+            AssertNoErrors(BindIn(
+                "let a: int? = null;\nlet b: int? = null;\n"
+                + "if (a == null || b == null) { }\nelse { let c: int = a; let d: int = b; }"));
+        }
+
+        [Fact]
+        public void AWhileConditionNarrowsItsBody()
+        {
+            AssertNoErrors(BindIn("let a: int? = null;\nwhile (a != null) { let b: int = a; break; }"));
+        }
+
+        [Fact]
+        public void AWhileBodyWriteRetractsTheNarrowing()
+        {
+            AssertNoErrors(BindIn("var a: int? = null;\nwhile (a != null) { a = a - 1; }"));
+        }
+
+        [Fact]
+        public void AForConditionNarrowsItsBody()
+        {
+            AssertNoErrors(BindIn(
+                "let a: int? = null;\n"
+                + "for (var i = 0; a != null; i += 1) { let b: int = a; break; }"));
+        }
+
+        [Fact]
+        public void ATernaryNarrowsEachArm()
+        {
+            AssertNoErrors(BindIn("let a: int? = null;\nlet b: int = a != null ? a : 0;"));
+        }
+
+        [Fact]
+        public void AnAndRightOperandIsNarrowedByTheLeft()
+        {
+            AssertNoErrors(BindIn("let a: int? = null;\nif (a != null && a > 0) { }"));
+        }
+
+        [Fact]
+        public void AnOrRightOperandIsNarrowedByTheNegatedLeft()
+        {
+            AssertNoErrors(BindIn("let a: int? = null;\nif (a == null || a > 0) { }"));
+        }
+
+        [Fact]
+        public void ATypeTestNarrowsToTheTestedType()
+        {
+            AssertNoErrors(BindIn(
+                "let a: Shape? = null;\nif (a is Circle) { let c: Circle = a; }",
+                extra: "class Shape { }\nclass Circle : Shape { }"));
+        }
+
+        [Fact]
+        public void AWriteToANarrowedLocalInsideABranchIsRetracted()
+        {
+            AssertReports(
+                BindIn("var a: int? = null;\nif (a != null) { a = null; let b: int = a; }"),
+                SurtrDiagnosticCode.CannotConvert);
+        }
         #endregion
 
         #region Generic constraints

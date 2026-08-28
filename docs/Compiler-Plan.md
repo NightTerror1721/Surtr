@@ -282,10 +282,14 @@ they are decided at the point they happen rather than by a later pass:
   local assigned only inside a loop body is not treated as assigned after it, since nothing proves
   the loop runs. Running on the bound tree also means a compound assignment is already expanded, so
   `x += 1` reads before it writes for free.
-* **Nullability narrowing** is in the binder rather than in the flow pass, because it changes what
-  an expression *is* rather than what can happen. Only the shapes that carry their proof on their
-  face — `x != null`, `x is T`, and the `&&` of two such — and only inside the branch they guard.
-  Stopping there keeps the rule predictable, which matters more than one more shape.
+* **Nullability and type narrowing** is in the binder rather than in the flow pass, because it
+  changes what an expression *is* rather than what can happen. The shapes that carry their proof on
+  their face — `x != null`, `x is T` (which narrows to `T` when `T` fits the declared type), and
+  their combinations through `&&` and `||` — hold inside the branch that proved them, in the `else`
+  of the negation, in the arms of `?:`, on the right of `&&`/`||`, and in a `while`/`for` body
+  whose condition checked them. A guard clause (`if (x == null) return;`) carries the negation to
+  the end of its block, and a write to the variable retracts it. Stopping at these shapes keeps the
+  rule predictable, which matters more than covering one more form.
 * **Generic constraints** are bound in a pass of their own after the hierarchy, since
   `<T : IComparable<T>>` names a type whose own hierarchy is still being resolved while signatures
   are bound. They are checked in another pass at the end, against the *substituted* bound —

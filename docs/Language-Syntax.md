@@ -1641,6 +1641,13 @@ into nullability. Three operators work with nullable types:
   throwing if it isn't. An escape hatch for call sites that know more than the type checker does,
   not the default way to consume a nullable.
 
+A check narrows where a check is needed most. Inside `if (x != null) { ... }` — and, with the
+condition negated, in its `else` — `x` reads as `T`, its non-nullable form; a `while` or `for`
+condition, each arm of `?:` and the right side of `&&`/`||` narrow the same way, and `if (x is T)`
+narrows to `T` when `T` fits the declared type. A guard clause (`if (x == null) return;`) keeps the
+negation's narrowing for the rest of its block, until a write to the variable retracts it. `!!` and
+`as` remain for the call sites that know more than any check can prove.
+
 This is a compile-time discipline only — at runtime a reference is still just its 32-bit payload
 either way (`CLAUDE.md` §"The virtual machine"), so `Type?` costs nothing beyond the flow analysis
 that enforces it.
@@ -2229,9 +2236,9 @@ already decided in earlier sections:
 - **`is` tests a type without casting**: `if (x is Dog) { ... }`, evaluating to `bool`. It adds no
   machinery — it is the same walk up `Ancestors` that `catch` clause matching already performs
   (§9), and `CLAUDE.md` notes that walk is one compare plus one load at any depth because
-  `Ancestors[Depth] == this`. `x is Dog` does *not* narrow `x`'s static type inside the branch;
-  narrowing is type-flow analysis, which belongs with pattern matching (§14.3) rather than here, so
-  the body still needs `x as Dog` to use it as one.
+  `Ancestors[Depth] == this`. Inside the branch, `x is Dog` *narrows* `x` to `Dog` — the type test
+  proves it, so the body uses it as one without an `as` (§5.1's flow narrowing applies for as long
+  as the check holds).
 
 From lowest to highest precedence (adjacent rows share a precedence level; unary and assignment
 are right-associative, everything else is left-associative):
@@ -3664,8 +3671,9 @@ pieces that remain.
 Each of these was considered and deliberately left out, and each is **additive** — adding it later
 does not invalidate anything written against this document.
 
-- **Pattern matching** (§4.3) — type patterns in `switch`, destructuring, and the type narrowing
-  that would let `if (x is Dog)` (§5.7) make `x` a `Dog` inside the branch.
+- **Pattern matching** (§4.3) — type patterns in `switch` and destructuring. The narrowing that
+  lets `if (x is Dog)` (§5.7) make `x` a `Dog` inside the branch already exists (§5.1); what
+  remains deferred is the broader pattern surface it was going to arrive with.
 - **Declaration-site generic variance**, `out T` / `in T` (§6).
 - **Per-case enum bodies**, Java's anonymous-constant pattern (§2.4).
 - **Deeply immutable collections** (§5.4) — `let` is shallow, and a frozen collection would need
