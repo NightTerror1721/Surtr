@@ -1451,7 +1451,7 @@ namespace Surtr.Runtime
         /// Mirrors <see cref="DefineNativeClass"/> but builds the class with <c>isEnum: true</c>, so
         /// it carries <see cref="SurtrClass.EnumCases"/> and an exhaustive <c>switch</c> over it
         /// compiles to a dense jump table. Cases are added with
-        /// <see cref="DefineNativeEnumCase(SurtrClass, string, SurtrNativeObject)"/> before
+        /// <see cref="DefineNativeEnumCase(SurtrClass, string, long)"/> before
         /// <see cref="FinishNativeClass"/> links the class.
         /// </remarks>
         /// <param name="fullName">The name its descriptor carries, for example <c>Game:LogLevel</c>.</param>

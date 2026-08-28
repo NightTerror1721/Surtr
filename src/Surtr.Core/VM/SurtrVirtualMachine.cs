@@ -4789,8 +4789,8 @@ namespace Surtr.VM
         private static SurtrExecutionException InvalidOpCode(byte opCode)
             => new SurtrExecutionException($"0x{opCode:X2} is not a valid opcode.", SurtrBuiltIns.InvalidOperationException);
 
-        [MethodImpl(MethodImplOptions.NoInlining)]
         /// <summary>An opcode that has no widened form appeared behind <see cref="OpCode.Wide"/>.</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
         private static SurtrExecutionException InvalidWideOpCode(byte opCode)
             => new SurtrExecutionException($"Opcode 0x{opCode:X2} has no wide form.");
 
