@@ -673,6 +673,12 @@ namespace Surtr.LanguageServer.Workspace
             if (unit is null)
                 return null;
 
+            // An enum case (§2.4) is not a declaration, so the declaration walk below never sees
+            // it; answer the case's own card before the containing type claims the position.
+            var enumCase = FindContainingEnumCase(unit.Syntax, position);
+            if (enumCase.Case is not null)
+                return EnumCaseHit((enumCase.Case, enumCase.Containing!), anchor);
+
             var declaration = FindContainingDeclaration(unit.Syntax, position);
             if (declaration is null)
                 return null;
@@ -765,6 +771,92 @@ namespace Surtr.LanguageServer.Workspace
             }
 
             return declaration;
+        }
+
+        /// <summary>
+        /// The enum case whose span holds a position, with the enum declaring it. An enum case is a
+        /// <see cref="EnumCaseSyntax"/> rather than a <see cref="DeclarationSyntax"/>, so the ordinary
+        /// declaration walk (<see cref="FindContainingDeclaration"/>) can never land on one.
+        /// </summary>
+        private static (EnumCaseSyntax? Case, TypeDeclarationSyntax? Containing) FindContainingEnumCase(CompilationUnitSyntax unit, int position)
+        {
+            foreach (var declaration in unit.Declarations)
+            {
+                var found = FindContainingEnumCase(declaration, position);
+                if (found.Case is not null)
+                    return found;
+            }
+
+            return (null, null);
+        }
+
+        private static (EnumCaseSyntax? Case, TypeDeclarationSyntax? Containing) FindContainingEnumCase(DeclarationSyntax declaration, int position)
+        {
+            if (!declaration.Span.Contains(position))
+                return (null, null);
+
+            switch (declaration)
+            {
+                case TypeDeclarationSyntax type:
+                    foreach (var @case in type.EnumCases)
+                    {
+                        if (@case.Span.Contains(position))
+                            return (@case, type);
+                    }
+
+                    foreach (var member in type.Members)
+                    {
+                        var found = FindContainingEnumCase(member, position);
+                        if (found.Case is not null)
+                            return found;
+                    }
+
+                    break;
+
+                case ConstIfDeclarationSyntax constIf:
+                    foreach (var branch in constIf.Then)
+                    {
+                        var found = FindContainingEnumCase(branch, position);
+                        if (found.Case is not null)
+                            return found;
+                    }
+
+                    foreach (var branch in constIf.Else)
+                    {
+                        var found = FindContainingEnumCase(branch, position);
+                        if (found.Case is not null)
+                            return found;
+                    }
+
+                    break;
+            }
+
+            return (null, null);
+        }
+
+        /// <summary>A hover card for the declaration site of an enum case (§2.4).</summary>
+        /// <remarks>
+        /// Built from the written syntax — the case's name, its explicit <c>= n</c> value when one
+        /// was written, and the enum declaring it. Like the other declaration-site hovers it carries
+        /// no definition of its own: a position on the declaration already is the definition.
+        /// </remarks>
+        private static Hit? EnumCaseHit((EnumCaseSyntax Case, TypeDeclarationSyntax Containing) found, Token anchor)
+        {
+            var @case = found.Case;
+            var builder = new System.Text.StringBuilder();
+            builder.Append("```surtr\n");
+            builder.Append(@case.Name).Append(" : ").Append(found.Containing.Name);
+            builder.Append("\n```");
+
+            if (@case.ExplicitValue is long value)
+                builder.Append("  \n").Append("enum case = ").Append(value);
+
+            return new Hit
+            {
+                Markdown = builder.ToString(),
+                AnchorStart = anchor.Span.Start.Position,
+                AnchorLength = anchor.Span.Length,
+            };
         }
 
         private static IEnumerable<ParameterSyntax> ParametersOf(DeclarationSyntax declaration)
@@ -1262,6 +1354,8 @@ namespace Surtr.LanguageServer.Workspace
                         field = field.OriginalDefinition;
                     if (field.ImportedFrom is not null)
                         return (null, 0, 0);
+                    if (field.ContainingSymbol is NamedTypeSymbol { TypeKind: TypeSymbolKind.Enum } containing)
+                        return FindEnumCaseDeclaration(field.Name, containing, snapshot);
                     return FindNamedMemberDeclaration(field.ContainingSymbol, field.Name, (d, n) => d is FieldDeclarationSyntax f && f.Name == n, snapshot);
 
                 case PropertySymbol property:
@@ -1366,6 +1460,39 @@ namespace Surtr.LanguageServer.Workspace
             return (null, 0, 0);
         }
 
+        /// <summary>
+        /// The source declaration of an enum case (§2.4), which is an <see cref="EnumCaseSyntax"/>
+        /// rather than a <see cref="FieldDeclarationSyntax"/>. The case field's own card is reached
+        /// through the enum's declaration, so the written name's span is found on the matching case.
+        /// </summary>
+        private static (string? File, int Start, int Length) FindEnumCaseDeclaration(string name, NamedTypeSymbol @enum, CompilationSnapshot snapshot)
+        {
+            foreach (var unit in UnitsOf(@enum, snapshot))
+            {
+                foreach (var (declaration, parent) in AllDeclarations(unit.Syntax))
+                {
+                    if (declaration is not TypeDeclarationSyntax typeSyntax
+                        || typeSyntax.Name != @enum.Name
+                        || typeSyntax.TypeParameters.Count != @enum.TypeParameters.Count
+                        || !MatchesParent(parent, @enum.ContainingType))
+                    {
+                        continue;
+                    }
+
+                    foreach (var @case in typeSyntax.EnumCases)
+                    {
+                        if (@case.Name != name)
+                            continue;
+
+                        SourceSpan nameSpan = NameSpanOf(unit.File.Text, @case, @case.Name);
+                        return (unit.File.Path, nameSpan.Start.Position, nameSpan.Length);
+                    }
+                }
+            }
+
+            return (null, 0, 0);
+        }
+
         private static (string? File, int Start, int Length) FindAliasDeclaration(Symbol? containing, AliasSymbol alias, CompilationSnapshot snapshot)
         {
             foreach (var unit in UnitsOf(containing, snapshot))
@@ -1450,7 +1577,7 @@ namespace Surtr.LanguageServer.Workspace
         }
 
         /// <summary>The declaration's name token span, from its file's text.</summary>
-        private static SourceSpan NameSpanOf(string fileText, DeclarationSyntax declaration, string name)
+        private static SourceSpan NameSpanOf(string fileText, SyntaxNode declaration, string name)
         {
             var tokens = new Lexer(SurtrSourceBuffer.FromString(fileText, declaration.Span.ToString())).Tokenize();
             Token? first = FirstNameToken(declaration.Span, tokens);

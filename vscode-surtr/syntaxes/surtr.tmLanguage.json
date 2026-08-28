@@ -137,7 +137,8 @@
       "name": "storage.modifier.surtr"
     },
     "import-declaration": {
-      "match": "(\\bimport\\b)(\\s+)([A-Za-z_][A-Za-z0-9_.]*\\*?)(;)",
+      "comment": "The terminator is optional (§1): an import ends at a ';', at a line break, or at the end of the file. An explicit ';' still matches (and is captured) so both styles highlight the same.",
+      "match": "(\\bimport\\b)(\\s+)([A-Za-z_][A-Za-z0-9_.]*\\*?)(;)?",
       "captures": {
         "1": { "name": "keyword.control.import.surtr" },
         "3": { "name": "support.module.surtr" },

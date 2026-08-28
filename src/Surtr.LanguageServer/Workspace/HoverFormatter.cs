@@ -364,7 +364,18 @@ namespace Surtr.LanguageServer.Workspace
             if (modifiers.Count > 0)
                 builder.Append(Break).Append(string.Join(" ", modifiers));
 
-            builder.Append(Break).Append(ContainingLabel(field.ContainingSymbol, "field", "variable"));
+            // An enum case (§2.4) is a synthesized static field; its card names it as the case it
+            // is, with the value the case holds, rather than as an ordinary member.
+            if (field.EnumValue is int enumValue)
+            {
+                builder.Append(Break).Append("enum case = " + enumValue);
+                builder.Append(Break).Append("case of `" + (field.ContainingSymbol?.Name ?? "enum") + "`");
+            }
+            else
+            {
+                builder.Append(Break).Append(ContainingLabel(field.ContainingSymbol, "field", "variable"));
+            }
+
             return builder.ToString();
         }
 
@@ -395,7 +406,7 @@ namespace Surtr.LanguageServer.Workspace
             string kind = TypeKindLabel(type.TypeKind);
 
             var builder = new StringBuilder();
-            builder.Append(Fence(kind + " " + DisplayWithName(type)));
+            builder.Append(Fence((type.IsFlagsEnum ? "@Flags " : string.Empty) + kind + " " + DisplayWithName(type)));
 
             var relations = new List<string>();
             if (type.BaseType is not null)

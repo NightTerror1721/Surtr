@@ -787,9 +787,9 @@ namespace Surtr.Tests.LanguageServer
             var result = SemanticTokensProvider.Compute(workspace.Snapshot, path, source);
 
             // The provider now tags more than this/super (types, type parameters, contextual
-            // keywords), so the "reads this" assertion is scoped to the `variable` tokens, which are
-            // exactly the this/super pass.
-            int variableType = Array.IndexOf(SemanticTokensProvider.TokenTypes, "variable");
+            // keywords), so the "reads this" assertion is scoped to the `keyword` tokens, which
+            // hold the this/super pass exactly — every real receiver, and nothing else.
+            int keywordType = Array.IndexOf(SemanticTokensProvider.TokenTypes, "keyword");
             int thisOrSuperCount = 0;
 
             // The literal "this" text inside the string must not itself be tagged - no decoded
@@ -809,11 +809,11 @@ namespace Surtr.Tests.LanguageServer
                 int offset = lines.OffsetAt(line, character);
                 string tagged = source.Substring(offset, length);
 
-                if (result.Data[i + 3] == variableType)
+                if (result.Data[i + 3] == keywordType)
                 {
                     thisOrSuperCount++;
                     Assert.True(tagged == "this" || tagged == "super",
-                        $"A variable token must read 'this' or 'super', got '{tagged}'.");
+                        $"A keyword token must read 'this' or 'super', got '{tagged}'.");
                 }
 
                 // The literal "this" text inside the string must not itself be tagged - no decoded
@@ -878,7 +878,7 @@ namespace Surtr.Tests.LanguageServer
         {
             // The semantic pass now tags what a regex grammar cannot: type references in any
             // position (type parameters and their uses included), with the contextual keywords
-            // coloured as modifiers/variables rather than as bare `keyword`, and no false positive
+            // coloured as keywords (blue, like every other keyword), and no false positive
             // on an implicit receiver's span (a bare `_items` read must not be tagged at all).
             const string source =
                 "public class Box<T> {\n" +
@@ -900,7 +900,7 @@ namespace Surtr.Tests.LanguageServer
 
             int type = Array.IndexOf(SemanticTokensProvider.TokenTypes, "type");
             int typeParameter = Array.IndexOf(SemanticTokensProvider.TokenTypes, "typeParameter");
-            int modifier = Array.IndexOf(SemanticTokensProvider.TokenTypes, "modifier");
+            int keyword = Array.IndexOf(SemanticTokensProvider.TokenTypes, "keyword");
 
             var tokens = DecodeSemanticTokens(result, source);
 
@@ -912,17 +912,18 @@ namespace Surtr.Tests.LanguageServer
                 "Expected the uses of 'T' (field, property, parameter, return) to be tagged as types.");
             // The built-in `int` is left to the grammar, never overridden by this pass.
             Assert.DoesNotContain(tokens, t => t.Text == "int");
-            // Contextual keywords ride the modifier slot (blue like fun/public), not keyword.
-            Assert.True(tokens.Any(t => t.Text == "value" && t.TokenType == modifier), "Expected 'value' as a modifier.");
-            Assert.True(tokens.Any(t => t.Text == "get" && t.TokenType == modifier), "Expected 'get' as a modifier.");
-            Assert.True(tokens.Any(t => t.Text == "set" && t.TokenType == modifier), "Expected 'set' as a modifier.");
+            // Contextual keywords ride the keyword slot, so they colour exactly like the reserved
+            // words (blue), not the modifier/variable slots.
+            Assert.True(tokens.Any(t => t.Text == "value" && t.TokenType == keyword), "Expected 'value' as a keyword.");
+            Assert.True(tokens.Any(t => t.Text == "get" && t.TokenType == keyword), "Expected 'get' as a keyword.");
+            Assert.True(tokens.Any(t => t.Text == "set" && t.TokenType == keyword), "Expected 'set' as a keyword.");
             // A bare field read is not an implicit-receiver span any more: nothing tags `_items`.
             Assert.DoesNotContain(tokens, t => t.Text == "_items");
         }
 
         /// <summary>
         /// §6's <c>out</c> is contextual and would fall through to the variable rule without this
-        /// pass; it is tagged as a modifier exactly where a type parameter declares it, and nothing
+        /// pass; it is tagged as a keyword exactly where a type parameter declares it, and nothing
         /// else. The <c>in</c> of a for-in is reserved and stays entirely the grammar's.
         /// </summary>
         [Fact]
@@ -947,12 +948,12 @@ namespace Surtr.Tests.LanguageServer
             var result = SemanticTokensProvider.Compute(workspace.Snapshot, path, source);
 
             int typeParameter = Array.IndexOf(SemanticTokensProvider.TokenTypes, "typeParameter");
-            int modifier = Array.IndexOf(SemanticTokensProvider.TokenTypes, "modifier");
+            int keyword = Array.IndexOf(SemanticTokensProvider.TokenTypes, "keyword");
 
             var tokens = DecodeSemanticTokens(result, source);
 
             // Exactly one "out", on the annotation - the parameter's name is tagged as itself.
-            Assert.Equal(1, tokens.Count(t => t.Text == "out" && t.TokenType == modifier));
+            Assert.Equal(1, tokens.Count(t => t.Text == "out" && t.TokenType == keyword));
             Assert.True(tokens.Any(t => t.Text == "T" && t.TokenType == typeParameter),
                 "Expected the type parameter's own name to be tagged.");
 
@@ -966,7 +967,7 @@ namespace Surtr.Tests.LanguageServer
             var namedResult = SemanticTokensProvider.Compute(namedWorkspace.Snapshot, namedPath, namedSource);
             var namedTokens = DecodeSemanticTokens(namedResult, namedSource);
 
-            Assert.DoesNotContain(namedTokens, t => t.Text == "out" && t.TokenType == modifier);
+            Assert.DoesNotContain(namedTokens, t => t.Text == "out" && t.TokenType == keyword);
             Assert.True(namedTokens.Any(t => t.Text == "out" && t.TokenType == typeParameter),
                 "Expected a parameter genuinely named 'out' to be tagged as a type parameter.");
         }
@@ -1650,6 +1651,143 @@ public class Holder {
             }
 
             Assert.True(tagged, "Expected the 'Widget' written after 'as' inside the yield operand to be tagged as a type.");
+        }
+
+        #endregion
+
+        #region Enums (§2.4)
+
+        /// <summary>
+        /// An enum case's written name is a declaration the grammar only sees as an ordinary
+        /// identifier and no bound node claims, so the semantic pass tags it as an enum member.
+        /// </summary>
+        [Fact]
+        public void SemanticTokensTagEnumCaseNamesAsEnumMembers()
+        {
+            const string source =
+                "public enum Color { Red, Green = 5, Blue }\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let c = Color.Red;\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Color.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Color.surtr");
+            var result = SemanticTokensProvider.Compute(workspace.Snapshot, path, source);
+
+            int enumMember = Array.IndexOf(SemanticTokensProvider.TokenTypes, "enumMember");
+            var tokens = DecodeSemanticTokens(result, source);
+
+            Assert.True(tokens.Any(t => t.Text == "Red" && t.TokenType == enumMember),
+                "Expected the case 'Red' to be tagged as an enum member.");
+            Assert.True(tokens.Any(t => t.Text == "Green" && t.TokenType == enumMember),
+                "Expected the case 'Green' to be tagged as an enum member.");
+            Assert.True(tokens.Any(t => t.Text == "Blue" && t.TokenType == enumMember),
+                "Expected the case 'Blue' to be tagged as an enum member.");
+            // The use in `Color.Red` is tagged the same as the declaration's name.
+            Assert.Equal(4, tokens.Count(t => t.TokenType == enumMember));
+        }
+
+        /// <summary>
+        /// Hover on a case use resolves to the case's card — naming it as a case with its value —
+        /// and go-to-definition lands on the case's own name in the enum's body.
+        /// </summary>
+        [Fact]
+        public void HoverAndDefinitionOnAnEnumCaseReachTheCaseDeclaration()
+        {
+            const string source =
+                "public enum Color { Red, Green = 5, Blue }\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let c = Color.Green;\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Color.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Color.surtr");
+
+            int useOffset = source.IndexOf("Color.Green", StringComparison.Ordinal) + "Color.".Length;
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, useOffset);
+
+            Assert.NotNull(hit);
+            Assert.Contains("enum case = 5", hit!.Markdown);
+            Assert.Contains("case of `Color`", hit.Markdown);
+
+            Assert.True(hit.HasDefinition,
+                "Expected the case use to resolve to its declaration.");
+            Assert.Equal(Path.GetFullPath(path), Path.GetFullPath(hit.DefinitionFile!), ignoreCase: true);
+
+            int declOffset = source.IndexOf("Green", StringComparison.Ordinal);
+            Assert.Equal(declOffset, hit.DefinitionStart);
+            Assert.Equal("Green".Length, hit.DefinitionLength);
+        }
+
+        /// <summary>
+        /// Hover on an enum case's declaration site shows the case's card directly, without the
+        /// containing enum's declaration swallowing the position.
+        /// </summary>
+        [Fact]
+        public void HoverOnAnEnumCaseDeclarationShowsTheCaseCard()
+        {
+            const string source =
+                "public enum Color { Red, Green = 5, Blue }\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let c = Color.Red;\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Color.surtr", source));
+            var diagnostics = workspace.Rebuild();
+            Assert.True(diagnostics.Values.All(list => list.Count == 0),
+                "The fixture itself must compile clean: " + Describe(diagnostics));
+
+            string path = Path.Combine(_root, "app", "Color.surtr");
+
+            int declOffset = source.IndexOf("Green", StringComparison.Ordinal);
+            var hit = SymbolResolver.Resolve(workspace.Snapshot, path, source, declOffset);
+
+            Assert.NotNull(hit);
+            Assert.Contains("Green : Color", hit!.Markdown);
+            Assert.Contains("enum case = 5", hit.Markdown);
+        }
+
+        /// <summary>
+        /// An enum's cases complete after a dot on the enum's name — the same path a singleton's
+        /// surface and a static holder's members already take.
+        /// </summary>
+        [Fact]
+        public void EnumCasesCompleteAfterADotOnTheEnumName()
+        {
+            const string source =
+                "public enum Color { Red, Green, Blue }\n" +
+                "public class Holder {\n" +
+                "    public fun run(): void {\n" +
+                "        let c = Color.\n" +
+                "    }\n" +
+                "}\n";
+
+            var workspace = Tree(("app/Color.surtr", source));
+            workspace.Rebuild();
+
+            string path = Path.Combine(_root, "app", "Color.surtr");
+            int dotEnd = source.IndexOf("Color.", StringComparison.Ordinal) + "Color.".Length;
+
+            var completion = CompletionProvider.Complete(workspace.Snapshot, path, source, dotEnd);
+            var labels = completion.Items.Select(item => item.Label).ToList();
+
+            Assert.Contains("Red", labels);
+            Assert.Contains("Green", labels);
+            Assert.Contains("Blue", labels);
         }
 
         #endregion
