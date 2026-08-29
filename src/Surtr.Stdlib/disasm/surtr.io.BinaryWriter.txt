@@ -1,5 +1,5 @@
 module surtr.io.BinaryWriter
-  constants: 0   types: 0   fields: 2   methods: 18   modules: 0
+  constants: 0   types: 0   fields: 2   methods: 19   modules: 0
 
   field table:
     #0  surtr.io.BinaryWriter:BinaryWriter._stream: surtr.io.Stream:Stream
@@ -10,20 +10,21 @@ module surtr.io.BinaryWriter
     #1  surtr.io.BinaryWriter:BinaryWriter.get_baseStream() -> surtr.io.Stream:Stream
     #2  surtr.io.BinaryWriter:BinaryWriter.writeBool(bool) -> void
     #3  surtr.io.BinaryWriter:BinaryWriter.writeByte(int) -> void
-    #4  surtr.io.BinaryWriter:BinaryWriter.writeChar(char) -> void
-    #5  surtr.io.BinaryWriter:BinaryWriter.writeInt(int) -> void
-    #6  surtr.io.BinaryWriter:BinaryWriter.writeBytes(bytes) -> void
-    #7  surtr.io.BinaryWriter:BinaryWriter.writeString(string) -> void
-    #8  surtr.io.BinaryWriter:BinaryWriter.flush() -> void
-    #9  surtr.io.BinaryWriter:BinaryWriter.close() -> void
-    #10  surtr.io.BinaryWriter:BinaryWriter.dispose() -> void
-    #11  surtr.io.Stream:Stream.writeByte(int) -> bool
-    #12  char.toInt() -> int
-    #13  bytes.get_length() -> int
-    #14  surtr.io.Stream:Stream.write(bytes, int, int) -> int
-    #15  bytes.fromUTF8(string) -> bytes
-    #16  surtr.io.Stream:Stream.flush() -> void
-    #17  surtr.io.Stream:Stream.dispose() -> void
+    #4  surtr.io.BinaryWriter:BinaryWriter.writeByteValue(int) -> void
+    #5  surtr.io.BinaryWriter:BinaryWriter.writeChar(char) -> void
+    #6  surtr.io.BinaryWriter:BinaryWriter.writeInt(int) -> void
+    #7  surtr.io.BinaryWriter:BinaryWriter.writeBytes(bytes) -> void
+    #8  surtr.io.BinaryWriter:BinaryWriter.writeString(string) -> void
+    #9  surtr.io.BinaryWriter:BinaryWriter.flush() -> void
+    #10  surtr.io.BinaryWriter:BinaryWriter.close() -> void
+    #11  surtr.io.BinaryWriter:BinaryWriter.dispose() -> void
+    #12  surtr.io.Stream:Stream.writeByte(int) -> bool
+    #13  char.toInt() -> int
+    #14  bytes.get_length() -> int
+    #15  surtr.io.Stream:Stream.write(bytes, int, int) -> int
+    #16  bytes.fromUTF8(string) -> bytes
+    #17  surtr.io.Stream:Stream.flush() -> void
+    #18  surtr.io.Stream:Stream.dispose() -> void
 
 class BinaryWriter  [public]
   [private] field _leaveOpen: bool
@@ -37,10 +38,10 @@ class BinaryWriter  [public]
         000F  ReturnValue
 
   [public] close(): void
-    ; entry 9, locals 1, stack 1, code 00FC..0103
-      00FC  Ldl0
-      00FD  InvokeSpecial 10 (dispose) args=1 ret=0
-      0102  ReturnVoid
+    ; entry 10, locals 1, stack 1, code 0106..010D
+      0106  Ldl0
+      0107  InvokeSpecial 11 (dispose) args=1 ret=0
+      010C  ReturnVoid
 
   [public] ctor (stream: surtr.io.Stream:Stream, leaveOpen: bool = false): void
     ; entry 0, locals 3, stack 2, code 0000..000B
@@ -53,23 +54,23 @@ class BinaryWriter  [public]
       000A  ReturnVoid
 
   [public] dispose(): void
-    ; entry 10, locals 1, stack 1, code 0103..0115
-      0103  Ldl0
-      0104  FieldGet 1 (_leaveOpen)
-      0107  Inv
-      0108  JPZ +9 -> L0 (0114)
-      010B  Ldl0
-      010C  FieldGet 0 (_stream)
-      010F  InvokeVirtual 17 (dispose) args=1 ret=0
+    ; entry 11, locals 1, stack 1, code 010D..011F
+      010D  Ldl0
+      010E  FieldGet 1 (_leaveOpen)
+      0111  Inv
+      0112  JPZ +9 -> L0 (011E)
+      0115  Ldl0
+      0116  FieldGet 0 (_stream)
+      0119  InvokeVirtual 18 (dispose) args=1 ret=0
     L0:
-      0114  ReturnVoid
+      011E  ReturnVoid
 
   [public] flush(): void
-    ; entry 8, locals 1, stack 1, code 00F2..00FC
-      00F2  Ldl0
-      00F3  FieldGet 0 (_stream)
-      00F6  InvokeVirtual 16 (flush) args=1 ret=0
-      00FB  ReturnVoid
+    ; entry 9, locals 1, stack 1, code 00FC..0106
+      00FC  Ldl0
+      00FD  FieldGet 0 (_stream)
+      0100  InvokeVirtual 17 (flush) args=1 ret=0
+      0105  ReturnVoid
 
   [public] writeBool(value: bool): void
     ; entry 2, locals 2, stack 2, code 0010..0025
@@ -82,7 +83,7 @@ class BinaryWriter  [public]
     L0:
       001D  PushI8 0
     L1:
-      001F  InvokeVirtual 11 (writeByte) args=2 ret=0
+      001F  InvokeVirtual 12 (writeByte) args=2 ret=0
       0024  ReturnVoid
 
   [public] writeByte(value: int): void
@@ -92,104 +93,113 @@ class BinaryWriter  [public]
       0029  Ldl1
       002A  PushI16 255
       002D  And
-      002E  InvokeVirtual 11 (writeByte) args=2 ret=0
+      002E  InvokeVirtual 12 (writeByte) args=2 ret=0
       0033  ReturnVoid
 
+  [public] writeByteValue(value: int): void
+    ; entry 4, locals 3, stack 2, code 0034..003E
+      0034  Ldl0
+      0035  Ldl1
+      0036  Stl2
+      0037  Ldl2
+      0038  InvokeSpecial 3 (writeByte) args=2 ret=0
+      003D  ReturnVoid
+
   [public] writeBytes(value: bytes): void
-    ; entry 6, locals 2, stack 4, code 009D..00B4
-      009D  Ldl1
-      009E  JPN +18 -> L0 (00B3)
-      00A1  Ldl0
-      00A2  FieldGet 0 (_stream)
-      00A5  Ldl1
-      00A6  PushI8 0
-      00A8  Ldl1
-      00A9  InvokeSpecial 13 (get_length) args=1 ret=1
-      00AE  InvokeVirtual 14 (write) args=4 ret=0
+    ; entry 7, locals 2, stack 4, code 00A7..00BE
+      00A7  Ldl1
+      00A8  JPN +18 -> L0 (00BD)
+      00AB  Ldl0
+      00AC  FieldGet 0 (_stream)
+      00AF  Ldl1
+      00B0  PushI8 0
+      00B2  Ldl1
+      00B3  InvokeSpecial 14 (get_length) args=1 ret=1
+      00B8  InvokeVirtual 15 (write) args=4 ret=0
     L0:
-      00B3  ReturnVoid
+      00BD  ReturnVoid
 
   [public] writeChar(value: char): void
-    ; entry 4, locals 3, stack 3, code 0034..005B
-      0034  Ldl1
-      0035  InvokeSpecial 12 (toInt) args=1 ret=1
-      003A  Stl2
-      003B  Ldl0
-      003C  FieldGet 0 (_stream)
-      003F  Ldl2
-      0040  PushI16 255
-      0043  And
-      0044  InvokeVirtual 11 (writeByte) args=2 ret=0
-      0049  Ldl0
-      004A  FieldGet 0 (_stream)
-      004D  Ldl2
-      004E  PushI8 8
-      0050  Sar
-      0051  PushI16 255
-      0054  And
-      0055  InvokeVirtual 11 (writeByte) args=2 ret=0
-      005A  ReturnVoid
+    ; entry 5, locals 3, stack 3, code 003E..0065
+      003E  Ldl1
+      003F  InvokeSpecial 13 (toInt) args=1 ret=1
+      0044  Stl2
+      0045  Ldl0
+      0046  FieldGet 0 (_stream)
+      0049  Ldl2
+      004A  PushI16 255
+      004D  And
+      004E  InvokeVirtual 12 (writeByte) args=2 ret=0
+      0053  Ldl0
+      0054  FieldGet 0 (_stream)
+      0057  Ldl2
+      0058  PushI8 8
+      005A  Sar
+      005B  PushI16 255
+      005E  And
+      005F  InvokeVirtual 12 (writeByte) args=2 ret=0
+      0064  ReturnVoid
 
   [public] writeInt(value: int): void
-    ; entry 5, locals 2, stack 3, code 005B..009D
-      005B  Ldl0
-      005C  FieldGet 0 (_stream)
-      005F  Ldl1
-      0060  PushI16 255
-      0063  And
-      0064  InvokeVirtual 11 (writeByte) args=2 ret=0
-      0069  Ldl0
-      006A  FieldGet 0 (_stream)
-      006D  Ldl1
-      006E  PushI8 8
-      0070  Sar
-      0071  PushI16 255
-      0074  And
-      0075  InvokeVirtual 11 (writeByte) args=2 ret=0
-      007A  Ldl0
-      007B  FieldGet 0 (_stream)
-      007E  Ldl1
-      007F  PushI8 16
-      0081  Sar
-      0082  PushI16 255
-      0085  And
-      0086  InvokeVirtual 11 (writeByte) args=2 ret=0
-      008B  Ldl0
-      008C  FieldGet 0 (_stream)
-      008F  Ldl1
-      0090  PushI8 24
-      0092  Sar
-      0093  PushI16 255
-      0096  And
-      0097  InvokeVirtual 11 (writeByte) args=2 ret=0
-      009C  ReturnVoid
+    ; entry 6, locals 2, stack 3, code 0065..00A7
+      0065  Ldl0
+      0066  FieldGet 0 (_stream)
+      0069  Ldl1
+      006A  PushI16 255
+      006D  And
+      006E  InvokeVirtual 12 (writeByte) args=2 ret=0
+      0073  Ldl0
+      0074  FieldGet 0 (_stream)
+      0077  Ldl1
+      0078  PushI8 8
+      007A  Sar
+      007B  PushI16 255
+      007E  And
+      007F  InvokeVirtual 12 (writeByte) args=2 ret=0
+      0084  Ldl0
+      0085  FieldGet 0 (_stream)
+      0088  Ldl1
+      0089  PushI8 16
+      008B  Sar
+      008C  PushI16 255
+      008F  And
+      0090  InvokeVirtual 12 (writeByte) args=2 ret=0
+      0095  Ldl0
+      0096  FieldGet 0 (_stream)
+      0099  Ldl1
+      009A  PushI8 24
+      009C  Sar
+      009D  PushI16 255
+      00A0  And
+      00A1  InvokeVirtual 12 (writeByte) args=2 ret=0
+      00A6  ReturnVoid
 
   [public] writeString(value: string): void
-    ; entry 7, locals 3, stack 4, code 00B4..00F2
-      00B4  Ldl1
-      00B5  JPNN +9 -> L0 (00C1)
-      00B8  Ldl0
-      00B9  PushI8 0
-      00BB  InvokeSpecial 5 (writeInt) args=2 ret=0
-      00C0  ReturnVoid
+    ; entry 8, locals 3, stack 4, code 00BE..00FC
+      00BE  Ldl1
+      00BF  JPNN +9 -> L0 (00CB)
+      00C2  Ldl0
+      00C3  PushI8 0
+      00C5  InvokeSpecial 6 (writeInt) args=2 ret=0
+      00CA  ReturnVoid
     L0:
-      00C1  Ldl1
-      00C2  InvokeStatic 15 (fromUTF8) args=1 ret=1
-      00C7  Stl2
-      00C8  Ldl0
-      00C9  Ldl2
-      00CA  InvokeSpecial 13 (get_length) args=1 ret=1
-      00CF  InvokeSpecial 5 (writeInt) args=2 ret=0
-      00D4  Ldl2
-      00D5  InvokeSpecial 13 (get_length) args=1 ret=1
-      00DA  PushI8 0
-      00DC  JPLE +18 -> L1 (00F1)
-      00DF  Ldl0
-      00E0  FieldGet 0 (_stream)
-      00E3  Ldl2
+      00CB  Ldl1
+      00CC  InvokeStatic 16 (fromUTF8) args=1 ret=1
+      00D1  Stl2
+      00D2  Ldl0
+      00D3  Ldl2
+      00D4  InvokeSpecial 14 (get_length) args=1 ret=1
+      00D9  InvokeSpecial 6 (writeInt) args=2 ret=0
+      00DE  Ldl2
+      00DF  InvokeSpecial 14 (get_length) args=1 ret=1
       00E4  PushI8 0
-      00E6  Ldl2
-      00E7  InvokeSpecial 13 (get_length) args=1 ret=1
-      00EC  InvokeVirtual 14 (write) args=4 ret=0
+      00E6  JPLE +18 -> L1 (00FB)
+      00E9  Ldl0
+      00EA  FieldGet 0 (_stream)
+      00ED  Ldl2
+      00EE  PushI8 0
+      00F0  Ldl2
+      00F1  InvokeSpecial 14 (get_length) args=1 ret=1
+      00F6  InvokeVirtual 15 (write) args=4 ret=0
     L1:
-      00F1  ReturnVoid
+      00FB  ReturnVoid

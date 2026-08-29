@@ -1,4 +1,5 @@
 import surtr.io.Stream;
+import surtr.core.byte;
 
 // Writes primitives to a Stream in little-endian byte order. (float/double/long are not
 // representable without a native int<->float bit-cast, so only the integer/char/bytes/string
@@ -25,6 +26,8 @@ public class BinaryWriter
     {
         _stream.writeByte(value & 0xFF);
     }
+
+    public inline fun writeByteValue(value: byte): void => writeByte(value.toInt());
 
     public fun writeChar(value: char): void
     {

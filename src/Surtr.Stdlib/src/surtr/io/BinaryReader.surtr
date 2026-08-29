@@ -1,4 +1,5 @@
 import surtr.io.Stream;
+import surtr.core.byte;
 
 // Reads primitives from a Stream in little-endian byte order. (float/double/long are not
 // representable without a native int<->float bit-cast, so only the integer/char/bytes/string
@@ -23,6 +24,9 @@ public class BinaryReader
     }
 
     public fun readByte(): int => _stream.readByte();
+
+    // Typed single-byte read. Throws if the stream is at end-of-stream (see Stream.readByteValue).
+    public inline fun readByteValue(): byte => _stream.readByteValue();
 
     public fun readChar(): char
     {

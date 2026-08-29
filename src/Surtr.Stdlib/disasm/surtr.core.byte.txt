@@ -1,54 +1,54 @@
-module surtr.core.Byte
+module surtr.core.byte
   constants: 0   types: 0   fields: 0   methods: 54   modules: 0
 
   method table:
-    #0  surtr.core.Byte:Byte.ctor(int) -> void
-    #1  surtr.core.Byte:Byte.get_raw() -> int
-    #2  surtr.core.Byte:Byte.toInt() -> int
-    #3  surtr.core.Byte:Byte.toChar() -> char
-    #4  surtr.core.Byte:Byte.toFloat() -> float
-    #5  surtr.core.Byte:Byte.toString() -> string
-    #6  surtr.core.Byte:Byte.toHex() -> string
-    #7  surtr.core.Byte:Byte.fromInt(int) -> int
-    #8  surtr.core.Byte:Byte.fromChar(char) -> int
-    #9  surtr.core.Byte:Byte.parse(string) -> int
-    #10  surtr.core.Byte:Byte.parseHex(string) -> int
-    #11  surtr.core.Byte:Byte.min(int, int) -> int
-    #12  surtr.core.Byte:Byte.max(int, int) -> int
-    #13  surtr.core.Byte:Byte.equals(int) -> bool
-    #14  surtr.core.Byte:Byte.compareTo(int) -> int
-    #15  surtr.core.Byte:Byte.op_+(int, int) -> int
-    #16  surtr.core.Byte:Byte.op_-(int, int) -> int
-    #17  surtr.core.Byte:Byte.op_*(int, int) -> int
-    #18  surtr.core.Byte:Byte.op_/(int, int) -> int
-    #19  surtr.core.Byte:Byte.op_%(int, int) -> int
-    #20  surtr.core.Byte:Byte.op_<<(int, int) -> int
-    #21  surtr.core.Byte:Byte.op_>>(int, int) -> int
-    #22  surtr.core.Byte:Byte.op_&(int, int) -> int
-    #23  surtr.core.Byte:Byte.op_|(int, int) -> int
-    #24  surtr.core.Byte:Byte.op_^(int, int) -> int
-    #25  surtr.core.Byte:Byte.op_==(int, int) -> bool
-    #26  surtr.core.Byte:Byte.op_<=>(int, int) -> int
-    #27  surtr.core.Byte:Byte.op_-u(int) -> int
-    #28  surtr.core.Byte:Byte.op_~(int) -> int
-    #29  surtr.core.Byte:Byte.addSaturating(int) -> int
-    #30  surtr.core.Byte:Byte.subtractSaturating(int) -> int
-    #31  surtr.core.Byte:Byte.invert() -> int
-    #32  surtr.core.Byte:Byte.rotateLeft(int) -> int
-    #33  surtr.core.Byte:Byte.rotateRight(int) -> int
-    #34  surtr.core.Byte:Byte.getBit(int) -> int
-    #35  surtr.core.Byte:Byte.isBitSet(int) -> bool
-    #36  surtr.core.Byte:Byte.setBit(int) -> int
-    #37  surtr.core.Byte:Byte.clearBit(int) -> int
-    #38  surtr.core.Byte:Byte.toggleBit(int) -> int
-    #39  surtr.core.Byte:Byte.withBit(int, bool) -> int
-    #40  surtr.core.Byte:Byte.bitCount() -> int
-    #41  surtr.core.Byte:Byte.highestSetBit() -> int
-    #42  surtr.core.Byte:Byte.lowestSetBit() -> int
-    #43  surtr.core.Byte:Byte.isEven() -> bool
-    #44  surtr.core.Byte:Byte.isOdd() -> bool
-    #45  surtr.core.Byte:Byte.isZero() -> bool
-    #46  surtr.core.Byte:Byte.isPowerOfTwo() -> bool
+    #0  surtr.core.byte:byte.ctor(int) -> void
+    #1  surtr.core.byte:byte.get_raw() -> int
+    #2  surtr.core.byte:byte.toInt() -> int
+    #3  surtr.core.byte:byte.toChar() -> char
+    #4  surtr.core.byte:byte.toFloat() -> float
+    #5  surtr.core.byte:byte.toString() -> string
+    #6  surtr.core.byte:byte.toHex() -> string
+    #7  surtr.core.byte:byte.fromInt(int) -> int
+    #8  surtr.core.byte:byte.fromChar(char) -> int
+    #9  surtr.core.byte:byte.parse(string) -> int
+    #10  surtr.core.byte:byte.parseHex(string) -> int
+    #11  surtr.core.byte:byte.min(int, int) -> int
+    #12  surtr.core.byte:byte.max(int, int) -> int
+    #13  surtr.core.byte:byte.equals(int) -> bool
+    #14  surtr.core.byte:byte.compareTo(int) -> int
+    #15  surtr.core.byte:byte.op_+(int, int) -> int
+    #16  surtr.core.byte:byte.op_-(int, int) -> int
+    #17  surtr.core.byte:byte.op_*(int, int) -> int
+    #18  surtr.core.byte:byte.op_/(int, int) -> int
+    #19  surtr.core.byte:byte.op_%(int, int) -> int
+    #20  surtr.core.byte:byte.op_<<(int, int) -> int
+    #21  surtr.core.byte:byte.op_>>(int, int) -> int
+    #22  surtr.core.byte:byte.op_&(int, int) -> int
+    #23  surtr.core.byte:byte.op_|(int, int) -> int
+    #24  surtr.core.byte:byte.op_^(int, int) -> int
+    #25  surtr.core.byte:byte.op_==(int, int) -> bool
+    #26  surtr.core.byte:byte.op_<=>(int, int) -> int
+    #27  surtr.core.byte:byte.op_-u(int) -> int
+    #28  surtr.core.byte:byte.op_~(int) -> int
+    #29  surtr.core.byte:byte.addSaturating(int) -> int
+    #30  surtr.core.byte:byte.subtractSaturating(int) -> int
+    #31  surtr.core.byte:byte.invert() -> int
+    #32  surtr.core.byte:byte.rotateLeft(int) -> int
+    #33  surtr.core.byte:byte.rotateRight(int) -> int
+    #34  surtr.core.byte:byte.getBit(int) -> int
+    #35  surtr.core.byte:byte.isBitSet(int) -> bool
+    #36  surtr.core.byte:byte.setBit(int) -> int
+    #37  surtr.core.byte:byte.clearBit(int) -> int
+    #38  surtr.core.byte:byte.toggleBit(int) -> int
+    #39  surtr.core.byte:byte.withBit(int, bool) -> int
+    #40  surtr.core.byte:byte.bitCount() -> int
+    #41  surtr.core.byte:byte.highestSetBit() -> int
+    #42  surtr.core.byte:byte.lowestSetBit() -> int
+    #43  surtr.core.byte:byte.isEven() -> bool
+    #44  surtr.core.byte:byte.isOdd() -> bool
+    #45  surtr.core.byte:byte.isZero() -> bool
+    #46  surtr.core.byte:byte.isPowerOfTwo() -> bool
     #47  int.toFloat() -> float
     #48  int.toString() -> string
     #49  string.fromChar(char) -> string
@@ -57,7 +57,7 @@ module surtr.core.Byte
     #52  int.parse(string) -> int
     #53  int.parseStrict(string, int) -> int
 
-sealed class Byte  [public]
+sealed class byte  [public]
   [private] readonly field _value: int
 
   [public] property raw: int { get; }
@@ -90,34 +90,34 @@ sealed class Byte  [public]
       0161  ReturnValue
 
   [public] bitCount(): int
-    ; entry 40, locals 5, stack 2, code 0212..023B
-      0212  PushI8 0
-      0214  Stl1
-      0215  Ldl0
-      0216  Stl2
-      0217  PushI8 0
-      0219  Stl3
-      021A  PushI8 8
-      021C  Stl4
-      021D  Ldl3
-      021E  Ldl4
-      021F  JPGE +23 -> L2 (0239)
-    L0:
-      0222  Ldl2
-      0223  PushI8 1
-      0225  And
-      0226  PushI8 1
-      0228  JPNE +3 -> L1 (022E)
-      022B  IncLocal 1 by 1
-    L1:
-      022E  Ldl2
-      022F  PushI8 1
-      0231  Sar
+    ; entry 40, locals 5, stack 2, code 022E..0257
+      022E  PushI8 0
+      0230  Stl1
+      0231  Ldl0
       0232  Stl2
-      0233  ForRangeNextLT 3 4 -> L0 (0222)
+      0233  PushI8 0
+      0235  Stl3
+      0236  PushI8 8
+      0238  Stl4
+      0239  Ldl3
+      023A  Ldl4
+      023B  JPGE +23 -> L2 (0255)
+    L0:
+      023E  Ldl2
+      023F  PushI8 1
+      0241  And
+      0242  PushI8 1
+      0244  JPNE +3 -> L1 (024A)
+      0247  IncLocal 1 by 1
+    L1:
+      024A  Ldl2
+      024B  PushI8 1
+      024D  Sar
+      024E  Stl2
+      024F  ForRangeNextLT 3 4 -> L0 (023E)
     L2:
-      0239  Ldl1
-      023A  ReturnValue
+      0255  Ldl1
+      0256  ReturnValue
 
   [public] clearBit(index: int): int
     ; entry 37, locals 3, stack 4, code 01E0..01F1
@@ -191,28 +191,28 @@ sealed class Byte  [public]
       01C8  ReturnValue
 
   [public] highestSetBit(): int
-    ; entry 41, locals 2, stack 2, code 023B..025A
-      023B  PushI8 7
-      023D  Stl1
+    ; entry 41, locals 2, stack 2, code 0257..0276
+      0257  PushI8 7
+      0259  Stl1
     L0:
-      023E  Ldl1
-      023F  PushI8 0
-      0241  JPLT +19 -> L2 (0257)
-      0244  Ldl0
-      0245  Ldl1
-      0246  Sar
-      0247  PushI8 1
-      0249  And
-      024A  PushI8 1
-      024C  JPNE +2 -> L1 (0251)
-      024F  Ldl1
-      0250  ReturnValue
+      025A  Ldl1
+      025B  PushI8 0
+      025D  JPLT +19 -> L2 (0273)
+      0260  Ldl0
+      0261  Ldl1
+      0262  Sar
+      0263  PushI8 1
+      0265  And
+      0266  PushI8 1
+      0268  JPNE +2 -> L1 (026D)
+      026B  Ldl1
+      026C  ReturnValue
     L1:
-      0251  IncLocal 1 by -1
-      0254  JP -25 -> L0 (023E)
+      026D  IncLocal 1 by -1
+      0270  JP -25 -> L0 (025A)
     L2:
-      0257  PushI8 -1
-      0259  ReturnValue
+      0273  PushI8 -1
+      0275  ReturnValue
 
   [public] invert(): int
     ; entry 31, locals 2, stack 2, code 017D..018A
@@ -238,73 +238,73 @@ sealed class Byte  [public]
       01D2  ReturnValue
 
   [public] isEven(): bool
-    ; entry 43, locals 1, stack 2, code 027B..0283
-      027B  Ldl0
-      027C  PushI8 1
-      027E  And
-      027F  PushI8 0
-      0281  EQ
-      0282  ReturnValue
+    ; entry 43, locals 1, stack 2, code 0297..029F
+      0297  Ldl0
+      0298  PushI8 1
+      029A  And
+      029B  PushI8 0
+      029D  EQ
+      029E  ReturnValue
 
   [public] isOdd(): bool
-    ; entry 44, locals 1, stack 2, code 0283..028B
-      0283  Ldl0
+    ; entry 44, locals 1, stack 2, code 029F..02A7
+      029F  Ldl0
+      02A0  PushI8 1
+      02A2  And
+      02A3  PushI8 1
+      02A5  EQ
+      02A6  ReturnValue
+
+  [public] isPowerOfTwo(): bool
+    ; entry 46, locals 1, stack 3, code 02AC..02C2
+      02AC  Ldl0
+      02AD  PushI8 0
+      02AF  NE
+      02B0  Dup
+      02B1  JPZ +13 -> L0 (02C1)
+      02B4  Pop
+      02B5  Ldl0
+      02B6  Ldl0
+      02B7  PushI8 1
+      02B9  Sub
+      02BA  And
+      02BB  PushI8 0
+      02BD  EQ
+      02BE  JP +0 -> L0 (02C1)
+    L0:
+      02C1  ReturnValue
+
+  [public] isZero(): bool
+    ; entry 45, locals 1, stack 2, code 02A7..02AC
+      02A7  Ldl0
+      02A8  PushI8 0
+      02AA  EQ
+      02AB  ReturnValue
+
+  [public] lowestSetBit(): int
+    ; entry 42, locals 3, stack 2, code 0276..0297
+      0276  PushI8 0
+      0278  Stl1
+      0279  PushI8 8
+      027B  Stl2
+      027C  Ldl1
+      027D  Ldl2
+      027E  JPGE +19 -> L2 (0294)
+    L0:
+      0281  Ldl0
+      0282  Ldl1
+      0283  Sar
       0284  PushI8 1
       0286  And
       0287  PushI8 1
-      0289  EQ
-      028A  ReturnValue
-
-  [public] isPowerOfTwo(): bool
-    ; entry 46, locals 1, stack 3, code 0290..02A6
-      0290  Ldl0
-      0291  PushI8 0
-      0293  NE
-      0294  Dup
-      0295  JPZ +13 -> L0 (02A5)
-      0298  Pop
-      0299  Ldl0
-      029A  Ldl0
-      029B  PushI8 1
-      029D  Sub
-      029E  And
-      029F  PushI8 0
-      02A1  EQ
-      02A2  JP +0 -> L0 (02A5)
-    L0:
-      02A5  ReturnValue
-
-  [public] isZero(): bool
-    ; entry 45, locals 1, stack 2, code 028B..0290
-      028B  Ldl0
-      028C  PushI8 0
-      028E  EQ
-      028F  ReturnValue
-
-  [public] lowestSetBit(): int
-    ; entry 42, locals 3, stack 2, code 025A..027B
-      025A  PushI8 0
-      025C  Stl1
-      025D  PushI8 8
-      025F  Stl2
-      0260  Ldl1
-      0261  Ldl2
-      0262  JPGE +19 -> L2 (0278)
-    L0:
-      0265  Ldl0
-      0266  Ldl1
-      0267  Sar
-      0268  PushI8 1
-      026A  And
-      026B  PushI8 1
-      026D  JPNE +2 -> L1 (0272)
-      0270  Ldl1
-      0271  ReturnValue
+      0289  JPNE +2 -> L1 (028E)
+      028C  Ldl1
+      028D  ReturnValue
     L1:
-      0272  ForRangeNextLT 1 2 -> L0 (0265)
+      028E  ForRangeNextLT 1 2 -> L0 (0281)
     L2:
-      0278  PushI8 -1
-      027A  ReturnValue
+      0294  PushI8 -1
+      0296  ReturnValue
 
   [public] static max(a: int, b: int): int
     ; entry 12, locals 2, stack 2, code 009C..00A8
@@ -675,15 +675,37 @@ sealed class Byte  [public]
       01FD  ReturnValue
 
   [public] withBit(index: int, on: bool): int
-    ; entry 39, locals 3, stack 2, code 01FE..0212
+    ; entry 39, locals 9, stack 4, code 01FE..022E
       01FE  Ldl2
-      01FF  JPZ +8 -> L0 (020A)
+      01FF  JPZ +17 -> L0 (0213)
       0202  Ldl0
-      0203  Ldl1
-      0204  InvokeSpecial 36 (setBit) args=2 ret=1
-      0209  ReturnValue
+      0203  Stl3
+      0204  Ldl1
+      0205  Stl4
+      0206  Ldl3
+      0207  PushI8 1
+      0209  Ldl4
+      020A  Shl
+      020B  Or
+      020C  Stl5
+      020D  Ldl5
+      020E  PushI16 255
+      0211  And
+      0212  ReturnValue
     L0:
-      020A  Ldl0
-      020B  Ldl1
-      020C  InvokeSpecial 37 (clearBit) args=2 ret=1
-      0211  ReturnValue
+      0213  Ldl0
+      0214  StlS 6
+      0216  Ldl1
+      0217  StlS 7
+      0219  LdlS 6
+      021B  PushI16 255
+      021E  PushI8 1
+      0220  LdlS 7
+      0222  Shl
+      0223  Sub
+      0224  And
+      0225  StlS 8
+      0227  LdlS 8
+      0229  PushI16 255
+      022C  And
+      022D  ReturnValue

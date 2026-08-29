@@ -1,4 +1,5 @@
 import surtr.io.Enums;
+import surtr.core.byte;
 
 public interface IWritableStream : IDisposable
 {
@@ -50,6 +51,23 @@ public abstract class Stream : IWritableStream, IReadableStream, ISeekableStream
     public inline fun write(buffer: bytes): int => write(buffer, 0, buffer.length);
 
     public inline fun close(): void => dispose();
+
+    // byte-typed convenience overloads //
+
+    // Writes a single typed byte; delegates to writeByte(int), so the same EOF/length
+    // semantics apply. Lets callers keep a byte in hand instead of an untyped int.
+    // (Named writeByteValue rather than an overload of writeByte, because byte flattens
+    // to int and would otherwise collide with writeByte(int).)
+    public inline fun writeByteValue(value: byte): bool => writeByte(value.toInt());
+
+    // Reads one typed byte. Unlike readByte(), which returns -1 at end-of-stream, this
+    // assumes data is available and throws if the stream is exhausted.
+    public fun readByteValue(): byte
+    {
+        let v = this.readByte();
+        if (v < 0) throw InvalidOperationException("Cannot read a byte past the end of the stream");
+        return byte(v);
+    }
 
     // Copies every byte from this stream into destination, returning the total copied.
     public fun copyTo(destination: Stream): int => copyTo(destination, 8192);
