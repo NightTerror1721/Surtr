@@ -1,0 +1,188 @@
+module surtr.io.StreamWriter
+  constants: 2   types: 1   fields: 3   methods: 16   modules: 0
+  string #0 = "Writer is closed"
+  string #1 = "
+"
+
+  type table:
+    #0  surtr:InvalidOperationException
+
+  field table:
+    #0  surtr.io.StreamWriter:StreamWriter._stream: surtr.io.Stream:Stream
+    #1  surtr.io.StreamWriter:StreamWriter._leaveOpen: bool
+    #2  surtr.io.StreamWriter:StreamWriter._isOpen: bool
+
+  method table:
+    #0  surtr.io.StreamWriter:StreamWriter.ctor(surtr.io.Stream:Stream, bool) -> void
+    #1  surtr.io.StreamWriter:StreamWriter.get_canWrite() -> bool
+    #2  surtr.io.StreamWriter:StreamWriter.write(string) -> void
+    #3  surtr.io.StreamWriter:StreamWriter.writeChar(char) -> void
+    #4  surtr.io.StreamWriter:StreamWriter.writeLine(string) -> void
+    #5  surtr.io.StreamWriter:StreamWriter.writeLine() -> void
+    #6  surtr.io.StreamWriter:StreamWriter.flush() -> void
+    #7  surtr.io.StreamWriter:StreamWriter.close() -> void
+    #8  surtr.io.StreamWriter:StreamWriter.dispose() -> void
+    #9  surtr:InvalidOperationException.ctor(string) -> void
+    #10  bytes.fromUTF8(string) -> bytes
+    #11  bytes.get_length() -> int
+    #12  surtr.io.Stream:Stream.write(bytes, int, int) -> int
+    #13  string.fromChar(char) -> string
+    #14  surtr.io.Stream:Stream.flush() -> void
+    #15  surtr.io.Stream:Stream.dispose() -> void
+
+class StreamWriter  [public]
+  [private] field _isOpen: bool
+  [private] field _leaveOpen: bool
+  [private] field _stream: surtr.io.Stream:Stream
+
+  [public] property canWrite: bool { get; }
+    get:
+      ; entry 1, locals 1, stack 1, code 0010..0015
+        0010  Ldl0
+        0011  FieldGet 2 (_isOpen)
+        0014  ReturnValue
+
+  [public] close(): void
+    ; entry 7, locals 1, stack 1, code 00DB..00E2
+      00DB  Ldl0
+      00DC  InvokeSpecial 8 (dispose) args=1 ret=0
+      00E1  ReturnVoid
+
+  [public] ctor (stream: surtr.io.Stream:Stream, leaveOpen: bool = false): void
+    ; entry 0, locals 3, stack 2, code 0000..0010
+      0000  Ldl0
+      0001  Ldl1
+      0002  FieldSet 0 (_stream)
+      0005  Ldl0
+      0006  Ldl2
+      0007  FieldSet 1 (_leaveOpen)
+      000A  Ldl0
+      000B  PushTrue
+      000C  FieldSet 2 (_isOpen)
+      000F  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 8, locals 1, stack 2, code 00E2..0109
+      00E2  Ldl0
+      00E3  FieldGet 2 (_isOpen)
+      00E6  JPZ +31 -> L0 (0108)
+      00E9  Ldl0
+      00EA  FieldGet 0 (_stream)
+      00ED  InvokeVirtual 14 (flush) args=1 ret=0
+      00F2  Ldl0
+      00F3  PushFalse
+      00F4  FieldSet 2 (_isOpen)
+      00F7  Ldl0
+      00F8  FieldGet 1 (_leaveOpen)
+      00FB  Inv
+      00FC  JPZ +9 -> L0 (0108)
+      00FF  Ldl0
+      0100  FieldGet 0 (_stream)
+      0103  InvokeVirtual 15 (dispose) args=1 ret=0
+    L0:
+      0108  ReturnVoid
+
+  [public] flush(): void
+    ; entry 6, locals 1, stack 1, code 00CA..00DB
+      00CA  Ldl0
+      00CB  FieldGet 2 (_isOpen)
+      00CE  JPZ +9 -> L0 (00DA)
+      00D1  Ldl0
+      00D2  FieldGet 0 (_stream)
+      00D5  InvokeVirtual 14 (flush) args=1 ret=0
+    L0:
+      00DA  ReturnVoid
+
+  [public] write(text: string): void
+    ; entry 2, locals 3, stack 4, code 0015..0052
+      0015  Ldl0
+      0016  FieldGet 2 (_isOpen)
+      0019  Inv
+      001A  JPZ +11 -> L0 (0028)
+      001D  ObjNew 0 (surtr:InvalidOperationException)
+      0020  Dup
+      0021  Ldc0
+      0022  InvokeSpecial 9 (ctor) args=2 ret=0
+      0027  Throw
+    L0:
+      0028  Ldl1
+      0029  JPNN +1 -> L1 (002D)
+      002C  ReturnVoid
+    L1:
+      002D  Ldl1
+      002E  InvokeStatic 10 (fromUTF8) args=1 ret=1
+      0033  Stl2
+      0034  Ldl2
+      0035  InvokeSpecial 11 (get_length) args=1 ret=1
+      003A  PushI8 0
+      003C  JPLE +18 -> L2 (0051)
+      003F  Ldl0
+      0040  FieldGet 0 (_stream)
+      0043  Ldl2
+      0044  PushI8 0
+      0046  Ldl2
+      0047  InvokeSpecial 11 (get_length) args=1 ret=1
+      004C  InvokeVirtual 12 (write) args=4 ret=0
+    L2:
+      0051  ReturnVoid
+
+  [public] writeChar(ch: char): void
+    ; entry 3, locals 3, stack 4, code 0052..008F
+      0052  Ldl0
+      0053  FieldGet 2 (_isOpen)
+      0056  Inv
+      0057  JPZ +11 -> L0 (0065)
+      005A  ObjNew 0 (surtr:InvalidOperationException)
+      005D  Dup
+      005E  Ldc0
+      005F  InvokeSpecial 9 (ctor) args=2 ret=0
+      0064  Throw
+    L0:
+      0065  Ldl1
+      0066  InvokeStatic 13 (fromChar) args=1 ret=1
+      006B  InvokeStatic 10 (fromUTF8) args=1 ret=1
+      0070  Stl2
+      0071  Ldl2
+      0072  InvokeSpecial 11 (get_length) args=1 ret=1
+      0077  PushI8 0
+      0079  JPLE +18 -> L1 (008E)
+      007C  Ldl0
+      007D  FieldGet 0 (_stream)
+      0080  Ldl2
+      0081  PushI8 0
+      0083  Ldl2
+      0084  InvokeSpecial 11 (get_length) args=1 ret=1
+      0089  InvokeVirtual 12 (write) args=4 ret=0
+    L1:
+      008E  ReturnVoid
+
+  [public] writeLine(text: string): void
+    ; entry 4, locals 3, stack 4, code 008F..00B0
+      008F  Ldl0
+      0090  Ldl1
+      0091  InvokeSpecial 2 (write) args=2 ret=0
+      0096  Ldc1
+      0097  InvokeStatic 10 (fromUTF8) args=1 ret=1
+      009C  Stl2
+      009D  Ldl0
+      009E  FieldGet 0 (_stream)
+      00A1  Ldl2
+      00A2  PushI8 0
+      00A4  Ldl2
+      00A5  InvokeSpecial 11 (get_length) args=1 ret=1
+      00AA  InvokeVirtual 12 (write) args=4 ret=0
+      00AF  ReturnVoid
+
+  [public] writeLine(): void
+    ; entry 5, locals 2, stack 4, code 00B0..00CA
+      00B0  Ldc1
+      00B1  InvokeStatic 10 (fromUTF8) args=1 ret=1
+      00B6  Stl1
+      00B7  Ldl0
+      00B8  FieldGet 0 (_stream)
+      00BB  Ldl1
+      00BC  PushI8 0
+      00BE  Ldl1
+      00BF  InvokeSpecial 11 (get_length) args=1 ret=1
+      00C4  InvokeVirtual 12 (write) args=4 ret=0
+      00C9  ReturnVoid

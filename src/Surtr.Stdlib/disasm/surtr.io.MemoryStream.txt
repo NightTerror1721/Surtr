@@ -1,0 +1,719 @@
+module surtr.io.MemoryStream
+  constants: 6   types: 2   fields: 6   methods: 34   modules: 0
+  string #0 = "value"
+  string #1 = "Cannot resize a non-resizable MemoryStream"
+  string #2 = "Cannot expand a non-resizable MemoryStream"
+  string #3 = "offset and count must be non-negative"
+  string #4 = "Stream is closed"
+  string #5 = "Stream is not writable"
+
+  type table:
+    #0  surtr:ArgumentOutOfRangeException
+    #1  surtr:InvalidOperationException
+
+  field table:
+    #0  surtr.io.MemoryStream:MemoryStream._buffer: bytes
+    #1  surtr.io.MemoryStream:MemoryStream._length: int
+    #2  surtr.io.MemoryStream:MemoryStream._position: int
+    #3  surtr.io.MemoryStream:MemoryStream._writable: bool
+    #4  surtr.io.MemoryStream:MemoryStream._expandable: bool
+    #5  surtr.io.MemoryStream:MemoryStream._isOpen: bool
+
+  method table:
+    #0  surtr.io.MemoryStream:MemoryStream.ctor(bytes, bool) -> void
+    #1  surtr.io.MemoryStream:MemoryStream.ctor(int) -> void
+    #2  surtr.io.MemoryStream:MemoryStream.get_canRead() -> bool
+    #3  surtr.io.MemoryStream:MemoryStream.get_canWrite() -> bool
+    #4  surtr.io.MemoryStream:MemoryStream.get_canSeek() -> bool
+    #5  surtr.io.MemoryStream:MemoryStream.get_eof() -> bool
+    #6  surtr.io.MemoryStream:MemoryStream.get_capacity() -> int
+    #7  surtr.io.MemoryStream:MemoryStream.get_length() -> int
+    #8  surtr.io.MemoryStream:MemoryStream.get_isExpandable() -> bool
+    #9  surtr.io.MemoryStream:MemoryStream.get_position() -> int
+    #10  surtr.io.MemoryStream:MemoryStream.set_position(int) -> void
+    #11  surtr.io.MemoryStream:MemoryStream.getBuffer() -> bytes
+    #12  surtr.io.MemoryStream:MemoryStream.toArray() -> bytes
+    #13  surtr.io.MemoryStream:MemoryStream.writeTo(surtr.io.Stream:Stream) -> void
+    #14  surtr.io.MemoryStream:MemoryStream.setCapacity(int) -> void
+    #15  surtr.io.MemoryStream:MemoryStream.setLength(int) -> void
+    #16  surtr.io.MemoryStream:MemoryStream.read(bytes, int, int) -> int
+    #17  surtr.io.MemoryStream:MemoryStream.write(bytes, int, int) -> int
+    #18  surtr.io.MemoryStream:MemoryStream.readByte() -> int
+    #19  surtr.io.MemoryStream:MemoryStream.writeByte(int) -> bool
+    #20  surtr.io.MemoryStream:MemoryStream.seek(int, surtr.io.Enums:SeekOrigin) -> int
+    #21  surtr.io.MemoryStream:MemoryStream.flush() -> void
+    #22  surtr.io.MemoryStream:MemoryStream.dispose() -> void
+    #23  bytes.get_length() -> int
+    #24  bytes.repeat(int, int) -> bytes
+    #25  bytes.get_capacity() -> int
+    #26  bytes.op_[](bytes, int) -> int
+    #27  bytes.op_[](bytes, int, int) -> void
+    #28  surtr.io.Stream:Stream.write(bytes, int, int) -> int
+    #29  surtr:ArgumentOutOfRangeException.ctor(string) -> void
+    #30  surtr:InvalidOperationException.ctor(string) -> void
+    #31  bytes.reserve(int) -> void
+    #32  bytes.push(int) -> void
+    #33  bytes.truncate(int) -> void
+
+class MemoryStream : surtr.io.Stream:Stream  [public]
+  [private] field _buffer: bytes
+  [private] field _expandable: bool
+  [private] field _isOpen: bool
+  [private] field _length: int
+  [private] field _position: int
+  [private] field _writable: bool
+
+  [public] property canRead: bool { get; }
+    get:
+      ; entry 2, locals 1, stack 1, code 005B..005D
+        005B  PushTrue
+        005C  ReturnValue
+
+  [public] property canSeek: bool { get; }
+    get:
+      ; entry 4, locals 1, stack 1, code 0062..0064
+        0062  PushTrue
+        0063  ReturnValue
+
+  [public] property canWrite: bool { get; }
+    get:
+      ; entry 3, locals 1, stack 1, code 005D..0062
+        005D  Ldl0
+        005E  FieldGet 3 (_writable)
+        0061  ReturnValue
+
+  [public] property capacity: int { get; }
+    get:
+      ; entry 6, locals 1, stack 1, code 006E..0078
+        006E  Ldl0
+        006F  FieldGet 0 (_buffer)
+        0072  InvokeSpecial 25 (get_capacity) args=1 ret=1
+        0077  ReturnValue
+
+  [public] property eof: bool { get; }
+    get:
+      ; entry 5, locals 1, stack 2, code 0064..006E
+        0064  Ldl0
+        0065  FieldGet 2 (_position)
+        0068  Ldl0
+        0069  FieldGet 1 (_length)
+        006C  GE
+        006D  ReturnValue
+
+  [public] property isExpandable: bool { get; }
+    get:
+      ; entry 8, locals 1, stack 1, code 007D..0082
+        007D  Ldl0
+        007E  FieldGet 4 (_expandable)
+        0081  ReturnValue
+
+  [public] property length: int { get; }
+    get:
+      ; entry 7, locals 1, stack 1, code 0078..007D
+        0078  Ldl0
+        0079  FieldGet 1 (_length)
+        007C  ReturnValue
+
+  [public] property position: int { get; set; }
+    get:
+      ; entry 9, locals 1, stack 1, code 0082..0087
+        0082  Ldl0
+        0083  FieldGet 2 (_position)
+        0086  ReturnValue
+    set:
+      ; entry 10, locals 2, stack 2, code 0087..008D
+        0087  Ldl0
+        0088  Ldl1
+        0089  FieldSet 2 (_position)
+        008C  ReturnVoid
+
+  [public] ctor (buffer: bytes, writable: bool): void
+    ; entry 0, locals 3, stack 2, code 0000..0025
+      0000  Ldl0
+      0001  Ldl1
+      0002  FieldSet 0 (_buffer)
+      0005  Ldl0
+      0006  Ldl1
+      0007  InvokeSpecial 23 (get_length) args=1 ret=1
+      000C  FieldSet 1 (_length)
+      000F  Ldl0
+      0010  PushI8 0
+      0012  FieldSet 2 (_position)
+      0015  Ldl0
+      0016  Ldl2
+      0017  FieldSet 3 (_writable)
+      001A  Ldl0
+      001B  PushFalse
+      001C  FieldSet 4 (_expandable)
+      001F  Ldl0
+      0020  PushTrue
+      0021  FieldSet 5 (_isOpen)
+      0024  ReturnVoid
+
+  [public] ctor (size: int): void
+    ; entry 1, locals 3, stack 3, code 0025..005B
+      0025  Ldl1
+      0026  PushI8 0
+      0028  LT
+      0029  JPZ +5 -> L0 (0031)
+      002C  PushI8 0
+      002E  JP +1 -> L1 (0032)
+    L0:
+      0031  Ldl1
+    L1:
+      0032  Stl2
+      0033  Ldl0
+      0034  PushI8 0
+      0036  Ldl2
+      0037  InvokeStatic 24 (repeat) args=2 ret=1
+      003C  FieldSet 0 (_buffer)
+      003F  Ldl0
+      0040  PushI8 0
+      0042  FieldSet 1 (_length)
+      0045  Ldl0
+      0046  PushI8 0
+      0048  FieldSet 2 (_position)
+      004B  Ldl0
+      004C  PushTrue
+      004D  FieldSet 3 (_writable)
+      0050  Ldl0
+      0051  PushTrue
+      0052  FieldSet 4 (_expandable)
+      0055  Ldl0
+      0056  PushTrue
+      0057  FieldSet 5 (_isOpen)
+      005A  ReturnVoid
+
+  [public] virtual override dispose(): void
+    ; entry 22, locals 1, stack 2, code 043A..0440
+      043A  Ldl0
+      043B  PushFalse
+      043C  FieldSet 5 (_isOpen)
+      043F  ReturnVoid
+
+  [public] virtual override flush(): void
+    ; entry 21, locals 1, stack 0, code 0439..043A
+      0439  ReturnVoid
+
+  [public] getBuffer(): bytes
+    ; entry 11, locals 1, stack 1, code 008D..0092
+      008D  Ldl0
+      008E  FieldGet 0 (_buffer)
+      0091  ReturnValue
+
+  [public] virtual override read(buffer: bytes, offset: int, count: int): int
+    ; entry 16, locals 7, stack 5, code 01AB..0231
+      01AB  Ldl2
+      01AC  PushI8 0
+      01AE  LT
+      01AF  Dup
+      01B0  JPNZ +8 -> L0 (01BB)
+      01B3  Pop
+      01B4  Ldl3
+      01B5  PushI8 0
+      01B7  LT
+      01B8  JP +0 -> L0 (01BB)
+    L0:
+      01BB  JPZ +11 -> L1 (01C9)
+      01BE  ObjNew 0 (surtr:ArgumentOutOfRangeException)
+      01C1  Dup
+      01C2  Ldc3
+      01C3  InvokeSpecial 29 (ctor) args=2 ret=0
+      01C8  Throw
+    L1:
+      01C9  Ldl0
+      01CA  FieldGet 5 (_isOpen)
+      01CD  Inv
+      01CE  JPZ +11 -> L2 (01DC)
+      01D1  ObjNew 1 (surtr:InvalidOperationException)
+      01D4  Dup
+      01D5  Ldc4
+      01D6  InvokeSpecial 30 (ctor) args=2 ret=0
+      01DB  Throw
+    L2:
+      01DC  Ldl0
+      01DD  FieldGet 1 (_length)
+      01E0  Ldl0
+      01E1  FieldGet 2 (_position)
+      01E4  Sub
+      01E5  Stl4
+      01E6  Ldl3
+      01E7  Ldl4
+      01E8  LT
+      01E9  JPZ +4 -> L3 (01F0)
+      01EC  Ldl3
+      01ED  JP +1 -> L4 (01F1)
+    L3:
+      01F0  Ldl4
+    L4:
+      01F1  Stl5
+      01F2  Ldl5
+      01F3  PushI8 0
+      01F5  JPGE +3 -> L5 (01FB)
+      01F8  PushI8 0
+      01FA  Stl5
+    L5:
+      01FB  PushI8 0
+      01FD  StlS 6
+    L6:
+      01FF  LdlS 6
+      0201  Ldl5
+      0202  JPGE +32 -> L7 (0225)
+      0205  Ldl1
+      0206  Ldl2
+      0207  LdlS 6
+      0209  Add
+      020A  Ldl0
+      020B  FieldGet 0 (_buffer)
+      020E  Ldl0
+      020F  FieldGet 2 (_position)
+      0212  LdlS 6
+      0214  Add
+      0215  InvokeStatic 26 (op_[]) args=2 ret=1
+      021A  InvokeStatic 27 (op_[]) args=3 ret=0
+      021F  IncLocal 6 by 1
+      0222  JP -38 -> L6 (01FF)
+    L7:
+      0225  Ldl0
+      0226  Ldl0
+      0227  FieldGet 2 (_position)
+      022A  Ldl5
+      022B  Add
+      022C  FieldSet 2 (_position)
+      022F  Ldl5
+      0230  ReturnValue
+
+  [public] virtual override readByte(): int
+    ; entry 18, locals 3, stack 3, code 0306..0341
+      0306  Ldl0
+      0307  FieldGet 5 (_isOpen)
+      030A  Inv
+      030B  JPZ +11 -> L0 (0319)
+      030E  ObjNew 1 (surtr:InvalidOperationException)
+      0311  Dup
+      0312  Ldc4
+      0313  InvokeSpecial 30 (ctor) args=2 ret=0
+      0318  Throw
+    L0:
+      0319  Ldl0
+      031A  FieldGet 2 (_position)
+      031D  Ldl0
+      031E  FieldGet 1 (_length)
+      0321  JPLT +3 -> L1 (0327)
+      0324  PushI8 -1
+      0326  ReturnValue
+    L1:
+      0327  Ldl0
+      0328  FieldGet 0 (_buffer)
+      032B  Ldl0
+      032C  FieldGet 2 (_position)
+      032F  Stl1
+      0330  Ldl1
+      0331  PushI8 1
+      0333  Add
+      0334  Stl2
+      0335  Ldl0
+      0336  Ldl2
+      0337  FieldSet 2 (_position)
+      033A  Ldl1
+      033B  InvokeStatic 26 (op_[]) args=2 ret=1
+      0340  ReturnValue
+
+  [public] virtual override seek(offset: int, origin: surtr.io.Enums:SeekOrigin): int
+    ; entry 20, locals 4, stack 3, code 03E3..0439
+      03E3  Ldl0
+      03E4  FieldGet 5 (_isOpen)
+      03E7  Inv
+      03E8  JPZ +11 -> L0 (03F6)
+      03EB  ObjNew 1 (surtr:InvalidOperationException)
+      03EE  Dup
+      03EF  Ldc4
+      03F0  InvokeSpecial 30 (ctor) args=2 ret=0
+      03F5  Throw
+    L0:
+      03F6  Ldl2
+      03F7  Stl3
+      03F8  Ldl3
+      03F9  Switch low=0 count=3 default -> L4 (0434)
+          case 0 -> L1 (0412)
+          case 1 -> L2 (041A)
+          case 2 -> L3 (0427)
+    L1:
+      0412  Ldl0
+      0413  Ldl1
+      0414  FieldSet 2 (_position)
+      0417  JP +26 -> L4 (0434)
+    L2:
+      041A  Ldl0
+      041B  Ldl0
+      041C  FieldGet 2 (_position)
+      041F  Ldl1
+      0420  Add
+      0421  FieldSet 2 (_position)
+      0424  JP +13 -> L4 (0434)
+    L3:
+      0427  Ldl0
+      0428  Ldl0
+      0429  FieldGet 1 (_length)
+      042C  Ldl1
+      042D  Add
+      042E  FieldSet 2 (_position)
+      0431  JP +0 -> L4 (0434)
+    L4:
+      0434  Ldl0
+      0435  FieldGet 2 (_position)
+      0438  ReturnValue
+
+  [public] setCapacity(value: int): void
+    ; entry 14, locals 2, stack 3, code 00D3..0122
+      00D3  Ldl1
+      00D4  PushI8 0
+      00D6  JPGE +11 -> L0 (00E4)
+      00D9  ObjNew 0 (surtr:ArgumentOutOfRangeException)
+      00DC  Dup
+      00DD  Ldc0
+      00DE  InvokeSpecial 29 (ctor) args=2 ret=0
+      00E3  Throw
+    L0:
+      00E4  Ldl0
+      00E5  FieldGet 4 (_expandable)
+      00E8  Inv
+      00E9  JPZ +11 -> L1 (00F7)
+      00EC  ObjNew 1 (surtr:InvalidOperationException)
+      00EF  Dup
+      00F0  Ldc1
+      00F1  InvokeSpecial 30 (ctor) args=2 ret=0
+      00F6  Throw
+    L1:
+      00F7  Ldl0
+      00F8  FieldGet 0 (_buffer)
+      00FB  Ldl1
+      00FC  InvokeSpecial 31 (reserve) args=2 ret=0
+      0101  Ldl0
+      0102  FieldGet 1 (_length)
+      0105  Ldl1
+      0106  JPLE +5 -> L2 (010E)
+      0109  Ldl0
+      010A  Ldl1
+      010B  FieldSet 1 (_length)
+    L2:
+      010E  Ldl0
+      010F  FieldGet 2 (_position)
+      0112  Ldl0
+      0113  FieldGet 1 (_length)
+      0116  JPLE +8 -> L3 (0121)
+      0119  Ldl0
+      011A  Ldl0
+      011B  FieldGet 1 (_length)
+      011E  FieldSet 2 (_position)
+    L3:
+      0121  ReturnVoid
+
+  [public] virtual override setLength(value: int): void
+    ; entry 15, locals 2, stack 3, code 0122..01AB
+      0122  Ldl1
+      0123  PushI8 0
+      0125  JPGE +11 -> L0 (0133)
+      0128  ObjNew 0 (surtr:ArgumentOutOfRangeException)
+      012B  Dup
+      012C  Ldc0
+      012D  InvokeSpecial 29 (ctor) args=2 ret=0
+      0132  Throw
+    L0:
+      0133  Ldl1
+      0134  Ldl0
+      0135  FieldGet 0 (_buffer)
+      0138  InvokeSpecial 23 (get_length) args=1 ret=1
+      013D  JPLE +59 -> L4 (017B)
+      0140  Ldl0
+      0141  FieldGet 4 (_expandable)
+      0144  Inv
+      0145  JPZ +11 -> L1 (0153)
+      0148  ObjNew 1 (surtr:InvalidOperationException)
+      014B  Dup
+      014C  Ldc2
+      014D  InvokeSpecial 30 (ctor) args=2 ret=0
+      0152  Throw
+    L1:
+      0153  Ldl0
+      0154  FieldGet 0 (_buffer)
+      0157  Ldl1
+      0158  InvokeSpecial 31 (reserve) args=2 ret=0
+    L2:
+      015D  Ldl0
+      015E  FieldGet 0 (_buffer)
+      0161  InvokeSpecial 23 (get_length) args=1 ret=1
+      0166  Ldl1
+      0167  JPGE +14 -> L3 (0178)
+      016A  Ldl0
+      016B  FieldGet 0 (_buffer)
+      016E  PushI8 0
+      0170  InvokeSpecial 32 (push) args=2 ret=0
+      0175  JP -27 -> L2 (015D)
+    L3:
+      0178  JP +23 -> L5 (0192)
+    L4:
+      017B  Ldl1
+      017C  Ldl0
+      017D  FieldGet 0 (_buffer)
+      0180  InvokeSpecial 23 (get_length) args=1 ret=1
+      0185  JPGE +10 -> L5 (0192)
+      0188  Ldl0
+      0189  FieldGet 0 (_buffer)
+      018C  Ldl1
+      018D  InvokeSpecial 33 (truncate) args=2 ret=0
+    L5:
+      0192  Ldl0
+      0193  Ldl1
+      0194  FieldSet 1 (_length)
+      0197  Ldl0
+      0198  FieldGet 2 (_position)
+      019B  Ldl0
+      019C  FieldGet 1 (_length)
+      019F  JPLE +8 -> L6 (01AA)
+      01A2  Ldl0
+      01A3  Ldl0
+      01A4  FieldGet 1 (_length)
+      01A7  FieldSet 2 (_position)
+    L6:
+      01AA  ReturnVoid
+
+  [public] toArray(): bytes
+    ; entry 12, locals 3, stack 4, code 0092..00C2
+      0092  PushI8 0
+      0094  Ldl0
+      0095  FieldGet 1 (_length)
+      0098  InvokeStatic 24 (repeat) args=2 ret=1
+      009D  Stl1
+      009E  PushI8 0
+      00A0  Stl2
+    L0:
+      00A1  Ldl2
+      00A2  Ldl0
+      00A3  FieldGet 1 (_length)
+      00A6  JPGE +23 -> L1 (00C0)
+      00A9  Ldl1
+      00AA  Ldl2
+      00AB  Ldl0
+      00AC  FieldGet 0 (_buffer)
+      00AF  Ldl2
+      00B0  InvokeStatic 26 (op_[]) args=2 ret=1
+      00B5  InvokeStatic 27 (op_[]) args=3 ret=0
+      00BA  IncLocal 2 by 1
+      00BD  JP -31 -> L0 (00A1)
+    L1:
+      00C0  Ldl1
+      00C1  ReturnValue
+
+  [public] virtual override write(buffer: bytes, offset: int, count: int): int
+    ; entry 17, locals 6, stack 5, code 0231..0306
+      0231  Ldl2
+      0232  PushI8 0
+      0234  LT
+      0235  Dup
+      0236  JPNZ +8 -> L0 (0241)
+      0239  Pop
+      023A  Ldl3
+      023B  PushI8 0
+      023D  LT
+      023E  JP +0 -> L0 (0241)
+    L0:
+      0241  JPZ +11 -> L1 (024F)
+      0244  ObjNew 0 (surtr:ArgumentOutOfRangeException)
+      0247  Dup
+      0248  Ldc3
+      0249  InvokeSpecial 29 (ctor) args=2 ret=0
+      024E  Throw
+    L1:
+      024F  Ldl0
+      0250  FieldGet 5 (_isOpen)
+      0253  Inv
+      0254  JPZ +11 -> L2 (0262)
+      0257  ObjNew 1 (surtr:InvalidOperationException)
+      025A  Dup
+      025B  Ldc4
+      025C  InvokeSpecial 30 (ctor) args=2 ret=0
+      0261  Throw
+    L2:
+      0262  Ldl0
+      0263  FieldGet 3 (_writable)
+      0266  Inv
+      0267  JPZ +11 -> L3 (0275)
+      026A  ObjNew 1 (surtr:InvalidOperationException)
+      026D  Dup
+      026E  Ldc5
+      026F  InvokeSpecial 30 (ctor) args=2 ret=0
+      0274  Throw
+    L3:
+      0275  Ldl0
+      0276  FieldGet 2 (_position)
+      0279  Ldl3
+      027A  Add
+      027B  Stl4
+      027C  Ldl4
+      027D  Ldl0
+      027E  FieldGet 0 (_buffer)
+      0281  InvokeSpecial 23 (get_length) args=1 ret=1
+      0286  JPLE +56 -> L6 (02C1)
+      0289  Ldl0
+      028A  FieldGet 4 (_expandable)
+      028D  Inv
+      028E  JPZ +11 -> L4 (029C)
+      0291  ObjNew 1 (surtr:InvalidOperationException)
+      0294  Dup
+      0295  Ldc2
+      0296  InvokeSpecial 30 (ctor) args=2 ret=0
+      029B  Throw
+    L4:
+      029C  Ldl0
+      029D  FieldGet 0 (_buffer)
+      02A0  Ldl4
+      02A1  InvokeSpecial 31 (reserve) args=2 ret=0
+    L5:
+      02A6  Ldl0
+      02A7  FieldGet 0 (_buffer)
+      02AA  InvokeSpecial 23 (get_length) args=1 ret=1
+      02AF  Ldl4
+      02B0  JPGE +14 -> L6 (02C1)
+      02B3  Ldl0
+      02B4  FieldGet 0 (_buffer)
+      02B7  PushI8 0
+      02B9  InvokeSpecial 32 (push) args=2 ret=0
+      02BE  JP -27 -> L5 (02A6)
+    L6:
+      02C1  PushI8 0
+      02C3  Stl5
+    L7:
+      02C4  Ldl5
+      02C5  Ldl3
+      02C6  JPGE +30 -> L8 (02E7)
+      02C9  Ldl0
+      02CA  FieldGet 0 (_buffer)
+      02CD  Ldl0
+      02CE  FieldGet 2 (_position)
+      02D1  Ldl5
+      02D2  Add
+      02D3  Ldl1
+      02D4  Ldl2
+      02D5  Ldl5
+      02D6  Add
+      02D7  InvokeStatic 26 (op_[]) args=2 ret=1
+      02DC  InvokeStatic 27 (op_[]) args=3 ret=0
+      02E1  IncLocal 5 by 1
+      02E4  JP -35 -> L7 (02C4)
+    L8:
+      02E7  Ldl0
+      02E8  Ldl0
+      02E9  FieldGet 2 (_position)
+      02EC  Ldl3
+      02ED  Add
+      02EE  FieldSet 2 (_position)
+      02F1  Ldl0
+      02F2  FieldGet 2 (_position)
+      02F5  Ldl0
+      02F6  FieldGet 1 (_length)
+      02F9  JPLE +8 -> L9 (0304)
+      02FC  Ldl0
+      02FD  Ldl0
+      02FE  FieldGet 2 (_position)
+      0301  FieldSet 1 (_length)
+    L9:
+      0304  Ldl3
+      0305  ReturnValue
+
+  [public] virtual override writeByte(value: int): bool
+    ; entry 19, locals 5, stack 3, code 0341..03E3
+      0341  Ldl0
+      0342  FieldGet 5 (_isOpen)
+      0345  Inv
+      0346  JPZ +11 -> L0 (0354)
+      0349  ObjNew 1 (surtr:InvalidOperationException)
+      034C  Dup
+      034D  Ldc4
+      034E  InvokeSpecial 30 (ctor) args=2 ret=0
+      0353  Throw
+    L0:
+      0354  Ldl0
+      0355  FieldGet 3 (_writable)
+      0358  Inv
+      0359  JPZ +11 -> L1 (0367)
+      035C  ObjNew 1 (surtr:InvalidOperationException)
+      035F  Dup
+      0360  Ldc5
+      0361  InvokeSpecial 30 (ctor) args=2 ret=0
+      0366  Throw
+    L1:
+      0367  Ldl0
+      0368  FieldGet 2 (_position)
+      036B  PushI8 1
+      036D  Add
+      036E  Stl2
+      036F  Ldl2
+      0370  Ldl0
+      0371  FieldGet 0 (_buffer)
+      0374  InvokeSpecial 23 (get_length) args=1 ret=1
+      0379  JPLE +56 -> L4 (03B4)
+      037C  Ldl0
+      037D  FieldGet 4 (_expandable)
+      0380  Inv
+      0381  JPZ +11 -> L2 (038F)
+      0384  ObjNew 1 (surtr:InvalidOperationException)
+      0387  Dup
+      0388  Ldc2
+      0389  InvokeSpecial 30 (ctor) args=2 ret=0
+      038E  Throw
+    L2:
+      038F  Ldl0
+      0390  FieldGet 0 (_buffer)
+      0393  Ldl2
+      0394  InvokeSpecial 31 (reserve) args=2 ret=0
+    L3:
+      0399  Ldl0
+      039A  FieldGet 0 (_buffer)
+      039D  InvokeSpecial 23 (get_length) args=1 ret=1
+      03A2  Ldl2
+      03A3  JPGE +14 -> L4 (03B4)
+      03A6  Ldl0
+      03A7  FieldGet 0 (_buffer)
+      03AA  PushI8 0
+      03AC  InvokeSpecial 32 (push) args=2 ret=0
+      03B1  JP -27 -> L3 (0399)
+    L4:
+      03B4  Ldl0
+      03B5  FieldGet 0 (_buffer)
+      03B8  Ldl0
+      03B9  FieldGet 2 (_position)
+      03BC  Stl3
+      03BD  Ldl3
+      03BE  PushI8 1
+      03C0  Add
+      03C1  Stl4
+      03C2  Ldl0
+      03C3  Ldl4
+      03C4  FieldSet 2 (_position)
+      03C7  Ldl3
+      03C8  Ldl1
+      03C9  InvokeStatic 27 (op_[]) args=3 ret=0
+      03CE  Ldl0
+      03CF  FieldGet 2 (_position)
+      03D2  Ldl0
+      03D3  FieldGet 1 (_length)
+      03D6  JPLE +8 -> L5 (03E1)
+      03D9  Ldl0
+      03DA  Ldl0
+      03DB  FieldGet 2 (_position)
+      03DE  FieldSet 1 (_length)
+    L5:
+      03E1  PushTrue
+      03E2  ReturnValue
+
+  [public] writeTo(destination: surtr.io.Stream:Stream): void
+    ; entry 13, locals 2, stack 4, code 00C2..00D3
+      00C2  Ldl1
+      00C3  Ldl0
+      00C4  FieldGet 0 (_buffer)
+      00C7  PushI8 0
+      00C9  Ldl0
+      00CA  FieldGet 1 (_length)
+      00CD  InvokeVirtual 28 (write) args=4 ret=0
+      00D2  ReturnVoid

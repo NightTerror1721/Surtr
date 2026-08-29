@@ -1,10 +1,35 @@
 import surtr.io.Enums;
 
-public abstract class Stream : IDisposable
+public interface IWritableStream : IDisposable
 {
-    public abstract canRead: bool { get }
-    public abstract canWrite: bool { get }
-    public abstract canSeek: bool { get }
+    fun write(buffer: bytes, offset: int, count: int): int;
+    fun writeByte(value: int): bool;
+
+    fun flush(): void;
+}
+
+public interface IReadableStream : IDisposable
+{
+    eof: bool { get; }
+
+    fun read(buffer: bytes, offset: int, count: int): int;
+    fun readByte(): int;
+}
+
+public interface ISeekableStream : IDisposable
+{
+    fun seek(offset: int, origin: SeekOrigin): int;
+}
+
+public abstract class Stream : IWritableStream, IReadableStream, ISeekableStream
+{
+    public abstract canRead: bool { get; }
+    public abstract canWrite: bool { get; }
+    public abstract canSeek: bool { get; }
+    public abstract eof: bool { get; }
+
+    public abstract length: int { get; }
+    public abstract position: int { get; set; }
 
     public abstract fun read(buffer: bytes, offset: int, count: int): int;
     public abstract fun write(buffer: bytes, offset: int, count: int): int;
@@ -13,9 +38,9 @@ public abstract class Stream : IDisposable
     public abstract fun writeByte(value: int): bool;
 
     public abstract fun seek(offset: int, origin: SeekOrigin): int;
+    public abstract fun setLength(value: int): void;
 
     public abstract fun flush(): void;
-
     public abstract fun dispose(): void;
 
 
@@ -24,11 +49,26 @@ public abstract class Stream : IDisposable
     public inline fun read(buffer: bytes): int => read(buffer, 0, buffer.length);
     public inline fun write(buffer: bytes): int => write(buffer, 0, buffer.length);
 
-    public inline fun read(buffer: int[], offset: int, count: int): int => read(bytes(buffer), offset, count);
-    public inline fun write(buffer: int[], offset: int, count: int): int => write(bytes(buffer), offset, count);
-
-    public inline fun read(buffer: int[]): int => read(bytes(buffer), 0, buffer.length);
-    public inline fun write(buffer: int[]): int => write(bytes(buffer), 0, buffer.length);
-
     public inline fun close(): void => dispose();
+
+    // Copies every byte from this stream into destination, returning the total copied.
+    public fun copyTo(destination: Stream): int => copyTo(destination, 8192);
+
+    public fun copyTo(destination: Stream, bufferSize: int): int
+    {
+        if (bufferSize <= 0) throw ArgumentOutOfRangeException("bufferSize must be greater than 0");
+
+        let buffer = bytes.repeat(0, bufferSize);
+        var total = 0;
+        var read = this.read(buffer, 0, bufferSize);
+
+        while (read > 0)
+        {
+            destination.write(buffer, 0, read);
+            total = total + read;
+            read = this.read(buffer, 0, bufferSize);
+        }
+
+        return total;
+    }
 }

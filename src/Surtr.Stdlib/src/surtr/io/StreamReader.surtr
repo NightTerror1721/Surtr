@@ -1,0 +1,81 @@
+import surtr.io.Stream;
+
+// Reads text from a Stream, decoding its bytes as UTF-8. Supports line-oriented reading with
+// one byte of pushback so CRLF/LF line endings are handled without losing data.
+public class StreamReader
+{
+    private var _stream: Stream;
+    private var _pushback: int;
+    private var _leaveOpen: bool;
+
+    public constructor(stream: Stream, leaveOpen: bool = false)
+    {
+        this._stream = stream;
+        this._pushback = -1;
+        this._leaveOpen = leaveOpen;
+    }
+
+    public inline endOfStream: bool { get { return peek() == -1; } }
+
+    private fun nextByte(): int
+    {
+        if (_pushback != -1)
+        {
+            let b = _pushback;
+            _pushback = -1;
+            return b;
+        }
+        return _stream.readByte();
+    }
+
+    public fun peek(): int
+    {
+        if (_pushback != -1) return _pushback;
+        let b = _stream.readByte();
+        _pushback = b;
+        return b;
+    }
+
+    public fun readByte(): int => nextByte();
+
+    public fun readLine(): string?
+    {
+        let line = bytes.withCapacity(128);
+        var b = nextByte();
+
+        while (b != -1)
+        {
+            if (b == 10) break;            // LF
+            if (b == 13)                   // CR: check for CRLF
+            {
+                let n = nextByte();
+                if (n != 10 && n != -1) _pushback = n;
+                break;
+            }
+            line.push(b);
+            b = nextByte();
+        }
+
+        if (b == -1 && line.length == 0) return null;
+        return line.decodeUTF8();
+    }
+
+    public fun readToEnd(): string
+    {
+        let buf = bytes.withCapacity(1024);
+        var b = nextByte();
+        while (b != -1)
+        {
+            buf.push(b);
+            b = nextByte();
+        }
+        return buf.decodeUTF8();
+    }
+
+    public fun close(): void => dispose();
+
+    public fun dispose(): void
+    {
+        if (!_leaveOpen && _stream != null) _stream.dispose();
+    }
+}

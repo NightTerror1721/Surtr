@@ -1,0 +1,65 @@
+import surtr.io.Stream;
+
+// Writes text to a Stream, encoding it as UTF-8.
+public class StreamWriter
+{
+    public const NewLine: string = "\n";
+
+    private var _stream: Stream;
+    private var _leaveOpen: bool;
+    private var _isOpen: bool;
+
+    public constructor(stream: Stream, leaveOpen: bool = false)
+    {
+        this._stream = stream;
+        this._leaveOpen = leaveOpen;
+        this._isOpen = true;
+    }
+
+    public inline canWrite: bool { get { return _isOpen; } }
+
+    public fun write(text: string): void
+    {
+        if (!_isOpen) throw InvalidOperationException("Writer is closed");
+        if (text == null) return;
+        let data = bytes.fromUTF8(text);
+        if (data.length > 0) _stream.write(data, 0, data.length);
+    }
+
+    public fun writeChar(ch: char): void
+    {
+        if (!_isOpen) throw InvalidOperationException("Writer is closed");
+        let data = bytes.fromUTF8(string.fromChar(ch));
+        if (data.length > 0) _stream.write(data, 0, data.length);
+    }
+
+    public fun writeLine(text: string): void
+    {
+        write(text);
+        let nl = bytes.fromUTF8(NewLine);
+        _stream.write(nl, 0, nl.length);
+    }
+
+    public fun writeLine(): void
+    {
+        let nl = bytes.fromUTF8(NewLine);
+        _stream.write(nl, 0, nl.length);
+    }
+
+    public fun flush(): void
+    {
+        if (_isOpen) _stream.flush();
+    }
+
+    public fun close(): void => dispose();
+
+    public fun dispose(): void
+    {
+        if (_isOpen)
+        {
+            _stream.flush();
+            _isOpen = false;
+            if (!_leaveOpen) _stream.dispose();
+        }
+    }
+}

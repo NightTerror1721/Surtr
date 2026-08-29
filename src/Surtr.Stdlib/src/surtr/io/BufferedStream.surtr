@@ -1,0 +1,173 @@
+import surtr.io.Stream;
+import surtr.io.Enums;
+
+// A Stream decorator that adds a read/write buffer over another stream, so small reads and
+// writes do not each round-trip to the underlying source.
+public class BufferedStream : Stream
+{
+    private var _stream: Stream;
+    private var _buffer: bytes;
+    private var _bufferSize: int;
+    private var _readPos: int;
+    private var _readLen: int;
+    private var _writePos: int;
+    private var _one: bytes;
+    private var _isOpen: bool;
+
+    public constructor(stream: Stream, bufferSize: int = 8192)
+    {
+        if (bufferSize <= 0) throw ArgumentOutOfRangeException("bufferSize must be greater than 0");
+        this._stream = stream;
+        this._bufferSize = bufferSize;
+        this._buffer = bytes.repeat(0, bufferSize);
+        this._readPos = 0;
+        this._readLen = 0;
+        this._writePos = 0;
+        this._one = bytes.repeat(0, 1);
+        this._isOpen = true;
+    }
+
+    public sealed override canRead: bool => _stream.canRead;
+    public sealed override canWrite: bool => _stream.canWrite;
+    public sealed override canSeek: bool => _stream.canSeek;
+    public sealed override eof: bool => _readPos >= _readLen && _stream.eof;
+
+    public sealed override length: int => _stream.length;
+
+    public override position: int
+    {
+        get { return _stream.position - (_readLen - _readPos) + _writePos; }
+        set
+        {
+            flush();
+            _stream.position = value;
+            _readPos = 0;
+            _readLen = 0;
+            _writePos = 0;
+        }
+    }
+
+    public override fun setLength(value: int): void
+    {
+        flush();
+        _stream.setLength(value);
+    }
+
+    private fun flushWrite(): void
+    {
+        if (_writePos > 0)
+        {
+            _stream.write(_buffer, 0, _writePos);
+            _writePos = 0;
+        }
+    }
+
+    public override fun read(buffer: bytes, offset: int, count: int): int
+    {
+        if (offset < 0 || count < 0) throw ArgumentOutOfRangeException("offset and count must be non-negative");
+        if (!_isOpen) throw InvalidOperationException("Stream is closed");
+
+        var total = 0;
+
+        let available = _readLen - _readPos;
+        if (available > 0)
+        {
+            let fromBuffer = available < count ? available : count;
+            for (var i = 0; i < fromBuffer; i++)
+                buffer[offset + i] = _buffer[_readPos + i];
+            _readPos = _readPos + fromBuffer;
+            total = total + fromBuffer;
+            if (total == count) return total;
+        }
+
+        let remaining = count - total;
+        if (remaining >= _bufferSize)
+        {
+            let direct = _stream.read(buffer, offset + total, remaining);
+            total = total + direct;
+            return total;
+        }
+
+        _readPos = 0;
+        _readLen = _stream.read(_buffer, 0, _bufferSize);
+        if (_readLen <= 0) return total;
+
+        let toCopy = _readLen < remaining ? _readLen : remaining;
+        for (var i = 0; i < toCopy; i++)
+            buffer[offset + total + i] = _buffer[i];
+        _readPos = toCopy;
+        total = total + toCopy;
+        return total;
+    }
+
+    public override fun write(buffer: bytes, offset: int, count: int): int
+    {
+        if (offset < 0 || count < 0) throw ArgumentOutOfRangeException("offset and count must be non-negative");
+        if (!_isOpen) throw InvalidOperationException("Stream is closed");
+
+        if (_writePos > 0)
+        {
+            let space = _bufferSize - _writePos;
+            if (count <= space)
+            {
+                for (var i = 0; i < count; i++)
+                    _buffer[_writePos + i] = buffer[offset + i];
+                _writePos = _writePos + count;
+                if (_writePos == _bufferSize) flushWrite();
+                return count;
+            }
+            flushWrite();
+        }
+
+        if (count >= _bufferSize)
+        {
+            _stream.write(buffer, offset, count);
+            return count;
+        }
+
+        for (var i = 0; i < count; i++)
+            _buffer[_writePos + i] = buffer[offset + i];
+        _writePos = count;
+        return count;
+    }
+
+    public override fun readByte(): int
+    {
+        if (_readPos < _readLen) return _buffer[_readPos++];
+        let n = read(_one, 0, 1);
+        if (n <= 0) return -1;
+        return _one[0];
+    }
+
+    public override fun writeByte(value: int): bool
+    {
+        if (_writePos >= _bufferSize) flushWrite();
+        _buffer[_writePos++] = value;
+        return true;
+    }
+
+    public override fun seek(offset: int, origin: SeekOrigin): int
+    {
+        if (!_isOpen) throw InvalidOperationException("Stream is closed");
+        flushWrite();
+        _readPos = 0;
+        _readLen = 0;
+        return _stream.seek(offset, origin);
+    }
+
+    public override fun flush(): void
+    {
+        flushWrite();
+        _stream.flush();
+    }
+
+    public override fun dispose(): void
+    {
+        if (_isOpen)
+        {
+            flushWrite();
+            _stream.dispose();
+            _isOpen = false;
+        }
+    }
+}

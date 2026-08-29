@@ -1,0 +1,72 @@
+import surtr.io.Stream;
+
+// Writes primitives to a Stream in little-endian byte order. (float/double/long are not
+// representable without a native int<->float bit-cast, so only the integer/char/bytes/string
+// surface is provided here.)
+public class BinaryWriter
+{
+    private var _stream: Stream;
+    private var _leaveOpen: bool;
+
+    public constructor(stream: Stream, leaveOpen: bool = false)
+    {
+        this._stream = stream;
+        this._leaveOpen = leaveOpen;
+    }
+
+    public inline baseStream: Stream => _stream;
+
+    public fun writeBool(value: bool): void
+    {
+        _stream.writeByte(value ? 1 : 0);
+    }
+
+    public fun writeByte(value: int): void
+    {
+        _stream.writeByte(value & 0xFF);
+    }
+
+    public fun writeChar(value: char): void
+    {
+        let code = value.toInt();
+        _stream.writeByte(code & 0xFF);
+        _stream.writeByte((code >> 8) & 0xFF);
+    }
+
+    public fun writeInt(value: int): void
+    {
+        _stream.writeByte(value & 0xFF);
+        _stream.writeByte((value >> 8) & 0xFF);
+        _stream.writeByte((value >> 16) & 0xFF);
+        _stream.writeByte((value >> 24) & 0xFF);
+    }
+
+    public fun writeBytes(value: bytes): void
+    {
+        if (value != null) _stream.write(value, 0, value.length);
+    }
+
+    public fun writeString(value: string): void
+    {
+        if (value == null)
+        {
+            writeInt(0);
+            return;
+        }
+        let data = bytes.fromUTF8(value);
+        writeInt(data.length);
+        if (data.length > 0) _stream.write(data, 0, data.length);
+    }
+
+    public fun flush(): void
+    {
+        _stream.flush();
+    }
+
+    public fun close(): void => dispose();
+
+    public fun dispose(): void
+    {
+        if (!_leaveOpen) _stream.dispose();
+    }
+}

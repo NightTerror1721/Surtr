@@ -1,0 +1,195 @@
+module surtr.io.BinaryWriter
+  constants: 0   types: 0   fields: 2   methods: 18   modules: 0
+
+  field table:
+    #0  surtr.io.BinaryWriter:BinaryWriter._stream: surtr.io.Stream:Stream
+    #1  surtr.io.BinaryWriter:BinaryWriter._leaveOpen: bool
+
+  method table:
+    #0  surtr.io.BinaryWriter:BinaryWriter.ctor(surtr.io.Stream:Stream, bool) -> void
+    #1  surtr.io.BinaryWriter:BinaryWriter.get_baseStream() -> surtr.io.Stream:Stream
+    #2  surtr.io.BinaryWriter:BinaryWriter.writeBool(bool) -> void
+    #3  surtr.io.BinaryWriter:BinaryWriter.writeByte(int) -> void
+    #4  surtr.io.BinaryWriter:BinaryWriter.writeChar(char) -> void
+    #5  surtr.io.BinaryWriter:BinaryWriter.writeInt(int) -> void
+    #6  surtr.io.BinaryWriter:BinaryWriter.writeBytes(bytes) -> void
+    #7  surtr.io.BinaryWriter:BinaryWriter.writeString(string) -> void
+    #8  surtr.io.BinaryWriter:BinaryWriter.flush() -> void
+    #9  surtr.io.BinaryWriter:BinaryWriter.close() -> void
+    #10  surtr.io.BinaryWriter:BinaryWriter.dispose() -> void
+    #11  surtr.io.Stream:Stream.writeByte(int) -> bool
+    #12  char.toInt() -> int
+    #13  bytes.get_length() -> int
+    #14  surtr.io.Stream:Stream.write(bytes, int, int) -> int
+    #15  bytes.fromUTF8(string) -> bytes
+    #16  surtr.io.Stream:Stream.flush() -> void
+    #17  surtr.io.Stream:Stream.dispose() -> void
+
+class BinaryWriter  [public]
+  [private] field _leaveOpen: bool
+  [private] field _stream: surtr.io.Stream:Stream
+
+  [public] property baseStream: surtr.io.Stream:Stream { get; }
+    get:
+      ; entry 1, locals 1, stack 1, code 000B..0010
+        000B  Ldl0
+        000C  FieldGet 0 (_stream)
+        000F  ReturnValue
+
+  [public] close(): void
+    ; entry 9, locals 1, stack 1, code 00FC..0103
+      00FC  Ldl0
+      00FD  InvokeSpecial 10 (dispose) args=1 ret=0
+      0102  ReturnVoid
+
+  [public] ctor (stream: surtr.io.Stream:Stream, leaveOpen: bool = false): void
+    ; entry 0, locals 3, stack 2, code 0000..000B
+      0000  Ldl0
+      0001  Ldl1
+      0002  FieldSet 0 (_stream)
+      0005  Ldl0
+      0006  Ldl2
+      0007  FieldSet 1 (_leaveOpen)
+      000A  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 10, locals 1, stack 1, code 0103..0115
+      0103  Ldl0
+      0104  FieldGet 1 (_leaveOpen)
+      0107  Inv
+      0108  JPZ +9 -> L0 (0114)
+      010B  Ldl0
+      010C  FieldGet 0 (_stream)
+      010F  InvokeVirtual 17 (dispose) args=1 ret=0
+    L0:
+      0114  ReturnVoid
+
+  [public] flush(): void
+    ; entry 8, locals 1, stack 1, code 00F2..00FC
+      00F2  Ldl0
+      00F3  FieldGet 0 (_stream)
+      00F6  InvokeVirtual 16 (flush) args=1 ret=0
+      00FB  ReturnVoid
+
+  [public] writeBool(value: bool): void
+    ; entry 2, locals 2, stack 2, code 0010..0025
+      0010  Ldl0
+      0011  FieldGet 0 (_stream)
+      0014  Ldl1
+      0015  JPZ +5 -> L0 (001D)
+      0018  PushI8 1
+      001A  JP +2 -> L1 (001F)
+    L0:
+      001D  PushI8 0
+    L1:
+      001F  InvokeVirtual 11 (writeByte) args=2 ret=0
+      0024  ReturnVoid
+
+  [public] writeByte(value: int): void
+    ; entry 3, locals 2, stack 3, code 0025..0034
+      0025  Ldl0
+      0026  FieldGet 0 (_stream)
+      0029  Ldl1
+      002A  PushI16 255
+      002D  And
+      002E  InvokeVirtual 11 (writeByte) args=2 ret=0
+      0033  ReturnVoid
+
+  [public] writeBytes(value: bytes): void
+    ; entry 6, locals 2, stack 4, code 009D..00B4
+      009D  Ldl1
+      009E  JPN +18 -> L0 (00B3)
+      00A1  Ldl0
+      00A2  FieldGet 0 (_stream)
+      00A5  Ldl1
+      00A6  PushI8 0
+      00A8  Ldl1
+      00A9  InvokeSpecial 13 (get_length) args=1 ret=1
+      00AE  InvokeVirtual 14 (write) args=4 ret=0
+    L0:
+      00B3  ReturnVoid
+
+  [public] writeChar(value: char): void
+    ; entry 4, locals 3, stack 3, code 0034..005B
+      0034  Ldl1
+      0035  InvokeSpecial 12 (toInt) args=1 ret=1
+      003A  Stl2
+      003B  Ldl0
+      003C  FieldGet 0 (_stream)
+      003F  Ldl2
+      0040  PushI16 255
+      0043  And
+      0044  InvokeVirtual 11 (writeByte) args=2 ret=0
+      0049  Ldl0
+      004A  FieldGet 0 (_stream)
+      004D  Ldl2
+      004E  PushI8 8
+      0050  Sar
+      0051  PushI16 255
+      0054  And
+      0055  InvokeVirtual 11 (writeByte) args=2 ret=0
+      005A  ReturnVoid
+
+  [public] writeInt(value: int): void
+    ; entry 5, locals 2, stack 3, code 005B..009D
+      005B  Ldl0
+      005C  FieldGet 0 (_stream)
+      005F  Ldl1
+      0060  PushI16 255
+      0063  And
+      0064  InvokeVirtual 11 (writeByte) args=2 ret=0
+      0069  Ldl0
+      006A  FieldGet 0 (_stream)
+      006D  Ldl1
+      006E  PushI8 8
+      0070  Sar
+      0071  PushI16 255
+      0074  And
+      0075  InvokeVirtual 11 (writeByte) args=2 ret=0
+      007A  Ldl0
+      007B  FieldGet 0 (_stream)
+      007E  Ldl1
+      007F  PushI8 16
+      0081  Sar
+      0082  PushI16 255
+      0085  And
+      0086  InvokeVirtual 11 (writeByte) args=2 ret=0
+      008B  Ldl0
+      008C  FieldGet 0 (_stream)
+      008F  Ldl1
+      0090  PushI8 24
+      0092  Sar
+      0093  PushI16 255
+      0096  And
+      0097  InvokeVirtual 11 (writeByte) args=2 ret=0
+      009C  ReturnVoid
+
+  [public] writeString(value: string): void
+    ; entry 7, locals 3, stack 4, code 00B4..00F2
+      00B4  Ldl1
+      00B5  JPNN +9 -> L0 (00C1)
+      00B8  Ldl0
+      00B9  PushI8 0
+      00BB  InvokeSpecial 5 (writeInt) args=2 ret=0
+      00C0  ReturnVoid
+    L0:
+      00C1  Ldl1
+      00C2  InvokeStatic 15 (fromUTF8) args=1 ret=1
+      00C7  Stl2
+      00C8  Ldl0
+      00C9  Ldl2
+      00CA  InvokeSpecial 13 (get_length) args=1 ret=1
+      00CF  InvokeSpecial 5 (writeInt) args=2 ret=0
+      00D4  Ldl2
+      00D5  InvokeSpecial 13 (get_length) args=1 ret=1
+      00DA  PushI8 0
+      00DC  JPLE +18 -> L1 (00F1)
+      00DF  Ldl0
+      00E0  FieldGet 0 (_stream)
+      00E3  Ldl2
+      00E4  PushI8 0
+      00E6  Ldl2
+      00E7  InvokeSpecial 13 (get_length) args=1 ret=1
+      00EC  InvokeVirtual 14 (write) args=4 ret=0
+    L1:
+      00F1  ReturnVoid

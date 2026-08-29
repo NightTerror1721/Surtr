@@ -1,0 +1,227 @@
+module surtr.io.BinaryReader
+  constants: 1   types: 0   fields: 2   methods: 15   modules: 0
+  string #0 = ""
+
+  field table:
+    #0  surtr.io.BinaryReader:BinaryReader._stream: surtr.io.Stream:Stream
+    #1  surtr.io.BinaryReader:BinaryReader._leaveOpen: bool
+
+  method table:
+    #0  surtr.io.BinaryReader:BinaryReader.ctor(surtr.io.Stream:Stream, bool) -> void
+    #1  surtr.io.BinaryReader:BinaryReader.get_baseStream() -> surtr.io.Stream:Stream
+    #2  surtr.io.BinaryReader:BinaryReader.readBool() -> bool
+    #3  surtr.io.BinaryReader:BinaryReader.readByte() -> int
+    #4  surtr.io.BinaryReader:BinaryReader.readChar() -> char
+    #5  surtr.io.BinaryReader:BinaryReader.readInt() -> int
+    #6  surtr.io.BinaryReader:BinaryReader.readBytes(int) -> bytes
+    #7  surtr.io.BinaryReader:BinaryReader.readString() -> string
+    #8  surtr.io.BinaryReader:BinaryReader.close() -> void
+    #9  surtr.io.BinaryReader:BinaryReader.dispose() -> void
+    #10  surtr.io.Stream:Stream.readByte() -> int
+    #11  bytes.repeat(int, int) -> bytes
+    #12  surtr.io.Stream:Stream.read(bytes, int, int) -> int
+    #13  bytes.decodeUTF8() -> string
+    #14  surtr.io.Stream:Stream.dispose() -> void
+
+class BinaryReader  [public]
+  [private] field _leaveOpen: bool
+  [private] field _stream: surtr.io.Stream:Stream
+
+  [public] property baseStream: surtr.io.Stream:Stream { get; }
+    get:
+      ; entry 1, locals 1, stack 1, code 000B..0010
+        000B  Ldl0
+        000C  FieldGet 0 (_stream)
+        000F  ReturnValue
+
+  [public] close(): void
+    ; entry 8, locals 1, stack 1, code 010B..0112
+      010B  Ldl0
+      010C  InvokeSpecial 9 (dispose) args=1 ret=0
+      0111  ReturnVoid
+
+  [public] ctor (stream: surtr.io.Stream:Stream, leaveOpen: bool = false): void
+    ; entry 0, locals 3, stack 2, code 0000..000B
+      0000  Ldl0
+      0001  Ldl1
+      0002  FieldSet 0 (_stream)
+      0005  Ldl0
+      0006  Ldl2
+      0007  FieldSet 1 (_leaveOpen)
+      000A  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 9, locals 1, stack 1, code 0112..0124
+      0112  Ldl0
+      0113  FieldGet 1 (_leaveOpen)
+      0116  Inv
+      0117  JPZ +9 -> L0 (0123)
+      011A  Ldl0
+      011B  FieldGet 0 (_stream)
+      011E  InvokeVirtual 14 (dispose) args=1 ret=0
+    L0:
+      0123  ReturnVoid
+
+  [public] readBool(): bool
+    ; entry 2, locals 2, stack 2, code 0010..001F
+      0010  Ldl0
+      0011  FieldGet 0 (_stream)
+      0014  InvokeVirtual 10 (readByte) args=1 ret=1
+      0019  Stl1
+      001A  Ldl1
+      001B  PushI8 0
+      001D  NE
+      001E  ReturnValue
+
+  [public] readByte(): int
+    ; entry 3, locals 1, stack 1, code 001F..0029
+      001F  Ldl0
+      0020  FieldGet 0 (_stream)
+      0023  InvokeVirtual 10 (readByte) args=1 ret=1
+      0028  ReturnValue
+
+  [public] readBytes(count: int): bytes
+    ; entry 6, locals 5, stack 5, code 0093..00C5
+      0093  PushI8 0
+      0095  Ldl1
+      0096  InvokeStatic 11 (repeat) args=2 ret=1
+      009B  Stl2
+      009C  PushI8 0
+      009E  Stl3
+    L0:
+      009F  Ldl3
+      00A0  Ldl1
+      00A1  JPGE +31 -> L2 (00C3)
+      00A4  Ldl0
+      00A5  FieldGet 0 (_stream)
+      00A8  Ldl2
+      00A9  Ldl3
+      00AA  Ldl1
+      00AB  Ldl3
+      00AC  Sub
+      00AD  InvokeVirtual 12 (read) args=4 ret=1
+      00B2  Stl4
+      00B3  Ldl4
+      00B4  PushI8 0
+      00B6  JPGT +3 -> L1 (00BC)
+      00B9  JP +7 -> L2 (00C3)
+    L1:
+      00BC  Ldl3
+      00BD  Ldl4
+      00BE  Add
+      00BF  Stl3
+      00C0  JP -36 -> L0 (009F)
+    L2:
+      00C3  Ldl2
+      00C4  ReturnValue
+
+  [public] readChar(): char
+    ; entry 4, locals 4, stack 2, code 0029..0051
+      0029  Ldl0
+      002A  FieldGet 0 (_stream)
+      002D  InvokeVirtual 10 (readByte) args=1 ret=1
+      0032  Stl1
+      0033  Ldl0
+      0034  FieldGet 0 (_stream)
+      0037  InvokeVirtual 10 (readByte) args=1 ret=1
+      003C  Stl2
+      003D  Ldl1
+      003E  PushI8 0
+      0040  JPGE +4 -> L0 (0047)
+      0043  PushI8 0
+      0045  I2C
+      0046  ReturnValue
+    L0:
+      0047  Ldl2
+      0048  PushI8 8
+      004A  Shl
+      004B  Ldl1
+      004C  Or
+      004D  Stl3
+      004E  Ldl3
+      004F  I2C
+      0050  ReturnValue
+
+  [public] readInt(): int
+    ; entry 5, locals 5, stack 3, code 0051..0093
+      0051  Ldl0
+      0052  FieldGet 0 (_stream)
+      0055  InvokeVirtual 10 (readByte) args=1 ret=1
+      005A  Stl1
+      005B  Ldl0
+      005C  FieldGet 0 (_stream)
+      005F  InvokeVirtual 10 (readByte) args=1 ret=1
+      0064  Stl2
+      0065  Ldl0
+      0066  FieldGet 0 (_stream)
+      0069  InvokeVirtual 10 (readByte) args=1 ret=1
+      006E  Stl3
+      006F  Ldl0
+      0070  FieldGet 0 (_stream)
+      0073  InvokeVirtual 10 (readByte) args=1 ret=1
+      0078  Stl4
+      0079  Ldl1
+      007A  PushI8 0
+      007C  JPGE +3 -> L0 (0082)
+      007F  PushI8 0
+      0081  ReturnValue
+    L0:
+      0082  Ldl1
+      0083  Ldl2
+      0084  PushI8 8
+      0086  Shl
+      0087  Or
+      0088  Ldl3
+      0089  PushI8 16
+      008B  Shl
+      008C  Or
+      008D  Ldl4
+      008E  PushI8 24
+      0090  Shl
+      0091  Or
+      0092  ReturnValue
+
+  [public] readString(): string
+    ; entry 7, locals 5, stack 5, code 00C5..010B
+      00C5  Ldl0
+      00C6  InvokeSpecial 5 (readInt) args=1 ret=1
+      00CB  Stl1
+      00CC  Ldl1
+      00CD  PushI8 0
+      00CF  JPGT +2 -> L0 (00D4)
+      00D2  Ldc0
+      00D3  ReturnValue
+    L0:
+      00D4  PushI8 0
+      00D6  Ldl1
+      00D7  InvokeStatic 11 (repeat) args=2 ret=1
+      00DC  Stl2
+      00DD  PushI8 0
+      00DF  Stl3
+    L1:
+      00E0  Ldl3
+      00E1  Ldl1
+      00E2  JPGE +31 -> L3 (0104)
+      00E5  Ldl0
+      00E6  FieldGet 0 (_stream)
+      00E9  Ldl2
+      00EA  Ldl3
+      00EB  Ldl1
+      00EC  Ldl3
+      00ED  Sub
+      00EE  InvokeVirtual 12 (read) args=4 ret=1
+      00F3  Stl4
+      00F4  Ldl4
+      00F5  PushI8 0
+      00F7  JPGT +3 -> L2 (00FD)
+      00FA  JP +7 -> L3 (0104)
+    L2:
+      00FD  Ldl3
+      00FE  Ldl4
+      00FF  Add
+      0100  Stl3
+      0101  JP -36 -> L1 (00E0)
+    L3:
+      0104  Ldl2
+      0105  InvokeSpecial 13 (decodeUTF8) args=1 ret=1
+      010A  ReturnValue

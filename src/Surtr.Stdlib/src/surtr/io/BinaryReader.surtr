@@ -1,0 +1,80 @@
+import surtr.io.Stream;
+
+// Reads primitives from a Stream in little-endian byte order. (float/double/long are not
+// representable without a native int<->float bit-cast, so only the integer/char/bytes/string
+// surface is provided here.)
+public class BinaryReader
+{
+    private var _stream: Stream;
+    private var _leaveOpen: bool;
+
+    public constructor(stream: Stream, leaveOpen: bool = false)
+    {
+        this._stream = stream;
+        this._leaveOpen = leaveOpen;
+    }
+
+    public inline baseStream: Stream => _stream;
+
+    public fun readBool(): bool
+    {
+        let b = _stream.readByte();
+        return b != 0;
+    }
+
+    public fun readByte(): int => _stream.readByte();
+
+    public fun readChar(): char
+    {
+        let lo = _stream.readByte();
+        let hi = _stream.readByte();
+        if (lo < 0) return char(0);
+        let code = (hi << 8) | lo;
+        return char(code);
+    }
+
+    public fun readInt(): int
+    {
+        let b0 = _stream.readByte();
+        let b1 = _stream.readByte();
+        let b2 = _stream.readByte();
+        let b3 = _stream.readByte();
+        if (b0 < 0) return 0;
+        return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+    }
+
+    public fun readBytes(count: int): bytes
+    {
+        let result = bytes.repeat(0, count);
+        var read = 0;
+        while (read < count)
+        {
+            let n = _stream.read(result, read, count - read);
+            if (n <= 0) break;
+            read = read + n;
+        }
+        return result;
+    }
+
+    public fun readString(): string
+    {
+        let len = readInt();
+        if (len <= 0) return "";
+        let buf = bytes.repeat(0, len);
+        var read = 0;
+        while (read < len)
+        {
+            let n = _stream.read(buf, read, len - read);
+            if (n <= 0) break;
+            read = read + n;
+        }
+        return buf.decodeUTF8();
+    }
+
+    public fun close(): void => dispose();
+
+    public fun dispose(): void
+    {
+        if (!_leaveOpen) _stream.dispose();
+    }
+}

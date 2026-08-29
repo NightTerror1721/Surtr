@@ -1,21 +1,53 @@
 module surtr.io.Stream
-  constants: 0   types: 0   fields: 0   methods: 12   modules: 0
+  constants: 1   types: 1   fields: 0   methods: 18   modules: 0
+  string #0 = "bufferSize must be greater than 0"
+
+  type table:
+    #0  surtr:ArgumentOutOfRangeException
 
   method table:
-    #0  surtr.io.Stream:Stream.read(bytes) -> int
-    #1  surtr.io.Stream:Stream.write(bytes) -> int
-    #2  surtr.io.Stream:Stream.read(int[], int, int) -> int
-    #3  surtr.io.Stream:Stream.write(int[], int, int) -> int
-    #4  surtr.io.Stream:Stream.read(int[]) -> int
-    #5  surtr.io.Stream:Stream.write(int[]) -> int
-    #6  surtr.io.Stream:Stream.close() -> void
-    #7  bytes.get_length() -> int
-    #8  surtr.io.Stream:Stream.read(bytes, int, int) -> int
-    #9  surtr.io.Stream:Stream.write(bytes, int, int) -> int
-    #10  bytes.from(int[]) -> bytes
-    #11  surtr.io.Stream:Stream.dispose() -> void
+    #0  surtr.io.Stream:IWritableStream.write(bytes, int, int) -> int
+    #1  surtr.io.Stream:IWritableStream.writeByte(int) -> bool
+    #2  surtr.io.Stream:IWritableStream.flush() -> void
+    #3  surtr.io.Stream:IReadableStream.get_eof() -> bool
+    #4  surtr.io.Stream:IReadableStream.read(bytes, int, int) -> int
+    #5  surtr.io.Stream:IReadableStream.readByte() -> int
+    #6  surtr.io.Stream:ISeekableStream.seek(int, surtr.io.Enums:SeekOrigin) -> int
+    #7  surtr.io.Stream:Stream.read(bytes) -> int
+    #8  surtr.io.Stream:Stream.write(bytes) -> int
+    #9  surtr.io.Stream:Stream.close() -> void
+    #10  surtr.io.Stream:Stream.copyTo(surtr.io.Stream:Stream) -> int
+    #11  surtr.io.Stream:Stream.copyTo(surtr.io.Stream:Stream, int) -> int
+    #12  bytes.get_length() -> int
+    #13  surtr.io.Stream:Stream.read(bytes, int, int) -> int
+    #14  surtr.io.Stream:Stream.write(bytes, int, int) -> int
+    #15  surtr.io.Stream:Stream.dispose() -> void
+    #16  surtr:ArgumentOutOfRangeException.ctor(string) -> void
+    #17  bytes.repeat(int, int) -> bytes
 
-abstract class Stream : surtr:IDisposable  [public]
+interface IReadableStream : surtr:IDisposable  [public]
+
+  [public] property eof: bool { get; }
+    get:
+      ; abstract
+
+  [public] abstract read(buffer: bytes, offset: int, count: int): int
+
+  [public] abstract readByte(): int
+
+interface ISeekableStream : surtr:IDisposable  [public]
+
+  [public] abstract seek(offset: int, origin: surtr.io.Enums:SeekOrigin): int
+
+interface IWritableStream : surtr:IDisposable  [public]
+
+  [public] abstract flush(): void
+
+  [public] abstract write(buffer: bytes, offset: int, count: int): int
+
+  [public] abstract writeByte(value: int): bool
+
+abstract class Stream : surtr.io.Stream:IWritableStream, surtr.io.Stream:IReadableStream, surtr.io.Stream:ISeekableStream  [public]
 
   [public] property canRead: bool { get; }
     get:
@@ -29,11 +61,80 @@ abstract class Stream : surtr:IDisposable  [public]
     get:
       ; abstract
 
+  [public] property eof: bool { get; }
+    get:
+      ; abstract
+
+  [public] property length: int { get; }
+    get:
+      ; abstract
+
+  [public] property position: int { get; set; }
+    get:
+      ; abstract
+    set:
+      ; abstract
+
   [public] close(): void
-    ; entry 6, locals 1, stack 1, code 0060..0067
-      0060  Ldl0
-      0061  InvokeVirtual 11 (dispose) args=1 ret=0
-      0066  ReturnVoid
+    ; entry 2, locals 1, stack 1, code 0020..0027
+      0020  Ldl0
+      0021  InvokeVirtual 15 (dispose) args=1 ret=0
+      0026  ReturnVoid
+
+  [public] copyTo(destination: surtr.io.Stream:Stream): int
+    ; entry 3, locals 2, stack 3, code 0027..0032
+      0027  Ldl0
+      0028  Ldl1
+      0029  PushI16 8192
+      002C  InvokeSpecial 11 (copyTo) args=3 ret=1
+      0031  ReturnValue
+
+  [public] copyTo(destination: surtr.io.Stream:Stream, bufferSize: int): int
+    ; entry 4, locals 6, stack 4, code 0032..007E
+      0032  Ldl2
+      0033  PushI8 0
+      0035  JPGT +11 -> L0 (0043)
+      0038  ObjNew 0 (surtr:ArgumentOutOfRangeException)
+      003B  Dup
+      003C  Ldc0
+      003D  InvokeSpecial 16 (ctor) args=2 ret=0
+      0042  Throw
+    L0:
+      0043  PushI8 0
+      0045  Ldl2
+      0046  InvokeStatic 17 (repeat) args=2 ret=1
+      004B  Stl3
+      004C  PushI8 0
+      004E  Stl4
+      004F  Ldl0
+      0050  Ldl3
+      0051  PushI8 0
+      0053  Ldl2
+      0054  InvokeVirtual 13 (read) args=4 ret=1
+      0059  Stl5
+    L1:
+      005A  Ldl5
+      005B  PushI8 0
+      005D  JPLE +28 -> L2 (007C)
+      0060  Ldl1
+      0061  Ldl3
+      0062  PushI8 0
+      0064  Ldl5
+      0065  InvokeVirtual 14 (write) args=4 ret=0
+      006A  Ldl4
+      006B  Ldl5
+      006C  Add
+      006D  Stl4
+      006E  Ldl0
+      006F  Ldl3
+      0070  PushI8 0
+      0072  Ldl2
+      0073  InvokeVirtual 13 (read) args=4 ret=1
+      0078  Stl5
+      0079  JP -34 -> L1 (005A)
+    L2:
+      007C  Ldl4
+      007D  ReturnValue
 
   [public] abstract dispose(): void
 
@@ -47,34 +148,15 @@ abstract class Stream : surtr:IDisposable  [public]
       0001  Ldl1
       0002  PushI8 0
       0004  Ldl1
-      0005  InvokeSpecial 7 (get_length) args=1 ret=1
-      000A  InvokeVirtual 8 (read) args=4 ret=1
+      0005  InvokeSpecial 12 (get_length) args=1 ret=1
+      000A  InvokeVirtual 13 (read) args=4 ret=1
       000F  ReturnValue
-
-  [public] read(buffer: int[], offset: int, count: int): int
-    ; entry 2, locals 4, stack 4, code 0020..002F
-      0020  Ldl0
-      0021  Ldl1
-      0022  InvokeStatic 10 (from) args=1 ret=1
-      0027  Ldl2
-      0028  Ldl3
-      0029  InvokeVirtual 8 (read) args=4 ret=1
-      002E  ReturnValue
-
-  [public] read(buffer: int[]): int
-    ; entry 4, locals 2, stack 4, code 003E..004F
-      003E  Ldl0
-      003F  Ldl1
-      0040  InvokeStatic 10 (from) args=1 ret=1
-      0045  PushI8 0
-      0047  Ldl1
-      0048  ArrLen
-      0049  InvokeVirtual 8 (read) args=4 ret=1
-      004E  ReturnValue
 
   [public] abstract readByte(): int
 
   [public] abstract seek(offset: int, origin: surtr.io.Enums:SeekOrigin): int
+
+  [public] abstract setLength(value: int): void
 
   [public] abstract write(buffer: bytes, offset: int, count: int): int
 
@@ -84,29 +166,8 @@ abstract class Stream : surtr:IDisposable  [public]
       0011  Ldl1
       0012  PushI8 0
       0014  Ldl1
-      0015  InvokeSpecial 7 (get_length) args=1 ret=1
-      001A  InvokeVirtual 9 (write) args=4 ret=1
+      0015  InvokeSpecial 12 (get_length) args=1 ret=1
+      001A  InvokeVirtual 14 (write) args=4 ret=1
       001F  ReturnValue
-
-  [public] write(buffer: int[], offset: int, count: int): int
-    ; entry 3, locals 4, stack 4, code 002F..003E
-      002F  Ldl0
-      0030  Ldl1
-      0031  InvokeStatic 10 (from) args=1 ret=1
-      0036  Ldl2
-      0037  Ldl3
-      0038  InvokeVirtual 9 (write) args=4 ret=1
-      003D  ReturnValue
-
-  [public] write(buffer: int[]): int
-    ; entry 5, locals 2, stack 4, code 004F..0060
-      004F  Ldl0
-      0050  Ldl1
-      0051  InvokeStatic 10 (from) args=1 ret=1
-      0056  PushI8 0
-      0058  Ldl1
-      0059  ArrLen
-      005A  InvokeVirtual 9 (write) args=4 ret=1
-      005F  ReturnValue
 
   [public] abstract writeByte(value: int): bool

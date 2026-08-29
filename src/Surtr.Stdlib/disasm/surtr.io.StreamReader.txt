@@ -1,0 +1,216 @@
+module surtr.io.StreamReader
+  constants: 0   types: 0   fields: 3   methods: 15   modules: 0
+
+  field table:
+    #0  surtr.io.StreamReader:StreamReader._stream: surtr.io.Stream:Stream
+    #1  surtr.io.StreamReader:StreamReader._pushback: int
+    #2  surtr.io.StreamReader:StreamReader._leaveOpen: bool
+
+  method table:
+    #0  surtr.io.StreamReader:StreamReader.ctor(surtr.io.Stream:Stream, bool) -> void
+    #1  surtr.io.StreamReader:StreamReader.get_endOfStream() -> bool
+    #2  surtr.io.StreamReader:StreamReader.nextByte() -> int
+    #3  surtr.io.StreamReader:StreamReader.peek() -> int
+    #4  surtr.io.StreamReader:StreamReader.readByte() -> int
+    #5  surtr.io.StreamReader:StreamReader.readLine() -> string
+    #6  surtr.io.StreamReader:StreamReader.readToEnd() -> string
+    #7  surtr.io.StreamReader:StreamReader.close() -> void
+    #8  surtr.io.StreamReader:StreamReader.dispose() -> void
+    #9  surtr.io.Stream:Stream.readByte() -> int
+    #10  bytes.withCapacity(int) -> bytes
+    #11  bytes.push(int) -> void
+    #12  bytes.get_length() -> int
+    #13  bytes.decodeUTF8() -> string
+    #14  surtr.io.Stream:Stream.dispose() -> void
+
+class StreamReader  [public]
+  [private] field _leaveOpen: bool
+  [private] field _pushback: int
+  [private] field _stream: surtr.io.Stream:Stream
+
+  [public] property endOfStream: bool { get; }
+    get:
+      ; entry 1, locals 1, stack 2, code 0011..001B
+        0011  Ldl0
+        0012  InvokeSpecial 3 (peek) args=1 ret=1
+        0017  PushI8 -1
+        0019  EQ
+        001A  ReturnValue
+
+  [public] close(): void
+    ; entry 7, locals 1, stack 1, code 0108..010F
+      0108  Ldl0
+      0109  InvokeSpecial 8 (dispose) args=1 ret=0
+      010E  ReturnVoid
+
+  [public] ctor (stream: surtr.io.Stream:Stream, leaveOpen: bool = false): void
+    ; entry 0, locals 3, stack 2, code 0000..0011
+      0000  Ldl0
+      0001  Ldl1
+      0002  FieldSet 0 (_stream)
+      0005  Ldl0
+      0006  PushI8 -1
+      0008  FieldSet 1 (_pushback)
+      000B  Ldl0
+      000C  Ldl2
+      000D  FieldSet 2 (_leaveOpen)
+      0010  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 8, locals 1, stack 2, code 010F..012E
+      010F  Ldl0
+      0110  FieldGet 2 (_leaveOpen)
+      0113  Inv
+      0114  Dup
+      0115  JPZ +9 -> L0 (0121)
+      0118  Pop
+      0119  Ldl0
+      011A  FieldGet 0 (_stream)
+      011D  IsNotNull
+      011E  JP +0 -> L0 (0121)
+    L0:
+      0121  JPZ +9 -> L1 (012D)
+      0124  Ldl0
+      0125  FieldGet 0 (_stream)
+      0128  InvokeVirtual 14 (dispose) args=1 ret=0
+    L1:
+      012D  ReturnVoid
+
+  [private] nextByte(): int
+    ; entry 2, locals 2, stack 2, code 001B..003B
+      001B  Ldl0
+      001C  FieldGet 1 (_pushback)
+      001F  PushI8 -1
+      0021  JPEQ +13 -> L0 (0031)
+      0024  Ldl0
+      0025  FieldGet 1 (_pushback)
+      0028  Stl1
+      0029  Ldl0
+      002A  PushI8 -1
+      002C  FieldSet 1 (_pushback)
+      002F  Ldl1
+      0030  ReturnValue
+    L0:
+      0031  Ldl0
+      0032  FieldGet 0 (_stream)
+      0035  InvokeVirtual 9 (readByte) args=1 ret=1
+      003A  ReturnValue
+
+  [public] peek(): int
+    ; entry 3, locals 2, stack 2, code 003B..005A
+      003B  Ldl0
+      003C  FieldGet 1 (_pushback)
+      003F  PushI8 -1
+      0041  JPEQ +5 -> L0 (0049)
+      0044  Ldl0
+      0045  FieldGet 1 (_pushback)
+      0048  ReturnValue
+    L0:
+      0049  Ldl0
+      004A  FieldGet 0 (_stream)
+      004D  InvokeVirtual 9 (readByte) args=1 ret=1
+      0052  Stl1
+      0053  Ldl0
+      0054  Ldl1
+      0055  FieldSet 1 (_pushback)
+      0058  Ldl1
+      0059  ReturnValue
+
+  [public] readByte(): int
+    ; entry 4, locals 1, stack 1, code 005A..0061
+      005A  Ldl0
+      005B  InvokeSpecial 2 (nextByte) args=1 ret=1
+      0060  ReturnValue
+
+  [public] readLine(): string
+    ; entry 5, locals 4, stack 2, code 0061..00DA
+      0061  PushI16 128
+      0064  InvokeStatic 10 (withCapacity) args=1 ret=1
+      0069  Stl1
+      006A  Ldl0
+      006B  InvokeSpecial 2 (nextByte) args=1 ret=1
+      0070  Stl2
+    L0:
+      0071  Ldl2
+      0072  PushI8 -1
+      0074  JPEQ +66 -> L5 (00B9)
+      0077  Ldl2
+      0078  PushI8 10
+      007A  JPNE +3 -> L1 (0080)
+      007D  JP +57 -> L5 (00B9)
+    L1:
+      0080  Ldl2
+      0081  PushI8 13
+      0083  JPNE +34 -> L4 (00A8)
+      0086  Ldl0
+      0087  InvokeSpecial 2 (nextByte) args=1 ret=1
+      008C  Stl3
+      008D  Ldl3
+      008E  PushI8 10
+      0090  NE
+      0091  Dup
+      0092  JPZ +8 -> L2 (009D)
+      0095  Pop
+      0096  Ldl3
+      0097  PushI8 -1
+      0099  NE
+      009A  JP +0 -> L2 (009D)
+    L2:
+      009D  JPZ +5 -> L3 (00A5)
+      00A0  Ldl0
+      00A1  Ldl3
+      00A2  FieldSet 1 (_pushback)
+    L3:
+      00A5  JP +17 -> L5 (00B9)
+    L4:
+      00A8  Ldl1
+      00A9  Ldl2
+      00AA  InvokeSpecial 11 (push) args=2 ret=0
+      00AF  Ldl0
+      00B0  InvokeSpecial 2 (nextByte) args=1 ret=1
+      00B5  Stl2
+      00B6  JP -72 -> L0 (0071)
+    L5:
+      00B9  Ldl2
+      00BA  PushI8 -1
+      00BC  EQ
+      00BD  Dup
+      00BE  JPZ +13 -> L6 (00CE)
+      00C1  Pop
+      00C2  Ldl1
+      00C3  InvokeSpecial 12 (get_length) args=1 ret=1
+      00C8  PushI8 0
+      00CA  EQ
+      00CB  JP +0 -> L6 (00CE)
+    L6:
+      00CE  JPZ +2 -> L7 (00D3)
+      00D1  PushNull
+      00D2  ReturnValue
+    L7:
+      00D3  Ldl1
+      00D4  InvokeSpecial 13 (decodeUTF8) args=1 ret=1
+      00D9  ReturnValue
+
+  [public] readToEnd(): string
+    ; entry 6, locals 3, stack 2, code 00DA..0108
+      00DA  PushI16 1024
+      00DD  InvokeStatic 10 (withCapacity) args=1 ret=1
+      00E2  Stl1
+      00E3  Ldl0
+      00E4  InvokeSpecial 2 (nextByte) args=1 ret=1
+      00E9  Stl2
+    L0:
+      00EA  Ldl2
+      00EB  PushI8 -1
+      00ED  JPEQ +17 -> L1 (0101)
+      00F0  Ldl1
+      00F1  Ldl2
+      00F2  InvokeSpecial 11 (push) args=2 ret=0
+      00F7  Ldl0
+      00F8  InvokeSpecial 2 (nextByte) args=1 ret=1
+      00FD  Stl2
+      00FE  JP -23 -> L0 (00EA)
+    L1:
+      0101  Ldl1
+      0102  InvokeSpecial 13 (decodeUTF8) args=1 ret=1
+      0107  ReturnValue
