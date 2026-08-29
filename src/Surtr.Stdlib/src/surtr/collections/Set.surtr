@@ -1,6 +1,6 @@
 import surtr.collections.Collection;
 
-public interface IReadOnlySet<T> default Set<T> : IReadOnlyCollection<T>
+public interface IReadOnlySet<T> default ReadOnlySet<T> : IReadOnlyCollection<T>
 {
     isEmpty: bool { get; }
 
@@ -41,8 +41,15 @@ public class ReadOnlySet<T> : IReadOnlySet<T>
 
     public constructor(items: T...)
     {
+        _dict = {};
         for (item in items)
             _dict[item] = true;
+    }
+
+    public constructor() { }
+    each (item: T)
+    {
+        _dict[item] = true;
     }
 
     public inline length: int => _dict.length;
@@ -226,7 +233,6 @@ public class Set<T> : ReadOnlySet<T>, ISet<T>
 
     public constructor(items: T...) : super(items) {}
 
-    // §5.x: the collection-builder form — `Set<int>[1, 2, 3]` fills through this $fill$ method.
     public constructor() : super() { }
     each (item: T)
     {
