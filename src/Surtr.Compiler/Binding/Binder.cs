@@ -1988,7 +1988,12 @@ namespace Surtr.Compiler.Binding
                             continue;
                         }
 
-                        if (!field.IsMutable)
+                        // §2.9: a value class's field discipline counts only *instance* `let`
+                        // fields. A static `let`/`var` and a `const` (implicitly static and
+                        // folded away, §7.1) are storage that never occupies an instance slot,
+                        // so they must stay out of the count - otherwise a value class with any
+                        // static or const field would fail `BindValueClassField`'s check.
+                        if (!field.IsMutable && !field.IsStatic && !field.IsConst)
                             letFields++;
 
                         var bound = BindField(field, symbol, binding);

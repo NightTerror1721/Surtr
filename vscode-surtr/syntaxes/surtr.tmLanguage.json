@@ -419,7 +419,7 @@
     },
     "language-variables": {
       "match": "\\b(?:this|super)\\b",
-      "name": "variable.language.surtr"
+      "name": "keyword.language.surtr"
     },
     "operators": {
       "patterns": [

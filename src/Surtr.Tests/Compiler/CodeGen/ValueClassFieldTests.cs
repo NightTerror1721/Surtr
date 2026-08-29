@@ -2,6 +2,7 @@
 
 using Surtr.Compiler.Binding;
 using Surtr.Compiler.CodeGen;
+using Surtr.Compiler.Diagnostics;
 using Surtr.Compiler.Compilation;
 using Surtr.Runtime;
 using Surtr.Runtime.Classes;
@@ -517,6 +518,52 @@ fun go(): int {
 "));
 
             Assert.Equal(42, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void AValueClassMayDeclareStaticAndConstFields()
+        {
+            var runtime = Load(Build(@"
+value class Meters {
+    public let raw: int;
+
+    public static var scale: int = 1000;
+    public static let unit: int = 1;
+    public const max: int = 100;
+
+    public constructor(raw: int) {
+        this.raw = raw;
+    }
+
+    public fun total(): int {
+        return this.raw * Meters.scale + Meters.unit + Meters.max;
+    }
+}
+
+fun go(): int {
+    return Meters(3).total();
+}
+"));
+
+            Assert.Equal(3 * 1000 + 1 + 100, Int(runtime, "go"));
+        }
+
+        [Fact]
+        public void AValueClassWithOnlyStaticAndConstFieldsIsRejected()
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(Root + "/game/core/Test.surtr", @"
+value class Empty {
+    public static let shared: int = 0;
+    public const limit: int = 1;
+}
+");
+
+            var compilation = SurtrCompilation.Create(project);
+            _owned.Add(compilation);
+            compilation.Bind();
+
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidValueClass);
         }
 
         #endregion
