@@ -3981,6 +3981,10 @@ namespace Surtr.Compiler.Binding
 
             BoundStatement bound = binder.BindBody(body.Syntax);
 
+            // §11: drop calls to a declaration marked @Condition(false) before anything else reads
+            // the tree, so flow analysis and the optimizer see the final, stripped shape.
+            bound = ConditionStrip.Rewrite(bound);
+
             // §P3: cross-statement CSE of pure calls, once a foldable set exists. Runs on the bound
             // tree before flow analysis, so the analysis sees the final shape.
             if (_pureFolder is not null)

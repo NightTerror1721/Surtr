@@ -349,6 +349,16 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass Pure;
 
         /// <summary>
+        /// The built-in <c>@Condition(expr)</c> attribute (§11): marks a method or property whose
+        /// invocations the compiler may drop when <c>expr</c> folds to <c>false</c> at compile time.
+        /// Surtr's answer to C#'s <c>[Conditional]</c>, but the gate is any compile-time boolean over
+        /// the build constants rather than one fixed symbol name. Compile-time only: it changes what
+        /// the compiler emits and carries no data worth reading back, so it never reaches the image
+        /// (see <see cref="BuiltInAttributes.ReachesImage"/>).
+        /// </summary>
+        public static readonly SurtrClass Condition;
+
+        /// <summary>
         /// The built-in <c>@MainThread</c> attribute (§11): declares a member may only run on the
         /// embedding host's main thread (a Unity draw call, say). Documentary until a thread model
         /// exists to lint against.
@@ -493,6 +503,7 @@ namespace Surtr.Runtime.BuiltIns
             NoAlloc = DeclareObject("NoAlloc", Attribute);
             Flags = DeclareObject("Flags", Attribute);
             Pure = DeclareObject("Pure", Attribute);
+            Condition = DeclareObject("Condition", Attribute);
             MainThread = DeclareObject("MainThread", Attribute);
             ThreadSafe = DeclareObject("ThreadSafe", Attribute);
             Type = DeclareObject("Type");
@@ -572,6 +583,7 @@ namespace Surtr.Runtime.BuiltIns
             DeclareNamedAttribute(BuilderFor(TestSuite, handles));
             DeclareReasonAttribute(BuilderFor(TestIgnore, handles));
             DeclareNamedAttribute(BuilderFor(Throws, handles));
+            DeclareBoolAttribute(BuilderFor(Condition, handles));
             // Value, Pure, NoAlloc, Flags, MainThread, ThreadSafe, TestBefore, TestAfter and
             // Benchmark carry nothing: their meaning is the mark.
             SurtrStandardLibrary.DeclareCoreInterfaces(Module, handles);
@@ -734,6 +746,15 @@ namespace Surtr.Runtime.BuiltIns
         /// </summary>
         private static void DeclareReasonAttribute(SurtrBuiltInTypeBuilder builder)
             => builder.Field("reason", SurtrClassReference.String, visibility: SurtrVisibility.Public);
+
+        /// <summary>
+        /// Gives <see cref="Condition"/> its single <c>enabled</c> field: the bool the compiled
+        /// condition expression folded to. The field exists so the one positional argument has a slot
+        /// to fill (§11.1's argument check); what the compiler actually reads is the folded value on
+        /// the use, via <see cref="BuiltInAttributes.IsConditionEnabled"/>.
+        /// </summary>
+        private static void DeclareBoolAttribute(SurtrBuiltInTypeBuilder builder)
+            => builder.Field("enabled", SurtrClassReference.Boolean, visibility: SurtrVisibility.Public);
 
         /// <summary>
         /// Gives <see cref="Range"/> its two bounds. Floats rather than ints so one attribute shape

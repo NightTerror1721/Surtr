@@ -354,7 +354,7 @@
         { "match": "\\bas\\?(?!\\w)", "name": "keyword.operator.cast.safe.surtr" },
         { "match": "\\bas\\b", "name": "keyword.operator.cast.surtr" },
         { "match": "\\bis\\b", "name": "keyword.operator.expression.surtr" },
-        { "match": "\\b(?:typeof|moduleof)\\b", "name": "keyword.operator.expression.surtr" },
+        { "match": "\\b(?:typeof|moduleof|defined)\\b", "name": "keyword.operator.expression.surtr" },
         { "match": "\\b(?:if|else|for|while|switch|case|default|break|continue|return|in|using)\\b", "name": "keyword.control.surtr" },
         {
           "comment": "each is contextual (§5.x), recognized only as the collection-builder clause of a constructor: 'each (' followed by a parameter list ('name: type'). Demanding the 'name:' shape keeps a call to something literally named each (each(x)) from matching. semanticTokens is the robust fix for full position-accuracy; this is the regex-only approximation.",

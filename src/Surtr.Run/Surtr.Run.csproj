@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Surtr.Core\Surtr.Core.csproj" />
+    <ProjectReference Include="..\Surtr.Stdlib\Surtr.Stdlib.csproj" />
   </ItemGroup>
 
 </Project>

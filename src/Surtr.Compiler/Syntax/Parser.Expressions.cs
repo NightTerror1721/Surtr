@@ -254,6 +254,9 @@ namespace Surtr.Compiler.Syntax
                     ExpressionSyntax decremented = ParseUnary();
                     return new UnaryExpressionSyntax(SpanFrom(start), UnaryOperator.PreDecrement, decremented);
 
+                case TokenType.KeywordDefined:
+                    return ParseDefined();
+
                 default:
                     return ParseCast();
             }
@@ -658,6 +661,26 @@ namespace Surtr.Compiler.Syntax
 
             reader.Expect(TokenType.RightParen, "')' to close 'moduleof'");
             return new ModuleOfExpressionSyntax(SpanFrom(start), path);
+        }
+
+        /// <summary>
+        /// Parses <c>defined(Path)</c> - a compile-time existence test for a build constant (§7.4).
+        /// Mirrors <see cref="ParseModuleOf"/>'s dotted-path shape, but the path names a constant
+        /// rather than a module, so the result is an operator that folds to a bool, not a value.
+        /// </summary>
+        private ExpressionSyntax ParseDefined()
+        {
+            SourceLocation start = reader.CurrentLocation;
+            reader.Advance();
+
+            reader.Expect(TokenType.LeftParen, "'(' after 'defined'");
+
+            List<string> path = new List<string> { reader.ExpectIdentifier("a constant name") };
+            while (reader.Match(TokenType.Dot))
+                path.Add(reader.ExpectIdentifier("a name after '.'"));
+
+            reader.Expect(TokenType.RightParen, "')' to close 'defined'");
+            return new DefinedExpressionSyntax(SpanFrom(start), path);
         }
 
         /// <summary>

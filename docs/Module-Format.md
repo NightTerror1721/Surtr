@@ -454,3 +454,55 @@ For anyone changing the format or the instruction set:
    because a compiler hashes a `switch`'s case labels at build time and the program hashes the
    subject at run time, in another process. Changing it would make every compiled string switch take
    the wrong arm. There are golden-value tests guarding it.
+
+---
+
+## 8. The `.surtrx` package container
+
+A compiled program is usually several module images, plus the standard library's. A host that runs
+one therefore has to load a set of `.surtrc` files and then be told which module-level function to
+call, because Surtr has no `main` (§2.5). The package is the single file that carries both: every
+module image the program needs, and the entry point. `surtrc build --package` writes one; `surtr`
+runs it without being handed a module path and a function name.
+
+Implemented by `src/Surtr.Core/Bytecode/Image/SurtrPackage.cs` (+ `SurtrPackageWriter`/`Reader`).
+Nothing here touches a filesystem: the bytes are the shareable form, like `SurtrModuleImage`.
+
+### 8.1 Layout
+
+| Field | Type | Meaning |
+|---|---|---|
+| `magic` | `u64` | `0x5355525452504B47` — `SURTRPKG` in ASCII, little-endian |
+| `formatVersion` | `u16` | The container version; currently **1**. A reader refuses any other. |
+| `entryModule` | `str` | An `i32` byte length + UTF-8: the entry module's path (e.g. `game.core.Main`) |
+| `entryFunction` | `str` | The entry module-level function's name (e.g. `main`) |
+| `moduleCount` | `i32` | How many embedded modules follow |
+| per module | | |
+| `modulePath` | `str` | The module's path, written for diagnostics; `image.Path` is authoritative |
+| `length` | `i32` | The embedded image's byte length |
+| `bytes` | `u8[length]` | A complete `.surtrc` image (`SURTRMOD`…), read with `SurtrModuleImage.FromBytes` |
+
+Strings are length-prefixed UTF-8, not a shared table: the container is short and the reader is a
+straight sequential pass. Each embedded module validates its own magic and version through
+`SurtrModuleImage.FromBytes`, so a bad package fails at its boundary, not partway through a module.
+
+### 8.2 What the package does and does not carry
+
+The package holds the program's **module images** and its **entry point**. It does not carry the
+standard library's native bodies: those are C# function pointers (`surtr.math.Math.*` today) that
+only exist in the process running the program, so the runtime that loads a package is the one that
+supplies them — `surtr` calls `SurtrStdlib.LoadAll` before loading the package's modules. A package
+may still embed stdlib module images (the compiler bundles every `reference`, including the stdlib);
+a module the runtime already holds is simply skipped by `SurtrRuntime.LoadModules`, so embedding the
+standard library is harmless and makes the file self-contained in Surtr code.
+
+### 8.3 Entry point
+
+Surtr has no `main`, so the entry point is named explicitly or found by convention:
+
+* A `entry = module.path function` directive in the `.surtrproj` wins.
+* With none, `surtrc build` auto-detects a single module-level `main`; more than one is an error.
+* A package with neither is a build failure — a packaged program must say where to start.
+
+`surtr run <file>.surtrx` (or the short form `surtr <file>.surtrx`) resolves the entry's overload
+against the argument count, exactly as `surtr run` does for a loose image set.

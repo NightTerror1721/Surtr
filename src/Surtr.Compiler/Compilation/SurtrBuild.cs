@@ -4,6 +4,7 @@ using Surtr.Bytecode.Image;
 using Surtr.Compiler.Binding;
 using Surtr.Compiler.CodeGen;
 using Surtr.Compiler.Diagnostics;
+using Surtr.Runtime.Classes;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -47,7 +48,16 @@ namespace Surtr.Compiler.Compilation
 
         /// <summary>Builds the project a project file describes.</summary>
         /// <param name="projectFilePath">The <c>.surtrproj</c> to read.</param>
-        public static SurtrBuild Run(string projectFilePath)
+        /// <param name="package">Force package output on (overrides the project's own <c>package</c> setting).</param>
+        /// <param name="packagePath">A package file name to write, when packaging. Null derives one.</param>
+        /// <param name="entryModulePath">An explicit entry module, overriding the project's <c>entry</c> directive.</param>
+        /// <param name="entryFunction">An explicit entry function, overriding the project's <c>entry</c> directive.</param>
+        public static SurtrBuild Run(
+            string projectFilePath,
+            bool package = false,
+            string? packagePath = null,
+            string? entryModulePath = null,
+            string? entryFunction = null)
         {
             var diagnostics = new SurtrDiagnosticBag();
             var file = SurtrProjectFile.Read(projectFilePath, diagnostics);
@@ -58,9 +68,14 @@ namespace Surtr.Compiler.Compilation
             string root = Path.GetFullPath(Path.Combine(file.Directory, file.Root));
             string output = Path.GetFullPath(Path.Combine(file.Directory, file.Output));
 
+            string? resolvedEntryModule = entryModulePath ?? file.EntryModulePath;
+            string? resolvedEntryFunction = entryFunction ?? file.EntryFunction;
+            bool resolvedPackage = package || file.Package;
+
             return Run(
                 root, output, file.RootModulePath, file.References, file.Constants, diagnostics, file.Directory,
-                file.WarningsAsErrors, file.SuppressedCodes);
+                file.WarningsAsErrors, file.SuppressedCodes, resolvedEntryModule, resolvedEntryFunction,
+                resolvedPackage, packagePath);
         }
 
         /// <summary>Builds a source tree with no project file, taking every setting as given.</summary>
@@ -73,7 +88,11 @@ namespace Surtr.Compiler.Compilation
             SurtrDiagnosticBag? diagnostics = null,
             string? referenceBase = null,
             bool warningsAsErrors = false,
-            IReadOnlyCollection<SurtrDiagnosticCode>? suppressedCodes = null)
+            IReadOnlyCollection<SurtrDiagnosticCode>? suppressedCodes = null,
+            string? entryModulePath = null,
+            string? entryFunction = null,
+            bool package = false,
+            string? packagePath = null)
         {
             diagnostics ??= new SurtrDiagnosticBag();
 
@@ -131,7 +150,9 @@ namespace Surtr.Compiler.Compilation
                     project.Define(constant.Key, constant.Value);
             }
 
-            return Compile(project, output: outputDirectory, diagnostics, warningsAsErrors, suppressedCodes);
+            return Compile(
+                project, output: outputDirectory, diagnostics, warningsAsErrors, suppressedCodes,
+                entryModulePath, entryFunction, package, packagePath);
         }
 
         /// <summary>
@@ -265,7 +286,11 @@ namespace Surtr.Compiler.Compilation
             string output,
             SurtrDiagnosticBag diagnostics,
             bool warningsAsErrors = false,
-            IReadOnlyCollection<SurtrDiagnosticCode>? suppressedCodes = null)
+            IReadOnlyCollection<SurtrDiagnosticCode>? suppressedCodes = null,
+            string? entryModulePath = null,
+            string? entryFunction = null,
+            bool package = false,
+            string? packagePath = null)
         {
             using var compilation = SurtrCompilation.Create(project);
 
@@ -286,7 +311,20 @@ namespace Surtr.Compiler.Compilation
             if (diagnostics.HasErrors)
                 return new SurtrBuild(diagnostics, Array.Empty<string>());
 
-            return new SurtrBuild(diagnostics, WriteImages(images, output));
+            if (!package)
+                return new SurtrBuild(diagnostics, WriteImages(images, output));
+
+            string? resolvedEntryModule = entryModulePath;
+            string? resolvedEntryFunction = entryFunction;
+            ResolveEntryIfNeeded(images, project.ReferencedImages, ref resolvedEntryModule, ref resolvedEntryFunction, diagnostics);
+
+            if (diagnostics.HasErrors)
+                return new SurtrBuild(diagnostics, Array.Empty<string>());
+
+            string finalPackagePath = packagePath
+                ?? Path.Combine(output, (string.IsNullOrEmpty(project.RootModulePath) ? "program" : project.RootModulePath) + SurtrPackage.FileExtension);
+
+            return new SurtrBuild(diagnostics, WritePackage(images, project.ReferencedImages, resolvedEntryModule!, resolvedEntryFunction!, finalPackagePath));
         }
 
         /// <summary>
@@ -307,6 +345,100 @@ namespace Surtr.Compiler.Compilation
             }
 
             return written;
+        }
+
+        /// <summary>
+        /// Writes every image, and every referenced image, into one <c>.surtrx</c> package with the
+        /// given entry point. References are bundled so a program that compiles against the standard
+        /// library (or another build) travels as one file; a module the runtime later loads first is
+        /// simply skipped, so embedding the standard library is harmless.
+        /// </summary>
+        private static List<string> WritePackage(
+            IReadOnlyList<SurtrModuleImage> userImages,
+            IReadOnlyList<SurtrModuleImage> references,
+            string entryModulePath,
+            string entryFunction,
+            string packagePath)
+        {
+            var modules = new List<SurtrModuleImage>(userImages.Count + references.Count);
+            modules.AddRange(userImages);
+            modules.AddRange(references);
+
+            var package = SurtrPackage.Create(modules, entryModulePath, entryFunction);
+
+            string? directory = Path.GetDirectoryName(packagePath);
+            if (!string.IsNullOrEmpty(directory))
+                Directory.CreateDirectory(directory);
+
+            File.WriteAllBytes(packagePath, package.ToBytes());
+            return new List<string> { packagePath };
+        }
+
+        /// <summary>
+        /// Resolves the package entry point: an explicit <c>entry</c> directive wins, otherwise a
+        /// single module-level <c>main</c> is auto-detected. Reports an error when neither is present
+        /// or when more than one <c>main</c> exists.
+        /// </summary>
+        private static void ResolveEntryIfNeeded(
+            IReadOnlyList<SurtrModuleImage> userImages,
+            IReadOnlyList<SurtrModuleImage> references,
+            ref string? entryModulePath,
+            ref string? entryFunction,
+            SurtrDiagnosticBag diagnostics)
+        {
+            if (!string.IsNullOrEmpty(entryModulePath) && !string.IsNullOrEmpty(entryFunction))
+                return;
+
+            string? foundModule = null;
+            int mainCount = 0;
+
+            var all = new List<SurtrModuleImage>(userImages.Count + references.Count);
+            all.AddRange(userImages);
+            all.AddRange(references);
+
+            foreach (var image in all)
+            {
+                SurtrModule module;
+                try
+                {
+                    module = image.Instantiate();
+                }
+                catch (Exception)
+                {
+                    continue;
+                }
+
+                if (module.TryGetMethods("main", out var overloads))
+                {
+                    foreach (var overload in overloads)
+                    {
+                        mainCount++;
+                        foundModule = module.Path;
+                    }
+                }
+            }
+
+            if (mainCount == 0)
+            {
+                diagnostics.ReportError(
+                    SurtrDiagnosticCode.ProjectFileInvalid,
+                    "A package needs an entry point: add 'entry = module function' to the project, or declare a module-level 'main'.",
+                    string.Empty,
+                    span: default);
+            }
+            else if (mainCount > 1)
+            {
+                diagnostics.ReportError(
+                    SurtrDiagnosticCode.ProjectFileInvalid,
+                    $"An entry point could not be auto-detected: {mainCount} 'main' functions exist; name one with 'entry = module function'.",
+                    string.Empty,
+                    span: default);
+            }
+            else
+            {
+                entryModulePath = foundModule;
+                entryFunction = "main";
+            }
         }
     }
 }

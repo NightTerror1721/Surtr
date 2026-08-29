@@ -1019,6 +1019,69 @@ namespace Surtr.Runtime
         }
 
         /// <summary>
+        /// Loads a set of module images into this runtime, retrying what does not yet resolve until
+        /// nothing more can be made to — the same fixed-point pass <see cref="Surtr.Bytecode.Image.SurtrModuleImage"/>
+        /// describes for a native import, because an image carries no dependency list of its own.
+        /// </summary>
+        /// <param name="images">The module images to load, in any order.</param>
+        /// <exception cref="ArgumentNullException">images is null.</exception>
+        /// <exception cref="InvalidOperationException">A module could not be resolved and nothing further could be made to.</exception>
+        public void LoadModules(IReadOnlyList<Bytecode.Image.SurtrModuleImage> images)
+        {
+            if (images is null)
+                throw new ArgumentNullException(nameof(images));
+
+            var pending = new List<Bytecode.Image.SurtrModuleImage>(images.Count);
+            foreach (var image in images)
+                pending.Add(image);
+
+            var lastError = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            while (pending.Count > 0)
+            {
+                var stillPending = new List<Bytecode.Image.SurtrModuleImage>();
+                bool progressed = false;
+
+                foreach (var image in pending)
+                {
+                    // Already loaded (e.g. the standard library, loaded by the host first) - done.
+                    if (TryGetModule(image.Path, out _))
+                        continue;
+
+                    try
+                    {
+                        LoadModule(image);
+                        progressed = true;
+                    }
+                    catch (InvalidOperationException exception)
+                    {
+                        lastError[image.Path] = exception.Message;
+                        stillPending.Add(image);
+                    }
+                }
+
+                if (stillPending.Count == 0)
+                    return;
+
+                if (!progressed)
+                {
+                    var reasons = new List<string>(stillPending.Count);
+                    foreach (var image in stillPending)
+                    {
+                        lastError.TryGetValue(image.Path, out string? reason);
+                        reasons.Add($"  '{image.Path}': {reason ?? "could not be resolved"}");
+                    }
+
+                    reasons.Sort(StringComparer.Ordinal);
+                    throw new InvalidOperationException(
+                        $"{stillPending.Count} module(s) could not be loaded:\n" + string.Join("\n", reasons));
+                }
+
+                pending = stillPending;
+            }
+        }
+
+        /// <summary>
         /// Binds the by-name access-table entries a module read from an image still carries.
         /// </summary>
         /// <remarks>

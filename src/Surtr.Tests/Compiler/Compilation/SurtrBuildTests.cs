@@ -329,5 +329,52 @@ namespace Surtr.Tests.Compiler.Compilation
             var runtime = Load(second);
             Assert.Equal(84, runtime.Invoke(Function(runtime, "game.core.Entity", "doubled"), SurtrValue.CreateInt(42)).AsInt);
         }
+
+        /// <summary>A packaged program carries its modules and an auto-detected entry point.</summary>
+        [Fact]
+        public void APackageBuildsWithAutoDetectedEntryAndRuns()
+        {
+            string tree = Tree(
+                "pkg",
+                ("game.surtrproj", "root = src\nmodule = game\noutput = out\npackage = true\n"),
+                ("src/core/M.surtr", "public fun main(): int { return 7; }"));
+
+            var build = SurtrBuild.Run(Path.Combine(tree, "game.surtrproj"));
+            Assert.False(build.Failed, string.Join("; ", build.Diagnostics.Select(d => d.ToString())));
+            Assert.Single(build.Written);
+
+            var package = SurtrPackage.FromBytes(File.ReadAllBytes(build.Written[0]));
+            Assert.Equal("game.core.M", package.EntryModulePath);
+            Assert.Equal("main", package.EntryFunction);
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+            runtime.LoadModules(package.Modules);
+
+            Assert.Equal(7, runtime.Invoke(Function(runtime, "game.core.M", "main")).AsInt);
+        }
+
+        /// <summary>An explicit <c>entry</c> directive names the package entry point over any <c>main</c>.</summary>
+        [Fact]
+        public void APackageUsesExplicitEntryDirective()
+        {
+            string tree = Tree(
+                "pkg-entry",
+                ("game.surtrproj", "root = src\nmodule = game\noutput = out\npackage = true\nentry = game.core.M start\n"),
+                ("src/core/M.surtr", "public fun start(): int { return 9; }\npublic fun main(): int { return 0; }"));
+
+            var build = SurtrBuild.Run(Path.Combine(tree, "game.surtrproj"));
+            Assert.False(build.Failed, string.Join("; ", build.Diagnostics.Select(d => d.ToString())));
+
+            var package = SurtrPackage.FromBytes(File.ReadAllBytes(build.Written[0]));
+            Assert.Equal("game.core.M", package.EntryModulePath);
+            Assert.Equal("start", package.EntryFunction);
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+            runtime.LoadModules(package.Modules);
+
+            Assert.Equal(9, runtime.Invoke(Function(runtime, "game.core.M", "start")).AsInt);
+        }
     }
 }

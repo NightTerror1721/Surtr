@@ -387,6 +387,32 @@ namespace Surtr.Compiler.Syntax.Ast
         }
     }
 
+    /// <summary>
+    /// <c>defined(Path)</c> - a compile-time-only existence test for a build constant (§7.4). Folds to
+    /// <c>true</c> when a build constant of that name exists and <c>false</c> otherwise, without the
+    /// "undefined name" error that naming the constant directly would raise. The path is the dotted
+    /// name exactly as written, one entry per segment, so <c>defined(Logging.Debug)</c> carries
+    /// <c>["Logging", "Debug"]</c>.
+    /// </summary>
+    /// <remarks>
+    /// A keyword operator rather than a call, because it must resolve against the build's constants
+    /// and never bind to a value the way <c>moduleof</c> resolves a module - the path is the payload,
+    /// not an expression to evaluate. The binder folds it through <see cref="ConstantEvaluator"/>.
+    /// </remarks>
+    public sealed class DefinedExpressionSyntax : ExpressionSyntax
+    {
+        /// <summary>The dotted constant name as written, one entry per segment.</summary>
+        public IReadOnlyList<string> Path { get; }
+
+        /// <summary>Initializes a <c>defined</c> expression.</summary>
+        /// <param name="span">The source the expression covers.</param>
+        /// <param name="path">The dotted constant name, one entry per segment.</param>
+        public DefinedExpressionSyntax(SourceSpan span, IReadOnlyList<string> path) : base(span)
+        {
+            Path = path;
+        }
+    }
+
     /// <summary>A lambda, <c>(x) =&gt; expr</c> or <c>(x) =&gt; { ... }</c>.</summary>
     public sealed class LambdaExpressionSyntax : ExpressionSyntax
     {

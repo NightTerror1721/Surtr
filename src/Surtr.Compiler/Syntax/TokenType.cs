@@ -256,6 +256,13 @@ namespace Surtr.Compiler.Syntax
         /// <summary><c>export</c> - marks an import as re-exposed by its module (§2.1's re-export).</summary>
         KeywordExport,
 
+        /// <summary>
+        /// <c>defined(Symbol)</c> - a compile-time-only operator that folds to <c>true</c> when the
+        /// named build constant exists and <c>false</c> otherwise, without an "undefined name" error.
+        /// The soft counterpart to naming a flag directly, which is a hard requirement (§7.4).
+        /// </summary>
+        KeywordDefined,
+
         /// <summary><c>(</c></summary>
         LeftParen,
 

@@ -130,10 +130,32 @@ namespace Surtr.Compiler.Binding
 
                 case MemberAccessExpressionSyntax member:
                     return TryEnumMember(member, out value, out _);
+
+                case DefinedExpressionSyntax defined:
+                    return TryDefined(defined, out value);
             }
 
             value = null;
             return false;
+        }
+
+        /// <summary>
+        /// Folds <c>defined(Path)</c> (§7.4): <see langword="true"/> when a build constant or a
+        /// source <c>const</c> of that name exists, <see langword="false"/> otherwise - and crucially
+        /// no error when it does not, which is the whole point of the operator. The direct reference
+        /// <c>const if (Missing)</c> is a hard failure; <c>defined(Missing)</c> is the soft test.
+        /// </summary>
+        private bool TryDefined(DefinedExpressionSyntax syntax, out object? value)
+        {
+            value = IsDefined(syntax.Path);
+            return true;
+        }
+
+        /// <summary>Whether a dotted name names a constant the build or the source supplied.</summary>
+        private bool IsDefined(IReadOnlyList<string> path)
+        {
+            string name = string.Join(".", path);
+            return _values.ContainsKey(name) || _pending.ContainsKey(name);
         }
 
         /// <summary>
