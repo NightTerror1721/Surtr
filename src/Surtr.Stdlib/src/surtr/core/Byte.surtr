@@ -1,0 +1,243 @@
+public sealed value class byte
+{
+    public const MinValue: int = 0;
+    public const MaxValue: int = 255;
+    public const SizeInBits: int = 8;
+
+    private let _value: int;
+
+    public constructor(value: int)
+    {
+        _value = value & 0xFF;
+    }
+
+    public inline raw: int => _value;
+
+    public inline fun toInt(): int => _value;
+
+    public inline fun toChar(): char => char(_value);
+
+    public inline fun toFloat(): float => _value.toFloat();
+
+    public inline fun toString(): string => _value.toString();
+
+    public fun toHex(): string
+    {
+        let hi = (_value >> 4) & 0xF;
+        let lo = _value & 0xF;
+        let hiChar = hi < 10 ? char(48 + hi) : char(55 + hi);
+        let loChar = lo < 10 ? char(48 + lo) : char(55 + lo);
+        return string.fromChar(hiChar).concat(string.fromChar(loChar));
+    }
+
+    public static inline fun fromInt(value: int): byte => byte(value);
+
+    public static inline fun fromChar(ch: char): byte => byte(ch.toInt());
+
+    public static inline fun parse(text: string): byte => byte(int.parse(text));
+
+    public static inline fun parseHex(text: string): byte => byte(int.parseStrict(text, 16));
+
+    public static inline fun min(a: byte, b: byte): byte
+    {
+        return a._value < b._value ? a : b;
+    }
+
+    public static inline fun max(a: byte, b: byte): byte
+    {
+        return a._value > b._value ? a : b;
+    }
+
+    public inline fun equals(other: byte): bool => _value == other._value;
+
+    public inline fun compareTo(other: byte): int
+    {
+        if (_value < other._value) return -1;
+        if (_value > other._value) return 1;
+        return 0;
+    }
+
+    inline operator+(a: byte, b: byte): byte
+    {
+        return byte(a._value + b._value);
+    }
+
+    inline operator-(a: byte, b: byte): byte
+    {
+        return byte(a._value - b._value);
+    }
+
+    inline operator*(a: byte, b: byte): byte
+    {
+        return byte(a._value * b._value);
+    }
+
+    inline operator/(a: byte, b: byte): byte
+    {
+        return byte(a._value / b._value);
+    }
+
+    inline operator%(a: byte, b: byte): byte
+    {
+        return byte(a._value % b._value);
+    }
+
+    inline operator<<(a: byte, bits: int): byte
+    {
+        return byte((a._value << bits) & 0xFF);
+    }
+
+    inline operator>>(a: byte, bits: int): byte
+    {
+        return byte(a._value >> bits);
+    }
+
+    inline operator&(a: byte, b: byte): byte
+    {
+        return byte(a._value & b._value);
+    }
+
+    inline operator|(a: byte, b: byte): byte
+    {
+        return byte(a._value | b._value);
+    }
+
+    inline operator^(a: byte, b: byte): byte
+    {
+        return byte(a._value ^ b._value);
+    }
+
+    inline operator==(a: byte, b: byte): bool
+    {
+        return a._value == b._value;
+    }
+
+    inline operator<=>(a: byte, b: byte): int
+    {
+        return a._value - b._value;
+    }
+
+    inline operator-(a: byte): byte
+    {
+        return byte(-a._value);
+    }
+
+    inline operator~(a: byte): byte
+    {
+        return byte((~a._value) & 0xFF);
+    }
+
+    public fun addSaturating(other: byte): byte
+    {
+        let sum = _value + other._value;
+        if (sum > 255) return byte(255);
+        return byte(sum);
+    }
+
+    public fun subtractSaturating(other: byte): byte
+    {
+        let diff = _value - other._value;
+        if (diff < 0) return byte(0);
+        return byte(diff);
+    }
+
+    public inline fun invert(): byte
+    {
+        return byte((~_value) & 0xFF);
+    }
+
+    public fun rotateLeft(bits: int): byte
+    {
+        let s = bits & 7;
+        let shifted = (_value << s) | (_value >> (8 - s));
+        return byte(shifted & 0xFF);
+    }
+
+    public fun rotateRight(bits: int): byte
+    {
+        let s = bits & 7;
+        let shifted = (_value >> s) | (_value << (8 - s));
+        return byte(shifted & 0xFF);
+    }
+
+    public inline fun getBit(index: int): int
+    {
+        return (_value >> index) & 1;
+    }
+
+    public inline fun isBitSet(index: int): bool
+    {
+        return ((_value >> index) & 1) == 1;
+    }
+
+    public inline fun setBit(index: int): byte
+    {
+        return byte(_value | (1 << index));
+    }
+
+    public inline fun clearBit(index: int): byte
+    {
+        return byte(_value & (255 - (1 << index)));
+    }
+
+    public inline fun toggleBit(index: int): byte
+    {
+        return byte(_value ^ (1 << index));
+    }
+
+    public inline fun withBit(index: int, on: bool): byte
+    {
+        if (on) return setBit(index);
+        return clearBit(index);
+    }
+
+    public fun bitCount(): int
+    {
+        var count = 0;
+        var v = _value;
+        for (var i = 0; i < 8; i++)
+        {
+            if ((v & 1) == 1) count = count + 1;
+            v = v >> 1;
+        }
+        return count;
+    }
+
+    public fun highestSetBit(): int
+    {
+        for (var i = 7; i >= 0; i--)
+        {
+            if (((_value >> i) & 1) == 1) return i;
+        }
+        return -1;
+    }
+
+    public fun lowestSetBit(): int
+    {
+        for (var i = 0; i < 8; i++)
+        {
+            if (((_value >> i) & 1) == 1) return i;
+        }
+        return -1;
+    }
+
+    public inline fun isEven(): bool
+    {
+        return (_value & 1) == 0;
+    }
+
+    public inline fun isOdd(): bool
+    {
+        return (_value & 1) == 1;
+    }
+
+    public inline fun isZero(): bool
+    {
+        return _value == 0;
+    }
+
+    public inline fun isPowerOfTwo(): bool
+    {
+        return _value != 0 && (_value & (_value - 1)) == 0;
+    }
+}
