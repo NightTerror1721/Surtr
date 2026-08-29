@@ -48,8 +48,14 @@ namespace Surtr.Stdlib
         /// <summary><c>surtr/text/</c> â€” <c>StringBuilder</c>.</summary>
         Text = 1 << 3,
 
+        /// <summary><c>surtr/io/</c> â€” <c>Enums</c>, <c>Stream</c>.</summary>
+        Io = 1 << 4,
+
+        /// <summary><c>surtr/diagnostics/</c> â€” <c>Assert</c>.</summary>
+        Diagnostics = 1 << 5,
+
         /// <summary>Every category â€” equivalent to the unfiltered <c>LoadInto</c> overloads.</summary>
-        All = Core | Math | Collections | Text,
+        All = Core | Math | Collections | Text | Io | Diagnostics,
     }
 
     /// <summary>
@@ -299,10 +305,40 @@ namespace Surtr.Stdlib
                 "math" => StdlibModules.Math,
                 "collections" => StdlibModules.Collections,
                 "text" => StdlibModules.Text,
+                "io" => StdlibModules.Io,
+                "diagnostics" => StdlibModules.Diagnostics,
                 _ => StdlibModules.None,
             };
 
             return flag != StdlibModules.None && (selection & flag) != 0;
+        }
+
+        /// <summary>
+        /// <see cref="LoadInto(SurtrRuntime, IReadOnlyList{SurtrModuleImage})"/>, restricted to the
+        /// images <paramref name="predicate"/> accepts by module path - full control over which
+        /// individual modules load, for a host that wants finer granularity than
+        /// <see cref="StdlibModules"/>'s per-category flags give (a single collection, not the
+        /// whole <see cref="StdlibModules.Collections"/> category).
+        /// </summary>
+        /// <param name="runtime">The runtime to load into.</param>
+        /// <param name="images">Every stdlib image available; only the ones <paramref name="predicate"/> accepts are loaded.</param>
+        /// <param name="predicate">Given a module's path (<c>surtr.collections.Stack</c>), whether to load it.</param>
+        public static void LoadInto(SurtrRuntime runtime, IReadOnlyList<SurtrModuleImage> images, Func<string, bool> predicate)
+        {
+            if (images is null)
+                throw new ArgumentNullException(nameof(images));
+
+            if (predicate is null)
+                throw new ArgumentNullException(nameof(predicate));
+
+            var selected = new List<SurtrModuleImage>();
+            foreach (var image in images)
+            {
+                if (predicate(image.Path))
+                    selected.Add(image);
+            }
+
+            LoadInto(runtime, selected);
         }
 
         /// <summary>

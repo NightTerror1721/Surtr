@@ -71,6 +71,12 @@ namespace Surtr.Runtime.Objects
         private int _liveEntityThresholdPercent;
         private int _nurseryFrequency;
 
+        // A hard ceiling, unlike the three fields above: those only tune when the collector
+        // *considers* collecting on its own (and are folded away entirely in Manual mode), while
+        // this is a refusal to grow further regardless of GC mode - a host sandboxing untrusted
+        // script content wants it enforced even when it drives collection itself.
+        private long _maxLiveEntities;
+
         /// <summary>How many entities were registered since the last collection.</summary>
         private long _allocationsSinceLastCollection;
 
@@ -182,9 +188,14 @@ namespace Surtr.Runtime.Objects
             }
             else
             {
-                newId = _nextId++;
-                if (newId >= _capacity)
+                // Checked before the increment, not after: ExpandCapacity can now throw (the
+                // live-entity cap), and _nextId must stay untouched if it does - incrementing it
+                // first and rolling back only on the throwing path would leave every other caller
+                // paying for a rollback check that almost never fires.
+                if (_nextId >= _capacity)
                     ExpandCapacity();
+
+                newId = _nextId++;
             }
 
             // After any expansion: the array this entity just landed in is the one the caller
@@ -221,6 +232,10 @@ namespace Surtr.Runtime.Objects
             _allocationThreshold = policy.Mode == SurtrGcMode.Manual ? long.MaxValue : policy.AllocationThreshold;
             _liveEntityThresholdPercent = policy.Mode == SurtrGcMode.Manual ? 0 : policy.LiveEntityThresholdPercent;
             _nurseryFrequency = Math.Max(1, policy.NurseryFrequency);
+
+            // Not folded away in Manual mode: a heap cap is a hard safety limit, not a trigger for
+            // automatic collection, so it applies exactly as configured under either GC mode.
+            _maxLiveEntities = policy.MaxLiveEntities;
         }
 
         /// <summary>The policy this registry currently collects under.</summary>
@@ -494,6 +509,16 @@ namespace Surtr.Runtime.Objects
         [MethodImpl(MethodImplOptions.NoInlining)]
         private void ExpandCapacity()
         {
+            // A hard refusal, checked first and before anything is mutated: this method only runs
+            // once the free list is already exhausted, so the live set is already at (or extremely
+            // close to) _capacity - that makes _capacity itself the right value to gate on, with no
+            // separate live-count scan needed on this already-cold path.
+            if (_maxLiveEntities != 0 && _capacity >= _maxLiveEntities)
+            {
+                throw new SurtrHeapLimitExceededException(
+                    $"The heap's live-entity cap of {_maxLiveEntities} was reached; no more objects can be allocated.");
+            }
+
             // Capacity is about to double, which is the collector's best pressure signal: the live
             // set has outgrown the registry, so a collection is due. Gated on the live-entity
             // threshold, which ConfigurePolicy folds to zero in Manual mode - so a manual runtime
@@ -587,6 +612,25 @@ namespace Surtr.Runtime.Objects
             if (entity is null)
                 return;
             Registry.Mark(entity.SurtrRef);
+        }
+    }
+
+    /// <summary>
+    /// Thrown when a runtime's heap would grow past the live-entity cap a host configured via
+    /// <see cref="SurtrGcPolicy.MaxLiveEntities"/>.
+    /// </summary>
+    /// <remarks>
+    /// An ordinary CLR exception, not a VM-specific one: allocation happens both from host code
+    /// (<c>SurtrRuntime.NewString</c> and friends) and from bytecode, and a plain exception raised
+    /// during execution is already searchable by a Surtr <c>catch</c> the same way any other host
+    /// throw is - wrapped as an object and walked through the interpreter's own handler search.
+    /// </remarks>
+    public sealed class SurtrHeapLimitExceededException : Exception
+    {
+        /// <summary>Initializes the exception with what limit was reached.</summary>
+        /// <param name="message">A description of the problem.</param>
+        public SurtrHeapLimitExceededException(string message) : base(message)
+        {
         }
     }
 }

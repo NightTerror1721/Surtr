@@ -70,17 +70,50 @@ namespace Surtr.Runtime.Objects
         /// </summary>
         public int NurseryFrequency { get; }
 
+        /// <summary>
+        /// The most entities the heap may ever hold live at once, or <c>0</c> - the default - for
+        /// no limit.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// A hard ceiling, not a collection trigger: unlike <see cref="AllocationThreshold"/> and
+        /// <see cref="LiveEntityThresholdPercent"/>, it is <em>not</em> folded away in
+        /// <see cref="SurtrGcMode.Manual"/> - a host sandboxing untrusted script content wants the
+        /// cap enforced whether or not it drives collection itself.
+        /// </para>
+        /// <para>
+        /// Checked when the registry's backing storage would otherwise grow to accommodate more
+        /// entities - the same cold path an ordinary capacity doubling already runs on, so an
+        /// allocation that reuses a freed id never pays for the check. That means the cap is a
+        /// ceiling on how large the heap may grow, not an instantaneous count: a runtime whose
+        /// initial capacity already sits at or above it is unaffected until growth is next needed.
+        /// A host that wants the cap enforced from the very first allocation should size the
+        /// runtime's initial entity capacity at or below it.
+        /// </para>
+        /// </remarks>
+        public long MaxLiveEntities { get; }
+
         /// <summary>Creates a policy with the given settings.</summary>
+        /// <param name="mode">How the collector is allowed to run on its own.</param>
+        /// <param name="allocationThreshold">See <see cref="AllocationThreshold"/>.</param>
+        /// <param name="liveEntityThresholdPercent">See <see cref="LiveEntityThresholdPercent"/>.</param>
+        /// <param name="nurseryFrequency">See <see cref="NurseryFrequency"/>.</param>
+        /// <param name="maxLiveEntities">
+        /// The most entities the heap may hold live at once, or <c>0</c> for no limit. See
+        /// <see cref="MaxLiveEntities"/>.
+        /// </param>
         /// <exception cref="ArgumentOutOfRangeException">
         /// <paramref name="allocationThreshold"/> is below <c>1</c>,
-        /// <paramref name="liveEntityThresholdPercent"/> is outside <c>[0, 100]</c>, or
-        /// <paramref name="nurseryFrequency"/> is below <c>1</c>.
+        /// <paramref name="liveEntityThresholdPercent"/> is outside <c>[0, 100]</c>,
+        /// <paramref name="nurseryFrequency"/> is below <c>1</c>, or
+        /// <paramref name="maxLiveEntities"/> is negative.
         /// </exception>
         public SurtrGcPolicy(
             SurtrGcMode mode,
             long allocationThreshold,
             int liveEntityThresholdPercent,
-            int nurseryFrequency)
+            int nurseryFrequency,
+            long maxLiveEntities = 0)
         {
             if (allocationThreshold < 1)
                 throw new ArgumentOutOfRangeException(nameof(allocationThreshold), allocationThreshold, "The allocation threshold must be at least 1.");
@@ -91,10 +124,14 @@ namespace Surtr.Runtime.Objects
             if (nurseryFrequency < 1)
                 throw new ArgumentOutOfRangeException(nameof(nurseryFrequency), nurseryFrequency, "The nursery frequency must be at least 1.");
 
+            if (maxLiveEntities < 0)
+                throw new ArgumentOutOfRangeException(nameof(maxLiveEntities), maxLiveEntities, "The live-entity cap cannot be negative.");
+
             Mode = mode;
             AllocationThreshold = allocationThreshold;
             LiveEntityThresholdPercent = liveEntityThresholdPercent;
             NurseryFrequency = nurseryFrequency;
+            MaxLiveEntities = maxLiveEntities;
         }
 
         /// <summary>The policy a freshly-initialized runtime uses: never collects on its own.</summary>

@@ -4,6 +4,7 @@ using Surtr.Compiler.Syntax;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Surtr.Compiler.Diagnostics
 {
@@ -111,6 +112,37 @@ namespace Surtr.Compiler.Diagnostics
 
                 diagnostics.RemoveAt(i);
             }
+        }
+
+        /// <summary>
+        /// A new bag holding the same diagnostics, with a suppression/severity policy applied: any
+        /// diagnostic whose code is in <paramref name="suppressedCodes"/> is dropped entirely, and
+        /// - when <paramref name="warningsAsErrors"/> is set - every remaining warning is promoted
+        /// to an error.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately produces a new bag rather than mutating this one: a diagnostic is immutable
+        /// by design (it outlives the pass that produced it), and a promoted warning is a genuinely
+        /// different diagnostic - its severity changed - not the same one with a field flipped.
+        /// </remarks>
+        public SurtrDiagnosticBag ApplyPolicy(bool warningsAsErrors, IReadOnlyCollection<SurtrDiagnosticCode>? suppressedCodes)
+        {
+            var result = new SurtrDiagnosticBag();
+
+            for (int i = 0; i < diagnostics.Count; i++)
+            {
+                var diagnostic = diagnostics[i];
+                if (suppressedCodes is not null && suppressedCodes.Contains(diagnostic.Code))
+                    continue;
+
+                var severity = warningsAsErrors && diagnostic.Severity == SurtrDiagnosticSeverity.Warning
+                    ? SurtrDiagnosticSeverity.Error
+                    : diagnostic.Severity;
+
+                result.Report(new SurtrDiagnostic(diagnostic.Code, severity, diagnostic.Message, diagnostic.SourceName, diagnostic.Span));
+            }
+
+            return result;
         }
 
         /// <summary>Adds everything from another bag, keeping its order.</summary>

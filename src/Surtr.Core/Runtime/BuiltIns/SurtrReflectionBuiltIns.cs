@@ -302,7 +302,7 @@ namespace Surtr.Runtime.BuiltIns
         /// same way source-level tooling already treats them as invisible.
         /// </summary>
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-        private static bool IsSynthetic(string name) => name.Length > 0 && name[0] == '$';
+        private static bool IsSynthetic(string name) => SurtrMetadataQuery.IsSynthetic(name);
 
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
         private static SurtrTypeValue SelfTypeValue(SurtrCallArguments arguments) => arguments.GetUnchecked<SurtrTypeValue>(0);
