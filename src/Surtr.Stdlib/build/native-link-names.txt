@@ -1,3 +1,16 @@
+surtr.diagnostics.Debug.debugBreakpoint
+surtr.diagnostics.Debug.debugDump
+surtr.diagnostics.Debug.debugIsDebuggerAttached
+surtr.diagnostics.Debug.debugPrint
+surtr.diagnostics.Debug.debugStack
+surtr.diagnostics.Profiler.stopwatchTimestamp
+surtr.diagnostics.RuntimeInfo.get_CpuArchitecture
+surtr.diagnostics.RuntimeInfo.get_EngineVersion
+surtr.diagnostics.RuntimeInfo.get_IsDebugBuild
+surtr.diagnostics.RuntimeInfo.get_Platform
+surtr.diagnostics.RuntimeInfo.get_ProcessorCount
+surtr.diagnostics.RuntimeInfo.get_RuntimeVersion
+surtr.diagnostics.RuntimeInfo.get_WorkingSet
 surtr.math.Math.acos
 surtr.math.Math.asin
 surtr.math.Math.atan

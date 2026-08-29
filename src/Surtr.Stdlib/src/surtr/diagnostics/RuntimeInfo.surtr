@@ -1,0 +1,7 @@
+native let Platform: string;
+native let EngineVersion: string;
+native let RuntimeVersion: string;
+native let CpuArchitecture: string;
+native let IsDebugBuild: bool;
+native let ProcessorCount: int;
+native let WorkingSet: int;

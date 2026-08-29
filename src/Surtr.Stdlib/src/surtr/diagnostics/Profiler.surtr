@@ -1,0 +1,158 @@
+public class Stopwatch
+{
+    private var _elapsed: float;
+    private var _running: bool;
+
+    public constructor()
+    {
+        this._elapsed = 0.0;
+        this._running = false;
+    }
+
+    public inline elapsed: float
+    {
+        get { return _elapsed; }
+    }
+
+    public inline isRunning: bool
+    {
+        get { return _running; }
+    }
+
+    public fun start(): void
+    {
+        _running = true;
+    }
+
+    public fun stop(): void
+    {
+        _running = false;
+    }
+
+    public fun reset(): void
+    {
+        _elapsed = 0.0;
+        _running = false;
+    }
+
+    public fun restart(): void
+    {
+        _elapsed = 0.0;
+        _running = true;
+    }
+
+    public fun addElapsed(delta: float): void
+    {
+        if (_running) _elapsed = _elapsed + delta;
+    }
+
+    public inline fun isFasterThan(other: Stopwatch): bool => _elapsed < other._elapsed;
+
+    public inline fun isSlowerThan(other: Stopwatch): bool => _elapsed > other._elapsed;
+
+    public inline fun getElapsedMilliseconds(): float => _elapsed;
+
+    public inline fun getElapsedSeconds(): float => _elapsed / 1000.0;
+}
+
+
+native fun stopwatchTimestamp(): float;
+
+
+public class ProfilerScope
+{
+    private let _stopwatch: Stopwatch;
+    private let _label: string;
+
+    public constructor(stopwatch: Stopwatch, label: string)
+    {
+        this._stopwatch = stopwatch;
+        this._label = label;
+        _stopwatch.restart();
+    }
+
+    public inline label: string { get { return _label; } }
+
+    public fun dispose(): void
+    {
+        _stopwatch.stop();
+    }
+}
+
+
+public class Profiler
+{
+    private var _name: string;
+    private var _entries: ProfilerEntry[];
+
+    public constructor(name: string = "Profiler")
+    {
+        this._name = name;
+        this._entries = array<ProfilerEntry>(0);
+    }
+
+    public inline name: string { get { return _name; } }
+    public inline entryCount: int { get { return _entries.length; } }
+
+    public fun beginScope(label: string): ProfilerScope
+    {
+        let entry = ProfilerEntry(label);
+        _entries.push(entry);
+        return ProfilerScope(entry.stopwatch, label);
+    }
+
+    public fun record(label: string, elapsed: float): void
+    {
+        _entries.push(ProfilerEntry(label, elapsed));
+    }
+
+    public fun getEntry(index: int): ProfilerEntry
+    {
+        if (index < 0 || index >= _entries.length) throw IndexOutOfRangeException("Index out of range");
+        return _entries[index];
+    }
+
+    public fun clear(): void
+    {
+        _entries.clear();
+    }
+
+    public fun getTotalElapsed(): float
+    {
+        var total = 0.0;
+        for (var i = 0; i < _entries.length; i++)
+            total = total + _entries[i].elapsed;
+        return total;
+    }
+
+    public fun getEntryCount(): int => _entries.length;
+}
+
+
+public class ProfilerEntry
+{
+    public let label: string;
+    public let stopwatch: Stopwatch;
+    public let elapsed: float;
+
+    public constructor(label: string)
+    {
+        this.label = label;
+        this.stopwatch = Stopwatch();
+        this.elapsed = 0.0;
+        this.stopwatch.start();
+    }
+
+    public constructor(label: string, elapsed: float)
+    {
+        this.label = label;
+        this.stopwatch = Stopwatch();
+        this.elapsed = elapsed;
+    }
+}
+
+
+public fun timestamp(): float
+{
+    return stopwatchTimestamp();
+}

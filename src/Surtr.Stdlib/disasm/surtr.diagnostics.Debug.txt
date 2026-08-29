@@ -1,0 +1,78 @@
+module surtr.diagnostics.Debug
+  constants: 1   types: 0   fields: 0   methods: 12   modules: 0
+  string #0 = "
+"
+
+  method table:
+    #0  debugPrint(string) -> void
+    #1  debugDump(unknown) -> string
+    #2  debugBreakpoint() -> void
+    #3  debugStack() -> string
+    #4  debugIsDebuggerAttached() -> bool
+    #5  print(string) -> void
+    #6  println(string) -> void
+    #7  dump(unknown) -> void
+    #8  dumpLine(unknown) -> void
+    #9  breakpoint() -> void
+    #10  stackTrace() -> string
+    #11  isDebuggerAttached() -> bool
+
+[public] static breakpoint(): void
+  ; entry 4, locals 0, stack 0, code 002C..0032
+    002C  CallLocalModule 2 (debugBreakpoint) args=0 ret=0
+    0031  ReturnVoid
+
+[internal] static native debugBreakpoint(): void
+  ; native link="surtr.diagnostics.Debug.debugBreakpoint" unbound declared
+
+[internal] static native debugDump(value: unknown): string
+  ; native link="surtr.diagnostics.Debug.debugDump" unbound declared
+
+[internal] static native debugIsDebuggerAttached(): bool
+  ; native link="surtr.diagnostics.Debug.debugIsDebuggerAttached" unbound declared
+
+[internal] static native debugPrint(message: string): void
+  ; native link="surtr.diagnostics.Debug.debugPrint" unbound declared
+
+[internal] static native debugStack(): string
+  ; native link="surtr.diagnostics.Debug.debugStack" unbound declared
+
+[public] static dump(value: unknown): void
+  ; entry 2, locals 1, stack 1, code 0011..001D
+    0011  Ldl0
+    0012  CallLocalModule 1 (debugDump) args=1 ret=1
+    0017  CallLocalModule 0 (debugPrint) args=1 ret=0
+    001C  ReturnVoid
+
+[public] static dumpLine(value: unknown): void
+  ; entry 3, locals 1, stack 2, code 001D..002C
+    001D  Ldl0
+    001E  CallLocalModule 1 (debugDump) args=1 ret=1
+    0023  Ldc0
+    0024  StrCat 2
+    0026  CallLocalModule 0 (debugPrint) args=1 ret=0
+    002B  ReturnVoid
+
+[public] static isDebuggerAttached(): bool
+  ; entry 6, locals 0, stack 1, code 0038..003E
+    0038  CallLocalModule 4 (debugIsDebuggerAttached) args=0 ret=1
+    003D  ReturnValue
+
+[public] static print(message: string): void
+  ; entry 0, locals 1, stack 1, code 0000..0007
+    0000  Ldl0
+    0001  CallLocalModule 0 (debugPrint) args=1 ret=0
+    0006  ReturnVoid
+
+[public] static println(message: string): void
+  ; entry 1, locals 1, stack 2, code 0007..0011
+    0007  Ldl0
+    0008  Ldc0
+    0009  StrCat 2
+    000B  CallLocalModule 0 (debugPrint) args=1 ret=0
+    0010  ReturnVoid
+
+[public] static stackTrace(): string
+  ; entry 5, locals 0, stack 1, code 0032..0038
+    0032  CallLocalModule 3 (debugStack) args=0 ret=1
+    0037  ReturnValue

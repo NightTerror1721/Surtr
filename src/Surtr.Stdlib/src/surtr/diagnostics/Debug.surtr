@@ -1,0 +1,41 @@
+native fun debugPrint(message: string): void;
+native fun debugDump(value: unknown): string;
+native fun debugBreakpoint(): void;
+native fun debugStack(): string;
+native fun debugIsDebuggerAttached(): bool;
+
+
+public fun print(message: string): void
+{
+    debugPrint(message);
+}
+
+public fun println(message: string): void
+{
+    debugPrint(message + "\n");
+}
+
+public fun dump(value: unknown): void
+{
+    debugPrint(debugDump(value));
+}
+
+public fun dumpLine(value: unknown): void
+{
+    debugPrint(debugDump(value) + "\n");
+}
+
+public fun breakpoint(): void
+{
+    debugBreakpoint();
+}
+
+public fun stackTrace(): string
+{
+    return debugStack();
+}
+
+public fun isDebuggerAttached(): bool
+{
+    return debugIsDebuggerAttached();
+}

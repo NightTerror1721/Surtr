@@ -1,0 +1,365 @@
+module surtr.diagnostics.Profiler
+  constants: 3   types: 5   fields: 9   methods: 29   modules: 0
+  string #2 = "Index out of range"
+
+  type table:
+    #0  surtr.diagnostics.Profiler:ProfilerEntry[]
+    #1  surtr.diagnostics.Profiler:ProfilerEntry
+    #2  surtr.diagnostics.Profiler:ProfilerScope
+    #3  surtr:IndexOutOfRangeException
+    #4  surtr.diagnostics.Profiler:Stopwatch
+
+  field table:
+    #0  surtr.diagnostics.Profiler:Stopwatch._elapsed: float
+    #1  surtr.diagnostics.Profiler:Stopwatch._running: bool
+    #2  surtr.diagnostics.Profiler:ProfilerScope._stopwatch: surtr.diagnostics.Profiler:Stopwatch
+    #3  surtr.diagnostics.Profiler:ProfilerScope._label: string
+    #4  surtr.diagnostics.Profiler:Profiler._name: string
+    #5  surtr.diagnostics.Profiler:Profiler._entries: surtr.diagnostics.Profiler:ProfilerEntry[]
+    #6  surtr.diagnostics.Profiler:ProfilerEntry.stopwatch: surtr.diagnostics.Profiler:Stopwatch
+    #7  surtr.diagnostics.Profiler:ProfilerEntry.elapsed: float
+    #8  surtr.diagnostics.Profiler:ProfilerEntry.label: string
+
+  method table:
+    #0  surtr.diagnostics.Profiler:Stopwatch.ctor() -> void
+    #1  surtr.diagnostics.Profiler:Stopwatch.get_elapsed() -> float
+    #2  surtr.diagnostics.Profiler:Stopwatch.get_isRunning() -> bool
+    #3  surtr.diagnostics.Profiler:Stopwatch.start() -> void
+    #4  surtr.diagnostics.Profiler:Stopwatch.stop() -> void
+    #5  surtr.diagnostics.Profiler:Stopwatch.reset() -> void
+    #6  surtr.diagnostics.Profiler:Stopwatch.restart() -> void
+    #7  surtr.diagnostics.Profiler:Stopwatch.addElapsed(float) -> void
+    #8  surtr.diagnostics.Profiler:Stopwatch.isFasterThan(surtr.diagnostics.Profiler:Stopwatch) -> bool
+    #9  surtr.diagnostics.Profiler:Stopwatch.isSlowerThan(surtr.diagnostics.Profiler:Stopwatch) -> bool
+    #10  surtr.diagnostics.Profiler:Stopwatch.getElapsedMilliseconds() -> float
+    #11  surtr.diagnostics.Profiler:Stopwatch.getElapsedSeconds() -> float
+    #12  surtr.diagnostics.Profiler:ProfilerScope.ctor(surtr.diagnostics.Profiler:Stopwatch, string) -> void
+    #13  surtr.diagnostics.Profiler:ProfilerScope.get_label() -> string
+    #14  surtr.diagnostics.Profiler:ProfilerScope.dispose() -> void
+    #15  surtr.diagnostics.Profiler:Profiler.ctor(string) -> void
+    #16  surtr.diagnostics.Profiler:Profiler.get_name() -> string
+    #17  surtr.diagnostics.Profiler:Profiler.get_entryCount() -> int
+    #18  surtr.diagnostics.Profiler:Profiler.beginScope(string) -> surtr.diagnostics.Profiler:ProfilerScope
+    #19  surtr.diagnostics.Profiler:Profiler.record(string, float) -> void
+    #20  surtr.diagnostics.Profiler:Profiler.getEntry(int) -> surtr.diagnostics.Profiler:ProfilerEntry
+    #21  surtr.diagnostics.Profiler:Profiler.clear() -> void
+    #22  surtr.diagnostics.Profiler:Profiler.getTotalElapsed() -> float
+    #23  surtr.diagnostics.Profiler:Profiler.getEntryCount() -> int
+    #24  surtr.diagnostics.Profiler:ProfilerEntry.ctor(string) -> void
+    #25  surtr.diagnostics.Profiler:ProfilerEntry.ctor(string, float) -> void
+    #26  stopwatchTimestamp() -> float
+    #27  timestamp() -> float
+    #28  surtr:IndexOutOfRangeException.ctor(string) -> void
+
+[internal] static native stopwatchTimestamp(): float
+  ; native link="surtr.diagnostics.Profiler.stopwatchTimestamp" unbound declared
+
+[public] static timestamp(): float
+  ; entry 0, locals 0, stack 1, code 0000..0006
+    0000  CallLocalModule 26 (stopwatchTimestamp) args=0 ret=1
+    0005  ReturnValue
+
+class Profiler  [public]
+  [private] field _entries: surtr.diagnostics.Profiler:ProfilerEntry[]
+  [private] field _name: string
+
+  [public] property entryCount: int { get; }
+    get:
+      ; entry 18, locals 1, stack 1, code 00A8..00AE
+        00A8  Ldl0
+        00A9  FieldGet 5 (_entries)
+        00AC  ArrLen
+        00AD  ReturnValue
+
+  [public] property name: string { get; }
+    get:
+      ; entry 17, locals 1, stack 1, code 00A3..00A8
+        00A3  Ldl0
+        00A4  FieldGet 4 (_name)
+        00A7  ReturnValue
+
+  [public] beginScope(label: string): surtr.diagnostics.Profiler:ProfilerScope
+    ; entry 19, locals 3, stack 4, code 00AE..00CE
+      00AE  ObjNew 1 (surtr.diagnostics.Profiler:ProfilerEntry)
+      00B1  Dup
+      00B2  Ldl1
+      00B3  InvokeSpecial 24 (ctor) args=2 ret=0
+      00B8  Stl2
+      00B9  Ldl0
+      00BA  FieldGet 5 (_entries)
+      00BD  Ldl2
+      00BE  ArrPush
+      00BF  ObjNew 2 (surtr.diagnostics.Profiler:ProfilerScope)
+      00C2  Dup
+      00C3  Ldl2
+      00C4  FieldGet 6 (stopwatch)
+      00C7  Ldl1
+      00C8  InvokeSpecial 12 (ctor) args=3 ret=0
+      00CD  ReturnValue
+
+  [public] clear(): void
+    ; entry 22, locals 1, stack 1, code 0107..010D
+      0107  Ldl0
+      0108  FieldGet 5 (_entries)
+      010B  ArrClear
+      010C  ReturnVoid
+
+  [public] ctor (name: string = "Profiler"): void
+    ; entry 16, locals 2, stack 2, code 0092..00A3
+      0092  Ldl0
+      0093  Ldl1
+      0094  FieldSet 4 (_name)
+      0097  Ldl0
+      0098  ArrNewX 0 (surtr.diagnostics.Profiler:ProfilerEntry[]) size=0
+      009F  FieldSet 5 (_entries)
+      00A2  ReturnVoid
+
+  [public] getEntry(index: int): surtr.diagnostics.Profiler:ProfilerEntry
+    ; entry 21, locals 2, stack 3, code 00DF..0107
+      00DF  Ldl1
+      00E0  PushI8 0
+      00E2  LT
+      00E3  Dup
+      00E4  JPNZ +11 -> L0 (00F2)
+      00E7  Pop
+      00E8  Ldl1
+      00E9  Ldl0
+      00EA  FieldGet 5 (_entries)
+      00ED  ArrLen
+      00EE  GE
+      00EF  JP +0 -> L0 (00F2)
+    L0:
+      00F2  JPZ +11 -> L1 (0100)
+      00F5  ObjNew 3 (surtr:IndexOutOfRangeException)
+      00F8  Dup
+      00F9  Ldc2
+      00FA  InvokeSpecial 28 (ctor) args=2 ret=0
+      00FF  Throw
+    L1:
+      0100  Ldl0
+      0101  FieldGet 5 (_entries)
+      0104  Ldl1
+      0105  ArrGet
+      0106  ReturnValue
+
+  [public] getEntryCount(): int
+    ; entry 24, locals 1, stack 1, code 012F..0135
+      012F  Ldl0
+      0130  FieldGet 5 (_entries)
+      0133  ArrLen
+      0134  ReturnValue
+
+  [public] getTotalElapsed(): float
+    ; entry 23, locals 3, stack 3, code 010D..012F
+      010D  Ldc0
+      010E  Stl1
+      010F  PushI8 0
+      0111  Stl2
+    L0:
+      0112  Ldl2
+      0113  Ldl0
+      0114  FieldGet 5 (_entries)
+      0117  ArrLen
+      0118  JPGE +18 -> L1 (012D)
+      011B  Ldl1
+      011C  Ldl0
+      011D  FieldGet 5 (_entries)
+      0120  Ldl2
+      0121  ArrGet
+      0122  FieldGet 7 (elapsed)
+      0125  FAdd
+      0126  Stl1
+      0127  IncLocal 2 by 1
+      012A  JP -27 -> L0 (0112)
+    L1:
+      012D  Ldl1
+      012E  ReturnValue
+
+  [public] record(label: string, elapsed: float): void
+    ; entry 20, locals 3, stack 5, code 00CE..00DF
+      00CE  Ldl0
+      00CF  FieldGet 5 (_entries)
+      00D2  ObjNew 1 (surtr.diagnostics.Profiler:ProfilerEntry)
+      00D5  Dup
+      00D6  Ldl1
+      00D7  Ldl2
+      00D8  InvokeSpecial 25 (ctor) args=3 ret=0
+      00DD  ArrPush
+      00DE  ReturnVoid
+
+class ProfilerEntry  [public]
+  [public] readonly field elapsed: float
+  [public] readonly field label: string
+  [public] readonly field stopwatch: surtr.diagnostics.Profiler:Stopwatch
+
+  [public] ctor (label: string): void
+    ; entry 25, locals 2, stack 3, code 0135..0156
+      0135  Ldl0
+      0136  Ldl1
+      0137  FieldSet 8 (label)
+      013A  Ldl0
+      013B  ObjNew 4 (surtr.diagnostics.Profiler:Stopwatch)
+      013E  Dup
+      013F  InvokeSpecial 0 (ctor) args=1 ret=0
+      0144  FieldSet 6 (stopwatch)
+      0147  Ldl0
+      0148  Ldc0
+      0149  FieldSet 7 (elapsed)
+      014C  Ldl0
+      014D  FieldGet 6 (stopwatch)
+      0150  InvokeSpecial 3 (start) args=1 ret=0
+      0155  ReturnVoid
+
+  [public] ctor (label: string, elapsed: float): void
+    ; entry 26, locals 3, stack 3, code 0156..016E
+      0156  Ldl0
+      0157  Ldl1
+      0158  FieldSet 8 (label)
+      015B  Ldl0
+      015C  ObjNew 4 (surtr.diagnostics.Profiler:Stopwatch)
+      015F  Dup
+      0160  InvokeSpecial 0 (ctor) args=1 ret=0
+      0165  FieldSet 6 (stopwatch)
+      0168  Ldl0
+      0169  Ldl2
+      016A  FieldSet 7 (elapsed)
+      016D  ReturnVoid
+
+class ProfilerScope  [public]
+  [private] readonly field _label: string
+  [private] readonly field _stopwatch: surtr.diagnostics.Profiler:Stopwatch
+
+  [public] property label: string { get; }
+    get:
+      ; entry 14, locals 1, stack 1, code 0083..0088
+        0083  Ldl0
+        0084  FieldGet 3 (_label)
+        0087  ReturnValue
+
+  [public] ctor (stopwatch: surtr.diagnostics.Profiler:Stopwatch, label: string): void
+    ; entry 13, locals 3, stack 2, code 006F..0083
+      006F  Ldl0
+      0070  Ldl1
+      0071  FieldSet 2 (_stopwatch)
+      0074  Ldl0
+      0075  Ldl2
+      0076  FieldSet 3 (_label)
+      0079  Ldl0
+      007A  FieldGet 2 (_stopwatch)
+      007D  InvokeSpecial 6 (restart) args=1 ret=0
+      0082  ReturnVoid
+
+  [public] dispose(): void
+    ; entry 15, locals 1, stack 1, code 0088..0092
+      0088  Ldl0
+      0089  FieldGet 2 (_stopwatch)
+      008C  InvokeSpecial 4 (stop) args=1 ret=0
+      0091  ReturnVoid
+
+class Stopwatch  [public]
+  [private] field _elapsed: float
+  [private] field _running: bool
+
+  [public] property elapsed: float { get; }
+    get:
+      ; entry 2, locals 1, stack 1, code 0011..0016
+        0011  Ldl0
+        0012  FieldGet 0 (_elapsed)
+        0015  ReturnValue
+
+  [public] property isRunning: bool { get; }
+    get:
+      ; entry 3, locals 1, stack 1, code 0016..001B
+        0016  Ldl0
+        0017  FieldGet 1 (_running)
+        001A  ReturnValue
+
+  [public] addElapsed(delta: float): void
+    ; entry 8, locals 2, stack 3, code 003D..004F
+      003D  Ldl0
+      003E  FieldGet 1 (_running)
+      0041  JPZ +10 -> L0 (004E)
+      0044  Ldl0
+      0045  Ldl0
+      0046  FieldGet 0 (_elapsed)
+      0049  Ldl1
+      004A  FAdd
+      004B  FieldSet 0 (_elapsed)
+    L0:
+      004E  ReturnVoid
+
+  [public] ctor (): void
+    ; entry 1, locals 1, stack 2, code 0006..0011
+      0006  Ldl0
+      0007  Ldc0
+      0008  FieldSet 0 (_elapsed)
+      000B  Ldl0
+      000C  PushFalse
+      000D  FieldSet 1 (_running)
+      0010  ReturnVoid
+
+  [public] getElapsedMilliseconds(): float
+    ; entry 11, locals 1, stack 1, code 0063..0068
+      0063  Ldl0
+      0064  FieldGet 0 (_elapsed)
+      0067  ReturnValue
+
+  [public] getElapsedSeconds(): float
+    ; entry 12, locals 1, stack 2, code 0068..006F
+      0068  Ldl0
+      0069  FieldGet 0 (_elapsed)
+      006C  Ldc1
+      006D  FDiv
+      006E  ReturnValue
+
+  [public] isFasterThan(other: surtr.diagnostics.Profiler:Stopwatch): bool
+    ; entry 9, locals 2, stack 2, code 004F..0059
+      004F  Ldl0
+      0050  FieldGet 0 (_elapsed)
+      0053  Ldl1
+      0054  FieldGet 0 (_elapsed)
+      0057  FLT
+      0058  ReturnValue
+
+  [public] isSlowerThan(other: surtr.diagnostics.Profiler:Stopwatch): bool
+    ; entry 10, locals 2, stack 2, code 0059..0063
+      0059  Ldl0
+      005A  FieldGet 0 (_elapsed)
+      005D  Ldl1
+      005E  FieldGet 0 (_elapsed)
+      0061  FGT
+      0062  ReturnValue
+
+  [public] reset(): void
+    ; entry 6, locals 1, stack 2, code 0027..0032
+      0027  Ldl0
+      0028  Ldc0
+      0029  FieldSet 0 (_elapsed)
+      002C  Ldl0
+      002D  PushFalse
+      002E  FieldSet 1 (_running)
+      0031  ReturnVoid
+
+  [public] restart(): void
+    ; entry 7, locals 1, stack 2, code 0032..003D
+      0032  Ldl0
+      0033  Ldc0
+      0034  FieldSet 0 (_elapsed)
+      0037  Ldl0
+      0038  PushTrue
+      0039  FieldSet 1 (_running)
+      003C  ReturnVoid
+
+  [public] start(): void
+    ; entry 4, locals 1, stack 2, code 001B..0021
+      001B  Ldl0
+      001C  PushTrue
+      001D  FieldSet 1 (_running)
+      0020  ReturnVoid
+
+  [public] stop(): void
+    ; entry 5, locals 1, stack 2, code 0021..0027
+      0021  Ldl0
+      0022  PushFalse
+      0023  FieldSet 1 (_running)
+      0026  ReturnVoid

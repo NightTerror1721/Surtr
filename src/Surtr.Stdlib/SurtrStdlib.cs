@@ -384,6 +384,27 @@ namespace Surtr.Stdlib
             runtime.DefineNativeBody("surtr.math.Math.ceil", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrMathNative.MathCeil));
             runtime.DefineNativeBody("surtr.math.Math.round", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrMathNative.MathRound));
             runtime.DefineNativeBody("surtr.math.Math.hypot", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrMathNative.MathHypot));
+
+            // ── surtr.diagnostics ───────────────────────────────────────────
+
+            // Profiler
+            runtime.DefineNativeBody("surtr.diagnostics.Profiler.stopwatchTimestamp", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.StopwatchTimestamp));
+
+            // Debug
+            runtime.DefineNativeBody("surtr.diagnostics.Debug.debugPrint", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.DebugPrint));
+            runtime.DefineNativeBody("surtr.diagnostics.Debug.debugDump", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.DebugDump));
+            runtime.DefineNativeBody("surtr.diagnostics.Debug.debugBreakpoint", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.DebugBreakpoint));
+            runtime.DefineNativeBody("surtr.diagnostics.Debug.debugStack", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.DebugStack));
+            runtime.DefineNativeBody("surtr.diagnostics.Debug.debugIsDebuggerAttached", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.DebugIsDebuggerAttached));
+
+            // RuntimeInfo (native let property getters)
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_Platform", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetPlatform));
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_EngineVersion", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetEngineVersion));
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_RuntimeVersion", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetRuntimeVersion));
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_CpuArchitecture", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetCpuArchitecture));
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_IsDebugBuild", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetIsDebugBuild));
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_ProcessorCount", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetProcessorCount));
+            runtime.DefineNativeBody("surtr.diagnostics.RuntimeInfo.get_WorkingSet", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrDiagnosticsNative.RuntimeInfoGetWorkingSet));
         }
     }
 }

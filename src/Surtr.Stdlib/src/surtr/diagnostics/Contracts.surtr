@@ -1,0 +1,128 @@
+public class PreconditionException : Exception
+{
+    public constructor(message: string = "Precondition failed.") : super(message) {}
+}
+
+public class PostconditionException : Exception
+{
+    public constructor(message: string = "Postcondition failed.") : super(message) {}
+}
+
+public class InvariantException : Exception
+{
+    public constructor(message: string = "Invariant violated.") : super(message) {}
+}
+
+
+// --- Precondition helpers ---
+
+public fun require(condition: bool, paramName: string, message: string = "Precondition failed."): void
+{
+    if (!condition) throw PreconditionException(message + " Parameter: " + paramName);
+}
+
+public fun require(condition: bool, message: string = "Precondition failed."): void
+{
+    if (!condition) throw PreconditionException(message);
+}
+
+public fun requireNotNull<T>(value: T, paramName: string): void
+{
+    if (value == null) throw PreconditionException("Parameter must not be null. Parameter: " + paramName);
+}
+
+public fun requireNotNull<T>(value: T, paramName: string, message: string): void
+{
+    if (value == null) throw PreconditionException(message + " Parameter: " + paramName);
+}
+
+public fun requireNotEmpty(value: string, paramName: string): void
+{
+    if (value == null || value.length == 0) throw PreconditionException("String must not be null or empty. Parameter: " + paramName);
+}
+
+public fun requireNotEmpty(value: string, paramName: string, message: string): void
+{
+    if (value == null || value.length == 0) throw PreconditionException(message + " Parameter: " + paramName);
+}
+
+public fun requireInRange(value: int, low: int, high: int, paramName: string): void
+{
+    if (value < low || value > high) throw PreconditionException("Value must be between " + low + " and " + high + ". Parameter: " + paramName);
+}
+
+public fun requirePositive(value: int, paramName: string): void
+{
+    if (value <= 0) throw PreconditionException("Value must be positive. Parameter: " + paramName);
+}
+
+public fun requirePositive(value: float, paramName: string): void
+{
+    if (value <= 0.0) throw PreconditionException("Value must be positive. Parameter: " + paramName);
+}
+
+public fun requireNonNegative(value: int, paramName: string): void
+{
+    if (value < 0) throw PreconditionException("Value must be non-negative. Parameter: " + paramName);
+}
+
+public fun requireNonNegative(value: float, paramName: string): void
+{
+    if (value < 0.0) throw PreconditionException("Value must be non-negative. Parameter: " + paramName);
+}
+
+
+// --- Postcondition helpers ---
+
+public fun ensure(condition: bool, message: string = "Postcondition failed."): void
+{
+    if (!condition) throw PostconditionException(message);
+}
+
+public fun ensureNotNull<T>(value: T, message: string = "Result must not be null."): void
+{
+    if (value == null) throw PostconditionException(message);
+}
+
+public fun ensurePositive(value: int, message: string = "Result must be positive."): void
+{
+    if (value <= 0) throw PostconditionException(message);
+}
+
+public fun ensurePositive(value: float, message: string = "Result must be positive."): void
+{
+    if (value <= 0.0) throw PostconditionException(message);
+}
+
+public fun ensureNonNegative(value: int, message: string = "Result must be non-negative."): void
+{
+    if (value < 0) throw PostconditionException(message);
+}
+
+public fun ensureNonNegative(value: float, message: string = "Result must be non-negative."): void
+{
+    if (value < 0.0) throw PostconditionException(message);
+}
+
+
+// --- Invariant helpers ---
+
+public fun invariant(condition: bool, message: string = "Invariant violated."): void
+{
+    if (!condition) throw InvariantException(message);
+}
+
+public fun invariantNotNull<T>(value: T, message: string = "Object state contains null."): void
+{
+    if (value == null) throw InvariantException(message);
+}
+
+public fun invariantNonEmpty(value: string, message: string = "Object state is empty."): void
+{
+    if (value == null || value.length == 0) throw InvariantException(message);
+}
+
+public fun invariantNonEmpty(collection: IIterable<unknown>, message: string = "Collection is empty."): void
+{
+    if (!collection.iterate().moveNext()) throw InvariantException(message);
+}

@@ -1,0 +1,39 @@
+module surtr.diagnostics.RuntimeInfo
+  constants: 0   types: 0   fields: 0   methods: 7   modules: 0
+
+  method table:
+    #0  get_Platform() -> string
+    #1  get_EngineVersion() -> string
+    #2  get_RuntimeVersion() -> string
+    #3  get_CpuArchitecture() -> string
+    #4  get_IsDebugBuild() -> bool
+    #5  get_ProcessorCount() -> int
+    #6  get_WorkingSet() -> int
+
+[internal] static property CpuArchitecture: string { get; }
+  get:
+    ; native link="surtr.diagnostics.RuntimeInfo.get_CpuArchitecture" unbound declared
+
+[internal] static property EngineVersion: string { get; }
+  get:
+    ; native link="surtr.diagnostics.RuntimeInfo.get_EngineVersion" unbound declared
+
+[internal] static property IsDebugBuild: bool { get; }
+  get:
+    ; native link="surtr.diagnostics.RuntimeInfo.get_IsDebugBuild" unbound declared
+
+[internal] static property Platform: string { get; }
+  get:
+    ; native link="surtr.diagnostics.RuntimeInfo.get_Platform" unbound declared
+
+[internal] static property ProcessorCount: int { get; }
+  get:
+    ; native link="surtr.diagnostics.RuntimeInfo.get_ProcessorCount" unbound declared
+
+[internal] static property RuntimeVersion: string { get; }
+  get:
+    ; native link="surtr.diagnostics.RuntimeInfo.get_RuntimeVersion" unbound declared
+
+[internal] static property WorkingSet: int { get; }
+  get:
+    ; native link="surtr.diagnostics.RuntimeInfo.get_WorkingSet" unbound declared
