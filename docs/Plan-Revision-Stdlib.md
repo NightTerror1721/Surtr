@@ -1,10 +1,14 @@
 # Plan-Revision-Stdlib — Auditoría de `src/Surtr.Stdlib` y propuestas
 
-> **Estado:** diagnóstico completo, sin implementar. Nace de una revisión manual de los 25 archivos
-> `.surtr` de la stdlib (~3500 líneas), con dos hallazgos verificados compilando y ejecutando código
-> real contra el runtime (`surtrc build` + `surtr run`), no solo por lectura. Este documento no
-> decide el orden de trabajo por sí mismo — la §5 recoge las decisiones que hacen falta antes de
-> tocar código.
+> **Estado:** Fases 0-3 implementadas (B1-B4, D1-D5) — ver la nota de cada hallazgo en §2 y el
+> resumen al final de §4. Fases 4-7 (limpieza de código muerto, README, y las adiciones nuevas:
+> vectores/`Random`/`PriorityQueue`/`Map`) siguen sin implementar por decisión explícita de alcance.
+> Nace de una revisión manual de los 25 archivos `.surtr` de la stdlib (~3500 líneas), con dos
+> hallazgos verificados compilando y ejecutando código real contra el runtime (`surtrc build` +
+> `surtr run`), no solo por lectura. Cada arreglo de las Fases 0-3 tiene una prueba de regresión en
+> `src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`, que compila y ejecuta la fuente `.surtr` real
+> (no la imagen `.surtrc` comitada) junto a un driver, así que confirma el comportamiento en vez de
+> solo la compilación.
 
 ---
 
@@ -28,7 +32,7 @@ Cada hallazgo lleva: **tipo**, **prioridad**, archivo/línea, evidencia y arregl
 
 ### 2.1 Bugs — Prioridad CRÍTICA (confirmados ejecutando código real)
 
-#### B1 — `StringBuilder` produce contenido corrupto desde su construcción
+#### B1 — `StringBuilder` produce contenido corrupto desde su construcción — **Corregido**
 **Archivo:** `src/surtr/text/StringBuilder.surtr:7-11`
 
 ```surtr
@@ -58,7 +62,7 @@ Afecta a **cualquier uso normal** de la clase, no es un caso límite.
 igual que `List.ensureCapacity` (`List.surtr:128-140`). `clear()` debe resetear `_length = 0` en vez
 de `_buffer.clear()`.
 
-#### B2 — `Profiler`/`Stopwatch` no miden tiempo real
+#### B2 — `Profiler`/`Stopwatch` no miden tiempo real — **Corregido**
 **Archivo:** `src/surtr/diagnostics/Profiler.surtr`
 
 - `Stopwatch.start()`/`stop()`/`restart()` (líneas 22-42) solo cambian el flag `_running`; `_elapsed`
@@ -70,17 +74,19 @@ de `_buffer.clear()`.
 **Evidencia empírica:** un `Profiler` que envuelve un bucle de 1.000.000 de iteraciones dentro de
 `beginScope(...)`/`scope.dispose()` devuelve `getEntry(0).elapsed == 0`.
 
-**Arreglo propuesto:**
-- `Stopwatch.start()`/`restart()` deben capturar `stopwatchTimestamp()` en un campo `_startedAt`.
-- `Stopwatch.stop()` y la propiedad `elapsed` deben calcular `_elapsed + (running ?
-  stopwatchTimestamp() - _startedAt : 0)`.
-- `ProfilerScope.dispose()` debe escribir el tiempo medido de vuelta en la `ProfilerEntry`
-  correspondiente (hoy `elapsed` es inmutable — hay que convertirlo en `var` o en un campo mutado
-  a través de un método interno de `ProfilerEntry`).
+**Arreglo aplicado:**
+- `Stopwatch.start()`/`restart()` capturan `stopwatchTimestamp()` en un nuevo campo `_startedAt`;
+  `stop()` y la propiedad `elapsed` calculan `_elapsed + (running ? stopwatchTimestamp() -
+  _startedAt : 0)`.
+- `ProfilerEntry.elapsed` dejó de ser un `let` fijado una vez y pasó a ser una propiedad computada
+  que lee `stopwatch.elapsed` directamente — no queda ningún "olvidé actualizarlo" posible, porque
+  no hay copia que actualizar. `ProfilerScope.dispose()` no necesitó cambios: ya llamaba a
+  `_stopwatch.stop()`, que ahora sí calcula algo real.
+- Test de regresión: `ProfilerScopeMeasuresRealElapsedTime`, `StopwatchElapsedGrowsWhileRunning`.
 
 ### 2.2 Bugs — Prioridad ALTA (alta confianza, por inspección de código)
 
-#### B3 — `BinaryReader` corrompe silenciosamente lecturas truncadas
+#### B3 — `BinaryReader` corrompe silenciosamente lecturas truncadas — **Corregido**
 **Archivo:** `src/surtr/io/BinaryReader.surtr`
 
 `readChar()` (línea 31), `readInt()` (línea 40), `readBytes()` (línea 50) y `readString()` (línea 63)
@@ -93,12 +99,15 @@ haya leído menos, sin forma de que el llamador distinga "leí todo" de "leí me
 Esto es inconsistente con el propio `Stream.readByteValue()` (`Stream.surtr:65-70`), que sí lanza
 `InvalidOperationException` ante EOF.
 
-**Arreglo propuesto:** cada lectura multi-byte debe comprobar cada byte individual, no solo el
-primero, y lanzar (p. ej. una nueva `EndOfStreamException`, ver propuesta §3.9) en cuanto cualquiera
-de ellos indica EOF a mitad de un valor. `readBytes`/`readString` deberían devolver el número real de
-bytes leídos o truncar el resultado, nunca dejar cola de ceros sin marcar.
+**Arreglo aplicado:** `readChar`/`readInt` siguen devolviendo el valor "en blanco" (`char(0)`/`0`) en
+un EOF limpio antes del primer byte, pero lanzan la nueva `EndOfStreamException` (declarada en
+`Stream.surtr`, §3.9) en cuanto un byte posterior indica EOF a mitad de valor. `readBytes` trunca el
+resultado a lo realmente leído (igual que `Stream.read`); `readString` lanza siempre que falte
+cualquier byte de los `len` declarados, porque ahí un corte a mitad no tiene lectura legítima
+posible. Tests: `ReadIntThrowsOnATruncatedStreamInsteadOfReturningGarbage`,
+`ReadIntAtCleanEofReturnsZero`, `ReadBytesPastEndOfStreamReturnsOnlyWhatWasRead`.
 
-#### B4 — `ReadOnlySet.copyTo` lanza en un caso válido
+#### B4 — `ReadOnlySet.copyTo` lanza en un caso válido — **Corregido**
 **Archivo:** `src/surtr/collections/Set.surtr:114-119`
 
 ```surtr
@@ -113,22 +122,22 @@ Si el set está vacío y se copia en un array vacío con `arrayIndex = 0`, `0 >=
 0`) es `true` y lanza, aunque no hay nada que copiar. `List.copyTo` (`List.surtr:115-121`) no tiene
 este problema porque solo comprueba `arrayIndex < 0`.
 
-**Arreglo propuesto:** alinear la condición con `List.copyTo` — comprobar solo `arrayIndex < 0`, y
-dejar que la comprobación de espacio disponible (ya presente en la línea siguiente) cubra el resto.
+**Arreglo aplicado:** alineada la condición con `List.copyTo` — solo comprueba `arrayIndex < 0`.
+Test: `CopyingAnEmptySetIntoAnEmptyArrayDoesNotThrow`.
 
 ### 2.3 Inconsistencias de diseño — Prioridad MEDIA
 
-#### D1 — `List<T>` no tiene `operator[]`
+#### D1 — `List<T>` no tiene `operator[]` — **Corregido**
 **Archivo:** `src/surtr/collections/List.surtr:16`
 
 `LinkedList<T>` (línea 422-423) y `StringBuilder` (línea 54) sí declaran `operator[]`; la colección
 más usada de la stdlib, no. Hoy `xs[i]` no funciona sobre un `List<int>` y hay que escribir
 `xs.get(i)`/`xs.set(i, v)`.
 
-**Arreglo propuesto:** añadir
-`inline operator [](self: List<T>, index: int): T => self.get(index);` y el setter equivalente.
+**Arreglo aplicado:** añadido `inline operator [](self: List<T>, index: int): T => self.get(index);`
+y el setter equivalente, tras `iterate()`. Test: `ListSupportsIndexerReadAndWrite`.
 
-#### D2 — `Deque<T>.dequeueBack()` es O(n)
+#### D2 — `Deque<T>.dequeueBack()` es O(n) — **Corregido**
 **Archivo:** `src/surtr/collections/Queue.surtr:187-212`
 
 `Queue<T>.Node<T>` (línea 111) solo tiene `next` (lista simplemente enlazada). `Deque.dequeueBack()`
@@ -136,13 +145,15 @@ recorre toda la lista para encontrar el penúltimo nodo. Un tipo llamado "deque"
 operaciones es O(n) no cumple lo que promete su nombre — la implementación de referencia (`.NET`,
 `std::deque`) es O(1) en ambos extremos.
 
-**Arreglo propuesto (dos caminos, ver pregunta en §5):**
-- (a) Convertir `Queue<T>.Node<T>` en doblemente enlazado (añadir `prev`), lo que hace `Queue` y
-  `Deque` O(1) en todo — cambia la clase base que ambos comparten.
-- (b) Dar a `Deque<T>` su propia lista doblemente enlazada independiente de `Queue<T>`, sin tocar la
-  base — más código, cero riesgo sobre `Queue`.
+**Arreglo aplicado:** opción (b) — `Deque<T>` pasó a ser una implementación independiente con su
+propio `Node<T>` doblemente enlazado (`prev`+`next`), implementando `IDeque<T>` directamente en vez
+de extender `Queue<T>`. `Queue<T>` no se tocó (sigue con su `Node<T>` de un solo enlace, que le
+basta); se le quitó el helper `makeNode`, que solo existía para que el antiguo `Deque : Queue<T>` lo
+usara y quedó sin llamadas. Efecto secundario aceptado: `Deque<T>` ya no es subtipo de la clase
+concreta `Queue<T>` (solo de `IQueue<T>`/`IDeque<T>`, que sigue implementando por completo). Tests:
+`DequeWorksAtBothEndsAndThroughTheCollectionContract`, `QueueStillWorksAfterDequeWasSeparatedFromIt`.
 
-#### D3 — Orden de iteración de `Stack<T>` no es LIFO
+#### D3 — Orden de iteración de `Stack<T>` no es LIFO — **Corregido**
 **Archivo:** `src/surtr/collections/Stack.surtr:65`
 
 `Iterator<T>(_items, _items.length)` recorre `_items` de índice `0` a `length-1`, es decir, en orden
@@ -151,11 +162,10 @@ un stack (p. ej. `System.Collections.Generic.Stack<T>` en .NET itera top-to-bott
 necesariamente un "bug", pero sorprende a cualquiera que espere semántica de pila al hacer
 `for (x in stack)`.
 
-**Arreglo propuesto:** iterar `_items` en orden inverso (`_index` empezando en `_items.length` y
-decrementando), o documentar explícitamente que la iteración es en orden de inserción si se decide
-mantenerla así.
+**Arreglo aplicado:** `Iterator` ahora arranca en `_index = _items.length` y cuenta hacia abajo hasta
+`0` inclusive. Test: `StackIteratesInPopOrder`.
 
-#### D4 — Falta una `ObjectDisposedException` dedicada
+#### D4 — Falta una `ObjectDisposedException` dedicada — **Corregido**
 **Archivo:** `src/surtr/io/Stream.surtr`, `BufferedStream.surtr`, `MemoryStream.surtr`,
 `StreamReader.surtr`, `StreamWriter.surtr`, `BinaryReader.surtr`, `BinaryWriter.surtr`
 
@@ -165,18 +175,20 @@ es un concepto central del lenguaje (`CLAUDE.md` le dedica una sección propia),
 dedicada permitiría a quien llama distinguir "usé esto después de cerrarlo" de cualquier otro
 `InvalidOperationException`, con un `catch` específico.
 
-**Arreglo propuesto:** añadir `ObjectDisposedException : Exception` en `core/Exception.surtr` (o un
-nuevo `core/IOExceptions.surtr`) y sustituir los siete lanzamientos manuales.
+**Arreglo aplicado:** `ObjectDisposedException : Exception` declarada en `io/Stream.surtr` (no en
+`core/Exception.surtr` — así ningún fichero de `io/` necesita un import nuevo, todos ya importan
+`surtr.io.Stream`), y los 10 lanzamientos manuales (`MemoryStream` ×5, `BufferedStream` ×3,
+`StreamWriter` ×2) sustituidos por ella. De paso se declaró también `EndOfStreamException` ahí mismo,
+usada por el arreglo de B3. Test: `ADisposedMemoryStreamThrowsObjectDisposedException`.
 
-#### D5 — Inconsistencia menor: `reset()` en iteradores
+#### D5 — Inconsistencia menor: `reset()` en iteradores — **Corregido**
 `Queue.Iterator` (`Queue.surtr:164-168`) declara `reset()`, que **no** forma parte del contrato
 `IIterator<T>` (solo `moveNext`/`current`/`dispose`, ver `SurtrStandardLibrary.cs:132-133`).
 `Stack.Iterator`, `List.Iterator`, `Set.Iterator` y `LinkedList.Iterator` no lo tienen. No es un bug
 — es simplemente inconsistente entre iteradores hermanos y probablemente vestigial.
 
-**Arreglo propuesto:** quitar el `reset()` suelto de `Queue.Iterator` (nadie puede llamarlo a través
-de `IIterator<T>` de todas formas), o si se quiere ese comportamiento, ofrecerlo de forma consistente
-en todos los iteradores propios de la stdlib.
+**Arreglo aplicado:** quitado el `reset()` suelto de `Queue.Iterator` (inalcanzable a través de
+`IIterator<T>` de todas formas) y limpiada la rama muerta `_current = _current;` de su `moveNext()`.
 
 ### 2.4 Código muerto — Prioridad BAJA/MEDIA
 
@@ -357,24 +369,28 @@ El orden respeta dependencias reales (no se puede escribir un test de regresión
 fiable hasta arreglarlo; no tiene sentido diseñar `Map<K,V>` antes de decidir si se quiere) y separa
 "arreglar lo que hay" de "añadir lo que falta", que son decisiones independientes.
 
-**Fase 0 — Red de seguridad**
-Antes de tocar nada: comprobar si existen tests actuales (`src/Surtr.Tests`) que ejerciten
-`StringBuilder`/`Profiler`/`BinaryReader`/`Set.copyTo` y que puedan estar afirmando el comportamiento
-roto como si fuera correcto (un test que hoy pase con `sbLength() == 16` se rompería al arreglar B1,
-lo cual sería lo correcto, pero hay que saberlo de antemano). Añadir tests de regresión para B1-B4
-*antes* del arreglo, en rojo, luego arreglarlos en verde.
+**Fase 0 — Red de seguridad — Hecho**
+Se comprobó `src/Surtr.Tests` (incluida `SurtrStdlibTests.cs`, la suite existente de la stdlib): nada
+afirmaba el comportamiento roto de B1-B4 como correcto, así que no había riesgo de "arreglar" algo que
+un test daba por bueno. Los tests de regresión se escribieron a la vez que cada arreglo (no antes,
+dado que ya se sabía qué debían afirmar) en el nuevo
+`src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`, que compila y ejecuta la fuente `.surtr` real
+junto a un driver — no la imagen `.surtrc` comitada — así que un futuro cambio a estos archivos
+vuelve a ejercitar el comportamiento, no solo la compilación. Las 3306 pruebas de la suite completa
+(`dotnet test src/Surtr.Tests`) pasan tras las Fases 1-3.
 
-**Fase 1 — Bugs críticos (B1, B2)**
+**Fase 1 — Bugs críticos (B1, B2) — Hecho**
 `StringBuilder` y `Profiler`/`Stopwatch`. Alto impacto, arreglo localizado a un archivo cada uno, sin
 decisiones de diseño abiertas.
 
-**Fase 2 — Bugs de alta confianza (B3, B4)**
-`BinaryReader` (requiere decidir la forma exacta de señalar EOF a mitad de lectura — nueva excepción
-vs. valor de retorno) y `Set.copyTo`.
+**Fase 2 — Bugs de alta confianza (B3, B4) — Hecho**
+`BinaryReader` (la forma exacta de señalar EOF a mitad de lectura se decidió por comportamiento: EOF
+limpio antes del valor sigue devolviendo el "cero" blando; a mitad de valor lanza
+`EndOfStreamException`; ver B3) y `Set.copyTo`.
 
-**Fase 3 — Inconsistencias de diseño (D1, D3-D5; D2 pendiente de decisión)**
-`operator[]` en `List`, orden de iteración de `Stack`, `ObjectDisposedException`, limpieza de
-`reset()`. `D2` (Deque O(n)) depende de la pregunta 3 de §5.
+**Fase 3 — Inconsistencias de diseño (D1-D5) — Hecho**
+`operator[]` en `List`, `Deque<T>` reimplementado con lista propia doblemente enlazada (D2, opción
+(b) de §5), orden de iteración de `Stack`, `ObjectDisposedException`, limpieza de `reset()`.
 
 **Fase 4 — Limpieza (C1-C3, E1)**
 Decidir destino de `Buffer<T>` y `ReadOnlyCollection<T>` (conectar o eliminar), quitar código
@@ -395,19 +411,23 @@ corregidas/estables. Es la fase con menos urgencia y se puede hacer incremental,
 
 ---
 
-## 5. Preguntas abiertas
+## 5. Decisiones tomadas y preguntas abiertas
 
-Antes de empezar a implementar nada de lo anterior:
+Las cuatro preguntas originales de esta sección ya están resueltas y las Fases 0-3 implementadas
+sobre esas respuestas:
 
-1. **Alcance de esta primera tanda de trabajo** — ¿solo los bugs confirmados (Fases 0-1), bugs +
-   inconsistencias (Fases 0-3), o todo el plan incluyendo las adiciones nuevas?
-2. **Dónde vive este documento** — ¿se queda como archivo de trabajo sin commitear, se comitea tal
-   cual en `docs/` siguiendo la convención `Plan-*.md` ya existente, o prefieres que además lo añada
-   a la tabla de "mapa de documentación" de `CLAUDE.md`?
-3. **Rediseño de `Deque<T>` (D2)** — ¿conviene convertir `Queue<T>.Node<T>` a doblemente enlazado
-   (afecta a `Queue` y `Deque` a la vez, todo O(1)) o dar a `Deque` su propia lista enlazada
-   independiente sin tocar `Queue`?
-4. **Vector/Quaternion/Random (Fase 5)** — ¿quieres que primero prepare y valide contigo el diseño
-   de la API (nombres, superficie exacta, qué constantes/estáticos incluir) antes de escribir
-   código, o prefieres que implemente directamente una primera versión razonable y la revisamos
-   después?
+1. **Alcance:** Fases 0-3 (bugs + inconsistencias). Fases 4-7 quedan fuera de esta tanda.
+2. **Documento:** comiteado en `docs/` como `Plan-Revision-Stdlib.md`, sin añadirlo a la tabla de
+   mapa de documentación de `CLAUDE.md`.
+3. **`Deque<T>` (D2):** opción (b) — lista doblemente enlazada propia, independiente de `Queue<T>`.
+4. **Vector/Quaternion/Random (Fase 5):** cuando se retome, primero se diseña y valida la API antes
+   de escribir código — pendiente de que se decida entrar en la Fase 5.
+
+Preguntas abiertas para cuando se retome el trabajo (Fases 4-7):
+
+- **Fase 4:** ¿`Buffer<T>` se conecta a un caso de uso real o se elimina? ¿Igual para
+  `ReadOnlyCollection<T>` (C2) — o se reutiliza como base de `Map`/`asReadOnly()` en la Fase 6 (§3.4)?
+- **Fase 5:** confirmar alcance exacto de la superficie de `Vector2`/`Vector3`/`Quaternion`/`Angle`
+  antes de diseñar (¿se incluye `Vector4`/`Color`/`Rect` ya, o se dejan para después como sugiere
+  §3.1?).
+- **Fase 6:** ¿`Map<K,V>` antes o después de `PriorityQueue<T>`? Son independientes entre sí.
