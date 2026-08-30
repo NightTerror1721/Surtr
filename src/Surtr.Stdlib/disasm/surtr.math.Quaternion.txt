@@ -1,0 +1,458 @@
+module surtr.math.Quaternion
+  constants: 8   types: 0   fields: 0   methods: 16   modules: 1
+  string #4 = "("
+  string #5 = ", "
+  string #6 = ")"
+
+  method table:
+    #0  surtr.math.Quaternion:Quaternion.ctor(float, float, float, float) -> void
+    #1  surtr.math.Quaternion:Quaternion.get_identity() -> surtr.math.Quaternion:Quaternion
+    #2  surtr.math.Quaternion:Quaternion.fromAxisAngle(surtr.math.Vector:Vector3, float) -> surtr.math.Quaternion:Quaternion
+    #3  surtr.math.Quaternion:Quaternion.lengthSquared() -> float
+    #4  surtr.math.Quaternion:Quaternion.length() -> float
+    #5  surtr.math.Quaternion:Quaternion.normalized() -> surtr.math.Quaternion:Quaternion
+    #6  surtr.math.Quaternion:Quaternion.conjugate() -> surtr.math.Quaternion:Quaternion
+    #7  surtr.math.Quaternion:Quaternion.toString() -> string
+    #8  surtr.math.Quaternion:Quaternion.op_*(surtr.math.Quaternion:Quaternion, surtr.math.Quaternion:Quaternion) -> surtr.math.Quaternion:Quaternion
+    #9  surtr.math.Quaternion:Quaternion.rotate(surtr.math.Vector:Vector3) -> surtr.math.Vector:Vector3
+    #10  surtr.math.Quaternion:Quaternion.op_==(surtr.math.Quaternion:Quaternion, surtr.math.Quaternion:Quaternion) -> bool
+    #11  surtr.math.Vector:Vector3.normalized() -> surtr.math.Vector:Vector3
+    #12  float.toString() -> string
+    #13  surtr.math.Vector:Vector3.cross(surtr.math.Vector:Vector3) -> surtr.math.Vector:Vector3
+    #14  surtr.math.Vector:Vector3.op_*(surtr.math.Vector:Vector3, float) -> surtr.math.Vector:Vector3
+    #15  surtr.math.Vector:Vector3.op_+(surtr.math.Vector:Vector3, surtr.math.Vector:Vector3) -> surtr.math.Vector:Vector3
+
+  module table:
+    #0  surtr.math.Math
+
+sealed class Quaternion : surtr:ValueType  [public]
+  [public] readonly field w: float
+  [public] readonly field x: float
+  [public] readonly field y: float
+  [public] readonly field z: float
+
+  [public] static property identity: surtr.math.Quaternion:Quaternion { get; }
+    get:
+      ; entry 1, locals 4, stack 4, code 0001..000F
+        0001  Ldc0
+        0002  Stl0
+        0003  Ldc0
+        0004  Stl1
+        0005  Ldc0
+        0006  Stl2
+        0007  Ldc1
+        0008  Stl3
+        0009  Ldl0
+        000A  Ldl1
+        000B  Ldl2
+        000C  Ldl3
+        000D  ReturnValues 4
+
+  @surtr:Pure
+  [public] conjugate(): surtr.math.Quaternion:Quaternion
+    ; entry 6, locals 24, stack 4, code 0242..0289
+      0242  LoadValueLocal 0 x4
+      0246  StoreValueLocal 5 x4
+      024A  LoadLocalField 5+0
+      024F  FNeg
+      0250  Stl4
+      0251  LoadValueLocal 0 x4
+      0255  StoreValueLocal 10 x4
+      0259  LoadLocalField 10+1
+      025E  FNeg
+      025F  StlS 9
+      0261  LoadValueLocal 0 x4
+      0265  StoreValueLocal 15 x4
+      0269  LoadLocalField 15+2
+      026E  FNeg
+      026F  StlS 14
+      0271  LoadValueLocal 0 x4
+      0275  StoreValueLocal 20 x4
+      0279  LoadLocalField 20+3
+      027E  StlS 19
+      0280  Ldl4
+      0281  LdlS 9
+      0283  LdlS 14
+      0285  LdlS 19
+      0287  ReturnValues 4
+
+  [public] ctor (x: float, y: float, z: float, w: float): void
+    ; entry 0, locals 8, stack 0, code 0000..0001
+      0000  ReturnVoid
+
+  [public] static fromAxisAngle(axis: surtr.math.Vector:Vector3, angle: float): surtr.math.Quaternion:Quaternion
+    ; entry 2, locals 14, stack 4, code 000F..0063
+      000F  LoadValueLocal 0 x3
+      0013  InvokeSpecial 11 (normalized) args=3 ret=1
+      0018  StoreValueLocal 4 x3
+      001C  Ldl3
+      001D  StlS 8
+      001F  LdlS 8
+      0021  Ldc2
+      0022  FMul
+      0023  StlS 7
+      0025  LdlS 7
+      0027  CallModule 0:0 (surtr.math.Math.sin) args=1 ret=1
+      002E  StlS 9
+      0030  LoadLocalField 4+0
+      0035  LdlS 9
+      0037  FMul
+      0038  StlS 10
+      003A  LoadLocalField 4+1
+      003F  LdlS 9
+      0041  FMul
+      0042  StlS 11
+      0044  LoadLocalField 4+2
+      0049  LdlS 9
+      004B  FMul
+      004C  StlS 12
+      004E  LdlS 7
+      0050  CallModule 0:1 (surtr.math.Math.cos) args=1 ret=1
+      0057  StlS 13
+      0059  LdlS 10
+      005B  LdlS 11
+      005D  LdlS 12
+      005F  LdlS 13
+      0061  ReturnValues 4
+
+  @surtr:Pure
+  [public] length(): float
+    ; entry 4, locals 40, stack 6, code 00D3..0152
+      00D3  LoadValueLocal 0 x4
+      00D7  StoreValueLocal 4 x4
+      00DB  LoadValueLocal 4 x4
+      00DF  StoreValueLocal 8 x4
+      00E3  LoadLocalField 8+0
+      00E8  LoadValueLocal 4 x4
+      00EC  StoreValueLocal 12 x4
+      00F0  LoadLocalField 12+0
+      00F5  FMul
+      00F6  LoadValueLocal 4 x4
+      00FA  StoreValueLocal 16 x4
+      00FE  LoadLocalField 16+1
+      0103  LoadValueLocal 4 x4
+      0107  StoreValueLocal 20 x4
+      010B  LoadLocalField 20+1
+      0110  FMul
+      0111  FAdd
+      0112  LoadValueLocal 4 x4
+      0116  StoreValueLocal 24 x4
+      011A  LoadLocalField 24+2
+      011F  LoadValueLocal 4 x4
+      0123  StoreValueLocal 28 x4
+      0127  LoadLocalField 28+2
+      012C  FMul
+      012D  FAdd
+      012E  LoadValueLocal 4 x4
+      0132  StoreValueLocal 32 x4
+      0136  LoadLocalField 32+3
+      013B  LoadValueLocal 4 x4
+      013F  StoreValueLocal 36 x4
+      0143  LoadLocalField 36+3
+      0148  FMul
+      0149  FAdd
+      014A  CallModule 0:7 (surtr.math.Math.sqrt) args=1 ret=1
+      0151  ReturnValue
+
+  @surtr:Pure
+  [public] lengthSquared(): float
+    ; entry 3, locals 36, stack 6, code 0063..00D3
+      0063  LoadValueLocal 0 x4
+      0067  StoreValueLocal 4 x4
+      006B  LoadLocalField 4+0
+      0070  LoadValueLocal 0 x4
+      0074  StoreValueLocal 8 x4
+      0078  LoadLocalField 8+0
+      007D  FMul
+      007E  LoadValueLocal 0 x4
+      0082  StoreValueLocal 12 x4
+      0086  LoadLocalField 12+1
+      008B  LoadValueLocal 0 x4
+      008F  StoreValueLocal 16 x4
+      0093  LoadLocalField 16+1
+      0098  FMul
+      0099  FAdd
+      009A  LoadValueLocal 0 x4
+      009E  StoreValueLocal 20 x4
+      00A2  LoadLocalField 20+2
+      00A7  LoadValueLocal 0 x4
+      00AB  StoreValueLocal 24 x4
+      00AF  LoadLocalField 24+2
+      00B4  FMul
+      00B5  FAdd
+      00B6  LoadValueLocal 0 x4
+      00BA  StoreValueLocal 28 x4
+      00BE  LoadLocalField 28+3
+      00C3  LoadValueLocal 0 x4
+      00C7  StoreValueLocal 32 x4
+      00CB  LoadLocalField 32+3
+      00D0  FMul
+      00D1  FAdd
+      00D2  ReturnValue
+
+  [public] normalized(): surtr.math.Quaternion:Quaternion
+    ; entry 5, locals 69, stack 6, code 0152..0242
+      0152  LoadValueLocal 0 x4
+      0156  StoreValueLocal 5 x4
+      015A  LoadValueLocal 5 x4
+      015E  StoreValueLocal 9 x4
+      0162  LoadValueLocal 9 x4
+      0166  StoreValueLocal 13 x4
+      016A  LoadLocalField 13+0
+      016F  LoadValueLocal 9 x4
+      0173  StoreValueLocal 17 x4
+      0177  LoadLocalField 17+0
+      017C  FMul
+      017D  LoadValueLocal 9 x4
+      0181  StoreValueLocal 21 x4
+      0185  LoadLocalField 21+1
+      018A  LoadValueLocal 9 x4
+      018E  StoreValueLocal 25 x4
+      0192  LoadLocalField 25+1
+      0197  FMul
+      0198  FAdd
+      0199  LoadValueLocal 9 x4
+      019D  StoreValueLocal 29 x4
+      01A1  LoadLocalField 29+2
+      01A6  LoadValueLocal 9 x4
+      01AA  StoreValueLocal 33 x4
+      01AE  LoadLocalField 33+2
+      01B3  FMul
+      01B4  FAdd
+      01B5  LoadValueLocal 9 x4
+      01B9  StoreValueLocal 37 x4
+      01BD  LoadLocalField 37+3
+      01C2  LoadValueLocal 9 x4
+      01C6  StoreValueLocal 41 x4
+      01CA  LoadLocalField 41+3
+      01CF  FMul
+      01D0  FAdd
+      01D1  CallModule 0:7 (surtr.math.Math.sqrt) args=1 ret=1
+      01D8  Stl4
+      01D9  Ldl4
+      01DA  Ldc3
+      01DB  JPFGE +22 -> L0 (01F4)
+      01DE  Ldc0
+      01DF  StlS 45
+      01E1  Ldc0
+      01E2  StlS 46
+      01E4  Ldc0
+      01E5  StlS 47
+      01E7  Ldc1
+      01E8  StlS 48
+      01EA  LdlS 45
+      01EC  LdlS 46
+      01EE  LdlS 47
+      01F0  LdlS 48
+      01F2  ReturnValues 4
+    L0:
+      01F4  LoadValueLocal 0 x4
+      01F8  StoreValueLocal 50 x4
+      01FC  LoadLocalField 50+0
+      0201  Ldl4
+      0202  FDiv
+      0203  StlS 49
+      0205  LoadValueLocal 0 x4
+      0209  StoreValueLocal 55 x4
+      020D  LoadLocalField 55+1
+      0212  Ldl4
+      0213  FDiv
+      0214  StlS 54
+      0216  LoadValueLocal 0 x4
+      021A  StoreValueLocal 60 x4
+      021E  LoadLocalField 60+2
+      0223  Ldl4
+      0224  FDiv
+      0225  StlS 59
+      0227  LoadValueLocal 0 x4
+      022B  StoreValueLocal 65 x4
+      022F  LoadLocalField 65+3
+      0234  Ldl4
+      0235  FDiv
+      0236  StlS 64
+      0238  LdlS 49
+      023A  LdlS 54
+      023C  LdlS 59
+      023E  LdlS 64
+      0240  ReturnValues 4
+
+  @surtr:Pure
+  [public] static op_*(a: surtr.math.Quaternion:Quaternion, b: surtr.math.Quaternion:Quaternion): surtr.math.Quaternion:Quaternion
+    ; entry 8, locals 12, stack 4, code 02E4..03B2
+      02E4  LoadLocalField 0+3
+      02E9  LoadLocalField 4+0
+      02EE  FMul
+      02EF  LoadLocalField 0+0
+      02F4  LoadLocalField 4+3
+      02F9  FMul
+      02FA  FAdd
+      02FB  LoadLocalField 0+1
+      0300  LoadLocalField 4+2
+      0305  FMul
+      0306  FAdd
+      0307  LoadLocalField 0+2
+      030C  LoadLocalField 4+1
+      0311  FMul
+      0312  FSub
+      0313  StlS 8
+      0315  LoadLocalField 0+3
+      031A  LoadLocalField 4+1
+      031F  FMul
+      0320  LoadLocalField 0+0
+      0325  LoadLocalField 4+2
+      032A  FMul
+      032B  FSub
+      032C  LoadLocalField 0+1
+      0331  LoadLocalField 4+3
+      0336  FMul
+      0337  FAdd
+      0338  LoadLocalField 0+2
+      033D  LoadLocalField 4+0
+      0342  FMul
+      0343  FAdd
+      0344  StlS 9
+      0346  LoadLocalField 0+3
+      034B  LoadLocalField 4+2
+      0350  FMul
+      0351  LoadLocalField 0+0
+      0356  LoadLocalField 4+1
+      035B  FMul
+      035C  FAdd
+      035D  LoadLocalField 0+1
+      0362  LoadLocalField 4+0
+      0367  FMul
+      0368  FSub
+      0369  LoadLocalField 0+2
+      036E  LoadLocalField 4+3
+      0373  FMul
+      0374  FAdd
+      0375  StlS 10
+      0377  LoadLocalField 0+3
+      037C  LoadLocalField 4+3
+      0381  FMul
+      0382  LoadLocalField 0+0
+      0387  LoadLocalField 4+0
+      038C  FMul
+      038D  FSub
+      038E  LoadLocalField 0+1
+      0393  LoadLocalField 4+1
+      0398  FMul
+      0399  FSub
+      039A  LoadLocalField 0+2
+      039F  LoadLocalField 4+2
+      03A4  FMul
+      03A5  FSub
+      03A6  StlS 11
+      03A8  LdlS 8
+      03AA  LdlS 9
+      03AC  LdlS 10
+      03AE  LdlS 11
+      03B0  ReturnValues 4
+
+  @surtr:Pure
+  [public] static op_==(a: surtr.math.Quaternion:Quaternion, b: surtr.math.Quaternion:Quaternion): bool
+    ; entry 10, locals 8, stack 2, code 043D..0482
+      043D  LoadLocalField 0+0
+      0442  LoadLocalField 4+0
+      0447  FEQ
+      0448  Dup
+      0449  JPZ +15 -> L0 (045B)
+      044C  Pop
+      044D  LoadLocalField 0+1
+      0452  LoadLocalField 4+1
+      0457  FEQ
+      0458  JP +0 -> L0 (045B)
+    L0:
+      045B  Dup
+      045C  JPZ +15 -> L1 (046E)
+      045F  Pop
+      0460  LoadLocalField 0+2
+      0465  LoadLocalField 4+2
+      046A  FEQ
+      046B  JP +0 -> L1 (046E)
+    L1:
+      046E  Dup
+      046F  JPZ +15 -> L2 (0481)
+      0472  Pop
+      0473  LoadLocalField 0+3
+      0478  LoadLocalField 4+3
+      047D  FEQ
+      047E  JP +0 -> L2 (0481)
+    L2:
+      0481  ReturnValue
+
+  @surtr:Pure
+  [public] rotate(v: surtr.math.Vector:Vector3): surtr.math.Vector:Vector3
+    ; entry 9, locals 35, stack 11, code 03B2..043D
+      03B2  LoadValueLocal 0 x4
+      03B6  StoreValueLocal 11 x4
+      03BA  LoadLocalField 11+0
+      03BF  StlS 10
+      03C1  LoadValueLocal 0 x4
+      03C5  StoreValueLocal 16 x4
+      03C9  LoadLocalField 16+1
+      03CE  StlS 15
+      03D0  LoadValueLocal 0 x4
+      03D4  StoreValueLocal 21 x4
+      03D8  LoadLocalField 21+2
+      03DD  StlS 20
+      03DF  LdlS 10
+      03E1  LdlS 15
+      03E3  LdlS 20
+      03E5  StoreValueLocal 7 x3
+      03E9  LoadValueLocal 7 x3
+      03ED  LoadValueLocal 4 x3
+      03F1  InvokeSpecial 13 (cross) args=6 ret=1
+      03F6  StoreValueLocal 25 x3
+      03FA  LoadValueLocal 7 x3
+      03FE  LoadValueLocal 25 x3
+      0402  InvokeSpecial 13 (cross) args=6 ret=1
+      0407  StoreValueLocal 28 x3
+      040B  LoadValueLocal 4 x3
+      040F  LoadValueLocal 25 x3
+      0413  Ldc7
+      0414  LoadValueLocal 0 x4
+      0418  StoreValueLocal 31 x4
+      041C  LoadLocalField 31+3
+      0421  FMul
+      0422  InvokeStatic 14 (op_*) args=4 ret=1
+      0427  InvokeStatic 15 (op_+) args=6 ret=1
+      042C  LoadValueLocal 28 x3
+      0430  Ldc7
+      0431  InvokeStatic 14 (op_*) args=4 ret=1
+      0436  InvokeStatic 15 (op_+) args=6 ret=1
+      043B  ReturnValues 3
+
+  @surtr:Pure
+  [public] virtual override toString(): string
+    ; entry 7, locals 20, stack 11, code 0289..02E4
+      0289  Ldl0
+      028A  UnboxValue 4
+      028C  StoreValueLocal 0 x4
+      0290  Ldc4
+      0291  LoadValueLocal 0 x4
+      0295  StoreValueLocal 4 x4
+      0299  LoadLocalField 4+0
+      029E  BoxFloat
+      029F  InvokeVirtual 12 (toString) args=1 ret=1
+      02A4  Ldc5
+      02A5  LoadValueLocal 0 x4
+      02A9  StoreValueLocal 8 x4
+      02AD  LoadLocalField 8+1
+      02B2  BoxFloat
+      02B3  InvokeVirtual 12 (toString) args=1 ret=1
+      02B8  Ldc5
+      02B9  LoadValueLocal 0 x4
+      02BD  StoreValueLocal 12 x4
+      02C1  LoadLocalField 12+2
+      02C6  BoxFloat
+      02C7  InvokeVirtual 12 (toString) args=1 ret=1
+      02CC  Ldc5
+      02CD  LoadValueLocal 0 x4
+      02D1  StoreValueLocal 16 x4
+      02D5  LoadLocalField 16+3
+      02DA  BoxFloat
+      02DB  InvokeVirtual 12 (toString) args=1 ret=1
+      02E0  Ldc6
+      02E1  StrCat 9
+      02E3  ReturnValue

@@ -789,12 +789,13 @@ namespace Surtr.Tests.Stdlib
         {
             var runtime = BuildAndLoad(
                 "import surtr.math.Vector;\n"
+                    + "import surtr.math.Quaternion;\n"
                     + "fun run(): bool {\n"
                     + "    let v = Vector3(1.0, 2.0, 3.0);\n"
                     + "    let r = Quaternion.identity.rotate(v);\n"
                     + "    return r.x > 0.999 && r.x < 1.001 && r.y > 1.999 && r.y < 2.001 && r.z > 2.999 && r.z < 3.001;\n"
                     + "}\n",
-                "math/Vector.surtr", "math/Math.surtr", "math/Angle.surtr");
+                "math/Vector.surtr", "math/Quaternion.surtr", "math/Math.surtr", "math/Angle.surtr");
 
             Assert.True(Bool(runtime, "run"));
         }
@@ -809,13 +810,14 @@ namespace Surtr.Tests.Stdlib
         {
             var runtime = BuildAndLoad(
                 "import surtr.math.Vector;\n"
+                    + "import surtr.math.Quaternion;\n"
                     + "import surtr.math.Angle;\n"
                     + "fun run(): bool {\n"
                     + "    let q = Quaternion.fromAxisAngle(Vector3.forward, Angle.fromDegrees(180.0));\n"
                     + "    let r = q.rotate(Vector3.right);\n"
                     + "    return r.x > -1.001 && r.x < -0.999 && r.y > -0.001 && r.y < 0.001;\n"
                     + "}\n",
-                "math/Vector.surtr", "math/Math.surtr", "math/Angle.surtr");
+                "math/Vector.surtr", "math/Quaternion.surtr", "math/Math.surtr", "math/Angle.surtr");
 
             Assert.True(Bool(runtime, "run"));
         }
@@ -826,6 +828,7 @@ namespace Surtr.Tests.Stdlib
         {
             var runtime = BuildAndLoad(
                 "import surtr.math.Vector;\n"
+                    + "import surtr.math.Quaternion;\n"
                     + "import surtr.math.Angle;\n"
                     + "fun run(): bool {\n"
                     + "    let axis = Vector3.up;\n"
@@ -838,7 +841,7 @@ namespace Surtr.Tests.Stdlib
                     + "    let diff = a - b;\n"
                     + "    return diff.length() < 0.001;\n"
                     + "}\n",
-                "math/Vector.surtr", "math/Math.surtr", "math/Angle.surtr");
+                "math/Vector.surtr", "math/Quaternion.surtr", "math/Math.surtr", "math/Angle.surtr");
 
             Assert.True(Bool(runtime, "run"));
         }
