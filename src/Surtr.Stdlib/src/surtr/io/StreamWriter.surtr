@@ -20,7 +20,7 @@ public class StreamWriter
 
     public fun write(text: string): void
     {
-        if (!_isOpen) throw InvalidOperationException("Writer is closed");
+        if (!_isOpen) throw ObjectDisposedException("Writer is closed");
         if (text == null) return;
         let data = bytes.fromUTF8(text);
         if (data.length > 0) _stream.write(data, 0, data.length);
@@ -28,7 +28,7 @@ public class StreamWriter
 
     public fun writeChar(ch: char): void
     {
-        if (!_isOpen) throw InvalidOperationException("Writer is closed");
+        if (!_isOpen) throw ObjectDisposedException("Writer is closed");
         let data = bytes.fromUTF8(string.fromChar(ch));
         if (data.length > 0) _stream.write(data, 0, data.length);
     }

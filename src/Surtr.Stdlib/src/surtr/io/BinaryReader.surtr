@@ -28,11 +28,17 @@ public class BinaryReader
     // Typed single-byte read. Throws if the stream is at end-of-stream (see Stream.readByteValue).
     public inline fun readByteValue(): byte => _stream.readByteValue();
 
+    // Only the *first* byte of a multi-byte read gets the soft "clean EOF" treatment (mirroring
+    // Stream.readByte()'s -1). Once a value has started, running out partway is not a legitimate
+    // end-of-stream - it is a truncated value - so every byte after the first throws instead of
+    // silently folding EOF's -1 into the shift/OR chain, which used to produce a garbage char/int
+    // instead of a signal (Plan-Revision-Stdlib.md B3).
     public fun readChar(): char
     {
         let lo = _stream.readByte();
-        let hi = _stream.readByte();
         if (lo < 0) return char(0);
+        let hi = _stream.readByte();
+        if (hi < 0) throw EndOfStreamException("Stream ended in the middle of a char.");
         let code = (hi << 8) | lo;
         return char(code);
     }
@@ -40,13 +46,17 @@ public class BinaryReader
     public fun readInt(): int
     {
         let b0 = _stream.readByte();
+        if (b0 < 0) return 0;
         let b1 = _stream.readByte();
         let b2 = _stream.readByte();
         let b3 = _stream.readByte();
-        if (b0 < 0) return 0;
+        if (b1 < 0 || b2 < 0 || b3 < 0) throw EndOfStreamException("Stream ended in the middle of an int.");
         return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
     }
 
+    // Reads at most `count` bytes, same contract as Stream.read: the result is sized to what was
+    // actually available, never padded with trailing zeros pretending to be data that was never
+    // there.
     public fun readBytes(count: int): bytes
     {
         let result = bytes.repeat(0, count);
@@ -57,9 +67,13 @@ public class BinaryReader
             if (n <= 0) break;
             read = read + n;
         }
+        if (read < count) result.truncate(read);
         return result;
     }
 
+    // Unlike readBytes, a short read here is always a corrupted/truncated stream: `len` came from
+    // this very reader's own length prefix (see BinaryWriter.writeString), so there is no legitimate
+    // reason to find fewer bytes than that.
     public fun readString(): string
     {
         let len = readInt();
@@ -69,7 +83,7 @@ public class BinaryReader
         while (read < len)
         {
             let n = _stream.read(buf, read, len - read);
-            if (n <= 0) break;
+            if (n <= 0) throw EndOfStreamException("Stream ended before the declared string length could be read.");
             read = read + n;
         }
         return buf.decodeUTF8();

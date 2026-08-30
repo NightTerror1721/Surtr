@@ -22,6 +22,24 @@ public interface ISeekableStream : IDisposable
     fun seek(offset: int, origin: SeekOrigin): int;
 }
 
+// Every io/ type used to throw a hand-written InvalidOperationException("... is closed") at its
+// own "am I disposed" check - seven copies of the same message across five files, indistinguishable
+// from any other InvalidOperationException at a catch site. Declared here (not core/Exception.surtr)
+// so every io/ file already importing this module sees it with no extra import.
+public class ObjectDisposedException : Exception
+{
+    public constructor(message: string = "Cannot access a disposed object.") : super(message) {}
+}
+
+// A structured read (readInt/readChar/readBytes/readString in BinaryReader, and anything built on
+// top of them) that starts consuming a multi-byte value and then runs out of stream mid-value has
+// nothing sane to return - unlike a clean EOF before the value even starts, which stays a soft
+// signal (an int 0, a null string terminator, ...) the same way Stream.readByte() returns -1.
+public class EndOfStreamException : Exception
+{
+    public constructor(message: string = "Attempted to read past the end of the stream.") : super(message) {}
+}
+
 public abstract class Stream : IWritableStream, IReadableStream, ISeekableStream
 {
     public abstract canRead: bool { get; }

@@ -1,5 +1,5 @@
 module surtr.io.MemoryStream
-  constants: 6   types: 2   fields: 6   methods: 34   modules: 0
+  constants: 6   types: 3   fields: 6   methods: 35   modules: 0
   string #0 = "value"
   string #1 = "Cannot resize a non-resizable MemoryStream"
   string #2 = "Cannot expand a non-resizable MemoryStream"
@@ -10,6 +10,7 @@ module surtr.io.MemoryStream
   type table:
     #0  surtr:ArgumentOutOfRangeException
     #1  surtr:InvalidOperationException
+    #2  surtr.io.Stream:ObjectDisposedException
 
   field table:
     #0  surtr.io.MemoryStream:MemoryStream._buffer: bytes
@@ -54,6 +55,7 @@ module surtr.io.MemoryStream
     #31  bytes.reserve(int) -> void
     #32  bytes.push(int) -> void
     #33  bytes.truncate(int) -> void
+    #34  surtr.io.Stream:ObjectDisposedException.ctor(string) -> void
 
 class MemoryStream : surtr.io.Stream:Stream  [public]
   [private] field _buffer: bytes
@@ -225,10 +227,10 @@ class MemoryStream : surtr.io.Stream:Stream  [public]
       01CA  FieldGet 5 (_isOpen)
       01CD  Inv
       01CE  JPZ +11 -> L2 (01DC)
-      01D1  ObjNew 1 (surtr:InvalidOperationException)
+      01D1  ObjNew 2 (surtr.io.Stream:ObjectDisposedException)
       01D4  Dup
       01D5  Ldc4
-      01D6  InvokeSpecial 30 (ctor) args=2 ret=0
+      01D6  InvokeSpecial 34 (ctor) args=2 ret=0
       01DB  Throw
     L2:
       01DC  Ldl0
@@ -289,10 +291,10 @@ class MemoryStream : surtr.io.Stream:Stream  [public]
       0307  FieldGet 5 (_isOpen)
       030A  Inv
       030B  JPZ +11 -> L0 (0319)
-      030E  ObjNew 1 (surtr:InvalidOperationException)
+      030E  ObjNew 2 (surtr.io.Stream:ObjectDisposedException)
       0311  Dup
       0312  Ldc4
-      0313  InvokeSpecial 30 (ctor) args=2 ret=0
+      0313  InvokeSpecial 34 (ctor) args=2 ret=0
       0318  Throw
     L0:
       0319  Ldl0
@@ -325,10 +327,10 @@ class MemoryStream : surtr.io.Stream:Stream  [public]
       03E4  FieldGet 5 (_isOpen)
       03E7  Inv
       03E8  JPZ +11 -> L0 (03F6)
-      03EB  ObjNew 1 (surtr:InvalidOperationException)
+      03EB  ObjNew 2 (surtr.io.Stream:ObjectDisposedException)
       03EE  Dup
       03EF  Ldc4
-      03F0  InvokeSpecial 30 (ctor) args=2 ret=0
+      03F0  InvokeSpecial 34 (ctor) args=2 ret=0
       03F5  Throw
     L0:
       03F6  Ldl2
@@ -529,10 +531,10 @@ class MemoryStream : surtr.io.Stream:Stream  [public]
       0250  FieldGet 5 (_isOpen)
       0253  Inv
       0254  JPZ +11 -> L2 (0262)
-      0257  ObjNew 1 (surtr:InvalidOperationException)
+      0257  ObjNew 2 (surtr.io.Stream:ObjectDisposedException)
       025A  Dup
       025B  Ldc4
-      025C  InvokeSpecial 30 (ctor) args=2 ret=0
+      025C  InvokeSpecial 34 (ctor) args=2 ret=0
       0261  Throw
     L2:
       0262  Ldl0
@@ -627,10 +629,10 @@ class MemoryStream : surtr.io.Stream:Stream  [public]
       0342  FieldGet 5 (_isOpen)
       0345  Inv
       0346  JPZ +11 -> L0 (0354)
-      0349  ObjNew 1 (surtr:InvalidOperationException)
+      0349  ObjNew 2 (surtr.io.Stream:ObjectDisposedException)
       034C  Dup
       034D  Ldc4
-      034E  InvokeSpecial 30 (ctor) args=2 ret=0
+      034E  InvokeSpecial 34 (ctor) args=2 ret=0
       0353  Throw
     L0:
       0354  Ldl0

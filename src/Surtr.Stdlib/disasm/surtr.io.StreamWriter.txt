@@ -5,7 +5,7 @@ module surtr.io.StreamWriter
 "
 
   type table:
-    #0  surtr:InvalidOperationException
+    #0  surtr.io.Stream:ObjectDisposedException
 
   field table:
     #0  surtr.io.StreamWriter:StreamWriter._stream: surtr.io.Stream:Stream
@@ -22,7 +22,7 @@ module surtr.io.StreamWriter
     #6  surtr.io.StreamWriter:StreamWriter.flush() -> void
     #7  surtr.io.StreamWriter:StreamWriter.close() -> void
     #8  surtr.io.StreamWriter:StreamWriter.dispose() -> void
-    #9  surtr:InvalidOperationException.ctor(string) -> void
+    #9  surtr.io.Stream:ObjectDisposedException.ctor(string) -> void
     #10  bytes.fromUTF8(string) -> bytes
     #11  bytes.get_length() -> int
     #12  surtr.io.Stream:Stream.write(bytes, int, int) -> int
@@ -99,7 +99,7 @@ class StreamWriter  [public]
       0016  FieldGet 2 (_isOpen)
       0019  Inv
       001A  JPZ +11 -> L0 (0028)
-      001D  ObjNew 0 (surtr:InvalidOperationException)
+      001D  ObjNew 0 (surtr.io.Stream:ObjectDisposedException)
       0020  Dup
       0021  Ldc0
       0022  InvokeSpecial 9 (ctor) args=2 ret=0
@@ -132,7 +132,7 @@ class StreamWriter  [public]
       0053  FieldGet 2 (_isOpen)
       0056  Inv
       0057  JPZ +11 -> L0 (0065)
-      005A  ObjNew 0 (surtr:InvalidOperationException)
+      005A  ObjNew 0 (surtr.io.Stream:ObjectDisposedException)
       005D  Dup
       005E  Ldc0
       005F  InvokeSpecial 9 (ctor) args=2 ret=0

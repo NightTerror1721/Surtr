@@ -65,7 +65,7 @@ public class BufferedStream : Stream
     public override fun read(buffer: bytes, offset: int, count: int): int
     {
         if (offset < 0 || count < 0) throw ArgumentOutOfRangeException("offset and count must be non-negative");
-        if (!_isOpen) throw InvalidOperationException("Stream is closed");
+        if (!_isOpen) throw ObjectDisposedException("Stream is closed");
 
         var total = 0;
 
@@ -103,7 +103,7 @@ public class BufferedStream : Stream
     public override fun write(buffer: bytes, offset: int, count: int): int
     {
         if (offset < 0 || count < 0) throw ArgumentOutOfRangeException("offset and count must be non-negative");
-        if (!_isOpen) throw InvalidOperationException("Stream is closed");
+        if (!_isOpen) throw ObjectDisposedException("Stream is closed");
 
         if (_writePos > 0)
         {
@@ -148,7 +148,7 @@ public class BufferedStream : Stream
 
     public override fun seek(offset: int, origin: SeekOrigin): int
     {
-        if (!_isOpen) throw InvalidOperationException("Stream is closed");
+        if (!_isOpen) throw ObjectDisposedException("Stream is closed");
         flushWrite();
         _readPos = 0;
         _readLen = 0;

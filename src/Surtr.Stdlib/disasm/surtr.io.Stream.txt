@@ -1,5 +1,5 @@
 module surtr.io.Stream
-  constants: 2   types: 2   fields: 0   methods: 23   modules: 0
+  constants: 2   types: 2   fields: 0   methods: 26   modules: 0
   string #0 = "Cannot read a byte past the end of the stream"
   string #1 = "bufferSize must be greater than 0"
 
@@ -15,22 +15,25 @@ module surtr.io.Stream
     #4  surtr.io.Stream:IReadableStream.read(bytes, int, int) -> int
     #5  surtr.io.Stream:IReadableStream.readByte() -> int
     #6  surtr.io.Stream:ISeekableStream.seek(int, surtr.io.Enums:SeekOrigin) -> int
-    #7  surtr.io.Stream:Stream.read(bytes) -> int
-    #8  surtr.io.Stream:Stream.write(bytes) -> int
-    #9  surtr.io.Stream:Stream.close() -> void
-    #10  surtr.io.Stream:Stream.writeByteValue(int) -> bool
-    #11  surtr.io.Stream:Stream.readByteValue() -> int
-    #12  surtr.io.Stream:Stream.copyTo(surtr.io.Stream:Stream) -> int
-    #13  surtr.io.Stream:Stream.copyTo(surtr.io.Stream:Stream, int) -> int
-    #14  bytes.get_length() -> int
-    #15  surtr.io.Stream:Stream.read(bytes, int, int) -> int
-    #16  surtr.io.Stream:Stream.write(bytes, int, int) -> int
-    #17  surtr.io.Stream:Stream.dispose() -> void
-    #18  surtr.io.Stream:Stream.writeByte(int) -> bool
-    #19  surtr.io.Stream:Stream.readByte() -> int
-    #20  surtr:InvalidOperationException.ctor(string) -> void
-    #21  surtr:ArgumentOutOfRangeException.ctor(string) -> void
-    #22  bytes.repeat(int, int) -> bytes
+    #7  surtr.io.Stream:ObjectDisposedException.ctor(string) -> void
+    #8  surtr.io.Stream:EndOfStreamException.ctor(string) -> void
+    #9  surtr.io.Stream:Stream.read(bytes) -> int
+    #10  surtr.io.Stream:Stream.write(bytes) -> int
+    #11  surtr.io.Stream:Stream.close() -> void
+    #12  surtr.io.Stream:Stream.writeByteValue(int) -> bool
+    #13  surtr.io.Stream:Stream.readByteValue() -> int
+    #14  surtr.io.Stream:Stream.copyTo(surtr.io.Stream:Stream) -> int
+    #15  surtr.io.Stream:Stream.copyTo(surtr.io.Stream:Stream, int) -> int
+    #16  surtr:Exception.ctor(string) -> void
+    #17  bytes.get_length() -> int
+    #18  surtr.io.Stream:Stream.read(bytes, int, int) -> int
+    #19  surtr.io.Stream:Stream.write(bytes, int, int) -> int
+    #20  surtr.io.Stream:Stream.dispose() -> void
+    #21  surtr.io.Stream:Stream.writeByte(int) -> bool
+    #22  surtr.io.Stream:Stream.readByte() -> int
+    #23  surtr:InvalidOperationException.ctor(string) -> void
+    #24  surtr:ArgumentOutOfRangeException.ctor(string) -> void
+    #25  bytes.repeat(int, int) -> bytes
 
 interface IReadableStream : surtr:IDisposable  [public]
 
@@ -53,6 +56,24 @@ interface IWritableStream : surtr:IDisposable  [public]
   [public] abstract write(buffer: bytes, offset: int, count: int): int
 
   [public] abstract writeByte(value: int): bool
+
+class EndOfStreamException : surtr:Exception  [public]
+
+  [public] ctor (message: string = "Attempted to read past the end of the stream."): void
+    ; entry 1, locals 2, stack 2, code 0008..0010
+      0008  Ldl0
+      0009  Ldl1
+      000A  InvokeSpecial 16 (ctor) args=2 ret=0
+      000F  ReturnVoid
+
+class ObjectDisposedException : surtr:Exception  [public]
+
+  [public] ctor (message: string = "Cannot access a disposed object."): void
+    ; entry 0, locals 2, stack 2, code 0000..0008
+      0000  Ldl0
+      0001  Ldl1
+      0002  InvokeSpecial 16 (ctor) args=2 ret=0
+      0007  ReturnVoid
 
 abstract class Stream : surtr.io.Stream:IWritableStream, surtr.io.Stream:IReadableStream, surtr.io.Stream:ISeekableStream  [public]
 
@@ -83,65 +104,65 @@ abstract class Stream : surtr.io.Stream:IWritableStream, surtr.io.Stream:IReadab
       ; abstract
 
   [public] close(): void
-    ; entry 2, locals 1, stack 1, code 0020..0027
-      0020  Ldl0
-      0021  InvokeVirtual 17 (dispose) args=1 ret=0
-      0026  ReturnVoid
+    ; entry 4, locals 1, stack 1, code 0030..0037
+      0030  Ldl0
+      0031  InvokeVirtual 20 (dispose) args=1 ret=0
+      0036  ReturnVoid
 
   [public] copyTo(destination: surtr.io.Stream:Stream): int
-    ; entry 5, locals 2, stack 3, code 0051..005C
-      0051  Ldl0
-      0052  Ldl1
-      0053  PushI16 8192
-      0056  InvokeSpecial 13 (copyTo) args=3 ret=1
-      005B  ReturnValue
+    ; entry 7, locals 2, stack 3, code 0061..006C
+      0061  Ldl0
+      0062  Ldl1
+      0063  PushI16 8192
+      0066  InvokeSpecial 15 (copyTo) args=3 ret=1
+      006B  ReturnValue
 
   [public] copyTo(destination: surtr.io.Stream:Stream, bufferSize: int): int
-    ; entry 6, locals 6, stack 4, code 005C..00A8
-      005C  Ldl2
-      005D  PushI8 0
-      005F  JPGT +11 -> L0 (006D)
-      0062  ObjNew 1 (surtr:ArgumentOutOfRangeException)
-      0065  Dup
-      0066  Ldc1
-      0067  InvokeSpecial 21 (ctor) args=2 ret=0
-      006C  Throw
-    L0:
+    ; entry 8, locals 6, stack 4, code 006C..00B8
+      006C  Ldl2
       006D  PushI8 0
-      006F  Ldl2
-      0070  InvokeStatic 22 (repeat) args=2 ret=1
-      0075  Stl3
-      0076  PushI8 0
-      0078  Stl4
-      0079  Ldl0
-      007A  Ldl3
-      007B  PushI8 0
-      007D  Ldl2
-      007E  InvokeVirtual 15 (read) args=4 ret=1
-      0083  Stl5
+      006F  JPGT +11 -> L0 (007D)
+      0072  ObjNew 1 (surtr:ArgumentOutOfRangeException)
+      0075  Dup
+      0076  Ldc1
+      0077  InvokeSpecial 24 (ctor) args=2 ret=0
+      007C  Throw
+    L0:
+      007D  PushI8 0
+      007F  Ldl2
+      0080  InvokeStatic 25 (repeat) args=2 ret=1
+      0085  Stl3
+      0086  PushI8 0
+      0088  Stl4
+      0089  Ldl0
+      008A  Ldl3
+      008B  PushI8 0
+      008D  Ldl2
+      008E  InvokeVirtual 18 (read) args=4 ret=1
+      0093  Stl5
     L1:
-      0084  Ldl5
-      0085  PushI8 0
-      0087  JPLE +28 -> L2 (00A6)
-      008A  Ldl1
-      008B  Ldl3
-      008C  PushI8 0
-      008E  Ldl5
-      008F  InvokeVirtual 16 (write) args=4 ret=0
-      0094  Ldl4
-      0095  Ldl5
-      0096  Add
-      0097  Stl4
-      0098  Ldl0
-      0099  Ldl3
-      009A  PushI8 0
-      009C  Ldl2
-      009D  InvokeVirtual 15 (read) args=4 ret=1
-      00A2  Stl5
-      00A3  JP -34 -> L1 (0084)
+      0094  Ldl5
+      0095  PushI8 0
+      0097  JPLE +28 -> L2 (00B6)
+      009A  Ldl1
+      009B  Ldl3
+      009C  PushI8 0
+      009E  Ldl5
+      009F  InvokeVirtual 19 (write) args=4 ret=0
+      00A4  Ldl4
+      00A5  Ldl5
+      00A6  Add
+      00A7  Stl4
+      00A8  Ldl0
+      00A9  Ldl3
+      00AA  PushI8 0
+      00AC  Ldl2
+      00AD  InvokeVirtual 18 (read) args=4 ret=1
+      00B2  Stl5
+      00B3  JP -34 -> L1 (0094)
     L2:
-      00A6  Ldl4
-      00A7  ReturnValue
+      00B6  Ldl4
+      00B7  ReturnValue
 
   [public] abstract dispose(): void
 
@@ -150,37 +171,37 @@ abstract class Stream : surtr.io.Stream:IWritableStream, surtr.io.Stream:IReadab
   [public] abstract read(buffer: bytes, offset: int, count: int): int
 
   [public] read(buffer: bytes): int
-    ; entry 0, locals 2, stack 4, code 0000..0010
-      0000  Ldl0
-      0001  Ldl1
-      0002  PushI8 0
-      0004  Ldl1
-      0005  InvokeSpecial 14 (get_length) args=1 ret=1
-      000A  InvokeVirtual 15 (read) args=4 ret=1
-      000F  ReturnValue
+    ; entry 2, locals 2, stack 4, code 0010..0020
+      0010  Ldl0
+      0011  Ldl1
+      0012  PushI8 0
+      0014  Ldl1
+      0015  InvokeSpecial 17 (get_length) args=1 ret=1
+      001A  InvokeVirtual 18 (read) args=4 ret=1
+      001F  ReturnValue
 
   [public] abstract readByte(): int
 
   [public] readByteValue(): int
-    ; entry 4, locals 3, stack 3, code 0031..0051
-      0031  Ldl0
-      0032  InvokeVirtual 19 (readByte) args=1 ret=1
-      0037  Stl1
-      0038  Ldl1
-      0039  PushI8 0
-      003B  JPGE +11 -> L0 (0049)
-      003E  ObjNew 0 (surtr:InvalidOperationException)
-      0041  Dup
-      0042  Ldc0
-      0043  InvokeSpecial 20 (ctor) args=2 ret=0
-      0048  Throw
+    ; entry 6, locals 3, stack 3, code 0041..0061
+      0041  Ldl0
+      0042  InvokeVirtual 22 (readByte) args=1 ret=1
+      0047  Stl1
+      0048  Ldl1
+      0049  PushI8 0
+      004B  JPGE +11 -> L0 (0059)
+      004E  ObjNew 0 (surtr:InvalidOperationException)
+      0051  Dup
+      0052  Ldc0
+      0053  InvokeSpecial 23 (ctor) args=2 ret=0
+      0058  Throw
     L0:
-      0049  Ldl1
-      004A  Stl2
-      004B  Ldl2
-      004C  PushI16 255
-      004F  And
-      0050  ReturnValue
+      0059  Ldl1
+      005A  Stl2
+      005B  Ldl2
+      005C  PushI16 255
+      005F  And
+      0060  ReturnValue
 
   [public] abstract seek(offset: int, origin: surtr.io.Enums:SeekOrigin): int
 
@@ -189,22 +210,22 @@ abstract class Stream : surtr.io.Stream:IWritableStream, surtr.io.Stream:IReadab
   [public] abstract write(buffer: bytes, offset: int, count: int): int
 
   [public] write(buffer: bytes): int
-    ; entry 1, locals 2, stack 4, code 0010..0020
-      0010  Ldl0
-      0011  Ldl1
-      0012  PushI8 0
-      0014  Ldl1
-      0015  InvokeSpecial 14 (get_length) args=1 ret=1
-      001A  InvokeVirtual 16 (write) args=4 ret=1
-      001F  ReturnValue
+    ; entry 3, locals 2, stack 4, code 0020..0030
+      0020  Ldl0
+      0021  Ldl1
+      0022  PushI8 0
+      0024  Ldl1
+      0025  InvokeSpecial 17 (get_length) args=1 ret=1
+      002A  InvokeVirtual 19 (write) args=4 ret=1
+      002F  ReturnValue
 
   [public] abstract writeByte(value: int): bool
 
   [public] writeByteValue(value: int): bool
-    ; entry 3, locals 3, stack 2, code 0027..0031
-      0027  Ldl0
-      0028  Ldl1
-      0029  Stl2
-      002A  Ldl2
-      002B  InvokeVirtual 18 (writeByte) args=2 ret=1
-      0030  ReturnValue
+    ; entry 5, locals 3, stack 2, code 0037..0041
+      0037  Ldl0
+      0038  Ldl1
+      0039  Stl2
+      003A  Ldl2
+      003B  InvokeVirtual 21 (writeByte) args=2 ret=1
+      0040  ReturnValue

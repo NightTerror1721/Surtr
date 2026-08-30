@@ -6,7 +6,7 @@ module surtr.io.BufferedStream
 
   type table:
     #0  surtr:ArgumentOutOfRangeException
-    #1  surtr:InvalidOperationException
+    #1  surtr.io.Stream:ObjectDisposedException
 
   field table:
     #0  surtr.io.BufferedStream:BufferedStream._stream: surtr.io.Stream:Stream
@@ -47,7 +47,7 @@ module surtr.io.BufferedStream
     #25  surtr.io.Stream:Stream.set_position(int) -> void
     #26  surtr.io.Stream:Stream.setLength(int) -> void
     #27  surtr.io.Stream:Stream.write(bytes, int, int) -> int
-    #28  surtr:InvalidOperationException.ctor(string) -> void
+    #28  surtr.io.Stream:ObjectDisposedException.ctor(string) -> void
     #29  bytes.op_[](bytes, int) -> int
     #30  bytes.op_[](bytes, int, int) -> void
     #31  surtr.io.Stream:Stream.read(bytes, int, int) -> int
@@ -260,7 +260,7 @@ class BufferedStream : surtr.io.Stream:Stream  [public]
       011E  FieldGet 7 (_isOpen)
       0121  Inv
       0122  JPZ +11 -> L2 (0130)
-      0125  ObjNew 1 (surtr:InvalidOperationException)
+      0125  ObjNew 1 (surtr.io.Stream:ObjectDisposedException)
       0128  Dup
       0129  Ldc2
       012A  InvokeSpecial 28 (ctor) args=2 ret=0
@@ -458,7 +458,7 @@ class BufferedStream : surtr.io.Stream:Stream  [public]
       037A  FieldGet 7 (_isOpen)
       037D  Inv
       037E  JPZ +11 -> L0 (038C)
-      0381  ObjNew 1 (surtr:InvalidOperationException)
+      0381  ObjNew 1 (surtr.io.Stream:ObjectDisposedException)
       0384  Dup
       0385  Ldc2
       0386  InvokeSpecial 28 (ctor) args=2 ret=0
@@ -513,7 +513,7 @@ class BufferedStream : surtr.io.Stream:Stream  [public]
       0249  FieldGet 7 (_isOpen)
       024C  Inv
       024D  JPZ +11 -> L2 (025B)
-      0250  ObjNew 1 (surtr:InvalidOperationException)
+      0250  ObjNew 1 (surtr.io.Stream:ObjectDisposedException)
       0253  Dup
       0254  Ldc2
       0255  InvokeSpecial 28 (ctor) args=2 ret=0

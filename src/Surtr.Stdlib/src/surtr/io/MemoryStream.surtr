@@ -95,7 +95,7 @@ public class MemoryStream : Stream
     public override fun read(buffer: bytes, offset: int, count: int): int
     {
         if (offset < 0 || count < 0) throw ArgumentOutOfRangeException("offset and count must be non-negative");
-        if (!_isOpen) throw InvalidOperationException("Stream is closed");
+        if (!_isOpen) throw ObjectDisposedException("Stream is closed");
 
         let available = _length - _position;
         var toRead = count < available ? count : available;
@@ -111,7 +111,7 @@ public class MemoryStream : Stream
     public override fun write(buffer: bytes, offset: int, count: int): int
     {
         if (offset < 0 || count < 0) throw ArgumentOutOfRangeException("offset and count must be non-negative");
-        if (!_isOpen) throw InvalidOperationException("Stream is closed");
+        if (!_isOpen) throw ObjectDisposedException("Stream is closed");
         if (!_writable) throw InvalidOperationException("Stream is not writable");
 
         let end = _position + count;
@@ -132,14 +132,14 @@ public class MemoryStream : Stream
 
     public override fun readByte(): int
     {
-        if (!_isOpen) throw InvalidOperationException("Stream is closed");
+        if (!_isOpen) throw ObjectDisposedException("Stream is closed");
         if (_position >= _length) return -1;
         return _buffer[_position++];
     }
 
     public override fun writeByte(value: int): bool
     {
-        if (!_isOpen) throw InvalidOperationException("Stream is closed");
+        if (!_isOpen) throw ObjectDisposedException("Stream is closed");
         if (!_writable) throw InvalidOperationException("Stream is not writable");
 
         let end = _position + 1;
@@ -157,7 +157,7 @@ public class MemoryStream : Stream
 
     public override fun seek(offset: int, origin: SeekOrigin): int
     {
-        if (!_isOpen) throw InvalidOperationException("Stream is closed");
+        if (!_isOpen) throw ObjectDisposedException("Stream is closed");
 
         switch (origin)
         {
