@@ -5139,6 +5139,20 @@ namespace Surtr.Compiler.CodeGen
             {
                 Expression(conversion.Operand);
                 BoxIfMultiSlot(conversion.Operand.Type);
+
+                // B8 (docs/Plan-Revision-Stdlib.md §2.8): stripping the conversion's own box is only
+                // half the story. It is correct when conversion.Operand is a concrete type - a
+                // literal or a value that was never boxed to begin with, where "restore the
+                // pre-erasure expression" already IS the raw value the opcode wants. But when the
+                // operand's own static type is *itself* a still-open type parameter (a field or
+                // method of a generic class writing its own K/V into a dict/array whose declared
+                // element is a DIFFERENT, built-in type parameter of the same erased shape - the
+                // scenario dict<K,V> keys()/values() and iteration corrupted for a primitive V),
+                // conversion.Operand is a value "at rest" in a still-generic body, which is *always*
+                // boxed regardless of what it converts into (UnboxIfStillErased's own doc comment).
+                // Skipping this left the boxed reference sitting in raw collection storage, which a
+                // later read handed back as if it were the primitive itself.
+                UnboxIfStillErased(conversion.Operand.Type);
                 return;
             }
 

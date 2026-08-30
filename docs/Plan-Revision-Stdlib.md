@@ -566,7 +566,7 @@ declarando únicamente `IIterable<(K,V)>` en vez de `IReadOnlyCollection<(K,V)>`
 del compilador ya lo permitiría (ver la nota en §3.4/la propuesta original), pero ampliar la interfaz
 es un cambio de superficie de la stdlib aparte, no parte de este arreglo puntual.
 
-### 2.8 B8 — Bug del compilador/runtime: `dict<K,V>` con K y V genéricos simultáneos corrompe silenciosamente los valores primitivos leídos vía `keys()`/`values()`/iteración — Prioridad CRÍTICA — **Sin corregir, reportado**
+### 2.8 B8 — Bug del compilador: `dict<K,V>` con K y V genéricos simultáneos corrompe silenciosamente los valores primitivos leídos vía `keys()`/`values()`/iteración — Prioridad CRÍTICA — **Corregido**
 
 Descubierto implementando `Map<K,V>` (Fase 6, §3.4), al intentar validar `for (pair in map)` con
 `Map<string, int>`. Es el hallazgo más serio de toda esta ronda: a diferencia de B6/B7 (que fallan
@@ -613,31 +613,60 @@ value es `bool`, un tipo **concreto**, no un segundo parámetro genérico. `Map<
 en toda la stdlib donde un `dict` tiene **sus dos lados** ligados a parámetros de tipo genéricos
 distintos de la misma clase (`G0` y `G1`) — un caso que, hasta ahora, nada había ejercitado.
 
-**Hipótesis de causa raíz (sin confirmar con debugging):** `SurtrClassReference.GetDictionaryValueType()`
-(usado por `DictionaryValues`/`DictionaryKeys` en `SurtrCompositeBuiltIns.cs`) y la declaración de
-`IIterable<T>` para el `dict` built-in (`SurtrIteratorBuiltIns.DeclareIterable`, que ya se vio
-declarando `iterate()` como `IIterator<K>` en vez de `IIterator<(K,V)>` al intentar hacer
-`_dict.iterate()` directamente desde `Map<K,V>` — ver el comentario en `Map.surtr`) probablemente
-asumen o derivan el tipo del "elemento"/"valor" a partir de un único slot genérico (`G0`), sin
-distinguir correctamente `G0` de `G1` cuando ambos coexisten sin resolver. El array que produce
-`values()` terminaría con un descriptor de elemento equivocado (posiblemente el de la **key**, no el
-del value), y una vez el array tiene el descriptor equivocado, cualquier lectura posterior interpreta
-los bits del `SurtrValue` almacenado bajo la forma equivocada.
+**Causa raíz real (confirmada con debugging del bytecode emitido — la hipótesis original apuntaba al
+sitio equivocado):** `GetDictionaryKeyType()`/`GetDictionaryValueType()` **no tenían ningún bug** —
+se verificó con un test que inspecciona el descriptor real de un campo `{K: V}` (`DG0G1`, correcto) y
+el de la propia clase built-in `dict` (`G0`/`G1` correctamente separados; ambos resuelven a
+`SurtrValueTypeCode.Erased` sin que el dígito importe para la representación). El array que
+`values()`/`keys()` construye SÍ tiene el descriptor de elemento correcto. El bug estaba en que los
+**elementos guardados dentro del propio `dict`** quedaban boxeados cuando no debían.
 
-**Impacto real:** bloquea `Map<K,V>` para cualquier `V` primitivo — que es, con diferencia, el caso de
-uso más común (`Map<string, int>`, contadores, tablas de puntuación, etc.). No afecta a `get(key)`
-sobre un único valor (that scalar path funciona), así que un `Map<K,V>` sigue siendo seguro de usar
-si solo se leen valores uno a uno por clave y nunca se llama a `keys()`/`values()`/`for-in` sobre él
-con un `V` primitivo.
+`array`/`dict` leen y escriben su almacenamiento nativo **crudo** (§3.5, "no per-element type
+tags") — un valor que cruza hacia dentro de una de estas colecciones desde un cuerpo genérico se
+desboxea primero (`MethodBodyEmitter.EmitCollectionOperand` llama a `UnboxIfStillErased`), porque un
+valor "en reposo" dentro de un cuerpo aún genérico siempre está boxeado (llegó boxeado a través de un
+límite de erasure — un argumento, una lectura de campo), pero el `array`/`dict` nunca lo estuvo.
+`EmitCollectionOperand` tenía dos ramas: una para cuando el argumento ya trae su propia conversión
+`ImplicitErasure` (el caso típico: `dict.set(key: G0, value: G1)` está declarado con los parámetros
+propios *sin sustituir* del built-in, así que el binder SIEMPRE envuelve el argumento en
+`ImplicitErasure`, incluso cuando, tras la sustitución de `Map<K,V>`'s propio `{K: V}`, el tipo
+sustituido coincide exactamente con el tipo del argumento) y otra para cuando no la trae (conversión
+por identidad). La segunda rama llamaba a `UnboxIfStillErased` correctamente; **la primera no** — se
+limitaba a "deshacer" la conversión (usar la expresión pre-erasure de `conversion.Operand` tal cual),
+lo cual es correcto cuando ese operando es un tipo concreto (nunca estuvo boxeado, así que no hay nada
+que desboxear) pero incorrecto cuando el operando es *él mismo* un parámetro de tipo genérico todavía
+abierto (`v: V`, el propio `V` de `Box`/`Map`) — que, "en reposo", SÍ está boxeado, por un límite de
+erasure *distinto y anterior* (el de la llamada externa `Box<string,int>.set("a", 1)`, que boxeó el
+`1` al entrar en el cuerpo genérico de `Box<K,V>.set`). Confirmado desensamblando `Box<K,V>.set`: antes
+del arreglo, `Ldl2` (cargar `v`) iba directo a `DictSet` sin ningún `UnboxDynamic` de por medio; el
+valor guardado en el dict quedaba como una referencia boxeada (`SurtrBoxed`) en vez del `int` crudo
+que la colección espera — confirmado leyendo el elemento resultante de `values()` con
+`runtime.Resolve<SurtrRuntimeEntity>`, que devolvía un `SurtrBoxed` real. `get(key)` no se veía
+afectado porque su *lectura* sí pasa por la conversión "unerase" correcta al volver de la llamada
+(`UnerasedCallResult`/`Unerase`, que usa `UnboxDynamic` — lee el tag propio del valor y funciona igual
+esté o no boxeado); el problema era exclusivamente de **escritura**.
 
-**Arreglo aplicado en la stdlib:** ninguno posible — es un bug de runtime, no algo que la stdlib
-pueda evitar salvo restringir su propio uso. `Map<K,V>`/`ReadOnlyMap<K,V>` se mantienen en el árbol
-(el trabajo es correcto y útil para `V` de tipo referencia — `string`, clases, `value class`es como
-`Vector2`, que se boxean a una referencia real y no sufren esta corrupción) con una prueba de
-regresión que **fija el comportamiento roto actual** para `V = int`
-(`SurtrStdlibBehaviorTests.MapIterationWithPrimitiveIntValuesCurrentlyReturnsCorruptedData`) en vez de
-asumir que funciona. **No se recomienda `Map<K, int>`/`Map<K, float>`/`Map<K, bool>`/`Map<K, char>`
-más allá de `get`/`set`/`containsKey`/`remove` por clave individual** hasta que esto se corrija.
+**Arreglo aplicado en el compilador** (`src/Surtr.Compiler/CodeGen/MethodBodyEmitter.cs`,
+`EmitCollectionOperand`): la rama que despoja la conversión `ImplicitErasure` ahora también llama a
+`UnboxIfStillErased(conversion.Operand.Type)`, igual que ya hacía la rama de identidad — simétrico en
+ambas, y sin efecto donde no hacía falta (`UnboxDynamic` es no-op sobre un valor que nunca estuvo
+boxeado). Verificado desensamblando de nuevo `Box<K,V>.set`: ahora tanto `k` como `v` reciben
+`UnboxDynamic` antes de `DictSet`, y el elemento leído de vuelta por `values()` es un `int` crudo, no
+una referencia. `Set<T>` nunca disparaba esto (su `value` es `bool`, concreto — el argumento nunca
+llega envuelto en `ImplicitErasure` con un operando *también* genérico) y `List<T>`/`array<T>` tampoco
+(sus elementos nunca se boxean para empezar: escriben directamente vía `ArrSet`/`ArrGet`, que
+`EmitCollectionOperand` también cubre con la misma corrección para cuando sí aplica).
+
+**Impacto real:** afectaba a `Map<K,V>` con cualquier `V` primitivo — el caso de uso más común
+(`Map<string, int>`, contadores, tablas de puntuación, etc.) — para `keys()`/`values()`/`for-in`.
+`get(key)` nunca estuvo afectado.
+
+Verificado con `src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`:
+`MapIterationWithPrimitiveIntValuesCurrentlyReturnsCorruptedData` (`for (pair in m) sum += pair[1];`
+ahora suma 6 de verdad) y la nueva `MapValuesOfPrimitiveIntReturnsRealNumbers` (`values()[0]` e
+indexación directa, y un `for-in` sobre el array que devuelve, ambos con `V = int`). Suite completa:
+3372/3372 en verde. La guía de "no usar `Map<K, int>` más allá de `get`/`set`" en el `README.md` de la
+stdlib y en este documento queda retirada — ya no aplica.
 
 ### 2.9 B9 — Bug del compilador: `T?` de un método genérico pierde su marca de ausencia al instanciarse a un primitivo — Prioridad CRÍTICA — **Sin corregir, reportado**
 

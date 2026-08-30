@@ -1120,15 +1120,13 @@ namespace Surtr.Tests.Stdlib
         }
 
         /// <summary>
-        /// B8 (docs/Plan-Revision-Stdlib.md): a dict field whose declared type is <c>{K: V}</c> with
-        /// BOTH K and V still generic (as opposed to Set&lt;T&gt;'s own <c>{T: bool}</c>, where only
-        /// the key side is generic and the value side, <c>bool</c>, is concrete) silently returns
-        /// wrong data for a primitive V once it round-trips through <c>values()</c>/iteration -
-        /// confirmed down to plain array indexing (<c>vs[0]</c>) with no loop involved, so it is not
-        /// a for-in-specific lowering gap. A single scalar `get(key)` is unaffected (still correct),
+        /// Regression for B8 (docs/Plan-Revision-Stdlib.md §2.8): a dict field whose declared type is
+        /// <c>{K: V}</c> with BOTH K and V still generic (as opposed to Set&lt;T&gt;'s own
+        /// <c>{T: bool}</c>, where only the key side is generic and the value side, <c>bool</c>, is
+        /// concrete) used to silently return corrupted data for a primitive V once it round-tripped
+        /// through <c>values()</c>/iteration. A single scalar <c>get(key)</c> was never affected,
         /// which is what makes <see cref="MapSetGetAndContainsKey"/> and
-        /// <see cref="MapIndexerReadsAndWrites"/> above pass despite this. Pins the current (broken)
-        /// behaviour until the compiler bug is fixed - flip it to assert the real sum afterwards.
+        /// <see cref="MapIndexerReadsAndWrites"/> pass regardless.
         /// </summary>
         [Fact]
         public void MapIterationWithPrimitiveIntValuesCurrentlyReturnsCorruptedData()
@@ -1146,7 +1144,7 @@ namespace Surtr.Tests.Stdlib
                     + "}\n",
                 "collections/Map.surtr");
 
-            Assert.NotEqual(6, Int(runtime, "run"));
+            Assert.Equal(6, Int(runtime, "run"));
         }
 
         [Fact]
@@ -1165,6 +1163,39 @@ namespace Surtr.Tests.Stdlib
                 "collections/Map.surtr");
 
             Assert.True(Bool(runtime, "run"));
+        }
+
+        /// <summary>
+        /// Regression for B8, exercising <c>values()</c> directly (not through <c>for-in</c>): with
+        /// K and V both still generic on <c>Map&lt;K,V&gt;</c>'s own <c>{K: V}</c> field, a primitive
+        /// V's array used to come back with each element still boxed from the erasure boundary
+        /// <c>_dict.set</c> crosses, read back as if it were the raw value itself. Indexes the result
+        /// directly (<c>vs[0]</c>) rather than looping, and sums via <c>for-in</c> too, so both the
+        /// indexer and the loop path are covered.
+        /// </summary>
+        [Fact]
+        public void MapValuesOfPrimitiveIntReturnsRealNumbers()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Map;\n"
+                    + "fun first(): int {\n"
+                    + "    let m = Map<string, int>();\n"
+                    + "    m.set(\"a\", 1);\n"
+                    + "    return m.values()[0];\n"
+                    + "}\n"
+                    + "fun sum(): int {\n"
+                    + "    let m = Map<string, int>();\n"
+                    + "    m.set(\"a\", 1);\n"
+                    + "    m.set(\"b\", 2);\n"
+                    + "    m.set(\"c\", 3);\n"
+                    + "    var total = 0;\n"
+                    + "    for (v in m.values()) total += v;\n"
+                    + "    return total;\n"
+                    + "}\n",
+                "collections/Map.surtr");
+
+            Assert.Equal(1, Int(runtime, "first"));
+            Assert.Equal(6, Int(runtime, "sum"));
         }
 
         [Fact]

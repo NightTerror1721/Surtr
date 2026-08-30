@@ -1868,66 +1868,66 @@ class ReadOnlyList`1<T> : surtr:object, surtr.collections.List:IReadOnlyList<T0>
         0958  ReturnValue
 
   [public] contains(item: T0): bool
-    ; entry 88, locals 5, stack 2, code 0968..0984
-      0968  Ldl0
-      0969  FieldGet 14 (_items)
-      096C  Stl2
-      096D  PushI8 -1
-      096F  Stl3
-      0970  JP +8 -> L1 (097B)
+    ; entry 88, locals 5, stack 2, code 0969..0985
+      0969  Ldl0
+      096A  FieldGet 14 (_items)
+      096D  Stl2
+      096E  PushI8 -1
+      0970  Stl3
+      0971  JP +8 -> L1 (097C)
     L0:
-      0973  Ldl4
-      0974  Ldl1
-      0975  DynEQ
-      0976  JPZ +2 -> L1 (097B)
-      0979  PushTrue
-      097A  ReturnValue
+      0974  Ldl4
+      0975  Ldl1
+      0976  DynEQ
+      0977  JPZ +2 -> L1 (097C)
+      097A  PushTrue
+      097B  ReturnValue
     L1:
-      097B  ArrForNext 2 3 4 -> L0 (0973)
-      0982  PushFalse
-      0983  ReturnValue
+      097C  ArrForNext 2 3 4 -> L0 (0974)
+      0983  PushFalse
+      0984  ReturnValue
 
   [public] virtual contains(item: unknown): bool
-    ; entry 94, locals 2, stack 2, code 09C6..09CE
-      09C6  Ldl0
-      09C7  Ldl1
-      09C8  InvokeSpecial 61 (contains) args=2 ret=1
-      09CD  ReturnValue
+    ; entry 94, locals 2, stack 2, code 09C7..09CF
+      09C7  Ldl0
+      09C8  Ldl1
+      09C9  InvokeSpecial 61 (contains) args=2 ret=1
+      09CE  ReturnValue
 
   [public] copyTo(array: T0[], arrayIndex: int): void
-    ; entry 89, locals 4, stack 4, code 0984..09A4
-      0984  PushI8 0
-      0986  Stl3
+    ; entry 89, locals 4, stack 4, code 0985..09A5
+      0985  PushI8 0
+      0987  Stl3
     L0:
-      0987  Ldl3
-      0988  Ldl0
-      0989  FieldGet 14 (_items)
-      098C  ArrLen
-      098D  JPGE +19 -> L1 (09A3)
-      0990  Ldl1
-      0991  Ldl2
-      0992  Ldl3
-      0993  Add
-      0994  Ldl0
-      0995  FieldGet 14 (_items)
-      0998  Ldl3
-      0999  ArrGet
-      099A  BoxDynamic
-      099B  UnboxDynamic
-      099C  ArrSet
-      099D  IncLocal 3 by 1
-      09A0  JP -28 -> L0 (0987)
+      0988  Ldl3
+      0989  Ldl0
+      098A  FieldGet 14 (_items)
+      098D  ArrLen
+      098E  JPGE +19 -> L1 (09A4)
+      0991  Ldl1
+      0992  Ldl2
+      0993  Ldl3
+      0994  Add
+      0995  Ldl0
+      0996  FieldGet 14 (_items)
+      0999  Ldl3
+      099A  ArrGet
+      099B  BoxDynamic
+      099C  UnboxDynamic
+      099D  ArrSet
+      099E  IncLocal 3 by 1
+      09A1  JP -28 -> L0 (0988)
     L1:
-      09A3  ReturnVoid
+      09A4  ReturnVoid
 
   [public] virtual copyTo(array: unknown[], arrayIndex: int): void
-    ; entry 95, locals 3, stack 3, code 09CE..09DA
-      09CE  Ldl0
-      09CF  Ldl1
-      09D0  Cast 1 (T0[])
-      09D3  Ldl2
-      09D4  InvokeSpecial 62 (copyTo) args=3 ret=0
-      09D9  ReturnVoid
+    ; entry 95, locals 3, stack 3, code 09CF..09DB
+      09CF  Ldl0
+      09D0  Ldl1
+      09D1  Cast 1 (T0[])
+      09D4  Ldl2
+      09D5  InvokeSpecial 62 (copyTo) args=3 ret=0
+      09DA  ReturnVoid
 
   [public] ctor (items: T0...): void
     ; entry 84, locals 2, stack 2, code 094D..0953
@@ -1946,43 +1946,44 @@ class ReadOnlyList`1<T> : surtr:object, surtr.collections.List:IReadOnlyList<T0>
       0960  ReturnValue
 
   [public] virtual get(index: int): unknown
-    ; entry 91, locals 2, stack 2, code 09AE..09B7
-      09AE  Ldl0
-      09AF  Ldl1
-      09B0  InvokeSpecial 59 (get) args=2 ret=1
-      09B5  BoxDynamic
-      09B6  ReturnValue
+    ; entry 91, locals 2, stack 2, code 09AF..09B8
+      09AF  Ldl0
+      09B0  Ldl1
+      09B1  InvokeSpecial 59 (get) args=2 ret=1
+      09B6  BoxDynamic
+      09B7  ReturnValue
 
   [public] virtual get_length(): int
-    ; entry 93, locals 1, stack 1, code 09BF..09C6
-      09BF  Ldl0
-      09C0  InvokeSpecial 58 (get_length) args=1 ret=1
-      09C5  ReturnValue
+    ; entry 93, locals 1, stack 1, code 09C0..09C7
+      09C0  Ldl0
+      09C1  InvokeSpecial 58 (get_length) args=1 ret=1
+      09C6  ReturnValue
 
   [public] indexOf(item: T0): int
-    ; entry 87, locals 2, stack 2, code 0961..0968
+    ; entry 87, locals 2, stack 2, code 0961..0969
       0961  Ldl0
       0962  FieldGet 14 (_items)
       0965  Ldl1
-      0966  ArrIndexOf
-      0967  ReturnValue
+      0966  UnboxDynamic
+      0967  ArrIndexOf
+      0968  ReturnValue
 
   [public] virtual indexOf(item: unknown): int
-    ; entry 92, locals 2, stack 2, code 09B7..09BF
-      09B7  Ldl0
-      09B8  Ldl1
-      09B9  InvokeSpecial 60 (indexOf) args=2 ret=1
-      09BE  ReturnValue
+    ; entry 92, locals 2, stack 2, code 09B8..09C0
+      09B8  Ldl0
+      09B9  Ldl1
+      09BA  InvokeSpecial 60 (indexOf) args=2 ret=1
+      09BF  ReturnValue
 
   [public] iterate(): surtr:IIterator<T0>
-    ; entry 90, locals 1, stack 1, code 09A4..09AE
-      09A4  Ldl0
-      09A5  FieldGet 14 (_items)
-      09A8  InvokeVirtual 104 (iterate) args=1 ret=1
-      09AD  ReturnValue
+    ; entry 90, locals 1, stack 1, code 09A5..09AF
+      09A5  Ldl0
+      09A6  FieldGet 14 (_items)
+      09A9  InvokeVirtual 104 (iterate) args=1 ret=1
+      09AE  ReturnValue
 
   [public] virtual iterate(): surtr:IIterator<unknown>
-    ; entry 96, locals 1, stack 1, code 09DA..09E1
-      09DA  Ldl0
-      09DB  InvokeSpecial 63 (iterate) args=1 ret=1
-      09E0  ReturnValue
+    ; entry 96, locals 1, stack 1, code 09DB..09E2
+      09DB  Ldl0
+      09DC  InvokeSpecial 63 (iterate) args=1 ret=1
+      09E1  ReturnValue
