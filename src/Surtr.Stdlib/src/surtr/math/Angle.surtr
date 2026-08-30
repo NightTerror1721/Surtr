@@ -1,8 +1,13 @@
+import surtr.math.Math;
+
+// Wraps a raw float in radians so a signature can say "this is an angle" instead of "this is a
+// float that happens to be one" - the same reasoning byte.surtr gives for wrapping a raw int.
 public value class Angle
 {
     private let _radians: float;
 
-    public constructor(radians: float) {
+    public constructor(radians: float)
+    {
         this._radians = radians;
     }
 
@@ -11,4 +16,54 @@ public value class Angle
     {
         get { return this._radians; }
     }
+
+    @Pure
+    public degrees: float
+    {
+        get { return this._radians * RadiansToDegrees; }
+    }
+
+    public static zero: Angle => Angle(0.0);
+
+    public static inline fun fromRadians(radians: float): Angle => Angle(radians);
+    public static inline fun fromDegrees(degrees: float): Angle => Angle(degrees * DegreesToRadians);
+
+    /// Wraps into `[0, 2*Pi)`. A negative angle wraps up from the top, not down past zero.
+    public fun normalized(): Angle
+    {
+        let wrapped = _radians % TwoPi;
+        if (wrapped < 0.0) return Angle(wrapped + TwoPi);
+        return Angle(wrapped);
+    }
+
+    /// The shortest signed difference `other - this`, in `(-Pi, Pi]` - what you add to `this` to
+    /// face `other` the short way round, useful for turning a facing towards a target.
+    public fun shortestDeltaTo(other: Angle): Angle
+    {
+        var delta = (other._radians - _radians) % TwoPi;
+        if (delta > Pi) delta -= TwoPi;
+        if (delta < -Pi) delta += TwoPi;
+        return Angle(delta);
+    }
+
+    @Pure
+    public inline fun toString(): string => "$_radians rad";
+
+    public static fun lerp(a: Angle, b: Angle, t: float): Angle
+    {
+        let ct = clamp01(t);
+        return Angle(a._radians + (b._radians - a._radians) * ct);
+    }
+
+    operator+(a: Angle, b: Angle): Angle { return Angle(a._radians + b._radians); }
+    operator-(a: Angle, b: Angle): Angle { return Angle(a._radians - b._radians); }
+    // No commutative `operator*(scalar: float, a: Angle)`: Angle is a single-field value class, so
+    // it erases to the bare `float` it wraps (§2.9) - that overload and this one would both erase
+    // to the identical signature `op_*(FF)` and collide in the method table.
+    operator*(a: Angle, scalar: float): Angle { return Angle(a._radians * scalar); }
+    operator/(a: Angle, scalar: float): Angle { return Angle(a._radians / scalar); }
+    operator-(a: Angle): Angle { return Angle(-a._radians); }
+
+    inline operator==(a: Angle, b: Angle): bool { return a._radians == b._radians; }
+    inline operator<=>(a: Angle, b: Angle): int { return a._radians < b._radians ? -1 : (a._radians > b._radians ? 1 : 0); }
 }

@@ -1,12 +1,38 @@
 module surtr.math.Angle
-  constants: 0   types: 0   fields: 0   methods: 2   modules: 0
+  constants: 8   types: 0   fields: 0   methods: 18   modules: 0
+  string #6 = " rad"
 
   method table:
     #0  surtr.math.Angle:Angle.ctor(float) -> void
     #1  surtr.math.Angle:Angle.get_radians() -> float
+    #2  surtr.math.Angle:Angle.get_degrees() -> float
+    #3  surtr.math.Angle:Angle.get_zero() -> float
+    #4  surtr.math.Angle:Angle.fromRadians(float) -> float
+    #5  surtr.math.Angle:Angle.fromDegrees(float) -> float
+    #6  surtr.math.Angle:Angle.normalized() -> float
+    #7  surtr.math.Angle:Angle.shortestDeltaTo(float) -> float
+    #8  surtr.math.Angle:Angle.toString() -> string
+    #9  surtr.math.Angle:Angle.lerp(float, float, float) -> float
+    #10  surtr.math.Angle:Angle.op_+(float, float) -> float
+    #11  surtr.math.Angle:Angle.op_-(float, float) -> float
+    #12  surtr.math.Angle:Angle.op_*(float, float) -> float
+    #13  surtr.math.Angle:Angle.op_/(float, float) -> float
+    #14  surtr.math.Angle:Angle.op_-u(float) -> float
+    #15  surtr.math.Angle:Angle.op_==(float, float) -> bool
+    #16  surtr.math.Angle:Angle.op_<=>(float, float) -> int
+    #17  float.toString() -> string
 
 sealed class Angle  [public]
   [private] readonly field _radians: float
+
+  @surtr:Pure
+  [public] property degrees: float { get; }
+    get:
+      ; entry 2, locals 1, stack 2, code 0003..0007
+        0003  Ldl0
+        0004  Ldc0
+        0005  FMul
+        0006  ReturnValue
 
   @surtr:Pure
   [public] property radians: float { get; }
@@ -15,6 +41,171 @@ sealed class Angle  [public]
         0001  Ldl0
         0002  ReturnValue
 
+  [public] static property zero: float { get; }
+    get:
+      ; entry 3, locals 0, stack 1, code 0007..0009
+        0007  Ldc1
+        0008  ReturnValue
+
   [public] ctor (radians: float): void
     ; entry 0, locals 2, stack 0, code 0000..0001
       0000  ReturnVoid
+
+  [public] static fromDegrees(degrees: float): float
+    ; entry 5, locals 1, stack 2, code 000B..000F
+      000B  Ldl0
+      000C  Ldc2
+      000D  FMul
+      000E  ReturnValue
+
+  [public] static fromRadians(radians: float): float
+    ; entry 4, locals 1, stack 1, code 0009..000B
+      0009  Ldl0
+      000A  ReturnValue
+
+  [public] static lerp(a: float, b: float, t: float): float
+    ; entry 9, locals 6, stack 3, code 0042..0067
+      0042  Ldl2
+      0043  Stl4
+      0044  Ldl4
+      0045  Ldc1
+      0046  JPFGE +5 -> L0 (004E)
+      0049  Ldc1
+      004A  Stl5
+      004B  JP +15 -> L2 (005D)
+    L0:
+      004E  Ldl4
+      004F  Ldc7
+      0050  JPFLE +5 -> L1 (0058)
+      0053  Ldc7
+      0054  Stl5
+      0055  JP +5 -> L2 (005D)
+    L1:
+      0058  Ldl4
+      0059  Stl5
+      005A  JP +0 -> L2 (005D)
+    L2:
+      005D  Ldl5
+      005E  Stl3
+      005F  Ldl0
+      0060  Ldl1
+      0061  Ldl0
+      0062  FSub
+      0063  Ldl3
+      0064  FMul
+      0065  FAdd
+      0066  ReturnValue
+
+  [public] normalized(): float
+    ; entry 6, locals 2, stack 2, code 000F..001E
+      000F  Ldl0
+      0010  Ldc3
+      0011  FMod
+      0012  Stl1
+      0013  Ldl1
+      0014  Ldc1
+      0015  JPFGE +4 -> L0 (001C)
+      0018  Ldl1
+      0019  Ldc3
+      001A  FAdd
+      001B  ReturnValue
+    L0:
+      001C  Ldl1
+      001D  ReturnValue
+
+  [public] static op_*(a: float, scalar: float): float
+    ; entry 12, locals 2, stack 2, code 006F..0073
+      006F  Ldl0
+      0070  Ldl1
+      0071  FMul
+      0072  ReturnValue
+
+  [public] static op_+(a: float, b: float): float
+    ; entry 10, locals 2, stack 2, code 0067..006B
+      0067  Ldl0
+      0068  Ldl1
+      0069  FAdd
+      006A  ReturnValue
+
+  [public] static op_-(a: float, b: float): float
+    ; entry 11, locals 2, stack 2, code 006B..006F
+      006B  Ldl0
+      006C  Ldl1
+      006D  FSub
+      006E  ReturnValue
+
+  [public] static op_-u(a: float): float
+    ; entry 14, locals 1, stack 1, code 0077..007A
+      0077  Ldl0
+      0078  FNeg
+      0079  ReturnValue
+
+  [public] static op_/(a: float, scalar: float): float
+    ; entry 13, locals 2, stack 2, code 0073..0077
+      0073  Ldl0
+      0074  Ldl1
+      0075  FDiv
+      0076  ReturnValue
+
+  [public] static op_<=>(a: float, b: float): int
+    ; entry 16, locals 2, stack 2, code 007E..0097
+      007E  Ldl0
+      007F  Ldl1
+      0080  FLT
+      0081  JPZ +5 -> L0 (0089)
+      0084  PushI8 -1
+      0086  JP +13 -> L2 (0096)
+    L0:
+      0089  Ldl0
+      008A  Ldl1
+      008B  FGT
+      008C  JPZ +5 -> L1 (0094)
+      008F  PushI8 1
+      0091  JP +2 -> L2 (0096)
+    L1:
+      0094  PushI8 0
+    L2:
+      0096  ReturnValue
+
+  [public] static op_==(a: float, b: float): bool
+    ; entry 15, locals 2, stack 2, code 007A..007E
+      007A  Ldl0
+      007B  Ldl1
+      007C  FEQ
+      007D  ReturnValue
+
+  [public] shortestDeltaTo(other: float): float
+    ; entry 7, locals 3, stack 2, code 001E..0038
+      001E  Ldl1
+      001F  Ldl0
+      0020  FSub
+      0021  Ldc3
+      0022  FMod
+      0023  Stl2
+      0024  Ldl2
+      0025  Ldc4
+      0026  JPFLE +4 -> L0 (002D)
+      0029  Ldl2
+      002A  Ldc3
+      002B  FSub
+      002C  Stl2
+    L0:
+      002D  Ldl2
+      002E  Ldc5
+      002F  JPFGE +4 -> L1 (0036)
+      0032  Ldl2
+      0033  Ldc3
+      0034  FAdd
+      0035  Stl2
+    L1:
+      0036  Ldl2
+      0037  ReturnValue
+
+  @surtr:Pure
+  [public] toString(): string
+    ; entry 8, locals 1, stack 2, code 0038..0042
+      0038  Ldl0
+      0039  InvokeSpecial 17 (toString) args=1 ret=1
+      003E  Ldc6
+      003F  StrCat 2
+      0041  ReturnValue
