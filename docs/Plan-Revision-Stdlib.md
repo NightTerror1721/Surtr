@@ -1,23 +1,23 @@
 # Plan-Revision-Stdlib — Auditoría de `src/Surtr.Stdlib` y propuestas
 
-> **Estado:** Fases 0-4 completas (B1-B4, D1-D5, C1-C3, E1). Fases 6-7 completas. Fase 5 parcial:
-> `Angle` completo y `Random` están terminados y son utilizables; `Vector2`/`Vector3`/`Quaternion`
-> están escritos, matemáticamente correctos y probados, pero **no son usables por ningún llamador
-> real** por un bug de compilador encontrado en el camino — B6 (§2.6), sin corregir, re-verificado
-> igual de roto tras una tanda no relacionada de commits sobre la jerarquía de tipos. Fase 6, con
-> matices: `PriorityQueue<T>` completa y utilizable de verdad entre módulos; `Map<K,V>` utilizable por
-> clave individual pero no recomendada con valores primitivos por B8. Fase 7 completa (ampliaciones a
-> `List`/`StringBuilder`/`Sequence`), con un cuarto bug encontrado en el camino (B9). Cinco bugs de
-> compilador/runtime nuevos en total esta ronda: **B5** (interfaces genéricas declaradas en Surtr
-> rompían la VM — corregido, §2.0), **B6** (una llamada entre módulos que recibe y devuelve una
-> `value class` multi-campo revienta — sin corregir, §2.6), **B7** (un parámetro-tupla de 2+ elementos
-> en un método con dispatch de interfaz revienta al emitirse — sin corregir, §2.7), **B8** (un
-> `dict<K,V>` con K y V genéricos simultáneos de la misma clase corrompe en silencio los valores
-> primitivos leídos vía `keys()`/`values()`/iteración — sin corregir, §2.8) y **B9** (el `T?` de un
-> método genérico instanciado a un primitivo pierde su marca de ausencia, así que `resultado == null`
-> da `false` cuando debería dar `true` — sin corregir, §2.9). B8 y B9 son los más serios de los
-> cinco: a diferencia de B6/B7 (que revientan ruidosamente en compilación), ambos fallan **en
-> silencio**, devolviendo datos incorrectos sin ningún error. Nace de una revisión
+> **Estado:** Fases 0-4 completas (B1-B4, D1-D5, C1-C3, E1). Fases 5-7 completas. `Angle` y `Random`
+> terminados y utilizables; `Vector2`/`Vector3`/`Quaternion` escritos, matemáticamente correctos,
+> probados y ahora también **utilizables por un llamador real entre módulos** — B6 (§2.6), que lo
+> bloqueaba, está corregido. Fase 6: `PriorityQueue<T>` y `Map<K,V>` ambas completas y utilizables de
+> verdad entre módulos, incluyendo `Map<K,V>` con valores primitivos ahora que B8 está corregido. Fase
+> 7 completa (ampliaciones a `List`/`StringBuilder`/`Sequence`). Cinco bugs de compilador/runtime
+> nuevos en total esta ronda, **los cinco corregidos**: **B5** (interfaces genéricas declaradas en
+> Surtr rompían la VM, §2.0), **B6** (una llamada entre módulos con un retorno `value class`
+> multi-campo revienta si no se inlinea — la causa real no era "entrada y salida a la vez" como
+> parecía al principio, §2.6), **B7** (un parámetro-tupla de 2+ elementos en un método con dispatch de
+> interfaz revienta al emitirse — la causa real vivía en el bridge sintetizado para el método, no en
+> el propio método, §2.7), **B8** (un `dict<K,V>` con K y V genéricos simultáneos de la misma clase
+> corrompía en silencio los valores primitivos leídos vía `keys()`/`values()`/iteración, §2.8) y **B9**
+> (el `T?` de un método genérico instanciado a un primitivo perdía su marca de ausencia, así que
+> `resultado == null` daba `false` cuando debía dar `true`, §2.9). B8 y B9 fueron los más serios de
+> los cinco mientras estuvieron abiertos: a diferencia de B6/B7 (que revientan ruidosamente en
+> compilación), ambos fallaban **en silencio**, devolviendo datos incorrectos sin ningún error. Nace
+> de una revisión
 > manual de los 25 archivos `.surtr` originales de la stdlib (~3500 líneas), con hallazgos
 > verificados compilando y ejecutando código real contra el runtime (`surtrc build`/`surtr run`, y
 > el arnés de `SurtrCompilation` que ya usa `src/Surtr.Tests`), no solo por lectura. Cada arreglo
@@ -367,7 +367,7 @@ tras eliminar `Buffer.surtr` en C1), agrupados igual que `src/surtr/`, y añadid
 está en C#" la fila de `Native/SurtrDiagnosticsNative.cs` (`Profiler`/`Debug`/`RuntimeInfo`), que
 faltaba por completo.
 
-### 2.6 B6 — Bug del compilador: llamada entre módulos con `value class` multi-campo de entrada Y salida — Prioridad CRÍTICA (bloquea Fase 5) — **Sin corregir, reportado**
+### 2.6 B6 — Bug del compilador: llamada entre módulos con `value class` multi-campo de entrada Y salida — Prioridad CRÍTICA (bloqueaba Fase 5) — **Corregido**
 
 Descubierto implementando `Vector2`/`Vector3`/`Quaternion` (Fase 5, §3.1). Como B5, **no es un bug
 de la stdlib** — vive en `Surtr.Compiler` (emisión de llamadas entre módulos) — pero determina si
@@ -415,44 +415,82 @@ que fija este comportamiento roto como conocido. Dentro del propio `Vector.surtr
 (mismo módulo), lo que explica por qué pasó desapercibido hasta escribir tests que lo usan desde
 fuera, exactamente como lo usaría un script real.
 
-**Hipótesis de causa raíz** (sin confirmar con debugging en el emisor): el cálculo del efecto de
-pila para una llamada cross-módulo (`CallExternal`) probablemente corrige el conteo de slots por
-separado para "argumento multi-slot" y para "retorno multi-slot", y esas dos correcciones se pisan
-o se aplican mal cuando coinciden en la misma llamada — de ahí que "solo entra" y "solo sale" por
-separado funcionen bien y juntos no.
+**Causa raíz real (confirmada con debugging directo de la metadata construida — la hipótesis
+original, "las dos correcciones de conteo de slots se pisan", apuntaba al sitio correcto (el efecto
+de pila de una llamada cross-módulo) pero no a la causa):** no hay ninguna interferencia entre "conteo
+de argumento" y "conteo de retorno" — cada uno se calcula de forma completamente independiente. El
+problema es que **`SurtrMethodInfo.ResultSlotCount` es una propiedad `virtual` cuya implementación
+base es dinámica**: para una `value class`, pregunta `_returnType.ResolvedType` (el `SurtrClass` que
+un `SurtrTypeHandle` resuelve a) por su `FlattenedSlotWidth`. Ese `ResolvedType` solo existe una vez
+que `SurtrTypeLinker` ha enlazado el módulo — es decir, una vez que un `SurtrRuntime` real ha
+ejecutado `LoadModule()` sobre él. Pero B6 se dispara **dentro de una misma compilación**: cuando
+`ModuleEmitter` construye `otromodulo` y a continuación emite `probe` (que llama a `otromodulo` de
+forma cruzada), ningún `LoadModule()` ha corrido todavía — los dos módulos existen solo como
+`SurtrModule`s recién construidos por el propio compilador, sin runtime de por medio. En ese momento,
+`EmitResolvedCall` (`MethodBodyEmitter.cs`) resuelve `scaleIt` a través de `_context.Resolve(method)`
+y lee `built.ResultSlotCount` directamente sobre esa metadata recién construida — que, al no tener su
+handle resuelto todavía, cae al valor por defecto de la ruta dinámica y devuelve **1** para cualquier
+`value class` multi-campo, en vez de su anchura real. `Code.CallExternal` usa ese 1 (en vez de 2) para
+llevar la cuenta de la pila de la instrucción de llamada — y el emisor, que sí conoce la anchura real
+de `Vector2` a través de su propia tabla de símbolos, emite justo después un `StoreValueLocal(index,
+2)` (o el equivalente) para guardar el resultado en un local de dos slots — que hace pop de 2 con solo
+1 registrado como disponible. De ahí el mensaje exacto (`pops 2 but the stack holds 1`).
 
-**Arreglos aplicados en la stdlib mientras tanto** (paliativos, no resuelven la causa):
-- `Vector.surtr`'s `lerp` deja de llamar a `Math.clamp01` (`forceinline` cross-módulo, dispara una
-  variante del mismo problema) y clampa a mano.
-- `Quaternion` se fusionó en el mismo módulo que `Vector2`/`Vector3` (`surtr.math.Vector`) en vez de
-  vivir en su propio archivo — así su uso interno de `Vector3.cross`/`+`/`*` es same-módulo y
-  funciona. Sigue **roto para cualquier llamador externo real**, exactamente igual que
-  `Vector2`/`Vector3` — fusionar el módulo no resuelve B6, solo evita que lo dispare el propio código
-  interno de `Quaternion`.
-- Los tests de comportamiento de `Vector2`/`Vector3`/`Quaternion` compilan la función de aserción
-  **dentro** del propio módulo `surtr.math.Vector` (`SurtrStdlibBehaviorTests.BuildAndLoadWithin`)
-  en vez de en un módulo `test` aparte, precisamente para poder verificar que las fórmulas
-  matemáticas son correctas de forma independiente de B6. Hay que volver a `BuildAndLoad` normal
-  (módulo `test` separado) en cuanto se arregle, para empezar a cubrir también el camino real
-  cross-módulo.
+Un test de diagnóstico directo (`emitter.Modules[0].TryGetMethods("scaleIt", ...)`, leído **antes**
+de cualquier `LoadModule()`) confirmó `ResultSlotCount == 1` para `scaleIt` — y también para
+`makeIt(s: float): Vector2` (solo escalar de entrada, `value class` de salida), pese a que la
+tabla original de la §2.6 marcaba ese caso como "Funciona". La explicación de esa aparente
+contradicción es que **la tabla nunca aisló la variable correcta**: los repros usados para "solo
+sale"/"solo entra" (`makeIt`/`sumIt` en esta investigación) son funciones triviales de una sola
+expresión — exactamente el tipo de cuerpo que `MethodBodyEmitter.ShouldInlineByCost` decide **esplicar
+en el propio call site** en vez de emitir una llamada real, lo cual evita por completo el camino
+`CallExternal` donde vive el bug. `scaleIt` (con dos operandos y una construcción) es la primera
+función, de las usadas en la caracterización original, que supera el umbral de coste y sí llega a
+`CallExternal` — así que **B6 nunca fue realmente sobre "entrada Y salida a la vez"**: es sobre
+cualquier retorno `value class` multi-campo cruzando un `CallExternal` real, sin importar la forma de
+los parámetros. Confirmado forzando a `makeIt` a NO inlinearse (una versión de cuerpo grande,
+`makeItBig`, con solo un `float` de entrada) — revienta exactamente igual que `scaleIt`.
 
-**No hay arreglo posible desde la stdlib** que no sea degradar la API (por ejemplo, forzar a quien
-use `Vector2`/`Vector3`/`Quaternion` a escribir su lógica de vectores dentro del propio módulo
-`surtr.math.Vector`, lo cual no es una librería reutilizable de verdad). Se ha lanzado una tarea
-aparte con el repro completo y la caracterización exacta (ver el chip de tarea de la sesión) — nota:
-una tarea anterior, más estrecha, describía esto como específico de `forceinline`; esa
-caracterización era incorrecta/incompleta y quedó sustituida por la de arriba.
+El "argumento" nunca estuvo roto porque `ArgumentSlotCount` **ya tenía** el arreglo que a
+`ResultSlotCount` le faltaba: `SurtrMethodBuilder.Build()` ya horneaba (`bakea`) el ancho de argumento
+calculado en tiempo de compilación (`_argumentSlots`, puesto por `SetArgumentLayout`) directamente en
+la metadata construida (`SurtrBytecodeMethodInfo._argumentSlotCount`), y `ArgumentSlotCount` prefiere
+ese valor horneado sobre el cálculo dinámico — con un comentario explícito señalando exactamente por
+qué ("Metadata read back from an image carries no baked count and falls through to the declared
+shape"). El mismo tratamiento nunca se le dio a `_resultSlots` — `Build()` simplemente no lo pasaba al
+constructor de `SurtrBytecodeMethodInfo`, así que el retorno se quedó dependiendo por completo del
+camino dinámico, que es exactamente el que no puede responder todavía en este punto de la
+compilación.
 
-**Re-verificado hoy, tras una tanda no relacionada de commits que tocan la jerarquía de tipos**
-(`object`/`Enum`/`ValueType` como raíz real, `equals`/`hashCode`/`toString` como overrides de vtable
-de verdad — ver el log de `git log --oneline`, commits `6a31338`..`9b8de0b`): el repro mínimo de una
-línea de §2.6 **sigue reventando exactamente igual**, con el mismo mensaje (`Operand stack underflow
-at offset 14 in 'run': the instruction pops 2 but the stack holds 1`). Esos commits no tocan el
-camino de emisión de `CallExternal` que causa B6, así que no hay razón para esperar que lo hayan
-corregido de rebote, y no lo han hecho. `Quaternion` sigue fusionado en `surtr.math.Vector` — **no se
-puede separar de vuelta a su propio módulo todavía**, exactamente por la razón que motivó fusionarlo:
-haría que su propio `rotate()`/composición dejaran de ser same-módulo y dispararían B6 de nuevo, esta
-vez sin ningún workaround posible desde dentro del propio módulo.
+**Arreglo aplicado en el compilador** (`src/Surtr.Core/Runtime/Classes/SurtrBytecodeMethodInfo.cs` y
+`src/Surtr.Core/Bytecode/Emit/SurtrMethodBuilder.cs`): se añadió un parámetro `resultSlotCount` al
+constructor de `SurtrBytecodeMethodInfo` (mismo patrón que el ya existente `argumentSlotCount` —
+sentinela `-1` cuando no se hornea nada, para no romper el otro sitio que construye esta metadata
+directamente desde una imagen en disco, `SurtrModuleImageReader`, donde el ancho real tampoco se
+necesita: `MetadataImporter`, el lado del compilador que lee una imagen como referencia, calcula el
+ancho desde su propia tabla de símbolos, nunca desde `SurtrMethodInfo.ResultSlotCount`), una propiedad
+`ResultSlotCount` que la prefiere sobre la base dinámica, y `SurtrMethodBuilder.Build()` ahora pasa su
+propio `_resultSlots` (que `ApplyValueLayout`/`SetResultSlots` ya calculaba correctamente desde el
+principio) al construir la metadata. Sin coste de rendimiento: `ResultSlotCount` no se lee nunca desde
+`SurtrVirtualMachine.Execute()` — solo desde el propio emisor en tiempo de compilación y desde los
+puntos de entrada de host (`SurtrRuntime.Invoke`/`InvokeClosure`/`TryInvoke`), ninguno de los cuales
+está en la ruta de dispatch por instrucción.
+
+Verificado con `src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`: el repro mínimo de un solo
+`float` de la doc (`VectorArithmeticFromAnotherModuleWorks`, antes
+`...CurrentlyCrashesOnTheCompilerStackBug`) ahora compila y devuelve el valor correcto, junto con
+cuatro tests nuevos (`CrossModuleCallReturningValueClassWorks`,
+`CrossModuleCallTakingValueClassWorks`, `CrossModuleCallTakingAndReturningValueClassWorks`,
+`CrossModuleCallReturningValueClassWorksWhenNotInlined`) que fijan la regla real: el argumento nunca
+importó, solo si el retorno multi-campo pasa por una llamada real. Los siete tests de
+`Vector2`/`Vector3`/`Quaternion` que usaban `BuildAndLoadWithin` (compilar la función de aserción
+dentro del propio módulo `surtr.math.Vector` para esquivar B6) vuelven a `BuildAndLoad` normal (un
+módulo `test` separado, importando `surtr.math.Vector` como haría cualquier llamador real) — el
+propio helper `BuildAndLoadWithin` se eliminó por quedar sin uso. Suite completa: 3377/3377 en verde.
+
+`Quaternion` sigue fusionado en el mismo archivo que `Vector2`/`Vector3` (`surtr.math.Vector`) —
+separarlo de vuelta a su propio módulo, `surtr.math.Quaternion`, queda como mejora aparte, no
+forzosa: el arreglo del compilador ya lo permite.
 
 Aprovechando la re-verificación, se hizo una pasada de humo más amplia sobre el resto de la stdlib
 real (no solo Vector/Quaternion) para comprobar si esa misma tanda de commits había roto algo más:
@@ -902,14 +940,14 @@ limpio antes del valor sigue devolviendo el "cero" blando; a mitad de valor lanz
 Descubierto y **corregido** durante esta fase: **B5** (§2.0), un bug de compilador que rompía
 `Set<T>`/`ReadOnlySet<T>` en producción.
 
-**Fase 5 — Adiciones de alto valor (§3.1, §3.2) — Parcial: bloqueada por B6**
+**Fase 5 — Adiciones de alto valor (§3.1, §3.2) — Hecha; B6, descubierto en el camino, ya corregido**
 `Angle` completo y `Random` — **hechos, utilizables**. `Vector2`/`Vector3`/`Quaternion`
-(`src/surtr/math/Vector.surtr`) — **escritos y verificados matemáticamente**, pero **no
-recomendables para uso real todavía**: B6 (§2.6), descubierto durante esta fase, rompe cualquier
-llamada entre módulos que combine una `value class` multi-campo de entrada y de salida, lo que
-cubre casi toda su API útil (`+`, `-`, `*`, `normalized()`, `lerp`, `rotate`, composición de
-quaterniones). Quedan en el árbol porque el trabajo es correcto y reutilizable en cuanto B6 se
-arregle, pero no se recomienda anunciarlos como listos hasta entonces.
+(`src/surtr/math/Vector.surtr`) — **escritos, verificados matemáticamente y ahora utilizables entre
+módulos de verdad**: B6 (§2.6), descubierto durante esta fase, rompía cualquier llamada entre módulos
+que devolviera una `value class` multi-campo sin inlinearse, lo que cubría casi toda su API útil (`+`,
+`-`, `*`, `normalized()`, `lerp`, `rotate`, composición de quaterniones) — corregido en el compilador
+(§2.6), verificado con `VectorArithmeticFromAnotherModuleWorks` y el resto de tests de
+`Vector2`/`Vector3`/`Quaternion`, que ya usan un driver en su propio módulo.
 
 **Fase 6 — Adiciones de valor medio (§3.3, §3.4) — Hecha, con matices; B6 resultó no bloquearla**
 La suposición original de que B6 bloquearía esta fase (por seguir "el mismo patrón") era demasiado
@@ -982,10 +1020,11 @@ sobre esas respuestas:
 7. **Fase 6, orden `Map<K,V>` vs `PriorityQueue<T>`:** no importó en la práctica — se implementaron
    ambas en la misma sesión, `PriorityQueue<T>` primero por ser la más simple de las dos.
 
-Preguntas abiertas, bloqueantes, igual que B5 lo fue antes:
+Los cinco bugs de compilador/runtime de esta ronda están **todos corregidos**:
 
-- **B6 (§2.6):** sigue sin resolverse — bloquea que `Vector2`/`Vector3`/`Quaternion` sean usables
-  entre módulos y que `Quaternion` se separe de `Vector.surtr` a su propio archivo.
+- **B6 (§2.6):** **corregido** — `Vector2`/`Vector3`/`Quaternion` ya son usables entre módulos.
+  `Quaternion` separarse de `Vector.surtr` a su propio archivo (`surtr.math.Quaternion`) queda como
+  mejora aparte, no forzosa: el arreglo del compilador ya lo permite.
 - **B7 (§2.7):** **corregido** — `IMap<K,V>` ya podría extender `IReadOnlyCollection<(K,V)>` como
   proponía §3.4 originalmente; el ensanchamiento en sí queda como mejora aparte, no forzosa.
 - **B8 (§2.8):** **corregido** — `Map<K,V>` ya se recomienda sin reservas con valores primitivos.

@@ -514,7 +514,8 @@ namespace Surtr.Bytecode.Emit
                 _genericConstraints,
                 _extension,
                 _bridge,
-                _argumentSlots);
+                _argumentSlots,
+                _resultSlots);
 
             for (int i = 0; i < _attributes.Count; i++)
                 _built.AddAttribute(_attributes[i]);

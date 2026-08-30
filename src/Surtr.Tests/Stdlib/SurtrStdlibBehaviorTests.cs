@@ -99,6 +99,117 @@ namespace Surtr.Tests.Stdlib
             return runtime;
         }
 
+        /// <summary>
+        /// Compiles two source modules together (as opposed to <see cref="BuildAndLoad"/>'s one
+        /// driver module plus stdlib files) and loads both. What B6's regressions below need: a
+        /// real cross-module caller, not the same-module path B6 never broke.
+        /// </summary>
+        private SurtrRuntime BuildTwoModules(string otroSource, string probeSource)
+        {
+            var project = new SurtrProject(Root);
+            project.AddSourceFile(Root + "/otro/otromodulo.surtr", "otromodulo", otroSource);
+            project.AddSourceFile(Root + "/game/core/probe.surtr", "probe", probeSource);
+
+            var compilation = SurtrCompilation.Create(project);
+            _owned.Add(compilation);
+            var binder = compilation.Bind();
+            binder.BindBodies();
+            Assert.True(!compilation.HasErrors, "Binding reported: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+
+            var emitter = new ModuleEmitter(compilation, binder);
+            Assert.True(emitter.TryEmit(), "Emission reported: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
+
+            var runtime = new SurtrRuntime();
+            _owned.Add(runtime);
+            foreach (var module in emitter.Modules)
+                runtime.LoadModule(module);
+
+            return runtime;
+        }
+
+        private const string OtroModuloSource =
+            "public value class Vector2 { public let x: float; public let y: float;\n"
+                + "    public constructor(x: float, y: float) { this.x = x; this.y = y; } }\n"
+                + "public fun scaleIt(a: Vector2, s: float): Vector2 => Vector2(a.x * s, a.y * s);\n"
+                + "public fun makeIt(s: float): Vector2 => Vector2(s, s);\n"
+                + "public fun sumIt(a: Vector2): float => a.x + a.y;\n";
+
+        /// <summary>
+        /// A cross-module call returning (but not taking) a multi-field value class, called from a
+        /// separate driver module. Trivial enough to be auto-inlined by <c>ShouldInlineByCost</c>,
+        /// so on its own this never actually exercised the real CallExternal path B6 lived in - kept
+        /// as a baseline the other B6 tests below contrast with.
+        /// </summary>
+        [Fact]
+        public void CrossModuleCallReturningValueClassWorks()
+        {
+            var runtime = BuildTwoModules(OtroModuloSource,
+                "import otromodulo;\n"
+                    + "fun run(): float { let v = makeIt(3.0); return v.x; }\n");
+
+            Assert.Equal(3.0, runtime.Invoke(FunctionIn(runtime, "probe", "run")).AsFloat);
+        }
+
+        /// <summary>The mirror of the above: taking (but not returning) a multi-field value class.</summary>
+        [Fact]
+        public void CrossModuleCallTakingValueClassWorks()
+        {
+            var runtime = BuildTwoModules(OtroModuloSource,
+                "import otromodulo;\n"
+                    + "fun run(): float { let s = sumIt(Vector2(1.0, 2.0)); return s; }\n");
+
+            Assert.Equal(3.0, runtime.Invoke(FunctionIn(runtime, "probe", "run")).AsFloat);
+        }
+
+        /// <summary>
+        /// Regression for B6 (docs/Plan-Revision-Stdlib.md §2.6): the exact minimal repro from the
+        /// doc. A cross-module call taking AND returning a multi-field value class used to crash
+        /// emission of the *caller* ("Operand stack underflow") - <c>scaleIt</c> here is complex
+        /// enough that the inliner leaves it as a real call, which is what actually exercised the
+        /// bug (see <see cref="CrossModuleCallReturningValueClassWorks"/>'s remark: the trivial
+        /// single-expression shape never did, regardless of which side the value class was on).
+        /// </summary>
+        [Fact]
+        public void CrossModuleCallTakingAndReturningValueClassWorks()
+        {
+            var runtime = BuildTwoModules(OtroModuloSource,
+                "import otromodulo;\n"
+                    + "fun run(): float { let v = scaleIt(Vector2(1.0, 2.0), 3.0); return v.x; }\n"
+                    + "fun runY(): float { let v = scaleIt(Vector2(1.0, 2.0), 3.0); return v.y; }\n");
+
+            Assert.Equal(3.0, runtime.Invoke(FunctionIn(runtime, "probe", "run")).AsFloat);
+            Assert.Equal(6.0, runtime.Invoke(FunctionIn(runtime, "probe", "runY")).AsFloat);
+        }
+
+        /// <summary>
+        /// Confirms B6's real shape: a value-class-returning cross-module call underflows whenever
+        /// it is NOT auto-inlined, regardless of whether any argument is also a value class. A large,
+        /// non-trivial body (<c>ShouldInlineByCost</c> refuses to splice it) that only ever takes a
+        /// scalar still hits the same bug the doc's own repro does - confirming the "takes AND
+        /// returns" framing described which examples happened to trigger it, not the actual cause.
+        /// </summary>
+        [Fact]
+        public void CrossModuleCallReturningValueClassWorksWhenNotInlined()
+        {
+            var otro =
+                "public value class Vector2 { public let x: float; public let y: float;\n"
+                    + "    public constructor(x: float, y: float) { this.x = x; this.y = y; } }\n"
+                    + "public fun makeItBig(s: float): Vector2 {\n"
+                    + "    var a = s; var b = s; var c = s; var d = s; var e = s;\n"
+                    + "    a += 1.0; b += 2.0; c += 3.0; d += 4.0; e += 5.0;\n"
+                    + "    a *= 2.0; b *= 2.0; c *= 2.0; d *= 2.0; e *= 2.0;\n"
+                    + "    let total = a + b + c + d + e;\n"
+                    + "    return Vector2(total, total);\n"
+                    + "}\n";
+
+            var runtime = BuildTwoModules(otro,
+                "import otromodulo;\n"
+                    + "fun run(): float { let v = makeItBig(3.0); return v.x; }\n");
+
+            // a=b=c=d=e=3.0, +1..+5, *2 => (4,5,6,7,8)*2 = (8,10,12,14,16), total=60
+            Assert.Equal(60.0, runtime.Invoke(FunctionIn(runtime, "probe", "run")).AsFloat);
+        }
+
         private static SurtrMethodInfo FunctionIn(SurtrRuntime runtime, string modulePath, string name)
         {
             Assert.True(runtime.TryGetModule(modulePath, out var module), $"No module '{modulePath}' was loaded.");
@@ -147,64 +258,6 @@ namespace Surtr.Tests.Stdlib
             Assert.True(Bool(runtime, "runGeneric"));
             Assert.True(Bool(runtime, "runPresent"));
             Assert.True(Bool(runtime, "runPresentNotNull"));
-        }
-
-        /// <summary>
-        /// Like <see cref="BuildAndLoad"/>, but <paramref name="extraCode"/> is appended directly
-        /// into the named module's own source (<paramref name="intoRelativePath"/>) instead of
-        /// living in a separate `test` module that merely imports it.
-        /// </summary>
-        /// <remarks>
-        /// Needed for Vector2/Vector3/Quaternion: a cross-module call that both takes and returns a
-        /// multi-field value class currently corrupts the emitter's stack accounting ("Operand stack
-        /// underflow") - a compiler bug, tracked separately (see the task chip from this session),
-        /// not a stdlib one. It covers essentially the whole vector/quaternion API (`+`, `-`, `*` by
-        /// scalar, `normalized()`, `lerp`, `rotate`, quaternion composition all take and return one),
-        /// so a driver in its own module - which is what any real caller would be - cannot exercise
-        /// any of it today. Same-module calls are unaffected, which is what this works around: the
-        /// assertion function becomes part of `surtr.math.Vector` itself, so it verifies the actual
-        /// vector/quaternion math independently of that orthogonal bug. Flip callers back to
-        /// <see cref="BuildAndLoad"/> once the compiler fix lands, to also start covering the
-        /// cross-module path for real.
-        /// </remarks>
-        private SurtrRuntime BuildAndLoadWithin(string intoRelativePath, string extraCode, params string[] otherStdlibRelativePaths)
-        {
-            var project = new SurtrProject(Root);
-
-            var (intoModulePath, intoText) = StdlibSource(intoRelativePath);
-            project.AddSourceFile(Root + "/surtr/" + intoRelativePath, intoModulePath, intoText + "\n" + extraCode);
-
-            foreach (string relative in otherStdlibRelativePaths)
-            {
-                var (modulePath, text) = StdlibSource(relative);
-                project.AddSourceFile(Root + "/surtr/" + relative, modulePath, text);
-            }
-
-            var compilation = SurtrCompilation.Create(project);
-            _owned.Add(compilation);
-
-            var binder = compilation.Bind();
-            binder.BindBodies();
-
-            Assert.True(
-                !compilation.HasErrors,
-                "Binding reported: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
-
-            var emitter = new ModuleEmitter(compilation, binder);
-
-            Assert.True(
-                emitter.TryEmit(),
-                "Emission reported: " + string.Join("; ", compilation.Diagnostics.Select(d => d.ToString())));
-
-            var runtime = new SurtrRuntime();
-            _owned.Add(runtime);
-
-            SurtrStdlib.RegisterNativeBodies(runtime);
-
-            foreach (var module in emitter.Modules)
-                runtime.LoadModule(module);
-
-            return runtime;
         }
 
         // ── B1: StringBuilder ────────────────────────────────────────────────
@@ -667,9 +720,9 @@ namespace Surtr.Tests.Stdlib
         [Fact]
         public void Vector2ArithmeticLengthAndDot()
         {
-            var runtime = BuildAndLoadWithin(
-                "math/Vector.surtr",
-                "fun run(): bool {\n"
+            var runtime = BuildAndLoad(
+                "import surtr.math.Vector;\n"
+                    + "fun run(): bool {\n"
                     + "    let a = Vector2(3.0, 4.0);\n"
                     + "    if (a.length() < 4.999 || a.length() > 5.001) return false;\n"
                     + "    let b = a + Vector2(1.0, 1.0);\n"
@@ -678,31 +731,31 @@ namespace Surtr.Tests.Stdlib
                     + "    if (scaled.x != 6.0 || scaled.y != 8.0) return false;\n"
                     + "    return a.dot(a) > 24.999 && a.dot(a) < 25.001;\n"
                     + "}\n",
-                "math/Math.surtr", "math/Angle.surtr");
+                "math/Vector.surtr", "math/Math.surtr", "math/Angle.surtr");
 
-            Assert.True(BoolIn(runtime, "surtr.math.Vector", "run"));
+            Assert.True(Bool(runtime, "run"));
         }
 
         [Fact]
         public void Vector2NormalizedHasUnitLength()
         {
-            var runtime = BuildAndLoadWithin(
-                "math/Vector.surtr",
-                "fun run(): bool {\n"
+            var runtime = BuildAndLoad(
+                "import surtr.math.Vector;\n"
+                    + "fun run(): bool {\n"
                     + "    let n = Vector2(3.0, 4.0).normalized();\n"
                     + "    return n.length() > 0.999 && n.length() < 1.001;\n"
                     + "}\n",
-                "math/Math.surtr", "math/Angle.surtr");
+                "math/Vector.surtr", "math/Math.surtr", "math/Angle.surtr");
 
-            Assert.True(BoolIn(runtime, "surtr.math.Vector", "run"));
+            Assert.True(Bool(runtime, "run"));
         }
 
         [Fact]
         public void Vector3CrossProductIsPerpendicularToBothInputs()
         {
-            var runtime = BuildAndLoadWithin(
-                "math/Vector.surtr",
-                "fun run(): bool {\n"
+            var runtime = BuildAndLoad(
+                "import surtr.math.Vector;\n"
+                    + "fun run(): bool {\n"
                     + "    let x = Vector3.right;\n"
                     + "    let y = Vector3.up;\n"
                     + "    let z = x.cross(y);\n"
@@ -710,23 +763,23 @@ namespace Surtr.Tests.Stdlib
                     + "    if (z.dot(y) < -0.001 || z.dot(y) > 0.001) return false;\n"
                     + "    return z.length() > 0.999 && z.length() < 1.001;\n"
                     + "}\n",
-                "math/Math.surtr", "math/Angle.surtr");
+                "math/Vector.surtr", "math/Math.surtr", "math/Angle.surtr");
 
-            Assert.True(BoolIn(runtime, "surtr.math.Vector", "run"));
+            Assert.True(Bool(runtime, "run"));
         }
 
         [Fact]
         public void Vector3LerpInterpolatesLinearly()
         {
-            var runtime = BuildAndLoadWithin(
-                "math/Vector.surtr",
-                "fun run(): bool {\n"
+            var runtime = BuildAndLoad(
+                "import surtr.math.Vector;\n"
+                    + "fun run(): bool {\n"
                     + "    let mid = Vector3.lerp(Vector3.zero, Vector3(10.0, 20.0, 30.0), 0.5);\n"
                     + "    return mid.x == 5.0 && mid.y == 10.0 && mid.z == 15.0;\n"
                     + "}\n",
-                "math/Math.surtr", "math/Angle.surtr");
+                "math/Vector.surtr", "math/Math.surtr", "math/Angle.surtr");
 
-            Assert.True(BoolIn(runtime, "surtr.math.Vector", "run"));
+            Assert.True(Bool(runtime, "run"));
         }
 
         // ── Fase 5: Quaternion ───────────────────────────────────────────────
@@ -734,16 +787,16 @@ namespace Surtr.Tests.Stdlib
         [Fact]
         public void QuaternionIdentityRotationLeavesAVectorUnchanged()
         {
-            var runtime = BuildAndLoadWithin(
-                "math/Vector.surtr",
-                "fun run(): bool {\n"
+            var runtime = BuildAndLoad(
+                "import surtr.math.Vector;\n"
+                    + "fun run(): bool {\n"
                     + "    let v = Vector3(1.0, 2.0, 3.0);\n"
                     + "    let r = Quaternion.identity.rotate(v);\n"
                     + "    return r.x > 0.999 && r.x < 1.001 && r.y > 1.999 && r.y < 2.001 && r.z > 2.999 && r.z < 3.001;\n"
                     + "}\n",
-                "math/Math.surtr", "math/Angle.surtr");
+                "math/Vector.surtr", "math/Math.surtr", "math/Angle.surtr");
 
-            Assert.True(BoolIn(runtime, "surtr.math.Vector", "run"));
+            Assert.True(Bool(runtime, "run"));
         }
 
         /// <summary>
@@ -754,25 +807,27 @@ namespace Surtr.Tests.Stdlib
         [Fact]
         public void QuaternionRotates180DegreesCorrectly()
         {
-            var runtime = BuildAndLoadWithin(
-                "math/Vector.surtr",
-                "fun run(): bool {\n"
+            var runtime = BuildAndLoad(
+                "import surtr.math.Vector;\n"
+                    + "import surtr.math.Angle;\n"
+                    + "fun run(): bool {\n"
                     + "    let q = Quaternion.fromAxisAngle(Vector3.forward, Angle.fromDegrees(180.0));\n"
                     + "    let r = q.rotate(Vector3.right);\n"
                     + "    return r.x > -1.001 && r.x < -0.999 && r.y > -0.001 && r.y < 0.001;\n"
                     + "}\n",
-                "math/Math.surtr", "math/Angle.surtr");
+                "math/Vector.surtr", "math/Math.surtr", "math/Angle.surtr");
 
-            Assert.True(BoolIn(runtime, "surtr.math.Vector", "run"));
+            Assert.True(Bool(runtime, "run"));
         }
 
         /// <summary>Composing two half-rotations should agree with one full rotation.</summary>
         [Fact]
         public void QuaternionCompositionMatchesASingleEquivalentRotation()
         {
-            var runtime = BuildAndLoadWithin(
-                "math/Vector.surtr",
-                "fun run(): bool {\n"
+            var runtime = BuildAndLoad(
+                "import surtr.math.Vector;\n"
+                    + "import surtr.math.Angle;\n"
+                    + "fun run(): bool {\n"
                     + "    let axis = Vector3.up;\n"
                     + "    let half = Quaternion.fromAxisAngle(axis, Angle.fromDegrees(45.0));\n"
                     + "    let full = Quaternion.fromAxisAngle(axis, Angle.fromDegrees(90.0));\n"
@@ -783,32 +838,30 @@ namespace Surtr.Tests.Stdlib
                     + "    let diff = a - b;\n"
                     + "    return diff.length() < 0.001;\n"
                     + "}\n",
-                "math/Math.surtr", "math/Angle.surtr");
+                "math/Vector.surtr", "math/Math.surtr", "math/Angle.surtr");
 
-            Assert.True(BoolIn(runtime, "surtr.math.Vector", "run"));
+            Assert.True(Bool(runtime, "run"));
         }
 
         /// <summary>
-        /// Regression for the cross-module value-class stack bug (see
-        /// <see cref="BuildAndLoadWithin"/>'s remarks and the task chip from this session): a driver
-        /// in its own module, importing `surtr.math.Vector` the way any real caller would, cannot
-        /// even add two vectors together. Pins the current (broken) behaviour until the compiler fix
-        /// lands - flip it to assert success afterwards.
+        /// Regression for B6 (docs/Plan-Revision-Stdlib.md §2.6): a driver in its own module,
+        /// importing `surtr.math.Vector` the way any real caller would, adds two vectors together -
+        /// which used to crash emission with an operand stack underflow, since `operator+` both
+        /// takes and returns a multi-field value class across a module boundary.
         /// </summary>
         [Fact]
-        public void VectorArithmeticFromAnotherModuleCurrentlyCrashesOnTheCompilerStackBug()
+        public void VectorArithmeticFromAnotherModuleWorks()
         {
-            // The failure surfaces as a failed emission (an assertion inside BuildAndLoad itself),
-            // not a runtime exception - so the "expected" outcome here is that building this at all
-            // throws, not that a call inside it does.
-            Assert.ThrowsAny<Exception>(() => BuildAndLoad(
+            var runtime = BuildAndLoad(
                 "import surtr.math.Vector;\n"
                     + "fun run(): float {\n"
                     + "    let a = Vector2(1.0, 2.0);\n"
                     + "    let b = a + Vector2(1.0, 1.0);\n"
                     + "    return b.x;\n"
                     + "}\n",
-                "math/Math.surtr", "math/Angle.surtr", "math/Vector.surtr"));
+                "math/Math.surtr", "math/Angle.surtr", "math/Vector.surtr");
+
+            Assert.Equal(2.0, Float(runtime, "run"));
         }
 
         // ── Fase 5: Random ───────────────────────────────────────────────────
@@ -887,13 +940,6 @@ namespace Surtr.Tests.Stdlib
         }
 
         // ── Fase 6: PriorityQueue<T> ─────────────────────────────────────────
-        //
-        // Unlike Vector2/Vector3/Quaternion (blocked by B6 - see docs/Plan-Revision-Stdlib.md §2.6),
-        // PriorityQueue<T>'s whole surface is generic: every parameter/return naming T is erased to
-        // a single slot regardless of what concrete type a caller substitutes, so there is no
-        // concrete multi-field value class in any of its signatures for B6 to catch. These tests use
-        // the ordinary BuildAndLoad (a real driver in its own `test` module), not BuildAndLoadWithin,
-        // specifically to confirm that cross-module path actually works here.
 
         [Fact]
         public void PriorityQueueDequeuesInAscendingPriorityOrder()
