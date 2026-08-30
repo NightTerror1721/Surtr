@@ -1683,11 +1683,16 @@ namespace Surtr.Compiler.CodeGen
             MethodSymbol target)
         {
             var parameters = new SurtrParameterInfo[declared.Parameters.Count];
+            var parameterWidths = new int[declared.Parameters.Count];
+            bool anyWideParameter = false;
             for (int i = 0; i < parameters.Length; i++)
             {
                 parameters[i] = context.Module.Parameter(
                     declared.Parameters[i].Name,
                     SurtrClassReference.Erase(_descriptors.Emit(declared.Parameters[i].Type)));
+
+                parameterWidths[i] = ValueTypeLayout.WidthOfType(declared.Parameters[i].Type);
+                anyWideParameter |= parameterWidths[i] > 1;
             }
 
             var bridge = @class.DefineMethod(
@@ -1698,6 +1703,16 @@ namespace Surtr.Compiler.CodeGen
                 SurtrMethodDispatch.Virtual,
                 isOverride: false,
                 SurtrVisibility.Public);
+
+            // B7 (docs/Plan-Revision-Stdlib.md §2.7): DefineMethod lays every parameter out one slot
+            // apart by default, which is wrong the moment one of them is an inline multi-slot shape
+            // (a tuple of 2+ elements - a multi-field value class parameter is not reachable here,
+            // see the remark below). Left uncorrected, the frame this bridge's own body reads from
+            // disagrees with what a real call site pushes, and the forwarding Call at the bottom -
+            // built against target's own (correct) ArgumentSlotCount - pops more than this body ever
+            // pushed. The same correction ApplyValueLayout applies to an ordinary method's frame.
+            if (anyWideParameter)
+                bridge.SetArgumentLayout(receiverWidth: 1, parameterWidths, callSiteReceiverWidth: 1);
 
             var code = bridge.Code;
             code.LoadLocal(bridge.Receiver);
@@ -1733,6 +1748,15 @@ namespace Surtr.Compiler.CodeGen
 
             for (int i = 0; i < parameters.Length; i++)
             {
+                // A tuple parameter (2+ elements) is a block of contiguous slots, not the one slot
+                // every other parameter shape needs - see EmitForwardedParameter for why it forwards
+                // element by element instead of the single LoadLocal(+Narrow) below.
+                if (parameterWidths[i] > 1)
+                {
+                    EmitForwardedTupleParameter(code, bridge.Parameter(i), declared.Parameters[i].Type, wanted.Parameters[i].Type, targetIsDirect);
+                    continue;
+                }
+
                 code.LoadLocal(bridge.Parameter(i));
 
                 // The slot handed us a reference; a Direct target wants the real type narrowed out
@@ -1764,6 +1788,55 @@ namespace Surtr.Compiler.CodeGen
                 code.Box(MethodBodyEmitter.TypeCodeOf(wanted.ReturnType));
 
             code.ReturnValue();
+        }
+
+        /// <summary>
+        /// Forwards a tuple-typed bridge parameter (2+ elements) one element at a time.
+        /// </summary>
+        /// <remarks>
+        /// B7 (docs/Plan-Revision-Stdlib.md §2.7): the block sits at <paramref name="slot"/> as
+        /// <paramref name="declaredType"/>'s own flattened width (already accounted for by the
+        /// <c>SetArgumentLayout</c> call in <see cref="EmitBridge"/>), but there is no opcode that
+        /// casts one slot out of the middle of a value sitting on the operand stack - <c>Cast</c>/
+        /// <c>Unbox</c> only ever read the top. So each element is read straight out of its own
+        /// offset in the block (exactly as <c>MethodBodyEmitter.EmitIndexRead</c> reads a constant
+        /// tuple index) and narrowed on its own, in order, which leaves the stack holding the same
+        /// sequence of values a normal multi-slot push would - what the forwarding <c>Call</c>
+        /// right after this loop expects.
+        /// </remarks>
+        private void EmitForwardedTupleParameter(SurtrCodeEmitter code, SurtrLocal slot, TypeSymbol declaredType, TypeSymbol wantedType, bool targetIsDirect)
+        {
+            var declaredTuple = (TupleTypeSymbol)declaredType.NonNullable;
+            var wantedTuple = wantedType.NonNullable as TupleTypeSymbol;
+
+            int offset = 0;
+            for (int e = 0; e < declaredTuple.ElementTypes.Count; e++)
+            {
+                var elementType = declaredTuple.ElementTypes[e];
+                int elementWidth = ValueTypeLayout.WidthOfType(elementType);
+
+                if (elementWidth > 1)
+                {
+                    // A nested inline multi-slot element (another tuple, or a multi-field value
+                    // class) inside a bridged tuple parameter - not exercised by anything in the
+                    // stdlib or by B7's own repro, and narrowing it correctly needs the same
+                    // per-element treatment recursively, which Narrow's single-value contract does
+                    // not give. Reported rather than silently mis-forwarded.
+                    if (targetIsDirect && wantedTuple is not null && !ReferenceEquals(elementType, wantedTuple.ElementTypes[e]))
+                        throw new SurtrEmitException($"a bridged tuple parameter with a nested multi-slot element at position {e}");
+
+                    code.LoadValueLocal(slot.Index + offset, elementWidth);
+                }
+                else
+                {
+                    code.LoadLocalField(slot.Index, offset);
+
+                    if (targetIsDirect && wantedTuple is not null && !ReferenceEquals(elementType, wantedTuple.ElementTypes[e]))
+                        Narrow(code, wantedTuple.ElementTypes[e]);
+                }
+
+                offset += elementWidth;
+            }
         }
 
         /// <summary>Reads a concrete type out of the erased value a contract slot passes.</summary>

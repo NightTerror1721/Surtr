@@ -474,7 +474,7 @@ solo leen campos y construyen un valor nuevo — simplemente no llevaban la marc
 `dot`/`cross`/`toString`/`conjugate`, que ya la llevaban. Verificado con una compilación de la stdlib
 completa que vuelca todos los diagnósticos: cero warnings tras el arreglo.
 
-### 2.7 B7 — Bug del compilador: parámetro-tupla de 2+ elementos en un método con dispatch por interfaz — Prioridad ALTA — **Sin corregir, reportado**
+### 2.7 B7 — Bug del compilador: parámetro-tupla de 2+ elementos en un método con dispatch por interfaz — Prioridad ALTA — **Corregido**
 
 Descubierto implementando `PriorityQueue<T>`/`Map<K,V>` (Fase 6, §3.3/§3.4). Distinto de B6: B6 es
 sobre `value class` **concretas** de varios campos; este es sobre **tuplas** (`(A, B, ...)`), y ni
@@ -509,24 +509,62 @@ public class Box<K, V> : IThing<K, V> {
 falla con `Operand stack underflow at offset 5 in 'contains': the instruction pops 3 but the stack
 holds 2`, sin que nada llame nunca a `contains`.
 
-**Hipótesis de causa raíz (sin confirmar con debugging en el emisor):** el mismo commit que arregló
-seis bugs del calling convention no-`Direct` (`76e076c`, "make equals/hashCode/toString real vtable
-overrides") introdujo `EmitReceiverUnpackIfNeeded` desplazando los parámetros a temporales frescos
-para no pisar al receptor desempaquetado — ese desplazamiento probablemente asume que cada parámetro
-ocupa exactamente un slot, lo cual es cierto para cualquier tipo salvo una tupla (o un `value class`
-multi-campo, aunque eso cae en B6 antes de llegar aquí) de 2+ elementos, que ocupa varios slots
-contiguos. Nótese que un **retorno** tupla no dispara nada (`iterate(): IIterator<(K,V)>` en una
-interfaz funciona sin problema) — el bug es específicamente sobre el layout de **entrada**.
+**Causa raíz real (confirmada con debugging en el emisor — no era la hipótesis original):** el fallo
+no está en `EmitReceiverUnpackIfNeeded` ni en el layout de parámetros del **propio** método —
+`Box<K,V>` es una clase normal (ancho de receptor 1), así que esa rutina retorna inmediatamente sin
+tocar nada. El repro mínimo falla igual con un cuerpo trivial (`return true;`), lo que ya descartaba
+cualquier hipótesis relacionada con el contenido del cuerpo o con el desplazamiento de parámetros del
+método real.
+
+El verdadero origen es el mecanismo de **bridges** que `76e076c` añadió a `ModuleEmitter.EmitBridge`
+(no `EmitReceiverUnpackIfNeeded`, que es del `MethodBodyEmitter` y opera sobre el método real, no
+sobre el bridge). `contains` no lleva `override`, así que su dispatch es `Direct` (§3.3 — no hay
+override implícito en Surtr) y por tanto `SurtrTypeLinker` nunca lo coloca en la vtable: `NeedsBridge`
+lo detecta y `EmitBridge` sintetiza un método puente, `Virtual`, con la forma erasionada de la
+interfaz, cuyo cuerpo hace `LoadLocal(receptor)`, `LoadLocal(cada parámetro)` y por último `Call` al
+método real. Ese bridge se construye con `SurtrClassBuilder.DefineMethod`, que **nunca invoca el
+equivalente de `ApplyValueLayout`/`SetArgumentLayout`** — a diferencia de todo método declarado por el
+compilador normal (`DeclareMethod`/`DeclareModuleMembers`/`DeclareExtensionFunction`, que sí lo
+hacen). Así que el bridge asume que cada parámetro ocupa un slot, lo cual es falso para una tupla de
+2+ elementos: su propio `LoadLocal(bridge.Parameter(0))` empuja un único valor donde la tupla ocupa
+dos slots contiguos, y el `Call` final al método real —construido contra el `ArgumentSlotCount`
+**correcto** de `contains` (receptor 1 + tupla 2 = 3)— hace pop de 3 con solo 2 en la pila. De ahí el
+mensaje exacto (`pops 3 but the stack holds 2`) y por qué el repro con un cuerpo vacío falla
+igual: el underflow ocurre en el bridge, no en el cuerpo del método declarado. Confirma también por
+qué un **retorno** tupla no dispara nada: el retorno se maneja con `code.Box(...)`/`ReturnValue()`, un
+camino distinto que no pasa por este bucle de `LoadLocal` por parámetro.
 
 **Impacto real:** cierra la puerta a que `IMap<K,V>` extienda `IReadOnlyCollection<(K,V)>` (que
 exigiría implementar `contains(item: (K,V)): bool`) — ver B8 más abajo para el motivo por el que
 `Map<K,V>` tampoco podría haber usado esa vía de todas formas. `PriorityQueue<T>` no se ve afectado:
 ningún método suyo toma una tupla como parámetro.
 
-**Arreglo aplicado en la stdlib:** `IReadOnlyMap<K,V>`/`IMap<K,V>` (`collections/Map.surtr`) declaran
-únicamente `IIterable<(K,V)>` (un `iterate()` sin parámetros) en vez de `IReadOnlyCollection<(K,V)>`
-— así no hay ningún método con parámetro-tupla satisfaciendo una interfaz en toda la superficie de
-`Map<K,V>`. Documentado en el propio archivo con la razón exacta.
+**Arreglo aplicado en el compilador** (`src/Surtr.Compiler/CodeGen/ModuleEmitter.cs`,
+`EmitBridge`/`Narrow`): antes de emitir el cuerpo del bridge se calcula el ancho de cada parámetro
+declarado (`ValueTypeLayout.WidthOfType`) y, si alguno ocupa más de un slot, se llama a
+`bridge.SetArgumentLayout(receiverWidth: 1, parameterWidths, callSiteReceiverWidth: 1)` — la misma
+corrección que `ApplyValueLayout` aplica a un método ordinario, ahora también al bridge. El bucle de
+reenvío de parámetros distingue el caso ancho: para un parámetro-tupla, un nuevo
+`EmitForwardedTupleParameter` reenvía **elemento a elemento** (leyendo cada uno con
+`LoadLocalField`/`LoadValueLocal` en su propio offset dentro del bloque, exactamente como
+`MethodBodyEmitter.EmitIndexRead` lee un índice de tupla constante) en vez de un único `LoadLocal`,
+porque no existe ningún opcode que reduzca/castee un slot en medio de un bloque que ya está en la
+pila de operandos — `Cast`/`Unbox` solo leen la cima. Cada elemento se estrecha (`Narrow`) por
+separado si su tipo difiere entre la interfaz y la implementación, preservando el comportamiento
+exacto que ya existía para un parámetro de un solo slot. Un elemento anidado de más de un slot dentro
+de la tupla (otra tupla, o un `value class` multi-campo) no está cubierto — no lo ejercita ni el
+repro de B7 ni la stdlib real — y se reporta con `SurtrEmitException` en vez de generar bytecode
+incorrecto en silencio.
+
+Verificado con `src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`
+(`InterfaceDispatchedMethodWithTwoElementTupleParameterWorks`), que ejercita tanto la llamada directa
+(no pasa por el bridge) como la llamada a través de una variable tipada por la interfaz (sí pasa por
+el bridge) — ambas devuelven el resultado correcto. Suite completa: 3371/3371 en verde.
+
+**Arreglo aplicado en la stdlib:** `IReadOnlyMap<K,V>`/`IMap<K,V>` (`collections/Map.surtr`) siguen
+declarando únicamente `IIterable<(K,V)>` en vez de `IReadOnlyCollection<(K,V)>` por ahora — el arreglo
+del compilador ya lo permitiría (ver la nota en §3.4/la propuesta original), pero ampliar la interfaz
+es un cambio de superficie de la stdlib aparte, no parte de este arreglo puntual.
 
 ### 2.8 B8 — Bug del compilador/runtime: `dict<K,V>` con K y V genéricos simultáneos corrompe silenciosamente los valores primitivos leídos vía `keys()`/`values()`/iteración — Prioridad CRÍTICA — **Sin corregir, reportado**
 

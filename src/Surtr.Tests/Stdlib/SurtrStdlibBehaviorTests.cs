@@ -999,6 +999,39 @@ namespace Surtr.Tests.Stdlib
             Assert.Equal(1.0, Float(runtime, "run"));
         }
 
+        // ── B7 regression ────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Regression for B7 (docs/Plan-Revision-Stdlib.md §2.7): an interface-dispatched method
+        /// (no `override` written, so the class's own member is `Direct` and the interface slot is
+        /// filled by a compiler-synthesized bridge) taking a 2+-element tuple parameter used to
+        /// crash emission of the bridge itself with an operand stack underflow - nothing had to call
+        /// it. Exercises both the direct call (bypasses the bridge entirely) and a call through an
+        /// interface-typed reference (goes through the bridge), so both paths are covered.
+        /// </summary>
+        [Fact]
+        public void InterfaceDispatchedMethodWithTwoElementTupleParameterWorks()
+        {
+            var runtime = BuildAndLoad(
+                "public interface IThing<K, V> { fun contains(item: (K, V)): bool; }\n"
+                    + "public class Box<K, V> : IThing<K, V> {\n"
+                    + "    public constructor() { }\n"
+                    + "    public fun contains(item: (K, V)): bool {\n"
+                    + "        if (item[0] == item[0]) return true;\n"
+                    + "        return item[1] == item[1];\n"
+                    + "    }\n"
+                    + "}\n"
+                    + "fun run(): bool { let b = Box<string, int>(); return b.contains((\"a\", 1)); }\n"
+                    + "fun runViaInterface(): bool {\n"
+                    + "    let b = Box<string, int>();\n"
+                    + "    let t: IThing<string, int> = b;\n"
+                    + "    return t.contains((\"a\", 1));\n"
+                    + "}\n");
+
+            Assert.True(Bool(runtime, "run"));
+            Assert.True(Bool(runtime, "runViaInterface"));
+        }
+
         // ── Fase 6: Map<K,V> ─────────────────────────────────────────────────
         //
         // IMap<K,V>/IReadOnlyMap<K,V> deliberately do not extend IReadOnlyCollection<(K,V)> - doing
