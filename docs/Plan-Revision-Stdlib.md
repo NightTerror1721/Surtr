@@ -1,12 +1,10 @@
 # Plan-Revision-Stdlib — Auditoría de `src/Surtr.Stdlib` y propuestas
 
-> **Estado:** Fases 0-4 implementadas (B1-B4, D1-D5, C1-C3, E1) — ver la nota de cada hallazgo en §2
-> y el resumen al final de §4. Durante la Fase 4 apareció un **hallazgo nuevo y de prioridad más
-> alta que todo lo anterior**: B5, un bug del *compilador* (no de la stdlib) que rompe en producción
-> toda la superficie de álgebra de conjuntos de `Set<T>`/`ReadOnlySet<T>` para cualquier tipo de
-> elemento. Ver §2.0 antes que ninguna otra sección — las Fases 5-7 (vectores/`Random`/
-> `PriorityQueue`/`Map`) están en pausa hasta decidir cómo proceder dado B5, porque el código nuevo
-> previsto usaría el mismo patrón (interfaces genéricas declaradas en Surtr) que dispara el bug. Nace de una revisión
+> **Estado:** Fases 0-4 implementadas (B1-B4, D1-D5, C1-C3, E1). Durante la Fase 4 apareció un
+> **hallazgo nuevo y de prioridad más alta que todo lo anterior**: B5, un bug del *compilador* (no
+> de la stdlib) que rompía en producción toda la superficie de álgebra de conjuntos de
+> `Set<T>`/`ReadOnlySet<T>` para cualquier tipo de elemento — **ya corregido** (ver §2.0). Las Fases
+> 5-7 (vectores/`Random`/`PriorityQueue`/`Map`) ya no están bloqueadas. Nace de una revisión
 > manual de los 25 archivos `.surtr` de la stdlib (~3500 líneas), con hallazgos verificados
 > compilando y ejecutando código real contra el runtime (`surtrc build`/`surtr run`, y el arnés de
 > `SurtrCompilation` que ya usa `src/Surtr.Tests`), no solo por lectura. Cada arreglo de las Fases
@@ -34,10 +32,10 @@ imprescindibles para ese caso de uso.
 
 Cada hallazgo lleva: **tipo**, **prioridad**, archivo/línea, evidencia y arreglo propuesto.
 
-### 2.0 B5 — Bug del compilador: interfaces genéricas declaradas en Surtr rompen la VM — Prioridad CRÍTICA MÁXIMA
+### 2.0 B5 — Bug del compilador: interfaces genéricas declaradas en Surtr rompen la VM — Prioridad CRÍTICA MÁXIMA — **Corregido**
 
-**No es un bug de la stdlib** — vive en `Surtr.Compiler` (codegen de argumentos) o en la VM
-(`SurtrVirtualMachine.cs`, opcode `Cast`), pero **rompe funcionalidad real y ya publicada de la
+**No era un bug de la stdlib** — vivía en `Surtr.Compiler` (el puente que emite `CodeGen/ModuleEmitter.cs`
+para satisfacer una interfaz genérica), pero **rompía funcionalidad real y ya publicada de la
 stdlib**, así que se documenta aquí primero.
 
 **Síntoma:** llamar a un método a través de una referencia tipada por una **interfaz genérica
@@ -74,46 +72,51 @@ interfaz*. Contrastado con el test ya existente
 **built-in** `IComparable<T>` y sí funciona — la diferencia parece estar en que las interfaces
 built-in tienen manejo especial en C# que nunca se extendió a las declaradas en código Surtr.
 
-**Hipótesis de causa raíz** (sin confirmar con debugging real, pendiente de que quien tome la tarea
-lo verifique): al pasar un argumento a un parámetro que erasiona al tipo de la propia interfaz
-(`G0`/`Erased`), el emisor parece insertar un opcode `Cast` (el mismo que se usa para *leer* un
-valor fuera de un slot `Erased`, que si necesita comprobación en runtime) en vez de tratarlo como
-"cualquier referencia entra en un slot `Erased` sin conversión" (regla ya documentada en
-`docs/Compiler-Plan.md`/`CLAUDE.md`: "anything reaches an erased slot and nothing returns without a
-cast"). El `Cast` en runtime comprueba `subjectClass.Implements/IsSubclassOf(target)`
-(`SurtrVirtualMachine.cs:3608-3616`), y ninguna clase real es "subclase de" la marca `Erased`, así
-que la comprobación falla siempre.
+**Causa raíz confirmada** (con debugging real: se instrumentó temporalmente el binder y se
+inspeccionó el bytecode emitido para el repro): cuando una clase genérica (`Box<T>`) satisface una
+interfaz genérica (`IHolder<T>`), el compilador sintetiza un **puente** (`ModuleEmitter.EmitBridges`/
+`EmitBridge`, `src/Surtr.Compiler/CodeGen/ModuleEmitter.cs`) — un método `virtual` con la firma
+erasionada exacta que pide el slot de la interfaz (`has(item: unknown)`), cuyo cuerpo reenvía al
+método real de la clase (`has(item: T)`, con dispatch `Direct`). Ese reenvío tiene que leer el
+argumento erasionado de vuelta al tipo que el método real declara — eso es lo que hace `Narrow`
+(`ModuleEmitter.cs:1693`). El problema: **una clase genérica mantiene un único cuerpo compilado sea
+cual sea su instanciación (§6)**, así que su propio parámetro de tipo (`T`) sigue erasionado *dentro*
+de ese cuerpo — es exactamente la misma representación que ya traía el slot de la interfaz. `Narrow`
+no tenía ningún caso para "el destino ya es él mismo un parámetro de tipo genérico sin instanciar";
+caía en la rama general de "convertir a un tipo concreto" (`ModuleEmitter.cs:1734`, antes de este
+arreglo), que emitía un `Cast` real contra el descriptor de `T` — que resuelve exactamente a la
+misma clase marca `SurtrBuiltIns.Erased` que el slot ya tenía. En runtime, el opcode `Cast` comprueba
+`subjectClass.IsSubclassOf(target)` (`SurtrVirtualMachine.cs:3608-3616`), y ninguna clase real es
+jamás "subclase de" la marca `Erased` — por lo que la comprobación fallaba siempre, para cualquier
+tipo de elemento.
 
-**Impacto real en la stdlib ya publicada**, confirmado ejecutando el código:
+**Impacto real que tenía en la stdlib ya publicada**, confirmado ejecutando el código antes del
+arreglo:
 - `Set<int>.isSubsetOf(other)` (y toda `IReadOnlySet<T>`/`ISet<T>`: `isSupersetOf`,
   `isProperSubsetOf`, `isProperSupersetOf`, `overlaps`, `equals`, `unionWith`, `intersectWith`,
   `exceptWith`, `symmetricExceptWith`, y los estáticos `union`/`intersect`/`except`/
-  `symmetricExcept`) **revienta la VM** en cuanto llaman a `other.contains(item)` a través del
-  parámetro `IReadOnlySet<T>`/`ISet<T>` — confirmado con `T = int` y `T = string`, así que es
-  universal, no depende del tipo de elemento.
-- La nueva `ReadOnlyCollection<T>`/`asReadOnly()` (C2, más abajo) hereda el mismo problema en su
-  `contains()` — documentado con un test que fija el comportamiento actual (crash) hasta que se
-  arregle el compilador:
-  `SurtrStdlibBehaviorTests.SetIsSubsetOfCurrentlyCrashesOnTheCompilerErasureBug`.
+  `symmetricExcept`) **reventaba la VM** en cuanto llamaban a `other.contains(item)` a través del
+  parámetro `IReadOnlySet<T>`/`ISet<T>` — confirmado con `T = int` y `T = string`, universal, no
+  dependía del tipo de elemento.
+- `ReadOnlyCollection<T>`/`asReadOnly()` (C2, más abajo) heredaba el mismo problema en su
+  `contains()`.
 
-**Lo que SÍ sigue funcionando:** cualquier miembro de `IReadOnlyCollection<T>`/`IReadOnlySet<T>`
-que no tome un argumento de tipo `T` a través de la interfaz — `length`, `iterate()`, `copyTo()`
-(toma `T[]`, siempre referencia) — porque no pasan por el `Cast`-a-`Erased` problemático. `contains`
-llamado sobre el tipo **concreto** (`Set<T>.contains(item)` directamente, sin pasar por la interfaz)
-también funciona, que es como `Set`/`ReadOnlySet` implementan su propio `contains` internamente —
-por eso el problema pasó desapercibido hasta que un método distinto (`isSubsetOf`) llama a
-`contains` **sobre el parámetro de la interfaz**, no sobre `this`.
+**Arreglo aplicado:** `Narrow` gana un caso al principio — si el tipo destino ya es él mismo un
+`TypeParameterSymbol` (el parámetro de tipo de la clase contenedora, sin instanciar), no emite nada:
+ni `Cast` ni `Unbox`, porque el valor ya está exactamente en la representación que el cuerpo real
+espera. Confirmado con el repro mínimo (`IHolder<T>`/`Box<T>`, ambas rutas — dispatch directo y por
+interfaz) y con el caso real (`Set<int>.isSubsetOf`, `Set<string>.isSubsetOf`). Tests:
+`ModuleEmitterTests.AUserDeclaredGenericInterfaceDispatchesAMethodTakingItsOwnTypeParameter`
+(`src/Surtr.Tests/Compiler/CodeGen/ModuleEmitterTests.cs`) para el repro aislado, y
+`SurtrStdlibBehaviorTests.SetIsSubsetOfWorksAcrossTwoInstances` /
+`ListAndSetAsReadOnlyStayLiveOverTheSource` (ahora también prueba `contains()` a través de la
+interfaz) para el impacto real en la stdlib. Suite completa: 3309/3309 en verde.
 
-**Por qué esto pausa las Fases 4 (resto)-7:** cualquier interfaz genérica nueva declarada en Surtr
-que se llame a través de su propio tipo (`PriorityQueue`'s `IPriorityQueue<T>`, `Map`'s
-`IReadOnlyMap<K,V>`, cualquier operador de `Vector2`/`Quaternion` que reciba `IEquatable<Vector2>`,
-etc.) puede chocar con el mismo bug en cuanto haga lo que `Set.unionWith` hace hoy. Seguir
-diseñando esa superficie sin saber si el compilador lo soporta es trabajo que podría desecharse.
-
-**No hay arreglo posible desde la stdlib** sin sacrificar el polimorfismo por interfaz (p. ej.
-cambiar `unionWith(other: ISet<T>)` a `unionWith(other: Set<T>)`, un tipo concreto en vez de una
-interfaz) — la causa está en el compilador/VM. Se ha lanzado una tarea aparte para investigarlo y
-arreglarlo (ver el chip de tarea en la sesión).
+**Por qué esto pausaba las Fases 4 (resto)-7 hasta arreglarse:** cualquier interfaz genérica nueva
+declarada en Surtr que se llamase a través de su propio tipo (`PriorityQueue`'s `IPriorityQueue<T>`,
+`Map`'s `IReadOnlyMap<K,V>`, cualquier operador de `Vector2`/`Quaternion` que recibiera
+`IEquatable<Vector2>`, etc.) habría chocado con el mismo bug. Con el compilador arreglado, esa
+restricción ya no aplica — las Fases 5-7 pueden retomarse sin esa limitación.
 
 #### B1 — `StringBuilder` produce contenido corrupto desde su construcción — **Corregido**
 **Archivo:** `src/surtr/text/StringBuilder.surtr:7-11`
@@ -500,48 +503,38 @@ limpio antes del valor sigue devolviendo el "cero" blando; a mitad de valor lanz
 **Fase 4 — Limpieza (C1-C3, E1) — Hecho**
 `Buffer<T>` eliminado, `ReadOnlyCollection<T>` resucitada con `asReadOnly()`, comentario de
 `Set.of` corregido con la razón real (§2.4), `README.md` reescrito con los 24 módulos reales (E1).
-Descubierto durante esta fase: **B5** (§2.0), un bug de compilador que rompe
-`Set<T>`/`ReadOnlySet<T>` en producción — es lo único que queda pendiente de esta fase, y es lo que
-pausa las Fases 5-7.
+Descubierto y **corregido** durante esta fase: **B5** (§2.0), un bug de compilador que rompía
+`Set<T>`/`ReadOnlySet<T>` en producción.
 
-**Fase 5 — Adiciones de alto valor (§3.1, §3.2) — EN PAUSA por B5**
-`Vector2`/`Vector3`/`Quaternion` + `Angle` completo, y `Random`. Cualquier operador que compare dos
-instancias a través de una interfaz genérica (p. ej. `IEquatable<Vector2>`) puede chocar con B5 del
-mismo modo que `Set.unionWith` lo hace hoy — diseñar esta superficie antes de saber si el compilador
-la soporta es trabajo que podría desecharse.
+**Fase 5 — Adiciones de alto valor (§3.1, §3.2)**
+`Vector2`/`Vector3`/`Quaternion` + `Angle` completo, y `Random`. Ya no bloqueadas por B5.
 
-**Fase 6 — Adiciones de valor medio (§3.3, §3.4) — EN PAUSA por B5**
-`PriorityQueue<T>` (su `IPriorityQueue<T>` es exactamente la forma que dispara B5 en cuanto compare
-prioridades a través de la interfaz) y `Map<K,V>`/`IMap<K,V>` (mismo riesgo que `Set`, del que
-copia el patrón). Reutilizarían `ReadOnlyCollection<T>`, ya disponible desde la Fase 4.
+**Fase 6 — Adiciones de valor medio (§3.3, §3.4)**
+`PriorityQueue<T>` y `Map<K,V>`/`IMap<K,V>` (reutilizarían `ReadOnlyCollection<T>`, ya disponible
+desde la Fase 4). Ya no bloqueadas por B5.
 
 **Fase 7 — Ampliaciones incrementales (§3.5-§3.7)**
 Métodos añadidos a `List`, `StringBuilder` y `Sequence` una vez sus bases respectivas están
-corregidas/estables. La menos afectada por B5 (son sobre todo métodos concretos, no interfaces
-genéricas nuevas), pero sigue detrás de las Fases 5-6 en el orden del plan.
+corregidas/estables. Sigue detrás de las Fases 5-6 en el orden del plan.
 
 ---
 
 ## 5. Decisiones tomadas y preguntas abiertas
 
-Las cuatro preguntas originales de esta sección ya están resueltas y las Fases 0-3 implementadas
+Las cuatro preguntas originales de esta sección ya están resueltas y las Fases 0-4 implementadas
 sobre esas respuestas:
 
-1. **Alcance:** Fases 0-3 (bugs + inconsistencias). Fases 4-7 quedan fuera de esta tanda.
+1. **Alcance:** Fases 0-3 primero (bugs + inconsistencias), luego, al descubrirse B5, priorizar su
+   arreglo antes de seguir con las Fases 5-7.
 2. **Documento:** comiteado en `docs/` como `Plan-Revision-Stdlib.md`, sin añadirlo a la tabla de
    mapa de documentación de `CLAUDE.md`.
 3. **`Deque<T>` (D2):** opción (b) — lista doblemente enlazada propia, independiente de `Queue<T>`.
 4. **Vector/Quaternion/Random (Fase 5):** cuando se retome, primero se diseña y valida la API antes
    de escribir código — pendiente de que se decida entrar en la Fase 5.
+5. **B5:** se priorizó arreglar el bug del compilador antes de seguir con las Fases 5-7 — hecho
+   (§2.0).
 
-Pregunta abierta, bloqueante, descubierta durante la Fase 4:
-
-- **B5 (§2.0):** ¿se prioriza arreglar el bug del compilador antes de seguir con las Fases 5-7 (para
-  no diseñar sobre una base que puede no soportar el patrón), o se continúa diseñando esas fases
-  evitando deliberadamente pasar un parámetro del propio tipo genérico de una interfaz a través de
-  ella (perdiendo parte del polimorfismo que esas interfaces existen para dar)?
-
-Preguntas que siguen abiertas para cuando se retome cada fase (sin bloquear, una vez resuelto B5):
+Preguntas que siguen abiertas para cuando se retome cada fase:
 
 - **Fase 5:** confirmar alcance exacto de la superficie de `Vector2`/`Vector3`/`Quaternion`/`Angle`
   antes de diseñar (¿se incluye `Vector4`/`Color`/`Rect` ya, o se dejan para después como sugiere
