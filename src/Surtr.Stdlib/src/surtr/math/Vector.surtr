@@ -1,0 +1,215 @@
+import surtr.math.Math;
+import surtr.math.Angle;
+
+// A 2D vector. Two fields flatten to a run of two contiguous slots (§2.9) - free wherever the
+// type is statically known (a local, a parameter, a field), boxed only where it flows into an
+// erased or interface-typed slot.
+public value class Vector2
+{
+    public let x: float;
+    public let y: float;
+
+    public constructor(x: float, y: float)
+    {
+        this.x = x;
+        this.y = y;
+    }
+
+    public static zero: Vector2 => Vector2(0.0, 0.0);
+    public static one: Vector2 => Vector2(1.0, 1.0);
+    public static up: Vector2 => Vector2(0.0, 1.0);
+    public static down: Vector2 => Vector2(0.0, -1.0);
+    public static left: Vector2 => Vector2(-1.0, 0.0);
+    public static right: Vector2 => Vector2(1.0, 0.0);
+
+    @Pure
+    public inline fun lengthSquared(): float => x * x + y * y;
+
+    @Pure
+    public inline fun length(): float => sqrt(lengthSquared());
+
+    /// The zero vector normalizes to itself rather than dividing by zero.
+    public fun normalized(): Vector2
+    {
+        let len = length();
+        if (len < Epsilon) return Vector2.zero;
+        return Vector2(x / len, y / len);
+    }
+
+    @Pure
+    public inline fun dot(other: Vector2): float => x * other.x + y * other.y;
+
+    @Pure
+    public inline fun toString(): string => "($x, $y)";
+
+    public static inline fun distance(a: Vector2, b: Vector2): float => (a - b).length();
+
+    public static fun lerp(a: Vector2, b: Vector2, t: float): Vector2
+    {
+        let ct = clamp01(t);
+        return Vector2(a.x + (b.x - a.x) * ct, a.y + (b.y - a.y) * ct);
+    }
+
+    operator+(a: Vector2, b: Vector2): Vector2 { return Vector2(a.x + b.x, a.y + b.y); }
+    operator-(a: Vector2, b: Vector2): Vector2 { return Vector2(a.x - b.x, a.y - b.y); }
+    operator*(a: Vector2, scalar: float): Vector2 { return Vector2(a.x * scalar, a.y * scalar); }
+    operator*(scalar: float, a: Vector2): Vector2 { return Vector2(a.x * scalar, a.y * scalar); }
+    operator/(a: Vector2, scalar: float): Vector2 { return Vector2(a.x / scalar, a.y / scalar); }
+    operator-(a: Vector2): Vector2 { return Vector2(-a.x, -a.y); }
+
+    inline operator==(a: Vector2, b: Vector2): bool { return a.x == b.x && a.y == b.y; }
+}
+
+// A 3D vector. Three fields flatten the same way Vector2's two do.
+public value class Vector3
+{
+    public let x: float;
+    public let y: float;
+    public let z: float;
+
+    public constructor(x: float, y: float, z: float)
+    {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+    }
+
+    public static zero: Vector3 => Vector3(0.0, 0.0, 0.0);
+    public static one: Vector3 => Vector3(1.0, 1.0, 1.0);
+    public static up: Vector3 => Vector3(0.0, 1.0, 0.0);
+    public static down: Vector3 => Vector3(0.0, -1.0, 0.0);
+    public static left: Vector3 => Vector3(-1.0, 0.0, 0.0);
+    public static right: Vector3 => Vector3(1.0, 0.0, 0.0);
+    public static forward: Vector3 => Vector3(0.0, 0.0, 1.0);
+    public static back: Vector3 => Vector3(0.0, 0.0, -1.0);
+
+    @Pure
+    public inline fun lengthSquared(): float => x * x + y * y + z * z;
+
+    @Pure
+    public inline fun length(): float => sqrt(lengthSquared());
+
+    /// The zero vector normalizes to itself rather than dividing by zero.
+    public fun normalized(): Vector3
+    {
+        let len = length();
+        if (len < Epsilon) return Vector3.zero;
+        return Vector3(x / len, y / len, z / len);
+    }
+
+    @Pure
+    public inline fun dot(other: Vector3): float => x * other.x + y * other.y + z * other.z;
+
+    @Pure
+    public fun cross(other: Vector3): Vector3
+    {
+        return Vector3(
+            y * other.z - z * other.y,
+            z * other.x - x * other.z,
+            x * other.y - y * other.x);
+    }
+
+    @Pure
+    public inline fun toString(): string => "($x, $y, $z)";
+
+    public static inline fun distance(a: Vector3, b: Vector3): float => (a - b).length();
+
+    public static fun lerp(a: Vector3, b: Vector3, t: float): Vector3
+    {
+        let ct = clamp01(t);
+        return Vector3(a.x + (b.x - a.x) * ct, a.y + (b.y - a.y) * ct, a.z + (b.z - a.z) * ct);
+    }
+
+    operator+(a: Vector3, b: Vector3): Vector3 { return Vector3(a.x + b.x, a.y + b.y, a.z + b.z); }
+    operator-(a: Vector3, b: Vector3): Vector3 { return Vector3(a.x - b.x, a.y - b.y, a.z - b.z); }
+    operator*(a: Vector3, scalar: float): Vector3 { return Vector3(a.x * scalar, a.y * scalar, a.z * scalar); }
+    operator*(scalar: float, a: Vector3): Vector3 { return Vector3(a.x * scalar, a.y * scalar, a.z * scalar); }
+    operator/(a: Vector3, scalar: float): Vector3 { return Vector3(a.x / scalar, a.y / scalar, a.z / scalar); }
+    operator-(a: Vector3): Vector3 { return Vector3(-a.x, -a.y, -a.z); }
+
+    inline operator==(a: Vector3, b: Vector3): bool { return a.x == b.x && a.y == b.y && a.z == b.z; }
+}
+
+// A unit quaternion representing a 3D rotation. Four fields flatten to a run of four contiguous
+// slots (§2.9), the same way Vector2/Vector3's fields do. Declared in this same module rather than
+// its own, deliberately: a call crossing a module boundary and returning a multi-field value class,
+// chained into further multi-field value class arithmetic (Vector3.cross/+/*, all declared here),
+// currently miscounts the emitter's stack effect ("Operand stack underflow") - a compiler bug,
+// tracked separately, not a stdlib one. Keeping Quaternion's own use of Vector3 same-module sidesteps
+// it entirely, without hand-reimplementing vector arithmetic to route around the bug.
+public value class Quaternion
+{
+    public let x: float;
+    public let y: float;
+    public let z: float;
+    public let w: float;
+
+    public constructor(x: float, y: float, z: float, w: float)
+    {
+        this.x = x;
+        this.y = y;
+        this.z = z;
+        this.w = w;
+    }
+
+    public static identity: Quaternion => Quaternion(0.0, 0.0, 0.0, 1.0);
+
+    /// Builds the rotation of `angle` around `axis`. `axis` need not be normalized.
+    public static fun fromAxisAngle(axis: Vector3, angle: Angle): Quaternion
+    {
+        let normalizedAxis = axis.normalized();
+        let half = angle.radians * 0.5;
+        let s = sin(half);
+        return Quaternion(normalizedAxis.x * s, normalizedAxis.y * s, normalizedAxis.z * s, cos(half));
+    }
+
+    @Pure
+    public inline fun lengthSquared(): float => x * x + y * y + z * z + w * w;
+
+    @Pure
+    public inline fun length(): float => sqrt(lengthSquared());
+
+    /// The identity quaternion normalizes to itself rather than dividing by zero.
+    public fun normalized(): Quaternion
+    {
+        let len = length();
+        if (len < Epsilon) return Quaternion.identity;
+        return Quaternion(x / len, y / len, z / len, w / len);
+    }
+
+    /// The inverse rotation for a unit quaternion: negate the vector part, keep `w`.
+    @Pure
+    public inline fun conjugate(): Quaternion => Quaternion(-x, -y, -z, w);
+
+    @Pure
+    public inline fun toString(): string => "($x, $y, $z, $w)";
+
+    /// Hamilton product: composes two rotations, `a` applied first, then `b`.
+    operator*(a: Quaternion, b: Quaternion): Quaternion
+    {
+        return Quaternion(
+            a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+            a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+            a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+            a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z);
+    }
+
+    // Named rather than a second `operator*(Quaternion, Vector3)`: two operator overloads that
+    // differ only in which multi-field value class they take as the second parameter currently
+    // collide as a duplicate signature - a compiler bug, tracked separately, not a stdlib one.
+    /// Rotates `v` by this quaternion, which should be a unit quaternion (as `fromAxisAngle`/
+    /// `normalized` produce).
+    @Pure
+    public fun rotate(v: Vector3): Vector3
+    {
+        let qv = Vector3(x, y, z);
+        let uv = qv.cross(v);
+        let uuv = qv.cross(uv);
+        return v + (uv * (2.0 * w)) + (uuv * 2.0);
+    }
+
+    inline operator==(a: Quaternion, b: Quaternion): bool
+    {
+        return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
+    }
+}
