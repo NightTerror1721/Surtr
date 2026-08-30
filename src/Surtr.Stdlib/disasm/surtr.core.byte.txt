@@ -57,7 +57,7 @@ module surtr.core.byte
     #52  int.parse(string) -> int
     #53  int.parseStrict(string, int) -> int
 
-sealed class byte  [public]
+sealed class byte : surtr:ValueType  [public]
   [private] readonly field _value: int
 
   [public] property raw: int { get; }
@@ -67,525 +67,525 @@ sealed class byte  [public]
         0002  ReturnValue
 
   [public] addSaturating(other: int): int
-    ; entry 29, locals 5, stack 2, code 0145..0162
-      0145  Ldl0
-      0146  Ldl1
-      0147  Add
-      0148  Stl2
-      0149  Ldl2
-      014A  PushI16 255
-      014D  JPLE +10 -> L0 (015A)
-      0150  PushI16 255
-      0153  Stl3
-      0154  Ldl3
-      0155  PushI16 255
-      0158  And
-      0159  ReturnValue
+    ; entry 29, locals 5, stack 2, code 0147..0164
+      0147  Ldl0
+      0148  Ldl1
+      0149  Add
+      014A  Stl2
+      014B  Ldl2
+      014C  PushI16 255
+      014F  JPLE +10 -> L0 (015C)
+      0152  PushI16 255
+      0155  Stl3
+      0156  Ldl3
+      0157  PushI16 255
+      015A  And
+      015B  ReturnValue
     L0:
-      015A  Ldl2
-      015B  Stl4
-      015C  Ldl4
-      015D  PushI16 255
-      0160  And
-      0161  ReturnValue
+      015C  Ldl2
+      015D  Stl4
+      015E  Ldl4
+      015F  PushI16 255
+      0162  And
+      0163  ReturnValue
 
   [public] bitCount(): int
-    ; entry 40, locals 5, stack 2, code 022E..0257
-      022E  PushI8 0
-      0230  Stl1
-      0231  Ldl0
-      0232  Stl2
-      0233  PushI8 0
-      0235  Stl3
-      0236  PushI8 8
-      0238  Stl4
-      0239  Ldl3
-      023A  Ldl4
-      023B  JPGE +23 -> L2 (0255)
+    ; entry 40, locals 5, stack 2, code 0230..0259
+      0230  PushI8 0
+      0232  Stl1
+      0233  Ldl0
+      0234  Stl2
+      0235  PushI8 0
+      0237  Stl3
+      0238  PushI8 8
+      023A  Stl4
+      023B  Ldl3
+      023C  Ldl4
+      023D  JPGE +23 -> L2 (0257)
     L0:
-      023E  Ldl2
-      023F  PushI8 1
-      0241  And
-      0242  PushI8 1
-      0244  JPNE +3 -> L1 (024A)
-      0247  IncLocal 1 by 1
+      0240  Ldl2
+      0241  PushI8 1
+      0243  And
+      0244  PushI8 1
+      0246  JPNE +3 -> L1 (024C)
+      0249  IncLocal 1 by 1
     L1:
-      024A  Ldl2
-      024B  PushI8 1
-      024D  Sar
-      024E  Stl2
-      024F  ForRangeNextLT 3 4 -> L0 (023E)
+      024C  Ldl2
+      024D  PushI8 1
+      024F  Sar
+      0250  Stl2
+      0251  ForRangeNextLT 3 4 -> L0 (0240)
     L2:
-      0255  Ldl1
-      0256  ReturnValue
+      0257  Ldl1
+      0258  ReturnValue
 
   [public] clearBit(index: int): int
-    ; entry 37, locals 3, stack 4, code 01E0..01F1
-      01E0  Ldl0
-      01E1  PushI16 255
-      01E4  PushI8 1
-      01E6  Ldl1
-      01E7  Shl
-      01E8  Sub
-      01E9  And
-      01EA  Stl2
-      01EB  Ldl2
-      01EC  PushI16 255
-      01EF  And
-      01F0  ReturnValue
+    ; entry 37, locals 3, stack 4, code 01E2..01F3
+      01E2  Ldl0
+      01E3  PushI16 255
+      01E6  PushI8 1
+      01E8  Ldl1
+      01E9  Shl
+      01EA  Sub
+      01EB  And
+      01EC  Stl2
+      01ED  Ldl2
+      01EE  PushI16 255
+      01F1  And
+      01F2  ReturnValue
 
   [public] compareTo(other: int): int
-    ; entry 14, locals 2, stack 2, code 00AC..00BF
-      00AC  Ldl0
-      00AD  Ldl1
-      00AE  JPGE +3 -> L0 (00B4)
-      00B1  PushI8 -1
-      00B3  ReturnValue
+    ; entry 14, locals 2, stack 2, code 00AE..00C1
+      00AE  Ldl0
+      00AF  Ldl1
+      00B0  JPGE +3 -> L0 (00B6)
+      00B3  PushI8 -1
+      00B5  ReturnValue
     L0:
-      00B4  Ldl0
-      00B5  Ldl1
-      00B6  JPLE +3 -> L1 (00BC)
-      00B9  PushI8 1
-      00BB  ReturnValue
+      00B6  Ldl0
+      00B7  Ldl1
+      00B8  JPLE +3 -> L1 (00BE)
+      00BB  PushI8 1
+      00BD  ReturnValue
     L1:
-      00BC  PushI8 0
-      00BE  ReturnValue
+      00BE  PushI8 0
+      00C0  ReturnValue
 
   [public] ctor (value: int): void
     ; entry 0, locals 2, stack 0, code 0000..0001
       0000  ReturnVoid
 
   [public] equals(other: int): bool
-    ; entry 13, locals 2, stack 2, code 00A8..00AC
-      00A8  Ldl0
-      00A9  Ldl1
-      00AA  EQ
-      00AB  ReturnValue
+    ; entry 13, locals 2, stack 2, code 00AA..00AE
+      00AA  Ldl0
+      00AB  Ldl1
+      00AC  EQ
+      00AD  ReturnValue
 
   [public] static fromChar(ch: char): int
-    ; entry 8, locals 2, stack 2, code 0067..0074
-      0067  Ldl0
-      0068  InvokeSpecial 51 (toInt) args=1 ret=1
-      006D  Stl1
-      006E  Ldl1
-      006F  PushI16 255
-      0072  And
-      0073  ReturnValue
+    ; entry 8, locals 2, stack 2, code 0069..0076
+      0069  Ldl0
+      006A  InvokeSpecial 51 (toInt) args=1 ret=1
+      006F  Stl1
+      0070  Ldl1
+      0071  PushI16 255
+      0074  And
+      0075  ReturnValue
 
   [public] static fromInt(value: int): int
-    ; entry 7, locals 2, stack 2, code 005F..0067
-      005F  Ldl0
-      0060  Stl1
-      0061  Ldl1
-      0062  PushI16 255
-      0065  And
-      0066  ReturnValue
+    ; entry 7, locals 2, stack 2, code 0061..0069
+      0061  Ldl0
+      0062  Stl1
+      0063  Ldl1
+      0064  PushI16 255
+      0067  And
+      0068  ReturnValue
 
   [public] getBit(index: int): int
-    ; entry 34, locals 2, stack 2, code 01C2..01C9
-      01C2  Ldl0
-      01C3  Ldl1
-      01C4  Sar
-      01C5  PushI8 1
-      01C7  And
-      01C8  ReturnValue
+    ; entry 34, locals 2, stack 2, code 01C4..01CB
+      01C4  Ldl0
+      01C5  Ldl1
+      01C6  Sar
+      01C7  PushI8 1
+      01C9  And
+      01CA  ReturnValue
 
   [public] highestSetBit(): int
-    ; entry 41, locals 2, stack 2, code 0257..0276
-      0257  PushI8 7
-      0259  Stl1
+    ; entry 41, locals 2, stack 2, code 0259..0278
+      0259  PushI8 7
+      025B  Stl1
     L0:
-      025A  Ldl1
-      025B  PushI8 0
-      025D  JPLT +19 -> L2 (0273)
-      0260  Ldl0
-      0261  Ldl1
-      0262  Sar
-      0263  PushI8 1
-      0265  And
-      0266  PushI8 1
-      0268  JPNE +2 -> L1 (026D)
-      026B  Ldl1
-      026C  ReturnValue
+      025C  Ldl1
+      025D  PushI8 0
+      025F  JPLT +19 -> L2 (0275)
+      0262  Ldl0
+      0263  Ldl1
+      0264  Sar
+      0265  PushI8 1
+      0267  And
+      0268  PushI8 1
+      026A  JPNE +2 -> L1 (026F)
+      026D  Ldl1
+      026E  ReturnValue
     L1:
-      026D  IncLocal 1 by -1
-      0270  JP -25 -> L0 (025A)
+      026F  IncLocal 1 by -1
+      0272  JP -25 -> L0 (025C)
     L2:
-      0273  PushI8 -1
-      0275  ReturnValue
+      0275  PushI8 -1
+      0277  ReturnValue
 
   [public] invert(): int
-    ; entry 31, locals 2, stack 2, code 017D..018A
-      017D  Ldl0
-      017E  Not
-      017F  PushI16 255
-      0182  And
-      0183  Stl1
-      0184  Ldl1
-      0185  PushI16 255
-      0188  And
-      0189  ReturnValue
+    ; entry 31, locals 2, stack 2, code 017F..018C
+      017F  Ldl0
+      0180  Not
+      0181  PushI16 255
+      0184  And
+      0185  Stl1
+      0186  Ldl1
+      0187  PushI16 255
+      018A  And
+      018B  ReturnValue
 
   [public] isBitSet(index: int): bool
-    ; entry 35, locals 2, stack 2, code 01C9..01D3
-      01C9  Ldl0
-      01CA  Ldl1
-      01CB  Sar
-      01CC  PushI8 1
-      01CE  And
-      01CF  PushI8 1
-      01D1  EQ
-      01D2  ReturnValue
+    ; entry 35, locals 2, stack 2, code 01CB..01D5
+      01CB  Ldl0
+      01CC  Ldl1
+      01CD  Sar
+      01CE  PushI8 1
+      01D0  And
+      01D1  PushI8 1
+      01D3  EQ
+      01D4  ReturnValue
 
   [public] isEven(): bool
-    ; entry 43, locals 1, stack 2, code 0297..029F
-      0297  Ldl0
-      0298  PushI8 1
-      029A  And
-      029B  PushI8 0
-      029D  EQ
-      029E  ReturnValue
+    ; entry 43, locals 1, stack 2, code 0299..02A1
+      0299  Ldl0
+      029A  PushI8 1
+      029C  And
+      029D  PushI8 0
+      029F  EQ
+      02A0  ReturnValue
 
   [public] isOdd(): bool
-    ; entry 44, locals 1, stack 2, code 029F..02A7
-      029F  Ldl0
-      02A0  PushI8 1
-      02A2  And
-      02A3  PushI8 1
-      02A5  EQ
-      02A6  ReturnValue
+    ; entry 44, locals 1, stack 2, code 02A1..02A9
+      02A1  Ldl0
+      02A2  PushI8 1
+      02A4  And
+      02A5  PushI8 1
+      02A7  EQ
+      02A8  ReturnValue
 
   [public] isPowerOfTwo(): bool
-    ; entry 46, locals 1, stack 3, code 02AC..02C2
-      02AC  Ldl0
-      02AD  PushI8 0
-      02AF  NE
-      02B0  Dup
-      02B1  JPZ +13 -> L0 (02C1)
-      02B4  Pop
-      02B5  Ldl0
-      02B6  Ldl0
-      02B7  PushI8 1
-      02B9  Sub
-      02BA  And
-      02BB  PushI8 0
-      02BD  EQ
-      02BE  JP +0 -> L0 (02C1)
+    ; entry 46, locals 1, stack 3, code 02AE..02C4
+      02AE  Ldl0
+      02AF  PushI8 0
+      02B1  NE
+      02B2  Dup
+      02B3  JPZ +13 -> L0 (02C3)
+      02B6  Pop
+      02B7  Ldl0
+      02B8  Ldl0
+      02B9  PushI8 1
+      02BB  Sub
+      02BC  And
+      02BD  PushI8 0
+      02BF  EQ
+      02C0  JP +0 -> L0 (02C3)
     L0:
-      02C1  ReturnValue
+      02C3  ReturnValue
 
   [public] isZero(): bool
-    ; entry 45, locals 1, stack 2, code 02A7..02AC
-      02A7  Ldl0
-      02A8  PushI8 0
-      02AA  EQ
-      02AB  ReturnValue
+    ; entry 45, locals 1, stack 2, code 02A9..02AE
+      02A9  Ldl0
+      02AA  PushI8 0
+      02AC  EQ
+      02AD  ReturnValue
 
   [public] lowestSetBit(): int
-    ; entry 42, locals 3, stack 2, code 0276..0297
-      0276  PushI8 0
-      0278  Stl1
-      0279  PushI8 8
-      027B  Stl2
-      027C  Ldl1
-      027D  Ldl2
-      027E  JPGE +19 -> L2 (0294)
+    ; entry 42, locals 3, stack 2, code 0278..0299
+      0278  PushI8 0
+      027A  Stl1
+      027B  PushI8 8
+      027D  Stl2
+      027E  Ldl1
+      027F  Ldl2
+      0280  JPGE +19 -> L2 (0296)
     L0:
-      0281  Ldl0
-      0282  Ldl1
-      0283  Sar
-      0284  PushI8 1
-      0286  And
-      0287  PushI8 1
-      0289  JPNE +2 -> L1 (028E)
-      028C  Ldl1
-      028D  ReturnValue
+      0283  Ldl0
+      0284  Ldl1
+      0285  Sar
+      0286  PushI8 1
+      0288  And
+      0289  PushI8 1
+      028B  JPNE +2 -> L1 (0290)
+      028E  Ldl1
+      028F  ReturnValue
     L1:
-      028E  ForRangeNextLT 1 2 -> L0 (0281)
+      0290  ForRangeNextLT 1 2 -> L0 (0283)
     L2:
-      0294  PushI8 -1
-      0296  ReturnValue
+      0296  PushI8 -1
+      0298  ReturnValue
 
   [public] static max(a: int, b: int): int
-    ; entry 12, locals 2, stack 2, code 009C..00A8
-      009C  Ldl0
-      009D  Ldl1
-      009E  GT
-      009F  JPZ +4 -> L0 (00A6)
-      00A2  Ldl0
-      00A3  JP +1 -> L1 (00A7)
+    ; entry 12, locals 2, stack 2, code 009E..00AA
+      009E  Ldl0
+      009F  Ldl1
+      00A0  GT
+      00A1  JPZ +4 -> L0 (00A8)
+      00A4  Ldl0
+      00A5  JP +1 -> L1 (00A9)
     L0:
-      00A6  Ldl1
+      00A8  Ldl1
     L1:
-      00A7  ReturnValue
+      00A9  ReturnValue
 
   [public] static min(a: int, b: int): int
-    ; entry 11, locals 2, stack 2, code 0090..009C
-      0090  Ldl0
-      0091  Ldl1
-      0092  LT
-      0093  JPZ +4 -> L0 (009A)
-      0096  Ldl0
-      0097  JP +1 -> L1 (009B)
+    ; entry 11, locals 2, stack 2, code 0092..009E
+      0092  Ldl0
+      0093  Ldl1
+      0094  LT
+      0095  JPZ +4 -> L0 (009C)
+      0098  Ldl0
+      0099  JP +1 -> L1 (009D)
     L0:
-      009A  Ldl1
+      009C  Ldl1
     L1:
-      009B  ReturnValue
+      009D  ReturnValue
 
   [public] static op_%(a: int, b: int): int
-    ; entry 19, locals 3, stack 2, code 00E7..00F1
-      00E7  Ldl0
-      00E8  Ldl1
-      00E9  Mod
-      00EA  Stl2
-      00EB  Ldl2
-      00EC  PushI16 255
-      00EF  And
-      00F0  ReturnValue
+    ; entry 19, locals 3, stack 2, code 00E9..00F3
+      00E9  Ldl0
+      00EA  Ldl1
+      00EB  Mod
+      00EC  Stl2
+      00ED  Ldl2
+      00EE  PushI16 255
+      00F1  And
+      00F2  ReturnValue
 
   [public] static op_&(a: int, b: int): int
-    ; entry 22, locals 3, stack 2, code 0109..0113
-      0109  Ldl0
-      010A  Ldl1
-      010B  And
-      010C  Stl2
-      010D  Ldl2
-      010E  PushI16 255
-      0111  And
-      0112  ReturnValue
+    ; entry 22, locals 3, stack 2, code 010B..0115
+      010B  Ldl0
+      010C  Ldl1
+      010D  And
+      010E  Stl2
+      010F  Ldl2
+      0110  PushI16 255
+      0113  And
+      0114  ReturnValue
 
   [public] static op_*(a: int, b: int): int
-    ; entry 17, locals 3, stack 2, code 00D3..00DD
-      00D3  Ldl0
-      00D4  Ldl1
-      00D5  Mul
-      00D6  Stl2
-      00D7  Ldl2
-      00D8  PushI16 255
-      00DB  And
-      00DC  ReturnValue
+    ; entry 17, locals 3, stack 2, code 00D5..00DF
+      00D5  Ldl0
+      00D6  Ldl1
+      00D7  Mul
+      00D8  Stl2
+      00D9  Ldl2
+      00DA  PushI16 255
+      00DD  And
+      00DE  ReturnValue
 
   [public] static op_+(a: int, b: int): int
-    ; entry 15, locals 3, stack 2, code 00BF..00C9
-      00BF  Ldl0
-      00C0  Ldl1
-      00C1  Add
-      00C2  Stl2
-      00C3  Ldl2
-      00C4  PushI16 255
-      00C7  And
-      00C8  ReturnValue
+    ; entry 15, locals 3, stack 2, code 00C1..00CB
+      00C1  Ldl0
+      00C2  Ldl1
+      00C3  Add
+      00C4  Stl2
+      00C5  Ldl2
+      00C6  PushI16 255
+      00C9  And
+      00CA  ReturnValue
 
   [public] static op_-(a: int, b: int): int
-    ; entry 16, locals 3, stack 2, code 00C9..00D3
-      00C9  Ldl0
-      00CA  Ldl1
-      00CB  Sub
-      00CC  Stl2
-      00CD  Ldl2
-      00CE  PushI16 255
-      00D1  And
-      00D2  ReturnValue
+    ; entry 16, locals 3, stack 2, code 00CB..00D5
+      00CB  Ldl0
+      00CC  Ldl1
+      00CD  Sub
+      00CE  Stl2
+      00CF  Ldl2
+      00D0  PushI16 255
+      00D3  And
+      00D4  ReturnValue
 
   [public] static op_-u(a: int): int
-    ; entry 27, locals 2, stack 2, code 012F..0138
-      012F  Ldl0
-      0130  Neg
-      0131  Stl1
-      0132  Ldl1
-      0133  PushI16 255
-      0136  And
-      0137  ReturnValue
+    ; entry 27, locals 2, stack 2, code 0131..013A
+      0131  Ldl0
+      0132  Neg
+      0133  Stl1
+      0134  Ldl1
+      0135  PushI16 255
+      0138  And
+      0139  ReturnValue
 
   [public] static op_/(a: int, b: int): int
-    ; entry 18, locals 3, stack 2, code 00DD..00E7
-      00DD  Ldl0
-      00DE  Ldl1
-      00DF  Div
-      00E0  Stl2
-      00E1  Ldl2
-      00E2  PushI16 255
-      00E5  And
-      00E6  ReturnValue
+    ; entry 18, locals 3, stack 2, code 00DF..00E9
+      00DF  Ldl0
+      00E0  Ldl1
+      00E1  Div
+      00E2  Stl2
+      00E3  Ldl2
+      00E4  PushI16 255
+      00E7  And
+      00E8  ReturnValue
 
   [public] static op_<<(a: int, bits: int): int
-    ; entry 20, locals 3, stack 2, code 00F1..00FF
-      00F1  Ldl0
-      00F2  Ldl1
-      00F3  Shl
-      00F4  PushI16 255
-      00F7  And
-      00F8  Stl2
-      00F9  Ldl2
-      00FA  PushI16 255
-      00FD  And
-      00FE  ReturnValue
+    ; entry 20, locals 3, stack 2, code 00F3..0101
+      00F3  Ldl0
+      00F4  Ldl1
+      00F5  Shl
+      00F6  PushI16 255
+      00F9  And
+      00FA  Stl2
+      00FB  Ldl2
+      00FC  PushI16 255
+      00FF  And
+      0100  ReturnValue
 
   [public] static op_<=>(a: int, b: int): int
-    ; entry 26, locals 2, stack 2, code 012B..012F
-      012B  Ldl0
-      012C  Ldl1
-      012D  Sub
-      012E  ReturnValue
+    ; entry 26, locals 2, stack 2, code 012D..0131
+      012D  Ldl0
+      012E  Ldl1
+      012F  Sub
+      0130  ReturnValue
 
   [public] static op_==(a: int, b: int): bool
-    ; entry 25, locals 2, stack 2, code 0127..012B
-      0127  Ldl0
-      0128  Ldl1
-      0129  EQ
-      012A  ReturnValue
+    ; entry 25, locals 2, stack 2, code 0129..012D
+      0129  Ldl0
+      012A  Ldl1
+      012B  EQ
+      012C  ReturnValue
 
   [public] static op_>>(a: int, bits: int): int
-    ; entry 21, locals 3, stack 2, code 00FF..0109
-      00FF  Ldl0
-      0100  Ldl1
-      0101  Sar
-      0102  Stl2
-      0103  Ldl2
-      0104  PushI16 255
-      0107  And
-      0108  ReturnValue
+    ; entry 21, locals 3, stack 2, code 0101..010B
+      0101  Ldl0
+      0102  Ldl1
+      0103  Sar
+      0104  Stl2
+      0105  Ldl2
+      0106  PushI16 255
+      0109  And
+      010A  ReturnValue
 
   [public] static op_^(a: int, b: int): int
-    ; entry 24, locals 3, stack 2, code 011D..0127
-      011D  Ldl0
-      011E  Ldl1
-      011F  Xor
-      0120  Stl2
-      0121  Ldl2
-      0122  PushI16 255
-      0125  And
-      0126  ReturnValue
+    ; entry 24, locals 3, stack 2, code 011F..0129
+      011F  Ldl0
+      0120  Ldl1
+      0121  Xor
+      0122  Stl2
+      0123  Ldl2
+      0124  PushI16 255
+      0127  And
+      0128  ReturnValue
 
   [public] static op_|(a: int, b: int): int
-    ; entry 23, locals 3, stack 2, code 0113..011D
-      0113  Ldl0
-      0114  Ldl1
-      0115  Or
-      0116  Stl2
-      0117  Ldl2
-      0118  PushI16 255
-      011B  And
-      011C  ReturnValue
+    ; entry 23, locals 3, stack 2, code 0115..011F
+      0115  Ldl0
+      0116  Ldl1
+      0117  Or
+      0118  Stl2
+      0119  Ldl2
+      011A  PushI16 255
+      011D  And
+      011E  ReturnValue
 
   [public] static op_~(a: int): int
-    ; entry 28, locals 2, stack 2, code 0138..0145
-      0138  Ldl0
-      0139  Not
-      013A  PushI16 255
-      013D  And
-      013E  Stl1
-      013F  Ldl1
-      0140  PushI16 255
-      0143  And
-      0144  ReturnValue
+    ; entry 28, locals 2, stack 2, code 013A..0147
+      013A  Ldl0
+      013B  Not
+      013C  PushI16 255
+      013F  And
+      0140  Stl1
+      0141  Ldl1
+      0142  PushI16 255
+      0145  And
+      0146  ReturnValue
 
   [public] static parse(text: string): int
-    ; entry 9, locals 2, stack 2, code 0074..0081
-      0074  Ldl0
-      0075  InvokeStatic 52 (parse) args=1 ret=1
-      007A  Stl1
-      007B  Ldl1
-      007C  PushI16 255
-      007F  And
-      0080  ReturnValue
+    ; entry 9, locals 2, stack 2, code 0076..0083
+      0076  Ldl0
+      0077  InvokeStatic 52 (parse) args=1 ret=1
+      007C  Stl1
+      007D  Ldl1
+      007E  PushI16 255
+      0081  And
+      0082  ReturnValue
 
   [public] static parseHex(text: string): int
-    ; entry 10, locals 2, stack 2, code 0081..0090
-      0081  Ldl0
-      0082  PushI8 16
-      0084  InvokeStatic 53 (parseStrict) args=2 ret=1
-      0089  Stl1
-      008A  Ldl1
-      008B  PushI16 255
-      008E  And
-      008F  ReturnValue
+    ; entry 10, locals 2, stack 2, code 0083..0092
+      0083  Ldl0
+      0084  PushI8 16
+      0086  InvokeStatic 53 (parseStrict) args=2 ret=1
+      008B  Stl1
+      008C  Ldl1
+      008D  PushI16 255
+      0090  And
+      0091  ReturnValue
 
   [public] rotateLeft(bits: int): int
-    ; entry 32, locals 5, stack 4, code 018A..01A6
-      018A  Ldl1
-      018B  PushI8 7
-      018D  And
-      018E  Stl2
-      018F  Ldl0
-      0190  Ldl2
-      0191  Shl
-      0192  Ldl0
-      0193  PushI8 8
-      0195  Ldl2
-      0196  Sub
-      0197  Sar
-      0198  Or
-      0199  Stl3
-      019A  Ldl3
-      019B  PushI16 255
-      019E  And
-      019F  Stl4
-      01A0  Ldl4
-      01A1  PushI16 255
-      01A4  And
-      01A5  ReturnValue
+    ; entry 32, locals 5, stack 4, code 018C..01A8
+      018C  Ldl1
+      018D  PushI8 7
+      018F  And
+      0190  Stl2
+      0191  Ldl0
+      0192  Ldl2
+      0193  Shl
+      0194  Ldl0
+      0195  PushI8 8
+      0197  Ldl2
+      0198  Sub
+      0199  Sar
+      019A  Or
+      019B  Stl3
+      019C  Ldl3
+      019D  PushI16 255
+      01A0  And
+      01A1  Stl4
+      01A2  Ldl4
+      01A3  PushI16 255
+      01A6  And
+      01A7  ReturnValue
 
   [public] rotateRight(bits: int): int
-    ; entry 33, locals 5, stack 4, code 01A6..01C2
-      01A6  Ldl1
-      01A7  PushI8 7
-      01A9  And
-      01AA  Stl2
-      01AB  Ldl0
-      01AC  Ldl2
-      01AD  Sar
-      01AE  Ldl0
-      01AF  PushI8 8
-      01B1  Ldl2
-      01B2  Sub
-      01B3  Shl
-      01B4  Or
-      01B5  Stl3
-      01B6  Ldl3
-      01B7  PushI16 255
-      01BA  And
-      01BB  Stl4
-      01BC  Ldl4
-      01BD  PushI16 255
-      01C0  And
-      01C1  ReturnValue
+    ; entry 33, locals 5, stack 4, code 01A8..01C4
+      01A8  Ldl1
+      01A9  PushI8 7
+      01AB  And
+      01AC  Stl2
+      01AD  Ldl0
+      01AE  Ldl2
+      01AF  Sar
+      01B0  Ldl0
+      01B1  PushI8 8
+      01B3  Ldl2
+      01B4  Sub
+      01B5  Shl
+      01B6  Or
+      01B7  Stl3
+      01B8  Ldl3
+      01B9  PushI16 255
+      01BC  And
+      01BD  Stl4
+      01BE  Ldl4
+      01BF  PushI16 255
+      01C2  And
+      01C3  ReturnValue
 
   [public] setBit(index: int): int
-    ; entry 36, locals 3, stack 3, code 01D3..01E0
-      01D3  Ldl0
-      01D4  PushI8 1
-      01D6  Ldl1
-      01D7  Shl
-      01D8  Or
-      01D9  Stl2
-      01DA  Ldl2
-      01DB  PushI16 255
-      01DE  And
-      01DF  ReturnValue
+    ; entry 36, locals 3, stack 3, code 01D5..01E2
+      01D5  Ldl0
+      01D6  PushI8 1
+      01D8  Ldl1
+      01D9  Shl
+      01DA  Or
+      01DB  Stl2
+      01DC  Ldl2
+      01DD  PushI16 255
+      01E0  And
+      01E1  ReturnValue
 
   [public] subtractSaturating(other: int): int
-    ; entry 30, locals 5, stack 2, code 0162..017D
-      0162  Ldl0
-      0163  Ldl1
-      0164  Sub
-      0165  Stl2
-      0166  Ldl2
-      0167  PushI8 0
-      0169  JPGE +9 -> L0 (0175)
-      016C  PushI8 0
-      016E  Stl3
-      016F  Ldl3
-      0170  PushI16 255
-      0173  And
-      0174  ReturnValue
+    ; entry 30, locals 5, stack 2, code 0164..017F
+      0164  Ldl0
+      0165  Ldl1
+      0166  Sub
+      0167  Stl2
+      0168  Ldl2
+      0169  PushI8 0
+      016B  JPGE +9 -> L0 (0177)
+      016E  PushI8 0
+      0170  Stl3
+      0171  Ldl3
+      0172  PushI16 255
+      0175  And
+      0176  ReturnValue
     L0:
-      0175  Ldl2
-      0176  Stl4
-      0177  Ldl4
-      0178  PushI16 255
-      017B  And
-      017C  ReturnValue
+      0177  Ldl2
+      0178  Stl4
+      0179  Ldl4
+      017A  PushI16 255
+      017D  And
+      017E  ReturnValue
 
   [public] toChar(): char
     ; entry 3, locals 1, stack 1, code 0005..0008
@@ -600,112 +600,114 @@ sealed class byte  [public]
       000E  ReturnValue
 
   [public] toHex(): string
-    ; entry 6, locals 5, stack 2, code 0016..005F
-      0016  Ldl0
-      0017  PushI8 4
-      0019  Sar
-      001A  PushI8 15
-      001C  And
-      001D  Stl1
-      001E  Ldl0
-      001F  PushI8 15
-      0021  And
-      0022  Stl2
-      0023  Ldl1
-      0024  PushI8 10
-      0026  LT
-      0027  JPZ +8 -> L0 (0032)
-      002A  PushI8 48
-      002C  Ldl1
-      002D  Add
-      002E  I2C
-      002F  JP +5 -> L1 (0037)
+    ; entry 6, locals 5, stack 2, code 0018..0061
+      0018  Ldl0
+      0019  PushI8 4
+      001B  Sar
+      001C  PushI8 15
+      001E  And
+      001F  Stl1
+      0020  Ldl0
+      0021  PushI8 15
+      0023  And
+      0024  Stl2
+      0025  Ldl1
+      0026  PushI8 10
+      0028  LT
+      0029  JPZ +8 -> L0 (0034)
+      002C  PushI8 48
+      002E  Ldl1
+      002F  Add
+      0030  I2C
+      0031  JP +5 -> L1 (0039)
     L0:
-      0032  PushI8 55
-      0034  Ldl1
-      0035  Add
-      0036  I2C
+      0034  PushI8 55
+      0036  Ldl1
+      0037  Add
+      0038  I2C
     L1:
-      0037  Stl3
-      0038  Ldl2
-      0039  PushI8 10
-      003B  LT
-      003C  JPZ +8 -> L2 (0047)
-      003F  PushI8 48
-      0041  Ldl2
-      0042  Add
-      0043  I2C
-      0044  JP +5 -> L3 (004C)
+      0039  Stl3
+      003A  Ldl2
+      003B  PushI8 10
+      003D  LT
+      003E  JPZ +8 -> L2 (0049)
+      0041  PushI8 48
+      0043  Ldl2
+      0044  Add
+      0045  I2C
+      0046  JP +5 -> L3 (004E)
     L2:
-      0047  PushI8 55
-      0049  Ldl2
-      004A  Add
-      004B  I2C
+      0049  PushI8 55
+      004B  Ldl2
+      004C  Add
+      004D  I2C
     L3:
-      004C  Stl4
-      004D  Ldl3
-      004E  InvokeStatic 49 (fromChar) args=1 ret=1
-      0053  Ldl4
-      0054  InvokeStatic 49 (fromChar) args=1 ret=1
-      0059  InvokeSpecial 50 (concat) args=2 ret=1
-      005E  ReturnValue
+      004E  Stl4
+      004F  Ldl3
+      0050  InvokeStatic 49 (fromChar) args=1 ret=1
+      0055  Ldl4
+      0056  InvokeStatic 49 (fromChar) args=1 ret=1
+      005B  InvokeSpecial 50 (concat) args=2 ret=1
+      0060  ReturnValue
 
   [public] toInt(): int
     ; entry 2, locals 1, stack 1, code 0003..0005
       0003  Ldl0
       0004  ReturnValue
 
-  [public] toString(): string
-    ; entry 5, locals 1, stack 1, code 000F..0016
+  [public] virtual override toString(): string
+    ; entry 5, locals 1, stack 1, code 000F..0018
       000F  Ldl0
-      0010  InvokeSpecial 48 (toString) args=1 ret=1
-      0015  ReturnValue
+      0010  Unbox
+      0011  BoxInt
+      0012  InvokeVirtual 48 (toString) args=1 ret=1
+      0017  ReturnValue
 
   [public] toggleBit(index: int): int
-    ; entry 38, locals 3, stack 3, code 01F1..01FE
-      01F1  Ldl0
-      01F2  PushI8 1
-      01F4  Ldl1
-      01F5  Shl
-      01F6  Xor
-      01F7  Stl2
-      01F8  Ldl2
-      01F9  PushI16 255
-      01FC  And
-      01FD  ReturnValue
+    ; entry 38, locals 3, stack 3, code 01F3..0200
+      01F3  Ldl0
+      01F4  PushI8 1
+      01F6  Ldl1
+      01F7  Shl
+      01F8  Xor
+      01F9  Stl2
+      01FA  Ldl2
+      01FB  PushI16 255
+      01FE  And
+      01FF  ReturnValue
 
   [public] withBit(index: int, on: bool): int
-    ; entry 39, locals 9, stack 4, code 01FE..022E
-      01FE  Ldl2
-      01FF  JPZ +17 -> L0 (0213)
-      0202  Ldl0
-      0203  Stl3
-      0204  Ldl1
-      0205  Stl4
-      0206  Ldl3
-      0207  PushI8 1
-      0209  Ldl4
-      020A  Shl
-      020B  Or
-      020C  Stl5
-      020D  Ldl5
-      020E  PushI16 255
-      0211  And
-      0212  ReturnValue
+    ; entry 39, locals 9, stack 4, code 0200..0230
+      0200  Ldl2
+      0201  JPZ +17 -> L0 (0215)
+      0204  Ldl0
+      0205  Stl3
+      0206  Ldl1
+      0207  Stl4
+      0208  Ldl3
+      0209  PushI8 1
+      020B  Ldl4
+      020C  Shl
+      020D  Or
+      020E  Stl5
+      020F  Ldl5
+      0210  PushI16 255
+      0213  And
+      0214  ReturnValue
     L0:
-      0213  Ldl0
-      0214  StlS 6
-      0216  Ldl1
-      0217  StlS 7
-      0219  LdlS 6
-      021B  PushI16 255
-      021E  PushI8 1
-      0220  LdlS 7
-      0222  Shl
-      0223  Sub
-      0224  And
-      0225  StlS 8
-      0227  LdlS 8
-      0229  PushI16 255
-      022C  And
-      022D  ReturnValue
+      0215  Ldl0
+      0216  StlS 6
+      0218  Ldl1
+      0219  StlS 7
+      021B  LdlS 6
+      021D  PushI16 255
+      0220  PushI8 1
+      0222  LdlS 7
+      0224  Shl
+      0225  Sub
+      0226  And
+      0227  StlS 8
+      0229  LdlS 8
+      022B  PushI16 255
+      022E  And
+      022F  ReturnValue

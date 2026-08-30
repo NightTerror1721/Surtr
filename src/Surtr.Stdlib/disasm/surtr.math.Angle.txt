@@ -22,7 +22,7 @@ module surtr.math.Angle
     #16  surtr.math.Angle:Angle.op_<=>(float, float) -> int
     #17  float.toString() -> string
 
-sealed class Angle  [public]
+sealed class Angle : surtr:ValueType  [public]
   [private] readonly field _radians: float
 
   @surtr:Pure
@@ -64,37 +64,37 @@ sealed class Angle  [public]
       000A  ReturnValue
 
   [public] static lerp(a: float, b: float, t: float): float
-    ; entry 9, locals 6, stack 3, code 0042..0067
-      0042  Ldl2
-      0043  Stl4
-      0044  Ldl4
-      0045  Ldc1
-      0046  JPFGE +5 -> L0 (004E)
-      0049  Ldc1
-      004A  Stl5
-      004B  JP +15 -> L2 (005D)
+    ; entry 9, locals 6, stack 3, code 0044..0069
+      0044  Ldl2
+      0045  Stl4
+      0046  Ldl4
+      0047  Ldc1
+      0048  JPFGE +5 -> L0 (0050)
+      004B  Ldc1
+      004C  Stl5
+      004D  JP +15 -> L2 (005F)
     L0:
-      004E  Ldl4
-      004F  Ldc7
-      0050  JPFLE +5 -> L1 (0058)
-      0053  Ldc7
-      0054  Stl5
-      0055  JP +5 -> L2 (005D)
+      0050  Ldl4
+      0051  Ldc7
+      0052  JPFLE +5 -> L1 (005A)
+      0055  Ldc7
+      0056  Stl5
+      0057  JP +5 -> L2 (005F)
     L1:
-      0058  Ldl4
-      0059  Stl5
-      005A  JP +0 -> L2 (005D)
+      005A  Ldl4
+      005B  Stl5
+      005C  JP +0 -> L2 (005F)
     L2:
-      005D  Ldl5
-      005E  Stl3
-      005F  Ldl0
-      0060  Ldl1
+      005F  Ldl5
+      0060  Stl3
       0061  Ldl0
-      0062  FSub
-      0063  Ldl3
-      0064  FMul
-      0065  FAdd
-      0066  ReturnValue
+      0062  Ldl1
+      0063  Ldl0
+      0064  FSub
+      0065  Ldl3
+      0066  FMul
+      0067  FAdd
+      0068  ReturnValue
 
   [public] normalized(): float
     ; entry 6, locals 2, stack 2, code 000F..001E
@@ -114,65 +114,65 @@ sealed class Angle  [public]
       001D  ReturnValue
 
   [public] static op_*(a: float, scalar: float): float
-    ; entry 12, locals 2, stack 2, code 006F..0073
-      006F  Ldl0
-      0070  Ldl1
-      0071  FMul
-      0072  ReturnValue
+    ; entry 12, locals 2, stack 2, code 0071..0075
+      0071  Ldl0
+      0072  Ldl1
+      0073  FMul
+      0074  ReturnValue
 
   [public] static op_+(a: float, b: float): float
-    ; entry 10, locals 2, stack 2, code 0067..006B
-      0067  Ldl0
-      0068  Ldl1
-      0069  FAdd
-      006A  ReturnValue
+    ; entry 10, locals 2, stack 2, code 0069..006D
+      0069  Ldl0
+      006A  Ldl1
+      006B  FAdd
+      006C  ReturnValue
 
   [public] static op_-(a: float, b: float): float
-    ; entry 11, locals 2, stack 2, code 006B..006F
-      006B  Ldl0
-      006C  Ldl1
-      006D  FSub
-      006E  ReturnValue
+    ; entry 11, locals 2, stack 2, code 006D..0071
+      006D  Ldl0
+      006E  Ldl1
+      006F  FSub
+      0070  ReturnValue
 
   [public] static op_-u(a: float): float
-    ; entry 14, locals 1, stack 1, code 0077..007A
-      0077  Ldl0
-      0078  FNeg
-      0079  ReturnValue
+    ; entry 14, locals 1, stack 1, code 0079..007C
+      0079  Ldl0
+      007A  FNeg
+      007B  ReturnValue
 
   [public] static op_/(a: float, scalar: float): float
-    ; entry 13, locals 2, stack 2, code 0073..0077
-      0073  Ldl0
-      0074  Ldl1
-      0075  FDiv
-      0076  ReturnValue
+    ; entry 13, locals 2, stack 2, code 0075..0079
+      0075  Ldl0
+      0076  Ldl1
+      0077  FDiv
+      0078  ReturnValue
 
   [public] static op_<=>(a: float, b: float): int
-    ; entry 16, locals 2, stack 2, code 007E..0097
-      007E  Ldl0
-      007F  Ldl1
-      0080  FLT
-      0081  JPZ +5 -> L0 (0089)
-      0084  PushI8 -1
-      0086  JP +13 -> L2 (0096)
+    ; entry 16, locals 2, stack 2, code 0080..0099
+      0080  Ldl0
+      0081  Ldl1
+      0082  FLT
+      0083  JPZ +5 -> L0 (008B)
+      0086  PushI8 -1
+      0088  JP +13 -> L2 (0098)
     L0:
-      0089  Ldl0
-      008A  Ldl1
-      008B  FGT
-      008C  JPZ +5 -> L1 (0094)
-      008F  PushI8 1
-      0091  JP +2 -> L2 (0096)
+      008B  Ldl0
+      008C  Ldl1
+      008D  FGT
+      008E  JPZ +5 -> L1 (0096)
+      0091  PushI8 1
+      0093  JP +2 -> L2 (0098)
     L1:
-      0094  PushI8 0
+      0096  PushI8 0
     L2:
-      0096  ReturnValue
+      0098  ReturnValue
 
   [public] static op_==(a: float, b: float): bool
-    ; entry 15, locals 2, stack 2, code 007A..007E
-      007A  Ldl0
-      007B  Ldl1
-      007C  FEQ
-      007D  ReturnValue
+    ; entry 15, locals 2, stack 2, code 007C..0080
+      007C  Ldl0
+      007D  Ldl1
+      007E  FEQ
+      007F  ReturnValue
 
   [public] shortestDeltaTo(other: float): float
     ; entry 7, locals 3, stack 2, code 001E..0038
@@ -202,10 +202,12 @@ sealed class Angle  [public]
       0037  ReturnValue
 
   @surtr:Pure
-  [public] toString(): string
-    ; entry 8, locals 1, stack 2, code 0038..0042
+  [public] virtual override toString(): string
+    ; entry 8, locals 1, stack 2, code 0038..0044
       0038  Ldl0
-      0039  InvokeSpecial 17 (toString) args=1 ret=1
-      003E  Ldc6
-      003F  StrCat 2
-      0041  ReturnValue
+      0039  Unbox
+      003A  BoxFloat
+      003B  InvokeVirtual 17 (toString) args=1 ret=1
+      0040  Ldc6
+      0041  StrCat 2
+      0043  ReturnValue

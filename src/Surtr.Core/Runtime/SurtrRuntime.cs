@@ -1496,11 +1496,15 @@ namespace Surtr.Runtime
                 : SurtrClassReference.ConstructedNative(fullName, typeArguments);
             SurtrClassReference.TrySplitFullName(fullName, out _, out string typePath);
 
+            // A native class with no host-declared base still extends `object`, the same default a
+            // Surtr class with no written `:` clause gets.
+            var effectiveBase = baseClass is null ? SurtrBuiltIns.Object.SelfReference : baseClass.SelfReference;
+
             var declared = new SurtrClass(
                 typePath,
                 SurtrValueTypeCode.Native,
                 reference,
-                baseClass is null ? null : TypeHandle(baseClass.SelfReference),
+                TypeHandle(effectiveBase),
                 isAbstract: false,
                 SurtrVisibility.Public,
                 declaringType: null);
@@ -1562,7 +1566,7 @@ namespace Surtr.Runtime
                 typePath,
                 SurtrValueTypeCode.Object,
                 reference,
-                baseType: null,
+                baseType: TypeHandle(SurtrBuiltIns.ValueType.SelfReference),
                 isAbstract: false,
                 SurtrVisibility.Public,
                 declaringType: null)
@@ -1645,7 +1649,7 @@ namespace Surtr.Runtime
                 typePath,
                 SurtrValueTypeCode.Native,
                 reference,
-                baseType: null,
+                baseType: TypeHandle(SurtrBuiltIns.Enum.SelfReference),
                 isAbstract: false,
                 SurtrVisibility.Public,
                 declaringType: null,

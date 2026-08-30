@@ -38,7 +38,7 @@ namespace Surtr.Runtime.BuiltIns
             SurtrClassReference real = SurtrClassReference.Float;
             SurtrClassReference text = SurtrClassReference.String;
 
-            builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&IntToString), isPure: true);
+            builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&IntToString), isPure: true, dispatch: SurtrMethodDispatch.Virtual, isOverride: true);
             builder.Method("toFloat", real, SurtrNativeEntryPoint.FromFunctionPointer(&IntToFloat), isPure: true);
             builder.Method("abs", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntAbs), isPure: true);
             builder.Method("sign", integer, SurtrNativeEntryPoint.FromFunctionPointer(&IntSign), isPure: true);
@@ -176,7 +176,7 @@ namespace Surtr.Runtime.BuiltIns
             SurtrClassReference boolean = SurtrClassReference.Boolean;
             SurtrClassReference text = SurtrClassReference.String;
 
-            builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&FloatToString), isPure: true);
+            builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&FloatToString), isPure: true, dispatch: SurtrMethodDispatch.Virtual, isOverride: true);
             builder.Method("toInt", integer, SurtrNativeEntryPoint.FromFunctionPointer(&FloatToInt), isPure: true);
             builder.Method("abs", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatAbs), isPure: true);
             builder.Method("sqrt", real, SurtrNativeEntryPoint.FromFunctionPointer(&FloatSqrt), isPure: true);
@@ -258,7 +258,7 @@ namespace Surtr.Runtime.BuiltIns
         #region Boolean
         internal static void DeclareBoolean(SurtrBuiltInTypeBuilder builder)
         {
-            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&BoolToString), isPure: true);
+            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&BoolToString), isPure: true, dispatch: SurtrMethodDispatch.Virtual, isOverride: true);
             builder.Method("toInt", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&BoolToInt), isPure: true);
             builder.Method("parseStrict", SurtrClassReference.Boolean, SurtrNativeEntryPoint.FromFunctionPointer(&BoolParseStrict), builder.Params(("text", SurtrClassReference.String)), isStatic: true, isPure: true);
         }
@@ -294,7 +294,7 @@ namespace Surtr.Runtime.BuiltIns
             SurtrClassReference character = SurtrClassReference.Character;
             SurtrClassReference text = SurtrClassReference.String;
 
-            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&CharToString), isPure: true);
+            builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&CharToString), isPure: true, dispatch: SurtrMethodDispatch.Virtual, isOverride: true);
             builder.Method("parseStrict", character, SurtrNativeEntryPoint.FromFunctionPointer(&CharParseStrict), builder.Params(("text", text)), isStatic: true, isPure: true);
             builder.Method("toInt", SurtrClassReference.Integer, SurtrNativeEntryPoint.FromFunctionPointer(&CharToInt), isPure: true);
             builder.Method("toUpper", character, SurtrNativeEntryPoint.FromFunctionPointer(&CharToUpper), isPure: true);

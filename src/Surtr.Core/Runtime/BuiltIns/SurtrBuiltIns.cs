@@ -105,6 +105,40 @@ namespace Surtr.Runtime.BuiltIns
         public static readonly SurtrClass Range;
 
         /// <summary>
+        /// The root <c>object</c> class: stateless, constructorless, and by default the base of
+        /// every class, every primitive and every built-in that declares no base of its own.
+        /// </summary>
+        /// <remarks>
+        /// Declares <c>equals</c>, <c>hashCode</c> and <c>toString</c> as
+        /// <see cref="SurtrMethodDispatch.Virtual"/> - see <see cref="SurtrObjectBuiltIn"/>. Declared
+        /// first among the library classes, since <see cref="DeclareObject"/> defaults every other
+        /// one's base to this.
+        /// </remarks>
+        public static readonly SurtrClass Object;
+
+        /// <summary>
+        /// The stateless class every enum implicitly extends, between it and <see cref="Object"/>.
+        /// </summary>
+        /// <remarks>
+        /// Overrides <c>toString</c> with one body shared by every enum, reading the receiver's own
+        /// <see cref="SurtrClass.EnumCases"/> rather than anything synthesised per enum - see
+        /// <see cref="SurtrObjectBuiltIn.DeclareEnum"/>. Not itself a value type: it carries no
+        /// field, so it never needs the flattened layout its concrete subclasses do.
+        /// </remarks>
+        public static readonly SurtrClass Enum;
+
+        /// <summary>
+        /// The stateless class every <c>value class</c> implicitly extends, between it and
+        /// <see cref="Object"/>.
+        /// </summary>
+        /// <remarks>
+        /// Declares no members of its own: a value class not marked <c>@Value</c> inherits
+        /// <see cref="Object"/>'s identity-based default, and one marked <c>@Value</c> gets a real
+        /// structural override synthesised by <c>ValueMemberSynthesizer</c> at compile time.
+        /// </remarks>
+        public static readonly SurtrClass ValueType;
+
+        /// <summary>
         /// The <c>Iterator</c> class, behind every <see cref="SurtrIterator"/>: the cursor each
         /// built-in collection hands back from <c>iterate()</c>.
         /// </summary>
@@ -454,24 +488,36 @@ namespace Surtr.Runtime.BuiltIns
             Module = new SurtrModule(ModulePath);
             var handles = Module.TypeHandles;
 
+            // The root of everything, and the two stateless classes every enum/value class
+            // implicitly extends. Declared before anything else in the module, since Declare and
+            // DeclareObject below both default a missing base to Object.
+            Object = DeclareObject("object", isAbstract: true);
+            Enum = DeclareObject("Enum", Object, isAbstract: true);
+            ValueType = DeclareObject("ValueType", Object, isAbstract: true);
+            SurtrObjectBuiltIn.Declare(BuilderFor(Object, handles));
+            SurtrObjectBuiltIn.DeclareEnum(BuilderFor(Enum, handles));
+
             // The composites use the bare family symbol as their descriptor. It is intentionally
             // not a well-formed descriptor - see the type remarks - and it still reads back the
-            // right SurtrValueTypeCode, which is the only thing anything asks it for.
-            Integer = Declare("int", SurtrValueTypeCode.Integer, SurtrClassReference.Integer);
-            Float = Declare("float", SurtrValueTypeCode.Float, SurtrClassReference.Float);
-            Boolean = Declare("bool", SurtrValueTypeCode.Boolean, SurtrClassReference.Boolean);
-            Character = Declare("char", SurtrValueTypeCode.Character, SurtrClassReference.Character);
-            String = Declare("string", SurtrValueTypeCode.String, SurtrClassReference.String);
-            Bytes = Declare("bytes", SurtrValueTypeCode.Bytes, SurtrClassReference.Bytes);
-            Array = Declare("array", SurtrValueTypeCode.Array, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolArray.ToString()));
-            Tuple = Declare("tuple", SurtrValueTypeCode.Tuple, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolTuple.ToString()));
-            Dictionary = Declare("dict", SurtrValueTypeCode.Dictionary, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolDictionary.ToString()));
-            Closure = Declare("closure", SurtrValueTypeCode.Closure, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolClosure.ToString()));
-            Generator = Declare("generator", SurtrValueTypeCode.Generator, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolGenerator.ToString()));
+            // right SurtrValueTypeCode, which is the only thing anything asks it for. Every one of
+            // them extends `object` and is declared sealed - nothing extends a built-in, so a
+            // devirtualised call site pays nothing for the vtable slot equals/hashCode/toString now
+            // occupy.
+            Integer = Declare("int", SurtrValueTypeCode.Integer, SurtrClassReference.Integer, baseType: Object, isSealed: true);
+            Float = Declare("float", SurtrValueTypeCode.Float, SurtrClassReference.Float, baseType: Object, isSealed: true);
+            Boolean = Declare("bool", SurtrValueTypeCode.Boolean, SurtrClassReference.Boolean, baseType: Object, isSealed: true);
+            Character = Declare("char", SurtrValueTypeCode.Character, SurtrClassReference.Character, baseType: Object, isSealed: true);
+            String = Declare("string", SurtrValueTypeCode.String, SurtrClassReference.String, baseType: Object, isSealed: true);
+            Bytes = Declare("bytes", SurtrValueTypeCode.Bytes, SurtrClassReference.Bytes, baseType: Object, isSealed: true);
+            Array = Declare("array", SurtrValueTypeCode.Array, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolArray.ToString()), baseType: Object, isSealed: true);
+            Tuple = Declare("tuple", SurtrValueTypeCode.Tuple, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolTuple.ToString()), baseType: Object, isSealed: true);
+            Dictionary = Declare("dict", SurtrValueTypeCode.Dictionary, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolDictionary.ToString()), baseType: Object, isSealed: true);
+            Closure = Declare("closure", SurtrValueTypeCode.Closure, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolClosure.ToString()), baseType: Object, isSealed: true);
+            Generator = Declare("generator", SurtrValueTypeCode.Generator, SurtrClassReference.FromDescriptor(SurtrClassReference.SymbolGenerator.ToString()), baseType: Object, isSealed: true);
             // Unlike its neighbours this one's SelfReference is a well-formed descriptor, because
             // a range has nothing to be parameterised by: R names the type completely.
-            Range = Declare("range", SurtrValueTypeCode.Range, SurtrClassReference.Range);
-            NativeObject = Declare("native", SurtrValueTypeCode.Native, SurtrClassReference.Native(NativeObjectFullName));
+            Range = Declare("range", SurtrValueTypeCode.Range, SurtrClassReference.Range, baseType: Object, isSealed: true);
+            NativeObject = Declare("native", SurtrValueTypeCode.Native, SurtrClassReference.Native(NativeObjectFullName), baseType: Object, isSealed: true);
             // The library classes. Ordinary Surtr objects with real instance layouts, unlike the
             // value-representation classes above: Surtr source extends Exception, so its state has
             // to be a slot the linker lays out and the collector traces.
@@ -681,16 +727,42 @@ namespace Surtr.Runtime.BuiltIns
                 // Qualified: this class declares a field of that name for the Surtr exception class.
                 : throw new System.InvalidOperationException($"The built-in module declares no '{name}' of arity {arity}.");
 
-        private static SurtrClass Declare(string name, SurtrValueTypeCode typeCode, SurtrClassReference selfReference, bool isAbstract = false)
+        /// <summary>
+        /// Declares one of the value-representation family classes: a primitive or a built-in
+        /// composite.
+        /// </summary>
+        /// <remarks>
+        /// <paramref name="baseType"/> defaults to <see langword="null"/> rather than to
+        /// <see cref="Object"/>, unlike <see cref="DeclareObject"/> - <see cref="Erased"/> and
+        /// <see cref="Void"/> are the two callers that still want no base at all, since neither
+        /// names a real value: <c>Void</c> is a marker no expression ever has, and <c>Erased</c> is
+        /// what a generic parameter looks like in memory, not a type a program constructs.
+        /// </remarks>
+        private static SurtrClass Declare(
+            string name,
+            SurtrValueTypeCode typeCode,
+            SurtrClassReference selfReference,
+            bool isAbstract = false,
+            SurtrClass? baseType = null,
+            bool isSealed = false)
         {
+            SurtrTypeHandle? baseHandle = null;
+            if (baseType is not null)
+            {
+                baseHandle = Module.TypeHandles.GetOrAdd(baseType.SelfReference);
+                if (!baseHandle.IsResolved)
+                    baseHandle.Resolve(baseType);
+            }
+
             var declared = new SurtrClass(
                 name,
                 typeCode,
                 selfReference,
-                baseType: null,
+                baseHandle,
                 isAbstract,
                 SurtrVisibility.Public,
-                declaringType: null);
+                declaringType: null,
+                isSealed);
 
             Module.AddClass(declared);
             return declared;
@@ -705,16 +777,25 @@ namespace Surtr.Runtime.BuiltIns
         /// above, whose bare symbols name a family and say nothing about parameterisation. These
         /// have no parameterisation to say nothing about: <c>Exception</c> is one concrete type.
         /// </remarks>
+        /// <remarks>
+        /// <paramref name="baseClass"/> omitted defaults to <see cref="Object"/> - every library
+        /// class extends the root unless it names its own base, exactly like a user class with no
+        /// written <c>:</c> clause. <see cref="Object"/>'s own declaration is the one call this
+        /// resolves to <see langword="null"/>: it runs before the <c>Object</c> field is assigned,
+        /// so the field still reads its default (<see langword="null"/>) at that point - there is
+        /// nothing above the root to default to.
+        /// </remarks>
         private static SurtrClass DeclareObject(string name, SurtrClass? baseClass = null, bool isAbstract = false)
         {
             var handles = Module.TypeHandles;
             SurtrTypeHandle? baseHandle = null;
+            var effectiveBase = baseClass ?? Object;
 
-            if (baseClass is not null)
+            if (effectiveBase is not null)
             {
-                baseHandle = handles.GetOrAdd(baseClass.SelfReference);
+                baseHandle = handles.GetOrAdd(effectiveBase.SelfReference);
                 if (!baseHandle.IsResolved)
-                    baseHandle.Resolve(baseClass);
+                    baseHandle.Resolve(effectiveBase);
             }
 
             var declared = new SurtrClass(

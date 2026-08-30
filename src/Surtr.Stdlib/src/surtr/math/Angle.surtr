@@ -47,7 +47,7 @@ public value class Angle
     }
 
     @Pure
-    public inline fun toString(): string => "$_radians rad";
+    public override fun toString(): string => "$_radians rad";
 
     public static fun lerp(a: Angle, b: Angle, t: float): Angle
     {

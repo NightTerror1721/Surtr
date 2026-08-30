@@ -30,7 +30,7 @@ module surtr.io.StreamWriter
     #14  surtr.io.Stream:Stream.flush() -> void
     #15  surtr.io.Stream:Stream.dispose() -> void
 
-class StreamWriter  [public]
+class StreamWriter : surtr:object  [public]
   [private] field _isOpen: bool
   [private] field _leaveOpen: bool
   [private] field _stream: surtr.io.Stream:Stream

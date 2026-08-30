@@ -70,7 +70,7 @@ interface IStack`1<T> : surtr.collections.Collection:ICollection<T0>  [public]
 
   [public] abstract push(item: T0): void
 
-class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
+class Stack`1<T> : surtr:object, surtr.collections.Stack:IStack<T0>  [public]
   [private] readonly field _items: T0[]
 
   [public] property isEmpty: bool { get; }
@@ -335,7 +335,7 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       0108  InvokeSpecial 14 (remove) args=2 ret=1
       010D  ReturnValue
 
-  sealed class Iterator`1<T> : surtr:IIterator<T0>  [private]
+  sealed class Iterator`1<T> : surtr:object, surtr:IIterator<T0>  [private]
     [private] field _index: int
     [private] readonly field _items: T0[]
     [private] readonly field _length: int

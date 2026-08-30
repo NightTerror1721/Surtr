@@ -97,13 +97,14 @@ namespace Surtr.Runtime.BuiltIns
             SurtrParameterInfo[]? parameters = null,
             bool isStatic = false,
             SurtrMethodDispatch dispatch = SurtrMethodDispatch.Direct,
-            bool isPure = false)
+            bool isPure = false,
+            bool isOverride = false)
         {
             var method = new SurtrNativeMethodInfo(
                 name,
                 dispatch,
                 SurtrMethodRole.Normal,
-                isOverride: false,
+                isOverride,
                 Handle(returnType),
                 parameters ?? NoParameters,
                 isStatic,

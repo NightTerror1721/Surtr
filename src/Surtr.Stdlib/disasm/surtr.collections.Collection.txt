@@ -45,7 +45,7 @@ interface IReadOnlyCollection`1<T> : surtr:IIterable<T0>  [public]
 
   [public] abstract copyTo(array: T0[], arrayIndex: int): void
 
-sealed class ReadOnlyCollection`1<T> : surtr.collections.Collection:IReadOnlyCollection<T0>  [public]
+sealed class ReadOnlyCollection`1<T> : surtr:ValueType, surtr.collections.Collection:IReadOnlyCollection<T0>  [public]
   [private] readonly field _col: surtr.collections.Collection:IReadOnlyCollection<T0>
 
   [public] property length: int { get; }

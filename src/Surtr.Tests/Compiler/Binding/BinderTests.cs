@@ -534,12 +534,14 @@ namespace Surtr.Tests.Compiler.Binding
         }
 
         [Fact]
-        public void AClassWithNoBaseSitsAtDepthZero()
+        public void AClassWithNoBaseExtendsObjectImplicitly()
         {
             var binder = Bind(out var compilation, ("game/core/Test.surtr", "class Foo { }"));
 
             AssertNoErrors(compilation);
-            Assert.Null(Type(binder, "game.core.Test", "Foo").BaseType);
+            var baseType = Type(binder, "game.core.Test", "Foo").BaseType;
+            Assert.NotNull(baseType);
+            Assert.Equal("object", baseType!.Name);
         }
 
         [Fact]

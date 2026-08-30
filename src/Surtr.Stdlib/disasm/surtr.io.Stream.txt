@@ -75,7 +75,7 @@ class ObjectDisposedException : surtr:Exception  [public]
       0002  InvokeSpecial 16 (ctor) args=2 ret=0
       0007  ReturnVoid
 
-abstract class Stream : surtr.io.Stream:IWritableStream, surtr.io.Stream:IReadableStream, surtr.io.Stream:ISeekableStream  [public]
+abstract class Stream : surtr:object, surtr.io.Stream:IWritableStream, surtr.io.Stream:IReadableStream, surtr.io.Stream:ISeekableStream  [public]
 
   [public] property canRead: bool { get; }
     get:

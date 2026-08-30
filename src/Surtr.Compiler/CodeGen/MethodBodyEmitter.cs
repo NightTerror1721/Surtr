@@ -178,6 +178,7 @@ namespace Surtr.Compiler.CodeGen
         /// <exception cref="SurtrEmitException">The body uses something not lowered yet.</exception>
         public void Emit(BoundStatement body)
         {
+            EmitReceiverUnpackIfNeeded();
             Statement(body);
 
             // Flow analysis already rejected a value-returning method that can fall off its end, so
@@ -195,6 +196,43 @@ namespace Surtr.Compiler.CodeGen
         /// statement and goes through the same lowering, but none of them ends a method.
         /// </remarks>
         public void EmitFragment(BoundStatement fragment) => Statement(fragment);
+
+        /// <summary>
+        /// One-time prologue for a non-<c>Direct</c> instance method on a multi-field value class:
+        /// spreads the boxed receiver the caller had to pass (<c>InvokeVirtual</c>/<c>InvokeInterface</c>
+        /// resolve a class through the entity registry, which only a boxed reference is in) back
+        /// into the raw per-field slots every other read of <c>this</c> in this body already
+        /// assumes, via <see cref="EnsureFrameWidths"/>.
+        /// </summary>
+        /// <remarks>
+        /// Runs once, before the body's first statement, rather than at every <c>this</c> access:
+        /// unlike a single-field value class - which erases to its one field, so unboxing on each
+        /// read is unboxing the very value being asked for - a multi-field receiver's fields live at
+        /// different offsets inside the block, which only works if slot 0 already holds the raw
+        /// block by the time anything indexes into it. A direct dispatch never boxes the receiver on
+        /// the way in (§6.3), so there is nothing to unpack for one.
+        /// </remarks>
+        private void EmitReceiverUnpackIfNeeded()
+        {
+            if (!_method.HasReceiver
+                || _symbol.Dispatch == MethodDispatch.Direct
+                || _symbol.ContainingType is not NamedTypeSymbol receiverType
+                || ValueTypeLayout.WidthOfType(receiverType) <= 1)
+            {
+                return;
+            }
+
+            // Slot 0 holds exactly the one boxed reference the caller passed - a raw single-slot
+            // load, not EmitLoadLocal, which would already consult the width EnsureFrameWidths is
+            // about to register and read (and fail to find) a block that is not there yet.
+            Code.LoadLocal(_method.Receiver);
+            UnpackIfMultiSlot(receiverType);
+
+            // The first call into the width-aware store, which is what makes EnsureFrameWidths
+            // register slot 0 as this value's whole width - every later EmitLoadLocal/EmitStoreLocal
+            // of the receiver agrees with it from here on.
+            EmitStoreLocal(_method.Receiver);
+        }
 
         #region Statements
         /// <summary>The node being lowered, which is the span a failure here belongs to.</summary>
@@ -2815,16 +2853,10 @@ namespace Surtr.Compiler.CodeGen
         /// </remarks>
         private void BoxReceiverForCall(MethodSymbol method, TypeSymbol receiverType)
         {
-            // A multi-field value class's box crosses the call as one reference slot while its
-            // callee frame claims the whole width - the two conventions cannot both hold (�6.3).
-            // Refused at the call site rather than emitted into a mis-sliced frame.
-            if (method.Dispatch != MethodDispatch.Direct
-                && receiverType.NonNullable is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } boxed
-                && ValueTypeLayout.WidthOfType(boxed) > 1)
-            {
-                throw Unsupported(
-                    "a non-Direct call whose receiver is a multi-field value class: that receiver convention does not exist yet");
-            }
+            // A multi-field value class's box now crosses the call as one reference slot, exactly
+            // like a single-field one - BoxIfValueClass below already builds it with BoxValue over
+            // the whole width, and EmitReceiverUnpackIfNeeded is the callee-side half that unpacks
+            // it back out at the top of the body.
 
             // A range receiver crosses as its three-slot block for a direct call - that is the
             // convention its own native members are built against - and packs only where the
@@ -5697,7 +5729,7 @@ namespace Surtr.Compiler.CodeGen
                 return true;
             }
 
-            var result = hasResult ? DeclareTemp("$inlineResult", _symbol.ReturnType) : default;
+            var result = hasResult ? DeclareTemp("$inlineResult", call.Method.ReturnType) : default;
             var exit = Code.NewLabel();
 
             _inlines.Add(new InlineFrame(call.Method, exit, result, hasResult, receiver, _finallies.Count));
@@ -6535,6 +6567,14 @@ namespace Surtr.Compiler.CodeGen
             if (!owner.TryGetMethods("toString", out var overloads) || overloads.Length != 1)
                 throw Unsupported($"interpolating a '{part.Type.ToDisplayString()}', whose toString could not be found");
 
+            // toString is Virtual now that it overrides object.toString (§6.3's rule for any
+            // non-Direct dispatch): InvokeVirtual resolves the receiver's class through the entity
+            // registry, which only a boxed value is in, so the raw primitive Expression(part) just
+            // pushed has to be boxed first - the same box BoxReceiverForCall emits for an ordinary
+            // call through this exact method.
+            if (overloads[0].Dispatch != SurtrMethodDispatch.Direct)
+                Code.Box(typeCode);
+
             Code.Call(overloads[0]);
         }
 
@@ -6842,8 +6882,12 @@ namespace Surtr.Compiler.CodeGen
             // BoxReceiverForCall makes at every call site, so the two can never disagree about
             // which convention this body was compiled against. A direct dispatch never boxes on
             // the way in, so there is nothing here to unwrap.
-            if (_symbol.ContainingType is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass }
-                && _symbol.Dispatch != MethodDispatch.Direct)
+            // A multi-field receiver is excluded: EmitReceiverUnpackIfNeeded already unpacked it
+            // once, at the top of the body, into the raw per-field slots EmitLoadLocal just read -
+            // unboxing again here would try to unbox a value that is no longer a box.
+            if (_symbol.ContainingType is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } receiverClass
+                && _symbol.Dispatch != MethodDispatch.Direct
+                && ValueTypeLayout.WidthOfType(receiverClass) <= 1)
                 Code.Unbox();
         }
 

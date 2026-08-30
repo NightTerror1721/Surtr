@@ -533,11 +533,11 @@ namespace Surtr.Bytecode.Emit
         /// because the linker reads it to lay the enum out as one flattened block — a bare enum is a
         /// single <c>value</c> slot, a case-carrying one is the whole block.
         /// </remarks>
-        public SurtrClassBuilder DefineEnum(string name, SurtrVisibility visibility = SurtrVisibility.Public)
+        public SurtrClassBuilder DefineEnum(string name, SurtrClassReference? baseType = null, SurtrVisibility visibility = SurtrVisibility.Public)
         {
             ThrowIfBuilt();
 
-            var builder = new SurtrClassBuilder(this, null, name, null, false, visibility, isSealed: true, isEnum: true);
+            var builder = new SurtrClassBuilder(this, null, name, baseType, false, visibility, isSealed: true, isEnum: true);
             builder.Class.IsValueType = true;
             _module.AddClass(builder.Class);
             _classes.Add(builder);

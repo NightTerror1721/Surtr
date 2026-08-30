@@ -159,7 +159,7 @@ interface ISet`1<T> : surtr.collections.Set:IReadOnlySet<T0>, surtr.collections.
 
   [public] abstract unionWith(other: surtr.collections.Set:ISet<T0>): void
 
-class ReadOnlySet`1<T> : surtr.collections.Set:IReadOnlySet<T0>  [public]
+class ReadOnlySet`1<T> : surtr:object, surtr.collections.Set:IReadOnlySet<T0>  [public]
   [protected] readonly field _dict: {T0: bool}
 
   [public] property isEmpty: bool { get; }
@@ -753,7 +753,7 @@ class ReadOnlySet`1<T> : surtr.collections.Set:IReadOnlySet<T0>  [public]
       02CB  InvokeSpecial 13 (ctor) args=2 ret=0
       02D0  ReturnValue
 
-  sealed class Iterator`1<T> : surtr:IIterator<T0>  [private]
+  sealed class Iterator`1<T> : surtr:object, surtr:IIterator<T0>  [private]
     [private] field _index: int
     [private] field _items: T0[]
 

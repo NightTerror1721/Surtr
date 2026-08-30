@@ -33,7 +33,7 @@ module surtr.io.BinaryReader
     #17  bytes.decodeUTF8() -> string
     #18  surtr.io.Stream:Stream.dispose() -> void
 
-class BinaryReader  [public]
+class BinaryReader : surtr:object  [public]
   [private] field _leaveOpen: bool
   [private] field _stream: surtr.io.Stream:Stream
 

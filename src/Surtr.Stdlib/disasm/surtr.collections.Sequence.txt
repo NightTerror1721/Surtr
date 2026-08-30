@@ -1131,7 +1131,7 @@ module surtr.collections.Sequence
     050D  InvokeSpecial 28 (toSet) args=1 ret=1
     0512  ReturnValue
 
-class EmptyIterator`1<T> : surtr:IIterator<T0>  [internal]
+class EmptyIterator`1<T> : surtr:object, surtr:IIterator<T0>  [internal]
 
   [public] property current: T0 { get; }
     get:
@@ -1174,7 +1174,7 @@ class EmptyIterator`1<T> : surtr:IIterator<T0>  [internal]
       082A  InvokeSpecial 34 (moveNext) args=1 ret=1
       082F  ReturnValue
 
-sealed class Sequence`1<T> : surtr:IIterable<T0>  [public]
+sealed class Sequence`1<T> : surtr:ValueType, surtr:IIterable<T0>  [public]
   [private] readonly field _provider: () -> surtr:IIterator<T0>
 
   [public] static property empty: () -> surtr:IIterator<T0> { get; }

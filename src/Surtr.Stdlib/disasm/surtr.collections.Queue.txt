@@ -140,7 +140,7 @@ interface IQueue`1<T> : surtr.collections.Collection:ICollection<T0>  [public]
 
   [public] abstract peek(): T0
 
-class Deque`1<T> : surtr.collections.Queue:IDeque<T0>  [public]
+class Deque`1<T> : surtr:object, surtr.collections.Queue:IDeque<T0>  [public]
   [private] field _back: surtr.collections.Queue:Deque.Node<T0>
   [private] field _count: int
   [private] field _front: surtr.collections.Queue:Deque.Node<T0>
@@ -742,7 +742,7 @@ class Deque`1<T> : surtr.collections.Queue:IDeque<T0>  [public]
       05E3  InvokeSpecial 41 (remove) args=2 ret=1
       05E8  ReturnValue
 
-  sealed class Iterator`1<T> : surtr:IIterator<T0>  [private]
+  sealed class Iterator`1<T> : surtr:object, surtr:IIterator<T0>  [private]
     [private] field _count: int
     [private] field _current: surtr.collections.Queue:Deque.Node<T0>
     [private] field _index: int
@@ -861,7 +861,7 @@ class Deque`1<T> : surtr.collections.Queue:IDeque<T0>  [public]
         06B4  InvokeSpecial 50 (moveNext) args=1 ret=1
         06B9  ReturnValue
 
-  sealed class Node`1<T>  [protected]
+  sealed class Node`1<T> : surtr:object  [protected]
     [public] field next: surtr.collections.Queue:Deque.Node<T0>
     [public] field prev: surtr.collections.Queue:Deque.Node<T0>
     [public] field value: T0
@@ -879,7 +879,7 @@ class Deque`1<T> : surtr.collections.Queue:IDeque<T0>  [public]
         061E  FieldSet 12 (prev)
         0621  ReturnVoid
 
-class Queue`1<T> : surtr.collections.Queue:IQueue<T0>  [public]
+class Queue`1<T> : surtr:object, surtr.collections.Queue:IQueue<T0>  [public]
   [protected] field _back: surtr.collections.Queue:Queue.Node<T0>
   [protected] field _count: int
   [protected] field _front: surtr.collections.Queue:Queue.Node<T0>
@@ -1263,7 +1263,7 @@ class Queue`1<T> : surtr.collections.Queue:IQueue<T0>  [public]
       01D5  InvokeSpecial 16 (remove) args=2 ret=1
       01DA  ReturnValue
 
-  sealed class Iterator`1<T> : surtr:IIterator<T0>  [private]
+  sealed class Iterator`1<T> : surtr:object, surtr:IIterator<T0>  [private]
     [private] field _count: int
     [private] field _current: surtr.collections.Queue:Queue.Node<T0>
     [private] field _index: int
@@ -1382,7 +1382,7 @@ class Queue`1<T> : surtr.collections.Queue:IQueue<T0>  [public]
         02A1  InvokeSpecial 25 (moveNext) args=1 ret=1
         02A6  ReturnValue
 
-  sealed class Node`1<T>  [protected]
+  sealed class Node`1<T> : surtr:object  [protected]
     [public] field next: surtr.collections.Queue:Queue.Node<T0>
     [public] field value: T0
 

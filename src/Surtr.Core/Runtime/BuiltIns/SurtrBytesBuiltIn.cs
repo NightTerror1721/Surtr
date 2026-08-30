@@ -91,7 +91,7 @@ namespace Surtr.Runtime.BuiltIns
                 builder.Params(("receiver", bytes), ("index", integer), ("value", integer)),
                 isStatic: true);
 
-            builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&ToHexString), isPure: true);
+            builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&ToHexString), isPure: true, dispatch: SurtrMethodDispatch.Virtual, isOverride: true);
             builder.Method("decodeUTF8", text, SurtrNativeEntryPoint.FromFunctionPointer(&DecodeUTF8), isPure: true);
 
             // Erased parameter and virtual dispatch, exactly like string's: see the class remarks.

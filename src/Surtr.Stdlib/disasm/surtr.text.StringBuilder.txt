@@ -31,7 +31,7 @@ module surtr.text.StringBuilder
     #14  surtr:IndexOutOfRangeException.ctor(string) -> void
     #15  string.fromCharArraySlice(char[], int, int) -> string
 
-class StringBuilder  [public]
+class StringBuilder : surtr:object  [public]
   [private] field _buffer: char[]
   [private] field _capacity: int
   [private] field _length: int
@@ -291,7 +291,7 @@ class StringBuilder  [public]
       0082  ArrSet
       0083  ReturnVoid
 
-  [public] toString(): string
+  [public] virtual override toString(): string
     ; entry 9, locals 1, stack 3, code 0103..0113
       0103  Ldl0
       0104  FieldGet 1 (_buffer)

@@ -7,6 +7,7 @@ using Surtr.Compiler.Binding.BoundTree;
 using Surtr.Compiler.Binding.Symbols;
 using Surtr.Compiler.Compilation;
 using Surtr.Compiler.Diagnostics;
+using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Classes;
 using System;
 using System.Collections.Generic;
@@ -378,9 +379,16 @@ namespace Surtr.Compiler.CodeGen
                 // EnumCases table keep working.
                 case TypeSymbolKind.Enum:
                 {
+                    // Every enum implicitly extends the built-in `Enum` class - §2.4 already
+                    // forbids writing a base for one, and the binder fills `BaseType` with `Enum`
+                    // for exactly that reason, so this is the only base an enum's metadata ever
+                    // carries.
+                    var enumBase = symbol.BaseType is NamedTypeSymbol declaredEnumBase
+                        ? _descriptors.Emit(declaredEnumBase)
+                        : SurtrBuiltIns.Enum.SelfReference;
                     var @enum = declaringClass is null
-                        ? module.DefineEnum(declaredName, Visibility(symbol))
-                        : declaringClass.DefineNestedEnum(declaredName, Visibility(symbol));
+                        ? module.DefineEnum(declaredName, enumBase, Visibility(symbol))
+                        : declaringClass.DefineNestedEnum(declaredName, enumBase, Visibility(symbol));
 
                     context.Declare(symbol, @enum);
                     emission = new TypeEmission(symbol, @enum, null);
@@ -1824,19 +1832,6 @@ namespace Surtr.Compiler.CodeGen
 
                 builder.Code.ReturnVoid();
                 return;
-            }
-
-            // �6.3's boxed-receiver convention exists for a single-field value class only: the box
-            // names the class, the unbox hands the body back the very field its frame holds. A
-            // multi-field value class has none yet - the box crosses the call as one reference slot
-            // while this frame would claim the whole width - so a non-Direct method on one is
-            // refused here rather than compiled against two disagreeing conventions.
-            if (symbol.Dispatch != MethodDispatch.Direct
-                && symbol.ContainingType is NamedTypeSymbol owner
-                && ValueTypeLayout.WidthOfType(owner) > 1)
-            {
-                throw new SurtrEmitException(
-                    "a non-Direct method on a multi-field value class has no receiver convention across a call yet");
             }
 
             // A generator is two methods (§3.7): what the caller reaches builds the object, and what

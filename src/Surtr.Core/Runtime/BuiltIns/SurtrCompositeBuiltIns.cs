@@ -441,6 +441,12 @@ namespace Surtr.Runtime.BuiltIns
             builder.Property("isInclusive", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&RangeIsInclusive), isPure: true);
 
             builder.Method("contains", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&RangeContains), builder.Params(("value", integer)), isPure: true);
+            // Not an override of object.toString(): a range's inline three-slot representation has
+            // no receiver convention across a non-Direct call yet (it is not a value class, so the
+            // multi-field unpack/pack machinery does not apply to it), so it keeps its own Direct
+            // member instead - resolved by static type wherever a range's own toString is called,
+            // and falling back to object's identity-based default only through a polymorphic
+            // receiver typed as `object`.
             builder.Method("toString", SurtrClassReference.String, SurtrNativeEntryPoint.FromFunctionPointer(&RangeToString), isPure: true);
         }
 

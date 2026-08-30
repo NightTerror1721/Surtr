@@ -152,7 +152,7 @@ interface IReadOnlyList`1<T> : surtr.collections.Collection:IReadOnlyCollection<
 
   [public] abstract indexOf(item: T0): int
 
-class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
+class LinkedList`1<T> : surtr:object, surtr.collections.List:IList<T0>  [public]
   [private] field _head: surtr.collections.List:LinkedList.Node<T0>
   [private] field _length: int
   [private] field _tail: surtr.collections.List:LinkedList.Node<T0>
@@ -905,7 +905,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
       07A5  InvokeSpecial 37 (set) args=3 ret=0
       07AA  ReturnVoid
 
-  sealed class Iterator`1<T> : surtr:IIterator<T0>  [private]
+  sealed class Iterator`1<T> : surtr:object, surtr:IIterator<T0>  [private]
     [private] field _current: T0
     [private] field _node: surtr.collections.List:LinkedList.Node<T0>
 
@@ -967,7 +967,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
         084B  InvokeSpecial 50 (moveNext) args=1 ret=1
         0850  ReturnValue
 
-  sealed class Node`1<T>  [private]
+  sealed class Node`1<T> : surtr:object  [private]
     [public] field next: surtr.collections.List:LinkedList.Node<T0>
     [public] field prev: surtr.collections.List:LinkedList.Node<T0>
     [public] field value: T0
@@ -985,7 +985,7 @@ class LinkedList`1<T> : surtr.collections.List:IList<T0>  [public]
         0819  FieldSet 9 (value)
         081C  ReturnVoid
 
-class List`1<T> : surtr.collections.List:IList<T0>  [public]
+class List`1<T> : surtr:object, surtr.collections.List:IList<T0>  [public]
   [private] field _capacity: int
   [private] field _items: T0[]
   [private] field _length: int
@@ -1581,7 +1581,7 @@ class List`1<T> : surtr.collections.List:IList<T0>  [public]
       02C9  InvokeSpecial 10 (set) args=3 ret=0
       02CE  ReturnVoid
 
-  sealed class Iterator`1<T> : surtr:IIterator<T0>  [private]
+  sealed class Iterator`1<T> : surtr:object, surtr:IIterator<T0>  [private]
     [private] field _index: int
     [private] readonly field _items: T0[]
     [private] readonly field _length: int
@@ -1681,7 +1681,7 @@ class List`1<T> : surtr.collections.List:IList<T0>  [public]
         0397  InvokeSpecial 27 (moveNext) args=1 ret=1
         039C  ReturnValue
 
-class ReadOnlyList`1<T> : surtr.collections.List:IReadOnlyList<T0>  [public]
+class ReadOnlyList`1<T> : surtr:object, surtr.collections.List:IReadOnlyList<T0>  [public]
   [private] readonly field _items: T0[]
 
   [public] property length: int { get; }

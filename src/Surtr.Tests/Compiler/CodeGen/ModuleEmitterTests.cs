@@ -2131,6 +2131,40 @@ var runtime = Run(
         }
 
         /// <summary>
+        /// Regression: a <c>forceinline</c> call's spliced result temp used to be sized from the
+        /// <em>enclosing</em> method's return type rather than the callee's own — so a single-slot
+        /// <c>float</c> result spliced into a caller that itself returns a multi-field value class
+        /// declared a 2-slot temp for a 1-slot value, and storing the callee's `return` into it
+        /// underflowed the stack. Constructing the value class after the inlined call is what
+        /// triggers it; the caller's own return type is what decides the (wrong) temp width.
+        /// </summary>
+        [Fact]
+        public void ForceInlineCallFollowedByMultiFieldValueClassConstructionDoesNotUnderflow()
+        {
+            var runtime = Run(
+                "import game.math.*;\n"
+                    + "value class Vec2 {\n"
+                    + "  public let x: float;\n"
+                    + "  public let y: float;\n"
+                    + "  public constructor(x: float, y: float) { this.x = x; this.y = y; }\n"
+                    + "}\n"
+                    + "fun make(t: float): Vec2 {\n"
+                    + "  let c = clamp01(t);\n"
+                    + "  return Vec2(c, c);\n"
+                    + "}",
+                ("/game/math/Math.surtr",
+                    "public forceinline fun clamp01(value: float): float {\n"
+                        + "  if (value < 0.0) return 0.0;\n"
+                        + "  if (value > 1.0) return 1.0;\n"
+                        + "  return value;\n"
+                        + "}"));
+
+            var instance = runtime.Resolve<SurtrInstance>(Call(runtime, "make", SurtrValue.CreateFloat(2.5)))!;
+            Assert.Equal(1.0, instance[0].AsFloat);
+            Assert.Equal(1.0, instance[1].AsFloat);
+        }
+
+        /// <summary>
         /// The synthesized bodies carry the <c>@Pure</c>/<c>@NoAlloc</c> marks (§2.3bis): a user
         /// <c>@NoAlloc</c> body may call them, and the analyzer accepts the synthesized bodies as
         /// written.
@@ -3621,15 +3655,20 @@ var runtime = Run(
         [Fact]
         public void AChainToASuperThatDoesNotExistIsReported()
         {
+            // Every class now implicitly extends `object`, so `super()` with no arguments against
+            // a base that declares no constructor is legal (it calls nothing, same as an omitted
+            // chain - BodyBinder.Expressions.cs's TryResolveConstructor says so explicitly). What
+            // is still illegal is passing an argument to a base with no constructor to receive it -
+            // reported as an unresolved call against zero candidates, not InvalidConstructorChain.
             var project = new SurtrProject(Root);
             project.AddSourceFile(
                 Root + "/game/core/Test.surtr",
-                "class C { public constructor() : super() { } }");
+                "class C { public constructor() : super(5) { } }");
 
             using var compilation = SurtrCompilation.Create(project);
             compilation.Bind().BindBodies();
 
-            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidConstructorChain);
+            Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.UnresolvedCall);
         }
 
         /// <summary>
@@ -6050,19 +6089,19 @@ var runtime = Run(
         }
 
         [Fact]
-        public void TypeBaseTypeWalksToTheDeclaredParentAndIsNullAtTheRoot()
+        public void TypeBaseTypeWalksToTheDeclaredParentAndIsObjectAtTheRoot()
         {
             var runtime = Run(
                 "class Animal { public let legs: int = 4; }\n"
                     + "class Dog : Animal { public let name: string = \"Rex\"; }\n"
                     + "fun dogBaseName(): string { return Type.of(Dog()).baseType.name; }\n"
-                    + "fun animalHasNoBase(): int {\n"
-                    + "  if (Type.of(Animal()).baseType == null) { return 1; }\n"
+                    + "fun animalBaseIsObject(): int {\n"
+                    + "  if (Type.of(Animal()).baseType.name == \"object\") { return 1; }\n"
                     + "  return 0;\n"
                     + "}");
 
             Assert.Equal("Animal", Text(runtime, "dogBaseName"));
-            Assert.Equal(1, Int(runtime, "animalHasNoBase"));
+            Assert.Equal(1, Int(runtime, "animalBaseIsObject"));
         }
         #endregion
 

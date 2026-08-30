@@ -1,5 +1,6 @@
 #nullable enable
 
+using Surtr.Runtime.BuiltIns;
 using Surtr.Runtime.Utilities;
 using System;
 using System.Collections.Generic;
@@ -354,9 +355,18 @@ namespace Surtr.Runtime.Classes
             // value type contributes that value's whole width.
             if (type.IsValueType)
             {
-                if (baseType is not null)
+                // The one legitimate base a value type may have: the stateless `Enum`/`ValueType`
+                // sentinel every enum and value class implicitly extends. Neither contributes a
+                // field - BuildValueFieldLayout below never reads `baseType` - so allowing them
+                // through changes nothing about the flattened width; this only rejects a base that
+                // could never be laid out through a value's flat slot block.
+                if (baseType is not null
+                    && !ReferenceEquals(baseType, SurtrBuiltIns.Enum)
+                    && !ReferenceEquals(baseType, SurtrBuiltIns.ValueType))
+                {
                     throw new InvalidOperationException(
                         $"Value type '{type.Name}' cannot extend '{baseType.Name}'; a value type has no identity to inherit through.");
+                }
 
                 BuildValueFieldLayout(type, new HashSet<SurtrClass>());
                 return;

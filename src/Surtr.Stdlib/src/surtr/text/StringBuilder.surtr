@@ -68,7 +68,7 @@ public class StringBuilder
         return this;
     }
 
-    public fun toString(): string
+    public override fun toString(): string
     {
         return string.fromCharArraySlice(_buffer, 0, _length);
     }

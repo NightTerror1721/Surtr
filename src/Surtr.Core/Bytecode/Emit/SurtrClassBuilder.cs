@@ -362,9 +362,9 @@ namespace Surtr.Bytecode.Emit
         }
 
         /// <summary>Declares an enum nested inside this class.</summary>
-        public SurtrClassBuilder DefineNestedEnum(string name, SurtrVisibility visibility = SurtrVisibility.Public)
+        public SurtrClassBuilder DefineNestedEnum(string name, SurtrClassReference? baseType = null, SurtrVisibility visibility = SurtrVisibility.Public)
         {
-            var nested = new SurtrClassBuilder(_module, this, name, null, false, visibility, isSealed: true, isEnum: true);
+            var nested = new SurtrClassBuilder(_module, this, name, baseType, false, visibility, isSealed: true, isEnum: true);
             nested.Class.IsValueType = true;
             _class.AddNestedClass(nested.Class);
             _nestedClasses.Add(nested);

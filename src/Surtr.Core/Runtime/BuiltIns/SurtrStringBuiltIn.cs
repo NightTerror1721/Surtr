@@ -55,7 +55,7 @@ namespace Surtr.Runtime.BuiltIns
             // GetUnchecked<SurtrString>, which does not care what the declared parameter type was.
             builder.Method("equals", boolean, SurtrNativeEntryPoint.FromFunctionPointer(&EqualsText), builder.Params(("other", SurtrClassReference.Erased)), dispatch: SurtrMethodDispatch.Virtual, isPure: true);
             builder.Method("compareTo", integer, SurtrNativeEntryPoint.FromFunctionPointer(&CompareTo), builder.Params(("other", SurtrClassReference.Erased)), dispatch: SurtrMethodDispatch.Virtual, isPure: true);
-            builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&ToStringSelf), isPure: true);
+            builder.Method("toString", text, SurtrNativeEntryPoint.FromFunctionPointer(&ToStringSelf), isPure: true, dispatch: SurtrMethodDispatch.Virtual, isOverride: true);
 
             builder.Method("fromChar", text, SurtrNativeEntryPoint.FromFunctionPointer(&FromChar), builder.Params(("value", character)), isStatic: true, isPure: true);
             builder.Method("join", text, SurtrNativeEntryPoint.FromFunctionPointer(&Join), builder.Params(("separator", text), ("parts", textArray)), isStatic: true, isPure: true);

@@ -27,7 +27,7 @@ module surtr.math.Random
 [internal] static native randomSeed(): int
   ; native link="surtr.math.Random.randomSeed" unbound declared
 
-class Random  [public]
+class Random : surtr:object  [public]
   [private] field _state: int
 
   [public] ctor (seed: int): void

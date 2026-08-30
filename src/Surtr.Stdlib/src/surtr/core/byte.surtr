@@ -28,7 +28,7 @@ public sealed value class byte
     public inline fun toFloat(): float => _value.toFloat();
 
     /// Decimal string form.
-    public inline fun toString(): string => _value.toString();
+    public override fun toString(): string => _value.toString();
 
     /// Two-digit upper-case hexadecimal form (e.g. 255 -> "FF").
     public fun toHex(): string

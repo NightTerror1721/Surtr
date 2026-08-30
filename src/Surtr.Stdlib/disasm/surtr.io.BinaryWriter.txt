@@ -26,7 +26,7 @@ module surtr.io.BinaryWriter
     #17  surtr.io.Stream:Stream.flush() -> void
     #18  surtr.io.Stream:Stream.dispose() -> void
 
-class BinaryWriter  [public]
+class BinaryWriter : surtr:object  [public]
   [private] field _leaveOpen: bool
   [private] field _stream: surtr.io.Stream:Stream
 

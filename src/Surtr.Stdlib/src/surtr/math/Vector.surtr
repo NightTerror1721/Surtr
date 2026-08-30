@@ -40,7 +40,7 @@ public value class Vector2
     public inline fun dot(other: Vector2): float => x * other.x + y * other.y;
 
     @Pure
-    public inline fun toString(): string => "($x, $y)";
+    public override fun toString(): string => "($x, $y)";
 
     public static inline fun distance(a: Vector2, b: Vector2): float => (a - b).length();
 
@@ -110,7 +110,7 @@ public value class Vector3
     }
 
     @Pure
-    public inline fun toString(): string => "($x, $y, $z)";
+    public override fun toString(): string => "($x, $y, $z)";
 
     public static inline fun distance(a: Vector3, b: Vector3): float => (a - b).length();
 
@@ -182,7 +182,7 @@ public value class Quaternion
     public inline fun conjugate(): Quaternion => Quaternion(-x, -y, -z, w);
 
     @Pure
-    public inline fun toString(): string => "($x, $y, $z, $w)";
+    public override fun toString(): string => "($x, $y, $z, $w)";
 
     /// Hamilton product: composes two rotations, `a` applied first, then `b`.
     operator*(a: Quaternion, b: Quaternion): Quaternion

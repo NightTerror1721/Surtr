@@ -1792,6 +1792,31 @@ namespace Surtr.Compiler.Binding
                 symbol.IsCompileTimeOnlyAttribute = syntax.IsCompileTimeOnlyAttribute;
             }
 
+            // A declaration that named no base of its own implicitly extends the language's root
+            // hierarchy: `object` for an ordinary class or singleton, and the stateless `Enum`/
+            // `ValueType` sentinel for an enum/value class - exactly what a written `: object`
+            // would resolve to, so nothing downstream (member lookup, `IsSubclassOf`) has to treat
+            // "no base" as a fourth state. An interface has no base-class slot to default -
+            // `ExtendedInterfaces` is a separate list - so it is excluded; this only fires when
+            // nothing already claimed the slot, which is why it runs after the `attribute class`
+            // case above rather than before it.
+            if (baseClass is null && syntax.Kind != TypeDeclarationKind.Interface)
+            {
+                string implicitBaseName = syntax.Kind switch
+                {
+                    TypeDeclarationKind.Enum => "Enum",
+                    TypeDeclarationKind.ValueClass => "ValueType",
+                    _ => "object",
+                };
+
+                var implicitBase = _resolver.Resolve(
+                    new NamedTypeSyntax(syntax.Span, new[] { implicitBaseName }, System.Array.Empty<TypeSyntax>()),
+                    binding.Scope, binding.SourceName);
+
+                if (implicitBase.NonNullable is NamedTypeSymbol resolvedImplicitBase)
+                    baseClass = resolvedImplicitBase;
+            }
+
             symbol.Interfaces = interfaces;
 
             if (baseClass is not null && !CreatesCycle(symbol, baseClass, binding))

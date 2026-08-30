@@ -60,7 +60,7 @@ module surtr.diagnostics.Profiler
     0000  CallLocalModule 27 (stopwatchTimestamp) args=0 ret=1
     0005  ReturnValue
 
-class Profiler  [public]
+class Profiler : surtr:object  [public]
   [private] field _entries: surtr.diagnostics.Profiler:ProfilerEntry[]
   [private] field _name: string
 
@@ -188,7 +188,7 @@ class Profiler  [public]
       013B  ArrPush
       013C  ReturnVoid
 
-class ProfilerEntry  [public]
+class ProfilerEntry : surtr:object  [public]
   [public] readonly field label: string
   [public] readonly field stopwatch: surtr.diagnostics.Profiler:Stopwatch
 
@@ -231,7 +231,7 @@ class ProfilerEntry  [public]
       01C8  InvokeSpecial 7 (addElapsed) args=2 ret=0
       01CD  ReturnVoid
 
-class ProfilerScope  [public]
+class ProfilerScope : surtr:object  [public]
   [private] readonly field _label: string
   [private] readonly field _stopwatch: surtr.diagnostics.Profiler:Stopwatch
 
@@ -262,7 +262,7 @@ class ProfilerScope  [public]
       00EA  InvokeSpecial 4 (stop) args=1 ret=0
       00EF  ReturnVoid
 
-class Stopwatch  [public]
+class Stopwatch : surtr:object  [public]
   [private] field _elapsed: float
   [private] field _running: bool
   [private] field _startedAt: float

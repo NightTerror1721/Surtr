@@ -23,7 +23,7 @@ module surtr.io.StreamReader
     #13  bytes.decodeUTF8() -> string
     #14  surtr.io.Stream:Stream.dispose() -> void
 
-class StreamReader  [public]
+class StreamReader : surtr:object  [public]
   [private] field _leaveOpen: bool
   [private] field _pushback: int
   [private] field _stream: surtr.io.Stream:Stream
