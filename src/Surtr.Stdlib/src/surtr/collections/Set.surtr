@@ -246,7 +246,15 @@ public class Set<T> : ReadOnlySet<T>, ISet<T>
     public static inline fun of(item: T): Set<T> => Set<T>(item);
     public static inline fun of(item1: T, item2: T): Set<T> => Set<T>(item1, item2);
     public static inline fun of(item1: T, item2: T, item3: T): Set<T> => Set<T>(item1, item2, item3);
-    //public static inline fun of(items: T...): Set<T> => Set<T>(items);
+
+    // No `of(items: T...)` overload for 4+ elements: `SignatureSet` erases a varargs parameter's
+    // element type the same way it erases a single one of that type, so `of(items: T...)` and
+    // `of(item: T)` above both key to the emitted signature `of(E)` and collide in the method
+    // table - confirmed by trying it (SURTR4001, "already declares a member with the signature
+    // 'of(E)'"). Renaming one to dodge the collision isn't worth the asymmetry; a 4+ literal can
+    // still reach a Set through `Set<T>(a, b, c, d, ...)`'s own constructor(items: T...), or
+    // `[a, b, c, d].toSet()` (Sequence.surtr's IIterable<T> extension).
+
 
     public inline fun add(item: T): void
     {
@@ -400,4 +408,7 @@ public class Set<T> : ReadOnlySet<T>, ISet<T>
         }
         return result;
     }
+
+    /// A read-only view over this set; stays live if the set changes underneath it.
+    public inline fun asReadOnly(): IReadOnlyCollection<T> => ReadOnlyCollection<T>(this);
 }

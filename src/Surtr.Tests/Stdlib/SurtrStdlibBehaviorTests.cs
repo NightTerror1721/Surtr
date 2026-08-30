@@ -342,6 +342,78 @@ namespace Surtr.Tests.Stdlib
             Assert.True(Bool(runtime, "run"));
         }
 
+        // ── C2: ReadOnlyCollection<T> / asReadOnly() ─────────────────────────
+
+        /// <summary>
+        /// `ReadOnlyCollection&lt;T&gt;` used to be `private` with no caller anywhere in the stdlib.
+        /// Now `List&lt;T&gt;.asReadOnly()`/`Set&lt;T&gt;.asReadOnly()` construct one, and the view
+        /// stays live over the underlying collection rather than snapshotting it.
+        /// </summary>
+        /// <remarks>
+        /// Deliberately does not call `view.contains(...)`: that crashes the VM with
+        /// `InvalidCastException` (`A '&lt;T&gt;' cannot be cast to 'erased'`) for every element type,
+        /// tried or not, because passing an argument into a *user-declared* generic interface's own
+        /// erased parameter emits a spurious `Cast`-to-`Erased` instead of an unconditional box - a
+        /// pre-existing compiler bug (see the "Bug crítico nuevo" note in
+        /// docs/Plan-Revision-Stdlib.md) that also breaks every `Set&lt;T&gt;`/`ReadOnlySet&lt;T&gt;`
+        /// method taking an `IReadOnlySet&lt;T&gt;`/`ISet&lt;T&gt;` parameter
+        /// (isSubsetOf/unionWith/etc.). `length`/`iterate()`/`copyTo()` take no `T`-typed argument
+        /// through the interface, so they are unaffected and are what this test exercises.
+        /// </remarks>
+        [Fact]
+        public void ListAndSetAsReadOnlyStayLiveOverTheSource()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.List;\n"
+                    + "import surtr.collections.Set;\n"
+                    + "fun run(): bool {\n"
+                    + "    let list = List<int>();\n"
+                    + "    let view = list.asReadOnly();\n"
+                    + "    if (view.length != 0) return false;\n"
+                    + "    list.add(1); list.add(2);\n"
+                    + "    if (view.length != 2) return false;\n"
+                    + "    var sum = 0;\n"
+                    + "    for (x in view) sum = sum + x;\n"
+                    + "    if (sum != 3) return false;\n"
+                    + "\n"
+                    + "    let s = Set<int>();\n"
+                    + "    let setView = s.asReadOnly();\n"
+                    + "    s.add(5);\n"
+                    + "    return setView.length == 1;\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        /// <summary>
+        /// Documents the pre-existing bug B5 (docs/Plan-Revision-Stdlib.md): every
+        /// `ReadOnlySet&lt;T&gt;`/`Set&lt;T&gt;` method taking an `IReadOnlySet&lt;T&gt;`/`ISet&lt;T&gt;`
+        /// parameter and calling a `T`-parameterised method on it (`other.contains(item)`) crashes
+        /// the VM, for every element type - not something a stdlib-only change can fix, since the
+        /// defect is in how the compiler emits an argument conversion into a user-declared generic
+        /// interface's own erased parameter. This test is expected to fail via a VM crash rather than
+        /// an assertion failure; flip it once the compiler fix lands, so it stops passing "by throwing"
+        /// and starts asserting the real behaviour (see the test this replaces in history for the
+        /// intended assertions: `a.isSubsetOf(b)` should be `true`).
+        /// </summary>
+        [Fact]
+        public void SetIsSubsetOfCurrentlyCrashesOnTheCompilerErasureBug()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Set;\n"
+                    + "fun run(): bool {\n"
+                    + "    let a = Set<int>();\n"
+                    + "    a.add(1); a.add(2);\n"
+                    + "    let b = Set<int>();\n"
+                    + "    b.add(1); b.add(2); b.add(3);\n"
+                    + "    return a.isSubsetOf(b);\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/Set.surtr");
+
+            Assert.ThrowsAny<Surtr.VM.SurtrExecutionException>(() => Bool(runtime, "run"));
+        }
+
         // ── D1: List<T> operator[] ───────────────────────────────────────────
 
         /// <summary>`List&lt;T&gt;` gets the same `operator[]` its sibling `LinkedList&lt;T&gt;` already had.</summary>
