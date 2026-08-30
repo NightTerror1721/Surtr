@@ -113,7 +113,10 @@ public class ReadOnlySet<T> : IReadOnlySet<T>
     
     public fun copyTo(array : T[], arrayIndex : int): void
     {
-        if (arrayIndex < 0 || arrayIndex >= array.length)
+        // Only `< 0` is checked here, matching List.copyTo: `arrayIndex == array.length` is valid
+        // when there is nothing to copy (an empty set into an empty array), and the space check
+        // below already rejects it once `length > 0`.
+        if (arrayIndex < 0)
             throw IndexOutOfRangeException("arrayIndex is out of range.");
         if (array.length - arrayIndex < length)
             throw ArgumentException("The number of elements in the source set is greater than the available space from arrayIndex to the end of the destination array.");

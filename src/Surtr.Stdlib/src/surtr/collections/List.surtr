@@ -125,6 +125,9 @@ public class List<T> : IList<T>
         return Iterator<T>(_items, _length);
     }
 
+    inline operator [](self: List<T>, index: int): T { return self.get(index); }
+    inline operator [](self: List<T>, index: int, value: T): void { self.set(index, value); }
+
     private fun ensureCapacity(min: int): void
     {
         if (_capacity < min)

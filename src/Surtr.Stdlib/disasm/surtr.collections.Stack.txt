@@ -37,7 +37,7 @@ module surtr.collections.Stack
     #16  surtr.collections.Stack:Stack<.contains(T0) -> bool
     #17  surtr.collections.Stack:Stack<.copyTo(T0[], int) -> void
     #18  surtr.collections.Stack:Stack<.iterate() -> surtr:IIterator<T0>
-    #19  surtr.collections.Stack:Stack.Iterator<.ctor(T0[], int, int) -> void
+    #19  surtr.collections.Stack:Stack.Iterator<.ctor(T0[], int) -> void
     #20  surtr.collections.Stack:Stack.Iterator<.get_current() -> T0
     #21  surtr.collections.Stack:Stack.Iterator<.dispose() -> void
     #22  surtr.collections.Stack:Stack.Iterator<.moveNext() -> bool
@@ -129,12 +129,12 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       0087  ReturnVoid
 
   [public] virtual add(item: unknown): void
-    ; entry 20, locals 2, stack 2, code 0103..010E
-      0103  Ldl0
-      0104  Ldl1
-      0105  Cast 3 (T0)
-      0108  InvokeSpecial 13 (add) args=2 ret=0
-      010D  ReturnVoid
+    ; entry 20, locals 2, stack 2, code 0101..010C
+      0101  Ldl0
+      0102  Ldl1
+      0103  Cast 3 (T0)
+      0106  InvokeSpecial 13 (add) args=2 ret=0
+      010B  ReturnVoid
 
   [public] clear(): void
     ; entry 11, locals 1, stack 1, code 0093..0099
@@ -144,10 +144,10 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       0098  ReturnVoid
 
   [public] virtual clear(): void
-    ; entry 22, locals 1, stack 1, code 0119..0120
-      0119  Ldl0
-      011A  InvokeSpecial 15 (clear) args=1 ret=0
-      011F  ReturnVoid
+    ; entry 22, locals 1, stack 1, code 0117..011E
+      0117  Ldl0
+      0118  InvokeSpecial 15 (clear) args=1 ret=0
+      011D  ReturnVoid
 
   [public] contains(item: T0): bool
     ; entry 12, locals 2, stack 2, code 0099..00A0
@@ -158,12 +158,12 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       009F  ReturnValue
 
   [public] virtual contains(item: unknown): bool
-    ; entry 24, locals 2, stack 2, code 0127..0132
-      0127  Ldl0
-      0128  Ldl1
-      0129  Cast 3 (T0)
-      012C  InvokeSpecial 16 (contains) args=2 ret=1
-      0131  ReturnValue
+    ; entry 24, locals 2, stack 2, code 0125..0130
+      0125  Ldl0
+      0126  Ldl1
+      0127  Cast 3 (T0)
+      012A  InvokeSpecial 16 (contains) args=2 ret=1
+      012F  ReturnValue
 
   [public] copyTo(array: T0[], arrayIndex: int): void
     ; entry 13, locals 5, stack 4, code 00A0..00C5
@@ -195,13 +195,13 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       00C4  ReturnVoid
 
   [public] virtual copyTo(array: unknown[], arrayIndex: int): void
-    ; entry 25, locals 3, stack 3, code 0132..013E
-      0132  Ldl0
-      0133  Ldl1
-      0134  Cast 0 (T0[])
-      0137  Ldl2
-      0138  InvokeSpecial 17 (copyTo) args=3 ret=0
-      013D  ReturnVoid
+    ; entry 25, locals 3, stack 3, code 0130..013C
+      0130  Ldl0
+      0131  Ldl1
+      0132  Cast 0 (T0[])
+      0135  Ldl2
+      0136  InvokeSpecial 17 (copyTo) args=3 ret=0
+      013B  ReturnVoid
 
   [public] ctor (): void
     ; entry 0, locals 1, stack 2, code 0000..000A
@@ -211,25 +211,25 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       0009  ReturnVoid
 
   [public] virtual get_isEmpty(): bool
-    ; entry 15, locals 1, stack 1, code 00DA..00E1
-      00DA  Ldl0
-      00DB  InvokeSpecial 8 (get_isEmpty) args=1 ret=1
-      00E0  ReturnValue
+    ; entry 15, locals 1, stack 1, code 00D8..00DF
+      00D8  Ldl0
+      00D9  InvokeSpecial 8 (get_isEmpty) args=1 ret=1
+      00DE  ReturnValue
 
   [public] virtual get_isReadOnly(): bool
-    ; entry 19, locals 1, stack 1, code 00FC..0103
-      00FC  Ldl0
-      00FD  InvokeSpecial 7 (get_isReadOnly) args=1 ret=1
-      0102  ReturnValue
+    ; entry 19, locals 1, stack 1, code 00FA..0101
+      00FA  Ldl0
+      00FB  InvokeSpecial 7 (get_isReadOnly) args=1 ret=1
+      0100  ReturnValue
 
   [public] virtual get_length(): int
-    ; entry 23, locals 1, stack 1, code 0120..0127
-      0120  Ldl0
-      0121  InvokeSpecial 6 (get_length) args=1 ret=1
-      0126  ReturnValue
+    ; entry 23, locals 1, stack 1, code 011E..0125
+      011E  Ldl0
+      011F  InvokeSpecial 6 (get_length) args=1 ret=1
+      0124  ReturnValue
 
   [public] iterate(): surtr:IIterator<T0>
-    ; entry 14, locals 1, stack 5, code 00C5..00DA
+    ; entry 14, locals 1, stack 4, code 00C5..00D8
       00C5  ObjNew 2 (surtr.collections.Stack:Stack.Iterator<T0>)
       00C8  Dup
       00C9  Ldl0
@@ -237,15 +237,14 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       00CD  Ldl0
       00CE  FieldGet 0 (_items)
       00D1  ArrLen
-      00D2  PushI8 -1
-      00D4  InvokeSpecial 19 (ctor) args=4 ret=0
-      00D9  ReturnValue
+      00D2  InvokeSpecial 19 (ctor) args=3 ret=0
+      00D7  ReturnValue
 
   [public] virtual iterate(): surtr:IIterator<unknown>
-    ; entry 26, locals 1, stack 1, code 013E..0145
-      013E  Ldl0
-      013F  InvokeSpecial 18 (iterate) args=1 ret=1
-      0144  ReturnValue
+    ; entry 26, locals 1, stack 1, code 013C..0143
+      013C  Ldl0
+      013D  InvokeSpecial 18 (iterate) args=1 ret=1
+      0142  ReturnValue
 
   [public] peek(): T0
     ; entry 8, locals 2, stack 3, code 0058..007F
@@ -275,11 +274,11 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       007E  ReturnValue
 
   [public] virtual peek(): unknown
-    ; entry 18, locals 1, stack 1, code 00F4..00FC
-      00F4  Ldl0
-      00F5  InvokeSpecial 12 (peek) args=1 ret=1
-      00FA  BoxDynamic
-      00FB  ReturnValue
+    ; entry 18, locals 1, stack 1, code 00F2..00FA
+      00F2  Ldl0
+      00F3  InvokeSpecial 12 (peek) args=1 ret=1
+      00F8  BoxDynamic
+      00F9  ReturnValue
 
   [public] pop(): T0
     ; entry 7, locals 2, stack 3, code 003A..0058
@@ -303,11 +302,11 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       0057  ReturnValue
 
   [public] virtual pop(): unknown
-    ; entry 17, locals 1, stack 1, code 00EC..00F4
-      00EC  Ldl0
-      00ED  InvokeSpecial 11 (pop) args=1 ret=1
-      00F2  BoxDynamic
-      00F3  ReturnValue
+    ; entry 17, locals 1, stack 1, code 00EA..00F2
+      00EA  Ldl0
+      00EB  InvokeSpecial 11 (pop) args=1 ret=1
+      00F0  BoxDynamic
+      00F1  ReturnValue
 
   [public] push(item: T0): void
     ; entry 6, locals 2, stack 2, code 0033..003A
@@ -318,12 +317,12 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       0039  ReturnVoid
 
   [public] virtual push(item: unknown): void
-    ; entry 16, locals 2, stack 2, code 00E1..00EC
-      00E1  Ldl0
-      00E2  Ldl1
-      00E3  Cast 3 (T0)
-      00E6  InvokeSpecial 10 (push) args=2 ret=0
-      00EB  ReturnVoid
+    ; entry 16, locals 2, stack 2, code 00DF..00EA
+      00DF  Ldl0
+      00E0  Ldl1
+      00E1  Cast 3 (T0)
+      00E4  InvokeSpecial 10 (push) args=2 ret=0
+      00E9  ReturnVoid
 
   [public] remove(item: T0): bool
     ; entry 10, locals 2, stack 3, code 0088..0093
@@ -334,12 +333,12 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
       0092  Throw
 
   [public] virtual remove(item: unknown): bool
-    ; entry 21, locals 2, stack 2, code 010E..0119
-      010E  Ldl0
-      010F  Ldl1
-      0110  Cast 3 (T0)
-      0113  InvokeSpecial 14 (remove) args=2 ret=1
-      0118  ReturnValue
+    ; entry 21, locals 2, stack 2, code 010C..0117
+      010C  Ldl0
+      010D  Ldl1
+      010E  Cast 3 (T0)
+      0111  InvokeSpecial 14 (remove) args=2 ret=1
+      0116  ReturnValue
 
   sealed class Iterator`1<T> : surtr:IIterator<T0>  [private]
     [private] field _index: int
@@ -348,95 +347,92 @@ class Stack`1<T> : surtr.collections.Stack:IStack<T0>  [public]
 
     [public] property current: T0 { get; }
       get:
-        ; entry 28, locals 1, stack 3, code 0155..0186
-          0155  Ldl0
-          0156  FieldGet 3 (_index)
-          0159  PushI8 0
-          015B  LT
-          015C  Dup
-          015D  JPNZ +13 -> L0 (016D)
-          0160  Pop
-          0161  Ldl0
-          0162  FieldGet 3 (_index)
-          0165  Ldl0
-          0166  FieldGet 2 (_length)
-          0169  GE
-          016A  JP +0 -> L0 (016D)
+        ; entry 28, locals 1, stack 3, code 0153..0184
+          0153  Ldl0
+          0154  FieldGet 3 (_index)
+          0157  PushI8 0
+          0159  LT
+          015A  Dup
+          015B  JPNZ +13 -> L0 (016B)
+          015E  Pop
+          015F  Ldl0
+          0160  FieldGet 3 (_index)
+          0163  Ldl0
+          0164  FieldGet 2 (_length)
+          0167  GE
+          0168  JP +0 -> L0 (016B)
         L0:
-          016D  JPZ +11 -> L1 (017B)
-          0170  ObjNew 4 (surtr:IndexOutOfRangeException)
-          0173  Dup
-          0174  Ldc2
-          0175  InvokeSpecial 36 (ctor) args=2 ret=0
-          017A  Throw
+          016B  JPZ +11 -> L1 (0179)
+          016E  ObjNew 4 (surtr:IndexOutOfRangeException)
+          0171  Dup
+          0172  Ldc2
+          0173  InvokeSpecial 36 (ctor) args=2 ret=0
+          0178  Throw
         L1:
-          017B  Ldl0
-          017C  FieldGet 1 (_items)
-          017F  Ldl0
-          0180  FieldGet 3 (_index)
-          0183  ArrGet
-          0184  BoxDynamic
-          0185  ReturnValue
+          0179  Ldl0
+          017A  FieldGet 1 (_items)
+          017D  Ldl0
+          017E  FieldGet 3 (_index)
+          0181  ArrGet
+          0182  BoxDynamic
+          0183  ReturnValue
 
-    [public] ctor (items: T0[], length: int, index: int = -1): void
-      ; entry 27, locals 4, stack 2, code 0145..0155
-        0145  Ldl0
-        0146  Ldl1
-        0147  FieldSet 1 (_items)
-        014A  Ldl0
-        014B  Ldl2
-        014C  FieldSet 2 (_length)
-        014F  Ldl0
-        0150  Ldl3
-        0151  FieldSet 3 (_index)
-        0154  ReturnVoid
+    [public] ctor (items: T0[], length: int): void
+      ; entry 27, locals 3, stack 2, code 0143..0153
+        0143  Ldl0
+        0144  Ldl1
+        0145  FieldSet 1 (_items)
+        0148  Ldl0
+        0149  Ldl2
+        014A  FieldSet 2 (_length)
+        014D  Ldl0
+        014E  Ldl2
+        014F  FieldSet 3 (_index)
+        0152  ReturnVoid
 
     [public] dispose(): void
-      ; entry 29, locals 1, stack 0, code 0186..0187
-        0186  ReturnVoid
+      ; entry 29, locals 1, stack 0, code 0184..0185
+        0184  ReturnVoid
 
     [public] virtual dispose(): void
-      ; entry 33, locals 1, stack 1, code 01B9..01C0
-        01B9  Ldl0
-        01BA  InvokeSpecial 21 (dispose) args=1 ret=0
-        01BF  ReturnVoid
+      ; entry 33, locals 1, stack 1, code 01B2..01B9
+        01B2  Ldl0
+        01B3  InvokeSpecial 21 (dispose) args=1 ret=0
+        01B8  ReturnVoid
 
     [public] virtual get_current(): unknown
-      ; entry 32, locals 1, stack 1, code 01B1..01B9
-        01B1  Ldl0
-        01B2  InvokeSpecial 20 (get_current) args=1 ret=1
-        01B7  BoxDynamic
-        01B8  ReturnValue
+      ; entry 32, locals 1, stack 1, code 01AA..01B2
+        01AA  Ldl0
+        01AB  InvokeSpecial 20 (get_current) args=1 ret=1
+        01B0  BoxDynamic
+        01B1  ReturnValue
 
     [public] moveNext(): bool
-      ; entry 30, locals 3, stack 2, code 0187..01AA
-        0187  Ldl0
-        0188  FieldGet 3 (_index)
-        018B  PushI8 1
-        018D  Add
-        018E  Ldl0
-        018F  FieldGet 2 (_length)
-        0192  JPGE +19 -> L0 (01A8)
-        0195  Ldl0
-        0196  FieldGet 3 (_index)
-        0199  Stl1
-        019A  Ldl1
-        019B  PushI8 1
-        019D  Add
-        019E  Stl2
-        019F  Ldl0
-        01A0  Ldl2
-        01A1  FieldSet 3 (_index)
-        01A4  Ldl1
-        01A5  Pop
-        01A6  PushTrue
-        01A7  ReturnValue
+      ; entry 30, locals 3, stack 2, code 0185..01A3
+        0185  Ldl0
+        0186  FieldGet 3 (_index)
+        0189  PushI8 0
+        018B  JPGT +2 -> L0 (0190)
+        018E  PushFalse
+        018F  ReturnValue
       L0:
-        01A8  PushFalse
-        01A9  ReturnValue
+        0190  Ldl0
+        0191  FieldGet 3 (_index)
+        0194  Stl1
+        0195  Ldl1
+        0196  PushI8 1
+        0198  Sub
+        0199  Stl2
+        019A  Ldl0
+        019B  Ldl2
+        019C  FieldSet 3 (_index)
+        019F  Ldl1
+        01A0  Pop
+        01A1  PushTrue
+        01A2  ReturnValue
 
     [public] virtual moveNext(): bool
-      ; entry 31, locals 1, stack 1, code 01AA..01B1
-        01AA  Ldl0
-        01AB  InvokeSpecial 22 (moveNext) args=1 ret=1
-        01B0  ReturnValue
+      ; entry 31, locals 1, stack 1, code 01A3..01AA
+        01A3  Ldl0
+        01A4  InvokeSpecial 22 (moveNext) args=1 ret=1
+        01A9  ReturnValue
