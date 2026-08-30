@@ -1,13 +1,12 @@
 # Plan-Revision-Stdlib — Auditoría de `src/Surtr.Stdlib` y propuestas
 
-> **Estado:** Fases 0-3 implementadas (B1-B4, D1-D5) y parte de la Fase 4 (C1-C3, ver §2.4) — ver la
-> nota de cada hallazgo en §2 y el resumen al final de §4. Durante la Fase 4 apareció un **hallazgo
-> nuevo y de prioridad más alta que todo lo anterior**: B5, un bug del *compilador* (no de la
-> stdlib) que rompe en producción toda la superficie de álgebra de conjuntos de `Set<T>`/
-> `ReadOnlySet<T>` para cualquier tipo de elemento. Ver §2.0 antes que ninguna otra sección — el
-> resto del trabajo de Fase 4 (README) y las Fases 5-7 (vectores/`Random`/`PriorityQueue`/`Map`)
-> están en pausa hasta decidir cómo proceder dado B5, porque el código nuevo previsto usaría el
-> mismo patrón (interfaces genéricas declaradas en Surtr) que dispara el bug. Nace de una revisión
+> **Estado:** Fases 0-4 implementadas (B1-B4, D1-D5, C1-C3, E1) — ver la nota de cada hallazgo en §2
+> y el resumen al final de §4. Durante la Fase 4 apareció un **hallazgo nuevo y de prioridad más
+> alta que todo lo anterior**: B5, un bug del *compilador* (no de la stdlib) que rompe en producción
+> toda la superficie de álgebra de conjuntos de `Set<T>`/`ReadOnlySet<T>` para cualquier tipo de
+> elemento. Ver §2.0 antes que ninguna otra sección — las Fases 5-7 (vectores/`Random`/
+> `PriorityQueue`/`Map`) están en pausa hasta decidir cómo proceder dado B5, porque el código nuevo
+> previsto usaría el mismo patrón (interfaces genéricas declaradas en Surtr) que dispara el bug. Nace de una revisión
 > manual de los 25 archivos `.surtr` de la stdlib (~3500 líneas), con hallazgos verificados
 > compilando y ejecutando código real contra el runtime (`surtrc build`/`surtr run`, y el arnés de
 > `SurtrCompilation` que ya usa `src/Surtr.Tests`), no solo por lectura. Cada arreglo de las Fases
@@ -333,7 +332,7 @@ vuelva a intentarlo sin saber por qué falla.
 
 ### 2.5 Documentación desactualizada — Prioridad MEDIA
 
-#### E1 — `src/Surtr.Stdlib/README.md` describe una stdlib que ya no existe
+#### E1 — `src/Surtr.Stdlib/README.md` describe una stdlib que ya no existe — **Corregido**
 - Lista solo 8 módulos; hoy hay 25 archivos `.surtr`.
 - Describe `surtr.core.Contracts` con contenido "`IDisposable<T>`" en `src/surtr/core/Contracts.surtr`
   — ese archivo **no existe**. Lo que existe es `src/surtr/diagnostics/Contracts.surtr`, con contenido
@@ -346,6 +345,11 @@ vuelva a intentarlo sin saber por qué falla.
 
 Por la propia norma de `CLAUDE.md` ("un doc que contradice al código es peor que no tener doc"),
 esto necesita una pasada de actualización — sea a mano o generándolo desde la lista real de módulos.
+
+**Arreglo aplicado:** tabla de módulos reescrita con los 24 archivos reales (23 más el que quedó
+tras eliminar `Buffer.surtr` en C1), agrupados igual que `src/surtr/`, y añadida a la tabla de "ya
+está en C#" la fila de `Native/SurtrDiagnosticsNative.cs` (`Profiler`/`Debug`/`RuntimeInfo`), que
+faltaba por completo.
 
 ---
 
@@ -493,11 +497,12 @@ limpio antes del valor sigue devolviendo el "cero" blando; a mitad de valor lanz
 `operator[]` en `List`, `Deque<T>` reimplementado con lista propia doblemente enlazada (D2, opción
 (b) de §5), orden de iteración de `Stack`, `ObjectDisposedException`, limpieza de `reset()`.
 
-**Fase 4 — Limpieza (C1-C3 hecho; E1 pendiente) — EN PAUSA por B5**
+**Fase 4 — Limpieza (C1-C3, E1) — Hecho**
 `Buffer<T>` eliminado, `ReadOnlyCollection<T>` resucitada con `asReadOnly()`, comentario de
-`Set.of` corregido con la razón real (§2.4). Descubierto durante esta fase: **B5** (§2.0), un bug
-de compilador que rompe `Set<T>`/`ReadOnlySet<T>` en producción. Queda pendiente solo `README.md`
-(E1), que no depende de B5 y se puede hacer en cualquier momento.
+`Set.of` corregido con la razón real (§2.4), `README.md` reescrito con los 24 módulos reales (E1).
+Descubierto durante esta fase: **B5** (§2.0), un bug de compilador que rompe
+`Set<T>`/`ReadOnlySet<T>` en producción — es lo único que queda pendiente de esta fase, y es lo que
+pausa las Fases 5-7.
 
 **Fase 5 — Adiciones de alto valor (§3.1, §3.2) — EN PAUSA por B5**
 `Vector2`/`Vector3`/`Quaternion` + `Angle` completo, y `Random`. Cualquier operador que compare dos
@@ -538,7 +543,6 @@ Pregunta abierta, bloqueante, descubierta durante la Fase 4:
 
 Preguntas que siguen abiertas para cuando se retome cada fase (sin bloquear, una vez resuelto B5):
 
-- **Fase 4 (resto):** ¿reescribir `README.md` (E1) ahora, sin esperar a B5, ya que no depende de él?
 - **Fase 5:** confirmar alcance exacto de la superficie de `Vector2`/`Vector3`/`Quaternion`/`Angle`
   antes de diseñar (¿se incluye `Vector4`/`Color`/`Rect` ya, o se dejan para después como sugiere
   §3.1?).
