@@ -2082,7 +2082,7 @@ namespace Surtr.Compiler.CodeGen
         {
             foreach (var method in symbol.Methods)
             {
-                if (context.TryGetBuilder(method, out var builder) && builder.Built is SurtrMethodInfo info)
+                if (TryGetBuiltInfo(context, method, out var info))
                 {
                     _builtMethods[method] = info;
                     _methodOwners[method] = built;
@@ -2094,7 +2094,7 @@ namespace Surtr.Compiler.CodeGen
             // module's own `EmitContext` — that only lives for the duration of building it.
             foreach (var method in symbol.ExtensionMethods)
             {
-                if (context.TryGetBuilder(method, out var builder) && builder.Built is SurtrMethodInfo info)
+                if (TryGetBuiltInfo(context, method, out var info))
                 {
                     _builtMethods[method] = info;
                     _methodOwners[method] = built;
@@ -2151,13 +2151,42 @@ namespace Surtr.Compiler.CodeGen
 
         private void RecordAccessor(EmitContext context, MethodSymbol? accessor, SurtrModule built, bool moduleLevel)
         {
-            if (accessor is null || !context.TryGetBuilder(accessor, out var builder) || builder.Built is not SurtrMethodInfo info)
+            if (accessor is null || !TryGetBuiltInfo(context, accessor, out var info))
                 return;
 
             _builtMethods[accessor] = info;
 
             if (moduleLevel)
                 _methodOwners[accessor] = built;
+        }
+
+        /// <summary>
+        /// The metadata a method became, carrying forward into modules built later (§15's cross-
+        /// module calls, and a module-level `native fun`/`native let`/`native var` reached the same
+        /// way): a compiled method answers through its builder, but a native one - module-level or
+        /// a class's own native accessor/method - was only ever <see cref="EmitContext.Bind"/>-ed
+        /// straight to its <see cref="SurtrMethodInfo"/>, with no builder to ask
+        /// <see cref="EmitContext.TryGetBuilder"/> about. Missing this case is what left a
+        /// cross-module native call unresolvable in every later module: `Record` only ever looked at
+        /// builders, so a native method's own module still knew its metadata but nothing built after
+        /// it ever inherited that knowledge.
+        /// </summary>
+        private static bool TryGetBuiltInfo(EmitContext context, MethodSymbol method, out SurtrMethodInfo info)
+        {
+            if (context.TryGetBuilder(method, out var builder) && builder.Built is SurtrMethodInfo built)
+            {
+                info = built;
+                return true;
+            }
+
+            if (method.IsNative && context.Resolve(method) is SurtrMethodInfo native)
+            {
+                info = native;
+                return true;
+            }
+
+            info = null!;
+            return false;
         }
         #endregion
 
