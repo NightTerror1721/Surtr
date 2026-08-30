@@ -1021,6 +1021,15 @@ namespace Surtr.Compiler.CodeGen
                     : 1;
             }
 
+            // §6.3: the unboxed-block receiver is a Direct-only convention. A non-Direct method is
+            // always reached through InvokeVirtual/InvokeInterface, which resolve the receiver's
+            // class through the entity registry - only a boxed reference is in it - so a call site
+            // can only ever have pushed one slot for it, whatever the block's own width is. The
+            // frame above still reserves the full block at local 0 - every field read in the body
+            // indexes into it - MethodBodyEmitter.EmitReceiverUnpackIfNeeded is the callee-side
+            // half that spreads the one incoming slot back into it.
+            int callSiteReceiverWidth = method.Dispatch == MethodDispatch.Direct ? receiverWidth : 1;
+
             var widths = new int[method.Parameters.Count];
             bool anyWide = receiverWidth > 1;
 
@@ -1031,7 +1040,7 @@ namespace Surtr.Compiler.CodeGen
             }
 
             if (anyWide)
-                builder.SetArgumentLayout(receiverWidth, widths);
+                builder.SetArgumentLayout(receiverWidth, widths, callSiteReceiverWidth);
 
             // The return width rides the declared type, not the call opcode's 0/1 gate - a
             // multi-field value class is the one case the descriptor cannot answer.
@@ -1590,6 +1599,17 @@ namespace Surtr.Compiler.CodeGen
 
             foreach (var candidate in _binder.MemberLookup.FindMethods(owner, wanted.Name))
             {
+                // FindMethods walks satisfied interfaces too (MemberLookup.CollectReachable), so a
+                // contract's own substituted member - IEquatable<Suit>.equals(Suit), with T0
+                // already read as Suit - comes back alongside the class's own declarations. Its
+                // erased key can coincide with `wantedKey` purely because both are re-deriving the
+                // same substituted shape, which would make `target` the interface's own method
+                // symbol instead of anything owner actually declared - a bridge calling itself.
+                // Only a member the class (or an ancestor class) genuinely wrote can be a bridge's
+                // forwarding target.
+                if (candidate.ContainingType?.TypeKind == TypeSymbolKind.Interface)
+                    continue;
+
                 string key = SlotKey(candidate);
 
                 // Sits in the vtable at the slot's own erased position already - SurtrTypeLinker's
@@ -1601,10 +1621,46 @@ namespace Surtr.Compiler.CodeGen
                 // signature - possibly more specific than the slot's erased shape, and possibly
                 // `Direct` (never placed in the vtable at all).
                 if (string.Equals(key, wantedKey, StringComparison.Ordinal))
+                {
                     target = candidate;
+                    continue;
+                }
+
+                // object's own equals/hashCode/toString slot is a legitimate target for ANY
+                // erased/generic contract parameter of matching arity, even though its own
+                // signature (object-typed) never equals a substituted `wanted` (Suit-typed, for
+                // IEquatable<Suit>.equals(Suit)): object accepts any reference by definition, and
+                // the real override's own body narrows it internally (a real `is Suit` test), so
+                // forwarding the still-erased argument straight through is exactly correct - unlike
+                // the exact-match case above, nothing here has to narrow it to the concrete type.
+                if (target is null && wanted.Parameters.Count > 0 && candidate.Dispatch != MethodDispatch.Direct
+                    && ReferenceEquals(candidate.ReturnType.NonNullable, wanted.ReturnType.NonNullable)
+                    && candidate.Parameters.Count == wanted.Parameters.Count
+                    && AllObjectTyped(candidate.Parameters))
+                {
+                    target = candidate;
+                }
             }
 
             return target is not null;
+        }
+
+        /// <summary>Whether every parameter is declared against the root <c>object</c> class.</summary>
+        /// <remarks>
+        /// The one class every reference is assignable to by definition, which is what makes a
+        /// candidate declared this way a legitimate bridge target for an erased/generic contract
+        /// slot even when its own signature never equals the slot's substituted one - see the
+        /// remark where this is called, in <see cref="NeedsBridge"/>.
+        /// </remarks>
+        private static bool AllObjectTyped(IReadOnlyList<ParameterSymbol> parameters)
+        {
+            foreach (var parameter in parameters)
+            {
+                if (parameter.Type.NonNullable is not NamedTypeSymbol { Name: "object" })
+                    return false;
+            }
+
+            return true;
         }
 
         /// <summary>The key <c>SurtrTypeLinker</c> matches a contract slot on.</summary>
@@ -1653,12 +1709,21 @@ namespace Surtr.Compiler.CodeGen
             // as it does for any other interface-dispatched call on one (§6.3) — the same test
             // MethodBodyEmitter.LoadReceiver makes for a value class's own virtual-dispatch body,
             // applied here since the bridge plays that same role. An enum is a value class from
-            // the migration (§2.4), so its bridge unboxes the same way. The `target` it forwards
-            // to keeps `Direct` dispatch and so expects the unboxed field, never the boxed form.
-            // A multi-field value class arrives as the SurtrInstance BoxValue packed rather than
-            // the SurtrBoxed BoxAs produced, so its mirror is UnboxValue over the whole width -
-            // the frame the forwarding call enters claims every field slot.
-            if (owner.TypeKind is TypeSymbolKind.ValueClass or TypeSymbolKind.Enum)
+            // the migration (§2.4), so its bridge unboxes the same way.
+            //
+            // Whether to unbox depends on what `target` itself wants, not on the bridge's own
+            // shape: a `Direct` target expects the unboxed field (the receiver's own convention),
+            // never the boxed form, so the bridge unwraps before forwarding. A non-Direct target -
+            // object.equals(other: object?) reached through a real override, for one - wants the
+            // boxed reference back, exactly what the bridge already holds, so unboxing here would
+            // hand InvokeVirtual raw slots where it expects the one reference it resolves a class
+            // through. A multi-field value class that IS unboxed arrives as the SurtrInstance
+            // BoxValue packed rather than the SurtrBoxed BoxAs produced, so its mirror is
+            // UnboxValue over the whole width - the frame the forwarding call enters claims every
+            // field slot.
+            bool targetIsDirect = target.Dispatch == MethodDispatch.Direct;
+
+            if (targetIsDirect && owner.TypeKind is TypeSymbolKind.ValueClass or TypeSymbolKind.Enum)
             {
                 if (ValueTypeLayout.WidthOfType(owner) > 1 && ValueTypeLayout.TryGet(owner, out var bridgeLayout, out _))
                     code.UnboxValue(bridgeLayout.Width);
@@ -1670,8 +1735,12 @@ namespace Surtr.Compiler.CodeGen
             {
                 code.LoadLocal(bridge.Parameter(i));
 
-                // The slot handed us a reference; the member it forwards to wants the real type.
-                if (!ReferenceEquals(declared.Parameters[i].Type, wanted.Parameters[i].Type))
+                // The slot handed us a reference; a Direct target wants the real type narrowed out
+                // of it. A non-Direct target's own parameter is itself a reference (object?, for
+                // equals's real override), so the erased value the slot already holds is exactly
+                // the right shape to forward - narrowing it away would be the same mismatch as
+                // unboxing the receiver above.
+                if (targetIsDirect && !ReferenceEquals(declared.Parameters[i].Type, wanted.Parameters[i].Type))
                     Narrow(code, wanted.Parameters[i].Type);
             }
 

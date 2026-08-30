@@ -98,9 +98,16 @@ namespace Surtr.Compiler.Binding
                 if (nearer.Parameters.Count != candidate.Parameters.Count)
                     continue;
 
+                // Nullability is deliberately excluded, the same way SignatureKey excludes it at
+                // the emit layer: a reference's nullability is not in the descriptor, so a base
+                // method reconstructed from imported metadata (which cannot encode it) reads as
+                // non-nullable regardless of how the declaring side wrote it - object.equals(other:
+                // object?)'s own parameter included. Comparing raw references here would then see
+                // two different-but-linked twins and treat a real override as an unrelated,
+                // equally-applicable overload, ambiguous at every call site on a derived receiver.
                 bool same = true;
                 for (int i = 0; i < nearer.Parameters.Count && same; i++)
-                    same = ReferenceEquals(nearer.Parameters[i].Type, candidate.Parameters[i].Type);
+                    same = ReferenceEquals(nearer.Parameters[i].Type.NonNullable, candidate.Parameters[i].Type.NonNullable);
 
                 if (same)
                     return true;

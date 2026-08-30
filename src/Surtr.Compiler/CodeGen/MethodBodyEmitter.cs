@@ -222,6 +222,52 @@ namespace Surtr.Compiler.CodeGen
                 return;
             }
 
+            EnsureFrameWidths();
+
+            // ApplyValueLayout (ModuleEmitter.cs) laid this frame's slots out against the
+            // receiver's full block width, since every field read of `this` in the body indexes
+            // into that block - but the call site only ever pushed one slot for it (§6.3). Every
+            // parameter therefore landed packed one slot to the left of where its own logical
+            // offset says it lives, by exactly this many slots.
+            int shift = ValueTypeLayout.WidthOfType(receiverType) - 1;
+
+            if (shift > 0 && _symbol.Parameters.Count > 0)
+            {
+                // Read every parameter out of its physical (unshifted) position into a fresh temp
+                // before the receiver is spread into the room its logical layout reserves for it -
+                // that spread writes over exactly the slots a packed parameter is still sitting in,
+                // so it has to happen after this, not before.
+                var temps = new SurtrLocal[_symbol.Parameters.Count];
+                for (int i = 0; i < _symbol.Parameters.Count; i++)
+                {
+                    var parameter = _symbol.Parameters[i];
+                    var logical = ParameterSlot(parameter);
+                    int width = _slotWidthsByIndex.TryGetValue(logical.Index, out int w) ? w : 1;
+                    int physical = logical.Index - shift;
+
+                    if (width > 1)
+                        Code.LoadValueLocal(physical, width);
+                    else
+                        Code.LoadLocal(physical);
+
+                    var temp = DeclareTemp("$paramShift", parameter.Type);
+                    EmitStoreLocal(temp);
+                    temps[i] = temp;
+                }
+
+                Code.LoadLocal(_method.Receiver);
+                UnpackIfMultiSlot(receiverType);
+                EmitStoreLocal(_method.Receiver);
+
+                for (int i = 0; i < _symbol.Parameters.Count; i++)
+                {
+                    EmitLoadLocal(temps[i]);
+                    EmitStoreLocal(ParameterSlot(_symbol.Parameters[i]));
+                }
+
+                return;
+            }
+
             // Slot 0 holds exactly the one boxed reference the caller passed - a raw single-slot
             // load, not EmitLoadLocal, which would already consult the width EnsureFrameWidths is
             // about to register and read (and fail to find) a block that is not there yet.
@@ -2579,6 +2625,15 @@ namespace Surtr.Compiler.CodeGen
                     }
 
                     Code.CastTo(Descriptors.Emit(to.NonNullable));
+
+                    // A cast landing on a genuinely different multi-field value type/enum - not the
+                    // `T? -> T` case above, which already named the same class - still has to
+                    // unbox: `object.equals(other: object?)`'s real override narrows `other` this
+                    // way before reading a field off it, and CastTo alone only checks the type and
+                    // leaves the one boxed reference on the stack.
+                    if (TryMultiSlotWidth(to, out _))
+                        UnpackIfMultiSlot(to);
+
                     return;
                 }
 
@@ -6885,7 +6940,7 @@ namespace Surtr.Compiler.CodeGen
             // A multi-field receiver is excluded: EmitReceiverUnpackIfNeeded already unpacked it
             // once, at the top of the body, into the raw per-field slots EmitLoadLocal just read -
             // unboxing again here would try to unbox a value that is no longer a box.
-            if (_symbol.ContainingType is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass } receiverClass
+            if (_symbol.ContainingType is NamedTypeSymbol { TypeKind: TypeSymbolKind.ValueClass or TypeSymbolKind.Enum } receiverClass
                 && _symbol.Dispatch != MethodDispatch.Direct
                 && ValueTypeLayout.WidthOfType(receiverClass) <= 1)
                 Code.Unbox();

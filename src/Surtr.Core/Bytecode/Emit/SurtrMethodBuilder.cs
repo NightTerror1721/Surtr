@@ -313,6 +313,19 @@ namespace Surtr.Bytecode.Emit
         /// </para>
         /// </remarks>
         public SurtrMethodBuilder SetArgumentLayout(int receiverWidth, int[] parameterWidths)
+            => SetArgumentLayout(receiverWidth, parameterWidths, callSiteReceiverWidth: receiverWidth);
+
+        /// <summary>
+        /// The <paramref name="callSiteReceiverWidth"/> overload: for a non-Direct instance method
+        /// on a multi-field value class, the frame still reserves <paramref name="receiverWidth"/>
+        /// slots at local 0 - every field read in the body indexes into that block - but a call
+        /// site only ever pushes one slot for the receiver (§6.3: InvokeVirtual/InvokeInterface
+        /// resolve it through the entity registry, which only a boxed reference is in), so
+        /// <see cref="ArgumentSlotCount"/> - what a caller's argsCount immediate has to match -
+        /// counts that one slot instead. MethodBodyEmitter.EmitReceiverUnpackIfNeeded is the
+        /// callee-side half that spreads it back into the block this builder still laid out.
+        /// </summary>
+        public SurtrMethodBuilder SetArgumentLayout(int receiverWidth, int[] parameterWidths, int callSiteReceiverWidth)
         {
             if (parameterWidths is null)
                 throw new ArgumentNullException(nameof(parameterWidths));
@@ -323,6 +336,9 @@ namespace Surtr.Bytecode.Emit
             bool hasReceiver = HasReceiver;
             if (receiverWidth < 1 || (!hasReceiver && receiverWidth != 1))
                 throw new ArgumentException("A receiver occupies at least one slot.", nameof(receiverWidth));
+
+            if (callSiteReceiverWidth < 1 || (!hasReceiver && callSiteReceiverWidth != 1))
+                throw new ArgumentException("A receiver occupies at least one slot.", nameof(callSiteReceiverWidth));
 
             _parameterOffsets = new int[_parameters.Length];
             int slot = hasReceiver ? receiverWidth : 0;
@@ -341,7 +357,10 @@ namespace Surtr.Bytecode.Emit
             while (_localNames.Count < slot)
                 _localNames.Add(null);
 
-            _argumentSlots = slot;
+            // What a call site's argsCount has to match: the frame's own layout above, minus
+            // whatever gap a narrower receiver at the call site leaves - the sum every other
+            // parameter's own width already covers.
+            _argumentSlots = slot - (receiverWidth - callSiteReceiverWidth);
             return this;
         }
 

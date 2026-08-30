@@ -41,6 +41,13 @@ namespace Surtr.Compiler.Binding
 
         private readonly Scope _globalScope = new Scope();
 
+        /// <summary>
+        /// The root <c>object</c> class's symbol, resolved once in <see cref="SeedGlobalScope"/> -
+        /// the implicit-base default and the value/enum member synthesis both need it repeatedly,
+        /// and it never changes within one compilation.
+        /// </summary>
+        private NamedTypeSymbol _objectType = null!;
+
         private readonly Dictionary<string, ModuleSymbol> _modules =
             new Dictionary<string, ModuleSymbol>(StringComparer.Ordinal);
 
@@ -249,7 +256,15 @@ namespace Surtr.Compiler.Binding
             // declaration of the same name shadows it rather than colliding with it.
             var library = _compilation.Importer.ImportModule(SurtrBuiltIns.Module);
             foreach (var type in library.Types)
+            {
                 _globalScope.AddCandidate(type.Name, type);
+
+                // Cached rather than re-resolved by name at every call site that needs it - the
+                // implicit-base default below, and the value/enum member synthesis further down,
+                // both need the root's symbol repeatedly.
+                if (type.Name == "object")
+                    _objectType = type;
+            }
 
             // Host-declared types (SurtrProject.AddHostType) reach source through no module, so
             // they join the same outermost layer: registered explicitly by the project, visible
@@ -5849,12 +5864,16 @@ namespace Surtr.Compiler.Binding
 
             if (!hasEquals)
             {
+                // A real override of object.equals(other: object?), not a same-name overload: the
+                // parameter is object?, and the body narrows it with an `is` test before reading
+                // any field - see ValueMemberSynthesizer.EqualsBody.
                 var method = new MethodSymbol(ValueMemberSynthesizer.EqualsName, definition, _factory.Bool)
                 {
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
-                    Dispatch = MethodDispatch.Direct,
-                    Parameters = new[] { new ParameterSymbol("other", definition, ordinal: 0) },
+                    Dispatch = MethodDispatch.Virtual,
+                    IsOverride = true,
+                    Parameters = new[] { new ParameterSymbol("other", _objectType.Nullable, ordinal: 0) },
                 };
                 members.Add(method);
                 _bound[method] = ValueMemberSynthesizer.EqualsBody(_factory, definition, fields, method);
@@ -5866,7 +5885,8 @@ namespace Surtr.Compiler.Binding
                 {
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
-                    Dispatch = MethodDispatch.Direct,
+                    Dispatch = MethodDispatch.Virtual,
+                    IsOverride = true,
                 };
                 members.Add(method);
                 _bound[method] = ValueMemberSynthesizer.HashCodeBody(_factory, MemberLookup, definition, fields, method);
@@ -5878,7 +5898,8 @@ namespace Surtr.Compiler.Binding
                 {
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
-                    Dispatch = MethodDispatch.Direct,
+                    Dispatch = MethodDispatch.Virtual,
+                    IsOverride = true,
                 };
                 members.Add(method);
                 _bound[method] = ValueMemberSynthesizer.ToDisplayStringBody(_factory, MemberLookup, definition, fields, method);
@@ -5931,13 +5952,19 @@ if (members.Count != definition.Members.Count)
 
             if (!HasMethod(members, EnumMemberSynthesizer.EqualsName, isStatic: false, definition))
             {
+                // A real override of object.equals(other: object?) - see the same note on
+                // ValueMemberSynthesizer's equals. `IsInline` still applies at any call site whose
+                // receiver's concrete type is known (a devirtualised call splices exactly as it did
+                // before); a genuinely polymorphic call goes through the vtable slot this occupies.
                 var method = new MethodSymbol(EnumMemberSynthesizer.EqualsName, definition, _factory.Bool)
                 {
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
                     IsInline = true,
                     IsConst = canBeConst,
-                    Parameters = new[] { new ParameterSymbol("other", definition, ordinal: 0) },
+                    Dispatch = MethodDispatch.Virtual,
+                    IsOverride = true,
+                    Parameters = new[] { new ParameterSymbol("other", _objectType.Nullable, ordinal: 0) },
                     Attributes = PureAndNoAlloc(),
                 };
                 members.Add(method);
@@ -5952,6 +5979,8 @@ if (members.Count != definition.Members.Count)
                     Accessibility = Accessibility.Public,
                     IsInline = true,
                     IsConst = canBeConst,
+                    Dispatch = MethodDispatch.Virtual,
+                    IsOverride = true,
                     Attributes = PureAndNoAlloc(),
                 };
                 members.Add(method);
@@ -5965,6 +5994,8 @@ if (members.Count != definition.Members.Count)
                     IsSynthetic = true,
                     Accessibility = Accessibility.Public,
                     IsConst = canBeConst,
+                    Dispatch = MethodDispatch.Virtual,
+                    IsOverride = true,
                     Attributes = PureOnly(),
                 };
                 members.Add(method);

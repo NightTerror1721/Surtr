@@ -196,8 +196,16 @@ namespace Surtr.Compiler.Binding
         }
 
         /// <summary>
-        /// Builds the <c>equals(other)</c> body: exactly the structural comparison <c>==</c> means.
+        /// Builds the <c>equals(other: object?)</c> body: exactly the structural comparison
+        /// <c>==</c> means, guarded by a real type test rather than a same-type overload.
         /// </summary>
+        /// <remarks>
+        /// A real override of <c>object.equals</c> (§4.8/<c>Compiler-Plan.md</c>), not a same-name
+        /// overload typed against this class: the parameter is <c>object?</c>, so <c>other</c> is
+        /// narrowed with an <c>is</c> test before any field on it is read - a value of a different
+        /// (or no) type answers <see langword="false"/> the same way a mismatched
+        /// <c>ReferenceEqual</c> would, without ever reaching the field walk.
+        /// </remarks>
         internal static BoundStatement EqualsBody(
             TypeSymbolFactory factory,
             NamedTypeSymbol type,
@@ -208,12 +216,10 @@ namespace Surtr.Compiler.Binding
             var argument = new BoundParameterExpression(NoSyntax, method.Parameters[0]);
 
             var same = new BoundBinaryExpression(NoSyntax, BinaryOperator.ReferenceEqual, receiver, argument, factory.Bool);
-            var guarded = new BoundBinaryExpression(
-                NoSyntax,
-                BinaryOperator.LogicalAnd,
-                new BoundBinaryExpression(NoSyntax, BinaryOperator.ReferenceNotEqual, receiver, new BoundLiteralExpression(NoSyntax, type.Nullable, null), factory.Bool),
-                new BoundBinaryExpression(NoSyntax, BinaryOperator.ReferenceNotEqual, argument, new BoundLiteralExpression(NoSyntax, type.Nullable, null), factory.Bool),
-                factory.Bool);
+
+            BoundExpression guarded = new BoundTypeTestExpression(NoSyntax, argument, type, factory.Bool);
+            var typedArgument = new BoundConversionExpression(
+                NoSyntax, argument, type, Conversion.Of(ConversionKind.ExplicitReference), isExplicit: false);
 
             for (int i = 0; i < fields.Count; i++)
             {
@@ -221,7 +227,7 @@ namespace Surtr.Compiler.Binding
                 var pair = new BoundBinaryExpression(
                     NoSyntax, BinaryOperator.Equal,
                     ThisField(receiver, field),
-                    ThisField(argument, field),
+                    ThisField(typedArgument, field),
                     factory.Bool);
                 guarded = new BoundBinaryExpression(NoSyntax, BinaryOperator.LogicalAnd, guarded, pair, factory.Bool);
             }
