@@ -317,6 +317,7 @@ sealed class Quaternion : surtr:ValueType  [public]
       09E1  LdlS 64
       09E3  ReturnValues 4
 
+  @surtr:Pure
   [public] static op_*(a: surtr.math.Vector:Quaternion, b: surtr.math.Vector:Quaternion): surtr.math.Vector:Quaternion
     ; entry 53, locals 12, stack 4, code 0A87..0B55
       0A87  LoadLocalField 0+3
@@ -389,6 +390,7 @@ sealed class Quaternion : surtr:ValueType  [public]
       0B51  LdlS 11
       0B53  ReturnValues 4
 
+  @surtr:Pure
   [public] static op_==(a: surtr.math.Vector:Quaternion, b: surtr.math.Vector:Quaternion): bool
     ; entry 55, locals 8, stack 2, code 0BE0..0C25
       0BE0  LoadLocalField 0+0
@@ -749,6 +751,7 @@ sealed class Vector2 : surtr:ValueType  [public]
       0134  LdlS 20
       0136  ReturnValues 2
 
+  @surtr:Pure
   [public] static op_*(a: surtr.math.Vector:Vector2, scalar: float): surtr.math.Vector:Vector2
     ; entry 16, locals 5, stack 2, code 0278..028C
       0278  LoadLocalField 0+0
@@ -763,6 +766,7 @@ sealed class Vector2 : surtr:ValueType  [public]
       0289  Ldl4
       028A  ReturnValues 2
 
+  @surtr:Pure
   [public] static op_*(scalar: float, a: surtr.math.Vector:Vector2): surtr.math.Vector:Vector2
     ; entry 17, locals 5, stack 2, code 028C..02A0
       028C  LoadLocalField 1+0
@@ -777,6 +781,7 @@ sealed class Vector2 : surtr:ValueType  [public]
       029D  Ldl4
       029E  ReturnValues 2
 
+  @surtr:Pure
   [public] static op_+(a: surtr.math.Vector:Vector2, b: surtr.math.Vector:Vector2): surtr.math.Vector:Vector2
     ; entry 14, locals 6, stack 2, code 0240..025C
       0240  LoadLocalField 0+0
@@ -791,6 +796,7 @@ sealed class Vector2 : surtr:ValueType  [public]
       0259  Ldl5
       025A  ReturnValues 2
 
+  @surtr:Pure
   [public] static op_-(a: surtr.math.Vector:Vector2, b: surtr.math.Vector:Vector2): surtr.math.Vector:Vector2
     ; entry 15, locals 6, stack 2, code 025C..0278
       025C  LoadLocalField 0+0
@@ -805,6 +811,7 @@ sealed class Vector2 : surtr:ValueType  [public]
       0275  Ldl5
       0276  ReturnValues 2
 
+  @surtr:Pure
   [public] static op_-u(a: surtr.math.Vector:Vector2): surtr.math.Vector:Vector2
     ; entry 19, locals 4, stack 2, code 02B4..02C6
       02B4  LoadLocalField 0+0
@@ -817,6 +824,7 @@ sealed class Vector2 : surtr:ValueType  [public]
       02C3  Ldl3
       02C4  ReturnValues 2
 
+  @surtr:Pure
   [public] static op_/(a: surtr.math.Vector:Vector2, scalar: float): surtr.math.Vector:Vector2
     ; entry 18, locals 5, stack 2, code 02A0..02B4
       02A0  LoadLocalField 0+0
@@ -831,6 +839,7 @@ sealed class Vector2 : surtr:ValueType  [public]
       02B1  Ldl4
       02B2  ReturnValues 2
 
+  @surtr:Pure
   [public] static op_==(a: surtr.math.Vector:Vector2, b: surtr.math.Vector:Vector2): bool
     ; entry 20, locals 4, stack 2, code 02C6..02E5
       02C6  LoadLocalField 0+0
@@ -1269,6 +1278,7 @@ sealed class Vector3 : surtr:ValueType  [public]
       04AD  LdlS 39
       04AF  ReturnValues 3
 
+  @surtr:Pure
   [public] static op_*(a: surtr.math.Vector:Vector3, scalar: float): surtr.math.Vector:Vector3
     ; entry 40, locals 7, stack 3, code 06FA..0719
       06FA  LoadLocalField 0+0
@@ -1288,6 +1298,7 @@ sealed class Vector3 : surtr:ValueType  [public]
       0715  LdlS 6
       0717  ReturnValues 3
 
+  @surtr:Pure
   [public] static op_*(scalar: float, a: surtr.math.Vector:Vector3): surtr.math.Vector:Vector3
     ; entry 41, locals 7, stack 3, code 0719..0738
       0719  LoadLocalField 1+0
@@ -1307,6 +1318,7 @@ sealed class Vector3 : surtr:ValueType  [public]
       0734  LdlS 6
       0736  ReturnValues 3
 
+  @surtr:Pure
   [public] static op_+(a: surtr.math.Vector:Vector3, b: surtr.math.Vector:Vector3): surtr.math.Vector:Vector3
     ; entry 38, locals 9, stack 3, code 069C..06CB
       069C  LoadLocalField 0+0
@@ -1326,6 +1338,7 @@ sealed class Vector3 : surtr:ValueType  [public]
       06C7  LdlS 8
       06C9  ReturnValues 3
 
+  @surtr:Pure
   [public] static op_-(a: surtr.math.Vector:Vector3, b: surtr.math.Vector:Vector3): surtr.math.Vector:Vector3
     ; entry 39, locals 9, stack 3, code 06CB..06FA
       06CB  LoadLocalField 0+0
@@ -1345,6 +1358,7 @@ sealed class Vector3 : surtr:ValueType  [public]
       06F6  LdlS 8
       06F8  ReturnValues 3
 
+  @surtr:Pure
   [public] static op_-u(a: surtr.math.Vector:Vector3): surtr.math.Vector:Vector3
     ; entry 43, locals 6, stack 3, code 0757..0771
       0757  LoadLocalField 0+0
@@ -1361,6 +1375,7 @@ sealed class Vector3 : surtr:ValueType  [public]
       076E  Ldl5
       076F  ReturnValues 3
 
+  @surtr:Pure
   [public] static op_/(a: surtr.math.Vector:Vector3, scalar: float): surtr.math.Vector:Vector3
     ; entry 42, locals 7, stack 3, code 0738..0757
       0738  LoadLocalField 0+0
@@ -1380,6 +1395,7 @@ sealed class Vector3 : surtr:ValueType  [public]
       0753  LdlS 6
       0755  ReturnValues 3
 
+  @surtr:Pure
   [public] static op_==(a: surtr.math.Vector:Vector3, b: surtr.math.Vector:Vector3): bool
     ; entry 44, locals 6, stack 2, code 0771..07A3
       0771  LoadLocalField 0+0

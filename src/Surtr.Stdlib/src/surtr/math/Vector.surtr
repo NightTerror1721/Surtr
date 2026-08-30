@@ -50,13 +50,20 @@ public value class Vector2
         return Vector2(a.x + (b.x - a.x) * ct, a.y + (b.y - a.y) * ct);
     }
 
+    @Pure
     operator+(a: Vector2, b: Vector2): Vector2 { return Vector2(a.x + b.x, a.y + b.y); }
+    @Pure
     operator-(a: Vector2, b: Vector2): Vector2 { return Vector2(a.x - b.x, a.y - b.y); }
+    @Pure
     operator*(a: Vector2, scalar: float): Vector2 { return Vector2(a.x * scalar, a.y * scalar); }
+    @Pure
     operator*(scalar: float, a: Vector2): Vector2 { return Vector2(a.x * scalar, a.y * scalar); }
+    @Pure
     operator/(a: Vector2, scalar: float): Vector2 { return Vector2(a.x / scalar, a.y / scalar); }
+    @Pure
     operator-(a: Vector2): Vector2 { return Vector2(-a.x, -a.y); }
 
+    @Pure
     inline operator==(a: Vector2, b: Vector2): bool { return a.x == b.x && a.y == b.y; }
 }
 
@@ -120,13 +127,20 @@ public value class Vector3
         return Vector3(a.x + (b.x - a.x) * ct, a.y + (b.y - a.y) * ct, a.z + (b.z - a.z) * ct);
     }
 
+    @Pure
     operator+(a: Vector3, b: Vector3): Vector3 { return Vector3(a.x + b.x, a.y + b.y, a.z + b.z); }
+    @Pure
     operator-(a: Vector3, b: Vector3): Vector3 { return Vector3(a.x - b.x, a.y - b.y, a.z - b.z); }
+    @Pure
     operator*(a: Vector3, scalar: float): Vector3 { return Vector3(a.x * scalar, a.y * scalar, a.z * scalar); }
+    @Pure
     operator*(scalar: float, a: Vector3): Vector3 { return Vector3(a.x * scalar, a.y * scalar, a.z * scalar); }
+    @Pure
     operator/(a: Vector3, scalar: float): Vector3 { return Vector3(a.x / scalar, a.y / scalar, a.z / scalar); }
+    @Pure
     operator-(a: Vector3): Vector3 { return Vector3(-a.x, -a.y, -a.z); }
 
+    @Pure
     inline operator==(a: Vector3, b: Vector3): bool { return a.x == b.x && a.y == b.y && a.z == b.z; }
 }
 
@@ -185,6 +199,7 @@ public value class Quaternion
     public override fun toString(): string => "($x, $y, $z, $w)";
 
     /// Hamilton product: composes two rotations, `a` applied first, then `b`.
+    @Pure
     operator*(a: Quaternion, b: Quaternion): Quaternion
     {
         return Quaternion(
@@ -208,6 +223,7 @@ public value class Quaternion
         return v + (uv * (2.0 * w)) + (uuv * 2.0);
     }
 
+    @Pure
     inline operator==(a: Quaternion, b: Quaternion): bool
     {
         return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;

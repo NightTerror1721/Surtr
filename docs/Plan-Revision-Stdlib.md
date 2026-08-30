@@ -6,9 +6,11 @@
 > segundo bug de compilador encontrado en el camino — B6 (§2.6), sin corregir. Dos bugs de
 > compilador nuevos en total esta ronda: **B5** (interfaces genéricas declaradas en Surtr rompían la
 > VM — ya corregido, ver §2.0) y **B6** (una llamada entre módulos que recibe y devuelve una `value
-> class` multi-campo revienta — sigue sin corregir, bloquea el valor real de la Fase 5). Fases 6-7
-> en pausa hasta que se resuelva B6, por la misma razón que motivó pausar antes por B5: seguirían el
-> mismo patrón (`PriorityQueue`, `Map`) y probablemente lo dispararían igual. Nace de una revisión
+> class` multi-campo revienta — sigue sin corregir, bloquea el valor real de la Fase 5;
+> re-verificado con el mismo repro tras una tanda no relacionada de commits sobre la jerarquía de
+> tipos, sigue reventando igual). Fases 6-7 en pausa hasta que se resuelva B6, por la misma razón que
+> motivó pausar antes por B5: seguirían el mismo patrón (`PriorityQueue`, `Map`) y probablemente lo
+> dispararían igual. Nace de una revisión
 > manual de los 25 archivos `.surtr` originales de la stdlib (~3500 líneas), con hallazgos
 > verificados compilando y ejecutando código real contra el runtime (`surtrc build`/`surtr run`, y
 > el arnés de `SurtrCompilation` que ya usa `src/Surtr.Tests`), no solo por lectura. Cada arreglo
@@ -433,6 +435,37 @@ use `Vector2`/`Vector3`/`Quaternion` a escribir su lógica de vectores dentro de
 aparte con el repro completo y la caracterización exacta (ver el chip de tarea de la sesión) — nota:
 una tarea anterior, más estrecha, describía esto como específico de `forceinline`; esa
 caracterización era incorrecta/incompleta y quedó sustituida por la de arriba.
+
+**Re-verificado hoy, tras una tanda no relacionada de commits que tocan la jerarquía de tipos**
+(`object`/`Enum`/`ValueType` como raíz real, `equals`/`hashCode`/`toString` como overrides de vtable
+de verdad — ver el log de `git log --oneline`, commits `6a31338`..`9b8de0b`): el repro mínimo de una
+línea de §2.6 **sigue reventando exactamente igual**, con el mismo mensaje (`Operand stack underflow
+at offset 14 in 'run': the instruction pops 2 but the stack holds 1`). Esos commits no tocan el
+camino de emisión de `CallExternal` que causa B6, así que no hay razón para esperar que lo hayan
+corregido de rebote, y no lo han hecho. `Quaternion` sigue fusionado en `surtr.math.Vector` — **no se
+puede separar de vuelta a su propio módulo todavía**, exactamente por la razón que motivó fusionarlo:
+haría que su propio `rotate()`/composición dejaran de ser same-módulo y dispararían B6 de nuevo, esta
+vez sin ningún workaround posible desde dentro del propio módulo.
+
+Aprovechando la re-verificación, se hizo una pasada de humo más amplia sobre el resto de la stdlib
+real (no solo Vector/Quaternion) para comprobar si esa misma tanda de commits había roto algo más:
+`byte`, `Vector2`, enums (`LogLevel`, `SeekOrigin`) y `Angle` ejercitados **entre módulos** (el
+`equals`/`hashCode`/`toString` que ahora es un override de vtable de verdad) — incluyendo `Set<T>` y
+`List<T>` con `byte`, `Vector2` y un enum como elemento, que es exactamente el camino que dependía de
+la comparación por identidad antes de que estos tipos tuvieran overrides reales. Los ocho escenarios
+probados pasan sin cambios en la stdlib. La suite completa (3332 tests) también sigue en verde. No se
+ha encontrado ninguna regresión de esa tanda de commits en la stdlib.
+
+**Hallazgo menor sí encontrado y corregido en el camino (no relacionado con B6/la tanda de
+commits, preexistente):** `Quaternion.rotate()` está marcado `@Pure` pero llamaba a `operator+` y
+`operator*` de `Vector3`, que no lo estaban — el compilador ya lo señalaba (`warning SURTR3081:
+'rotate' is marked @Pure but calls 'op_+'/'op_*', which is not marked @Pure`) pero la advertencia
+nunca se veía porque el paso de build de la stdlib (`Surtr.Stdlib.Tool`) solo vuelca diagnósticos
+cuando hay un error, no en éxito. Corregido marcando `@Pure` todos los operadores aritméticos y de
+comparación de `Vector2`/`Vector3`/`Quaternion` (ya eran puros de hecho — sin efectos secundarios,
+solo leen campos y construyen un valor nuevo — simplemente no llevaban la marca), coherente con
+`dot`/`cross`/`toString`/`conjugate`, que ya la llevaban. Verificado con una compilación de la stdlib
+completa que vuelca todos los diagnósticos: cero warnings tras el arreglo.
 
 ---
 
