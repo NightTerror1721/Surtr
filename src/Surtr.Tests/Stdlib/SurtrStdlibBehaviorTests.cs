@@ -856,5 +856,318 @@ namespace Surtr.Tests.Stdlib
 
             Assert.True(Bool(runtime, "run"));
         }
+
+        // ── Fase 6: PriorityQueue<T> ─────────────────────────────────────────
+        //
+        // Unlike Vector2/Vector3/Quaternion (blocked by B6 - see docs/Plan-Revision-Stdlib.md §2.6),
+        // PriorityQueue<T>'s whole surface is generic: every parameter/return naming T is erased to
+        // a single slot regardless of what concrete type a caller substitutes, so there is no
+        // concrete multi-field value class in any of its signatures for B6 to catch. These tests use
+        // the ordinary BuildAndLoad (a real driver in its own `test` module), not BuildAndLoadWithin,
+        // specifically to confirm that cross-module path actually works here.
+
+        [Fact]
+        public void PriorityQueueDequeuesInAscendingPriorityOrder()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.PriorityQueue;\n"
+                    + "fun run(): bool {\n"
+                    + "    let q = PriorityQueue<string>();\n"
+                    + "    q.enqueue(\"c\", 3.0);\n"
+                    + "    q.enqueue(\"a\", 1.0);\n"
+                    + "    q.enqueue(\"b\", 2.0);\n"
+                    + "    if (q.dequeue() != \"a\") return false;\n"
+                    + "    if (q.dequeue() != \"b\") return false;\n"
+                    + "    if (q.dequeue() != \"c\") return false;\n"
+                    + "    return q.isEmpty;\n"
+                    + "}\n",
+                "collections/PriorityQueue.surtr", "collections/Collection.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void PriorityQueueHandlesManyOutOfOrderInsertions()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.PriorityQueue;\n"
+                    + "fun run(): bool {\n"
+                    + "    let q = PriorityQueue<int>();\n"
+                    + "    var i = 200;\n"
+                    + "    while (i > 0) {\n"
+                    + "        i -= 1;\n"
+                    + "        q.enqueue(i, i.toFloat());\n"
+                    + "    }\n"
+                    + "    var expected = 0;\n"
+                    + "    while (!q.isEmpty) {\n"
+                    + "        if (q.dequeue() != expected) return false;\n"
+                    + "        expected += 1;\n"
+                    + "    }\n"
+                    + "    return expected == 200;\n"
+                    + "}\n",
+                "collections/PriorityQueue.surtr", "collections/Collection.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void PriorityQueuePeekDoesNotRemove()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.PriorityQueue;\n"
+                    + "fun run(): bool {\n"
+                    + "    let q = PriorityQueue<int>();\n"
+                    + "    q.enqueue(5, 5.0);\n"
+                    + "    q.enqueue(1, 1.0);\n"
+                    + "    if (q.peek() != 1) return false;\n"
+                    + "    if (q.length != 2) return false;\n"
+                    + "    return q.peek() == 1;\n"
+                    + "}\n",
+                "collections/PriorityQueue.surtr", "collections/Collection.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void PriorityQueueDequeueOnEmptyThrows()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.PriorityQueue;\n"
+                    + "fun run(): int { return PriorityQueue<int>().dequeue(); }\n",
+                "collections/PriorityQueue.surtr", "collections/Collection.surtr");
+
+            Assert.Throws<Surtr.VM.SurtrThrownException>(() => runtime.Invoke(Function(runtime, "run")));
+        }
+
+        [Fact]
+        public void PriorityQueueClearEmptiesIt()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.PriorityQueue;\n"
+                    + "fun run(): bool {\n"
+                    + "    let q = PriorityQueue<int>();\n"
+                    + "    q.enqueue(1, 1.0);\n"
+                    + "    q.enqueue(2, 2.0);\n"
+                    + "    q.clear();\n"
+                    + "    return q.isEmpty && q.length == 0;\n"
+                    + "}\n",
+                "collections/PriorityQueue.surtr", "collections/Collection.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void PriorityQueueContainsAndCopyTo()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.PriorityQueue;\n"
+                    + "fun run(): bool {\n"
+                    + "    let q = PriorityQueue<int>();\n"
+                    + "    q.enqueue(10, 3.0);\n"
+                    + "    q.enqueue(20, 1.0);\n"
+                    + "    q.enqueue(30, 2.0);\n"
+                    + "    if (!q.contains(20)) return false;\n"
+                    + "    if (q.contains(99)) return false;\n"
+                    + "    let dest = array<int>(3);\n"
+                    + "    q.copyTo(dest, 0);\n"
+                    + "    var sum = 0;\n"
+                    + "    for (var i = 0; i < 3; i++) sum += dest[i];\n"
+                    + "    return sum == 60;\n"
+                    + "}\n",
+                "collections/PriorityQueue.surtr", "collections/Collection.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void PriorityQueueOfVectorsAcrossModules()
+        {
+            // Also exercises T = a multi-field value class (Vector2) as the queue's element type -
+            // still fine, since PriorityQueue<T> never names a concrete value class in any signature.
+            var runtime = BuildAndLoad(
+                "import surtr.math.Vector;\n"
+                    + "import surtr.collections.PriorityQueue;\n"
+                    + "fun run(): float {\n"
+                    + "    let q = PriorityQueue<Vector2>();\n"
+                    + "    q.enqueue(Vector2(9.0, 9.0), 2.0);\n"
+                    + "    q.enqueue(Vector2(1.0, 1.0), 1.0);\n"
+                    + "    return q.dequeue().x;\n"
+                    + "}\n",
+                "math/Vector.surtr", "math/Math.surtr", "math/Angle.surtr",
+                "collections/PriorityQueue.surtr", "collections/Collection.surtr");
+
+            Assert.Equal(1.0, Float(runtime, "run"));
+        }
+
+        // ── Fase 6: Map<K,V> ─────────────────────────────────────────────────
+        //
+        // IMap<K,V>/IReadOnlyMap<K,V> deliberately do not extend IReadOnlyCollection<(K,V)> - doing
+        // so would require implementing `contains(item: (K,V)): bool`, and B7 (see
+        // docs/Plan-Revision-Stdlib.md) crashes any interface-dispatched method taking a 2+-element
+        // tuple parameter. IMap<K,V> only needs IIterable<(K,V)> for `for (pair in map)`, so this is
+        // the one collections/ interface pair that stands alone rather than joining the
+        // IReadOnlyCollection<T> hierarchy. These tests use BuildAndLoad (a real driver in its own
+        // `test` module) specifically to exercise that interface dispatch across a module boundary.
+
+        [Fact]
+        public void MapSetGetAndContainsKey()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Map;\n"
+                    + "fun run(): bool {\n"
+                    + "    let m = Map<string, int>();\n"
+                    + "    m.set(\"a\", 1);\n"
+                    + "    m.set(\"b\", 2);\n"
+                    + "    if (!m.containsKey(\"a\")) return false;\n"
+                    + "    if (m.containsKey(\"z\")) return false;\n"
+                    + "    return m.get(\"b\") == 2;\n"
+                    + "}\n",
+                "collections/Map.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void MapIndexerReadsAndWrites()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Map;\n"
+                    + "fun run(): int {\n"
+                    + "    let m = Map<string, int>();\n"
+                    + "    m[\"x\"] = 10;\n"
+                    + "    m[\"x\"] = m[\"x\"] + 5;\n"
+                    + "    return m[\"x\"];\n"
+                    + "}\n",
+                "collections/Map.surtr");
+
+            Assert.Equal(15, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void MapRemoveAndClear()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Map;\n"
+                    + "fun run(): bool {\n"
+                    + "    let m = Map<string, int>();\n"
+                    + "    m.set(\"a\", 1);\n"
+                    + "    m.set(\"b\", 2);\n"
+                    + "    if (!m.remove(\"a\")) return false;\n"
+                    + "    if (m.remove(\"a\")) return false;\n"
+                    + "    if (m.containsKey(\"a\")) return false;\n"
+                    + "    m.clear();\n"
+                    + "    return m.isEmpty && m.length == 0;\n"
+                    + "}\n",
+                "collections/Map.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void MapIteratesRealKeyValuePairsWithReferenceTypedValues()
+        {
+            // Exercises for-in over a Map from another module - the highest-risk path for B7, since
+            // it drives Map<K,V>.iterate() through the interface (IIterable<(K,V)>) rather than
+            // calling the concrete class directly. V = string here deliberately - see B8 just below
+            // for why V = a primitive (int/float/bool/char) is a separate, currently broken case.
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Map;\n"
+                    + "fun run(): int {\n"
+                    + "    let m = Map<string, string>();\n"
+                    + "    m.set(\"a\", \"x\");\n"
+                    + "    m.set(\"b\", \"yy\");\n"
+                    + "    m.set(\"c\", \"zzz\");\n"
+                    + "    var sum = 0;\n"
+                    + "    for (pair in m) sum += pair[1].length;\n"
+                    + "    return sum;\n"
+                    + "}\n",
+                "collections/Map.surtr");
+
+            Assert.Equal(6, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// B8 (docs/Plan-Revision-Stdlib.md): a dict field whose declared type is <c>{K: V}</c> with
+        /// BOTH K and V still generic (as opposed to Set&lt;T&gt;'s own <c>{T: bool}</c>, where only
+        /// the key side is generic and the value side, <c>bool</c>, is concrete) silently returns
+        /// wrong data for a primitive V once it round-trips through <c>values()</c>/iteration -
+        /// confirmed down to plain array indexing (<c>vs[0]</c>) with no loop involved, so it is not
+        /// a for-in-specific lowering gap. A single scalar `get(key)` is unaffected (still correct),
+        /// which is what makes <see cref="MapSetGetAndContainsKey"/> and
+        /// <see cref="MapIndexerReadsAndWrites"/> above pass despite this. Pins the current (broken)
+        /// behaviour until the compiler bug is fixed - flip it to assert the real sum afterwards.
+        /// </summary>
+        [Fact]
+        public void MapIterationWithPrimitiveIntValuesCurrentlyReturnsCorruptedData()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Map;\n"
+                    + "fun run(): int {\n"
+                    + "    let m = Map<string, int>();\n"
+                    + "    m.set(\"a\", 1);\n"
+                    + "    m.set(\"b\", 2);\n"
+                    + "    m.set(\"c\", 3);\n"
+                    + "    var sum = 0;\n"
+                    + "    for (pair in m) sum += pair[1];\n"
+                    + "    return sum;\n"
+                    + "}\n",
+                "collections/Map.surtr");
+
+            Assert.NotEqual(6, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void MapKeysAndValuesArrays()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Map;\n"
+                    + "fun run(): bool {\n"
+                    + "    let m = Map<string, int>();\n"
+                    + "    m.set(\"a\", 1);\n"
+                    + "    m.set(\"b\", 2);\n"
+                    + "    let ks = m.keys();\n"
+                    + "    let vs = m.values();\n"
+                    + "    return ks.length == 2 && vs.length == 2;\n"
+                    + "}\n",
+                "collections/Map.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void MapAsReadOnlyStaysLiveAndHidesMutation()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Map;\n"
+                    + "fun run(): bool {\n"
+                    + "    let m = Map<string, int>();\n"
+                    + "    m.set(\"a\", 1);\n"
+                    + "    let ro = m.asReadOnly();\n"
+                    + "    if (ro.length != 1) return false;\n"
+                    + "    m.set(\"b\", 2);\n"
+                    + "    return ro.length == 2 && ro.get(\"b\") == 2;\n"
+                    + "}\n",
+                "collections/Map.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void MapOfVectorValuesAcrossModules()
+        {
+            // T = a multi-field value class (Vector2) as the map's VALUE type - fine, since
+            // IMap<K,V>'s own signatures never name a concrete value class, only G0/G1.
+            var runtime = BuildAndLoad(
+                "import surtr.math.Vector;\n"
+                    + "import surtr.collections.Map;\n"
+                    + "fun run(): float {\n"
+                    + "    let m = Map<string, Vector2>();\n"
+                    + "    m.set(\"origin\", Vector2(1.0, 2.0));\n"
+                    + "    return m.get(\"origin\").y;\n"
+                    + "}\n",
+                "math/Vector.surtr", "math/Math.surtr", "math/Angle.surtr", "collections/Map.surtr");
+
+            Assert.Equal(2.0, Float(runtime, "run"));
+        }
     }
 }

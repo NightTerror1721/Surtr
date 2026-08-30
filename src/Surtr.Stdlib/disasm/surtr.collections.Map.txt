@@ -1,0 +1,480 @@
+module surtr.collections.Map
+  constants: 0   types: 6   fields: 1   methods: 57   modules: 0
+
+  type table:
+    #0  {T0: T1}
+    #1  T0[]
+    #2  T1[]
+    #3  (T0, T1)[]
+    #4  (T0, T1)
+    #5  surtr.collections.Map:ReadOnlyMap<T0, T1>
+
+  field table:
+    #0  surtr.collections.Map:Map<._dict: {T0: T1}
+
+  method table:
+    #0  surtr.collections.Map:IReadOnlyMap<.get_length() -> int
+    #1  surtr.collections.Map:IReadOnlyMap<.get_isEmpty() -> bool
+    #2  surtr.collections.Map:IReadOnlyMap<.containsKey(T0) -> bool
+    #3  surtr.collections.Map:IReadOnlyMap<.get(T0) -> T1
+    #4  surtr.collections.Map:IReadOnlyMap<.keys() -> T0[]
+    #5  surtr.collections.Map:IReadOnlyMap<.values() -> T1[]
+    #6  surtr.collections.Map:IMap<.get_isReadOnly() -> bool
+    #7  surtr.collections.Map:IMap<.set(T0, T1) -> void
+    #8  surtr.collections.Map:IMap<.remove(T0) -> bool
+    #9  surtr.collections.Map:IMap<.clear() -> void
+    #10  surtr.collections.Map:Map<.ctor() -> void
+    #11  surtr.collections.Map:Map<.ctor(surtr:IIterable<(T0, T1)>) -> void
+    #12  surtr.collections.Map:Map<.get_length() -> int
+    #13  surtr.collections.Map:Map<.get_isEmpty() -> bool
+    #14  surtr.collections.Map:Map<.get_isReadOnly() -> bool
+    #15  surtr.collections.Map:Map<.containsKey(T0) -> bool
+    #16  surtr.collections.Map:Map<.get(T0) -> T1
+    #17  surtr.collections.Map:Map<.set(T0, T1) -> void
+    #18  surtr.collections.Map:Map<.remove(T0) -> bool
+    #19  surtr.collections.Map:Map<.clear() -> void
+    #20  surtr.collections.Map:Map<.keys() -> T0[]
+    #21  surtr.collections.Map:Map<.values() -> T1[]
+    #22  surtr.collections.Map:Map<.iterate() -> surtr:IIterator<(T0, T1)>
+    #23  surtr.collections.Map:Map<.op_[](surtr.collections.Map:Map<T0, T1>, T0) -> T1
+    #24  surtr.collections.Map:Map<.op_[](surtr.collections.Map:Map<T0, T1>, T0, T1) -> void
+    #25  surtr.collections.Map:Map<.asReadOnly() -> surtr.collections.Map:IReadOnlyMap<T0, T1>
+    #26  surtr.collections.Map:ReadOnlyMap<.ctor(surtr.collections.Map:IReadOnlyMap<T0, T1>) -> void
+    #27  surtr.collections.Map:ReadOnlyMap<.get_length() -> int
+    #28  surtr.collections.Map:ReadOnlyMap<.get_isEmpty() -> bool
+    #29  surtr.collections.Map:ReadOnlyMap<.containsKey(T0) -> bool
+    #30  surtr.collections.Map:ReadOnlyMap<.get(T0) -> T1
+    #31  surtr.collections.Map:ReadOnlyMap<.keys() -> T0[]
+    #32  surtr.collections.Map:ReadOnlyMap<.values() -> T1[]
+    #33  surtr.collections.Map:ReadOnlyMap<.iterate() -> surtr:IIterator<(T0, T1)>
+    #34  surtr:IIterable<T0>.iterate() -> surtr:IIterator<T0>
+    #35  surtr:IIterator<T0>.moveNext() -> bool
+    #36  surtr:IIterator<T0>.get_current() -> T0
+    #37  surtr:IDisposable.dispose() -> void
+    #38  [].iterate() -> surtr:IIterator<T0>
+    #39  surtr.collections.Map:Map<.get_isReadOnly() -> bool
+    #40  surtr.collections.Map:Map<.set(unknown, unknown) -> void
+    #41  surtr.collections.Map:Map<.remove(unknown) -> bool
+    #42  surtr.collections.Map:Map<.clear() -> void
+    #43  surtr.collections.Map:Map<.get_length() -> int
+    #44  surtr.collections.Map:Map<.get_isEmpty() -> bool
+    #45  surtr.collections.Map:Map<.containsKey(unknown) -> bool
+    #46  surtr.collections.Map:Map<.get(unknown) -> unknown
+    #47  surtr.collections.Map:Map<.keys() -> unknown[]
+    #48  surtr.collections.Map:Map<.values() -> unknown[]
+    #49  surtr.collections.Map:Map<.iterate() -> surtr:IIterator<unknown>
+    #50  surtr.collections.Map:ReadOnlyMap<.get_length() -> int
+    #51  surtr.collections.Map:ReadOnlyMap<.get_isEmpty() -> bool
+    #52  surtr.collections.Map:ReadOnlyMap<.containsKey(unknown) -> bool
+    #53  surtr.collections.Map:ReadOnlyMap<.get(unknown) -> unknown
+    #54  surtr.collections.Map:ReadOnlyMap<.keys() -> unknown[]
+    #55  surtr.collections.Map:ReadOnlyMap<.values() -> unknown[]
+    #56  surtr.collections.Map:ReadOnlyMap<.iterate() -> surtr:IIterator<unknown>
+
+interface IMap`2<K, V> : surtr.collections.Map:IReadOnlyMap<T0, T1>  [public]
+
+  [public] property isReadOnly: bool { get; }
+    get:
+      ; abstract
+
+  [public] abstract clear(): void
+
+  [public] abstract remove(key: T0): bool
+
+  [public] abstract set(key: T0, value: T1): void
+
+interface IReadOnlyMap`2<K, V> : surtr:IIterable<(T0, T1)>  [public]
+
+  [public] property isEmpty: bool { get; }
+    get:
+      ; abstract
+
+  [public] property length: int { get; }
+    get:
+      ; abstract
+
+  [public] abstract containsKey(key: T0): bool
+
+  [public] abstract get(key: T0): T1
+
+  [public] abstract keys(): T0[]
+
+  [public] abstract values(): T1[]
+
+class Map`2<K, V> : surtr:object, surtr.collections.Map:IMap<T0, T1>  [public]
+  [private] readonly field _dict: {T0: T1}
+
+  [public] property isEmpty: bool { get; }
+    get:
+      ; entry 3, locals 1, stack 2, code 005C..0065
+        005C  Ldl0
+        005D  FieldGet 0 (_dict)
+        0060  DictLen
+        0061  PushI8 0
+        0063  EQ
+        0064  ReturnValue
+
+  [public] property isReadOnly: bool { get; }
+    get:
+      ; entry 4, locals 1, stack 1, code 0065..0067
+        0065  PushFalse
+        0066  ReturnValue
+
+  [public] property length: int { get; }
+    get:
+      ; entry 2, locals 1, stack 1, code 0056..005C
+        0056  Ldl0
+        0057  FieldGet 0 (_dict)
+        005A  DictLen
+        005B  ReturnValue
+
+  [public] asReadOnly(): surtr.collections.Map:IReadOnlyMap<T0, T1>
+    ; entry 15, locals 1, stack 1, code 00F4..00F9
+      00F4  Ldl0
+      00F5  BoxAs 5 (surtr.collections.Map:ReadOnlyMap<T0, T1>)
+      00F8  ReturnValue
+
+  [public] clear(): void
+    ; entry 9, locals 1, stack 1, code 0085..008B
+      0085  Ldl0
+      0086  FieldGet 0 (_dict)
+      0089  DictClear
+      008A  ReturnVoid
+
+  [public] virtual clear(): void
+    ; entry 19, locals 1, stack 1, code 0111..0118
+      0111  Ldl0
+      0112  InvokeSpecial 19 (clear) args=1 ret=0
+      0117  ReturnVoid
+
+  [public] containsKey(key: T0): bool
+    ; entry 5, locals 2, stack 2, code 0067..006E
+      0067  Ldl0
+      0068  FieldGet 0 (_dict)
+      006B  Ldl1
+      006C  DictIn
+      006D  ReturnValue
+
+  [public] virtual containsKey(key: unknown): bool
+    ; entry 22, locals 2, stack 2, code 0126..012E
+      0126  Ldl0
+      0127  Ldl1
+      0128  InvokeSpecial 15 (containsKey) args=2 ret=1
+      012D  ReturnValue
+
+  [public] ctor (): void
+    ; entry 0, locals 1, stack 2, code 0000..000A
+      0000  Ldl0
+      0001  DictPack 0 ({T0: T1}) count=0
+      0006  FieldSet 0 (_dict)
+      0009  ReturnVoid
+
+  [public] ctor (collection: surtr:IIterable<(T0, T1)>): void
+    ; entry 1, locals 6, stack 3, code 000A..0056
+      000A  Ldl0
+      000B  DictPack 0 ({T0: T1}) count=0
+      0010  FieldSet 0 (_dict)
+      0013  Ldl1
+      0014  InvokeInterface 34 (iterate) args=1 ret=1
+      0019  Stl2
+    ; try_0 begin
+    L0:
+      001A  Ldl2
+      001B  InvokeInterface 35 (moveNext) args=1 ret=1
+      0020  JPZ +32 -> L1 (0043)
+      0023  Ldl2
+      0024  InvokeInterface 36 (get_current) args=1 ret=1
+      0029  TupUnpack 2
+      002B  StoreValueLocal 3 x2
+      002F  Ldl0
+      0030  FieldGet 0 (_dict)
+      0033  LoadLocalField 3+0
+      0038  BoxDynamic
+      0039  LoadLocalField 3+1
+      003E  BoxDynamic
+      003F  DictSet
+      0040  JP -41 -> L0 (001A)
+    ; try_0 end
+    L1:
+      0043  Ldl2
+      0044  InvokeInterface 37 (dispose) args=1 ret=0
+      0049  JP +9 -> L2 (0055)
+    ; catch_0 (*)
+      004C  Stl5
+      004D  Ldl2
+      004E  InvokeInterface 37 (dispose) args=1 ret=0
+      0053  Ldl5
+      0054  Throw
+    L2:
+      0055  ReturnVoid
+    handler [001A, 0043) -> 004C  catch *
+
+  [public] get(key: T0): T1
+    ; entry 6, locals 2, stack 2, code 006E..0076
+      006E  Ldl0
+      006F  FieldGet 0 (_dict)
+      0072  Ldl1
+      0073  DictGet
+      0074  BoxDynamic
+      0075  ReturnValue
+
+  [public] virtual get(key: unknown): unknown
+    ; entry 23, locals 2, stack 2, code 012E..0137
+      012E  Ldl0
+      012F  Ldl1
+      0130  InvokeSpecial 16 (get) args=2 ret=1
+      0135  BoxDynamic
+      0136  ReturnValue
+
+  [public] virtual get_isEmpty(): bool
+    ; entry 21, locals 1, stack 1, code 011F..0126
+      011F  Ldl0
+      0120  InvokeSpecial 13 (get_isEmpty) args=1 ret=1
+      0125  ReturnValue
+
+  [public] virtual get_isReadOnly(): bool
+    ; entry 16, locals 1, stack 1, code 00F9..0100
+      00F9  Ldl0
+      00FA  InvokeSpecial 14 (get_isReadOnly) args=1 ret=1
+      00FF  ReturnValue
+
+  [public] virtual get_length(): int
+    ; entry 20, locals 1, stack 1, code 0118..011F
+      0118  Ldl0
+      0119  InvokeSpecial 12 (get_length) args=1 ret=1
+      011E  ReturnValue
+
+  [public] iterate(): surtr:IIterator<(T0, T1)>
+    ; entry 12, locals 10, stack 4, code 009B..00D4
+      009B  Ldl0
+      009C  FieldGet 0 (_dict)
+      009F  DictLen
+      00A0  ArrNew 3 ((T0, T1)[])
+      00A3  Stl1
+      00A4  PushI8 0
+      00A6  Stl2
+      00A7  Ldl0
+      00A8  FieldGet 0 (_dict)
+      00AB  Stl3
+      00AC  Ldl3
+      00AD  DictKeys 1 (T0[])
+      00B0  Stl4
+      00B1  PushI8 -1
+      00B3  Stl5
+      00B4  JP +14 -> L1 (00C5)
+    L0:
+      00B7  Ldl1
+      00B8  Ldl2
+      00B9  LoadValueLocal 8 x2
+      00BD  TupPack 4 ((T0, T1)) count=2
+      00C1  ArrSet
+      00C2  IncLocal 2 by 1
+    L1:
+      00C5  DictForNext 4 5 3 8 -> L0 (00B7)
+      00CD  Ldl1
+      00CE  InvokeVirtual 38 (iterate) args=1 ret=1
+      00D3  ReturnValue
+
+  [public] virtual iterate(): surtr:IIterator<unknown>
+    ; entry 26, locals 1, stack 1, code 0145..014C
+      0145  Ldl0
+      0146  InvokeSpecial 22 (iterate) args=1 ret=1
+      014B  ReturnValue
+
+  [public] keys(): T0[]
+    ; entry 10, locals 1, stack 1, code 008B..0093
+      008B  Ldl0
+      008C  FieldGet 0 (_dict)
+      008F  DictKeys 1 (T0[])
+      0092  ReturnValue
+
+  [public] virtual keys(): unknown[]
+    ; entry 24, locals 1, stack 1, code 0137..013E
+      0137  Ldl0
+      0138  InvokeSpecial 20 (keys) args=1 ret=1
+      013D  ReturnValue
+
+  [public] static op_[](self: surtr.collections.Map:Map<T0, T1>, key: T0): T1
+    ; entry 13, locals 4, stack 2, code 00D4..00E1
+      00D4  Ldl0
+      00D5  Stl2
+      00D6  Ldl1
+      00D7  BoxDynamic
+      00D8  Stl3
+      00D9  Ldl2
+      00DA  FieldGet 0 (_dict)
+      00DD  Ldl3
+      00DE  DictGet
+      00DF  BoxDynamic
+      00E0  ReturnValue
+
+  [public] static op_[](self: surtr.collections.Map:Map<T0, T1>, key: T0, value: T1): void
+    ; entry 14, locals 6, stack 3, code 00E1..00F4
+      00E1  Ldl0
+      00E2  Stl3
+      00E3  Ldl1
+      00E4  BoxDynamic
+      00E5  Stl4
+      00E6  Ldl2
+      00E7  BoxDynamic
+      00E8  Stl5
+      00E9  Ldl3
+      00EA  FieldGet 0 (_dict)
+      00ED  Ldl4
+      00EE  Ldl5
+      00EF  DictSet
+      00F0  JP +0 -> L0 (00F3)
+    L0:
+      00F3  ReturnVoid
+
+  [public] remove(key: T0): bool
+    ; entry 8, locals 2, stack 2, code 007E..0085
+      007E  Ldl0
+      007F  FieldGet 0 (_dict)
+      0082  Ldl1
+      0083  DictDel
+      0084  ReturnValue
+
+  [public] virtual remove(key: unknown): bool
+    ; entry 18, locals 2, stack 2, code 0109..0111
+      0109  Ldl0
+      010A  Ldl1
+      010B  InvokeSpecial 18 (remove) args=2 ret=1
+      0110  ReturnValue
+
+  [public] set(key: T0, value: T1): void
+    ; entry 7, locals 3, stack 3, code 0076..007E
+      0076  Ldl0
+      0077  FieldGet 0 (_dict)
+      007A  Ldl1
+      007B  Ldl2
+      007C  DictSet
+      007D  ReturnVoid
+
+  [public] virtual set(key: unknown, value: unknown): void
+    ; entry 17, locals 3, stack 3, code 0100..0109
+      0100  Ldl0
+      0101  Ldl1
+      0102  Ldl2
+      0103  InvokeSpecial 17 (set) args=3 ret=0
+      0108  ReturnVoid
+
+  [public] values(): T1[]
+    ; entry 11, locals 1, stack 1, code 0093..009B
+      0093  Ldl0
+      0094  FieldGet 0 (_dict)
+      0097  DictValues 2 (T1[])
+      009A  ReturnValue
+
+  [public] virtual values(): unknown[]
+    ; entry 25, locals 1, stack 1, code 013E..0145
+      013E  Ldl0
+      013F  InvokeSpecial 21 (values) args=1 ret=1
+      0144  ReturnValue
+
+sealed class ReadOnlyMap`2<K, V> : surtr:ValueType, surtr.collections.Map:IReadOnlyMap<T0, T1>  [public]
+  [private] readonly field _map: surtr.collections.Map:IReadOnlyMap<T0, T1>
+
+  [public] property isEmpty: bool { get; }
+    get:
+      ; entry 29, locals 1, stack 1, code 0154..015B
+        0154  Ldl0
+        0155  InvokeInterface 1 (get_isEmpty) args=1 ret=1
+        015A  ReturnValue
+
+  [public] property length: int { get; }
+    get:
+      ; entry 28, locals 1, stack 1, code 014D..0154
+        014D  Ldl0
+        014E  InvokeInterface 0 (get_length) args=1 ret=1
+        0153  ReturnValue
+
+  [public] containsKey(key: T0): bool
+    ; entry 30, locals 2, stack 2, code 015B..0164
+      015B  Ldl0
+      015C  Ldl1
+      015D  BoxDynamic
+      015E  InvokeInterface 2 (containsKey) args=2 ret=1
+      0163  ReturnValue
+
+  [public] virtual containsKey(key: unknown): bool
+    ; entry 37, locals 2, stack 2, code 0192..019B
+      0192  Ldl0
+      0193  Unbox
+      0194  Ldl1
+      0195  InvokeSpecial 29 (containsKey) args=2 ret=1
+      019A  ReturnValue
+
+  [public] ctor (map: surtr.collections.Map:IReadOnlyMap<T0, T1>): void
+    ; entry 27, locals 2, stack 0, code 014C..014D
+      014C  ReturnVoid
+
+  [public] get(key: T0): T1
+    ; entry 31, locals 2, stack 2, code 0164..016D
+      0164  Ldl0
+      0165  Ldl1
+      0166  BoxDynamic
+      0167  InvokeInterface 3 (get) args=2 ret=1
+      016C  ReturnValue
+
+  [public] virtual get(key: unknown): unknown
+    ; entry 38, locals 2, stack 2, code 019B..01A5
+      019B  Ldl0
+      019C  Unbox
+      019D  Ldl1
+      019E  InvokeSpecial 30 (get) args=2 ret=1
+      01A3  BoxDynamic
+      01A4  ReturnValue
+
+  [public] virtual get_isEmpty(): bool
+    ; entry 36, locals 1, stack 1, code 018A..0192
+      018A  Ldl0
+      018B  Unbox
+      018C  InvokeSpecial 28 (get_isEmpty) args=1 ret=1
+      0191  ReturnValue
+
+  [public] virtual get_length(): int
+    ; entry 35, locals 1, stack 1, code 0182..018A
+      0182  Ldl0
+      0183  Unbox
+      0184  InvokeSpecial 27 (get_length) args=1 ret=1
+      0189  ReturnValue
+
+  [public] iterate(): surtr:IIterator<(T0, T1)>
+    ; entry 34, locals 1, stack 1, code 017B..0182
+      017B  Ldl0
+      017C  InvokeInterface 34 (iterate) args=1 ret=1
+      0181  ReturnValue
+
+  [public] virtual iterate(): surtr:IIterator<unknown>
+    ; entry 41, locals 1, stack 1, code 01B5..01BD
+      01B5  Ldl0
+      01B6  Unbox
+      01B7  InvokeSpecial 33 (iterate) args=1 ret=1
+      01BC  ReturnValue
+
+  [public] keys(): T0[]
+    ; entry 32, locals 1, stack 1, code 016D..0174
+      016D  Ldl0
+      016E  InvokeInterface 4 (keys) args=1 ret=1
+      0173  ReturnValue
+
+  [public] virtual keys(): unknown[]
+    ; entry 39, locals 1, stack 1, code 01A5..01AD
+      01A5  Ldl0
+      01A6  Unbox
+      01A7  InvokeSpecial 31 (keys) args=1 ret=1
+      01AC  ReturnValue
+
+  [public] values(): T1[]
+    ; entry 33, locals 1, stack 1, code 0174..017B
+      0174  Ldl0
+      0175  InvokeInterface 5 (values) args=1 ret=1
+      017A  ReturnValue
+
+  [public] virtual values(): unknown[]
+    ; entry 40, locals 1, stack 1, code 01AD..01B5
+      01AD  Ldl0
+      01AE  Unbox
+      01AF  InvokeSpecial 32 (values) args=1 ret=1
+      01B4  ReturnValue

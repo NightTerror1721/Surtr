@@ -3,14 +3,17 @@
 > **Estado:** Fases 0-4 completas (B1-B4, D1-D5, C1-C3, E1). Fase 5 parcial: `Angle` completo y
 > `Random` están terminados y son utilizables; `Vector2`/`Vector3`/`Quaternion` están escritos,
 > matemáticamente correctos y probados, pero **no son usables por ningún llamador real** por un
-> segundo bug de compilador encontrado en el camino — B6 (§2.6), sin corregir. Dos bugs de
-> compilador nuevos en total esta ronda: **B5** (interfaces genéricas declaradas en Surtr rompían la
-> VM — ya corregido, ver §2.0) y **B6** (una llamada entre módulos que recibe y devuelve una `value
-> class` multi-campo revienta — sigue sin corregir, bloquea el valor real de la Fase 5;
-> re-verificado con el mismo repro tras una tanda no relacionada de commits sobre la jerarquía de
-> tipos, sigue reventando igual). Fases 6-7 en pausa hasta que se resuelva B6, por la misma razón que
-> motivó pausar antes por B5: seguirían el mismo patrón (`PriorityQueue`, `Map`) y probablemente lo
-> dispararían igual. Nace de una revisión
+> segundo bug de compilador encontrado en el camino — B6 (§2.6), sin corregir, re-verificado
+> igual de roto tras una tanda no relacionada de commits sobre la jerarquía de tipos. Fase 6 hecha,
+> con matices: `PriorityQueue<T>` completa y utilizable de verdad entre módulos; `Map<K,V>` utilizable
+> por clave individual pero no recomendada con valores primitivos por B8. Cuatro bugs de compilador/
+> runtime nuevos en total esta ronda: **B5** (interfaces genéricas declaradas en Surtr rompían la
+> VM — corregido, §2.0), **B6** (una llamada entre módulos que recibe y devuelve una `value class`
+> multi-campo revienta — sin corregir, §2.6), **B7** (un parámetro-tupla de 2+ elementos en un método
+> con dispatch de interfaz revienta al emitirse — sin corregir, §2.7) y **B8** (un `dict<K,V>` con K y
+> V genéricos simultáneos de la misma clase corrompe en silencio los valores primitivos leídos vía
+> `keys()`/`values()`/iteración — sin corregir, el más serio de los cuatro por fallar sin ningún error
+> ni excepción, §2.8). Nace de una revisión
 > manual de los 25 archivos `.surtr` originales de la stdlib (~3500 líneas), con hallazgos
 > verificados compilando y ejecutando código real contra el runtime (`surtrc build`/`surtr run`, y
 > el arnés de `SurtrCompilation` que ya usa `src/Surtr.Tests`), no solo por lectura. Cada arreglo
@@ -467,6 +470,133 @@ solo leen campos y construyen un valor nuevo — simplemente no llevaban la marc
 `dot`/`cross`/`toString`/`conjugate`, que ya la llevaban. Verificado con una compilación de la stdlib
 completa que vuelca todos los diagnósticos: cero warnings tras el arreglo.
 
+### 2.7 B7 — Bug del compilador: parámetro-tupla de 2+ elementos en un método con dispatch por interfaz — Prioridad ALTA — **Sin corregir, reportado**
+
+Descubierto implementando `PriorityQueue<T>`/`Map<K,V>` (Fase 6, §3.3/§3.4). Distinto de B6: B6 es
+sobre `value class` **concretas** de varios campos; este es sobre **tuplas** (`(A, B, ...)`), y ni
+siquiera hace falta que sus elementos sean genéricos/erasionados — lo que importa es que la tupla
+tenga 2 o más elementos y sea el tipo de un **parámetro** (no del receptor, no del retorno) de un
+método cuyo dispatch no es `Direct` — es decir, un método que satisface una interfaz.
+
+**Síntoma:** `SURTR4001: Operand stack underflow` al **emitir el propio cuerpo del método**, no en
+quien lo llama — falla incluso si nada invoca el método todavía, porque el fallo está en cómo el
+emisor calcula el layout de parámetros de un método con dispatch no-`Direct`, no en el call site.
+
+**Regla exacta, confirmada con cinco repros mínimos aislados** (vía `SurtrCompilation`/
+`ModuleEmitter`, sin pasar por disco):
+
+| Método... | ...con parámetro tupla de 2+ elementos | ...con parámetro tupla de 1 elemento | ...sin parámetro tupla (solo retorno tupla) |
+|---|---|---|---|
+| **No** satisface ninguna interfaz (dispatch `Direct`) | Funciona | Funciona | Funciona |
+| **Sí** satisface una interfaz (dispatch no-`Direct`) | **Revienta siempre** | Funciona | Funciona |
+
+Repro mínimo (una interfaz, una clase, sin `dict` ni genéricos de por medio):
+
+```surtr
+public interface IThing<K, V> { fun contains(item: (K, V)): bool; }
+public class Box<K, V> : IThing<K, V> {
+    public constructor() { }
+    public fun contains(item: (K, V)): bool {
+        if (item[0] == item[0]) return true;
+        return item[1] == item[1];
+    }
+}
+```
+falla con `Operand stack underflow at offset 5 in 'contains': the instruction pops 3 but the stack
+holds 2`, sin que nada llame nunca a `contains`.
+
+**Hipótesis de causa raíz (sin confirmar con debugging en el emisor):** el mismo commit que arregló
+seis bugs del calling convention no-`Direct` (`76e076c`, "make equals/hashCode/toString real vtable
+overrides") introdujo `EmitReceiverUnpackIfNeeded` desplazando los parámetros a temporales frescos
+para no pisar al receptor desempaquetado — ese desplazamiento probablemente asume que cada parámetro
+ocupa exactamente un slot, lo cual es cierto para cualquier tipo salvo una tupla (o un `value class`
+multi-campo, aunque eso cae en B6 antes de llegar aquí) de 2+ elementos, que ocupa varios slots
+contiguos. Nótese que un **retorno** tupla no dispara nada (`iterate(): IIterator<(K,V)>` en una
+interfaz funciona sin problema) — el bug es específicamente sobre el layout de **entrada**.
+
+**Impacto real:** cierra la puerta a que `IMap<K,V>` extienda `IReadOnlyCollection<(K,V)>` (que
+exigiría implementar `contains(item: (K,V)): bool`) — ver B8 más abajo para el motivo por el que
+`Map<K,V>` tampoco podría haber usado esa vía de todas formas. `PriorityQueue<T>` no se ve afectado:
+ningún método suyo toma una tupla como parámetro.
+
+**Arreglo aplicado en la stdlib:** `IReadOnlyMap<K,V>`/`IMap<K,V>` (`collections/Map.surtr`) declaran
+únicamente `IIterable<(K,V)>` (un `iterate()` sin parámetros) en vez de `IReadOnlyCollection<(K,V)>`
+— así no hay ningún método con parámetro-tupla satisfaciendo una interfaz en toda la superficie de
+`Map<K,V>`. Documentado en el propio archivo con la razón exacta.
+
+### 2.8 B8 — Bug del compilador/runtime: `dict<K,V>` con K y V genéricos simultáneos corrompe silenciosamente los valores primitivos leídos vía `keys()`/`values()`/iteración — Prioridad CRÍTICA — **Sin corregir, reportado**
+
+Descubierto implementando `Map<K,V>` (Fase 6, §3.4), al intentar validar `for (pair in map)` con
+`Map<string, int>`. Es el hallazgo más serio de toda esta ronda: a diferencia de B6/B7 (que fallan
+ruidosamente, `SURTR4001` en tiempo de compilación), **este falla en silencio** — compila y ejecuta
+sin ningún error, y simplemente devuelve datos incorrectos.
+
+**Síntoma:** un campo `{K: V}` declarado dentro de una clase **genérica propia** (no un `dict<K,V>`
+suelto con tipos concretos, y no el `{T: bool}` de `Set<T>` — ver por qué abajo), con **K y V siendo
+dos parámetros de tipo genéricos distintos simultáneamente**, devuelve valores corruptos para un `V`
+primitivo (`int` confirmado; `float`/`bool`/`char` no probados pero con la misma forma de erasure, se
+asume el mismo riesgo) en cuanto se lee a través de `keys()`/`values()` o de la iteración
+(`for (pair in dict)`) — confirmado hasta con indexación directa sobre el array resultante (`vs[0]`),
+así que no es un problema específico del lowering de `for-in`.
+
+**Regla exacta, confirmada con seis repros mínimos aislados** (vía `SurtrCompilation`/
+`ModuleEmitter`):
+
+| Operación sobre `{K: V}` (K, V genéricos de la misma clase) | V = `string` (referencia) | V = `int` (primitivo) |
+|---|---|---|
+| `get(key): V` (un único valor, sin array) | Correcto | **Correcto** |
+| `values(): V[]` + `for`-in sobre el array, leyendo `.length`/sumando | Correcto | **Corrupto** |
+| `values(): V[]` + indexación directa `vs[0]` (sin bucle) | — (no probado, innecesario) | **Corrupto** |
+| `dict<string, int>` **concreto**, sin genéricos de por medio | — | Correcto |
+| `Set<T>`'s `{T: bool}` (solo la key es genérica; el value, `bool`, es concreto) | — | Correcto (ya en producción) |
+
+Repro mínimo:
+
+```surtr
+public class Box<K, V> {
+    private let _dict: {K: V};
+    public constructor() { _dict = {}; }
+    public fun set(k: K, v: V): void { _dict.set(k, v); }
+    public fun values(): V[] => _dict.values();
+}
+// Box<string, int>(): set("a",1), set("b",2), set("c",3)
+// vs = box.values(); vs[0] debería ser 1 — en la práctica sale un valor distinto (visto: 4)
+// sum de vs sumando en un for-in debería ser 6 — en la práctica sale 21
+```
+
+**Por qué `Set<T>` no lo tenía ya y por qué nadie lo había visto:** en todo el resto de la stdlib
+(`List<T>`, `Set<T>`, `Queue<T>`/`Stack<T>`/`Deque<T>`), cada colección solo tiene **un** slot
+genérico erasionado (el elemento `T`) — el `{T: bool}` de `Set<T>` tiene la key genérica pero el
+value es `bool`, un tipo **concreto**, no un segundo parámetro genérico. `Map<K,V>` es el primer sitio
+en toda la stdlib donde un `dict` tiene **sus dos lados** ligados a parámetros de tipo genéricos
+distintos de la misma clase (`G0` y `G1`) — un caso que, hasta ahora, nada había ejercitado.
+
+**Hipótesis de causa raíz (sin confirmar con debugging):** `SurtrClassReference.GetDictionaryValueType()`
+(usado por `DictionaryValues`/`DictionaryKeys` en `SurtrCompositeBuiltIns.cs`) y la declaración de
+`IIterable<T>` para el `dict` built-in (`SurtrIteratorBuiltIns.DeclareIterable`, que ya se vio
+declarando `iterate()` como `IIterator<K>` en vez de `IIterator<(K,V)>` al intentar hacer
+`_dict.iterate()` directamente desde `Map<K,V>` — ver el comentario en `Map.surtr`) probablemente
+asumen o derivan el tipo del "elemento"/"valor" a partir de un único slot genérico (`G0`), sin
+distinguir correctamente `G0` de `G1` cuando ambos coexisten sin resolver. El array que produce
+`values()` terminaría con un descriptor de elemento equivocado (posiblemente el de la **key**, no el
+del value), y una vez el array tiene el descriptor equivocado, cualquier lectura posterior interpreta
+los bits del `SurtrValue` almacenado bajo la forma equivocada.
+
+**Impacto real:** bloquea `Map<K,V>` para cualquier `V` primitivo — que es, con diferencia, el caso de
+uso más común (`Map<string, int>`, contadores, tablas de puntuación, etc.). No afecta a `get(key)`
+sobre un único valor (that scalar path funciona), así que un `Map<K,V>` sigue siendo seguro de usar
+si solo se leen valores uno a uno por clave y nunca se llama a `keys()`/`values()`/`for-in` sobre él
+con un `V` primitivo.
+
+**Arreglo aplicado en la stdlib:** ninguno posible — es un bug de runtime, no algo que la stdlib
+pueda evitar salvo restringir su propio uso. `Map<K,V>`/`ReadOnlyMap<K,V>` se mantienen en el árbol
+(el trabajo es correcto y útil para `V` de tipo referencia — `string`, clases, `value class`es como
+`Vector2`, que se boxean a una referencia real y no sufren esta corrupción) con una prueba de
+regresión que **fija el comportamiento roto actual** para `V = int`
+(`SurtrStdlibBehaviorTests.MapIterationWithPrimitiveIntValuesCurrentlyReturnsCorruptedData`) en vez de
+asumir que funciona. **No se recomienda `Map<K, int>`/`Map<K, float>`/`Map<K, bool>`/`Map<K, char>`
+más allá de `get`/`set`/`containsKey`/`remove` por clave individual** hasta que esto se corrija.
+
 ---
 
 ## 3. Propuestas de mejora y adición (detalle)
@@ -628,10 +758,25 @@ cubre casi toda su API útil (`+`, `-`, `*`, `normalized()`, `lerp`, `rotate`, c
 quaterniones). Quedan en el árbol porque el trabajo es correcto y reutilizable en cuanto B6 se
 arregle, pero no se recomienda anunciarlos como listos hasta entonces.
 
-**Fase 6 — Adiciones de valor medio (§3.3, §3.4) — EN PAUSA por B6**
-`PriorityQueue<T>` y `Map<K,V>`/`IMap<K,V>` (reutilizarían `ReadOnlyCollection<T>`, ya disponible
-desde la Fase 4). `IPriorityQueue<T>`/`IReadOnlyMap<K,V>` seguirían el mismo patrón que dispara B6
-en cuanto una operación reciba y devuelva un tipo compuesto propio entre módulos.
+**Fase 6 — Adiciones de valor medio (§3.3, §3.4) — Hecha, con matices; B6 resultó no bloquearla**
+La suposición original de que B6 bloquearía esta fase (por seguir "el mismo patrón") era demasiado
+cautelosa: B6 es específicamente sobre `value class`es concretas multi-campo, y toda la superficie de
+`PriorityQueue<T>`/`Map<K,V>` es genérica (`T`/`K`/`V` erasionados a un slot), así que se implementaron
+y probaron de verdad en vez de dejarlas en pausa. En el camino aparecieron dos bugs de compilador
+nuevos, más estrechos que B6 y catalogados por separado:
+
+- **`PriorityQueue<T>`** (`collections/PriorityQueue.surtr`) — **completa y utilizable de verdad**,
+  incluso entre módulos y con `T` instanciado a una `value class` multi-campo (`PriorityQueue<Vector2>`
+  probado). Sin `default`/soporte de literal `[...]` (§3.3 lo daba por hecho; ver el comentario del
+  propio archivo sobre por qué no encaja con una prioridad por elemento).
+- **`Map<K,V>`/`ReadOnlyMap<K,V>`** (`collections/Map.surtr`) — utilizable para `get`/`set`/
+  `containsKey`/`remove`/`clear` por clave con cualquier `V`, y para `keys()`/`values()`/`for-in` con
+  `V` de tipo referencia (`string`, clases, `value class`es). **No recomendado con `V` primitivo
+  (`int`/`float`/`bool`/`char`) más allá de acceso por clave individual** — B8 (§2.8) corrompe
+  silenciosamente los datos ahí. Tampoco extiende `IReadOnlyCollection<(K,V)>` como proponía §3.4
+  originalmente — B7 (§2.7) lo impide (un `contains(item: (K,V))` con dispatch de interfaz revienta
+  en la propia emisión) — así que `reutilizarían ReadOnlyCollection<T>` de la propuesta original no
+  aplicó; en su lugar hay un `ReadOnlyMap<K,V>` propio, un nivel más arriba en la jerarquía.
 
 **Fase 7 — Ampliaciones incrementales (§3.5-§3.7)**
 Métodos añadidos a `List`, `StringBuilder` y `Sequence` una vez sus bases respectivas están
@@ -655,17 +800,25 @@ sobre esas respuestas:
    (B6), que una pasada de diseño puramente sobre el papel no habría podido prever.
 5. **B5:** se priorizó arreglar el bug del compilador antes de seguir con las Fases 5-7 — hecho
    (§2.0).
+6. **B6:** se documentó y se paró por ese día en vez de arreglarlo antes de seguir — la sesión
+   siguiente retomó con "seguir con el resto del plan", así que la Fase 6 se intentó igualmente en
+   vez de esperar: resultó ser la decisión correcta, B6 no la bloqueaba (ver el análisis en la
+   entrada de la Fase 6, §4).
+7. **Fase 6, orden `Map<K,V>` vs `PriorityQueue<T>`:** no importó en la práctica — se implementaron
+   ambas en la misma sesión, `PriorityQueue<T>` primero por ser la más simple de las dos.
 
-Pregunta abierta, bloqueante, igual que B5 lo fue antes:
+Preguntas abiertas, bloqueantes, igual que B5 lo fue antes:
 
-- **B6 (§2.6):** ¿se prioriza arreglar este segundo bug de compilador antes de dar por terminada la
-  Fase 5 y seguir con las Fases 6-7, o se documenta `Vector2`/`Vector3`/`Quaternion` como "no listo
-  para uso real" y se avanza igualmente con `PriorityQueue`/`Map` asumiendo que probablemente
-  también queden bloqueados en la práctica?
+- **B6 (§2.6):** sigue sin resolverse — bloquea que `Vector2`/`Vector3`/`Quaternion` sean usables
+  entre módulos y que `Quaternion` se separe de `Vector.surtr` a su propio archivo.
+- **B7 (§2.7):** sigue sin resolverse — bloquea que `IMap<K,V>` extienda `IReadOnlyCollection<(K,V)>`
+  como proponía §3.4 originalmente.
+- **B8 (§2.8):** sigue sin resolverse, y es el más urgente de arreglar de los tres — a diferencia de
+  B6/B7 (que fallan ruidosamente en compilación), corrompe datos en silencio. Bloquea que `Map<K,V>`
+  se recomiende con valores primitivos.
 
 Preguntas que siguen abiertas para cuando se retome cada fase:
 
 - **Fase 5:** confirmar alcance exacto de la superficie de `Vector2`/`Vector3`/`Quaternion`/`Angle`
   antes de diseñar (¿se incluye `Vector4`/`Color`/`Rect` ya, o se dejan para después como sugiere
   §3.1?).
-- **Fase 6:** ¿`Map<K,V>` antes o después de `PriorityQueue<T>`? Son independientes entre sí.

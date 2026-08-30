@@ -1,0 +1,111 @@
+// Wraps `{K: V}` the same way Set<T> (Set.surtr) wraps `{T: bool}`: the built-in dict already gives
+// get/set/containsKey/remove/keys/values and an `iterate()` yielding (K, V) pairs - this turns it
+// into a proper class of its own, with an asReadOnly() the same way List<T>/Set<T> get one (see
+// ReadOnlyMap<K,V> below).
+//
+// Deliberately NOT `: IReadOnlyCollection<(K, V)>` the way IReadOnlySet<T> extends
+// IReadOnlyCollection<T>: that would require implementing `contains(item: (K, V)): bool`, and any
+// interface-dispatched method taking a 2-or-more-element tuple as a parameter currently corrupts the
+// emitter's stack accounting ("Operand stack underflow") the moment something calls it - a compiler
+// bug (see docs/Plan-Revision-Stdlib.md B7), distinct from B6 (which is about concrete multi-field
+// `value class`es, not tuples) and narrower: a tuple *return* (this file's own `iterate(): IIterator
+// <(K, V)>`) is unaffected, and neither is a tuple parameter on a plain, non-interface-dispatched
+// method - only a tuple *parameter* on a method that satisfies a contract. `IMap<K,V>` only needs
+// `IIterable<(K,V)>` (a single no-argument `iterate()`) to give `for (pair in map)` its element type,
+// so nothing here is actually lost by not inheriting the wider interface.
+public interface IReadOnlyMap<K, V> : IIterable<(K, V)>
+{
+    length: int { get; }
+    isEmpty: bool { get; }
+
+    fun containsKey(key: K): bool;
+    fun get(key: K): V;
+    fun keys(): K[];
+    fun values(): V[];
+}
+
+public interface IMap<K, V> : IReadOnlyMap<K, V>
+{
+    isReadOnly: bool { get; }
+
+    fun set(key: K, value: V): void;
+    fun remove(key: K): bool;
+    fun clear(): void;
+}
+
+public class Map<K, V> : IMap<K, V>
+{
+    private let _dict: {K: V};
+
+    public constructor()
+    {
+        _dict = {};
+    }
+
+    public constructor(collection: IIterable<(K, V)>)
+    {
+        _dict = {};
+        for (pair in collection)
+            _dict.set(pair[0], pair[1]);
+    }
+
+    public inline length: int => _dict.length;
+    public inline isEmpty: bool => _dict.length == 0;
+    public inline isReadOnly: bool => false;
+
+    public inline fun containsKey(key: K): bool => _dict.containsKey(key);
+    public inline fun get(key: K): V => _dict.get(key);
+    public inline fun set(key: K, value: V): void { _dict.set(key, value); }
+    public inline fun remove(key: K): bool => _dict.remove(key);
+    public inline fun clear(): void { _dict.clear(); }
+    public inline fun keys(): K[] => _dict.keys();
+    public inline fun values(): V[] => _dict.values();
+
+    // Can't delegate straight to `_dict.iterate()`: the built-in dict's `IIterable<T>` conformance
+    // is declared against its first type parameter only (`IIterable<K>`), even though a `for-in`
+    // over a dict receiver is specially lowered to walk real `(K, V)` pairs regardless (the same way
+    // Set<T>'s own `for (item in dict<T, bool>())` already relies on, elsewhere in this package) - so
+    // the pairs are real here too, just not reachable through the dict's own declared `iterate()`.
+    // Snapshotting into an array sidesteps the mismatch: `array<(K,V)>` only has one type parameter,
+    // so its own `iterate()` is exactly `IIterator<(K, V)>`, no widening involved.
+    public fun iterate(): IIterator<(K, V)>
+    {
+        var pairs = array<(K, V)>(_dict.length);
+        var i = 0;
+        for (pair in _dict)
+        {
+            pairs[i] = pair;
+            i += 1;
+        }
+        return pairs.iterate();
+    }
+
+    inline operator [](self: Map<K, V>, key: K): V { return self.get(key); }
+    inline operator [](self: Map<K, V>, key: K, value: V): void { self.set(key, value); }
+
+    /// A read-only view over this map; stays live if the map changes underneath it.
+    public inline fun asReadOnly(): IReadOnlyMap<K, V> => ReadOnlyMap<K, V>(this);
+}
+
+/// A thin read-only view over another map - wraps rather than copies, so it stays live if the
+/// wrapped map changes. `Map<K,V>.asReadOnly()` is what constructs one; nothing outside this file
+/// needs to name the type itself, only the `IReadOnlyMap<K,V>` it returns as.
+public value class ReadOnlyMap<K, V> : IReadOnlyMap<K, V>
+{
+    private let _map: IReadOnlyMap<K, V>;
+
+    public constructor(map: IReadOnlyMap<K, V>)
+    {
+        this._map = map;
+    }
+
+    public length: int { get { return _map.length; } }
+    public isEmpty: bool { get { return _map.isEmpty; } }
+
+    public fun containsKey(key: K): bool => _map.containsKey(key);
+    public fun get(key: K): V => _map.get(key);
+    public fun keys(): K[] => _map.keys();
+    public fun values(): V[] => _map.values();
+
+    public fun iterate(): IIterator<(K, V)> => _map.iterate();
+}

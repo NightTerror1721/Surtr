@@ -89,11 +89,15 @@ Every module is a file under `src/surtr/`; its dotted path is its location relat
 | `surtr.core.byte` | `src/surtr/core/byte.surtr` | The `byte` value class: a type-safe, always-in-range wrapper over a single 8-bit value. |
 | `surtr.math.Angle` | `src/surtr/math/Angle.surtr` | The `Angle` value class. |
 | `surtr.math.Math` | `src/surtr/math/Math.surtr` | The float constants, the trig/float `native fun` declarations whose bodies `SurtrStdlib.LoadInto` publishes from `Native/SurtrMathNative.cs`, and ordinary Surtr logic over them (`abs`, `min`, `max`, `clamp`, `lerp`, `degreesToRadians`, …). The **only** `Math` the language has — `Surtr.Core` declares none. |
+| `surtr.math.Vector` | `src/surtr/math/Vector.surtr` | `Vector2`, `Vector3` and `Quaternion` value classes. `Quaternion` lives here rather than its own file because a compiler bug (see `docs/Plan-Revision-Stdlib.md` B6) currently breaks any cross-module call taking and returning a multi-field `value class`, which is most of this API — keeping `Quaternion`'s own use of `Vector3` same-module works around it for internal use, though the whole module still isn't safe to call from another module yet. |
+| `surtr.math.Random` | `src/surtr/math/Random.surtr` | `Random`, a pure-Surtr xorshift32 PRNG, host-seeded by default via a `native fun`. |
 | `surtr.collections.Collection` | `src/surtr/collections/Collection.surtr` | `IReadOnlyCollection<T>`/`ICollection<T>`, and `ReadOnlyCollection<T>`, a read-only view over either. |
 | `surtr.collections.List` | `src/surtr/collections/List.surtr` | `IReadOnlyList<T>`/`IList<T>`, `List<T>`, a `LinkedList<T>` implementing them, and `ReadOnlyList<T>`. |
 | `surtr.collections.Stack` | `src/surtr/collections/Stack.surtr` | `IStack<T>`/`Stack<T>`. |
 | `surtr.collections.Queue` | `src/surtr/collections/Queue.surtr` | `IQueue<T>`/`IDeque<T>`, `Queue<T>`, and `Deque<T>` (its own doubly-linked structure, not a `Queue<T>` subclass). |
 | `surtr.collections.Set` | `src/surtr/collections/Set.surtr` | `IReadOnlySet<T>`/`ISet<T>`, `ReadOnlySet<T>`, `Set<T>`. |
+| `surtr.collections.PriorityQueue` | `src/surtr/collections/PriorityQueue.surtr` | `IPriorityQueue<T>`/`PriorityQueue<T>`, a binary min-heap over a flat array. |
+| `surtr.collections.Map` | `src/surtr/collections/Map.surtr` | `IReadOnlyMap<K,V>`/`IMap<K,V>`, `Map<K,V>` and `ReadOnlyMap<K,V>`, wrapping `{K: V}`. Not recommended with a primitive `V` beyond per-key `get`/`set` — see `docs/Plan-Revision-Stdlib.md` B8. |
 | `surtr.collections.Sequence` | `src/surtr/collections/Sequence.surtr` | `Sequence<T>`, a lazy LINQ-style pipeline (`map`/`filter`/`take`/`zip`/…) built on generators, plus `IIterable<T>` extension methods (`forEach`, `toList`, `toSet`, `reduce`, …). |
 | `surtr.text.StringBuilder` | `src/surtr/text/StringBuilder.surtr` | The `StringBuilder` class. |
 | `surtr.io.Enums` | `src/surtr/io/Enums.surtr` | `SeekOrigin`. |

@@ -1,0 +1,202 @@
+import surtr.collections.Collection;
+
+// A binary min-heap over a flat array, the same growth-by-doubling shape List<T> uses internally -
+// `dequeue()` always returns the item with the lowest priority (ties broken arbitrarily), which is
+// what pathfinding (A*), timestamped event queues and turn schedulers all want. Priorities live in
+// their own parallel float[] rather than paired with each item in a value class: a generic <T> with
+// a second concrete field would still flatten to two contiguous slots wherever the pair crossed a
+// call boundary, and there is no need to risk that when two parallel arrays say the same thing.
+// Deliberately no `default` implementer: that would require an `each` collection-builder
+// constructor, and `PriorityQueue<T>[...]` has no way to carry a priority per literal element.
+public interface IPriorityQueue<T> : ICollection<T>
+{
+    isEmpty: bool { get; }
+
+    /// Inserts `item` with the given `priority`. Lower priorities come out of `dequeue()` first.
+    fun enqueue(item: T, priority: float): void;
+
+    /// Removes and returns the item with the lowest priority.
+    fun dequeue(): T;
+
+    /// The item with the lowest priority, without removing it.
+    fun peek(): T;
+}
+
+public class PriorityQueue<T> : IPriorityQueue<T>
+{
+    private const DefaultCapacity: int = 4;
+
+    private var _items: T[];
+    private var _priorities: float[];
+    private var _count: int;
+    private var _capacity: int;
+
+    public constructor(initialCapacity: int = DefaultCapacity)
+    {
+        if (initialCapacity < 0) throw IndexOutOfRangeException("Initial capacity must be non-negative");
+        this._capacity = initialCapacity;
+        this._items = array<T>(_capacity);
+        this._priorities = array<float>(_capacity);
+        this._count = 0;
+    }
+
+    public inline length: int => _count;
+    public inline isReadOnly: bool => false;
+    public inline isEmpty: bool => _count == 0;
+
+    public fun enqueue(item: T, priority: float): void
+    {
+        if (_count == _capacity) ensureCapacity(_count + 1);
+        _items[_count] = item;
+        _priorities[_count] = priority;
+        siftUp(_count);
+        _count += 1;
+    }
+
+    public fun dequeue(): T
+    {
+        if (isEmpty) throw InvalidOperationException("PriorityQueue is empty.");
+
+        var result = _items[0];
+        _count -= 1;
+        _items[0] = _items[_count];
+        _priorities[0] = _priorities[_count];
+        if (_count > 0) siftDown(0);
+        return result;
+    }
+
+    public fun peek(): T
+    {
+        if (isEmpty) throw InvalidOperationException("PriorityQueue is empty.");
+        return _items[0];
+    }
+
+    /// Enqueues with priority 0 - here only for `ICollection<T>` parity. Real callers want
+    /// `enqueue(item, priority)`, which is why this class does not support the `PriorityQueue<T>[...]`
+    /// collection-builder syntax: there is no priority to assign a bare literal element.
+    public inline fun add(item: T): void => enqueue(item, 0.0);
+
+    public inline fun remove(item: T): bool { throw InvalidOperationException("PriorityQueue does not support removing arbitrary items."); }
+
+    public inline fun clear(): void
+    {
+        _count = 0;
+    }
+
+    public fun contains(item: T): bool
+    {
+        for (var i = 0; i < _count; i++)
+        {
+            if (_items[i] == item) return true;
+        }
+        return false;
+    }
+
+    public fun copyTo(array: T[], arrayIndex: int): void
+    {
+        if (arrayIndex < 0) throw IndexOutOfRangeException("Array index must be non-negative");
+        if (array.length - arrayIndex < _count) throw ArgumentException("The number of elements in the source PriorityQueue is greater than the available space from arrayIndex to the end of the destination array.");
+        for (var i = 0; i < _count; i++)
+            array[arrayIndex + i] = _items[i];
+    }
+
+    /// Enumeration order is the heap's internal array order, not ascending priority. Call
+    /// `dequeue()` in a loop to drain in priority order.
+    public inline fun iterate(): IIterator<T> => Iterator<T>(_items, _count);
+
+    /// A read-only view over this queue; stays live if the queue changes underneath it.
+    public inline fun asReadOnly(): IReadOnlyCollection<T> => ReadOnlyCollection<T>(this);
+
+    private fun siftUp(startIndex: int): void
+    {
+        var index = startIndex;
+        while (index > 0)
+        {
+            var parent = (index - 1) / 2;
+            if (_priorities[index] >= _priorities[parent]) break;
+            swap(index, parent);
+            index = parent;
+        }
+    }
+
+    private fun siftDown(startIndex: int): void
+    {
+        var index = startIndex;
+        while (true)
+        {
+            var left = index * 2 + 1;
+            var right = index * 2 + 2;
+            var smallest = index;
+            if (left < _count && _priorities[left] < _priorities[smallest]) smallest = left;
+            if (right < _count && _priorities[right] < _priorities[smallest]) smallest = right;
+            if (smallest == index) break;
+            swap(index, smallest);
+            index = smallest;
+        }
+    }
+
+    private fun swap(a: int, b: int): void
+    {
+        var tempItem = _items[a];
+        _items[a] = _items[b];
+        _items[b] = tempItem;
+        var tempPriority = _priorities[a];
+        _priorities[a] = _priorities[b];
+        _priorities[b] = tempPriority;
+    }
+
+    private fun ensureCapacity(min: int): void
+    {
+        if (_capacity < min)
+        {
+            var newCapacity = _capacity == 0 ? DefaultCapacity : _capacity * 2;
+            if (newCapacity < min) newCapacity = min;
+            var newItems = array<T>(newCapacity);
+            var newPriorities = array<float>(newCapacity);
+            for (var i = 0; i < _count; i++)
+            {
+                newItems[i] = _items[i];
+                newPriorities[i] = _priorities[i];
+            }
+            _items = newItems;
+            _priorities = newPriorities;
+            _capacity = newCapacity;
+        }
+    }
+
+    private sealed class Iterator<T> : IIterator<T>
+    {
+        private let _items: T[];
+        private let _count: int;
+        private var _index: int;
+
+        public constructor(items: T[], count: int, index: int = -1)
+        {
+            this._items = items;
+            this._count = count;
+            this._index = index;
+        }
+
+        public current: T
+        {
+            get
+            {
+                if (_index < 0 || _index >= _count) throw IndexOutOfRangeException("Iterator is out of bounds");
+                return _items[_index];
+            }
+        }
+
+        // Nothing held that outlives this cursor, so the contract slot is filled and empty.
+        public fun dispose(): void { }
+
+        public fun moveNext(): bool
+        {
+            if (_index + 1 < _count)
+            {
+                _index++;
+                return true;
+            }
+            return false;
+        }
+    }
+}
