@@ -121,6 +121,35 @@ namespace Surtr.Tests.Stdlib
             => runtime.Invoke(FunctionIn(runtime, modulePath, name)).AsBool;
 
         /// <summary>
+        /// Regression for B9 (docs/Plan-Revision-Stdlib.md §2.9), with the minimal repro from the
+        /// doc rather than through <c>Sequence&lt;T&gt;</c>: a non-generic <c>int?</c> comparing
+        /// against <c>null</c> always worked (<c>runConcrete</c>); the exact same comparison through
+        /// a generic method's substituted <c>T?</c> return did not (<c>runGeneric</c>). Also checks
+        /// the present side explicitly with a value of <c>0</c> (<c>runPresent</c>/
+        /// <c>runPresentNotNull</c>) - the fix tells a genuine absent value apart from a present
+        /// primitive that happens to be zero, and a naive fix that tested the returned reference's
+        /// raw payload for zero (rather than its own tag) would pass every other test here and still
+        /// misreport this one.
+        /// </summary>
+        [Fact]
+        public void GenericMethodNullablePrimitiveReturnComparesCorrectlyAgainstNull()
+        {
+            var runtime = BuildAndLoad(
+                "fun getNullConcrete(): int? { return null; }\n"
+                    + "fun runConcrete(): bool { return getNullConcrete() == null; }\n"
+                    + "fun getNullGeneric<T>(): T? { return null; }\n"
+                    + "fun runGeneric(): bool { return getNullGeneric<int>() == null; }\n"
+                    + "fun getPresentGeneric<T>(v: T): T? { return v; }\n"
+                    + "fun runPresent(): bool { let r = getPresentGeneric<int>(0); return r == 0; }\n"
+                    + "fun runPresentNotNull(): bool { let r = getPresentGeneric<int>(0); return r != null; }\n");
+
+            Assert.True(Bool(runtime, "runConcrete"));
+            Assert.True(Bool(runtime, "runGeneric"));
+            Assert.True(Bool(runtime, "runPresent"));
+            Assert.True(Bool(runtime, "runPresentNotNull"));
+        }
+
+        /// <summary>
         /// Like <see cref="BuildAndLoad"/>, but <paramref name="extraCode"/> is appended directly
         /// into the named module's own source (<paramref name="intoRelativePath"/>) instead of
         /// living in a separate `test` module that merely imports it.
@@ -1425,15 +1454,14 @@ namespace Surtr.Tests.Stdlib
         }
 
         /// <summary>
-        /// B9 (docs/Plan-Revision-Stdlib.md): a generic method's <c>T?</c> return, instantiated to a
-        /// primitive (confirmed with <c>int</c>), loses its "absent" tag by the time the caller
-        /// compares it to <c>null</c> - a concrete, non-generic <c>int?</c> compares correctly, but
-        /// the exact same value routed through a generic method's substituted return type does not.
-        /// This is not new to <c>min</c>/<c>max</c> - the pre-existing <c>firstOrNull()</c> has the
-        /// same gap (see <see cref="SequenceFirstOrNullOnEmptySequenceCurrentlyReturnsFalseNotNull"/>),
-        /// just never had a test exercising an empty, primitive-typed sequence before. Pins the
-        /// current (broken) behaviour until the compiler bug is fixed - flip it to assert `true`
-        /// afterwards.
+        /// Regression for B9 (docs/Plan-Revision-Stdlib.md §2.9): a generic method's <c>T?</c>
+        /// return, instantiated to a primitive (confirmed with <c>int</c>), used to lose its
+        /// "absent" tag by the time the caller compared it to <c>null</c> - a concrete, non-generic
+        /// <c>int?</c> always compared correctly, but the exact same value routed through a generic
+        /// method's substituted return type did not. Not new to <c>min</c>/<c>max</c> - the
+        /// pre-existing <c>firstOrNull()</c> had the same gap (see
+        /// <see cref="SequenceFirstOrNullOnEmptySequenceCurrentlyReturnsFalseNotNull"/>), just never
+        /// had a test exercising an empty, primitive-typed sequence before.
         /// </summary>
         [Fact]
         public void SequenceMinOnEmptySequenceCurrentlyReturnsFalseNotNull()
@@ -1445,10 +1473,10 @@ namespace Surtr.Tests.Stdlib
                     + "}\n",
                 "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
 
-            Assert.False(Bool(runtime, "run"));
+            Assert.True(Bool(runtime, "run"));
         }
 
-        /// <summary>B9 again (see the remarks above) - pins the pre-existing gap in firstOrNull().</summary>
+        /// <summary>B9 again (see the remarks above) - regression for the pre-existing gap in firstOrNull().</summary>
         [Fact]
         public void SequenceFirstOrNullOnEmptySequenceCurrentlyReturnsFalseNotNull()
         {
@@ -1459,7 +1487,7 @@ namespace Surtr.Tests.Stdlib
                     + "}\n",
                 "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
 
-            Assert.False(Bool(runtime, "run"));
+            Assert.True(Bool(runtime, "run"));
         }
 
         [Fact]
@@ -1571,7 +1599,7 @@ namespace Surtr.Tests.Stdlib
             Assert.True(Bool(runtime, "run"));
         }
 
-        /// <summary>B9 again (see the remarks on SequenceMinOnEmptySequenceCurrentlyReturnsFalseNotNull) - pins the same gap in lastOrNull().</summary>
+        /// <summary>B9 again (see the remarks on SequenceMinOnEmptySequenceCurrentlyReturnsFalseNotNull) - regression for the same gap in lastOrNull().</summary>
         [Fact]
         public void SequenceLastOrNullOnEmptySequenceCurrentlyReturnsFalseNotNull()
         {
@@ -1582,7 +1610,7 @@ namespace Surtr.Tests.Stdlib
                     + "}\n",
                 "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
 
-            Assert.False(Bool(runtime, "run"));
+            Assert.True(Bool(runtime, "run"));
         }
 
         [Fact]

@@ -668,7 +668,7 @@ indexación directa, y un `for-in` sobre el array que devuelve, ambos con `V = i
 3372/3372 en verde. La guía de "no usar `Map<K, int>` más allá de `get`/`set`" en el `README.md` de la
 stdlib y en este documento queda retirada — ya no aplica.
 
-### 2.9 B9 — Bug del compilador: `T?` de un método genérico pierde su marca de ausencia al instanciarse a un primitivo — Prioridad CRÍTICA — **Sin corregir, reportado**
+### 2.9 B9 — Bug del compilador: `T?` de un método genérico pierde su marca de ausencia al instanciarse a un primitivo — Prioridad CRÍTICA — **Corregido**
 
 Descubierto implementando la Fase 7, al escribir la primera prueba de verdad que compara con `null`
 el resultado de `Sequence<T>.firstOrNull()`/`lastOrNull()`/`min()`/`max()` sobre una secuencia **vacía**
@@ -692,22 +692,63 @@ fun getNull<T>(): T? { return null; }
 fun run(): bool { return getNull<int>() == null; }          // false - incorrecto
 ```
 
-**Impacto real:** no es nuevo de esta ronda — es un hueco **preexistente** en `Sequence<T>` que nadie
-había probado hasta ahora. Afecta a `firstOrNull()` (ya en el árbol desde antes de esta revisión) y a
-los `min()`/`max()`/`lastOrNull()` nuevos de la Fase 7, todos ellos en el caso "secuencia vacía, `T`
-primitivo". No afecta al valor no-nulo (`firstOrNull()` sobre una secuencia no vacía sigue devolviendo
-el elemento correcto — es solo la comparación con `null` en el camino vacío la que falla), ni a `T`
-de tipo referencia (una referencia nula ya se representa de forma nativa sin la marca especial que
-usa un primitivo nulable, §1.11 de `CLAUDE.md`).
+**Causa raíz real (confirmada leyendo el propio emisor — la hipótesis original, "el Cast al leer de
+vuelta", apuntaba al mecanismo correcto pero no a lo que realmente le faltaba):** dentro del cuerpo
+genérico de `getNull<T>(): T?`, `return null;` **no** se compila como `PushAbsent` — `EmitLiteral`
+solo elige `PushAbsent` cuando `IsNullablePrimitive(literal.Type)` es cierto, y esa comprobación mira
+el `TypeCode` del tipo, que para `T?` con `T` todavía sin resolver es `Erased`, no
+`Integer`/`Float`/... — así que el `null` de un cuerpo genérico se compila igual que el de cualquier
+tipo referencia: `Code.LoadNull()`, una referencia nula corriente. Esto es correcto en sí mismo — el
+cuerpo se compila una sola vez para todo `T`, y no puede saber de antemano si terminará en algo que
+necesita la marca de ausencia.
 
-**Arreglo aplicado en la stdlib:** ninguno posible. Pruebas de regresión que **fijan el comportamiento
-roto actual** en vez de asumir que funciona:
+El punto donde se pierde es la conversión de vuelta. `MethodBodyEmitter.UnerasedCallResult` — que ya
+existe precisamente para "leer el resultado de una llamada genérica de vuelta como cualquier otro slot
+erasionado" (§1.11) — detecta correctamente que `getNull<int>()`'s declaración original (`T?`, un
+parámetro de tipo desnudo tras quitar la nulabilidad) necesita esta conversión, y llama a `Unerase`
+sobre el tipo sustituido (`int?`). Pero `Unerase` **ignora la nulabilidad de `target`**: hace
+`bare = target.NonNullable` y, para un primitivo, emite sencillamente `Code.UnboxDynamic()` — el
+opcode que "lee el propio tag del valor" para servir tanto al caso boxeado como al crudo. `UnboxDynamic`
+sabe convertir una referencia boxeada (`SurtrBoxed`) a su primitivo crudo, y sabe dejar en paz
+cualquier cosa que no sea una referencia — pero una **referencia nula** no es ni lo uno ni lo otro:
+no es un `SurtrBoxed`, así que `UnboxDynamic` la deja exactamente como estaba (confirmado leyendo su
+propia implementación en la VM: "Null, or a reference that is not a box at all... both stay exactly
+as they are"). El valor que llega al llamador sigue siendo una referencia nula ordinaria
+(`TagMaskReference`, payload 0) en vez del valor con la marca de ausencia propia de un nulable
+primitivo (`TagMaskAbsent`) — dos tags **distintos** por diseño (§5.1: "un `int?` ausente es su propio
+valor con marca, no una referencia nula"). Y la comparación `resultado == null` que el llamador
+escribe, al ver que el lado izquierdo es un nulable primitivo *concreto* (`int?`, ya sustituido),
+se compila como una prueba de tag contra `TagMaskAbsent` (`TryEmitAbsenceTest`/`Code.IsAbsent()`) —
+que sobre una referencia nula (`TagMaskReference`) da `false`. De ahí el síntoma exacto.
+
+**Arreglo aplicado en el compilador** (`src/Surtr.Compiler/CodeGen/MethodBodyEmitter.cs`,
+`UnerasedCallResult`): en vez de ensanchar `Unerase` (compartido por sitios donde el valor erasionado
+sí puede ser legítimamente un primitivo crudo sin marca — el propio almacenamiento de un
+`array`/`dict`, o `IIterator<T>.current` sobre uno — donde una prueba ingenua de "¿el payload es
+cero?" confundiría un `0` real con ausencia), se añadió un camino específico para cuando el tipo
+sustituido es un nulable primitivo: antes de desboxear, se duplica el valor y se comprueba si es una
+referencia nula (`Dup` + `IsNull` + `JPZ`) — comprobación segura aquí porque un valor `T?` "en reposo"
+dentro de un cuerpo todavía genérico, al volver de una llamada real (no de un acceso a almacenamiento
+nativo), solo puede haberse producido como referencia: boxeado (presente) o nulo (ausente), nunca como
+primitivo crudo — la misma invariante que `BoxIfStillErased`/`UnboxIfStillErased` ya hacen cumplir en
+cualquier otro límite de erasure. Si es nulo, se descarta y se empuja `PushAbsent` con el tipo
+concreto correcto; si no, seguía el mismo `UnboxDynamic` de siempre.
+
+**Impacto real:** no era nuevo de esta ronda — era un hueco preexistente en `Sequence<T>` que nadie
+había probado hasta ahora. Afectaba a `firstOrNull()` (ya en el árbol desde antes de esta revisión) y
+a los `min()`/`max()`/`lastOrNull()` de la Fase 7, todos ellos en el caso "secuencia vacía, `T`
+primitivo". Nunca afectó al valor no-nulo, ni a `T` de tipo referencia (una referencia nula ya se
+representa de forma nativa sin necesitar la marca especial que usa un primitivo nulable).
+
+Verificado con `src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`:
 `SequenceFirstOrNullOnEmptySequenceCurrentlyReturnsFalseNotNull`,
 `SequenceMinOnEmptySequenceCurrentlyReturnsFalseNotNull`,
-`SequenceLastOrNullOnEmptySequenceCurrentlyReturnsFalseNotNull`. **No usar
-`firstOrNull()`/`lastOrNull()`/`min()`/`max()` de `Sequence<T>`/`IIterable<T>` con un `T` primitivo
-para distinguir "vacío" de "el valor por defecto"** hasta que esto se corrija — comprobar `isEmpty`/
-`count() == 0` antes en su lugar.
+`SequenceLastOrNullOnEmptySequenceCurrentlyReturnsFalseNotNull` (las tres ahora aciertan de verdad) y
+la nueva `GenericMethodNullablePrimitiveReturnComparesCorrectlyAgainstNull`, con el repro mínimo del
+propio documento — incluyendo explícitamente el caso "presente con valor `0`", que es exactamente lo
+que una corrección ingenua basada en el payload (en vez del tag) habría vuelto a romper. Suite
+completa: 3373/3373 en verde. La advertencia de "no usar `firstOrNull()`/`lastOrNull()`/`min()`/`max()`
+con un `T` primitivo para distinguir vacío del valor por defecto" queda retirada — ya no aplica.
 
 ---
 
@@ -945,14 +986,11 @@ Preguntas abiertas, bloqueantes, igual que B5 lo fue antes:
 
 - **B6 (§2.6):** sigue sin resolverse — bloquea que `Vector2`/`Vector3`/`Quaternion` sean usables
   entre módulos y que `Quaternion` se separe de `Vector.surtr` a su propio archivo.
-- **B7 (§2.7):** sigue sin resolverse — bloquea que `IMap<K,V>` extienda `IReadOnlyCollection<(K,V)>`
-  como proponía §3.4 originalmente.
-- **B8 (§2.8):** sigue sin resolverse, y es de los más urgentes de arreglar de los cuatro — a
-  diferencia de B6/B7 (que fallan ruidosamente en compilación), corrompe datos en silencio. Bloquea
-  que `Map<K,V>` se recomiende con valores primitivos.
-- **B9 (§2.9):** sigue sin resolverse, igual de urgente que B8 por la misma razón (falla en
-  silencio). Bloquea que `firstOrNull()`/`lastOrNull()`/`min()`/`max()` se usen con un `T` primitivo
-  para distinguir "vacío" de "el valor por defecto".
+- **B7 (§2.7):** **corregido** — `IMap<K,V>` ya podría extender `IReadOnlyCollection<(K,V)>` como
+  proponía §3.4 originalmente; el ensanchamiento en sí queda como mejora aparte, no forzosa.
+- **B8 (§2.8):** **corregido** — `Map<K,V>` ya se recomienda sin reservas con valores primitivos.
+- **B9 (§2.9):** **corregido** — `firstOrNull()`/`lastOrNull()`/`min()`/`max()` ya distinguen
+  correctamente "vacío" de "el valor por defecto" con un `T` primitivo.
 
 Preguntas que siguen abiertas para cuando se retome cada fase:
 

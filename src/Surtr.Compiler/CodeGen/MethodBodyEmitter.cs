@@ -5011,8 +5011,48 @@ namespace Surtr.Compiler.CodeGen
         private void UnerasedCallResult(MethodSymbol method)
         {
             var original = method.OriginalDefinition ?? method;
-            if (original.ReturnType.NonNullable is TypeParameterSymbol)
-                Unerase(method.ReturnType);
+            if (original.ReturnType.NonNullable is not TypeParameterSymbol)
+                return;
+
+            var target = method.ReturnType;
+
+            // B9 (docs/Plan-Revision-Stdlib.md §2.9): a generic method's own `T?` still compiles
+            // `return null;` as an ordinary null reference - IsNullablePrimitive reads false while
+            // T is unconstrained, so the absent tag PushAbsent would use never gets a chance to run.
+            // Unerase's own primitive branch (UnboxDynamic) leaves that null reference exactly as it
+            // found it, since it is not a box, so a caller's `getNull<int>() == null` - which
+            // TryEmitAbsenceTest lowers to a tag test against TagMaskAbsent once the substituted
+            // type is known concrete - compares a reference tag against an absent tag and reads
+            // false. The fix has to run here rather than widen Unerase itself: everywhere else
+            // Unerase is used the erased value can legitimately already be a raw primitive (an
+            // array's own storage, an iterator's `current`), where a payload-only null test would
+            // misread a genuine `0` as absence. A result crossing back out of an ordinary call has
+            // no such ambiguity - a T?-typed value "at rest" inside a still-generic body is always
+            // produced as a reference, boxed (present) or null (absent), by the same convention
+            // BoxIfStillErased/UnboxIfStillErased enforce at every other erasure boundary - so
+            // testing the reference's own payload for zero *before* unboxing safely tells the two
+            // apart here, then either replaces the null with a properly-tagged absent primitive or
+            // unboxes the present one.
+            if (target.IsNullable && target.NonNullable.IsPrimitive && !target.NonNullable.IsVoid)
+            {
+                var present = Code.NewLabel();
+                var done = Code.NewLabel();
+
+                Code.Dup();
+                Code.IsNull();
+                Code.JPZ(present);
+
+                Code.Pop();
+                Code.PushAbsent(TypeCodeOf(target.NonNullable));
+                Code.JP(done);
+
+                Code.MarkLabel(present);
+                Code.UnboxDynamic();
+                Code.MarkLabel(done);
+                return;
+            }
+
+            Unerase(target);
         }
 
         /// <summary>
