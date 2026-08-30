@@ -347,19 +347,10 @@ namespace Surtr.Tests.Stdlib
         /// <summary>
         /// `ReadOnlyCollection&lt;T&gt;` used to be `private` with no caller anywhere in the stdlib.
         /// Now `List&lt;T&gt;.asReadOnly()`/`Set&lt;T&gt;.asReadOnly()` construct one, and the view
-        /// stays live over the underlying collection rather than snapshotting it.
+        /// stays live over the underlying collection rather than snapshotting it. Exercises
+        /// `contains()` through the interface too - see <see cref="SetIsSubsetOfWorksAcrossTwoInstances"/>
+        /// for why that used to crash unconditionally (B5, fixed alongside this test).
         /// </summary>
-        /// <remarks>
-        /// Deliberately does not call `view.contains(...)`: that crashes the VM with
-        /// `InvalidCastException` (`A '&lt;T&gt;' cannot be cast to 'erased'`) for every element type,
-        /// tried or not, because passing an argument into a *user-declared* generic interface's own
-        /// erased parameter emits a spurious `Cast`-to-`Erased` instead of an unconditional box - a
-        /// pre-existing compiler bug (see the "Bug crítico nuevo" note in
-        /// docs/Plan-Revision-Stdlib.md) that also breaks every `Set&lt;T&gt;`/`ReadOnlySet&lt;T&gt;`
-        /// method taking an `IReadOnlySet&lt;T&gt;`/`ISet&lt;T&gt;` parameter
-        /// (isSubsetOf/unionWith/etc.). `length`/`iterate()`/`copyTo()` take no `T`-typed argument
-        /// through the interface, so they are unaffected and are what this test exercises.
-        /// </remarks>
         [Fact]
         public void ListAndSetAsReadOnlyStayLiveOverTheSource()
         {
@@ -371,7 +362,7 @@ namespace Surtr.Tests.Stdlib
                     + "    let view = list.asReadOnly();\n"
                     + "    if (view.length != 0) return false;\n"
                     + "    list.add(1); list.add(2);\n"
-                    + "    if (view.length != 2) return false;\n"
+                    + "    if (view.length != 2 || !view.contains(2)) return false;\n"
                     + "    var sum = 0;\n"
                     + "    for (x in view) sum = sum + x;\n"
                     + "    if (sum != 3) return false;\n"
@@ -379,7 +370,7 @@ namespace Surtr.Tests.Stdlib
                     + "    let s = Set<int>();\n"
                     + "    let setView = s.asReadOnly();\n"
                     + "    s.add(5);\n"
-                    + "    return setView.length == 1;\n"
+                    + "    return setView.length == 1 && setView.contains(5);\n"
                     + "}\n",
                 "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr");
 
@@ -387,18 +378,22 @@ namespace Surtr.Tests.Stdlib
         }
 
         /// <summary>
-        /// Documents the pre-existing bug B5 (docs/Plan-Revision-Stdlib.md): every
-        /// `ReadOnlySet&lt;T&gt;`/`Set&lt;T&gt;` method taking an `IReadOnlySet&lt;T&gt;`/`ISet&lt;T&gt;`
-        /// parameter and calling a `T`-parameterised method on it (`other.contains(item)`) crashes
-        /// the VM, for every element type - not something a stdlib-only change can fix, since the
-        /// defect is in how the compiler emits an argument conversion into a user-declared generic
-        /// interface's own erased parameter. This test is expected to fail via a VM crash rather than
-        /// an assertion failure; flip it once the compiler fix lands, so it stops passing "by throwing"
-        /// and starts asserting the real behaviour (see the test this replaces in history for the
-        /// intended assertions: `a.isSubsetOf(b)` should be `true`).
+        /// Regression for B5 (docs/Plan-Revision-Stdlib.md): every `ReadOnlySet&lt;T&gt;`/`Set&lt;T&gt;`
+        /// method taking an `IReadOnlySet&lt;T&gt;`/`ISet&lt;T&gt;` parameter and calling a
+        /// `T`-parameterised method on it (`other.contains(item)`) used to crash the VM with
+        /// `InvalidCastException: A '&lt;T&gt;' cannot be cast to 'erased'`, for every element type -
+        /// a compiler bug (`ModuleEmitter.Narrow`, `src/Surtr.Compiler/CodeGen/ModuleEmitter.cs`),
+        /// not a stdlib one. A generic class keeps one compiled body regardless of instantiation
+        /// (§6), so a member's own class-level type parameter is still erased in that body; the
+        /// interface bridge `Narrow` emits to read a contract slot's erased argument back into the
+        /// concrete parameter type had no case for the destination itself still being a bare type
+        /// parameter, so it fell into the general "cast to a concrete type" path and tried to cast an
+        /// already-erased value to the very marker class (`SurtrBuiltIns.Erased`) nothing is ever "a
+        /// subclass of". Exercises both set-vs-set (`isSubsetOf`) and set-vs-set-of-strings, since
+        /// the bug did not depend on the element type at all.
         /// </summary>
         [Fact]
-        public void SetIsSubsetOfCurrentlyCrashesOnTheCompilerErasureBug()
+        public void SetIsSubsetOfWorksAcrossTwoInstances()
         {
             var runtime = BuildAndLoad(
                 "import surtr.collections.Set;\n"
@@ -407,11 +402,18 @@ namespace Surtr.Tests.Stdlib
                     + "    a.add(1); a.add(2);\n"
                     + "    let b = Set<int>();\n"
                     + "    b.add(1); b.add(2); b.add(3);\n"
-                    + "    return a.isSubsetOf(b);\n"
+                    + "    if (!a.isSubsetOf(b)) return false;\n"
+                    + "    if (b.isSubsetOf(a)) return false;\n"
+                    + "\n"
+                    + "    let sa = Set<string>();\n"
+                    + "    sa.add(\"x\"); sa.add(\"y\");\n"
+                    + "    let sb = Set<string>();\n"
+                    + "    sb.add(\"x\"); sb.add(\"y\"); sb.add(\"z\");\n"
+                    + "    return sa.isSubsetOf(sb);\n"
                     + "}\n",
                 "collections/Collection.surtr", "collections/Set.surtr");
 
-            Assert.ThrowsAny<Surtr.VM.SurtrExecutionException>(() => Bool(runtime, "run"));
+            Assert.True(Bool(runtime, "run"));
         }
 
         // ── D1: List<T> operator[] ───────────────────────────────────────────

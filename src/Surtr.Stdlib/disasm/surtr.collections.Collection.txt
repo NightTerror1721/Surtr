@@ -1,9 +1,8 @@
 module surtr.collections.Collection
-  constants: 0   types: 2   fields: 0   methods: 17   modules: 0
+  constants: 0   types: 1   fields: 0   methods: 17   modules: 0
 
   type table:
-    #0  T0
-    #1  T0[]
+    #0  T0[]
 
   method table:
     #0  surtr.collections.Collection:IReadOnlyCollection<.get_length() -> int
@@ -65,13 +64,12 @@ sealed class ReadOnlyCollection`1<T> : surtr.collections.Collection:IReadOnlyCol
       0010  ReturnValue
 
   [public] virtual contains(item: unknown): bool
-    ; entry 6, locals 2, stack 2, code 0029..0035
+    ; entry 6, locals 2, stack 2, code 0029..0032
       0029  Ldl0
       002A  Unbox
       002B  Ldl1
-      002C  Cast 0 (T0)
-      002F  InvokeSpecial 9 (contains) args=2 ret=1
-      0034  ReturnValue
+      002C  InvokeSpecial 9 (contains) args=2 ret=1
+      0031  ReturnValue
 
   [public] copyTo(array: T0[], arrayIndex: int): void
     ; entry 3, locals 3, stack 3, code 0011..001A
@@ -82,14 +80,14 @@ sealed class ReadOnlyCollection`1<T> : surtr.collections.Collection:IReadOnlyCol
       0019  ReturnVoid
 
   [public] virtual copyTo(array: unknown[], arrayIndex: int): void
-    ; entry 7, locals 3, stack 3, code 0035..0042
-      0035  Ldl0
-      0036  Unbox
-      0037  Ldl1
-      0038  Cast 1 (T0[])
-      003B  Ldl2
-      003C  InvokeSpecial 10 (copyTo) args=3 ret=0
-      0041  ReturnVoid
+    ; entry 7, locals 3, stack 3, code 0032..003F
+      0032  Ldl0
+      0033  Unbox
+      0034  Ldl1
+      0035  Cast 0 (T0[])
+      0038  Ldl2
+      0039  InvokeSpecial 10 (copyTo) args=3 ret=0
+      003E  ReturnVoid
 
   [public] ctor (collection: surtr.collections.Collection:IReadOnlyCollection<T0>): void
     ; entry 0, locals 2, stack 0, code 0000..0001
@@ -109,8 +107,8 @@ sealed class ReadOnlyCollection`1<T> : surtr.collections.Collection:IReadOnlyCol
       0020  ReturnValue
 
   [public] virtual iterate(): surtr:IIterator<unknown>
-    ; entry 8, locals 1, stack 1, code 0042..004A
-      0042  Ldl0
-      0043  Unbox
-      0044  InvokeSpecial 11 (iterate) args=1 ret=1
-      0049  ReturnValue
+    ; entry 8, locals 1, stack 1, code 003F..0047
+      003F  Ldl0
+      0040  Unbox
+      0041  InvokeSpecial 11 (iterate) args=1 ret=1
+      0046  ReturnValue

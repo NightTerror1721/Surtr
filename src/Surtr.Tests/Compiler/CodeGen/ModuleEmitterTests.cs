@@ -6863,6 +6863,39 @@ using var compilation = Reject(
             Assert.True(Call(runtime, "run").AsBool);
         }
 
+        /// <summary>
+        /// Regression: calling a method through a <em>user-declared</em> generic interface, where
+        /// the parameter is that interface's own type parameter, used to crash the VM with
+        /// <c>InvalidCastException: A '&lt;class&gt;' cannot be cast to 'erased'</c>, for every
+        /// element type - unlike the built-in <c>IComparable&lt;T&gt;</c>/<c>IEquatable&lt;T&gt;</c>
+        /// cases above, which always worked. The bridge <c>ModuleEmitter.EmitBridges</c> synthesizes
+        /// to satisfy the interface's erased vtable slot forwards to the class's own <c>has(item: T)</c>
+        /// - and since a generic class keeps one compiled body regardless of instantiation (§6), that
+        /// body's own parameter is <em>itself</em> still erased. <c>Narrow</c> (the bridge's argument
+        /// conversion) had no case for its destination already being a bare type parameter, so it
+        /// fell into the general "cast to a concrete type" path and cast an already-erased value to
+        /// the `Erased` marker class itself - which nothing is ever "a subclass of", so the cast
+        /// failed unconditionally. Both the direct-dispatch call (<c>viaConcrete</c>, always worked)
+        /// and the interface-dispatch one (<c>viaInterface</c>, the regression) are covered so a
+        /// future change cannot fix one path while re-breaking the other.
+        /// </summary>
+        [Fact]
+        public void AUserDeclaredGenericInterfaceDispatchesAMethodTakingItsOwnTypeParameter()
+        {
+            var runtime = Run(
+                "interface IHolder<T> { fun has(item: T): bool; }\n"
+                    + "class Box<T> : IHolder<T> {\n"
+                    + "    private let _v: T;\n"
+                    + "    public constructor(v: T) { _v = v; }\n"
+                    + "    public fun has(item: T): bool => _v == item;\n"
+                    + "}\n"
+                    + "fun viaConcrete(): bool { let b = Box<int>(5); return b.has(5); }\n"
+                    + "fun viaInterface(): bool { let b: IHolder<int> = Box<int>(5); return b.has(5); }\n");
+
+            Assert.True(Call(runtime, "viaConcrete").AsBool);
+            Assert.True(Call(runtime, "viaInterface").AsBool);
+        }
+
         /// <summary>An unconstrained parameter promises nothing, and there is no root class to fall back to.</summary>
         [Fact]
         public void AnUnconstrainedTypeParameterExposesNothing()

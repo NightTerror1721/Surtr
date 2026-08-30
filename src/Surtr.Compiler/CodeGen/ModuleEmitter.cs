@@ -1694,6 +1694,19 @@ namespace Surtr.Compiler.CodeGen
         {
             var bare = target.NonNullable;
 
+            // §6: a generic class keeps one compiled body regardless of instantiation, so its own
+            // type parameter is still erased in the method the bridge forwards to - the same
+            // representation the contract slot already handed over. Casting an already-erased value
+            // to itself is not a no-op cast here: `target`'s descriptor resolves to the very
+            // `SurtrBuiltIns.Erased` marker class, and nothing is ever "a subclass of" that marker
+            // (it exists to be assigned into, never tested against), so the emitted `Cast` opcode
+            // failed unconditionally - every interface call reaching a member of a still-generic
+            // class through its own contract crashed with `InvalidCastException`. `ConvertIntoErased`
+            // (BodyBinder.Expressions.cs) already draws exactly this line for the mirror case, an
+            // argument going the other way into the class.
+            if (bare.TypeKind == TypeSymbolKind.TypeParameter)
+                return;
+
             if (bare.TypeKind == TypeSymbolKind.Enum)
             {
                 // An enum boxes as its own value: a bare one as the int it is (Box(Integer)), a
