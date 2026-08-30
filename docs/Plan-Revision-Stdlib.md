@@ -1,14 +1,19 @@
 # Plan-Revision-Stdlib — Auditoría de `src/Surtr.Stdlib` y propuestas
 
-> **Estado:** Fases 0-3 implementadas (B1-B4, D1-D5) — ver la nota de cada hallazgo en §2 y el
-> resumen al final de §4. Fases 4-7 (limpieza de código muerto, README, y las adiciones nuevas:
-> vectores/`Random`/`PriorityQueue`/`Map`) siguen sin implementar por decisión explícita de alcance.
-> Nace de una revisión manual de los 25 archivos `.surtr` de la stdlib (~3500 líneas), con dos
-> hallazgos verificados compilando y ejecutando código real contra el runtime (`surtrc build` +
-> `surtr run`), no solo por lectura. Cada arreglo de las Fases 0-3 tiene una prueba de regresión en
-> `src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`, que compila y ejecuta la fuente `.surtr` real
-> (no la imagen `.surtrc` comitada) junto a un driver, así que confirma el comportamiento en vez de
-> solo la compilación.
+> **Estado:** Fases 0-3 implementadas (B1-B4, D1-D5) y parte de la Fase 4 (C1-C3, ver §2.4) — ver la
+> nota de cada hallazgo en §2 y el resumen al final de §4. Durante la Fase 4 apareció un **hallazgo
+> nuevo y de prioridad más alta que todo lo anterior**: B5, un bug del *compilador* (no de la
+> stdlib) que rompe en producción toda la superficie de álgebra de conjuntos de `Set<T>`/
+> `ReadOnlySet<T>` para cualquier tipo de elemento. Ver §2.0 antes que ninguna otra sección — el
+> resto del trabajo de Fase 4 (README) y las Fases 5-7 (vectores/`Random`/`PriorityQueue`/`Map`)
+> están en pausa hasta decidir cómo proceder dado B5, porque el código nuevo previsto usaría el
+> mismo patrón (interfaces genéricas declaradas en Surtr) que dispara el bug. Nace de una revisión
+> manual de los 25 archivos `.surtr` de la stdlib (~3500 líneas), con hallazgos verificados
+> compilando y ejecutando código real contra el runtime (`surtrc build`/`surtr run`, y el arnés de
+> `SurtrCompilation` que ya usa `src/Surtr.Tests`), no solo por lectura. Cada arreglo de las Fases
+> 0-4 tiene una prueba de regresión en `src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`, que
+> compila y ejecuta la fuente `.surtr` real (no la imagen `.surtrc` comitada) junto a un driver, así
+> que confirma el comportamiento en vez de solo la compilación.
 
 ---
 
@@ -30,7 +35,86 @@ imprescindibles para ese caso de uso.
 
 Cada hallazgo lleva: **tipo**, **prioridad**, archivo/línea, evidencia y arreglo propuesto.
 
-### 2.1 Bugs — Prioridad CRÍTICA (confirmados ejecutando código real)
+### 2.0 B5 — Bug del compilador: interfaces genéricas declaradas en Surtr rompen la VM — Prioridad CRÍTICA MÁXIMA
+
+**No es un bug de la stdlib** — vive en `Surtr.Compiler` (codegen de argumentos) o en la VM
+(`SurtrVirtualMachine.cs`, opcode `Cast`), pero **rompe funcionalidad real y ya publicada de la
+stdlib**, así que se documenta aquí primero.
+
+**Síntoma:** llamar a un método a través de una referencia tipada por una **interfaz genérica
+declarada en Surtr** (no una built-in como `IComparable<T>`/`IEquatable<T>`), cuando ese método toma
+como parámetro el propio parámetro de tipo de la interfaz, revienta la VM con
+`InvalidCastException: A '<Clase>' cannot be cast to 'erased'` — **para cualquier tipo de elemento**,
+primitivo o referencia.
+
+**Repro mínimo** (fuera de la stdlib, para aislar que no es un problema de `Set`):
+
+```surtr
+interface IHolder<T> { fun has(item: T): bool; }
+
+class Box<T> : IHolder<T>
+{
+    private let _v: T;
+    public constructor(v: T) { _v = v; }
+    public fun has(item: T): bool => _v == item;
+}
+
+fun run(): bool
+{
+    let b: IHolder<int> = Box<int>(5);
+    return b.has(5);   // revienta: "A 'int' cannot be cast to 'erased'"
+}
+```
+
+Confirmado también con `T = string` (falla igual, así que no es específico de primitivos que
+necesiten boxing) y confirmado que **calling a través del tipo concreto** (`Box<int>(5).has(5)`,
+sin pasar por `IHolder<int>`) **funciona bien** — el fallo es específicamente del *dispatch por
+interfaz*. Contrastado con el test ya existente
+`ModuleEmitterTests.AnIntCastToIComparableCallsCompareToThroughTheInterface`
+(`src/Surtr.Tests/Compiler/CodeGen/ModuleEmitterTests.cs:6768`), que hace lo mismo con la interfaz
+**built-in** `IComparable<T>` y sí funciona — la diferencia parece estar en que las interfaces
+built-in tienen manejo especial en C# que nunca se extendió a las declaradas en código Surtr.
+
+**Hipótesis de causa raíz** (sin confirmar con debugging real, pendiente de que quien tome la tarea
+lo verifique): al pasar un argumento a un parámetro que erasiona al tipo de la propia interfaz
+(`G0`/`Erased`), el emisor parece insertar un opcode `Cast` (el mismo que se usa para *leer* un
+valor fuera de un slot `Erased`, que si necesita comprobación en runtime) en vez de tratarlo como
+"cualquier referencia entra en un slot `Erased` sin conversión" (regla ya documentada en
+`docs/Compiler-Plan.md`/`CLAUDE.md`: "anything reaches an erased slot and nothing returns without a
+cast"). El `Cast` en runtime comprueba `subjectClass.Implements/IsSubclassOf(target)`
+(`SurtrVirtualMachine.cs:3608-3616`), y ninguna clase real es "subclase de" la marca `Erased`, así
+que la comprobación falla siempre.
+
+**Impacto real en la stdlib ya publicada**, confirmado ejecutando el código:
+- `Set<int>.isSubsetOf(other)` (y toda `IReadOnlySet<T>`/`ISet<T>`: `isSupersetOf`,
+  `isProperSubsetOf`, `isProperSupersetOf`, `overlaps`, `equals`, `unionWith`, `intersectWith`,
+  `exceptWith`, `symmetricExceptWith`, y los estáticos `union`/`intersect`/`except`/
+  `symmetricExcept`) **revienta la VM** en cuanto llaman a `other.contains(item)` a través del
+  parámetro `IReadOnlySet<T>`/`ISet<T>` — confirmado con `T = int` y `T = string`, así que es
+  universal, no depende del tipo de elemento.
+- La nueva `ReadOnlyCollection<T>`/`asReadOnly()` (C2, más abajo) hereda el mismo problema en su
+  `contains()` — documentado con un test que fija el comportamiento actual (crash) hasta que se
+  arregle el compilador:
+  `SurtrStdlibBehaviorTests.SetIsSubsetOfCurrentlyCrashesOnTheCompilerErasureBug`.
+
+**Lo que SÍ sigue funcionando:** cualquier miembro de `IReadOnlyCollection<T>`/`IReadOnlySet<T>`
+que no tome un argumento de tipo `T` a través de la interfaz — `length`, `iterate()`, `copyTo()`
+(toma `T[]`, siempre referencia) — porque no pasan por el `Cast`-a-`Erased` problemático. `contains`
+llamado sobre el tipo **concreto** (`Set<T>.contains(item)` directamente, sin pasar por la interfaz)
+también funciona, que es como `Set`/`ReadOnlySet` implementan su propio `contains` internamente —
+por eso el problema pasó desapercibido hasta que un método distinto (`isSubsetOf`) llama a
+`contains` **sobre el parámetro de la interfaz**, no sobre `this`.
+
+**Por qué esto pausa las Fases 4 (resto)-7:** cualquier interfaz genérica nueva declarada en Surtr
+que se llame a través de su propio tipo (`PriorityQueue`'s `IPriorityQueue<T>`, `Map`'s
+`IReadOnlyMap<K,V>`, cualquier operador de `Vector2`/`Quaternion` que reciba `IEquatable<Vector2>`,
+etc.) puede chocar con el mismo bug en cuanto haga lo que `Set.unionWith` hace hoy. Seguir
+diseñando esa superficie sin saber si el compilador lo soporta es trabajo que podría desecharse.
+
+**No hay arreglo posible desde la stdlib** sin sacrificar el polimorfismo por interfaz (p. ej.
+cambiar `unionWith(other: ISet<T>)` a `unionWith(other: Set<T>)`, un tipo concreto en vez de una
+interfaz) — la causa está en el compilador/VM. Se ha lanzado una tarea aparte para investigarlo y
+arreglarlo (ver el chip de tarea en la sesión).
 
 #### B1 — `StringBuilder` produce contenido corrupto desde su construcción — **Corregido**
 **Archivo:** `src/surtr/text/StringBuilder.surtr:7-11`
@@ -192,43 +276,60 @@ usada por el arreglo de B3. Test: `ADisposedMemoryStreamThrowsObjectDisposedExce
 
 ### 2.4 Código muerto — Prioridad BAJA/MEDIA
 
-#### C1 — `Buffer<T>` (core/Buffer.surtr) no está conectado a nada
+#### C1 — `Buffer<T>` (core/Buffer.surtr) no está conectado a nada — **Corregido (eliminado)**
 **Archivo:** `src/surtr/core/Buffer.surtr`
 
-El comentario de cabecera dice "la implementación concreta vive en el host (`bytes`, la clase
+El comentario de cabecera decía "la implementación concreta vive en el host (`bytes`, la clase
 built-in)", pero `bytes` (`SurtrBuiltIns.Declare("bytes", ...)`,
 `src/Surtr.Core/Runtime/BuiltIns/SurtrBuiltIns.cs:465`) es una clase de profundidad 0 sin relación
-con `Buffer<T>` — no lo extiende ni lo implementa. Además `Buffer<T>` está incompleto frente a lo
-que `bytes` realmente ofrece (le faltan `capacity`, `reserve`, `truncate`, que sí existen en
+con `Buffer<T>` — no lo extendía ni lo implementaba. Además estaba incompleto frente a lo que
+`bytes` realmente ofrece (le faltaban `capacity`, `reserve`, `truncate`, que sí existen en
 `SurtrBytesBuiltIn.cs`).
 
-**Propuesta:** o se conecta de verdad (documentando qué tipo de usuario lo implementaría — p. ej.
-un buffer definido en Surtr puro), o se elimina. Tal como está, es documentación engañosa disfrazada
-de código.
+**Arreglo aplicado:** eliminado el archivo entero. No había ningún tipo, en la stdlib ni en los
+tests, que lo implementara o lo nombrara — inventar un caso de uso ficticio para "conectarlo" no
+era mejor que quitar documentación engañosa disfrazada de código. Si en el futuro hace falta un
+buffer definido en Surtr puro con esta forma, se puede volver a proponer contra un caso de uso real.
 
-#### C2 — `ReadOnlyCollection<T>` (Collection.surtr) es código muerto
+#### C2 — `ReadOnlyCollection<T>` (Collection.surtr) es código muerto — **Corregido**
 **Archivo:** `src/surtr/collections/Collection.surtr:20-50`
 
-Declarada `private`, no la usa nada dentro del propio `Collection.surtr`, y ni `List` ni `Set` la
-usan para ofrecer un `asReadOnly()`. `ReadOnlyList`/`ReadOnlySet` son implementaciones
-**independientes**, no envoltorios sobre esta clase.
+Declarada `private`, no la usaba nada dentro del propio `Collection.surtr`, y ni `List` ni `Set` la
+usaban para ofrecer un `asReadOnly()`. `ReadOnlyList`/`ReadOnlySet` son implementaciones
+independientes, no envoltorios sobre esta clase.
 
-**Propuesta:** o se hace pública y se cablea un `asReadOnly(): IReadOnlyCollection<T>` en `ICollection<T>`
-que la use de verdad (propuesta detallada en §3.4), o se elimina.
+**Arreglo aplicado:** hecha `public`, y añadido `asReadOnly(): IReadOnlyCollection<T>` como método
+concreto en `List<T>` y `Set<T>` (no en la interfaz `ICollection<T>` — eso obligaría a
+`Stack`/`Queue`/`Deque` a implementarlo también sin necesidad, solo por compartir la interfaz).
+Se simplificó además a un único constructor `(collection: IReadOnlyCollection<T>)`: el segundo
+constructor original, `(collection: ICollection<T>)`, era redundante (`ICollection<T>` ya extiende
+`IReadOnlyCollection<T>`) y además **nunca fue invocable** — pasar una instancia real de
+`List<T>`/`Set<T>` a los dos constructores a la vez resultaba en "no candidate", un bug de
+resolución de sobrecarga del compilador con esta forma exacta (interfaz derivada + interfaz base),
+reportado aparte (ver el chip de tarea de la sesión). Test:
+`ListAndSetAsReadOnlyStayLiveOverTheSource` (cubre `length`/`iterate()`; `contains()` a través de
+la vista choca con B5, ver §2.0).
 
-#### C3 — Código comentado en `Set.of`
+#### C3 — Código comentado en `Set.of` — **Investigado, comentario corregido**
 **Archivo:** `src/surtr/collections/Set.surtr:246`
 
 ```surtr
 //public static inline fun of(items: T...): Set<T> => Set<T>(items);
 ```
 
-`Set.of(...)` solo cubre 0–3 elementos a mano; la variante varargs está comentada, probablemente
-porque no se puede reenviar un parámetro varargs ya recogido a otro varargs sin "desempaquetarlo".
-Dejar código comentado en la stdlib publicada no es buena práctica.
+`Set.of(...)` solo cubre 0–3 elementos a mano; la variante varargs estaba comentada. El comentario
+original no explicaba por qué.
 
-**Propuesta:** o se investiga si el lenguaje permite reenviar varargs de alguna forma y se activa,
-o se documenta con un comentario claro por qué el límite es 3, o se elimina la línea muerta.
+**Investigación:** se confirmó (probeta fuera de la stdlib, compilando y ejecutando) que Surtr **sí**
+permite reenviar un parámetro `T...` ya recogido a otro parámetro `T...` sin desempaquetarlo — la
+regla "un candidato no-varargs siempre gana a uno varargs" incluso hace que, en ese caso, la llamada
+real resuelva contra el *otro* constructor de `Set<T>` (`(collection: IIterable<T>)`), lo cual
+también es correcto. La razón real de que estuviera comentado es otra: `SignatureSet` erosiona un
+parámetro varargs igual que erosiona uno singular del mismo tipo, así que `of(items: T...)` y
+`of(item: T)` (ya declarado arriba) colisionan en la firma emitida `of(E)` — confirmado con
+`SURTR4001` al intentarlo. **Arreglo aplicado:** se dejó sin la sobrecarga varargs (no se puede
+tener ambas), pero se sustituyó el comentario por uno que documenta la razón real, para que nadie
+vuelva a intentarlo sin saber por qué falla.
 
 ### 2.5 Documentación desactualizada — Prioridad MEDIA
 
@@ -392,22 +493,27 @@ limpio antes del valor sigue devolviendo el "cero" blando; a mitad de valor lanz
 `operator[]` en `List`, `Deque<T>` reimplementado con lista propia doblemente enlazada (D2, opción
 (b) de §5), orden de iteración de `Stack`, `ObjectDisposedException`, limpieza de `reset()`.
 
-**Fase 4 — Limpieza (C1-C3, E1)**
-Decidir destino de `Buffer<T>` y `ReadOnlyCollection<T>` (conectar o eliminar), quitar código
-comentado, reescribir `README.md` para reflejar los 25 módulos reales.
+**Fase 4 — Limpieza (C1-C3 hecho; E1 pendiente) — EN PAUSA por B5**
+`Buffer<T>` eliminado, `ReadOnlyCollection<T>` resucitada con `asReadOnly()`, comentario de
+`Set.of` corregido con la razón real (§2.4). Descubierto durante esta fase: **B5** (§2.0), un bug
+de compilador que rompe `Set<T>`/`ReadOnlySet<T>` en producción. Queda pendiente solo `README.md`
+(E1), que no depende de B5 y se puede hacer en cualquier momento.
 
-**Fase 5 — Adiciones de alto valor (§3.1, §3.2)**
-`Vector2`/`Vector3`/`Quaternion` + `Angle` completo, y `Random`. Son independientes entre sí y
-pueden ir en paralelo. Requieren una pasada de diseño de API antes de escribir código (ver pregunta
-4 de §5).
+**Fase 5 — Adiciones de alto valor (§3.1, §3.2) — EN PAUSA por B5**
+`Vector2`/`Vector3`/`Quaternion` + `Angle` completo, y `Random`. Cualquier operador que compare dos
+instancias a través de una interfaz genérica (p. ej. `IEquatable<Vector2>`) puede chocar con B5 del
+mismo modo que `Set.unionWith` lo hace hoy — diseñar esta superficie antes de saber si el compilador
+la soporta es trabajo que podría desecharse.
 
-**Fase 6 — Adiciones de valor medio (§3.3, §3.4)**
-`PriorityQueue<T>` y `Map<K,V>`/`IMap<K,V>` (esta última reutiliza `ReadOnlyCollection<T>` si se
-decidió conservarla en la Fase 4).
+**Fase 6 — Adiciones de valor medio (§3.3, §3.4) — EN PAUSA por B5**
+`PriorityQueue<T>` (su `IPriorityQueue<T>` es exactamente la forma que dispara B5 en cuanto compare
+prioridades a través de la interfaz) y `Map<K,V>`/`IMap<K,V>` (mismo riesgo que `Set`, del que
+copia el patrón). Reutilizarían `ReadOnlyCollection<T>`, ya disponible desde la Fase 4.
 
 **Fase 7 — Ampliaciones incrementales (§3.5-§3.7)**
 Métodos añadidos a `List`, `StringBuilder` y `Sequence` una vez sus bases respectivas están
-corregidas/estables. Es la fase con menos urgencia y se puede hacer incremental, método a método.
+corregidas/estables. La menos afectada por B5 (son sobre todo métodos concretos, no interfaces
+genéricas nuevas), pero sigue detrás de las Fases 5-6 en el orden del plan.
 
 ---
 
@@ -423,10 +529,16 @@ sobre esas respuestas:
 4. **Vector/Quaternion/Random (Fase 5):** cuando se retome, primero se diseña y valida la API antes
    de escribir código — pendiente de que se decida entrar en la Fase 5.
 
-Preguntas abiertas para cuando se retome el trabajo (Fases 4-7):
+Pregunta abierta, bloqueante, descubierta durante la Fase 4:
 
-- **Fase 4:** ¿`Buffer<T>` se conecta a un caso de uso real o se elimina? ¿Igual para
-  `ReadOnlyCollection<T>` (C2) — o se reutiliza como base de `Map`/`asReadOnly()` en la Fase 6 (§3.4)?
+- **B5 (§2.0):** ¿se prioriza arreglar el bug del compilador antes de seguir con las Fases 5-7 (para
+  no diseñar sobre una base que puede no soportar el patrón), o se continúa diseñando esas fases
+  evitando deliberadamente pasar un parámetro del propio tipo genérico de una interfaz a través de
+  ella (perdiendo parte del polimorfismo que esas interfaces existen para dar)?
+
+Preguntas que siguen abiertas para cuando se retome cada fase (sin bloquear, una vez resuelto B5):
+
+- **Fase 4 (resto):** ¿reescribir `README.md` (E1) ahora, sin esperar a B5, ya que no depende de él?
 - **Fase 5:** confirmar alcance exacto de la superficie de `Vector2`/`Vector3`/`Quaternion`/`Angle`
   antes de diseñar (¿se incluye `Vector4`/`Color`/`Rect` ya, o se dejan para después como sugiere
   §3.1?).
