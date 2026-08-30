@@ -1,0 +1,74 @@
+// Only the parameterless constructor's seed needs the host, for real unpredictability - the
+// generator itself is ordinary Surtr (xorshift32), deterministic given a seed on every platform,
+// the same principle `array.sort` and `SurtrString.ComputeHash` already apply: a script that seeds
+// its own Random gets the same sequence everywhere, which is what a replay or a test fixture needs.
+native fun randomSeed(): int;
+
+public class Random
+{
+    private var _state: int;
+
+    /// A Random producing the same sequence every time, for tests and replays.
+    public constructor(seed: int)
+    {
+        // xorshift32's state must never be 0 - that state maps to itself forever.
+        _state = seed == 0 ? 1 : seed;
+    }
+
+    /// A Random seeded unpredictably from the host.
+    public constructor() : this(randomSeed()) {}
+
+    private fun next(): int
+    {
+        var state = _state;
+        state = state ^ (state << 13);
+        state = state ^ (state >>> 17);
+        state = state ^ (state << 5);
+        _state = state;
+        return state;
+    }
+
+    /// Every bit uniformly distributed - the full 32-bit range, negative values included.
+    public inline fun nextInt(): int => next();
+
+    /// Uniformly distributed over `[0, max)`. `max` must be positive.
+    public fun nextInt(max: int): int
+    {
+        if (max <= 0) throw ArgumentOutOfRangeException("max must be positive");
+
+        let n = next();
+        // -(n + 1) rather than -n: negating int.MinValue directly has no representable result,
+        // but int.MinValue + 1 negates fine, and shifting the whole non-negative range down by one
+        // costs nothing a modulo by max would not already absorb.
+        let nonNegative = n < 0 ? -(n + 1) : n;
+        return nonNegative % max;
+    }
+
+    /// Uniformly distributed over `[min, max)`.
+    public fun nextInt(min: int, max: int): int
+    {
+        if (max <= min) throw ArgumentOutOfRangeException("max must be greater than min");
+        return min + nextInt(max - min);
+    }
+
+    /// Uniformly distributed over `[0, 1)`.
+    public fun nextFloat(): float
+    {
+        let n = next();
+        let nonNegative = n < 0 ? -(n + 1) : n;
+        return nonNegative.toFloat() / 2147483648.0;
+    }
+
+    /// Uniformly distributed over `[min, max)`.
+    public inline fun nextFloat(min: float, max: float): float => min + (max - min) * nextFloat();
+
+    public inline fun nextBool(): bool => (next() & 1) == 1;
+
+    /// `true` with probability `probability` (clamped to `[0, 1]`), `false` otherwise.
+    public fun nextBool(probability: float): bool
+    {
+        if (probability <= 0.0) return false;
+        if (probability >= 1.0) return true;
+        return nextFloat() < probability;
+    }
+}

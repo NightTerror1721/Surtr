@@ -385,6 +385,9 @@ namespace Surtr.Stdlib
             runtime.DefineNativeBody("surtr.math.Math.round", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrMathNative.MathRound));
             runtime.DefineNativeBody("surtr.math.Math.hypot", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrMathNative.MathHypot));
 
+            // Random
+            runtime.DefineNativeBody("surtr.math.Random.randomSeed", SurtrNativeEntryPoint.FromFunctionPointer(&SurtrRandomNative.RandomSeed));
+
             // ── surtr.diagnostics ───────────────────────────────────────────
 
             // Profiler

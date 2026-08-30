@@ -27,3 +27,4 @@ surtr.math.Math.round
 surtr.math.Math.sin
 surtr.math.Math.sqrt
 surtr.math.Math.tan
+surtr.math.Random.randomSeed

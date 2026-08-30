@@ -1,0 +1,206 @@
+module surtr.math.Random
+  constants: 5   types: 1   fields: 1   methods: 13   modules: 0
+  string #0 = "max must be positive"
+  string #1 = "max must be greater than min"
+
+  type table:
+    #0  surtr:ArgumentOutOfRangeException
+
+  field table:
+    #0  surtr.math.Random:Random._state: int
+
+  method table:
+    #0  surtr.math.Random:Random.ctor(int) -> void
+    #1  surtr.math.Random:Random.ctor() -> void
+    #2  surtr.math.Random:Random.next() -> int
+    #3  surtr.math.Random:Random.nextInt() -> int
+    #4  surtr.math.Random:Random.nextInt(int) -> int
+    #5  surtr.math.Random:Random.nextInt(int, int) -> int
+    #6  surtr.math.Random:Random.nextFloat() -> float
+    #7  surtr.math.Random:Random.nextFloat(float, float) -> float
+    #8  surtr.math.Random:Random.nextBool() -> bool
+    #9  surtr.math.Random:Random.nextBool(float) -> bool
+    #10  randomSeed() -> int
+    #11  surtr:ArgumentOutOfRangeException.ctor(string) -> void
+    #12  int.toFloat() -> float
+
+[internal] static native randomSeed(): int
+  ; native link="surtr.math.Random.randomSeed" unbound declared
+
+class Random  [public]
+  [private] field _state: int
+
+  [public] ctor (seed: int): void
+    ; entry 0, locals 2, stack 3, code 0000..0012
+      0000  Ldl0
+      0001  Ldl1
+      0002  PushI8 0
+      0004  EQ
+      0005  JPZ +5 -> L0 (000D)
+      0008  PushI8 1
+      000A  JP +1 -> L1 (000E)
+    L0:
+      000D  Ldl1
+    L1:
+      000E  FieldSet 0 (_state)
+      0011  ReturnVoid
+
+  [public] ctor (): void
+    ; entry 1, locals 1, stack 2, code 0012..001E
+      0012  Ldl0
+      0013  CallLocalModule 10 (randomSeed) args=0 ret=1
+      0018  InvokeSpecial 0 (ctor) args=2 ret=0
+      001D  ReturnVoid
+
+  [private] next(): int
+    ; entry 2, locals 2, stack 3, code 001E..003F
+      001E  Ldl0
+      001F  FieldGet 0 (_state)
+      0022  Stl1
+      0023  Ldl1
+      0024  Ldl1
+      0025  PushI8 13
+      0027  Shl
+      0028  Xor
+      0029  Stl1
+      002A  Ldl1
+      002B  Ldl1
+      002C  PushI8 17
+      002E  Shr
+      002F  Xor
+      0030  Stl1
+      0031  Ldl1
+      0032  Ldl1
+      0033  PushI8 5
+      0035  Shl
+      0036  Xor
+      0037  Stl1
+      0038  Ldl0
+      0039  Ldl1
+      003A  FieldSet 0 (_state)
+      003D  Ldl1
+      003E  ReturnValue
+
+  [public] nextBool(): bool
+    ; entry 8, locals 1, stack 2, code 00BD..00CA
+      00BD  Ldl0
+      00BE  InvokeSpecial 2 (next) args=1 ret=1
+      00C3  PushI8 1
+      00C5  And
+      00C6  PushI8 1
+      00C8  EQ
+      00C9  ReturnValue
+
+  [public] nextBool(probability: float): bool
+    ; entry 9, locals 2, stack 2, code 00CA..00E1
+      00CA  Ldl1
+      00CB  Ldc3
+      00CC  JPFGT +2 -> L0 (00D1)
+      00CF  PushFalse
+      00D0  ReturnValue
+    L0:
+      00D1  Ldl1
+      00D2  Ldc4
+      00D3  JPFLT +2 -> L1 (00D8)
+      00D6  PushTrue
+      00D7  ReturnValue
+    L1:
+      00D8  Ldl0
+      00D9  InvokeSpecial 6 (nextFloat) args=1 ret=1
+      00DE  Ldl1
+      00DF  FLT
+      00E0  ReturnValue
+
+  [public] nextFloat(): float
+    ; entry 6, locals 3, stack 2, code 008F..00B0
+      008F  Ldl0
+      0090  InvokeSpecial 2 (next) args=1 ret=1
+      0095  Stl1
+      0096  Ldl1
+      0097  PushI8 0
+      0099  LT
+      009A  JPZ +8 -> L0 (00A5)
+      009D  Ldl1
+      009E  PushI8 1
+      00A0  Add
+      00A1  Neg
+      00A2  JP +1 -> L1 (00A6)
+    L0:
+      00A5  Ldl1
+    L1:
+      00A6  Stl2
+      00A7  Ldl2
+      00A8  InvokeSpecial 12 (toFloat) args=1 ret=1
+      00AD  Ldc2
+      00AE  FDiv
+      00AF  ReturnValue
+
+  [public] nextFloat(min: float, max: float): float
+    ; entry 7, locals 3, stack 3, code 00B0..00BD
+      00B0  Ldl1
+      00B1  Ldl2
+      00B2  Ldl1
+      00B3  FSub
+      00B4  Ldl0
+      00B5  InvokeSpecial 6 (nextFloat) args=1 ret=1
+      00BA  FMul
+      00BB  FAdd
+      00BC  ReturnValue
+
+  [public] nextInt(): int
+    ; entry 3, locals 1, stack 1, code 003F..0046
+      003F  Ldl0
+      0040  InvokeSpecial 2 (next) args=1 ret=1
+      0045  ReturnValue
+
+  [public] nextInt(max: int): int
+    ; entry 4, locals 4, stack 3, code 0046..0073
+      0046  Ldl1
+      0047  PushI8 0
+      0049  JPGT +11 -> L0 (0057)
+      004C  ObjNew 0 (surtr:ArgumentOutOfRangeException)
+      004F  Dup
+      0050  Ldc0
+      0051  InvokeSpecial 11 (ctor) args=2 ret=0
+      0056  Throw
+    L0:
+      0057  Ldl0
+      0058  InvokeSpecial 2 (next) args=1 ret=1
+      005D  Stl2
+      005E  Ldl2
+      005F  PushI8 0
+      0061  LT
+      0062  JPZ +8 -> L1 (006D)
+      0065  Ldl2
+      0066  PushI8 1
+      0068  Add
+      0069  Neg
+      006A  JP +1 -> L2 (006E)
+    L1:
+      006D  Ldl2
+    L2:
+      006E  Stl3
+      006F  Ldl3
+      0070  Ldl1
+      0071  Mod
+      0072  ReturnValue
+
+  [public] nextInt(min: int, max: int): int
+    ; entry 5, locals 3, stack 4, code 0073..008F
+      0073  Ldl2
+      0074  Ldl1
+      0075  JPGT +11 -> L0 (0083)
+      0078  ObjNew 0 (surtr:ArgumentOutOfRangeException)
+      007B  Dup
+      007C  Ldc1
+      007D  InvokeSpecial 11 (ctor) args=2 ret=0
+      0082  Throw
+    L0:
+      0083  Ldl1
+      0084  Ldl0
+      0085  Ldl2
+      0086  Ldl1
+      0087  Sub
+      0088  InvokeSpecial 4 (nextInt) args=2 ret=1
+      008D  Add
+      008E  ReturnValue
