@@ -22,6 +22,8 @@ public class StringBuilder
 
     public inline length: int { get { return _length; } }
 
+    public inline capacity: int { get { return _capacity; } }
+
     public inline isEmpty: bool { get { return _length == 0; } }
 
     public fun get(index: int): char
@@ -66,6 +68,71 @@ public class StringBuilder
     {
         _length = 0;
         return this;
+    }
+
+    public fun insert(index: int, value: string): StringBuilder
+    {
+        if (index < 0 || index > _length) throw IndexOutOfRangeException("Index out of range");
+        let insertLength = value.length;
+        if (insertLength == 0) return this;
+
+        ensureCapacity(_length + insertLength);
+        for (var i = _length - 1; i >= index; i--)
+            _buffer[i + insertLength] = _buffer[i];
+        for (var i = 0; i < insertLength; i++)
+            _buffer[index + i] = value[i];
+        _length += insertLength;
+        return this;
+    }
+
+    public fun remove(start: int, length: int): StringBuilder
+    {
+        if (start < 0 || length < 0 || start + length > _length) throw IndexOutOfRangeException("Index out of range");
+        for (var i = start + length; i < _length; i++)
+            _buffer[i - length] = _buffer[i];
+        _length -= length;
+        return this;
+    }
+
+    public fun replace(start: int, length: int, value: string): StringBuilder
+    {
+        remove(start, length);
+        insert(start, value);
+        return this;
+    }
+
+    public fun indexOf(value: char): int
+    {
+        for (var i = 0; i < _length; i++)
+        {
+            if (_buffer[i] == value) return i;
+        }
+        return -1;
+    }
+
+    public fun indexOf(value: string): int
+    {
+        if (value.length == 0) return 0;
+        for (var start = 0; start <= _length - value.length; start++)
+        {
+            var matched = true;
+            for (var j = 0; j < value.length; j++)
+            {
+                if (_buffer[start + j] != value[j])
+                {
+                    matched = false;
+                    break;
+                }
+            }
+            if (matched) return start;
+        }
+        return -1;
+    }
+
+    public fun substring(start: int, length: int): string
+    {
+        if (start < 0 || length < 0 || start + length > _length) throw IndexOutOfRangeException("Index out of range");
+        return string.fromCharArraySlice(_buffer, start, length);
     }
 
     public override fun toString(): string

@@ -131,6 +131,58 @@ public class List<T> : IList<T>
     /// A read-only view over this list; stays live if the list changes underneath it.
     public inline fun asReadOnly(): IReadOnlyCollection<T> => ReadOnlyCollection<T>(this);
 
+    public fun lastIndexOf(item: T): int
+    {
+        for (var i = _length - 1; i >= 0; i--)
+        {
+            if (_items[i] == item) return i;
+        }
+        return -1;
+    }
+
+    public fun reverse(): void
+    {
+        var i = 0;
+        var j = _length - 1;
+        while (i < j)
+        {
+            let temp = _items[i];
+            _items[i] = _items[j];
+            _items[j] = temp;
+            i++;
+            j--;
+        }
+    }
+
+    public fun addRange(items: IIterable<T>): void
+    {
+        for (item in items)
+            add(item);
+    }
+
+    /// A fresh, exactly-sized copy of this list's elements.
+    public fun toArray(): T[]
+    {
+        var result = array<T>(_length);
+        for (var i = 0; i < _length; i++)
+            result[i] = _items[i];
+        return result;
+    }
+
+    /// Sorts in place, stably, through `comparator`. Sorts a fresh `toArray()` copy and writes it
+    /// back rather than calling `_items.sort(comparator)` directly: `_items` is over-allocated to
+    /// `_capacity`, and the built-in array's own `sort()` would include the unused tail past
+    /// `_length` (garbage or stale values from a previous shrink), not just this list's real
+    /// content.
+    public fun sort(comparator: (T, T) -> int): void
+    {
+        if (_length < 2) return;
+        let sorted = toArray();
+        sorted.sort(comparator);
+        for (var i = 0; i < _length; i++)
+            _items[i] = sorted[i];
+    }
+
     private fun ensureCapacity(min: int): void
     {
         if (_capacity < min)

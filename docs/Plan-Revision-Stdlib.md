@@ -1,19 +1,23 @@
 # Plan-Revision-Stdlib — Auditoría de `src/Surtr.Stdlib` y propuestas
 
-> **Estado:** Fases 0-4 completas (B1-B4, D1-D5, C1-C3, E1). Fase 5 parcial: `Angle` completo y
-> `Random` están terminados y son utilizables; `Vector2`/`Vector3`/`Quaternion` están escritos,
-> matemáticamente correctos y probados, pero **no son usables por ningún llamador real** por un
-> segundo bug de compilador encontrado en el camino — B6 (§2.6), sin corregir, re-verificado
-> igual de roto tras una tanda no relacionada de commits sobre la jerarquía de tipos. Fase 6 hecha,
-> con matices: `PriorityQueue<T>` completa y utilizable de verdad entre módulos; `Map<K,V>` utilizable
-> por clave individual pero no recomendada con valores primitivos por B8. Cuatro bugs de compilador/
-> runtime nuevos en total esta ronda: **B5** (interfaces genéricas declaradas en Surtr rompían la
-> VM — corregido, §2.0), **B6** (una llamada entre módulos que recibe y devuelve una `value class`
-> multi-campo revienta — sin corregir, §2.6), **B7** (un parámetro-tupla de 2+ elementos en un método
-> con dispatch de interfaz revienta al emitirse — sin corregir, §2.7) y **B8** (un `dict<K,V>` con K y
-> V genéricos simultáneos de la misma clase corrompe en silencio los valores primitivos leídos vía
-> `keys()`/`values()`/iteración — sin corregir, el más serio de los cuatro por fallar sin ningún error
-> ni excepción, §2.8). Nace de una revisión
+> **Estado:** Fases 0-4 completas (B1-B4, D1-D5, C1-C3, E1). Fases 6-7 completas. Fase 5 parcial:
+> `Angle` completo y `Random` están terminados y son utilizables; `Vector2`/`Vector3`/`Quaternion`
+> están escritos, matemáticamente correctos y probados, pero **no son usables por ningún llamador
+> real** por un bug de compilador encontrado en el camino — B6 (§2.6), sin corregir, re-verificado
+> igual de roto tras una tanda no relacionada de commits sobre la jerarquía de tipos. Fase 6, con
+> matices: `PriorityQueue<T>` completa y utilizable de verdad entre módulos; `Map<K,V>` utilizable por
+> clave individual pero no recomendada con valores primitivos por B8. Fase 7 completa (ampliaciones a
+> `List`/`StringBuilder`/`Sequence`), con un cuarto bug encontrado en el camino (B9). Cinco bugs de
+> compilador/runtime nuevos en total esta ronda: **B5** (interfaces genéricas declaradas en Surtr
+> rompían la VM — corregido, §2.0), **B6** (una llamada entre módulos que recibe y devuelve una
+> `value class` multi-campo revienta — sin corregir, §2.6), **B7** (un parámetro-tupla de 2+ elementos
+> en un método con dispatch de interfaz revienta al emitirse — sin corregir, §2.7), **B8** (un
+> `dict<K,V>` con K y V genéricos simultáneos de la misma clase corrompe en silencio los valores
+> primitivos leídos vía `keys()`/`values()`/iteración — sin corregir, §2.8) y **B9** (el `T?` de un
+> método genérico instanciado a un primitivo pierde su marca de ausencia, así que `resultado == null`
+> da `false` cuando debería dar `true` — sin corregir, §2.9). B8 y B9 son los más serios de los
+> cinco: a diferencia de B6/B7 (que revientan ruidosamente en compilación), ambos fallan **en
+> silencio**, devolviendo datos incorrectos sin ningún error. Nace de una revisión
 > manual de los 25 archivos `.surtr` originales de la stdlib (~3500 líneas), con hallazgos
 > verificados compilando y ejecutando código real contra el runtime (`surtrc build`/`surtr run`, y
 > el arnés de `SurtrCompilation` que ya usa `src/Surtr.Tests`), no solo por lectura. Cada arreglo
@@ -597,6 +601,47 @@ regresión que **fija el comportamiento roto actual** para `V = int`
 asumir que funciona. **No se recomienda `Map<K, int>`/`Map<K, float>`/`Map<K, bool>`/`Map<K, char>`
 más allá de `get`/`set`/`containsKey`/`remove` por clave individual** hasta que esto se corrija.
 
+### 2.9 B9 — Bug del compilador: `T?` de un método genérico pierde su marca de ausencia al instanciarse a un primitivo — Prioridad CRÍTICA — **Sin corregir, reportado**
+
+Descubierto implementando la Fase 7, al escribir la primera prueba de verdad que compara con `null`
+el resultado de `Sequence<T>.firstOrNull()`/`lastOrNull()`/`min()`/`max()` sobre una secuencia **vacía**
+con `T` primitivo. Como B8, **falla en silencio** — sin `SURTR4001`, sin excepción — así que es fácil
+de no ver: nada en la suite existente había comparado nunca ese resultado contra `null` con un `T`
+primitivo antes de estas pruebas.
+
+**Síntoma:** un método genérico declarado `fun f<T>(): T?` (o con `T` fijado por la clase contenedora,
+como el `T` de `Sequence<T>`), instanciado a un tipo primitivo (confirmado con `int`), que hace
+`return null;` en algún camino, devuelve un valor que **no compara igual a `null`** en el llamador —
+`resultado == null` da `false` cuando debería dar `true`. El mismo valor a través de un `T?`
+**concreto, no genérico** (`fun f(): int? { return null; }`) compara correctamente.
+
+**Regla exacta, confirmada con dos repros mínimos aislados:**
+
+```surtr
+fun getNull(): int? { return null; }
+fun run(): bool { return getNull() == null; }              // true  - correcto
+
+fun getNull<T>(): T? { return null; }
+fun run(): bool { return getNull<int>() == null; }          // false - incorrecto
+```
+
+**Impacto real:** no es nuevo de esta ronda — es un hueco **preexistente** en `Sequence<T>` que nadie
+había probado hasta ahora. Afecta a `firstOrNull()` (ya en el árbol desde antes de esta revisión) y a
+los `min()`/`max()`/`lastOrNull()` nuevos de la Fase 7, todos ellos en el caso "secuencia vacía, `T`
+primitivo". No afecta al valor no-nulo (`firstOrNull()` sobre una secuencia no vacía sigue devolviendo
+el elemento correcto — es solo la comparación con `null` en el camino vacío la que falla), ni a `T`
+de tipo referencia (una referencia nula ya se representa de forma nativa sin la marca especial que
+usa un primitivo nulable, §1.11 de `CLAUDE.md`).
+
+**Arreglo aplicado en la stdlib:** ninguno posible. Pruebas de regresión que **fijan el comportamiento
+roto actual** en vez de asumir que funciona:
+`SequenceFirstOrNullOnEmptySequenceCurrentlyReturnsFalseNotNull`,
+`SequenceMinOnEmptySequenceCurrentlyReturnsFalseNotNull`,
+`SequenceLastOrNullOnEmptySequenceCurrentlyReturnsFalseNotNull`. **No usar
+`firstOrNull()`/`lastOrNull()`/`min()`/`max()` de `Sequence<T>`/`IIterable<T>` con un `T` primitivo
+para distinguir "vacío" de "el valor por defecto"** hasta que esto se corrija — comprobar `isEmpty`/
+`count() == 0` antes en su lugar.
+
 ---
 
 ## 3. Propuestas de mejora y adición (detalle)
@@ -778,10 +823,32 @@ nuevos, más estrechos que B6 y catalogados por separado:
   en la propia emisión) — así que `reutilizarían ReadOnlyCollection<T>` de la propuesta original no
   aplicó; en su lugar hay un `ReadOnlyMap<K,V>` propio, un nivel más arriba en la jerarquía.
 
-**Fase 7 — Ampliaciones incrementales (§3.5-§3.7)**
-Métodos añadidos a `List`, `StringBuilder` y `Sequence` una vez sus bases respectivas están
-corregidas/estables. La menos afectada por B6 (son sobre todo métodos sobre tipos ya existentes,
-sin `value class` multi-campo de por medio), pero sigue detrás de las Fases 5-6 en el orden del plan.
+**Fase 7 — Ampliaciones incrementales (§3.5-§3.7) — Hecha**
+Como se esperaba, la menos afectada por los bugs de compilador encontrados en las fases anteriores
+(son sobre todo métodos sobre tipos ya existentes, sin `value class` multi-campo ni parámetro-tupla de
+por medio). Aun así apareció un cuarto bug — B9 (§2.9) — y un matiz de diseño en dos sitios:
+
+- **`List<T>`:** `sort(comparator)`, `reverse()`, `addRange(items)`, `lastIndexOf(item)`, `toArray()`
+  — todos según lo previsto en §3.5. `sort` copia a un `toArray()` propio en vez de llamar a
+  `_items.sort(comparator)` directamente, porque `_items` está sobre-reservado a `_capacity` y el
+  `sort` del array built-in no sabe distinguir eso de `_length`.
+- **`StringBuilder`:** `insert`/`remove`/`replace`/`indexOf(char)`/`indexOf(string)`/`substring`/
+  `capacity` — todos según §3.6 (el setter de `operator[]` que pedía D1 ya existía desde el arreglo de
+  B1).
+- **`Sequence<T>`:** `min`/`max` (comparador explícito, no una restricción `IComparable<T>`),
+  `groupBy<K>` (usa `Map<K, List<T>>`, ya disponible desde la Fase 6), `distinctBy<K>`,
+  `sortBy<K>`/`sortByDescending<K>` (comparador explícito sobre `K`, mismo motivo que `min`/`max`),
+  `joinToString` (con selector `(T) -> string` explícito en vez de asumir `T.toString()` — `T` no
+  lleva la restricción `<T : object>` que eso necesitaría), `elementAt`/`last`/`lastOrNull`, y
+  `sumInts`/`averageInts`/`sumFloats`/`averageFloats` (dos extensiones concretas en vez de un
+  `sum()`/`average()` genérico — ver el porqué exacto en el propio archivo: `Sequence<T>` es una
+  `value class` de un solo campo y erosiona `Sequence<int>`/`Sequence<float>` a la misma firma).
+  Descubierto en el camino: **B9** (§2.9), donde `firstOrNull()`/`lastOrNull()`/`min()`/`max()` no
+  distinguen "vacío" de "cero" con un `T` primitivo. Además, `distinctBy`/`groupBy`/`sortBy`/
+  `sortByDescending` necesitan el argumento de tipo explícito (`.groupBy<int>(...)`) cuando el
+  `keySelector` es un lambda literal — la inferencia no lo deduce del cuerpo del lambda como sí hace
+  con un `(T) -> U` ya tipado que se pasa directamente (visto en `joinToString`'s propio uso interno
+  de `map(selector)`); no bloqueante, solo menos ergonómico de lo que sugería §3.7.
 
 ---
 
@@ -813,9 +880,12 @@ Preguntas abiertas, bloqueantes, igual que B5 lo fue antes:
   entre módulos y que `Quaternion` se separe de `Vector.surtr` a su propio archivo.
 - **B7 (§2.7):** sigue sin resolverse — bloquea que `IMap<K,V>` extienda `IReadOnlyCollection<(K,V)>`
   como proponía §3.4 originalmente.
-- **B8 (§2.8):** sigue sin resolverse, y es el más urgente de arreglar de los tres — a diferencia de
-  B6/B7 (que fallan ruidosamente en compilación), corrompe datos en silencio. Bloquea que `Map<K,V>`
-  se recomiende con valores primitivos.
+- **B8 (§2.8):** sigue sin resolverse, y es de los más urgentes de arreglar de los cuatro — a
+  diferencia de B6/B7 (que fallan ruidosamente en compilación), corrompe datos en silencio. Bloquea
+  que `Map<K,V>` se recomiende con valores primitivos.
+- **B9 (§2.9):** sigue sin resolverse, igual de urgente que B8 por la misma razón (falla en
+  silencio). Bloquea que `firstOrNull()`/`lastOrNull()`/`min()`/`max()` se usen con un `T` primitivo
+  para distinguir "vacío" de "el valor por defecto".
 
 Preguntas que siguen abiertas para cuando se retome cada fase:
 

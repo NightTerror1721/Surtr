@@ -1169,5 +1169,377 @@ namespace Surtr.Tests.Stdlib
 
             Assert.Equal(2.0, Float(runtime, "run"));
         }
+
+        // ── Fase 7: List<T> ampliaciones ─────────────────────────────────────
+
+        [Fact]
+        public void ListSortSortsInPlaceAndIgnoresSpareCapacity()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.List;\n"
+                    + "fun run(): bool {\n"
+                    + "    let l = List<int>(2);\n"
+                    + "    l.add(3); l.add(1); l.add(4); l.add(1); l.add(5);\n"
+                    + "    l.sort((a, b) => a - b);\n"
+                    + "    if (l.length != 5) return false;\n"
+                    + "    let expected = [1, 1, 3, 4, 5];\n"
+                    + "    for (var i = 0; i < 5; i++) { if (l.get(i) != expected[i]) return false; }\n"
+                    + "    return true;\n"
+                    + "}\n",
+                "collections/List.surtr", "collections/Collection.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void ListReverseReversesInPlace()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.List;\n"
+                    + "fun run(): bool {\n"
+                    + "    let l = List<int>(); l.add(1); l.add(2); l.add(3);\n"
+                    + "    l.reverse();\n"
+                    + "    return l.get(0) == 3 && l.get(1) == 2 && l.get(2) == 1;\n"
+                    + "}\n",
+                "collections/List.surtr", "collections/Collection.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void ListAddRangeAppendsFromAnyIterable()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.List;\n"
+                    + "fun run(): int {\n"
+                    + "    let l = List<int>(); l.add(1);\n"
+                    + "    l.addRange([2, 3, 4]);\n"
+                    + "    var sum = 0;\n"
+                    + "    for (x in l) sum += x;\n"
+                    + "    return sum;\n"
+                    + "}\n",
+                "collections/List.surtr", "collections/Collection.surtr");
+
+            Assert.Equal(10, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ListLastIndexOfFindsTheLastOccurrence()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.List;\n"
+                    + "fun run(): int {\n"
+                    + "    let l = List<int>(); l.add(1); l.add(2); l.add(1); l.add(2);\n"
+                    + "    return l.lastIndexOf(1);\n"
+                    + "}\n",
+                "collections/List.surtr", "collections/Collection.surtr");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        [Fact]
+        public void ListToArrayIsExactlySizedNotCapacitySized()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.List;\n"
+                    + "fun run(): int {\n"
+                    + "    let l = List<int>(16); l.add(1); l.add(2);\n"
+                    + "    return l.toArray().length;\n"
+                    + "}\n",
+                "collections/List.surtr", "collections/Collection.surtr");
+
+            Assert.Equal(2, Int(runtime, "run"));
+        }
+
+        // ── Fase 7: StringBuilder ampliaciones ───────────────────────────────
+
+        [Fact]
+        public void StringBuilderCapacityIsExposedSeparatelyFromLength()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.StringBuilder;\n"
+                    + "fun run(): bool {\n"
+                    + "    let sb = StringBuilder(16);\n"
+                    + "    sb.append(\"hi\");\n"
+                    + "    return sb.length == 2 && sb.capacity >= 16;\n"
+                    + "}\n",
+                "text/StringBuilder.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void StringBuilderInsertShiftsExistingContentRight()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.StringBuilder;\n"
+                    + "fun run(): string {\n"
+                    + "    let sb = StringBuilder(); sb.append(\"helloworld\");\n"
+                    + "    sb.insert(5, \" \");\n"
+                    + "    return sb.toString();\n"
+                    + "}\n",
+                "text/StringBuilder.surtr");
+
+            Assert.Equal("hello world", runtime.Resolve<Surtr.Runtime.Objects.SurtrString>(runtime.Invoke(Function(runtime, "run")))!.Text);
+        }
+
+        [Fact]
+        public void StringBuilderRemoveDeletesARange()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.StringBuilder;\n"
+                    + "fun run(): string {\n"
+                    + "    let sb = StringBuilder(); sb.append(\"hello world\");\n"
+                    + "    sb.remove(5, 6);\n"
+                    + "    return sb.toString();\n"
+                    + "}\n",
+                "text/StringBuilder.surtr");
+
+            Assert.Equal("hello", runtime.Resolve<Surtr.Runtime.Objects.SurtrString>(runtime.Invoke(Function(runtime, "run")))!.Text);
+        }
+
+        [Fact]
+        public void StringBuilderReplaceSwapsARangeForADifferentLengthString()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.StringBuilder;\n"
+                    + "fun run(): string {\n"
+                    + "    let sb = StringBuilder(); sb.append(\"hello world\");\n"
+                    + "    sb.replace(6, 5, \"there!!\");\n"
+                    + "    return sb.toString();\n"
+                    + "}\n",
+                "text/StringBuilder.surtr");
+
+            Assert.Equal("hello there!!", runtime.Resolve<Surtr.Runtime.Objects.SurtrString>(runtime.Invoke(Function(runtime, "run")))!.Text);
+        }
+
+        [Fact]
+        public void StringBuilderIndexOfCharAndString()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.StringBuilder;\n"
+                    + "fun run(): bool {\n"
+                    + "    let sb = StringBuilder(); sb.append(\"hello world\");\n"
+                    + "    if (sb.indexOf('w') != 6) return false;\n"
+                    + "    if (sb.indexOf('z') != -1) return false;\n"
+                    + "    if (sb.indexOf(\"world\") != 6) return false;\n"
+                    + "    return sb.indexOf(\"xyz\") == -1;\n"
+                    + "}\n",
+                "text/StringBuilder.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void StringBuilderSubstringReturnsASlice()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.text.StringBuilder;\n"
+                    + "fun run(): string {\n"
+                    + "    let sb = StringBuilder(); sb.append(\"hello world\");\n"
+                    + "    return sb.substring(6, 5);\n"
+                    + "}\n",
+                "text/StringBuilder.surtr");
+
+            Assert.Equal("world", runtime.Resolve<Surtr.Runtime.Objects.SurtrString>(runtime.Invoke(Function(runtime, "run")))!.Text);
+        }
+
+        // ── Fase 7: Sequence<T> ampliaciones ──────────────────────────────────
+
+        [Fact]
+        public void SequenceMinAndMax()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Sequence;\n"
+                    + "fun run(): bool {\n"
+                    + "    let seq = Sequence<int>.of(3, 1, 4, 1, 5);\n"
+                    + "    return seq.min((a, b) => a - b) == 1 && seq.max((a, b) => a - b) == 5;\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        /// <summary>
+        /// B9 (docs/Plan-Revision-Stdlib.md): a generic method's <c>T?</c> return, instantiated to a
+        /// primitive (confirmed with <c>int</c>), loses its "absent" tag by the time the caller
+        /// compares it to <c>null</c> - a concrete, non-generic <c>int?</c> compares correctly, but
+        /// the exact same value routed through a generic method's substituted return type does not.
+        /// This is not new to <c>min</c>/<c>max</c> - the pre-existing <c>firstOrNull()</c> has the
+        /// same gap (see <see cref="SequenceFirstOrNullOnEmptySequenceCurrentlyReturnsFalseNotNull"/>),
+        /// just never had a test exercising an empty, primitive-typed sequence before. Pins the
+        /// current (broken) behaviour until the compiler bug is fixed - flip it to assert `true`
+        /// afterwards.
+        /// </summary>
+        [Fact]
+        public void SequenceMinOnEmptySequenceCurrentlyReturnsFalseNotNull()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Sequence;\n"
+                    + "fun run(): bool {\n"
+                    + "    return Sequence<int>.empty.min((a, b) => a - b) == null;\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
+
+            Assert.False(Bool(runtime, "run"));
+        }
+
+        /// <summary>B9 again (see the remarks above) - pins the pre-existing gap in firstOrNull().</summary>
+        [Fact]
+        public void SequenceFirstOrNullOnEmptySequenceCurrentlyReturnsFalseNotNull()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Sequence;\n"
+                    + "fun run(): bool {\n"
+                    + "    return Sequence<int>.empty.firstOrNull() == null;\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
+
+            Assert.False(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void SequenceSumIntsAndAverageInts()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Sequence;\n"
+                    + "fun run(): bool {\n"
+                    + "    let seq = Sequence<int>.of(1, 2, 3, 4);\n"
+                    + "    if (seq.sumInts() != 10) return false;\n"
+                    + "    let avg = seq.averageInts();\n"
+                    + "    return avg > 2.499 && avg < 2.501;\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void SequenceSumFloatsAndAverageFloats()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Sequence;\n"
+                    + "fun run(): bool {\n"
+                    + "    let seq = Sequence<float>.of(1.0, 2.0, 3.0);\n"
+                    + "    let sum = seq.sumFloats();\n"
+                    + "    if (sum < 5.999 || sum > 6.001) return false;\n"
+                    + "    let avg = seq.averageFloats();\n"
+                    + "    return avg > 1.999 && avg < 2.001;\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void SequenceGroupByGroupsPreservingEncounterOrder()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Sequence;\n"
+                    + "fun run(): bool {\n"
+                    + "    let groups = Sequence<int>.of(1, 2, 3, 4, 5, 6).groupBy<int>((x) => x % 2);\n"
+                    + "    let evens = groups.get(0);\n"
+                    + "    let odds = groups.get(1);\n"
+                    + "    if (evens.length != 3 || odds.length != 3) return false;\n"
+                    + "    return evens.get(0) == 2 && odds.get(0) == 1;\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void SequenceDistinctByKeepsFirstPerKey()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Sequence;\n"
+                    + "fun run(): bool {\n"
+                    + "    let result = Sequence<int>.of(1, 2, 3, 4, 5).distinctBy<int>((x) => x % 2).toArray();\n"
+                    + "    return result.length == 2 && result[0] == 1 && result[1] == 2;\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void SequenceSortByAndSortByDescending()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Sequence;\n"
+                    + "fun run(): bool {\n"
+                    + "    let asc = Sequence<int>.of(3, 1, 2).sortBy<int>((x) => -x, (a, b) => a - b).toArray();\n"
+                    + "    let desc = Sequence<int>.of(1, 2, 3).sortByDescending<int>((x) => x, (a, b) => a - b).toArray();\n"
+                    + "    if (asc[0] != 3 || asc[1] != 2 || asc[2] != 1) return false;\n"
+                    + "    return desc[0] == 3 && desc[1] == 2 && desc[2] == 1;\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void SequenceJoinToStringUsesTheGivenSelectorAndSeparator()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Sequence;\n"
+                    + "fun run(): string {\n"
+                    + "    return Sequence<int>.of(1, 2, 3).joinToString(\", \", (x) => x.toString());\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
+
+            Assert.Equal("1, 2, 3", runtime.Resolve<Surtr.Runtime.Objects.SurtrString>(runtime.Invoke(Function(runtime, "run")))!.Text);
+        }
+
+        [Fact]
+        public void SequenceElementAtLastAndLastOrNull()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Sequence;\n"
+                    + "fun run(): bool {\n"
+                    + "    let seq = Sequence<int>.of(10, 20, 30);\n"
+                    + "    if (seq.elementAt(1) != 20) return false;\n"
+                    + "    if (seq.last() != 30) return false;\n"
+                    + "    return seq.lastOrNull() == 30;\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
+
+        /// <summary>B9 again (see the remarks on SequenceMinOnEmptySequenceCurrentlyReturnsFalseNotNull) - pins the same gap in lastOrNull().</summary>
+        [Fact]
+        public void SequenceLastOrNullOnEmptySequenceCurrentlyReturnsFalseNotNull()
+        {
+            var runtime = BuildAndLoad(
+                "import surtr.collections.Sequence;\n"
+                    + "fun run(): bool {\n"
+                    + "    return Sequence<int>.empty.lastOrNull() == null;\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
+
+            Assert.False(Bool(runtime, "run"));
+        }
+
+        [Fact]
+        public void SequenceTerminalOpsWorkThroughTheIIterableExtensionsToo()
+        {
+            // Exercises the IIterable<T> extension wrappers directly on a List<int> (not a
+            // Sequence<T>), the same way forEach/toList/etc. above already do.
+            var runtime = BuildAndLoad(
+                "import surtr.collections.List;\n"
+                    + "import surtr.collections.Sequence;\n"
+                    + "fun run(): bool {\n"
+                    + "    let l = List<int>(); l.add(1); l.add(2); l.add(3);\n"
+                    + "    if (l.sumInts() != 6) return false;\n"
+                    + "    if (l.min((a, b) => a - b) != 1) return false;\n"
+                    + "    if (l.max((a, b) => a - b) != 3) return false;\n"
+                    + "    if (l.last() != 3) return false;\n"
+                    + "    return l.elementAt(1) == 2;\n"
+                    + "}\n",
+                "collections/Collection.surtr", "collections/List.surtr", "collections/Set.surtr", "collections/Map.surtr", "collections/Sequence.surtr");
+
+            Assert.True(Bool(runtime, "run"));
+        }
     }
 }

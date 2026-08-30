@@ -663,6 +663,10 @@ var runtime = Run(
                 "surtr.collections.Set",
                 File.ReadAllText(collections + "/Set.surtr"));
             project.AddSourceFile(
+                Root + "/surtr/collections/Map.surtr",
+                "surtr.collections.Map",
+                File.ReadAllText(collections + "/Map.surtr"));
+            project.AddSourceFile(
                 Root + "/surtr/collections/Sequence.surtr", "surtr.collections.Sequence", sequenceSource);
 
             var compilation = SurtrCompilation.Create(project);
