@@ -6213,6 +6213,60 @@ var runtime = Run(
 
             Assert.Contains(compilation.Diagnostics, d => d.Code == SurtrDiagnosticCode.InvalidBaseType);
         }
+
+        /// <summary>
+        /// The baseline this feature must not disturb: <c>array&lt;T&gt;.indexOf</c>/<c>contains</c>
+        /// reach an ordinary class instance's equality through <c>SurtrValueComparer</c>'s untyped
+        /// fallback (there is no <c>SurtrInstance</c> case for a non-value-type class - see
+        /// <c>ReferencesEqual</c>'s <c>default:</c>), and a class declaring no <c>equals</c> of its
+        /// own must still compare by identity there, exactly as before <c>SurtrObject.EqualsOverridable</c>
+        /// existed.
+        /// </summary>
+        [Fact]
+        public void AnArrayOfPlainClassesWithNoEqualsOverride_IndexOfStillComparesByIdentity()
+        {
+            var runtime = Run(
+                "class Point { public let x: int; public constructor(x: int) { this.x = x; } }\n"
+                    + "fun run(): int {\n"
+                    + "  let a = Point(1);\n"
+                    + "  let b = Point(1);\n"
+                    + "  let xs = [a];\n"
+                    + "  return (xs.contains(a) ? 1 : 0) * 10 + (xs.contains(b) ? 1 : 0);\n"
+                    + "}");
+
+            Assert.Equal(10, Int(runtime, "run"));
+        }
+
+        /// <summary>
+        /// The new behaviour Part B of the <c>object</c> root work exists for: a class writing a
+        /// real <c>override fun equals(other: object?): bool</c> is now honoured by the same
+        /// generic/untyped <c>array&lt;T&gt;.indexOf</c>/<c>contains</c> path the identity test
+        /// above exercises - the vtable slot no longer resolves to <c>object.equals</c>, so
+        /// <see cref="Surtr.Runtime.Objects.SurtrObject.EqualsOverridable"/>'s slow path runs the
+        /// override instead of the comparer's identity default.
+        /// </summary>
+        [Fact]
+        public void AnArrayOfPlainClassesWithARealEqualsOverride_IndexOfNowRespectsIt()
+        {
+            var runtime = Run(
+                "class Point {\n"
+                    + "  public let x: int;\n"
+                    + "  public constructor(x: int) { this.x = x; }\n"
+                    + "  public override fun equals(other: object?): bool {\n"
+                    + "    let p = other as? Point;\n"
+                    + "    return p != null && p.x == this.x;\n"
+                    + "  }\n"
+                    + "}\n"
+                    + "fun run(): int {\n"
+                    + "  let a = Point(1);\n"
+                    + "  let b = Point(1);\n"
+                    + "  let c = Point(2);\n"
+                    + "  let xs = [a];\n"
+                    + "  return (xs.contains(b) ? 1 : 0) * 10 + (xs.contains(c) ? 1 : 0);\n"
+                    + "}");
+
+            Assert.Equal(10, Int(runtime, "run"));
+        }
         #endregion
 
         #region typeof (Fase 13)

@@ -23,13 +23,28 @@ namespace Surtr.Runtime.BuiltIns
     /// </remarks>
     internal static unsafe class SurtrObjectBuiltIn
     {
+        /// <summary>
+        /// <c>object.equals</c>'s own metadata - the exact <see cref="SurtrMethodInfo"/> every
+        /// class inherits into its vtable slot until something overrides it. Comparing a class's
+        /// resolved <c>VirtualMethods[slot]</c> against this by reference is how
+        /// <see cref="SurtrObject.EqualsOverridable"/> tells "nobody overrode this" from "a real
+        /// override exists" without a per-class flag anywhere.
+        /// </summary>
+        internal static SurtrMethodInfo EqualsMethod { get; private set; } = null!;
+
+        /// <summary>The same slot-identity marker as <see cref="EqualsMethod"/>, for <c>hashCode</c>.</summary>
+        internal static SurtrMethodInfo HashCodeMethod { get; private set; } = null!;
+
+        /// <summary>The same slot-identity marker as <see cref="EqualsMethod"/>, for <c>toString</c>.</summary>
+        internal static SurtrMethodInfo ToStringMethod { get; private set; } = null!;
+
         /// <summary>Declares <c>equals</c>, <c>hashCode</c> and <c>toString</c> on <c>object</c> itself.</summary>
         internal static void Declare(SurtrBuiltInTypeBuilder builder)
         {
             // `object?` and `object` share one descriptor: a reference's nullability needs no
             // encoding of its own (a reference is its payload, and null is already representable
             // in it), so the parameter is declared against the plain `object` reference either way.
-            builder.Method(
+            EqualsMethod = builder.Method(
                 "equals",
                 SurtrClassReference.Boolean,
                 SurtrNativeEntryPoint.FromFunctionPointer(&DefaultEquals),
@@ -37,14 +52,14 @@ namespace Surtr.Runtime.BuiltIns
                 dispatch: SurtrMethodDispatch.Virtual,
                 isPure: true);
 
-            builder.Method(
+            HashCodeMethod = builder.Method(
                 "hashCode",
                 SurtrClassReference.Integer,
                 SurtrNativeEntryPoint.FromFunctionPointer(&DefaultHashCode),
                 dispatch: SurtrMethodDispatch.Virtual,
                 isPure: true);
 
-            builder.Method(
+            ToStringMethod = builder.Method(
                 "toString",
                 SurtrClassReference.String,
                 SurtrNativeEntryPoint.FromFunctionPointer(&DefaultToString),

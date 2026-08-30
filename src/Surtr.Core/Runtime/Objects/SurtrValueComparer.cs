@@ -168,8 +168,14 @@ namespace Surtr.Runtime.Objects
                         && ReferenceEquals(leftValue.Class, rightValue.Class)
                         && InstancesEqual(leftValue.Fields, rightValue.Fields);
 
+                // Everything else - an array, a dict, a closure, an ordinary (non-value) class
+                // instance, a native object - has no more specific structural rule, so this is
+                // where equals actually deciding something (a real override, not the inherited
+                // identity default) gets a say. The fast path costs nothing beyond what identity
+                // comparison already did - see SurtrObject.EqualsOverridable.
                 default:
-                    return false;
+                    return leftEntity is SurtrObject leftObject
+                        && leftObject.EqualsOverridable(_runtime, SurtrValue.CreateReference(right));
             }
         }
 
@@ -241,8 +247,10 @@ namespace Surtr.Runtime.Objects
                 case SurtrInstance value when value.Class.IsValueType:
                     return SlotsHash(value.Fields);
 
+                // The hash half of ReferencesEqual's default case: same fast/slow split, same
+                // reason - see SurtrObject.HashCodeOverridable.
                 default:
-                    return reference;
+                    return entity is SurtrObject entityObject ? entityObject.HashCodeOverridable(_runtime) : reference;
             }
         }
 
