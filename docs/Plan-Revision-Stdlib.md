@@ -1,16 +1,20 @@
 # Plan-Revision-Stdlib — Auditoría de `src/Surtr.Stdlib` y propuestas
 
-> **Estado:** Fases 0-4 implementadas (B1-B4, D1-D5, C1-C3, E1). Durante la Fase 4 apareció un
-> **hallazgo nuevo y de prioridad más alta que todo lo anterior**: B5, un bug del *compilador* (no
-> de la stdlib) que rompía en producción toda la superficie de álgebra de conjuntos de
-> `Set<T>`/`ReadOnlySet<T>` para cualquier tipo de elemento — **ya corregido** (ver §2.0). Las Fases
-> 5-7 (vectores/`Random`/`PriorityQueue`/`Map`) ya no están bloqueadas. Nace de una revisión
-> manual de los 25 archivos `.surtr` de la stdlib (~3500 líneas), con hallazgos verificados
-> compilando y ejecutando código real contra el runtime (`surtrc build`/`surtr run`, y el arnés de
-> `SurtrCompilation` que ya usa `src/Surtr.Tests`), no solo por lectura. Cada arreglo de las Fases
-> 0-4 tiene una prueba de regresión en `src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`, que
-> compila y ejecuta la fuente `.surtr` real (no la imagen `.surtrc` comitada) junto a un driver, así
-> que confirma el comportamiento en vez de solo la compilación.
+> **Estado:** Fases 0-4 completas (B1-B4, D1-D5, C1-C3, E1). Fase 5 parcial: `Angle` completo y
+> `Random` están terminados y son utilizables; `Vector2`/`Vector3`/`Quaternion` están escritos,
+> matemáticamente correctos y probados, pero **no son usables por ningún llamador real** por un
+> segundo bug de compilador encontrado en el camino — B6 (§2.6), sin corregir. Dos bugs de
+> compilador nuevos en total esta ronda: **B5** (interfaces genéricas declaradas en Surtr rompían la
+> VM — ya corregido, ver §2.0) y **B6** (una llamada entre módulos que recibe y devuelve una `value
+> class` multi-campo revienta — sigue sin corregir, bloquea el valor real de la Fase 5). Fases 6-7
+> en pausa hasta que se resuelva B6, por la misma razón que motivó pausar antes por B5: seguirían el
+> mismo patrón (`PriorityQueue`, `Map`) y probablemente lo dispararían igual. Nace de una revisión
+> manual de los 25 archivos `.surtr` originales de la stdlib (~3500 líneas), con hallazgos
+> verificados compilando y ejecutando código real contra el runtime (`surtrc build`/`surtr run`, y
+> el arnés de `SurtrCompilation` que ya usa `src/Surtr.Tests`), no solo por lectura. Cada arreglo
+> tiene una prueba de regresión en `src/Surtr.Tests/Stdlib/SurtrStdlibBehaviorTests.cs`, que compila
+> y ejecuta la fuente `.surtr` real (no la imagen `.surtrc` comitada) junto a un driver, así que
+> confirma el comportamiento en vez de solo la compilación.
 
 ---
 
@@ -354,6 +358,82 @@ tras eliminar `Buffer.surtr` en C1), agrupados igual que `src/surtr/`, y añadid
 está en C#" la fila de `Native/SurtrDiagnosticsNative.cs` (`Profiler`/`Debug`/`RuntimeInfo`), que
 faltaba por completo.
 
+### 2.6 B6 — Bug del compilador: llamada entre módulos con `value class` multi-campo de entrada Y salida — Prioridad CRÍTICA (bloquea Fase 5) — **Sin corregir, reportado**
+
+Descubierto implementando `Vector2`/`Vector3`/`Quaternion` (Fase 5, §3.1). Como B5, **no es un bug
+de la stdlib** — vive en `Surtr.Compiler` (emisión de llamadas entre módulos) — pero determina si
+`Vector2`/`Vector3`/`Quaternion` son utilizables de verdad desde código real.
+
+**Síntoma:** una llamada (función, operador o método de instancia) que cruza un límite de módulo
+revienta con `SURTR4001: Operand stack underflow` en el **llamador**, en cuanto esa llamada **recibe
+Y devuelve** una `value class` multi-campo (dos o más campos, que se aplanan a varios slots
+contiguos, §2.9) a la vez. El receptor de un método de instancia cuenta como "entrada" a este
+efecto.
+
+**Regla exacta, confirmada con cuatro repros mínimos aislados** (compilando dos módulos con
+`surtrc build`):
+
+| Entra `value class` multi-campo | Sale `value class` multi-campo | Resultado |
+|---|---|---|
+| No (solo escalares) | Sí | Funciona |
+| Sí | No (sale un escalar) | Funciona |
+| Sí | Sí | **Revienta siempre** |
+| (cualquiera) | (cualquiera), mismo módulo | Funciona siempre |
+
+El caso que revienta cubre, literalmente, `operator+`, `operator-`, `operator*` por escalar,
+`normalized()`, `lerp(a, b, t)`, `rotate(v)` y la composición de quaterniones — es decir, **casi
+toda la superficie útil de una API de vectores/quaterniones**. Un repro mínimo de una sola línea ya
+lo dispara:
+
+```surtr
+// otromodulo.surtr
+public value class Vector2 { public let x: float; public let y: float;
+    public constructor(x: float, y: float) { this.x = x; this.y = y; } }
+public fun scaleIt(a: Vector2, s: float): Vector2 => Vector2(a.x * s, a.y * s);
+```
+```surtr
+// probe.surtr
+import otromodulo;
+fun run(): float { let v = scaleIt(Vector2(1.0, 2.0), 3.0); return v.x; }
+```
+falla con `Operand stack underflow at offset 14 in 'run': the instruction pops 2 but the stack holds 1`.
+
+**Impacto real:** un script que `import surtr.math.Vector;` y escriba `a + b` entre dos `Vector2` —
+el uso más básico imaginable, y el que cualquier llamador real haría, porque un llamador real vive
+por definición en *otro* módulo — revienta al compilar. Confirmado con un test dedicado
+(`SurtrStdlibBehaviorTests.VectorArithmeticFromAnotherModuleCurrentlyCrashesOnTheCompilerStackBug`)
+que fija este comportamiento roto como conocido. Dentro del propio `Vector.surtr` todo funciona
+(mismo módulo), lo que explica por qué pasó desapercibido hasta escribir tests que lo usan desde
+fuera, exactamente como lo usaría un script real.
+
+**Hipótesis de causa raíz** (sin confirmar con debugging en el emisor): el cálculo del efecto de
+pila para una llamada cross-módulo (`CallExternal`) probablemente corrige el conteo de slots por
+separado para "argumento multi-slot" y para "retorno multi-slot", y esas dos correcciones se pisan
+o se aplican mal cuando coinciden en la misma llamada — de ahí que "solo entra" y "solo sale" por
+separado funcionen bien y juntos no.
+
+**Arreglos aplicados en la stdlib mientras tanto** (paliativos, no resuelven la causa):
+- `Vector.surtr`'s `lerp` deja de llamar a `Math.clamp01` (`forceinline` cross-módulo, dispara una
+  variante del mismo problema) y clampa a mano.
+- `Quaternion` se fusionó en el mismo módulo que `Vector2`/`Vector3` (`surtr.math.Vector`) en vez de
+  vivir en su propio archivo — así su uso interno de `Vector3.cross`/`+`/`*` es same-módulo y
+  funciona. Sigue **roto para cualquier llamador externo real**, exactamente igual que
+  `Vector2`/`Vector3` — fusionar el módulo no resuelve B6, solo evita que lo dispare el propio código
+  interno de `Quaternion`.
+- Los tests de comportamiento de `Vector2`/`Vector3`/`Quaternion` compilan la función de aserción
+  **dentro** del propio módulo `surtr.math.Vector` (`SurtrStdlibBehaviorTests.BuildAndLoadWithin`)
+  en vez de en un módulo `test` aparte, precisamente para poder verificar que las fórmulas
+  matemáticas son correctas de forma independiente de B6. Hay que volver a `BuildAndLoad` normal
+  (módulo `test` separado) en cuanto se arregle, para empezar a cubrir también el camino real
+  cross-módulo.
+
+**No hay arreglo posible desde la stdlib** que no sea degradar la API (por ejemplo, forzar a quien
+use `Vector2`/`Vector3`/`Quaternion` a escribir su lógica de vectores dentro del propio módulo
+`surtr.math.Vector`, lo cual no es una librería reutilizable de verdad). Se ha lanzado una tarea
+aparte con el repro completo y la caracterización exacta (ver el chip de tarea de la sesión) — nota:
+una tarea anterior, más estrecha, describía esto como específico de `forceinline`; esa
+caracterización era incorrecta/incompleta y quedó sustituida por la de arriba.
+
 ---
 
 ## 3. Propuestas de mejora y adición (detalle)
@@ -506,16 +586,24 @@ limpio antes del valor sigue devolviendo el "cero" blando; a mitad de valor lanz
 Descubierto y **corregido** durante esta fase: **B5** (§2.0), un bug de compilador que rompía
 `Set<T>`/`ReadOnlySet<T>` en producción.
 
-**Fase 5 — Adiciones de alto valor (§3.1, §3.2)**
-`Vector2`/`Vector3`/`Quaternion` + `Angle` completo, y `Random`. Ya no bloqueadas por B5.
+**Fase 5 — Adiciones de alto valor (§3.1, §3.2) — Parcial: bloqueada por B6**
+`Angle` completo y `Random` — **hechos, utilizables**. `Vector2`/`Vector3`/`Quaternion`
+(`src/surtr/math/Vector.surtr`) — **escritos y verificados matemáticamente**, pero **no
+recomendables para uso real todavía**: B6 (§2.6), descubierto durante esta fase, rompe cualquier
+llamada entre módulos que combine una `value class` multi-campo de entrada y de salida, lo que
+cubre casi toda su API útil (`+`, `-`, `*`, `normalized()`, `lerp`, `rotate`, composición de
+quaterniones). Quedan en el árbol porque el trabajo es correcto y reutilizable en cuanto B6 se
+arregle, pero no se recomienda anunciarlos como listos hasta entonces.
 
-**Fase 6 — Adiciones de valor medio (§3.3, §3.4)**
+**Fase 6 — Adiciones de valor medio (§3.3, §3.4) — EN PAUSA por B6**
 `PriorityQueue<T>` y `Map<K,V>`/`IMap<K,V>` (reutilizarían `ReadOnlyCollection<T>`, ya disponible
-desde la Fase 4). Ya no bloqueadas por B5.
+desde la Fase 4). `IPriorityQueue<T>`/`IReadOnlyMap<K,V>` seguirían el mismo patrón que dispara B6
+en cuanto una operación reciba y devuelva un tipo compuesto propio entre módulos.
 
 **Fase 7 — Ampliaciones incrementales (§3.5-§3.7)**
 Métodos añadidos a `List`, `StringBuilder` y `Sequence` una vez sus bases respectivas están
-corregidas/estables. Sigue detrás de las Fases 5-6 en el orden del plan.
+corregidas/estables. La menos afectada por B6 (son sobre todo métodos sobre tipos ya existentes,
+sin `value class` multi-campo de por medio), pero sigue detrás de las Fases 5-6 en el orden del plan.
 
 ---
 
@@ -529,10 +617,18 @@ sobre esas respuestas:
 2. **Documento:** comiteado en `docs/` como `Plan-Revision-Stdlib.md`, sin añadirlo a la tabla de
    mapa de documentación de `CLAUDE.md`.
 3. **`Deque<T>` (D2):** opción (b) — lista doblemente enlazada propia, independiente de `Queue<T>`.
-4. **Vector/Quaternion/Random (Fase 5):** cuando se retome, primero se diseña y valida la API antes
-   de escribir código — pendiente de que se decida entrar en la Fase 5.
+4. **Vector/Quaternion/Random (Fase 5):** diseño directo, sin pasada de validación previa por
+   separado — se implementó y se ajustó sobre la marcha contra los límites reales del compilador
+   (B6), que una pasada de diseño puramente sobre el papel no habría podido prever.
 5. **B5:** se priorizó arreglar el bug del compilador antes de seguir con las Fases 5-7 — hecho
    (§2.0).
+
+Pregunta abierta, bloqueante, igual que B5 lo fue antes:
+
+- **B6 (§2.6):** ¿se prioriza arreglar este segundo bug de compilador antes de dar por terminada la
+  Fase 5 y seguir con las Fases 6-7, o se documenta `Vector2`/`Vector3`/`Quaternion` como "no listo
+  para uso real" y se avanza igualmente con `PriorityQueue`/`Map` asumiendo que probablemente
+  también queden bloqueados en la práctica?
 
 Preguntas que siguen abiertas para cuando se retome cada fase:
 
