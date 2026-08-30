@@ -504,8 +504,14 @@ namespace Surtr.Runtime.Classes
         {
             get
             {
+                // The unboxed-block receiver convention is Direct-only (§6.3): a non-Direct call
+                // resolves the receiver's class through the entity registry, which only a boxed
+                // reference is in, so InvokeVirtual/InvokeInterface always read exactly one slot at
+                // the frame base regardless of what the receiver's own type would flatten to. A
+                // Direct call on a tuple-wide/range/multi-field-value receiver never boxes, so it
+                // keeps the full inline width.
                 int slots = DeclaringType is not null && !IsStatic && !IsInstanceFactoryConstructor
-                    ? SlotWidthOf(DeclaringType)
+                    ? (_dispatch == SurtrMethodDispatch.Direct ? SlotWidthOf(DeclaringType) : 1)
                     : 0;
 
                 for (int i = 0; i < _parameters.Length; i++)

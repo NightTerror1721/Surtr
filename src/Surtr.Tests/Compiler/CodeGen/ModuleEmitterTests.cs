@@ -6181,6 +6181,26 @@ var runtime = Run(
             Assert.Equal(1, Int(runtime, "boxedIntsCompareByValue"));
         }
 
+        /// <summary>
+        /// A range's inline three-slot representation needed its own receiver-convention fix,
+        /// separate from a multi-field value class's: <c>SurtrMethodInfo.ArgumentSlotCount</c>
+        /// hardcoded the receiver width to 3 for any member declared on <c>range</c> regardless of
+        /// dispatch, which only <c>toString()</c> - now an override of <c>object</c>'s virtual slot
+        /// - ever exercised as a non-Direct call. This is the same polymorphic path the multi-field
+        /// value class test above exercises, for the representation that needed a different fix.
+        /// </summary>
+        [Fact]
+        public void ARangeThroughObjectUsesItsOwnToStringNotTheGenericDefault()
+        {
+            var runtime = Run(
+                "fun rangeAsObjectToString(): string {\n"
+                    + "  let asObject: object = 1..4;\n"
+                    + "  return asObject.toString();\n"
+                    + "}");
+
+            Assert.Equal("1..4", Text(runtime, "rangeAsObjectToString"));
+        }
+
         /// <summary>Every built-in is declared sealed once it extends object, so nothing may extend it.</summary>
         [Fact]
         public void ExtendingABuiltInIsRejected()
